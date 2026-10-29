@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/editor-core", "crates/solidcraft-integration", "apps/pcbcraft-cli", "apps/pcbcraft", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+
+[workspace.dependencies]
+pcbcraft-core = { path = "crates/editor-core" }
+pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+schemars = "1.2"
+thiserror = "2"
+egui = "0.36"
+egui-wgpu = "0.36"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
+solidcraft-ui-egui = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+
+# Adopted from Solidcraft: optimized dependencies and a CI profile that avoids
+# truck debug assertions while retaining checked arithmetic in our code.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.ci]
+inherits = "dev"
+opt-level = 1
+debug = "line-tables-only"
+debug-assertions = false
+overflow-checks = true
+
+[profile.ci.package."*"]
+opt-level = 2
+debug = false
+
+# Cargo does not inherit a dependency workspace's patches. Keep Solidcraft's
+# geometry fixes pinned to the exact same revision as its engine.
+[patch.crates-io]
+egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+winit = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+truck-geometry = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+truck-stepio = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+matext4cgmath = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }

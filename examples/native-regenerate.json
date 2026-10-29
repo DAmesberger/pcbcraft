@@ -1,0 +1,22 @@
+{
+  "commands": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "changes": {
+          "board_thickness": "2.4 mm",
+          "hole_x": "6 mm",
+          "hole_y": "7 mm",
+          "top_x": "17 mm",
+          "top_y": "13 mm",
+          "top_angle": "90 deg",
+          "bottom_x": "28 mm",
+          "bottom_y": "20 mm",
+          "bottom_angle": "-45 deg",
+          "package_length": "5 mm",
+          "package_height": "1.8 mm"
+        }
+      }
+    }
+  ]
+}

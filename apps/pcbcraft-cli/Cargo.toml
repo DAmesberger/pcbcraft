@@ -1,0 +1,14 @@
+[package]
+name = "pcbcraft-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pcbcraft-core.workspace = true
+pcbcraft-solidcraft.workspace = true
+serde_json.workspace = true
+serde.workspace = true
