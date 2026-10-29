@@ -9,3 +9,6 @@ workspace = true
 
 [dependencies]
 serde_json.workspace = true
+# Parses Rust for the UI container gate (MIT OR Apache-2.0; already in the tree).
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }

@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/editor-core", "crates/solidcraft-integration", "apps/pcbcraft-cli", "apps/pcbcraft", "xtask"]
+members = [
+    "crates/editor-core",
+    "crates/io",
+    "crates/solidcraft-integration",
+    "crates/automation",
+    "apps/pcbcraft-cli",
+    "apps/pcbcraft",
+    "xtask",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,7 +17,10 @@ rust-version = "1.96"
 
 [workspace.dependencies]
 pcbcraft-core = { path = "crates/editor-core" }
+pcbcraft-io = { path = "crates/io" }
 pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
+pcbcraft-automation = { path = "crates/automation" }
+tempfile = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 schemars = "1.2"

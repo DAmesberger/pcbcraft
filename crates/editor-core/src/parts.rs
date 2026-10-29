@@ -4,54 +4,130 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum PartCommand {
+    /// Replace the component draft being authored. Drafts may be unfinished;
+    /// only resource bounds and finite geometry are enforced.
+    #[serde(rename = "part.draft_set")]
+    SetDraft { draft: Part },
+    /// Drop the component draft.
+    #[serde(rename = "part.draft_discard")]
+    DiscardDraft {},
+    /// Publish a draft as an immutable project snapshot. Without `draft`, the
+    /// current authoring draft is published. Afterwards the draft is the
+    /// published revision, ready for the next edit.
     #[serde(rename = "part.publish")]
-    Publish { draft: Part },
+    Publish {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        draft: Option<Part>,
+    },
 }
 
-pub fn apply(project: &mut Project, command: PartCommand) -> Result<()> {
+pub(crate) fn apply(document: &mut Document, command: PartCommand) -> Result<()> {
     match command {
-        PartCommand::Publish { mut draft } => {
-            validate_part(&draft)?;
-            if project.parts.len() >= 4096 {
-                return Err(Error::Invalid(
-                    "project component snapshot limit reached".into(),
-                ));
+        PartCommand::SetDraft { draft } => {
+            validate_draft(&draft)?;
+            document.draft = Some(Arc::new(draft));
+            Ok(())
+        }
+        PartCommand::DiscardDraft {} => {
+            if document.draft.take().is_none() {
+                return Err(Error::NotFound("there is no component draft".into()));
             }
-            if draft.id == 0 {
-                if draft.revision != 0 {
-                    return Err(Error::Invalid(
-                        "a new component draft starts at revision zero".into(),
-                    ));
-                }
-                draft.id = project.allocate()?;
-                draft.revision = 1;
-            } else {
-                let latest = project
-                    .parts
-                    .iter()
-                    .filter(|p| p.id == draft.id)
-                    .max_by_key(|p| p.revision)
-                    .ok_or_else(|| {
-                        Error::Invalid("component draft refers to an unknown definition".into())
-                    })?;
-                if latest.revision != draft.revision {
-                    return Err(Error::Invalid(
-                        "a newer component revision exists; load it before publishing".into(),
-                    ));
-                }
-                draft.revision = latest
-                    .revision
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Invalid("component revision exhausted".into()))?;
-            }
-            project.parts.push(draft);
+            Ok(())
+        }
+        PartCommand::Publish { draft } => {
+            let draft = match draft {
+                Some(draft) => draft,
+                None => document
+                    .draft
+                    .as_deref()
+                    .cloned()
+                    .ok_or_else(|| Error::NotFound("there is no component draft".into()))?,
+            };
+            let published = publish(Arc::make_mut(&mut document.project), draft)?;
+            document.draft = Some(Arc::new(published));
             Ok(())
         }
     }
+}
+
+fn publish(project: &mut Project, mut draft: Part) -> Result<Part> {
+    validate_part(&draft)?;
+    if project.parts.len() >= 4096 {
+        return Err(Error::Limit(
+            "project component snapshot limit reached".into(),
+        ));
+    }
+    if draft.id == 0 {
+        if draft.revision != 0 {
+            return Err(Error::Invalid(
+                "a new component draft starts at revision zero".into(),
+            ));
+        }
+        draft.id = project.allocate()?;
+        draft.revision = 1;
+    } else {
+        let latest = project
+            .parts
+            .iter()
+            .filter(|p| p.id == draft.id)
+            .max_by_key(|p| p.revision)
+            .ok_or_else(|| {
+                Error::NotFound("component draft refers to an unknown definition".into())
+            })?;
+        if latest.revision != draft.revision {
+            return Err(Error::Conflict(
+                "a newer component revision exists; load it before publishing".into(),
+            ));
+        }
+        draft.revision = latest
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| Error::Limit("component revision exhausted".into()))?;
+    }
+    project.parts.push(draft.clone());
+    Ok(draft)
+}
+
+/// Drafts are not published components: empty names, missing mappings, duplicate
+/// local IDs and zero/negative dimensions may be legitimate interrupted edits.
+/// Only resource bounds and finite geometry are required for safe persistence.
+pub fn validate_draft(part: &Part) -> Result<()> {
+    if part.name.len() > 256
+        || part.provenance.len() > 4096
+        || part.component.terminals.len() > 256
+        || part.symbol.pins.len() > 256
+        || part.package.terminals.len() > 512
+        || part.footprint.pads.len() > 1024
+        || part.binding.mappings.len() > 512
+        || part.component.terminals.iter().any(|t| t.name.len() > 256)
+        || part.package.terminals.iter().any(|t| t.number.len() > 256)
+    {
+        return Err(Error::Limit(
+            "authoring draft exceeds supported text or item limits".into(),
+        ));
+    }
+    let finite = |values: &[f64]| values.iter().all(|v| v.is_finite() && v.abs() <= 10000.0);
+    if !finite(&part.symbol.body_size)
+        || !finite(&part.package.body_size)
+        || !finite(&part.package.model_offset)
+        || !finite(&part.footprint.datum_offset)
+        || part.symbol.pins.iter().any(|p| !finite(&p.position))
+        || part
+            .footprint
+            .pads
+            .iter()
+            .any(|p| !finite(&p.position) || !finite(&p.size))
+    {
+        return Err(Error::Invalid(
+            "authoring draft geometry must be finite and within ±10000 mm".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn require(condition: bool, message: &str) -> Result<()> {
@@ -331,25 +407,20 @@ mod tests {
         let original = project.clone();
         let mut missing = passive_template("R");
         missing.binding.mappings.pop();
-        assert!(apply(&mut project, PartCommand::Publish { draft: missing }).is_err());
+        assert!(publish(&mut project, missing).map(|_| ()).is_err());
         let mut duplicate = passive_template("R");
         duplicate.binding.mappings.push(TerminalMap {
             electrical: 2,
             physical: 1,
         });
-        assert!(apply(&mut project, PartCommand::Publish { draft: duplicate }).is_err());
+        assert!(publish(&mut project, duplicate).map(|_| ()).is_err());
         assert_eq!(project, original);
     }
 
     #[test]
     fn new_revision_does_not_mutate_placed_snapshot() -> Result<()> {
         let mut project = Project::default();
-        apply(
-            &mut project,
-            PartCommand::Publish {
-                draft: passive_template("R"),
-            },
-        )?;
+        publish(&mut project, passive_template("R")).map(|_| ())?;
         let original = project.parts[0].clone();
         project.instances.push(Instance {
             id: 2,
@@ -364,7 +435,7 @@ mod tests {
         let mut draft = original.clone();
         draft.name = "Renamed resistor".into();
         draft.footprint.pads[0].position[0] -= 0.4;
-        apply(&mut project, PartCommand::Publish { draft })?;
+        publish(&mut project, draft).map(|_| ())?;
         assert_eq!(project.parts[0], original);
         assert_eq!(project.parts[1].revision, 2);
         assert_eq!(project.instance(2).map(|i| i.part.revision), Some(1));
@@ -381,21 +452,11 @@ mod tests {
     #[test]
     fn stale_draft_cannot_publish_over_a_newer_revision() -> Result<()> {
         let mut project = Project::default();
-        apply(
-            &mut project,
-            PartCommand::Publish {
-                draft: passive_template("R"),
-            },
-        )?;
+        publish(&mut project, passive_template("R")).map(|_| ())?;
         let draft = project.parts[0].clone();
-        apply(
-            &mut project,
-            PartCommand::Publish {
-                draft: draft.clone(),
-            },
-        )?;
+        publish(&mut project, draft.clone()).map(|_| ())?;
         let before = project.clone();
-        assert!(apply(&mut project, PartCommand::Publish { draft }).is_err());
+        assert!(publish(&mut project, draft).map(|_| ()).is_err());
         assert_eq!(project, before);
         Ok(())
     }

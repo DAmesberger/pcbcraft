@@ -1,6 +1,6 @@
 //! Revision-bound, speculative changes to electronics and their PCB impact.
 //! Plans are derived from exact snapshots and electrical IDs, never names.
-use crate::{Endpoint, Error, Id, PartRef, PinKind, Project, Result, layout, schematic};
+use crate::{Endpoint, Error, Id, PartRef, PinKind, Project, Result, layout, nets, schematic};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,6 +58,9 @@ impl UpdatePlan {
 fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
 }
+fn not_found(message: &str) -> Error {
+    Error::NotFound(message.into())
+}
 
 fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
     let reference = project
@@ -96,7 +99,7 @@ fn local_pad(pad: Option<&crate::Pad>) -> String {
 fn world_pad(pad: Option<&layout::WorldPad>) -> String {
     pad.map(|p| {
         format!(
-            "at {:?} mm, size {:?} mm, {}°, {:?}, {}",
+            "at {:?} mm, size {:?} mm, {}°, {:?}, net {}",
             p.position, p.size, p.rotation_deg, p.layer, p.net
         )
     })
@@ -113,7 +116,7 @@ fn stage(project: &Project, change: &Change) -> Result<Project> {
                 ));
             }
             let target_part = project.part(*target).ok_or_else(|| {
-                invalid("Target exact component revision is not in the project snapshot.")
+                not_found("Target exact component revision is not in the project snapshot.")
             })?;
             crate::parts::validate_part(target_part)?;
             let mut selected = BTreeSet::new();
@@ -125,10 +128,10 @@ fn stage(project: &Project, change: &Change) -> Result<Project> {
                     .instances
                     .iter_mut()
                     .find(|i| i.id == *id)
-                    .ok_or_else(|| invalid("Update refers to an unknown instance."))?;
+                    .ok_or_else(|| not_found("Update refers to an unknown instance."))?;
                 if instance.part.id != target.id {
-                    return Err(invalid(
-                        "Revision updates must retain the component definition ID. Matching names or pin numbers do not establish electrical compatibility.",
+                    return Err(Error::Conflict(
+                        "Revision updates must retain the component definition ID. Matching names or pin numbers do not establish electrical compatibility.".into(),
                     ));
                 }
                 instance.part = *target;
@@ -147,6 +150,7 @@ fn stage(project: &Project, change: &Change) -> Result<Project> {
                 .map(|wire| wire.id)
                 .collect();
             next.wires.retain(|wire| retained.contains(&wire.id));
+            nets::reconcile(&mut next)?;
             schematic::validate(&next)?;
         }
         Change::Schematic { command } => {
@@ -182,44 +186,58 @@ pub(crate) fn preview(
             return (plan, None);
         }
     };
-    let old_nets: BTreeMap<_, _> = schematic::nets(project)
-        .into_iter()
-        .map(|net| (net.id, net.terminals))
-        .collect();
-    let new_nets: BTreeMap<_, _> = schematic::nets(&next)
-        .into_iter()
-        .map(|net| (net.id, net.terminals))
-        .collect();
-    let old_net_by_terminal: BTreeMap<_, _> = old_nets
+    let old_nets: BTreeMap<Id, &[Endpoint]> = project
+        .nets
         .iter()
-        .flat_map(|(id, terminals)| {
-            terminals
-                .iter()
-                .map(move |terminal| (*terminal, id.clone()))
-        })
+        .map(|net| (net.id, net.terminals.as_slice()))
         .collect();
-    let new_net_by_terminal: BTreeMap<_, _> = new_nets
+    let new_nets: BTreeMap<Id, &[Endpoint]> = next
+        .nets
         .iter()
-        .flat_map(|(id, terminals)| {
-            terminals
-                .iter()
-                .map(move |terminal| (*terminal, id.clone()))
-        })
+        .map(|net| (net.id, net.terminals.as_slice()))
         .collect();
+    let old_net_by_terminal: BTreeMap<Endpoint, Id> = project
+        .nets
+        .iter()
+        .flat_map(|net| net.terminals.iter().map(move |t| (*t, net.id)))
+        .collect();
+    let new_net_by_terminal: BTreeMap<Endpoint, Id> = next
+        .nets
+        .iter()
+        .flat_map(|net| net.terminals.iter().map(move |t| (*t, net.id)))
+        .collect();
+    // Net IDs are persistent, so a net that only gains terminals keeps its
+    // copper valid. Nets that lose terminals, disappear or merge away are
+    // electrical changes whose copper must be removed explicitly.
     let mut electrical_changes = BTreeSet::new();
     for (id, terminals) in &old_nets {
-        if new_nets.get(id) != Some(terminals) {
-            electrical_changes.insert(id.clone());
-            plan.detail(format!(
-                "Net {id}: {} → {}.",
-                members(project, terminals),
-                members(&next, new_nets.get(id).map(Vec::as_slice).unwrap_or(&[]))
-            ));
+        let name = project.net_name(*id);
+        match new_nets.get(id) {
+            Some(after) if after == terminals => {}
+            Some(after) if terminals.iter().all(|t| after.binary_search(t).is_ok()) => {
+                plan.detail(format!(
+                    "Net {name} gains terminals: {} → {}.",
+                    members(project, terminals),
+                    members(&next, after)
+                ));
+            }
+            after => {
+                electrical_changes.insert(*id);
+                plan.detail(format!(
+                    "Net {name}: {} → {}.",
+                    members(project, terminals),
+                    members(&next, after.copied().unwrap_or(&[]))
+                ));
+            }
         }
     }
     for (id, terminals) in &new_nets {
         if !old_nets.contains_key(id) {
-            plan.detail(format!("Add net {id}: {}.", members(&next, terminals)));
+            plan.detail(format!(
+                "Add net {}: {}.",
+                next.net_name(*id),
+                members(&next, terminals)
+            ));
         }
     }
     let mut mapping_endpoints = BTreeSet::new();
@@ -399,7 +417,7 @@ pub(crate) fn preview(
             .into_iter()
             .chain(new_net_by_terminal.get(&endpoint))
         {
-            electrical_changes.insert(net.clone());
+            electrical_changes.insert(*net);
         }
     }
     for wire in &project.wires {
@@ -551,11 +569,12 @@ pub(crate) fn preview(
         plan.blockers.push(error.to_string());
     }
     for check in layout::checks(&next) {
-        plan.warnings.push(format!("Candidate PCB check: {check}"));
+        plan.warnings
+            .push(format!("Candidate PCB check: {}", check.message));
     }
     for check in schematic::checks(&next) {
         plan.warnings
-            .push(format!("Candidate electrical check: {check}"));
+            .push(format!("Candidate electrical check: {}", check.message));
     }
     plan.affected_wires.sort_unstable();
     plan.affected_wires.dedup();
@@ -581,10 +600,10 @@ pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -
     }
     let (plan, candidate) = preview(project, revision, update.change);
     if !plan.blockers.is_empty() {
-        return Err(Error::Invalid(plan.blockers.join("\n")));
+        return Err(Error::Conflict(plan.blockers.join("\n")));
     }
     if !plan.conflicting_tracks.is_empty() && !update.remove_conflicting_tracks {
-        return Err(Error::Invalid(format!(
+        return Err(Error::Conflict(format!(
             "Update requires explicit removal of conflicting tracks {:?}.",
             plan.conflicting_tracks
         )));

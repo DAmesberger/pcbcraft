@@ -95,7 +95,7 @@ pub(super) fn fixture() -> Result<Session> {
             net: net.into(),
             layer: layer.into(),
             kind: kind.into(),
-            component: crate::id(&reply, "component")?,
+            component: super::super::id(&reply, "component")?,
         });
         let name = format!("copper-{id}");
         match id {

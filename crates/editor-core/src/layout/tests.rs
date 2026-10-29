@@ -3,6 +3,15 @@ use crate::{Engine, Operation, PartRef, parts, schematic};
 
 fn fixture() -> Result<Project> {
     let mut project = Engine::demo()?.project().clone();
+    let net = |terminal| {
+        project
+            .net_of(Endpoint {
+                instance: 2,
+                terminal,
+            })
+            .map(|n| n.id)
+    };
+    assert_eq!((net(1), net(2)), (Some(R1_1), Some(SHARED)));
     for (instance, position) in [(2, [10.0, 10.0]), (3, [25.0, 10.0])] {
         apply(
             &mut project,
@@ -17,9 +26,14 @@ fn fixture() -> Result<Project> {
     Ok(project)
 }
 
+/// Demo net IDs: R1 terminals got 1 and 2, R2 got 3 and 4; connecting
+/// R1.2–R2.1 merged 3 into the older 2.
+const SHARED: Id = 2;
+const R1_1: Id = 1;
+
 fn request() -> RouteRequest {
     RouteRequest {
-        net: "net:2:2".into(),
+        net: SHARED,
         start: [11.2, 10.0],
         end: [23.8, 10.0],
         width: 0.3,
@@ -34,7 +48,7 @@ fn physical_connectivity_changes_when_a_pad_moves() -> Result<()> {
     assert_eq!(
         checks(&project)
             .iter()
-            .filter(|s| s.starts_with("Unrouted:"))
+            .filter(|s| s.code == "board.unrouted")
             .count(),
         2
     );
@@ -56,7 +70,7 @@ fn physical_connectivity_changes_when_a_pad_moves() -> Result<()> {
     assert_eq!(
         checks(&project)
             .iter()
-            .filter(|s| s.starts_with("Unrouted:"))
+            .filter(|s| s.code == "board.unrouted")
             .count(),
         2
     );
@@ -113,7 +127,7 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
             terminal: 1
         }
     );
-    assert_eq!(pad.net, "net:2:1");
+    assert_eq!(pad.net, R1_1);
     Ok(())
 }
 
@@ -123,7 +137,7 @@ fn rejects_foreign_nets_malformed_geometry_and_short_circuits_atomically() -> Re
     let before = project.clone();
     for bad in [
         RouteRequest {
-            net: "foreign-net".into(),
+            net: 999,
             ..request()
         },
         RouteRequest {
@@ -208,7 +222,7 @@ fn multi_segment_edit_is_one_atomic_engine_operation() -> Result<()> {
                                 ..request()
                             },
                             RouteRequest {
-                                net: "unknown".into(),
+                                net: 999,
                                 ..request()
                             }
                         ],
@@ -236,7 +250,7 @@ fn electrical_mapping_connects_the_right_physical_pads() -> Result<()> {
     project.parts[0] = part;
     let world = pads(&project);
     assert_eq!(world[0].terminal.terminal, 2);
-    assert_eq!(world[0].net, "net:2:2");
+    assert_eq!(world[0].net, SHARED);
     Ok(())
 }
 
@@ -287,7 +301,7 @@ fn matching_xy_on_opposite_layers_does_not_connect_copper() -> Result<()> {
     assert_eq!(
         checks(&project)
             .iter()
-            .filter(|s| s.starts_with("Unrouted:"))
+            .filter(|s| s.code == "board.unrouted")
             .count(),
         2
     );

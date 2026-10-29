@@ -36,7 +36,7 @@
       # uses AppKit and Metal and needs none of these.
       runtimeLibs =
         pkgs:
-        pkgs.lib.optionals pkgs.stdenv.isLinux (
+        pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
           with pkgs;
           [
             wayland
@@ -62,8 +62,8 @@
             (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             pkgs.git
           ]
-          ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.pkg-config ];
-          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux (
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.pkg-config ];
+          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux (
             "${pkgs.lib.makeLibraryPath (runtimeLibs pkgs)}:/run/opengl-driver/lib"
           );
           # A separate target directory keeps this toolchain's cache apart from rustup's.

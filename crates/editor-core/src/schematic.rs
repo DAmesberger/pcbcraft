@@ -1,11 +1,12 @@
 //! Single-sheet capture. Wire endpoints reference electrical identities; drawn
 //! crossings and coincident symbol pins never imply an electrical connection.
 use crate::{
-    Endpoint, Error, Id, Instance, Net, PartRef, PinKind, Point, Project, Result, Wire, point_valid,
+    Endpoint, Error, Finding, Id, Instance, Net, ObjectRef, PartRef, PinKind, Point, Project,
+    Result, Wire, nets as net_ids, point_valid,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
@@ -31,19 +32,38 @@ pub enum SchematicCommand {
     Disconnect { wire: Id },
     #[serde(rename = "schematic.remove")]
     Remove { instance: Id },
+    /// Relabel a net. Its identity, membership and routed copper are unchanged.
+    #[serde(rename = "schematic.net_rename")]
+    RenameNet { net: Id, name: String },
 }
 
 fn invalid(message: &str) -> Error {
     Error::Invalid(message.into())
 }
+fn not_found(message: &str) -> Error {
+    Error::NotFound(message.into())
+}
+fn conflict(message: &str) -> Error {
+    Error::Conflict(message.into())
+}
 
-/// Also atomic when invoked directly, rather than through Engine::apply.
+/// Atomic when invoked directly: a failure leaves `project` unchanged.
 pub fn apply(project: &mut Project, command: SchematicCommand) -> Result<()> {
     let mut candidate = project.clone();
-    apply_candidate(&mut candidate, command, false)?;
-    protect_routed_nets(project, &candidate)?;
+    apply_staged(project, &mut candidate, command)?;
     *project = candidate;
     Ok(())
+}
+
+/// Apply to a candidate copy of `before`. The engine discards the candidate on
+/// failure, so this does not need its own copy.
+pub(crate) fn apply_staged(
+    before: &Project,
+    candidate: &mut Project,
+    command: SchematicCommand,
+) -> Result<()> {
+    apply_candidate(candidate, command, false)?;
+    protect_routed_nets(before, candidate)
 }
 
 /// Speculative edits only. The update planner validates and commits the result.
@@ -60,11 +80,11 @@ pub(crate) fn apply_candidate(
             position,
         } => {
             if candidate.part(part).is_none() {
-                return Err(invalid("Choose a published part revision first."));
+                return Err(not_found("Choose a published part revision first."));
             }
             if candidate.instances.len() >= 4096 {
-                return Err(invalid(
-                    "This edition supports at most 4096 schematic instances.",
+                return Err(Error::Limit(
+                    "This edition supports at most 4096 schematic instances.".into(),
                 ));
             }
             let id = candidate.allocate()?;
@@ -81,7 +101,7 @@ pub(crate) fn apply_candidate(
                 .instances
                 .iter_mut()
                 .find(|i| i.id == instance)
-                .ok_or_else(|| invalid("Unknown schematic instance."))?;
+                .ok_or_else(|| not_found("Unknown schematic instance."))?;
             item.position = position;
         }
         SchematicCommand::Edit {
@@ -93,7 +113,7 @@ pub(crate) fn apply_candidate(
                 .instances
                 .iter_mut()
                 .find(|i| i.id == instance)
-                .ok_or_else(|| invalid("Unknown schematic instance."))?;
+                .ok_or_else(|| not_found("Unknown schematic instance."))?;
             item.reference = reference;
             item.value = value;
         }
@@ -103,10 +123,10 @@ pub(crate) fn apply_candidate(
             }
             for endpoint in [from, to] {
                 if terminal_kind(candidate, endpoint).is_none() {
-                    return Err(invalid("Unknown wire terminal."));
+                    return Err(not_found("Unknown wire terminal."));
                 }
                 if terminal_kind(candidate, endpoint) == Some(PinKind::NotConnected) {
-                    return Err(invalid("A device-declared NC terminal cannot be wired."));
+                    return Err(conflict("A device-declared NC terminal cannot be wired."));
                 }
             }
             if candidate
@@ -114,27 +134,29 @@ pub(crate) fn apply_candidate(
                 .iter()
                 .any(|w| (w.from == from && w.to == to) || (w.from == to && w.to == from))
             {
-                return Err(invalid("These terminals are already connected by a wire."));
+                return Err(conflict("These terminals are already connected by a wire."));
             }
             if candidate.wires.len() >= 16384 {
-                return Err(invalid("This edition supports at most 16384 wires."));
+                return Err(Error::Limit(
+                    "This edition supports at most 16384 wires.".into(),
+                ));
             }
             let id = candidate.allocate()?;
             candidate.wires.push(Wire { id, from, to });
         }
         SchematicCommand::Disconnect { wire } => {
             if !candidate.wires.iter().any(|w| w.id == wire) {
-                return Err(invalid("Unknown schematic wire."));
+                return Err(not_found("Unknown schematic wire."));
             }
             candidate.wires.retain(|w| w.id != wire);
         }
         SchematicCommand::Remove { instance } => {
             if candidate.instance(instance).is_none() {
-                return Err(invalid("Unknown schematic instance."));
+                return Err(not_found("Unknown schematic instance."));
             }
             if !allow_placed_removal && candidate.placements.iter().any(|p| p.instance == instance)
             {
-                return Err(invalid(
+                return Err(conflict(
                     "Remove the PCB placement before deleting this instance.",
                 ));
             }
@@ -144,21 +166,39 @@ pub(crate) fn apply_candidate(
                 .wires
                 .retain(|w| w.from.instance != instance && w.to.instance != instance);
         }
+        SchematicCommand::RenameNet { net, name } => {
+            if !net_ids::name_valid(&name) {
+                return Err(invalid("Net names must be 1–64 bytes without spaces."));
+            }
+            if candidate
+                .nets
+                .iter()
+                .any(|n| n.id != net && n.name.eq_ignore_ascii_case(&name))
+            {
+                return Err(conflict("Another net already uses this name."));
+            }
+            candidate
+                .nets
+                .iter_mut()
+                .find(|n| n.id == net)
+                .ok_or_else(|| not_found("Unknown net."))?
+                .name = name;
+            return validate(candidate);
+        }
     }
+    net_ids::reconcile(candidate)?;
     validate(candidate)
 }
 
+/// Direct schematic edits may not change the membership of a routed net; the
+/// update planner previews and applies such changes with explicit track removal.
 fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
-    if before.tracks.is_empty() {
-        return Ok(());
-    }
-    let old = nets(before);
-    let new = nets(after);
-    for track in &before.tracks {
-        let a = old.iter().find(|net| net.id == track.net);
-        let b = new.iter().find(|net| net.id == track.net);
-        if a.map(|net| &net.terminals) != b.map(|net| &net.terminals) {
-            return Err(invalid(
+    let routed: BTreeSet<Id> = before.tracks.iter().map(|t| t.net).collect();
+    for id in routed {
+        let a = before.net(id).map(|net| &net.terminals);
+        let b = after.net(id).map(|net| &net.terminals);
+        if a != b {
+            return Err(conflict(
                 "This connectivity change affects routed copper. Preview it with project.preview_update and apply the reviewed track removals through project.apply_update.",
             ));
         }
@@ -198,7 +238,7 @@ pub fn validate(project: &Project) -> Result<()> {
             ));
         }
         if !labels.insert(instance.reference.to_lowercase()) {
-            return Err(invalid("Reference designators must be unique."));
+            return Err(conflict("Reference designators must be unique."));
         }
         if instance.value.len() > 256 || instance.value.chars().any(char::is_control) {
             return Err(invalid(
@@ -265,54 +305,14 @@ pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
     ])
 }
 
-pub fn nets(project: &Project) -> Vec<Net> {
-    let mut graph: BTreeMap<Endpoint, BTreeSet<Endpoint>> = BTreeMap::new();
-    for instance in &project.instances {
-        if let Some(part) = project.part(instance.part) {
-            for terminal in &part.component.terminals {
-                graph
-                    .entry(Endpoint {
-                        instance: instance.id,
-                        terminal: terminal.id,
-                    })
-                    .or_default();
-            }
-        }
-    }
-    for wire in &project.wires {
-        if graph.contains_key(&wire.from) && graph.contains_key(&wire.to) {
-            graph.entry(wire.from).or_default().insert(wire.to);
-            graph.entry(wire.to).or_default().insert(wire.from);
-        }
-    }
-    let mut seen = BTreeSet::new();
-    let mut output = Vec::new();
-    for first in graph.keys().copied() {
-        if seen.contains(&first) {
-            continue;
-        }
-        let mut queue = VecDeque::from([first]);
-        let mut members = BTreeSet::new();
-        while let Some(endpoint) = queue.pop_front() {
-            if !seen.insert(endpoint) {
-                continue;
-            }
-            members.insert(endpoint);
-            if let Some(neighbors) = graph.get(&endpoint) {
-                queue.extend(neighbors.iter().copied().filter(|n| !seen.contains(n)));
-            }
-        }
-        output.push(Net {
-            id: format!("net:{}:{}", first.instance, first.terminal),
-            terminals: members.into_iter().collect(),
-        });
-    }
-    output
+/// The project's nets, sorted by ID.
+pub fn nets(project: &Project) -> &[Net] {
+    &project.nets
 }
 
 /// A deliberately small ERC subset. Passive and unspecified drive compatibility,
 /// voltage domains and project no-connect decisions remain future work.
-pub fn checks(project: &Project) -> Vec<String> {
+pub fn checks(project: &Project) -> Vec<Finding> {
     let mut issues = Vec::new();
     for net in nets(project) {
         let pins: Vec<_> = net
@@ -325,9 +325,10 @@ pub fn checks(project: &Project) -> Vec<String> {
             .filter(|(_, kind)| matches!(kind, PinKind::Output | PinKind::PowerOutput))
             .count();
         if outputs > 1 {
-            issues.push(format!(
-                "{}: multiple output terminals are connected.",
-                net.id
+            issues.push(Finding::new(
+                "erc.multiple_outputs",
+                format!("{}: multiple output terminals are connected.", net.name),
+                vec![ObjectRef::Net { id: net.id }],
             ));
         }
         for (endpoint, kind) in &pins {
@@ -335,17 +336,25 @@ pub fn checks(project: &Project) -> Vec<String> {
                 .instance(endpoint.instance)
                 .map(|i| i.reference.as_str())
                 .unwrap_or("?");
+            let object = vec![ObjectRef::Terminal {
+                endpoint: *endpoint,
+            }];
             if pins.len() == 1 && matches!(kind, PinKind::Input | PinKind::PowerInput) {
-                issues.push(format!(
-                    "{reference} terminal {} is unconnected.",
-                    endpoint.terminal
+                issues.push(Finding::new(
+                    "erc.unconnected_input",
+                    format!("{reference} terminal {} is unconnected.", endpoint.terminal),
+                    object,
                 ));
             } else if *kind == PinKind::PowerInput
                 && !pins.iter().any(|(_, kind)| *kind == PinKind::PowerOutput)
             {
-                issues.push(format!(
-                    "{reference} terminal {} has no power-output driver on its net.",
-                    endpoint.terminal
+                issues.push(Finding::new(
+                    "erc.undriven_power_input",
+                    format!(
+                        "{reference} terminal {} has no power-output driver on its net.",
+                        endpoint.terminal
+                    ),
+                    object,
                 ));
             }
         }
@@ -477,7 +486,7 @@ mod tests {
                 },
             },
         )?;
-        let before = nets(&p);
+        let before = nets(&p).to_vec();
         apply(
             &mut p,
             SchematicCommand::Move {
@@ -548,12 +557,13 @@ mod tests {
         assert_eq!(p, before);
         apply(&mut p, SchematicCommand::Connect { from, to })?;
         let net = nets(&p)
-            .into_iter()
+            .iter()
             .find(|n| n.terminals.contains(&from))
+            .map(|n| n.id)
             .ok_or_else(|| invalid("missing test net"))?;
         p.tracks.push(Track {
             id: 9,
-            net: net.id,
+            net,
             start: [0.0, 0.0],
             end: [5.0, 0.0],
             width: 0.5,
@@ -585,7 +595,7 @@ mod tests {
                 },
             },
         )?;
-        assert!(checks(&p).iter().any(|m| m.contains("multiple output")));
+        assert!(checks(&p).iter().any(|m| m.code == "erc.multiple_outputs"));
         Ok(())
     }
 
@@ -595,7 +605,7 @@ mod tests {
         engine.apply(
             0,
             Operation::Part(parts::PartCommand::Publish {
-                draft: parts::passive_template("Resistor"),
+                draft: Some(parts::passive_template("Resistor")),
             }),
         )?;
         for (reference, position) in [("R1", [0.0, 0.0]), ("R2", [20.0, 0.0]), ("R3", [40.0, 0.0])]
@@ -633,7 +643,7 @@ mod tests {
                 }),
             )?;
         }
-        let connected = nets(engine.project());
+        let connected = nets(engine.project()).to_vec();
         assert_eq!(
             connected
                 .iter()
@@ -650,7 +660,7 @@ mod tests {
         newer.symbol.pins[1].position = [15.0, 0.0];
         engine.apply(
             engine.revision(),
-            Operation::Part(parts::PartCommand::Publish { draft: newer }),
+            Operation::Part(parts::PartCommand::Publish { draft: Some(newer) }),
         )?;
         assert_eq!(engine.project().parts.len(), 2);
         assert_eq!(pin_position(engine.project(), endpoints[0]), anchor);

@@ -1,0 +1,20 @@
+[package]
+name = "pcbcraft-automation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pcbcraft-core.workspace = true
+pcbcraft-io.workspace = true
+pcbcraft-solidcraft.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

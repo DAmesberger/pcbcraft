@@ -1,58 +1,21 @@
-use pcbcraft_solidcraft::{Command, Create, Empty, FilePath, Parameters, Probe, Update, schemas};
+//! Command-line access to Pcbcraft's command engine. Every subcommand is a
+//! thin transport over `pcbcraft_automation::Session`.
+use pcbcraft_automation::{Session, lines, mcp, session};
+use pcbcraft_core::Engine;
 use serde_json::{Value, json};
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::process::ExitCode;
 
-#[derive(Default)]
-struct CommandSession {
-    project: pcbcraft_core::Engine,
-    probe: Probe,
-    board: Option<pcbcraft_solidcraft::copper::Board>,
-}
+/// JSON-lines requests carry at most one component draft.
+const MAX_REQUEST: usize = 4 * 1024 * 1024;
 
-impl CommandSession {
-    fn dispatch(&mut self, request: Value) -> Value {
-        let command = request.get("command").and_then(Value::as_str).unwrap_or("");
-        if command.starts_with("project.") {
-            return match self.project.dispatch(request) {
-                Ok(result) => json!({"ok":true,"result":result}),
-                Err(error) => {
-                    let code = match &error {
-                        pcbcraft_core::Error::Stale { .. } => "stale_revision",
-                        pcbcraft_core::Error::Invalid(_) => "invalid_input",
-                        pcbcraft_core::Error::Json(_) => "invalid_command",
-                        pcbcraft_core::Error::Io(_) => "io_error",
-                    };
-                    json!({"ok":false,"error":{"code":code,"message":error.to_string()}})
-                }
-            };
-        }
-        let result = if command.starts_with("board.") {
-            if self.board.is_none() {
-                match pcbcraft_solidcraft::copper::Board::fixture() {
-                    Ok(board) => self.board = Some(board),
-                    Err(error) => return json!({"ok":false,"error":error.diagnostic()}),
-                }
-            }
-            match self.board.as_mut() {
-                Some(board) => board
-                    .dispatch(request)
-                    .and_then(|value| Ok(serde_json::to_value(value)?)),
-                None => Err(pcbcraft_solidcraft::Error::Invalid(
-                    "board unavailable".into(),
-                )),
-            }
-        } else {
-            self.probe
-                .dispatch(request)
-                .and_then(|value| Ok(serde_json::to_value(value)?))
-        };
-        match result {
-            Ok(result) => json!({"ok":true,"result":result}),
-            Err(error) => json!({"ok":false,"error":error.diagnostic()}),
-        }
-    }
-}
+const USAGE: &str = "usage: pcbcraft-cli <command>
+  commands                         print request, document and diagnostic schemas
+  stdio [FILE.pcbcraft]            JSON-lines requests on stdin, replies on stdout
+  mcp [FILE.pcbcraft]              Model Context Protocol server on stdio
+  demo NEW_FILE.pcbcraft           write the two-resistor demo project
+  export FILE.pcbcraft NEW_FILE.solidcraft
+                                   export a project as a native Solidcraft model";
 
 fn main() -> ExitCode {
     match run() {
@@ -64,109 +27,88 @@ fn main() -> ExitCode {
     }
 }
 
-fn print(value: &impl serde::Serialize) -> Result<(), Box<dyn std::error::Error>> {
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn print(value: &Value) -> Result<()> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, value)?;
     writeln!(stdout)?;
     Ok(())
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    match args.as_slice() {
-        [cmd] if cmd == "commands" => print(&json!({"project":pcbcraft_core::schemas(),"probe":schemas(),"board":pcbcraft_solidcraft::copper::schemas()})),
-        [cmd,path] if cmd == "project-demo" => {
-            let path=std::path::Path::new(path);
-            if path.try_exists()? {return Err("output exists; choose a new .pcbcraft filename".into());}
-            let mut engine=pcbcraft_core::Engine::demo()?;
-            engine.save(path)?;
-            print(&json!({"saved_path":path,"result":engine.dispatch(json!({"command":"project.inspect","params":{}}))?}))
-        },
-        [cmd,source,target] if cmd == "project-export" => {
-            let mut engine=pcbcraft_core::Engine::default();
-            engine.open(std::path::Path::new(source))?;
-            let model=pcbcraft_solidcraft::project::build(engine.project())?;
-            model.save(target)?;
-            print(&json!({"source":source,"saved_path":target,"geometry_count":model.geometry.len(),"sources":model.sources}))
-        },
-        [cmd,path] if cmd == "copper" => {
-            let mut board=pcbcraft_solidcraft::copper::Board::fixture()?;
-            print(&board.execute(pcbcraft_solidcraft::copper::Command::Save{path:path.clone()})?)
-        },
-        [cmd, path] if cmd == "probe" => {
-            let mut probe = Probe::default();
-            let initial = probe.execute(Command::Create(Create {
-                parameters: Parameters::default(),
-            }))?;
-            let saved = probe.execute(Command::Save(FilePath { path: path.clone() }))?;
-            let mut reopened = Probe::default();
-            reopened.execute(Command::Open(FilePath { path: path.clone() }))?;
-            let before = reopened.execute(Command::Inspect(Empty {}))?;
-            let changed = Parameters {
-                board_thickness: 2.4,
-                hole_x: 6.0,
-                package_length: 5.0,
-                top_x: 17.0,
-                top_y: 12.0,
-                top_angle: 90.0,
-                bottom_x: 28.0,
-                bottom_angle: -45.0,
-                ..Parameters::default()
-            };
-            let after = reopened.execute(Command::Update(Update {
-                expected_revision: before.revision,
-                parameters: changed,
-            }))?;
-            print(&json!({"created": initial, "saved": saved.saved_path,
-                "reopened": before, "regenerated_after_reopen": after,
-                "note": "The saved file contains the original parameters; regeneration checks run on the reopened in-memory document."}))
-        }
-        [cmd] if cmd == "stdio" => {
-            let mut session = CommandSession::default();
-            let mut input = io::stdin().lock();
-            let mut line = String::new();
-            loop {
-                line.clear();
-                // Bound line allocation before parsing external command input.
-                let count = std::io::Read::take(&mut input, 65537).read_line(&mut line)?;
-                if count == 0 {
-                    break;
-                }
-                if count > 65536 {
-                    return Err("request exceeds 64 KiB".into());
-                }
-                let reply = match serde_json::from_str::<Value>(&line) {
-                    Ok(request) => session.dispatch(request),
-                    Err(error) => {
-                        json!({"ok": false, "error": {"code": "invalid_json", "message": error.to_string()}})
-                    }
-                };
-                let mut stdout = io::stdout().lock();
-                serde_json::to_writer(&mut stdout, &reply)?;
-                writeln!(stdout)?;
-                stdout.flush()?;
-            }
-            Ok(())
-        }
-        _ => Err("usage: pcbcraft-cli commands | project-demo NEW_FILE.pcbcraft | project-export FILE.pcbcraft NEW_FILE.solidcraft | probe NEW_FILE.solidcraft | copper NEW_FILE.solidcraft | stdio".into()),
+/// Run one request; a failure becomes the process error.
+fn execute(session: &mut Session, request: Value) -> Result<Value> {
+    let reply = session.dispatch(request);
+    if reply["ok"] == true {
+        Ok(reply["result"].clone())
+    } else {
+        Err(reply["error"].to_string().into())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn project_transport_uses_typed_engine_and_keeps_session_after_failure() {
-        let mut session = CommandSession::default();
-        let before = session.dispatch(json!({"command":"project.inspect","params":{}}));
-        assert_eq!(before["ok"], true);
-        let bad = session.dispatch(json!({"command":"project.apply","params":{"expected_revision":99,"operation":{"editor":"Schematic","operation":{"command":"schematic.move","params":{"instance":999,"position":[0,0]}}}}}));
-        assert_eq!(bad["ok"], false);
-        assert_eq!(bad["error"]["code"], "stale_revision");
-        assert_eq!(
-            session.dispatch(json!({"command":"project.inspect","params":{}})),
-            before
-        );
+/// A session, optionally starting from a project file.
+fn open(path: Option<&String>) -> Result<Session> {
+    let mut session = Session::default();
+    if let Some(path) = path {
+        execute(
+            &mut session,
+            json!({"command": "project.open", "params": {"path": path}}),
+        )?;
     }
+    Ok(session)
+}
+
+fn run() -> Result<()> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [command] if command == "commands" => print(&session::schemas()),
+        [command, rest @ ..] if command == "stdio" && rest.len() <= 1 => stdio(open(rest.first())?),
+        [command, rest @ ..] if command == "mcp" && rest.len() <= 1 => {
+            let mut server = mcp::Server::new(open(rest.first())?);
+            Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
+        }
+        [command, path] if command == "demo" => {
+            if std::path::Path::new(path).try_exists()? {
+                return Err("output exists; choose a new .pcbcraft filename".into());
+            }
+            let mut session = Session::new(Engine::demo()?);
+            let saved = execute(
+                &mut session,
+                json!({"command": "project.save", "params": {"path": path}}),
+            )?;
+            print(&json!({"saved": saved, "document": session.snapshot()}))
+        }
+        [command, source, target] if command == "export" => {
+            let mut session = open(Some(source))?;
+            print(&execute(
+                &mut session,
+                json!({"command": "project.export_native", "params": {"path": target}}),
+            )?)
+        }
+        _ => Err(USAGE.into()),
+    }
+}
+
+fn stdio(mut session: Session) -> Result<()> {
+    let mut input = io::stdin().lock();
+    while let Some(line) = lines::next(&mut input, MAX_REQUEST)? {
+        let reply = match line {
+            lines::Line::Text(text) if text.trim().is_empty() => continue,
+            lines::Line::Text(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(request) => session.dispatch(request),
+                Err(error) => failure("malformed_request", &error.to_string()),
+            },
+            lines::Line::TooLarge => failure("limit_exceeded", "request exceeds 4 MiB"),
+            lines::Line::NotUtf8 => failure("malformed_request", "request is not UTF-8"),
+        };
+        let mut stdout = io::stdout().lock();
+        serde_json::to_writer(&mut stdout, &reply)?;
+        writeln!(stdout)?;
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn failure(code: &str, message: &str) -> Value {
+    json!({"ok": false, "error": {"code": code, "message": message}})
 }

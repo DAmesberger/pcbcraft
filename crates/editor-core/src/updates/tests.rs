@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    Engine, Layer, Operation, Part, Request,
+    Engine, Layer, Operation, Part,
     layout::{LayoutCommand, RouteRequest},
     parts::PartCommand,
     schematic::SchematicCommand,
@@ -9,13 +9,22 @@ use crate::{
 fn apply(engine: &mut Engine, operation: Operation) -> Result<()> {
     engine.apply(engine.revision(), operation)
 }
-fn route(engine: &mut Engine, net: &str, start: [f64; 2], end: [f64; 2]) -> Result<Id> {
+/// Route on the net of `terminal` (instance, terminal).
+fn route(engine: &mut Engine, terminal: (Id, Id), start: [f64; 2], end: [f64; 2]) -> Result<Id> {
     let id = engine.project().next_id;
+    let net = engine
+        .project()
+        .net_of(Endpoint {
+            instance: terminal.0,
+            terminal: terminal.1,
+        })
+        .map(|net| net.id)
+        .ok_or_else(|| Error::NotFound("terminal has no net".into()))?;
     apply(
         engine,
         Operation::Layout(LayoutCommand::Route {
             request: RouteRequest {
-                net: net.into(),
+                net,
                 start,
                 end,
                 width: 0.3,
@@ -27,8 +36,8 @@ fn route(engine: &mut Engine, net: &str, start: [f64; 2], end: [f64; 2]) -> Resu
 }
 fn routed() -> Result<(Engine, Id, Id)> {
     let mut engine = Engine::demo()?;
-    let shared = route(&mut engine, "net:2:2", [9.2, 8.0], [14.8, 8.0])?;
-    let unaffected = route(&mut engine, "net:3:2", [17.2, 8.0], [21.0, 8.0])?;
+    let shared = route(&mut engine, (2, 2), [9.2, 8.0], [14.8, 8.0])?;
+    let unaffected = route(&mut engine, (3, 2), [17.2, 8.0], [21.0, 8.0])?;
     Ok((engine, shared, unaffected))
 }
 fn publish(engine: &mut Engine, edit: impl FnOnce(&mut Part)) -> Result<PartRef> {
@@ -43,7 +52,10 @@ fn publish(engine: &mut Engine, edit: impl FnOnce(&mut Part)) -> Result<PartRef>
         id: draft.id,
         revision: draft.revision + 1,
     };
-    apply(engine, Operation::Part(PartCommand::Publish { draft }))?;
+    apply(
+        engine,
+        Operation::Part(PartCommand::Publish { draft: Some(draft) }),
+    )?;
     Ok(target)
 }
 fn revision_change(target: PartRef) -> Change {
@@ -88,11 +100,8 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
     assert_eq!(engine.project(), &before);
     engine.redo()?;
     assert_eq!(engine.project(), &after);
-    let dir = tempfile::tempdir()?;
-    let path = dir.path().join("updated.pcbcraft");
-    engine.save(&path)?;
-    let mut reopened = Engine::default();
-    reopened.open(&path)?;
+    let bytes = crate::format::encode(&engine.to_file())?;
+    let reopened = Engine::from_file(crate::format::decode(&bytes)?)?;
     assert_eq!(reopened.project(), &after);
     Ok(())
 }
@@ -291,28 +300,33 @@ fn removed_terminal_is_not_reconnected_by_name_and_lists_wire_loss() -> Result<(
     engine.apply_update(plan.revision, plan.change, true)?;
     assert!(engine.project().wires.is_empty());
     assert!(
-        schematic::nets(engine.project())
-            .iter()
-            .any(|n| n.id == "net:2:20")
+        engine
+            .project()
+            .net_of(Endpoint {
+                instance: 2,
+                terminal: 20
+            })
+            .is_some()
     );
     Ok(())
 }
 
 #[test]
-fn preview_and_apply_are_available_through_public_transport_and_schema() -> Result<()> {
+fn preview_and_apply_roundtrip_through_serialized_operations_and_schema() -> Result<()> {
     let mut engine = Engine::demo()?;
     let target = publish(&mut engine, |part| part.name = "New caption".into())?;
     let revision = engine.revision();
-    let value = engine.dispatch(serde_json::to_value(Request::PreviewUpdate {
-        change: revision_change(target),
-    })?)?;
+    let value = serde_json::to_value(engine.preview_update(revision_change(target)))?;
     let plan: UpdatePlan = serde_json::from_value(value)?;
     assert_eq!(plan.revision, revision);
-    engine.dispatch(serde_json::to_value(Request::ApplyUpdate(ApplyUpdate {
-        expected_revision: plan.revision,
-        change: plan.change,
-        remove_conflicting_tracks: false,
-    }))?)?;
+    let operation: Operation = serde_json::from_value(serde_json::to_value(Operation::Update(
+        Box::new(ApplyUpdate {
+            expected_revision: plan.revision,
+            change: plan.change,
+            remove_conflicting_tracks: false,
+        }),
+    ))?)?;
+    apply(&mut engine, operation)?;
     assert_eq!(engine.project().instances[0].part, target);
     assert!(crate::schemas().get("update_plan").is_some());
     let before = engine.project().clone();
@@ -354,7 +368,7 @@ fn unrelated_definition_with_matching_terminal_names_is_blocked() -> Result<()> 
     apply(
         &mut engine,
         Operation::Part(PartCommand::Publish {
-            draft: crate::parts::passive_template("Resistor"),
+            draft: Some(crate::parts::passive_template("Resistor")),
         }),
     )?;
     let before = engine.project().clone();
@@ -397,7 +411,7 @@ fn pcb_sync_preview_adds_only_missing_placement_and_preserves_copper() -> Result
 #[test]
 fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Result<()> {
     let (mut engine, _, _) = routed()?;
-    let nc_track = route(&mut engine, "net:2:1", [6.8, 8.0], [6.8, 5.0])?;
+    let nc_track = route(&mut engine, (2, 1), [6.8, 8.0], [6.8, 5.0])?;
     let target = publish(&mut engine, |part| {
         part.component.terminals[0].kind = PinKind::NotConnected
     })?;

@@ -1,6 +1,9 @@
 //! Placement and manual routing over the electrical document. Geometry here is
 //! electronics checking geometry; native 3D remains in the Solidcraft adapter.
-use crate::{Endpoint, Error, Id, Layer, Placement, Point, Project, Result, Track, point_valid};
+use crate::{
+    Endpoint, Error, Finding, Id, Layer, ObjectRef, Placement, Point, Project, Result, Track,
+    point_valid,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,7 +50,7 @@ pub enum LayoutCommand {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RouteRequest {
-    pub net: String,
+    pub net: Id,
     pub start: Point,
     pub end: Point,
     pub width: f64,
@@ -85,7 +88,7 @@ pub struct WorldPad {
     pub instance: Id,
     pub pad: Id,
     pub terminal: Endpoint,
-    pub net: String,
+    pub net: Id,
     pub position: Point,
     pub size: Point,
     pub rotation_deg: f64,
@@ -111,12 +114,13 @@ pub fn placed_point(placement: &Placement, point: Point, datum: Point) -> Point 
 }
 
 pub fn pads(project: &Project) -> Vec<WorldPad> {
-    let net_by_terminal: BTreeMap<_, _> = crate::schematic::nets(project)
-        .into_iter()
+    let net_by_terminal: BTreeMap<Endpoint, Id> = project
+        .nets
+        .iter()
         .flat_map(|net| {
             net.terminals
-                .into_iter()
-                .map(move |terminal| (terminal, net.id.clone()))
+                .iter()
+                .map(move |terminal| (*terminal, net.id))
         })
         .collect();
     let mut result = Vec::new();
@@ -147,7 +151,7 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                 instance: instance.id,
                 pad: pad.id,
                 terminal,
-                net: net.clone(),
+                net: *net,
                 position: placed_point(placement, pad.position, part.footprint.datum_offset),
                 size: pad.size,
                 rotation_deg: placement.rotation_deg,
@@ -168,12 +172,18 @@ pub fn sync_preview(project: &Project) -> Vec<Id> {
         .collect()
 }
 
+/// Atomic when invoked directly: a failure leaves `project` unchanged.
 pub fn apply(project: &mut Project, command: LayoutCommand) -> Result<()> {
     let mut candidate = project.clone();
-    apply_inner(&mut candidate, command)?;
-    validate(&candidate)?;
+    apply_staged(&mut candidate, command)?;
     *project = candidate;
     Ok(())
+}
+
+/// Apply to a candidate the caller discards on failure.
+pub(crate) fn apply_staged(candidate: &mut Project, command: LayoutCommand) -> Result<()> {
+    apply_inner(candidate, command)?;
+    validate(candidate)
 }
 
 fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
@@ -203,8 +213,11 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
             rotation_deg,
             layer,
         } => {
+            if project.instance(instance).is_none() {
+                return Err(Error::NotFound("unknown schematic instance".into()));
+            }
             if project.placements.iter().any(|p| p.instance == instance) {
-                return invalid("component is already placed");
+                return Err(Error::Conflict("component is already placed".into()));
             }
             project.placements.push(Placement {
                 instance,
@@ -224,9 +237,9 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::Invalid("unknown placement".into()))?;
+                .ok_or_else(|| Error::NotFound("unknown placement".into()))?;
             if placement.locked {
-                return invalid("placement is locked");
+                return Err(Error::Conflict("placement is locked".into()));
             }
             placement.position = position;
             placement.rotation_deg = rotation_deg;
@@ -238,7 +251,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::Invalid("unknown placement".into()))?
+                .ok_or_else(|| Error::NotFound("unknown placement".into()))?
                 .locked = locked;
         }
         LayoutCommand::Route { request } => {
@@ -260,7 +273,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .tracks
                 .iter_mut()
                 .find(|t| t.id == id)
-                .ok_or_else(|| Error::Invalid("unknown track".into()))?
+                .ok_or_else(|| Error::NotFound("unknown track".into()))?
                 .locked = locked;
         }
     }
@@ -273,7 +286,7 @@ fn invalid<T>(message: &str) -> Result<T> {
 
 fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     if edits.add.len() + edits.replace.len() + edits.remove.len() > MAX_TRACKS {
-        return invalid("routing edit exceeds prototype limit");
+        return Err(Error::Limit("routing edit exceeds prototype limit".into()));
     }
     let mut touched = BTreeSet::new();
     for id in edits
@@ -289,13 +302,16 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             .tracks
             .iter()
             .find(|t| t.id == id)
-            .ok_or_else(|| Error::Invalid("routing edit references unknown track".into()))?;
+            .ok_or_else(|| Error::NotFound("routing edit references unknown track".into()))?;
         if previous.locked {
-            return invalid("routing edit would change a locked track");
+            return Err(Error::Conflict(
+                "routing edit would change a locked track".into(),
+            ));
         }
     }
-    let nets = crate::schematic::nets(project)
-        .into_iter()
+    let nets = project
+        .nets
+        .iter()
         .map(|net| net.id)
         .collect::<BTreeSet<_>>();
     for track in &edits.replace {
@@ -304,7 +320,9 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             .iter()
             .any(|old| old.id == track.id && old.net != track.net)
         {
-            return invalid("routing edits cannot silently change a track's net");
+            return Err(Error::Conflict(
+                "routing edits cannot silently change a track's net".into(),
+            ));
         }
         check_request_with_nets(project, &request_from(track), &nets)?;
     }
@@ -319,7 +337,7 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             .tracks
             .iter_mut()
             .find(|t| t.id == track.id)
-            .ok_or_else(|| Error::Invalid("missing replacement target".into()))?;
+            .ok_or_else(|| Error::NotFound("missing replacement target".into()))?;
         *target = track;
     }
     for request in edits.add {
@@ -343,30 +361,34 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         for other in &project.tracks {
             check_pairs += 1;
             if check_pairs > MAX_CHECK_PAIRS {
-                return invalid(
-                    "routing clearance budget exceeded; split this routing edit into smaller transactions",
-                );
+                return Err(Error::Limit(
+                    "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
+                ));
             }
             if other.id != track.id
                 && other.layer == track.layer
                 && other.net != track.net
                 && polygon_distance(&polygon, &track_polygon(other)) < CLEARANCE_MM - EPS
             {
-                return invalid("route violates 0.2 mm clearance to another net's track");
+                return Err(Error::Conflict(
+                    "route violates 0.2 mm clearance to another net's track".into(),
+                ));
             }
         }
         for pad in &world_pads {
             check_pairs += 1;
             if check_pairs > MAX_CHECK_PAIRS {
-                return invalid(
-                    "routing clearance budget exceeded; split this routing edit into smaller transactions",
-                );
+                return Err(Error::Limit(
+                    "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
+                ));
             }
             if pad.layer == track.layer
                 && pad.net != track.net
                 && polygon_distance(&polygon, &pad_polygon(pad)) < CLEARANCE_MM - EPS
             {
-                return invalid("route violates 0.2 mm clearance to another net's pad");
+                return Err(Error::Conflict(
+                    "route violates 0.2 mm clearance to another net's pad".into(),
+                ));
             }
         }
     }
@@ -375,7 +397,7 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
 
 fn request_from(track: &Track) -> RouteRequest {
     RouteRequest {
-        net: track.net.clone(),
+        net: track.net,
         start: track.start,
         end: track.end,
         width: track.width,
@@ -384,8 +406,9 @@ fn request_from(track: &Track) -> RouteRequest {
 }
 
 fn check_request(project: &Project, request: &RouteRequest) -> Result<()> {
-    let nets = crate::schematic::nets(project)
-        .into_iter()
+    let nets = project
+        .nets
+        .iter()
         .map(|net| net.id)
         .collect::<BTreeSet<_>>();
     check_request_with_nets(project, request, &nets)
@@ -394,7 +417,7 @@ fn check_request(project: &Project, request: &RouteRequest) -> Result<()> {
 fn check_request_with_nets(
     project: &Project,
     request: &RouteRequest,
-    nets: &BTreeSet<String>,
+    nets: &BTreeSet<Id>,
 ) -> Result<()> {
     if !point_valid(request.start)
         || !point_valid(request.end)
@@ -407,11 +430,11 @@ fn check_request_with_nets(
         return invalid("track must be at least 0.01 mm long");
     }
     if !nets.contains(&request.net) {
-        return invalid("unknown electrical net");
+        return Err(Error::NotFound("unknown electrical net".into()));
     }
     let track = Track {
         id: 0,
-        net: request.net.clone(),
+        net: request.net,
         start: request.start,
         end: request.end,
         width: request.width,
@@ -461,10 +484,7 @@ pub fn validate(project: &Project) -> Result<()> {
             return invalid("placement datum must lie inside the board with a finite rotation");
         }
     }
-    let ids = crate::schematic::nets(project)
-        .into_iter()
-        .map(|n| n.id)
-        .collect::<BTreeSet<_>>();
+    let ids = project.nets.iter().map(|n| n.id).collect::<BTreeSet<_>>();
     let mut track_ids = BTreeSet::new();
     for track in &project.tracks {
         if track.id == 0 || track.id >= project.next_id || !track_ids.insert(track.id) {
@@ -617,31 +637,36 @@ pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
 }
 
 struct CopperShape {
-    net: String,
+    net: Id,
     layer: Layer,
     polygon: [Point; 4],
     label: String,
+    object: ObjectRef,
     pad: Option<usize>,
 }
 
 /// Basic geometric connectivity and clearance checks. Pad membership in a net
 /// does not join separated copper: union happens only when same-layer polygons
 /// touch. No hidden interconnect through the component is assumed.
-pub fn checks(project: &Project) -> Vec<String> {
+pub fn checks(project: &Project) -> Vec<Finding> {
     let mut issues = Vec::new();
     for id in sync_preview(project) {
         let reference = project
             .instance(id)
             .map(|i| i.reference.as_str())
             .unwrap_or("component");
-        issues.push(format!("{reference} is not placed on the board"));
+        issues.push(Finding::new(
+            "board.unplaced",
+            format!("{reference} is not placed on the board"),
+            vec![ObjectRef::Instance { id }],
+        ));
     }
     let world_pads = pads(project);
     let mut shapes = world_pads
         .iter()
         .enumerate()
         .map(|(i, pad)| CopperShape {
-            net: pad.net.clone(),
+            net: pad.net,
             layer: pad.layer,
             polygon: pad_polygon(pad),
             label: format!(
@@ -652,29 +677,40 @@ pub fn checks(project: &Project) -> Vec<String> {
                     .unwrap_or("component"),
                 pad.pad
             ),
+            object: ObjectRef::Pad {
+                instance: pad.instance,
+                pad: pad.pad,
+            },
             pad: Some(i),
         })
         .collect::<Vec<_>>();
     shapes.extend(project.tracks.iter().map(|t| CopperShape {
-        net: t.net.clone(),
+        net: t.net,
         layer: t.layer,
         polygon: track_polygon(t),
         label: format!("track {}", t.id),
+        object: ObjectRef::Track { id: t.id },
         pad: None,
     }));
     let mut parents = (0..shapes.len()).collect::<Vec<_>>();
     let mut pairs = 0usize;
     for (i, a) in shapes.iter().enumerate() {
         if a.polygon.iter().any(|p| !inside_board(project, *p)) {
-            issues.push(format!("{} extends beyond board outline", a.label));
+            issues.push(Finding::new(
+                "board.outside_outline",
+                format!("{} extends beyond board outline", a.label),
+                vec![a.object],
+            ));
         }
         for (j, b) in shapes.iter().enumerate().skip(i + 1) {
             pairs += 1;
             if pairs > MAX_CHECK_PAIRS {
-                issues.push(
+                issues.push(Finding::new(
+                    "board.check_limit",
                     "Connectivity/clearance check limit reached; remaining geometry is unchecked"
                         .into(),
-                );
+                    vec![],
+                ));
                 return issues;
             }
             if a.layer != b.layer {
@@ -684,20 +720,32 @@ pub fn checks(project: &Project) -> Vec<String> {
             if a.net == b.net && gap <= EPS {
                 union(&mut parents, i, j);
             } else if a.net != b.net && gap < CLEARANCE_MM - EPS {
-                issues.push(format!("Clearance < 0.2 mm: {} / {}", a.label, b.label));
+                issues.push(Finding::new(
+                    "board.clearance",
+                    format!("Clearance < 0.2 mm: {} / {}", a.label, b.label),
+                    vec![a.object, b.object],
+                ));
             }
         }
     }
-    let mut groups: BTreeMap<&str, BTreeSet<usize>> = BTreeMap::new();
+    let mut groups: BTreeMap<Id, BTreeSet<usize>> = BTreeMap::new();
     for (i, shape) in shapes.iter().enumerate().filter(|(_, s)| s.pad.is_some()) {
         groups
-            .entry(&shape.net)
+            .entry(shape.net)
             .or_default()
             .insert(find(&parents, i));
     }
     for shape in &shapes {
-        if shape.pad.is_some() && groups.get(shape.net.as_str()).is_some_and(|g| g.len() > 1) {
-            issues.push(format!("Unrouted: {} ({})", shape.label, shape.net));
+        if shape.pad.is_some() && groups.get(&shape.net).is_some_and(|g| g.len() > 1) {
+            issues.push(Finding::new(
+                "board.unrouted",
+                format!(
+                    "Unrouted: {} ({})",
+                    shape.label,
+                    project.net_name(shape.net)
+                ),
+                vec![shape.object, ObjectRef::Net { id: shape.net }],
+            ));
         }
     }
     issues
@@ -723,12 +771,12 @@ pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
     let world = pads(project);
     let shapes = world
         .iter()
-        .map(|p| (p.net.as_str(), p.layer, pad_polygon(p)))
+        .map(|p| (p.net, p.layer, pad_polygon(p)))
         .chain(
             project
                 .tracks
                 .iter()
-                .map(|t| (t.net.as_str(), t.layer, track_polygon(t))),
+                .map(|t| (t.net, t.layer, track_polygon(t))),
         )
         .collect::<Vec<_>>();
     let mut parents = (0..shapes.len()).collect::<Vec<_>>();
@@ -744,10 +792,10 @@ pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
             }
         }
     }
-    let mut islands: BTreeMap<&str, BTreeMap<usize, usize>> = BTreeMap::new();
+    let mut islands: BTreeMap<Id, BTreeMap<usize, usize>> = BTreeMap::new();
     for (i, pad) in world.iter().enumerate() {
         islands
-            .entry(&pad.net)
+            .entry(pad.net)
             .or_default()
             .entry(find(&parents, i))
             .or_insert(i);

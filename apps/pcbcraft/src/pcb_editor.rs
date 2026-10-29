@@ -31,8 +31,8 @@ pub struct PcbEditor {
     tool: Tool,
     instance: Option<Id>,
     track: Option<Id>,
-    net: Option<String>,
-    highlighted: Option<String>,
+    net: Option<Id>,
+    highlighted: Option<Id>,
     layer: Layer,
     width: f64,
     route_start: Option<Point>,
@@ -50,7 +50,7 @@ pub struct PcbEditor {
     cached_revision: Option<u64>,
     world_pads: Vec<WorldPad>,
     airwires: Vec<(WorldPad, WorldPad)>,
-    issues: Vec<String>,
+    issues: Vec<pcbcraft_core::Finding>,
 }
 
 impl Default for PcbEditor {
@@ -99,19 +99,16 @@ impl PcbEditor {
     pub fn selected_track(&self) -> Option<Id> {
         self.track
     }
-    pub fn selected_net(&self) -> Option<&str> {
-        self.net.as_deref()
+    pub fn highlighted_net(&self) -> Option<Id> {
+        self.highlighted
     }
-    pub fn highlighted_net(&self) -> Option<&str> {
-        self.highlighted.as_deref()
-    }
-    pub fn highlight_net(&mut self, net: Option<String>) {
+    pub fn highlight_net(&mut self, net: Option<Id>) {
         self.highlighted = net;
     }
-    pub fn set_selection(&mut self, instance: Option<Id>, track: Option<Id>, net: Option<String>) {
+    pub fn set_selection(&mut self, instance: Option<Id>, track: Option<Id>, net: Option<Id>) {
         self.instance = instance;
         self.track = track;
-        self.net = net.clone();
+        self.net = net;
         self.highlighted = net;
         self.property_key = None;
     }
@@ -136,11 +133,10 @@ impl PcbEditor {
             {
                 self.track = None;
             }
-            if self.net.as_ref().is_some_and(|id| {
-                !schematic::nets(engine.project())
-                    .iter()
-                    .any(|n| &n.id == id)
-            }) {
+            if self
+                .net
+                .is_some_and(|id| engine.project().net(id).is_none())
+            {
                 self.net = None;
                 self.highlighted = None;
                 self.route_start = None;
@@ -327,7 +323,9 @@ impl PcbEditor {
             ui.label(format!("Track {}", track.id));
             ui.weak(format!(
                 "{} · {:.2} mm · {:?}",
-                track.net, track.width, track.layer
+                project.net_name(track.net),
+                track.width,
+                track.layer
             ));
             let mut locked = track.locked;
             if ui.checkbox(&mut locked, "Lock track").changed() {
@@ -351,11 +349,14 @@ impl PcbEditor {
             self.route_start = None;
         }
         egui::ComboBox::from_id_salt("routing-net")
-            .selected_text(self.selected_net().unwrap_or("Select a net or pad"))
+            .selected_text(
+                self.net
+                    .map_or("Select a net or pad", |id| project.net_name(id)),
+            )
             .show_ui(ui, |ui| {
                 for net in schematic::nets(project) {
                     if ui
-                        .selectable_value(&mut self.net, Some(net.id.clone()), &net.id)
+                        .selectable_value(&mut self.net, Some(net.id), &net.name)
                         .changed()
                     {
                         self.route_start = None;
@@ -368,7 +369,7 @@ impl PcbEditor {
             .checkbox(&mut highlight, "Highlight complete net")
             .changed()
         {
-            self.highlight_net(if highlight { self.net.clone() } else { None });
+            self.highlight_net(if highlight { self.net } else { None });
         }
         ui.checkbox(&mut self.show_airwires, "Show airwires");
         ui.weak(if self.route_start.is_some() {
@@ -379,7 +380,7 @@ impl PcbEditor {
         ui.collapsing(format!("Board checks · {}", self.issues.len()), |ui| {
             ui.weak("Basic physical connectivity, outline and 0.2 mm copper clearance. This is not a complete manufacturing DRC.");
             if self.issues.is_empty() { ui.label("No issues found by these checks."); }
-            for issue in self.issues.iter().take(40) { ui.label(issue); }
+            for issue in self.issues.iter().take(40) { ui.label(&issue.message); }
             if self.issues.len() > 40 { ui.weak(format!("{} more issues", self.issues.len() - 40)); }
         });
         ui.collapsing("Placements", |ui| {
@@ -501,7 +502,7 @@ impl PcbEditor {
             if self.tool == Tool::Route {
                 let destination = snapped_pad.map(|p| p.position).unwrap_or_else(|| snap(at));
                 if let Some(start) = self.route_start {
-                    if let Some(net) = self.net.clone() {
+                    if let Some(net) = self.net {
                         operation = Some(Operation::Layout(LayoutCommand::Route {
                             request: RouteRequest {
                                 net,
@@ -517,8 +518,8 @@ impl PcbEditor {
                     }
                 } else {
                     if let Some(pad) = snapped_pad {
-                        self.net = Some(pad.net.clone());
-                        self.highlighted = self.net.clone();
+                        self.net = Some(pad.net);
+                        self.highlighted = self.net;
                     }
                     if self.net.is_some() {
                         self.route_start = Some(destination);
@@ -530,7 +531,7 @@ impl PcbEditor {
                 .rev()
                 .find(|p| layout::point_in_polygon(at, &layout::pad_polygon(p)))
             {
-                let (instance, net) = (pad.instance, pad.net.clone());
+                let (instance, net) = (pad.instance, pad.net);
                 self.set_selection(Some(instance), None, Some(net));
             } else if let Some(track) = project
                 .tracks
@@ -538,7 +539,7 @@ impl PcbEditor {
                 .rev()
                 .find(|track| layout::point_in_polygon(at, &layout::track_polygon(track)))
             {
-                self.set_selection(None, Some(track.id), Some(track.net.clone()));
+                self.set_selection(None, Some(track.id), Some(track.net));
             } else {
                 self.set_selection(pick_instance(project, &self.world_pads, at), None, None);
             }
@@ -583,8 +584,7 @@ impl PcbEditor {
             }
         }
         for track in &project.tracks {
-            let selected = self.track == Some(track.id)
-                || self.highlighted.as_deref() == Some(track.net.as_str());
+            let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
             let ink = copper_color(track.layer, selected);
             painter.add(Shape::convex_polygon(
                 layout::track_polygon(track).map(screen).to_vec(),
@@ -634,8 +634,8 @@ impl PcbEditor {
                 shown.position[0] += position[0] - placement.position[0];
                 shown.position[1] += position[1] - placement.position[1];
             }
-            let selected = self.instance == Some(shown.instance)
-                || self.highlighted.as_deref() == Some(shown.net.as_str());
+            let selected =
+                self.instance == Some(shown.instance) || self.highlighted == Some(shown.net);
             painter.add(Shape::convex_polygon(
                 layout::pad_polygon(&shown).map(screen).to_vec(),
                 copper_color(shown.layer, selected),
@@ -684,14 +684,13 @@ impl PcbEditor {
     }
 }
 
+/// Same layer colours as the 3D model.
 fn copper_color(layer: Layer, selected: bool) -> Color32 {
-    let t = Tokens::get();
+    let colors = crate::palette::board();
     if selected {
-        t.body_selected
-    } else if layer == Layer::Top {
-        t.accent
+        colors.selected
     } else {
-        t.text_dim
+        colors.copper(layer)
     }
 }
 fn opposite(layer: Layer) -> Layer {
@@ -772,11 +771,19 @@ mod tests {
 
     fn routed_board() -> pcbcraft_core::Result<Engine> {
         let mut engine = Engine::demo()?;
+        let net = engine
+            .project()
+            .net_of(pcbcraft_core::Endpoint {
+                instance: 2,
+                terminal: 2,
+            })
+            .map(|n| n.id)
+            .ok_or_else(|| pcbcraft_core::Error::NotFound("demo net".into()))?;
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::Route {
                 request: RouteRequest {
-                    net: "net:2:2".into(),
+                    net,
                     start: [9.2, 8.0],
                     end: [14.8, 8.0],
                     width: 0.3,

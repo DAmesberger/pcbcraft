@@ -1,4 +1,5 @@
-use crate::{Error, Parameters, Result, SOLIDCRAFT_REVISION};
+use super::Parameters;
+use crate::{Error, Result, SOLIDCRAFT_REVISION};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::json;

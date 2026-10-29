@@ -26,6 +26,8 @@ pub struct SchematicEditor {
     part: Option<PartRef>,
     selected: Option<Id>,
     selected_wire: Option<Id>,
+    /// Net-name edit buffer for the selected wire's net.
+    net_label: Option<(Id, String)>,
     wire_from: Option<Endpoint>,
     draft_reference: String,
     draft_value: String,
@@ -40,7 +42,7 @@ pub struct SchematicEditor {
     observed_revision: Option<u64>,
     nets_revision: Option<u64>,
     nets: Vec<Net>,
-    issues: Vec<String>,
+    issues: Vec<pcbcraft_core::Finding>,
     update: crate::update_preview::UpdatePreview,
 }
 
@@ -51,6 +53,7 @@ impl Default for SchematicEditor {
             part: None,
             selected: None,
             selected_wire: None,
+            net_label: None,
             wire_from: None,
             draft_reference: String::new(),
             draft_value: String::new(),
@@ -87,7 +90,7 @@ impl SchematicEditor {
 
     fn refresh_connectivity(&mut self, engine: &Engine) {
         if self.nets_revision != Some(engine.revision()) {
-            self.nets = schematic::nets(engine.project());
+            self.nets = schematic::nets(engine.project()).to_vec();
             self.issues = schematic::checks(engine.project());
             self.nets_revision = Some(engine.revision());
         }
@@ -271,6 +274,33 @@ impl SchematicEditor {
                 "{}:{} → {}:{}",
                 wire.from.instance, wire.from.terminal, wire.to.instance, wire.to.terminal
             ));
+            if let Some(net) = project.net_of(wire.from) {
+                if self.net_label.as_ref().is_none_or(|(id, _)| *id != net.id) {
+                    self.net_label = Some((net.id, net.name.clone()));
+                }
+                let mut renamed = None;
+                if let Some((id, name)) = &mut self.net_label {
+                    ui.horizontal(|ui| {
+                        ui.label("Net name");
+                        let response = ui.text_edit_singleline(name);
+                        if response.lost_focus() && *name != net.name {
+                            renamed = Some((*id, name.trim().to_string()));
+                        }
+                    });
+                }
+                if let Some((net, name)) = renamed {
+                    output = Some(Operation::Schematic(SchematicCommand::RenameNet {
+                        net,
+                        name,
+                    }));
+                    self.net_label = None;
+                }
+                ui.weak(format!(
+                    "Net ID {} · {} terminals",
+                    net.id,
+                    net.terminals.len()
+                ));
+            }
             if ui_kit::button(ui, "Disconnect wire", Button::Normal).clicked() {
                 output = self.stage_update(engine, SchematicCommand::Disconnect { wire: wire.id });
             }
@@ -295,7 +325,7 @@ impl SchematicEditor {
                 ui.label("No issues in the supported check subset.");
             }
             for issue in &self.issues {
-                ui.colored_label(t.form_error, issue);
+                ui.colored_label(t.form_error, &issue.message);
             }
             ui.small("Checks: unconnected inputs/power and multiple outputs.");
         }

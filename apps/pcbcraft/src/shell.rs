@@ -14,7 +14,6 @@ pub enum Workspace {
     Part,
     Schematic,
     Pcb,
-    Copper,
 }
 impl Workspace {
     pub fn label(self) -> &'static str {
@@ -22,7 +21,6 @@ impl Workspace {
             Self::Part => "Component",
             Self::Schematic => "Schematic",
             Self::Pcb => "PCB",
-            Self::Copper => "Copper sample",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -30,7 +28,6 @@ impl Workspace {
             Self::Part => "component",
             Self::Schematic => "sketch",
             Self::Pcb => "sketch",
-            Self::Copper => "box",
         }
     }
 }

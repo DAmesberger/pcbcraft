@@ -11,6 +11,7 @@ use solidcraft_ui_egui::{
     theme::Tokens,
     ui_kit::{self, Button},
 };
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum View {
@@ -21,16 +22,25 @@ enum View {
     Model,
 }
 
+/// Component authoring. The authoring draft lives in the engine; this editor
+/// holds a working copy that widgets edit during a gesture and commits as one
+/// `part.draft_set` operation once no pointer button or text field is active.
+/// Every finished edit is therefore one shared undo step.
 pub struct PartEditor {
+    /// Working copy edited by widgets.
     draft: Part,
-    loaded_draft: Part,
-    saved_draft: Option<Part>,
-    draft_started: bool,
-    pending_load: Option<Part>,
+    /// What the working copy was loaded from; a difference is uncommitted work.
+    baseline: Part,
+    /// The engine draft last loaded, compared by identity to notice undo,
+    /// redo, open and publish.
+    source: Option<Arc<Part>>,
+    loaded: bool,
+    /// A commit was sent; resync from the engine whatever its outcome (the
+    /// draft may even return to `source` through an undo).
+    awaiting: bool,
+    publishing: bool,
     view: View,
     selected: Option<Id>,
-    dirty: bool,
-    publication_revision: Option<u64>,
     notice: String,
     drag_scale: Option<f32>,
     update: crate::update_preview::UpdatePreview,
@@ -39,16 +49,16 @@ pub struct PartEditor {
 
 impl Default for PartEditor {
     fn default() -> Self {
+        let starter = parts::passive_template("Resistor");
         Self {
-            draft: parts::passive_template("Resistor"),
-            loaded_draft: parts::passive_template("Resistor"),
-            saved_draft: None,
-            draft_started: false,
-            pending_load: None,
+            draft: starter.clone(),
+            baseline: starter,
+            source: None,
+            loaded: false,
+            awaiting: false,
+            publishing: false,
             view: View::Symbol,
             selected: Some(1),
-            dirty: true,
-            publication_revision: None,
             notice: String::new(),
             drag_scale: None,
             update: Default::default(),
@@ -58,25 +68,6 @@ impl Default for PartEditor {
 }
 
 impl PartEditor {
-    /// An untouched starter template is not unsaved user work. Edited or explicitly
-    /// created drafts are persisted even when mappings are not publishable yet.
-    pub fn snapshot_draft(&self) -> Option<Part> {
-        (self.dirty && (self.draft_started || self.draft != self.loaded_draft))
-            .then(|| self.draft.clone())
-    }
-    pub fn restore_draft(&mut self, draft: Option<Part>) {
-        *self = Self::default();
-        if let Some(draft) = draft {
-            self.load(draft.clone());
-            self.dirty = true;
-            self.draft_started = true;
-            self.mark_saved();
-        }
-    }
-    pub fn has_unsaved_changes(&self) -> bool { self.snapshot_draft() != self.saved_draft }
-    pub fn mark_saved(&mut self) { self.saved_draft = self.snapshot_draft(); }
-    pub fn mark_saved_as(&mut self, draft: Option<Part>) { self.saved_draft = draft; }
-
     pub fn preview_part(&self) -> Option<&Part> {
         Some(&self.draft)
     }
@@ -84,31 +75,67 @@ impl PartEditor {
         self.view == View::Model
     }
 
+    /// Whether the working copy differs from its published snapshot.
+    fn unpublished(&self, engine: &Engine) -> bool {
+        unpublished(engine, &self.draft)
+    }
+
+    /// Reload the working copy when the engine's draft changed elsewhere.
     fn sync(&mut self, engine: &Engine) {
-        if self
-            .publication_revision
-            .is_some_and(|r| engine.revision() > r)
-        {
-            let found = engine.project().parts.iter().rev().find(|part| {
-                let mut normalized = (*part).clone();
-                normalized.id = self.draft.id;
-                normalized.revision = self.draft.revision;
-                normalized == self.draft
-            });
-            if let Some(part) = found {
-                self.draft = part.clone();
-                self.dirty = false;
-                self.notice = format!(
-                    "Revision {} published. Existing instances retain their snapshots.",
-                    part.revision
-                );
-            }
-            self.publication_revision = None;
+        let current = engine.document().draft.clone();
+        let changed = match (&current, &self.source) {
+            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+            (None, None) => false,
+            _ => true,
+        };
+        if !changed && self.loaded && !self.awaiting {
+            return;
         }
+        self.awaiting = false;
+        let part = current
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| parts::passive_template("Resistor"));
+        if self
+            .selected
+            .is_none_or(|id| !part.component.terminals.iter().any(|t| t.id == id))
+        {
+            self.selected = part.component.terminals.first().map(|t| t.id);
+        }
+        if self.publishing && !unpublished(engine, &part) {
+            self.notice = format!(
+                "Revision {} published. Existing instances retain their snapshots.",
+                part.revision
+            );
+        }
+        self.publishing = false;
+        self.baseline = part.clone();
+        self.draft = part;
+        self.source = current;
+        self.loaded = true;
+        self.drag_scale = None;
+    }
+
+    /// The operation committing a finished edit, if any. Call once per frame
+    /// after the editor's widgets ran.
+    pub fn commit(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
+        self.sync(engine);
+        let interacting =
+            ctx.memory(|m| m.focused().is_some()) || ctx.input(|i| i.pointer.any_down());
+        if interacting || self.draft == self.baseline {
+            return None;
+        }
+        // Sent once; the next sync shows what the engine accepted.
+        self.baseline = self.draft.clone();
+        self.awaiting = true;
+        Some(Operation::Part(PartCommand::SetDraft {
+            draft: self.draft.clone(),
+        }))
     }
 
     pub fn tools(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        let unpublished = self.unpublished(engine);
         if self.update.is_open() {
             ui.label("Review the update in properties");
             return None;
@@ -127,20 +154,22 @@ impl PartEditor {
             }
             ui.separator();
             if crate::shell::tool(ui, "component", "Passive", true, false).clicked() {
-                self.request_load(parts::passive_template("Resistor"));
+                self.load(parts::passive_template("Resistor"));
             }
             if crate::shell::tool(ui, "component", "Connector", true, false).clicked() {
-                self.request_load(parts::connector_template("Connector"));
+                self.load(parts::connector_template("Connector"));
             }
             if crate::shell::tool(ui, "point", "Terminal", true, false).clicked() {
                 self.add_terminal(engine);
             }
-            if crate::shell::tool(ui, "save", "Publish", self.dirty, false).clicked() {
+            if crate::shell::tool(ui, "save", "Publish", unpublished, false).clicked() {
                 match parts::validate_part(&self.draft) {
                     Ok(()) => {
-                        self.publication_revision = Some(engine.revision());
+                        self.publishing = true;
+                        self.baseline = self.draft.clone();
+                        self.awaiting = true;
                         command = Some(Operation::Part(PartCommand::Publish {
-                            draft: self.draft.clone(),
+                            draft: Some(self.draft.clone()),
                         }));
                     }
                     Err(error) => self.notice = error.to_string(),
@@ -150,18 +179,10 @@ impl PartEditor {
         command
     }
 
-    fn request_load(&mut self, part: Part) {
-        if self.has_unsaved_changes() { self.pending_load = Some(part); }
-        else { self.load(part); }
-    }
-
+    /// Replace the working copy; the next commit makes it one undoable step.
     fn load(&mut self, part: Part) {
         self.selected = part.component.terminals.first().map(|t| t.id);
-        self.dirty = part.id == 0;
-        self.draft_started = part.id == 0;
-        self.loaded_draft = part.clone();
         self.draft = part;
-        self.publication_revision = None;
         self.notice.clear();
         self.drag_scale = None;
     }
@@ -251,7 +272,6 @@ impl PartEditor {
             physical,
         });
         self.selected = Some(electrical);
-        self.dirty = true;
     }
 
     fn remove_selected(&mut self) {
@@ -285,7 +305,6 @@ impl PartEditor {
             .pads
             .retain(|p| !physical.contains(&p.terminal));
         self.selected = self.draft.component.terminals.first().map(|t| t.id);
-        self.dirty = true;
     }
 
     fn add_pad(&mut self, engine: &Engine) {
@@ -330,25 +349,18 @@ impl PartEditor {
             position: [0.0, 0.0],
             size: [1.0, 1.4],
         });
-        self.dirty = true;
     }
 
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
-        if self.pending_load.is_some() {
-            ui.strong("Replace unpublished draft?");
-            ui.label("Save the project to keep this draft, or discard its changes before loading another component.");
-            if ui_kit::button(ui,"Keep editing",Button::Normal).clicked() { self.pending_load = None; }
-            if ui_kit::button(ui,"Discard draft and load",Button::Ghost).clicked()
-                && let Some(part) = self.pending_load.take() { self.load(part); }
-            return None;
+        if self.update.is_open() {
+            return self.update.show(ui, engine);
         }
-        if self.update.is_open() { return self.update.show(ui, engine); }
         let t = Tokens::get();
         ui.spacing_mut().item_spacing = egui::vec2(t.space_4, t.form_gap_y);
         ui.spacing_mut().interact_size.y = t.control_height;
         ui.label(egui::RichText::new("Component definition").font(fonts::semibold(t.font_panel)));
-        self.dirty |= text_row(ui, "Name", &mut self.draft.name);
+        text_row(ui, "Name", &mut self.draft.name);
         ui.weak(if self.draft.id == 0 {
             "New project-local draft".into()
         } else {
@@ -356,7 +368,11 @@ impl PartEditor {
                 "Definition {} · revision {}{}",
                 self.draft.id,
                 self.draft.revision,
-                if self.dirty { " · edited draft" } else { "" }
+                if self.unpublished(engine) {
+                    " · unpublished edits"
+                } else {
+                    ""
+                }
             )
         });
         ui.label(
@@ -377,7 +393,7 @@ impl PartEditor {
                 ui.label("Parametric package envelope");
                 ui.weak("Approximate body; not a verified supplier model.");
                 for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                    self.dirty |= number_row(
+                    number_row(
                         ui,
                         label,
                         &mut self.draft.package.body_size[index],
@@ -385,7 +401,7 @@ impl PartEditor {
                     );
                 }
                 for (index, label) in ["Offset X", "Offset Y", "Offset Z"].into_iter().enumerate() {
-                    self.dirty |= number_row(
+                    number_row(
                         ui,
                         label,
                         &mut self.draft.package.model_offset[index],
@@ -403,14 +419,14 @@ impl PartEditor {
                     .on_hover_text("Load this snapshot into the authoring draft")
                     .clicked()
                 {
-                    self.request_load(part.clone());
+                    self.load(part.clone());
                 }
             }
             if engine.project().parts.is_empty() {
                 ui.weak("Publish a draft to make it available in the schematic.");
             }
         });
-        if !self.dirty && self.draft.id != 0 {
+        if !self.unpublished(engine) {
             let target = pcbcraft_core::PartRef {
                 id: self.draft.id,
                 revision: self.draft.revision,
@@ -467,7 +483,7 @@ impl PartEditor {
             }
         }
         ui.collapsing("Provenance", |ui| {
-            self.dirty |= text_row(ui, "Source", &mut self.draft.provenance);
+            text_row(ui, "Source", &mut self.draft.provenance);
             ui.weak("Structural validation does not replace a datasheet review.");
         });
         None
@@ -492,7 +508,7 @@ impl PartEditor {
     }
 
     fn symbol_inspector(&mut self, ui: &mut Ui) {
-        self.dirty |= pair_row(
+        pair_row(
             ui,
             "Body size",
             &mut self.draft.symbol.body_size,
@@ -508,7 +524,7 @@ impl PartEditor {
                 .find(|t| t.id == id)
             {
                 ui.separator();
-                self.dirty |= text_row(ui, "Pin name", &mut terminal.name);
+                text_row(ui, "Pin name", &mut terminal.name);
                 egui::ComboBox::from_id_salt(("pin-kind", id))
                     .selected_text(format!("{:?}", terminal.kind))
                     .show_ui(ui, |ui| {
@@ -520,14 +536,13 @@ impl PartEditor {
                             PinKind::PowerOutput,
                             PinKind::NotConnected,
                         ] {
-                            self.dirty |= ui
-                                .selectable_value(&mut terminal.kind, kind, format!("{kind:?}"))
+                            ui.selectable_value(&mut terminal.kind, kind, format!("{kind:?}"))
                                 .changed();
                         }
                     });
             }
             if let Some(pin) = self.draft.symbol.pins.iter_mut().find(|p| p.terminal == id) {
-                self.dirty |= pair_row(ui, "Pin anchor", &mut pin.position, -10000.0..=10000.0);
+                pair_row(ui, "Pin anchor", &mut pin.position, -10000.0..=10000.0);
             }
             if ui_kit::button(ui, "Remove terminal", Button::Small).clicked() {
                 self.remove_selected();
@@ -537,7 +552,7 @@ impl PartEditor {
     }
 
     fn footprint_inspector(&mut self, ui: &mut Ui, engine: &Engine) {
-        self.dirty |= pair_row(
+        pair_row(
             ui,
             "Package datum",
             &mut self.draft.footprint.datum_offset,
@@ -568,13 +583,12 @@ impl PartEditor {
                 .selected_text(format!("Package terminal {}", pad.terminal))
                 .show_ui(ui, |ui| {
                     for terminal in &self.draft.package.terminals {
-                        self.dirty |= ui
-                            .selectable_value(&mut pad.terminal, terminal.id, &terminal.number)
+                        ui.selectable_value(&mut pad.terminal, terminal.id, &terminal.number)
                             .changed();
                     }
                 });
-            self.dirty |= pair_row(ui, "Position", &mut pad.position, -10000.0..=10000.0);
-            self.dirty |= pair_row(ui, "Land size", &mut pad.size, 0.01..=10000.0);
+            pair_row(ui, "Position", &mut pad.position, -10000.0..=10000.0);
+            pair_row(ui, "Land size", &mut pad.size, 0.01..=10000.0);
         }
         if ui_kit::button(ui, "Add pad to selected terminal", Button::Small).clicked() {
             self.add_pad(engine);
@@ -587,7 +601,7 @@ impl PartEditor {
         ui.weak("Mappings are explicit; matching names do not establish compatibility.");
         for physical in &mut self.draft.package.terminals {
             ui.separator();
-            self.dirty |= text_row(
+            text_row(
                 ui,
                 &format!("Terminal {}", physical.id),
                 &mut physical.number,
@@ -611,13 +625,12 @@ impl PartEditor {
                     .selected_text(selected)
                     .show_ui(ui, |ui| {
                         for terminal in &self.draft.component.terminals {
-                            self.dirty |= ui
-                                .selectable_value(
-                                    &mut mapping.electrical,
-                                    terminal.id,
-                                    &terminal.name,
-                                )
-                                .changed();
+                            ui.selectable_value(
+                                &mut mapping.electrical,
+                                terminal.id,
+                                &terminal.name,
+                            )
+                            .changed();
                         }
                     });
             }
@@ -762,7 +775,6 @@ impl PartEditor {
                         f64::from((p.x - origin.x) / scale),
                         f64::from((origin.y - p.y) / scale),
                     ];
-                    self.dirty = true;
                 }
             }
         } else {
@@ -830,7 +842,6 @@ impl PartEditor {
                         f64::from((p.x - origin.x) / scale),
                         f64::from((origin.y - p.y) / scale),
                     ];
-                    self.dirty = true;
                 }
             }
         }
@@ -921,6 +932,14 @@ impl PartEditor {
     }
 }
 
+fn unpublished(engine: &Engine, part: &Part) -> bool {
+    part.id == 0
+        || engine.project().part(pcbcraft_core::PartRef {
+            id: part.id,
+            revision: part.revision,
+        }) != Some(part)
+}
+
 fn text_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
     let t = Tokens::get();
     let mut changed = false;
@@ -986,32 +1005,44 @@ fn pair_row(
 #[cfg(test)]
 mod draft_tests {
     use super::*;
+
     #[test]
-    fn untouched_templates_are_clean_but_edited_drafts_survive_save_and_restore() {
+    fn finished_edits_commit_once_and_engine_changes_reload_the_working_copy()
+    -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
-        assert!(editor.snapshot_draft().is_none());
-        assert!(!editor.has_unsaved_changes());
-        editor.draft.name = "Connector draft".into();
-        assert!(editor.has_unsaved_changes());
-        let saved = editor.snapshot_draft();
-        editor.mark_saved();
-        assert!(!editor.has_unsaved_changes());
-        editor.draft.name = "Newer edit".into();
-        editor.mark_saved_as(saved.clone());
-        assert!(editor.has_unsaved_changes(), "an old save cannot clear newer edits");
-        editor.restore_draft(saved.clone());
-        assert_eq!(editor.snapshot_draft(),saved);
-        assert!(!editor.has_unsaved_changes());
-        assert!(editor.dirty,"restored unpublished work is still publishable");
+        assert!(
+            editor.commit(&ctx, &engine).is_none(),
+            "loading is not an edit"
+        );
+        let original = engine.draft().cloned();
+        editor.draft.name = "Edited".into();
+        let operation = editor.commit(&ctx, &engine);
+        assert!(editor.commit(&ctx, &engine).is_none(), "sent once");
+        if let Some(operation) = operation {
+            engine.apply(engine.revision(), operation)?;
+        }
+        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Edited"));
+        engine.undo()?;
+        assert!(editor.commit(&ctx, &engine).is_none());
+        assert_eq!(Some(&editor.draft), original.as_ref());
+        Ok(())
     }
+
     #[test]
-    fn loading_another_component_defers_without_discarding_work() {
+    fn loading_a_template_is_an_undoable_draft_change() -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
-        editor.draft.name = "Unsaved work".into();
-        editor.request_load(parts::connector_template("Replacement"));
-        assert_eq!(editor.draft.name,"Unsaved work");
-        assert!(editor.pending_load.is_some());
-        editor.pending_load = None; // Cancel.
-        assert_eq!(editor.draft.name,"Unsaved work");
+        editor.commit(&ctx, &engine);
+        editor.load(parts::connector_template("Replacement"));
+        if let Some(operation) = editor.commit(&ctx, &engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Replacement"));
+        engine.undo()?;
+        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Resistor"));
+        Ok(())
     }
 }

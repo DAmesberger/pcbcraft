@@ -1,9 +1,7 @@
 //! Independent, bounded recovery snapshots. Each live session owns a unique file;
 //! restoring never writes to the original project path.
-use crate::{
-    Error, Result,
-    persistence::{self, EditorFile},
-};
+use crate::{Error, Result, persistence};
+use pcbcraft_core::format::{EditorFile, encode_bounded};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -79,7 +77,7 @@ impl RecoveryStore {
             original_path: original_path.map(Path::to_path_buf),
             saved_unix_ms,
         };
-        persistence::atomic_write(&self.path, &persistence::encode(&record)?)
+        persistence::atomic_write(&self.path, &encode_bounded(&record)?)
     }
     pub fn remove_own(&self) -> Result<()> {
         remove_entry(&self.directory, &self.path)

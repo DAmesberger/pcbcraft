@@ -2644,6 +2644,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "pcbcraft-core",
+ "pcbcraft-io",
  "pcbcraft-solidcraft",
  "pollster 0.4.0",
  "rfd",
@@ -2652,12 +2653,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcbcraft-cli"
+name = "pcbcraft-automation"
 version = "0.1.0"
 dependencies = [
  "pcbcraft-core",
+ "pcbcraft-io",
  "pcbcraft-solidcraft",
+ "schemars",
  "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pcbcraft-cli"
+version = "0.1.0"
+dependencies = [
+ "pcbcraft-automation",
+ "pcbcraft-core",
  "serde_json",
 ]
 
@@ -2666,6 +2680,16 @@ name = "pcbcraft-core"
 version = "0.1.0"
 dependencies = [
  "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "pcbcraft-io"
+version = "0.1.0"
+dependencies = [
+ "pcbcraft-core",
  "serde",
  "serde_json",
  "tempfile",
@@ -5026,7 +5050,9 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "serde_json",
+ "syn 2.0.119",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
-use crate::{Error, Result, call, id};
+use super::{call, id};
+use crate::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -202,6 +203,6 @@ pub(crate) fn build(parameters: &Parameters) -> Result<Session> {
             }),
         )?;
     }
-    crate::measure::verify(&s, parameters)?;
+    super::measure::verify(&s, parameters)?;
     Ok(s)
 }

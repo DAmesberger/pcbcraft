@@ -4,19 +4,17 @@ mod build;
 #[cfg(test)]
 mod tests;
 
-use crate::{Error, Result, call};
-use schemars::JsonSchema;
+use super::call;
+use crate::scene::Geometry;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use solidcraft_engine::{
-    Session, doc,
-    geom::{Mesh, Vec3},
-};
+use solidcraft_engine::{Session, doc, geom::Vec3};
 use std::sync::Arc;
 
 const META: &str = "org.pcbcraft.copper-fixture";
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Item {
     pub id: u64,
     pub label: String,
@@ -26,23 +24,14 @@ pub struct Item {
     pub component: u64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
     items: Vec<Item>,
 }
 
-#[derive(Clone)]
-pub struct Geometry {
-    pub item: Option<u64>,
-    pub mesh: Arc<Mesh>,
-    pub volume: f64,
-    pub min: [f64; 3],
-    pub max: [f64; 3],
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
     #[default]
@@ -50,7 +39,7 @@ pub enum ViewMode {
     Solid,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum Command {
     #[serde(rename = "board.inspect")]
@@ -76,7 +65,7 @@ pub enum Command {
     Open { path: String },
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize)]
 pub struct Snapshot {
     pub revision: u64,
     pub scene_builds: u64,
@@ -125,21 +114,6 @@ impl Board {
         })
     }
 
-    pub fn geometry(&self) -> &[Geometry] {
-        &self.geometry
-    }
-    pub fn items(&self) -> &[Item] {
-        &self.items
-    }
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-    pub fn mode(&self) -> ViewMode {
-        self.mode
-    }
-    pub fn selected(&self) -> Option<u64> {
-        self.selected
-    }
     pub fn highlighted(&self, id: u64) -> bool {
         self.selected == Some(id)
             || self
@@ -181,9 +155,6 @@ impl Board {
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .and_then(|(_, id)| id)
     }
-    pub fn dispatch(&mut self, value: Value) -> Result<Snapshot> {
-        self.execute(serde_json::from_value(value)?)
-    }
     pub fn execute(&mut self, command: Command) -> Result<Snapshot> {
         match command {
             Command::Inspect {} => {}
@@ -208,10 +179,10 @@ impl Board {
                 width_mm,
             } => {
                 if expected_revision != self.revision {
-                    return Err(Error::Stale {
-                        expected: expected_revision,
-                        actual: self.revision,
-                    });
+                    return Err(Error::Invalid(format!(
+                        "stale revision: expected {expected_revision}, current {}",
+                        self.revision
+                    )));
                 }
                 if !width_mm.is_finite() || !(0.2..=1.5).contains(&width_mm) {
                     return Err(Error::Invalid(
@@ -244,7 +215,7 @@ impl Board {
                 }
             }
             Command::Save { path } => {
-                crate::validate_path(&path)?;
+                crate::native::validate_path(&path)?;
                 if std::path::Path::new(&path).try_exists()? {
                     return Err(Error::Invalid("output exists; choose a new path".into()));
                 }
@@ -256,7 +227,7 @@ impl Board {
                 )?;
             }
             Command::Open { path } => {
-                crate::validate_path(&path)?;
+                crate::native::validate_path(&path)?;
                 let mut candidate = Session::default();
                 call(
                     &mut candidate,
@@ -367,8 +338,4 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
         }
     }
     Ok((manifest.items, geometry))
-}
-
-pub fn schemas() -> Value {
-    json!({"input":schemars::schema_for!(Command),"output":schemars::schema_for!(Snapshot)})
 }

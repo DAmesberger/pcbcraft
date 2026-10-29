@@ -1,99 +1,56 @@
 //! Electronics → native Solidcraft. Parametric pads, traces and envelopes are
 //! ordinary native features and planar joints, editable without Pcbcraft.
-use crate::copper::Geometry;
-use crate::{Error, Result, call, id};
-use pcbcraft_core::{Layer, Part, Project};
+use crate::native::{BoardJoint, BoxBody, Expr, Native, mm};
+use crate::scene::Geometry;
+use crate::{Error, Result};
+use pcbcraft_core::{Id, Layer, Part, Project};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use solidcraft_engine::Session;
+use serde_json::json;
 
+/// Native appearance of the board substrate (FR-4 green).
+const SUBSTRATE_COLOR: &str = "#236447";
+const BOARD_THICKNESS_MM: f64 = 1.6;
+const COPPER_THICKNESS_MM: f64 = 0.035;
+const METADATA_KEY: &str = "org.pcbcraft.electronics";
+
+/// Which Pcbcraft object a native body came from. Stored in the native file's
+/// metadata so identity survives reopening.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
     pub pick_id: u64,
-    pub instance: Option<u64>,
-    pub pad: Option<u64>,
-    pub track: Option<u64>,
-    pub net: Option<String>,
+    pub instance: Option<Id>,
+    pub pad: Option<Id>,
+    pub track: Option<Id>,
+    pub net: Option<Id>,
     pub layer: Option<Layer>,
     pub label: String,
     pub component: u64,
 }
+
 pub struct NativeModel {
-    session: Session,
+    native: Native,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
 }
+
 impl NativeModel {
+    /// Write the model as a new `.solidcraft` file; refuses existing files.
     pub fn save(&self, path: &str) -> Result<()> {
-        crate::validate_path(path)?;
-        if std::path::Path::new(path).try_exists()? {
-            return Err(Error::Invalid(
-                "output exists; choose a new .solidcraft filename".into(),
-            ));
-        }
-        let mut copy = Session::new((*self.session.doc).clone());
-        call(
-            &mut copy,
-            "file.save_as",
-            json!({"path":path,"format":"container","cache":false,"preview":false}),
-        )?;
-        Ok(())
+        self.native.save_new(path)
     }
 }
-fn param(s: &mut Session, name: &str, value: f64, unit: &str) -> Result<()> {
-    call(
-        s,
-        "parameters.add",
-        json!({"name":name,"expression":format!("{value} {unit}")}),
-    )?;
-    Ok(())
+
+fn param(native: &mut Native, name: &str, value: f64, unit: &str) -> Result<()> {
+    native.parameter(name, format!("{value} {unit}"))
 }
-fn component(s: &mut Session, name: &str) -> Result<(u64, u64)> {
-    call(s, "component.activate", json!({"component":"root"}))?;
-    let value = call(s, "component.create", json!({"name":name,"grounded":false}))?;
-    Ok((id(&value, "component")?, id(&value, "occurrence")?))
-}
-fn box_body(s: &mut Session, name: &str, size: [Value; 3], corner: Value) -> Result<()> {
-    call(
-        s,
-        "solid.box",
-        json!({"body_name":name,"name":name,"length":size[0],"width":size[1],"height":size[2],"corner":corner}),
-    )?;
-    Ok(())
-}
-fn joint(
-    s: &mut Session,
-    board: u64,
-    occurrence: u64,
-    x: Value,
-    y: Value,
-    angle: Value,
-    layer: Layer,
-) -> Result<()> {
-    call(
-        s,
-        "joint.create",
-        json!({"type":"planar","name":format!("placement-{occurrence}"),
-        "a":{"occurrence":board,"point":[0,0,0],"z":[0,0,1],"x":[1,0,0]},
-        "b":{"occurrence":occurrence,"point":[0,0,0],"z":[0,0,1],"x":[1,0,0]},
-        "flip":layer==Layer::Top,"angle":0,"offset":if layer==Layer::Top{"board_thickness"}else{"0 mm"},"values":[x,y,angle]}),
-    )?;
-    Ok(())
-}
-fn finish(mut session: Session, sources: Vec<Source>) -> Result<NativeModel> {
-    call(
-        &mut session,
-        "document.metadata.set",
-        json!({"values":{"org.pcbcraft.electronics":{"version":1,"sources":sources}}}),
-    )?;
-    if let Some(error) = session.model.results.iter().find(|f| f.error.is_some()) {
-        return Err(Error::Verification(format!(
-            "{}: {:?}",
-            error.name, error.error
-        )));
+
+fn finish(mut native: Native, sources: Vec<Source>) -> Result<NativeModel> {
+    native.set_metadata(METADATA_KEY, json!({"version": 1, "sources": sources}))?;
+    if let Some(error) = native.evaluation_error() {
+        return Err(Error::Verification(error));
     }
     let mut geometry = vec![];
-    for body in &session.world_state().bodies {
+    for body in &native.session().world_state().bodies {
         let m = body
             .measure()
             .map_err(|e| Error::Verification(e.to_string()))?;
@@ -109,45 +66,39 @@ fn finish(mut session: Session, sources: Vec<Source>) -> Result<NativeModel> {
         });
     }
     Ok(NativeModel {
-        session,
+        native,
         geometry,
         sources,
     })
 }
 
+fn next_pick(sources: &[Source]) -> u64 {
+    u64::try_from(sources.len()).map_or(u64::MAX, |n| n.saturating_add(1))
+}
+
 pub fn build(project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate(project).map_err(|e| Error::Invalid(e.to_string()))?;
-    let mut s = Session::default();
-    call(&mut s, "file.new", json!({"name":project.name}))?;
+    let mut native = Native::new(&project.name)?;
+    let s = &mut native;
     for (name, value) in [
         ("board_width", project.board_size[0]),
         ("board_depth", project.board_size[1]),
-        ("board_thickness", 1.6),
-        ("copper_thickness", 0.035),
+        ("board_thickness", BOARD_THICKNESS_MM),
+        ("copper_thickness", COPPER_THICKNESS_MM),
     ] {
-        param(&mut s, name, value, "mm")?;
+        param(s, name, value, "mm")?;
     }
-    let board = call(
-        &mut s,
-        "component.create",
-        json!({"name":"PCB substrate","grounded":true}),
-    )?;
-    let board_occurrence = id(&board, "occurrence")?;
-    box_body(
-        &mut s,
-        "Substrate",
-        [
-            json!("board_width"),
-            json!("board_depth"),
-            json!("board_thickness"),
+    let board = s.component("PCB substrate", true)?.occurrence;
+    s.solid_box(BoxBody {
+        name: "Substrate",
+        corner: [0.into(), 0.into(), 0.into()],
+        size: [
+            "board_width".into(),
+            "board_depth".into(),
+            "board_thickness".into(),
         ],
-        json!([0, 0, 0]),
-    )?;
-    call(
-        &mut s,
-        "appearance.assign",
-        json!({"bodies":["Substrate"],"color":"#236447"}),
-    )?;
+    })?;
+    s.color(&["Substrate"], SUBSTRATE_COLOR)?;
     let mut sources = vec![];
     for placement in &project.placements {
         let instance = project
@@ -162,48 +113,45 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ("y", placement.position[1], "mm"),
             ("angle", placement.rotation_deg, "deg"),
         ] {
-            param(&mut s, &format!("{prefix}_{suffix}"), value, unit)?;
+            param(s, &format!("{prefix}_{suffix}"), value, unit)?;
         }
-        let (component, occurrence) =
-            component(&mut s, &format!("{} envelope", instance.reference))?;
+        let label = format!("{} envelope", instance.reference);
+        let created = s.component(&label, false)?;
         let size = part.package.body_size;
         for (axis, value) in ["length", "width", "height"].into_iter().zip(size) {
-            param(&mut s, &format!("{prefix}_{axis}"), value, "mm")?;
+            param(s, &format!("{prefix}_{axis}"), value, "mm")?;
         }
-        box_body(
-            &mut s,
-            &format!("{} envelope", instance.reference),
-            [
-                json!(format!("{prefix}_length")),
-                json!(format!("{prefix}_width")),
-                json!(format!("{prefix}_height")),
+        let offset = part.package.model_offset;
+        s.solid_box(BoxBody {
+            name: &label,
+            corner: [
+                format!("- {prefix}_length / 2 + {}", mm(offset[0])).into(),
+                format!("- {prefix}_width / 2 + {}", mm(offset[1])).into(),
+                format!("copper_thickness + {}", mm(offset[2])).into(),
             ],
-            json!([
-                format!(
-                    "- {prefix}_length / 2 + {} mm",
-                    part.package.model_offset[0]
-                ),
-                format!("- {prefix}_width / 2 + {} mm", part.package.model_offset[1]),
-                format!("copper_thickness + {} mm", part.package.model_offset[2])
-            ]),
-        )?;
-        joint(
-            &mut s,
-            board_occurrence,
-            occurrence,
-            json!(format!("{prefix}_x")),
-            json!(format!("{prefix}_y")),
-            json!(format!("{prefix}_angle")),
-            placement.layer,
-        )?;
+            size: [
+                format!("{prefix}_length").into(),
+                format!("{prefix}_width").into(),
+                format!("{prefix}_height").into(),
+            ],
+        })?;
+        s.board_joint(BoardJoint {
+            board,
+            occurrence: created.occurrence,
+            x: format!("{prefix}_x").into(),
+            y: format!("{prefix}_y").into(),
+            angle: format!("{prefix}_angle").into(),
+            layer: placement.layer,
+        })?;
+        let component = created.component;
         sources.push(Source {
-            pick_id: sources.len() as u64 + 1,
+            pick_id: next_pick(&sources),
             instance: Some(instance.id),
             pad: None,
             track: None,
             net: None,
             layer: Some(placement.layer),
-            label: format!("{} envelope", instance.reference),
+            label,
             component,
         });
     }
@@ -225,34 +173,37 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let dx = local.position[0] - part.footprint.datum_offset[0];
         let dy = (local.position[1] - part.footprint.datum_offset[1])
             * if pad.layer == Layer::Top { 1.0 } else { -1.0 };
-        param(&mut s, &format!("{pp}_length"), pad.size[0], "mm")?;
-        param(&mut s, &format!("{pp}_width"), pad.size[1], "mm")?;
-        let (component, occurrence) = component(&mut s, &pp)?;
-        box_body(
-            &mut s,
-            &pp,
-            [
-                json!(format!("{pp}_length")),
-                json!(format!("{pp}_width")),
-                json!("copper_thickness"),
+        param(s, &format!("{pp}_length"), pad.size[0], "mm")?;
+        param(s, &format!("{pp}_width"), pad.size[1], "mm")?;
+        let created = s.component(&pp, false)?;
+        s.solid_box(BoxBody {
+            name: &pp,
+            corner: [
+                format!("-{pp}_length / 2").into(),
+                format!("-{pp}_width / 2").into(),
+                0.into(),
             ],
-            json!([format!("-{pp}_length / 2"), format!("-{pp}_width / 2"), 0]),
-        )?;
+            size: [
+                format!("{pp}_length").into(),
+                format!("{pp}_width").into(),
+                "copper_thickness".into(),
+            ],
+        })?;
         let x =
             format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
         let y =
             format!("{prefix}_y + sin({prefix}_angle) * {dx} mm + cos({prefix}_angle) * {dy} mm");
-        joint(
-            &mut s,
-            board_occurrence,
-            occurrence,
-            json!(x),
-            json!(y),
-            json!(format!("{prefix}_angle")),
-            pad.layer,
-        )?;
+        s.board_joint(BoardJoint {
+            board,
+            occurrence: created.occurrence,
+            x: x.into(),
+            y: y.into(),
+            angle: format!("{prefix}_angle").into(),
+            layer: pad.layer,
+        })?;
+        let component = created.component;
         sources.push(Source {
-            pick_id: sources.len() as u64 + 1,
+            pick_id: next_pick(&sources),
             instance: Some(pad.instance),
             pad: Some(pad.pad),
             track: None,
@@ -271,68 +222,62 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ("y1", track.end[1]),
             ("width", track.width),
         ] {
-            param(&mut s, &format!("{prefix}_{suffix}"), value, "mm")?;
+            param(s, &format!("{prefix}_{suffix}"), value, "mm")?;
         }
-        let (component, occurrence) = component(&mut s, &prefix)?;
+        let created = s.component(&prefix, false)?;
         let length = format!("sqrt(({prefix}_x1-{prefix}_x0)^2 + ({prefix}_y1-{prefix}_y0)^2)");
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
-        box_body(
-            &mut s,
-            &prefix,
-            [
-                json!(length),
-                json!(format!("{prefix}_width")),
-                json!("copper_thickness"),
+        s.solid_box(BoxBody {
+            name: &prefix,
+            corner: [0.into(), format!("-{prefix}_width / 2").into(), 0.into()],
+            size: [
+                length.into(),
+                format!("{prefix}_width").into(),
+                "copper_thickness".into(),
             ],
-            json!([0, format!("-{prefix}_width / 2"), 0]),
-        )?;
-        joint(
-            &mut s,
-            board_occurrence,
-            occurrence,
-            json!(format!("{prefix}_x0")),
-            json!(format!("{prefix}_y0")),
-            json!(angle),
-            track.layer,
-        )?;
+        })?;
+        s.board_joint(BoardJoint {
+            board,
+            occurrence: created.occurrence,
+            x: format!("{prefix}_x0").into(),
+            y: format!("{prefix}_y0").into(),
+            angle: angle.into(),
+            layer: track.layer,
+        })?;
+        let component = created.component;
         sources.push(Source {
-            pick_id: sources.len() as u64 + 1,
+            pick_id: next_pick(&sources),
             instance: None,
             pad: None,
             track: Some(track.id),
-            net: Some(track.net.clone()),
+            net: Some(track.net),
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),
             component,
         });
     }
-    finish(s, sources)
+    finish(native, sources)
 }
 
 pub fn preview(part: &Part) -> Result<NativeModel> {
     pcbcraft_core::parts::validate_part(part).map_err(|e| Error::Invalid(e.to_string()))?;
-    let mut s = Session::default();
-    call(
-        &mut s,
-        "file.new",
-        json!({"name":format!("{} — package envelope",part.name)}),
-    )?;
+    let mut s = Native::new(&format!("{} — package envelope", part.name))?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
         .zip(part.package.body_size)
     {
         param(&mut s, name, value, "mm")?;
     }
-    box_body(
-        &mut s,
-        "Package envelope",
-        [json!("length"), json!("width"), json!("height")],
-        json!([
-            format!("-length/2 + {} mm", part.package.model_offset[0]),
-            format!("-width/2 + {} mm", part.package.model_offset[1]),
-            part.package.model_offset[2]
-        ]),
-    )?;
+    let offset = part.package.model_offset;
+    s.solid_box(BoxBody {
+        name: "Package envelope",
+        corner: [
+            format!("-length/2 + {}", mm(offset[0])).into(),
+            format!("-width/2 + {}", mm(offset[1])).into(),
+            Expr::from(offset[2]),
+        ],
+        size: ["length".into(), "width".into(), "height".into()],
+    })?;
     finish(s, vec![])
 }
 

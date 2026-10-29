@@ -1,16 +1,14 @@
-//! Solidcraft's GPU renderer and cached geometry, with one camera input path for
-//! flat and orbit modes. Its full navigation handler is private to SolveApp.
+//! Solidcraft's GPU renderer and camera over cached geometry. Solidcraft's full
+//! navigation handler is private to its app, so this applies the same camera
+//! operations (middle-drag pan, right-drag orbit, scroll zoom) directly.
 use pcbcraft_solidcraft::{
-    copper::{Geometry, Snapshot, ViewMode},
     geom::{Aabb3, Vec3},
-    render::{Camera, StandardView},
+    render::Camera,
+    scene::Geometry,
 };
-use solidcraft_ui_egui::{
-    gpu::{
-        self, BlockBuilder, Frame, GpuScene, GpuTarget, Palette, PaletteIndex, SceneBlock,
-        SceneSlot, TriClass, ViewportCallback,
-    },
-    theme::Tokens,
+use solidcraft_ui_egui::gpu::{
+    self, BlockBuilder, Frame, GpuScene, GpuTarget, Palette, PaletteIndex, SceneBlock, SceneSlot,
+    TriClass, ViewportCallback,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,10 +26,7 @@ pub struct Viewport {
     slot: SceneSlot,
     empty: SceneSlot,
     key: u64,
-    revision: u64,
-    mode: ViewMode,
     camera: Camera,
-    solid_camera: Camera,
     pub hide_substrate: bool,
 }
 impl Viewport {
@@ -48,8 +43,7 @@ impl Viewport {
             ..window
         };
         gpu::install(rs, scene, window, false);
-        let mut camera = Camera::default();
-        camera.set_view(StandardView::Top);
+        let camera = Camera::default();
         let mut result = Self {
             geometry: vec![],
             bounds: Self::initial_bounds(),
@@ -59,10 +53,7 @@ impl Viewport {
             slot: Arc::new(Mutex::new(None)),
             empty: Arc::new(Mutex::new(None)),
             key: next_key(),
-            revision: 0,
-            mode: ViewMode::Layout,
             camera,
-            solid_camera: Camera::default(),
             hide_substrate: false,
         };
         result.fit();
@@ -76,9 +67,9 @@ impl Viewport {
     }
     pub fn fit(&mut self) {
         self.camera.fit(&self.bounds);
-        self.solid_camera.fit(&self.bounds);
     }
-    pub fn set_geometry(&mut self, geometry: Vec<Geometry>, revision: u64) {
+    /// Replace the meshes and their base colours (one per geometry).
+    pub fn set_geometry(&mut self, geometry: Vec<Geometry>, colors: Vec<[u8; 4]>) {
         if !geometry.is_empty() {
             let min = std::array::from_fn::<_, 3, _>(|axis| {
                 geometry
@@ -98,7 +89,7 @@ impl Viewport {
             };
         }
         self.geometry = geometry;
-        self.revision = revision;
+        self.colors = colors;
         self.blocks = self
             .geometry
             .iter()
@@ -130,48 +121,27 @@ impl Viewport {
             .collect();
         self.refresh();
     }
-    pub fn set_state(&mut self, s: &Snapshot) {
-        self.set_mode(s.mode);
-        self.highlight(s.highlighted_items.clone());
-    }
-    pub fn set_mode(&mut self, mode: ViewMode) {
-        if self.mode != mode {
-            if mode == ViewMode::Layout {
-                self.solid_camera = self.camera;
-                self.camera.set_view(StandardView::Top);
-            } else {
-                self.camera = self.solid_camera;
-            }
-            self.mode = mode;
-        }
-    }
     pub fn highlight(&mut self, ids: Vec<u64>) {
         if self.highlighted != ids {
             self.highlighted = ids;
             self.refresh();
         }
     }
-    pub fn colors(&mut self, colors: Vec<[u8; 4]>) {
-        self.colors = colors;
-        self.refresh();
-    }
     pub fn refresh(&mut self) {
-        let t = Tokens::get();
+        // Highlighting rebuilds only the palette; mesh blocks are reused.
+        let board = crate::palette::board();
         let colors = self
             .geometry
             .iter()
             .enumerate()
             .map(|(index, g)| {
                 if g.item.is_some_and(|i| self.highlighted.contains(&i)) {
-                    t.body_selected.to_array()
-                } else if let Some(color) = self.colors.get(index) {
-                    *color
-                } else if g.item == Some(7) {
-                    [85, 171, 213, 255]
-                } else if g.item.is_some() {
-                    [209, 149, 66, 255]
+                    board.selected.to_array()
                 } else {
-                    [32, 92, 62, 255]
+                    self.colors
+                        .get(index)
+                        .copied()
+                        .unwrap_or(board.package.to_array())
                 }
             })
             .collect();
@@ -199,7 +169,7 @@ impl Viewport {
             self.camera
                 .pan(f64::from(d.x), f64::from(d.y), f64::from(rect.height()));
         }
-        if self.mode == ViewMode::Solid && response.dragged_by(egui::PointerButton::Secondary) {
+        if response.dragged_by(egui::PointerButton::Secondary) {
             let d = ui.input(|i| i.pointer.delta());
             self.camera.orbit(f64::from(d.x), f64::from(d.y));
         }

@@ -1,5 +1,5 @@
 use super::*;
-use pcbcraft_core::{Engine, Track};
+use pcbcraft_core::{Endpoint, Engine, Track};
 
 fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
@@ -24,13 +24,20 @@ fn fixture() -> Result<Project> {
         placement.rotation_deg = 90.0;
         placement.layer = layer;
     }
+    let shared = project
+        .net_of(Endpoint {
+            instance: 2,
+            terminal: 2,
+        })
+        .map(|net| net.id)
+        .ok_or_else(|| Error::Verification("demo has no shared net".into()))?;
     for (y, layer) in [(25.0, Layer::Top), (28.0, Layer::Bottom)] {
         let id = project
             .allocate()
             .map_err(|error| Error::Verification(error.to_string()))?;
         project.tracks.push(Track {
             id,
-            net: "net:2:2".into(),
+            net: shared,
             start: [5.0, y],
             end: [15.0, y],
             width: 0.4,
@@ -110,7 +117,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
             .iter()
             .find(|s| s.track == Some(track.id))
             .ok_or_else(|| Error::Verification("missing trace source".into()))?;
-        assert_eq!(source.net.as_deref(), Some("net:2:2"));
+        assert_eq!(source.net, Some(track.net));
         assert_eq!(source.layer, Some(track.layer));
     }
     Ok(())
@@ -149,13 +156,8 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         .to_string_lossy()
         .into_owned();
     original.save(&path)?;
-    let mut reopened = Session::default();
-    call(
-        &mut reopened,
-        "doc.open",
-        json!({"path":path,"read_only":true}),
-    )?;
-    let metadata = serde_json::to_value(&reopened.doc.metadata)?;
+    let reopened = Native::open(&path)?;
+    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
     let retained: Vec<Source> =
         serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
     assert_eq!(
@@ -172,16 +174,12 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         bounds(restored, previous.min, previous.max);
         near(restored.volume, previous.volume);
     }
-    let mut reopened = before.session;
-    call(
-        &mut reopened,
-        "parameters.change",
-        json!({"changes":{
+    let mut reopened = before.native;
+    reopened.change_parameters(json!({
             "board_thickness":"2.4 mm", "copper_thickness":"0.07 mm",
             "instance_2_x":"15 mm", "instance_2_y":"18 mm", "instance_2_angle":"0 deg",
             "instance_2_length":"4 mm", "instance_3_angle":"180 deg"
-        }}),
-    )?;
+    }))?;
     let changed = finish(reopened, before.sources)?;
     let top = source_geometry(&changed, |s| s.instance == Some(2) && s.pad.is_none())?;
     bounds(top, [13.25, 17.0, 2.67], [17.25, 18.2, 3.27]);

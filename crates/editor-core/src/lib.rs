@@ -1,29 +1,27 @@
+//! Pcbcraft's electronics document and its single typed command engine.
+//!
+//! This crate is pure and wasm-compatible: no files, threads, windows or
+//! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
+//! MCP) translate requests into [`Operation`]s applied by [`Engine`].
+pub mod diagnostics;
+pub mod format;
 pub mod layout;
 pub mod model;
+pub mod nets;
 pub mod parts;
-pub mod persistence;
-pub mod recovery;
 pub mod schematic;
 #[cfg(test)]
 mod tests;
 pub mod updates;
+pub use diagnostics::{Diagnostic, Error, Finding, ObjectRef, Result};
 pub use model::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::Arc;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("{0}")]
-    Invalid(String),
-    #[error("stale revision: expected {expected}, current {actual}")]
-    Stale { expected: u64, actual: u64 },
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-pub type Result<T> = std::result::Result<T, Error>;
-
+/// Every document mutation. UI gestures, CLI requests and MCP tools all
+/// produce one of these and apply it through [`Engine::apply`].
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "editor", content = "operation", deny_unknown_fields)]
 pub enum Operation {
@@ -33,21 +31,38 @@ pub enum Operation {
     Update(Box<updates::ApplyUpdate>),
 }
 
+/// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
+/// copies of the whole project.
+pub const MAX_UNDO: usize = 100;
+
+/// The document, its revision and one shared undo history.
+///
+/// Every mutation is staged on a candidate and validated before it replaces
+/// the document, so a failed operation leaves document, revision and history
+/// unchanged.
 #[derive(Default)]
 pub struct Engine {
-    project: Project,
-    authoring_draft: Option<Part>,
+    document: Document,
     revision: u64,
-    undo: Vec<Project>,
-    redo: Vec<Project>,
+    undo: VecDeque<Document>,
+    redo: Vec<Document>,
 }
+
 impl Engine {
+    /// An engine for an already validated file, with empty history.
+    pub fn from_file(file: format::EditorFile) -> Result<Self> {
+        let mut engine = Self::default();
+        engine.replace_document(file)?;
+        Ok(engine)
+    }
+
+    /// Two connected resistors, placed on the board, with a resistor draft.
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
         engine.apply(
             0,
             Operation::Part(parts::PartCommand::Publish {
-                draft: parts::passive_template("Resistor"),
+                draft: Some(parts::passive_template("Resistor")),
             }),
         )?;
         let part = PartRef { id: 1, revision: 1 };
@@ -83,33 +98,22 @@ impl Engine {
         engine.redo.clear();
         Ok(engine)
     }
-    pub fn save(&self, path: &std::path::Path) -> Result<()> {
-        persistence::write(path, &self.document(self.authoring_draft.clone()))
-    }
-    pub fn open(&mut self, path: &std::path::Path) -> Result<()> {
-        self.replace_document(persistence::read(path)?)
-    }
-    /// The UI supplies its current draft; None explicitly means no draft.
-    pub fn document(&self, authoring_draft: Option<Part>) -> persistence::EditorFile {
-        persistence::EditorFile {
-            version: persistence::FILE_VERSION,
-            project: self.project.clone(),
-            authoring_draft,
-        }
-    }
-    pub fn authoring_draft(&self) -> Option<&Part> {
-        self.authoring_draft.as_ref()
-    }
-    pub fn replace_document(&mut self, file: persistence::EditorFile) -> Result<()> {
-        file.validate()?;
-        self.commit(file.project)?;
-        self.authoring_draft = file.authoring_draft;
-        self.undo.clear();
-        self.redo.clear();
-        Ok(())
+
+    pub fn document(&self) -> &Document {
+        &self.document
     }
     pub fn project(&self) -> &Project {
-        &self.project
+        &self.document.project
+    }
+    /// Shared handle; equal pointers mean an unchanged project.
+    pub fn project_arc(&self) -> &Arc<Project> {
+        &self.document.project
+    }
+    pub fn draft(&self) -> Option<&Part> {
+        self.document.draft.as_deref()
+    }
+    pub fn to_file(&self) -> format::EditorFile {
+        format::EditorFile::from_document(&self.document)
     }
     pub fn revision(&self) -> u64 {
         self.revision
@@ -120,6 +124,19 @@ impl Engine {
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+
+    /// Replace the whole document (open, new, recover). History is cleared;
+    /// an invalid file leaves everything unchanged.
+    pub fn replace_document(&mut self, file: format::EditorFile) -> Result<()> {
+        file.validate()?;
+        let revision = self.next_revision()?;
+        self.document = file.into_document();
+        self.revision = revision;
+        self.undo.clear();
+        self.redo.clear();
+        Ok(())
+    }
+
     pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<()> {
         if expected_revision != self.revision {
             return Err(Error::Stale {
@@ -127,22 +144,38 @@ impl Engine {
                 actual: self.revision,
             });
         }
-        let mut candidate = self.project.clone();
+        let mut candidate = self.document.clone();
         match operation {
-            Operation::Part(c) => parts::apply(&mut candidate, c)?,
-            Operation::Schematic(c) => schematic::apply(&mut candidate, c)?,
-            Operation::Layout(c) => layout::apply(&mut candidate, c)?,
+            Operation::Part(command) => parts::apply(&mut candidate, command)?,
+            Operation::Schematic(command) => schematic::apply_staged(
+                &self.document.project,
+                Arc::make_mut(&mut candidate.project),
+                command,
+            )?,
+            Operation::Layout(command) => {
+                layout::apply_staged(Arc::make_mut(&mut candidate.project), command)?
+            }
             Operation::Update(update) => {
-                candidate = updates::candidate(&self.project, self.revision, *update)?;
+                candidate.project = Arc::new(updates::candidate(
+                    &self.document.project,
+                    self.revision,
+                    *update,
+                )?);
             }
         }
-        validate(&candidate)?;
-        self.commit(candidate)?;
-        Ok(())
+        let project_changed = !Arc::ptr_eq(&candidate.project, &self.document.project);
+        if project_changed {
+            validate(&candidate.project)?;
+        } else if candidate.draft == self.document.draft {
+            return Ok(());
+        }
+        self.commit(candidate)
     }
+
     pub fn preview_update(&self, change: updates::Change) -> updates::UpdatePlan {
-        updates::preview(&self.project, self.revision, change).0
+        updates::preview(&self.document.project, self.revision, change).0
     }
+
     pub fn apply_update(
         &mut self,
         expected_revision: u64,
@@ -158,57 +191,51 @@ impl Engine {
             })),
         )
     }
-    fn commit(&mut self, candidate: Project) -> Result<()> {
-        let revision = self
-            .revision
+
+    pub fn undo(&mut self) -> Result<()> {
+        let revision = self.next_revision()?;
+        let previous = self
+            .undo
+            .pop_back()
+            .ok_or_else(|| Error::History("nothing to undo".into()))?;
+        self.redo
+            .push(std::mem::replace(&mut self.document, previous));
+        self.revision = revision;
+        Ok(())
+    }
+
+    pub fn redo(&mut self) -> Result<()> {
+        let revision = self.next_revision()?;
+        let next = self
+            .redo
+            .pop()
+            .ok_or_else(|| Error::History("nothing to redo".into()))?;
+        self.undo
+            .push_back(std::mem::replace(&mut self.document, next));
+        self.revision = revision;
+        Ok(())
+    }
+
+    fn next_revision(&self) -> Result<u64> {
+        self.revision
             .checked_add(1)
-            .ok_or_else(|| Error::Invalid("revision exhausted".into()))?;
-        if self.undo.len() == 100 {
-            self.undo.remove(0);
+            .ok_or_else(|| Error::Limit("revision exhausted".into()))
+    }
+
+    fn commit(&mut self, candidate: Document) -> Result<()> {
+        let revision = self.next_revision()?;
+        if self.undo.len() >= MAX_UNDO {
+            self.undo.pop_front();
         }
         self.undo
-            .push(std::mem::replace(&mut self.project, candidate));
+            .push_back(std::mem::replace(&mut self.document, candidate));
         self.redo.clear();
         self.revision = revision;
         Ok(())
     }
-    pub fn undo(&mut self) -> Result<()> {
-        let candidate = self
-            .undo
-            .last()
-            .ok_or_else(|| Error::Invalid("nothing to undo".into()))?
-            .clone();
-        let revision = self
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| Error::Invalid("revision exhausted".into()))?;
-        self.redo
-            .push(std::mem::replace(&mut self.project, candidate));
-        self.undo.pop();
-        self.revision = revision;
-        Ok(())
-    }
-    pub fn redo(&mut self) -> Result<()> {
-        let candidate = self
-            .redo
-            .last()
-            .ok_or_else(|| Error::Invalid("nothing to redo".into()))?
-            .clone();
-        let revision = self
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| Error::Invalid("revision exhausted".into()))?;
-        self.undo
-            .push(std::mem::replace(&mut self.project, candidate));
-        self.redo.pop();
-        self.revision = revision;
-        Ok(())
-    }
 }
+
 pub fn validate(p: &Project) -> Result<()> {
-    if p.version != 1 {
-        return Err(Error::Invalid("unsupported project version".into()));
-    }
     if p.name.trim().is_empty() || p.name.len() > 256 {
         return Err(Error::Invalid("project name is empty or too long".into()));
     }
@@ -229,6 +256,7 @@ pub fn validate(p: &Project) -> Result<()> {
     }
     parts::validate(p)?;
     schematic::validate(p)?;
+    nets::validate(p)?;
     layout::validate(p)?;
     Ok(())
 }
@@ -236,55 +264,14 @@ pub fn point_valid(p: Point) -> bool {
     p.iter().all(|v| v.is_finite() && v.abs() <= 10000.0)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "command", content = "params", deny_unknown_fields)]
-pub enum Request {
-    #[serde(rename = "project.apply")]
-    Apply {
-        expected_revision: u64,
-        operation: Box<Operation>,
-    },
-    #[serde(rename = "project.inspect")]
-    Inspect {},
-    #[serde(rename = "project.undo")]
-    Undo {},
-    #[serde(rename = "project.redo")]
-    Redo {},
-    #[serde(rename = "project.save")]
-    Save { path: String },
-    #[serde(rename = "project.open")]
-    Open { path: String },
-    #[serde(rename = "project.preview_update")]
-    PreviewUpdate { change: updates::Change },
-    #[serde(rename = "project.apply_update")]
-    ApplyUpdate(updates::ApplyUpdate),
-}
-impl Engine {
-    pub fn dispatch(&mut self, value: serde_json::Value) -> Result<serde_json::Value> {
-        match serde_json::from_value::<Request>(value)? {
-            Request::Apply {
-                expected_revision,
-                operation,
-            } => self.apply(expected_revision, *operation)?,
-            Request::Inspect {} => {}
-            Request::Undo {} => self.undo()?,
-            Request::Redo {} => self.redo()?,
-            Request::Save { path } => self.save(std::path::Path::new(&path))?,
-            Request::Open { path } => self.open(std::path::Path::new(&path))?,
-            Request::PreviewUpdate { change } => {
-                return Ok(serde_json::to_value(self.preview_update(change))?);
-            }
-            Request::ApplyUpdate(update) => self.apply_update(
-                update.expected_revision,
-                update.change,
-                update.remove_conflicting_tracks,
-            )?,
-        }
-        Ok(
-            serde_json::json!({"revision":self.revision,"project":self.project,"erc":schematic::checks(&self.project),"board_checks":layout::checks(&self.project)}),
-        )
-    }
-}
+/// JSON schemas of the document types every transport shares.
 pub fn schemas() -> serde_json::Value {
-    serde_json::json!({"input":schemars::schema_for!(Request),"project":schemars::schema_for!(Project),"update_plan":schemars::schema_for!(updates::UpdatePlan),"editor_file":schemars::schema_for!(persistence::EditorFile)})
+    serde_json::json!({
+        "operation": schemars::schema_for!(Operation),
+        "project": schemars::schema_for!(Project),
+        "update_plan": schemars::schema_for!(updates::UpdatePlan),
+        "editor_file": schemars::schema_for!(format::EditorFile),
+        "finding": schemars::schema_for!(Finding),
+        "diagnostic": schemars::schema_for!(Diagnostic),
+    })
 }
