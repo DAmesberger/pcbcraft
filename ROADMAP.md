@@ -25,7 +25,8 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 - [x] Explicit schematic-to-board sync, placement, manual routing and physical-island checks.
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.
 - [x] Atomic `.pcbcraft` save, offline reopen, shared command engine and undo/redo.
-- [ ] Complete first-release editors, library updates, recovery and manufacturing workflow.
+- [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned component drafts; file dialogs, background saves and crash recovery.
+- [ ] Complete first-release editors, library updates and manufacturing workflow.
 
 ## Subsequent milestones
 
@@ -39,7 +40,7 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 At the user's request, execute in this order:
 
 1. **Component and schematic updates:** revision-bound impact previews, explicit affected-copper handling and one-step undo. Implemented, including live airwire preview during component dragging; tests cover stale/cancel/locked/failed updates.
-2. **File handling and recovery:** native dialogs, unsaved-work transitions, portable unpublished drafts and crash recovery. In progress.
+2. **File handling and recovery:** native dialogs, unsaved-work transitions, portable unpublished drafts and crash recovery. Implemented; macOS Cmd+Q still quits without the unsaved-work prompt (work survives in recovery) until a native app menu routes Quit through the close request, as Solidcraft's does.
 3. **Performance:** measure representative boards, then remove whole-model reconstruction from local edits. Keep timings and remaining limits explicit.
 
 Parametric design is an additional user requirement: author footprints and board geometry using Solidcraft's parameter/expression facilities. Placement references must support board edges and other components, with independently selectable placement origin, body center and pad-center anchors. Rotation and bottom-side transforms must be explicit. Persist dependencies and stable electrical identities, reject cycles/missing references, and preview footprint-driven routing changes. This follows the hardening sequence; numeric editor fields alone do not satisfy it.

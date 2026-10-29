@@ -23,7 +23,11 @@ The desktop links `solidcraft-ui-egui` at the same pinned revision. Fonts, icons
 Adapted source references, under the MIT option above:
 
 - `apps/pcbcraft/src/shell.rs`: upstream `crates/ui-egui/src/toolbar.rs`, `shell.rs`, `ui_kit/panel.rs` and `ui_kit/layout.rs` for workspace/ribbon proportions, floating cards and form spacing.
-- `apps/pcbcraft/src/main.rs`: upstream application bar, bundled font setup and container layout conventions.
+- `apps/pcbcraft/src/app.rs` and `app/chrome.rs`: upstream application bar (`toolbar::APP_BAR_HEIGHT`, `titlebar::TRAFFIC_LIGHTS`), bundled font setup, system-theme default, close-request handling and container layout conventions.
+- `apps/pcbcraft/src/file_ui.rs`: upstream `apps/solidcraft/src/main.rs` picker services and `documents.rs` unsaved-work choices; prompts use the public `ui_kit::Window`.
+- `crates/automation/src/mcp.rs` and `lines.rs`: upstream `crates/mcp/src/server.rs` conventions (newline-delimited JSON-RPC, bounded lines, protocol-version negotiation, tool errors as results). Tools and their schemas are generated from Pcbcraft's own request types.
+- `xtask/src/ui_containers.rs` and `layers.rs`: upstream `xtask/src/ui_containers.rs` and `layers.rs` boundary checks, reduced to Pcbcraft's crates.
+- `flake.nix`: upstream `flake.nix` Linux runtime-library list; the pinned toolchain comes from `rust-overlay` (MIT).
 - Editor content: upstream `ui_kit/layout.rs`, `ui_kit/fields.rs`, `dialogs_library.rs`, `tools.rs` and `drag_snap.rs` for forms and interaction conventions. Electronics commands, mapping and geometry checks are original.
 - `viewport.rs`: upstream `gpu` renderer API and `solidcraft-render` camera API via the engine. Navigation is adapted locally because the complete upstream event handler is private to `SolveApp`.
 

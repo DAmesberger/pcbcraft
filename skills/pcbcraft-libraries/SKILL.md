@@ -24,8 +24,8 @@ Make editing scope explicit: project-local definition/selected instances versus 
 
 ## File changes
 
-Version persistence explicitly. Test old-file migration, unsupported-new-feature refusal, damaged input, and offline reopen. Write atomically through a shared persistence routine. Treat renderer caches as disposable, versioned data; retain authoritative parametric definitions.
+Version persistence explicitly. Test unsupported-version refusal, damaged input and offline reopen. Write atomically through `pcbcraft-io`. Treat renderer caches as disposable, versioned data; retain authoritative parametric definitions.
 
-Pcbcraft's format uses its own migration mechanism once implemented; do not refer to nonexistent upstream-style pending folders. A Solidcraft format change follows the actual instructions and migration machinery in the upstream checkout.
+Pcbcraft is pre-release: `pcbcraft_core::format` accepts only the current version, with no migrations or legacy readers. Add a migration mechanism (and old-file tests) with the first released format; do not refer to nonexistent upstream-style pending folders. A Solidcraft format change follows the actual instructions and migration machinery in the upstream checkout.
 
 Record imported asset provenance/license separately from code licensing. Report unsupported input features without silently changing the electrical meaning. Cover the relevant edge cases from the library proposal through the public command API.

@@ -6,7 +6,7 @@ Pcbcraft is a Rust electronics editor with component authoring, schematics, PCB 
 
 Read [ROADMAP.md](ROADMAP.md) for the active milestone and [docs/milestone-0.md](docs/milestone-0.md) before foundation work. Product scope is in [docs/pcbcraft-plan.md](docs/pcbcraft-plan.md); vocabulary is in [GLOSSARY.md](GLOSSARY.md). Distinguish user requirements from proposed scope boundaries in those documents.
 
-The workspace includes a desktop editor, shared electronics command engine, native Solidcraft adapter and CLI. Run `cargo xtask ci` for formatting, dependency boundaries, strict Clippy, native tests and headless wasm compilation. See [README.md](README.md) for commands and [editor evidence](docs/editor-evidence.md) for current capabilities and limits; scaling benchmarks and complete first-release workflows remain pending.
+The workspace layers are: `pcbcraft-core` (pure document, typed operations, the one engine), `pcbcraft-io` (atomic files, recovery), `pcbcraft-solidcraft` (native 3D via Solidcraft's engine), `pcbcraft-automation` (headless session, JSON-lines and MCP transports), and the desktop and CLI apps. `cargo xtask layers` enforces the direction. Run `cargo xtask ci` (inside `nix develop` if Rust is not installed) for formatting, dependency and UI-container boundaries, strict Clippy, native tests and headless wasm compilation. See [README.md](README.md) for commands and [editor evidence](docs/editor-evidence.md) for current capabilities and limits; scaling benchmarks and complete first-release workflows remain pending.
 
 ## Hard rules
 
@@ -18,7 +18,7 @@ The workspace includes a desktop editor, shared electronics command engine, nati
 - Library identity, explicit pin mapping and exact project snapshots are foundational. Apply library updates through an atomic impact preview; never infer electrical compatibility from matching names.
 - Plan routing for push-and-shove from the first implementation; deliver it by release 2 if it is absent from release 1.
 - Production Rust uses checked input handling and `Result`; forbid application `unsafe` and unchecked `unwrap`, `expect`, panic and unfinished-code macros. Bound input sizes and arithmetic; keep long work off the UI thread. Shared dependency internals retain their upstream policies.
-- Preserve work with atomic saves, recovery and explicit format migrations. Reject unsupported required features instead of silently dropping them.
+- Preserve work with atomic saves and recovery. Reject unsupported versions and required features instead of silently dropping them. Until the first release, the file format has one version and no migrations or legacy readers; add explicit migrations once files are released.
 - Follow Solidcraft's independent-implementation policy: use public specifications/documentation and permissive code dependencies; do not read, copy or link GPL/LGPL/AGPL implementation code. Library data has its own provenance and license. Attribute reused code, instructions and assets; preserve their notices.
 - Verify observable behavior and measured correctness. Label performance targets as targets until measured. Do not weaken expected results to make a test pass.
 - Keep changes within the task. Work in an isolated checkout for any Solidcraft changes; honor that checkout's instructions. These rules do not authorize upstream pushes, issues, PRs or publication.

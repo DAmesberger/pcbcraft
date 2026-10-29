@@ -40,7 +40,7 @@ One component used in a project, such as R12, with its electrical connections, c
 _Avoid_: Library component when referring to a placed instance
 
 **Net**:
-A set of electrical connection points intended to be joined. Sharing a net does not establish that PCB copper actually connects those points.
+A set of electrical connection points intended to be joined. Each net has a persistent ID and an editable name; tracks refer to the ID. Connecting merges nets (the routed, else older, ID survives) and disconnecting splits them (the larger group keeps the ID). Sharing a net does not establish that PCB copper actually connects those points.
 
 **No-connect marker**:
 A project decision to leave a particular connection point unconnected. It is distinct from a manufacturer's declaration that a package terminal must not be connected.
