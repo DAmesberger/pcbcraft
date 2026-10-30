@@ -1,10 +1,11 @@
-//! Application chrome: app bar, ribbon, status bar and the floating browser
-//! and properties cards. Geometry comes from Solidcraft tokens and constants;
-//! feature content comes from the editors.
-use super::App;
+//! Application chrome: app bar, ribbon, the floating Browser and properties
+//! cards, the canvas navigation bar and status messages. Geometry comes from
+//! Solidcraft tokens and constants; content comes from the editors.
+use super::{App, browser};
 use crate::file_ui::Action;
-use crate::shell::{self, Workspace};
-use egui::{Rect, pos2, vec2};
+use crate::kit;
+use crate::shell::{self, RibbonEvent, Workspace};
+use egui::{FontId, Rect, pos2, vec2};
 use solidcraft_ui_egui::{
     fonts,
     theme::Tokens,
@@ -19,6 +20,11 @@ const SHELL_GAP: f32 = 7.0;
 /// The browser shows when the viewport fits it beside the canvas and the
 /// properties card.
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
+/// Upstream Browser card width.
+const BROWSER_WIDTH: f32 = 260.0;
+/// Informational status messages fade after this many seconds; errors stay
+/// until the next action.
+const STATUS_SECONDS: f64 = 6.0;
 
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
@@ -32,16 +38,8 @@ pub(super) fn layout(area: Rect, show_browser: bool) -> Layout {
     let area = area.shrink(SHELL_GAP);
     let card = t.form_card_width.min(area.width() * 0.4).max(0.0);
     let inspector = Rect::from_min_max(pos2(area.right() - card, area.top()), area.max);
-    let browser = (show_browser && area.width() > card * BROWSER_MIN_VIEWPORT_CARDS).then(|| {
-        let rows = 6.0;
-        Rect::from_min_size(
-            area.min,
-            vec2(
-                card * 0.8,
-                t.form_header_height + rows * t.control_height + t.space_24,
-            ),
-        )
-    });
+    let browser = (show_browser && area.width() > card * BROWSER_MIN_VIEWPORT_CARDS)
+        .then(|| Rect::from_min_size(area.min, vec2(BROWSER_WIDTH.min(card), area.height())));
     let left = browser.map_or(area.left(), |b| b.right() + SHELL_GAP);
     let canvas = Rect::from_min_max(
         pos2(left, area.top()),
@@ -52,6 +50,14 @@ pub(super) fn layout(area: Rect, show_browser: bool) -> Layout {
         inspector,
         browser,
     }
+}
+
+/// How a status message reads.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Status {
+    pub text: String,
+    pub error: bool,
+    pub at: f64,
 }
 
 impl App {
@@ -72,7 +78,7 @@ impl App {
                             .font(fonts::bold(t.font_heading))
                             .color(t.app_bar_text),
                     );
-                    ui.separator();
+                    ui.add_space(t.space_8);
                     self.file_menu(ui);
                     if shell::icon_button(ui, "save", "Save project", !self.files.busy()).clicked()
                     {
@@ -84,17 +90,8 @@ impl App {
                     if shell::icon_button(ui, "redo", "Redo", self.engine.can_redo()).clicked() {
                         self.history(true);
                     }
-                    ui.separator();
-                    let file = self
-                        .files
-                        .path()
-                        .and_then(|p| p.file_name())
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| self.engine.project().name.clone());
-                    ui.label(format!(
-                        "{file}{}",
-                        if self.files.dirty() { " •" } else { "" }
-                    ));
+                    ui.add_space(t.space_8);
+                    self.document_tab(ui);
                     let (_, drag) = ui.allocate_exact_size(
                         vec2(ui.available_width().max(0.0), APP_BAR_HEIGHT - t.space_8),
                         egui::Sense::drag(),
@@ -106,6 +103,41 @@ impl App {
             });
     }
 
+    /// The open document as an application-bar tab, with the unsaved dot.
+    fn document_tab(&self, ui: &mut egui::Ui) {
+        let t = Tokens::get();
+        let name = self
+            .files
+            .path()
+            .and_then(|p| p.file_stem())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.engine.project().name.clone());
+        let label = if self.files.dirty() {
+            format!("{name} •")
+        } else {
+            name
+        };
+        let galley = ui.painter().layout_no_wrap(
+            label.clone(),
+            fonts::semibold(t.font_label),
+            t.app_bar_text,
+        );
+        let size = vec2(
+            galley.size().x + 2.0 * t.space_12,
+            APP_BAR_HEIGHT - t.space_8,
+        );
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, t.radius_md, t.app_bar_tab_active);
+        ui.painter()
+            .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
+        if let Some(path) = self.files.path() {
+            response.on_hover_text(path.display().to_string());
+        } else if self.files.dirty() {
+            response.on_hover_text("Unsaved project");
+        }
+    }
+
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let file = ui_kit::button(ui, "File", Button::Ghost);
@@ -114,7 +146,7 @@ impl App {
             .menu(&file)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
-                shell::form(ui, |ui| {
+                kit::form(ui, |ui| {
                     for (label, action) in [
                         ("New project", Action::New),
                         ("Open…", Action::Open),
@@ -126,44 +158,37 @@ impl App {
                             self.files.request(action);
                         }
                     }
-                    ui.small("Export writes a native, parametric .solidcraft model of the board.");
+                    kit::note(
+                        ui,
+                        "Export writes a native, parametric .solidcraft model of the board.",
+                    );
                 });
             });
     }
 
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {
-        let mut workspace = self.workspace;
-        shell::ribbon(ui, &mut workspace, |ui| self.tools(ui));
-        self.workspace = workspace;
-    }
-
-    pub(super) fn status_bar(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        let t = Tokens::get();
-        let bottom = Container::new(&ctx, Surface::ApplicationBar);
-        bottom
-            .edge("status", Edge::Bottom)
-            .exact_size(t.control_height)
-            .frame(bottom.edge_frame(t.app_bar))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.small(&self.status);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if shell::icon_button(ui, "fit", "Fit 3D view", true).clicked() {
-                            self.scene.viewport.fit();
-                        }
-                        ui.small("mm");
-                        if self.workspace == Workspace::Pcb
-                            && self.pcb.is_3d()
-                            && ui
-                                .checkbox(&mut self.scene.viewport.hide_substrate, "Hide substrate")
-                                .changed()
-                        {
-                            self.scene.viewport.refresh();
-                        }
-                    });
-                });
-            });
+        let ribbon = match self.workspace {
+            Workspace::Part => self.part.ribbon(&self.engine),
+            Workspace::Schematic => self.schematic.ribbon(&self.engine),
+            Workspace::Pcb => self.pcb.ribbon(&self.engine),
+        };
+        match shell::ribbon(ui, self.workspace, &ribbon) {
+            Some(RibbonEvent::Workspace(workspace)) => self.workspace = workspace,
+            Some(RibbonEvent::Tab(tab)) => match self.workspace {
+                Workspace::Part => self.part.on_tab(tab),
+                Workspace::Schematic => {}
+                Workspace::Pcb => self.pcb.on_tab(tab),
+            },
+            Some(RibbonEvent::Tool(tool)) => {
+                let operation = match self.workspace {
+                    Workspace::Part => self.part.on_tool(tool, &self.engine),
+                    Workspace::Schematic => self.schematic.on_tool(tool, &self.engine),
+                    Workspace::Pcb => self.pcb.on_tool(tool, &self.engine),
+                };
+                self.apply(operation);
+            }
+            None => {}
+        }
     }
 
     pub(super) fn workspace_area(&mut self, ui: &mut egui::Ui) {
@@ -177,54 +202,223 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
+                    self.navigation_bar(ui, layout.canvas);
+                    self.status_chip(ui, layout.canvas);
                 });
                 if let Some(rect) = layout.browser {
-                    shell::card(&ctx, "project-browser", rect, "Browser", "folder", |ui| {
-                        self.browser(ui)
-                    });
+                    let summary = browser::summary(&self.engine);
+                    let lit = self.lit();
+                    let mut pick = None;
+                    shell::card(
+                        &ctx,
+                        "project-browser",
+                        rect,
+                        |ui| kit::card_title(ui, "Browser", &summary),
+                        |ui| pick = browser::show(ui, &self.engine, lit),
+                    );
+                    if let Some(pick) = pick {
+                        self.pick(pick);
+                    }
                 }
-                let title = format!("{} properties", self.workspace.label());
+                let header = match self.workspace {
+                    Workspace::Part => self.part.header(&self.engine),
+                    Workspace::Schematic => self.schematic.header(&self.engine),
+                    Workspace::Pcb => self.pcb.header(&self.engine),
+                };
                 shell::card(
                     &ctx,
                     "properties",
                     layout.inspector,
-                    &title,
-                    "settings",
+                    |ui| kit::inspector_header(ui, header.icon, &header.title, header.kind),
                     |ui| self.inspector(ui),
                 );
             });
     }
 
-    fn browser(&mut self, ui: &mut egui::Ui) {
-        let project = self.engine.project();
-        ui.strong(&project.name);
-        ui.separator();
-        let rows = [
-            (
-                Workspace::Part,
-                format!(
-                    "Components  ·  {}",
-                    project.library.latest_components().len()
-                ),
-            ),
-            (
-                Workspace::Schematic,
-                format!(
-                    "Schematic  ·  {} symbols, {} nets",
-                    project.occurrences.len(),
-                    project.nets.len()
-                ),
-            ),
-            (
-                Workspace::Pcb,
-                format!("PCB  ·  {} tracks", project.tracks.len()),
-            ),
-        ];
-        for (workspace, label) in rows {
-            if ui_kit::button(ui, label, Button::Ghost).clicked() {
-                self.workspace = workspace;
+    /// The selection the Browser marks, from the active workspace.
+    fn lit(&self) -> browser::Lit {
+        match self.workspace {
+            Workspace::Part => browser::Lit {
+                component: self.part.lineage(),
+                ..Default::default()
+            },
+            Workspace::Schematic => browser::Lit {
+                instance: self.schematic.selected_instance(),
+                net: self.schematic.selected_net(&self.engine),
+                ..Default::default()
+            },
+            Workspace::Pcb => browser::Lit {
+                placement: self.pcb.selected_instance(),
+                track: self.pcb.selected_track(),
+                net: self.pcb.highlighted_net(),
+                board: self.pcb.selected_instance().is_none()
+                    && self.pcb.selected_track().is_none(),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Open a Browser row in its workspace and select it there.
+    fn pick(&mut self, pick: browser::Pick) {
+        use browser::Pick;
+        match pick {
+            Pick::Component(id) => {
+                self.workspace = Workspace::Part;
+                self.part.open(id, &self.engine);
+            }
+            Pick::Instance(id) => {
+                self.workspace = Workspace::Schematic;
+                self.schematic
+                    .select_instance(Some(id), self.engine.project());
+            }
+            Pick::Net(id) => {
+                if self.workspace == Workspace::Pcb {
+                    self.pcb.set_selection(None, None, Some(id));
+                } else {
+                    self.workspace = Workspace::Schematic;
+                    self.schematic.select_net(id, self.engine.project());
+                }
+            }
+            Pick::Placement(id) => {
+                self.workspace = Workspace::Pcb;
+                self.pcb.set_selection(Some(id), None, None);
+            }
+            Pick::Track(id) => {
+                self.workspace = Workspace::Pcb;
+                let net = self
+                    .engine
+                    .project()
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map(|t| t.net);
+                self.pcb.set_selection(None, Some(id), net);
+            }
+            Pick::Board => {
+                self.workspace = Workspace::Pcb;
+                self.pcb.set_selection(None, None, None);
             }
         }
+    }
+
+    /// Floating view controls at the bottom of the canvas (Solidcraft's
+    /// navigation bar): fit, and the substrate toggle in PCB 3D.
+    fn navigation_bar(&mut self, ui: &mut egui::Ui, canvas: Rect) {
+        let t = Tokens::get();
+        let three_d = self.model_key().is_some();
+        let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
+        let buttons = if pcb_3d { 2.0 } else { 1.0 };
+        let size = vec2(
+            buttons * t.control_height + (buttons + 1.0) * t.space_4,
+            t.control_height + 2.0 * t.space_4,
+        );
+        let rect = Rect::from_center_size(
+            pos2(
+                canvas.center().x,
+                canvas.bottom() - t.space_16 - size.y / 2.0,
+            ),
+            size,
+        );
+        if rect.width() > canvas.width() {
+            return;
+        }
+        ui.painter().rect(
+            rect,
+            t.radius_lg,
+            t.toolbar,
+            t.container_border(t.border),
+            egui::StrokeKind::Inside,
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink(t.space_4))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.spacing_mut().item_spacing.x = t.space_4;
+        if shell::icon_button(&mut child, "fit", "Fit view", true).clicked() {
+            if three_d {
+                self.scene.viewport.fit();
+            } else {
+                match self.workspace {
+                    Workspace::Part => self.part.fit(),
+                    Workspace::Schematic => self.schematic.fit(),
+                    Workspace::Pcb => self.pcb.fit(),
+                }
+            }
+        }
+        if pcb_3d {
+            let hidden = self.scene.viewport.hide_substrate;
+            let label = if hidden {
+                "Show substrate"
+            } else {
+                "Hide substrate"
+            };
+            let response = shell::icon_button(
+                &mut child,
+                if hidden {
+                    "style_translucent"
+                } else {
+                    "style_shaded"
+                },
+                label,
+                true,
+            );
+            if hidden {
+                child.painter().rect_stroke(
+                    response.rect,
+                    t.radius_sm,
+                    egui::Stroke::new(1.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            if response.clicked() {
+                self.scene.viewport.hide_substrate = !hidden;
+                self.scene.viewport.refresh();
+            }
+        }
+    }
+
+    /// The latest status message, bottom-left in the canvas. Errors stay
+    /// until the next action; other messages fade.
+    fn status_chip(&mut self, ui: &mut egui::Ui, canvas: Rect) {
+        let t = Tokens::get();
+        let Some(status) = &self.status else {
+            return;
+        };
+        let now = ui.input(|i| i.time);
+        if !status.error && now - status.at > STATUS_SECONDS {
+            self.status = None;
+            return;
+        }
+        if !status.error {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(STATUS_SECONDS));
+        }
+        let ink = if status.error { t.error } else { t.text };
+        let mut job = egui::text::LayoutJob::simple(
+            status.text.clone(),
+            FontId::proportional(t.font_label),
+            ink,
+            (canvas.width() * 0.45).max(120.0),
+        );
+        job.wrap.max_rows = 3;
+        let galley = ui.painter().layout_job(job);
+        let rect = Rect::from_min_size(
+            pos2(
+                canvas.left() + t.space_12,
+                canvas.bottom() - t.space_16 - galley.size().y - 2.0 * t.space_8,
+            ),
+            galley.size() + vec2(2.0 * t.space_12, 2.0 * t.space_8),
+        );
+        ui.painter().rect(
+            rect,
+            t.radius_md,
+            t.toolbar,
+            t.container_border(if status.error { t.error } else { t.border }),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter()
+            .galley(rect.min + vec2(t.space_12, t.space_8), galley, ink);
     }
 }
 

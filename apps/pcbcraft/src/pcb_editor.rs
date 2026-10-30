@@ -202,49 +202,102 @@ impl PcbEditor {
             .unwrap_or(&self.airwires)
     }
 
-    pub fn tools(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    /// Tabs are the 2D layout and 3D views of one board, with shared
+    /// selection and undo; groups are commands.
+    pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
+        use crate::shell::{Group, Ribbon, Tab, Tool as Button};
         self.sync(engine);
-        if crate::shell::tool(
-            ui,
-            "component",
-            "Update PCB",
-            !layout::sync_preview(engine.project()).is_empty() && !self.update.is_open(),
-            self.update.is_open(),
-        )
-        .clicked()
-        {
-            self.update.begin(engine, Change::SyncPcb {});
-            self.tool = Tool::Select;
-            self.route_start = None;
-            self.cancel_drag();
+        let reviewing = self.update.is_open();
+        let tabs = vec![
+            Tab {
+                id: "layout",
+                label: "Layout",
+                active: !self.view_3d,
+            },
+            Tab {
+                id: "3d",
+                label: "3D",
+                active: self.view_3d,
+            },
+        ];
+        if reviewing {
+            return Ribbon {
+                tabs,
+                groups: vec![],
+                notice: Some("Review the update in Properties"),
+            };
         }
-        if crate::shell::tool(ui, "move", "Select", true, self.tool == Tool::Select).clicked() {
-            self.tool = Tool::Select;
-            self.route_start = None;
+        let pending = !layout::sync_preview(engine.project()).is_empty();
+        Ribbon {
+            tabs,
+            groups: vec![
+                Group {
+                    label: "Schematic",
+                    tools: vec![
+                        Button::new("update", "component", "Update PCB")
+                            .enabled(pending)
+                            .tip("Preview bringing schematic changes to the board"),
+                    ],
+                },
+                Group {
+                    label: "Edit",
+                    tools: vec![
+                        Button::new("select", "move", "Select")
+                            .selected(self.tool == Tool::Select)
+                            .tip("Select and move placements"),
+                        Button::new("route", "trace", "Route")
+                            .enabled(!self.view_3d)
+                            .selected(self.tool == Tool::Route)
+                            .tip("Route copper from a pad; switch to Layout to route"),
+                    ],
+                },
+            ],
+            notice: None,
         }
-        if crate::shell::tool(
-            ui,
-            "trace",
-            "Route",
-            !self.view_3d && !self.update.is_open(),
-            self.tool == Tool::Route,
-        )
-        .clicked()
-        {
-            self.tool = Tool::Route;
-        }
-        ui.separator();
-        if crate::shell::tool(ui, "sketch", "2D", true, !self.view_3d).clicked() {
-            self.set_3d(false);
-        }
-        if crate::shell::tool(ui, "box", "3D", true, self.view_3d).clicked() {
-            self.set_3d(true);
-        }
-        if crate::shell::tool(ui, "fit", "Fit", !self.view_3d, false).clicked() {
-            self.zoom = 1.0;
-            self.pan = Vec2::ZERO;
+    }
+
+    pub fn on_tab(&mut self, tab: &str) {
+        self.set_3d(tab == "3d");
+    }
+
+    pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
+        self.sync(engine);
+        match tool {
+            "update" => {
+                self.update.begin(engine, Change::SyncPcb {});
+                self.tool = Tool::Select;
+                self.route_start = None;
+                self.cancel_drag();
+            }
+            "select" => {
+                self.tool = Tool::Select;
+                self.route_start = None;
+            }
+            "route" => self.tool = Tool::Route,
+            _ => {}
         }
         None
+    }
+
+    pub fn header(&self, engine: &Engine) -> crate::shell::Header {
+        use crate::shell::Header;
+        let project = engine.project();
+        if self.update.is_open() {
+            return Header::new("component", "Update PCB", "Review");
+        }
+        if let Some(instance) = self.instance.and_then(|id| project.instance(id)) {
+            return Header::new("component", instance.designator.clone(), "Placement");
+        }
+        if let Some(track) = self.track {
+            return Header::new("trace", format!("Track {track}"), "Track");
+        }
+        Header::new("plane", "Board", "PCB")
+    }
+
+    /// Return the layout view to its fitted scale.
+    pub fn fit(&mut self) {
+        self.zoom = 1.0;
+        self.pan = Vec2::ZERO;
     }
 
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {

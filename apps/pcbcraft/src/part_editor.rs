@@ -237,6 +237,9 @@ impl PartEditor {
     /// after the editor's widgets ran.
     pub fn commit(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        if let Some(publish) = self.publish_pending() {
+            return Some(publish);
+        }
         let interacting =
             ctx.memory(|m| m.focused().is_some()) || ctx.input(|i| i.pointer.any_down());
         if interacting || self.draft == self.baseline {
@@ -256,8 +259,8 @@ impl PartEditor {
         }))
     }
 
-    pub fn tools(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
-        self.sync(engine);
+    /// Send a deferred publish once the edit before it was applied.
+    fn publish_pending(&mut self) -> Option<Operation> {
         if self.publish_next && !self.awaiting {
             self.publish_next = false;
             if self.draft == self.baseline
@@ -268,40 +271,147 @@ impl PartEditor {
                 return Some(set.publish());
             }
         }
-        let unpublished = self.unpublished(engine);
+        None
+    }
+
+    /// Ribbon tabs are the four views of one component; groups are commands.
+    pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
+        use crate::shell::{Group, Ribbon, Tab, Tool};
+        self.sync(engine);
+        let tabs = [
+            ("symbol", "Symbol", View::Symbol),
+            ("footprint", "Footprint", View::Footprint),
+            ("mapping", "Mapping", View::Mapping),
+            ("model", "3D", View::Model),
+        ]
+        .into_iter()
+        .map(|(id, label, view)| Tab {
+            id,
+            label,
+            active: self.view == view,
+        })
+        .collect();
         if self.update.is_open() {
-            ui.label("Review the update in properties");
-            return None;
+            return Ribbon {
+                tabs,
+                groups: vec![],
+                notice: Some("Review the instance update in Properties"),
+            };
         }
-        let mut command = None;
-        ui.horizontal(|ui| {
-            for (icon, label, view) in [
-                ("sketch", "Symbol", View::Symbol),
-                ("component", "Footprint", View::Footprint),
-                ("params", "Mapping", View::Mapping),
-                ("box", "3D", View::Model),
-            ] {
-                if crate::shell::tool(ui, icon, label, true, self.view == view).clicked() {
-                    self.view = view;
-                }
-            }
-            ui.separator();
-            for (label, template) in [
-                ("Passive", Template::TwoTerminal),
-                ("Connector", Template::Header),
-            ] {
-                if crate::shell::tool(ui, "component", label, true, false).clicked() {
-                    self.load_template(template);
-                }
-            }
-            if crate::shell::tool(ui, "point", "Terminal", self.draft.is_some(), false).clicked() {
-                self.add_terminal();
-            }
-            if crate::shell::tool(ui, "save", "Publish", unpublished, false).clicked() {
-                command = self.publish(engine);
-            }
+        let has_draft = self.draft.is_some();
+        let selected_mapped = self.draft.as_ref().is_some_and(|set| {
+            set.binding
+                .mappings
+                .iter()
+                .any(|m| Some(m.terminal) == self.selected)
         });
-        command
+        let mut edit = vec![
+            Tool::new("terminal", "point", "Terminal")
+                .enabled(has_draft)
+                .tip("Add a terminal with its symbol pin, package terminal and pad"),
+        ];
+        if self.view == View::Footprint {
+            edit.push(
+                Tool::new("pad", "rect", "Pad")
+                    .enabled(selected_mapped)
+                    .tip("Add another pad to the selected terminal"),
+            );
+        }
+        edit.push(
+            Tool::new("remove-terminal", "delete", "Remove")
+                .enabled(has_draft && self.selected.is_some())
+                .tip("Remove the selected terminal everywhere in this component"),
+        );
+        Ribbon {
+            tabs,
+            groups: vec![
+                Group {
+                    label: "Create",
+                    tools: vec![
+                        Tool::new("passive", "component", "Passive")
+                            .tip("Two-terminal passive template"),
+                        Tool::new("connector", "component", "Connector")
+                            .tip("Two-pin header template"),
+                    ],
+                },
+                Group {
+                    label: "Terminals",
+                    tools: edit,
+                },
+                Group {
+                    label: "Library",
+                    tools: vec![
+                        Tool::new("publish", "save", "Publish")
+                            .enabled(self.unpublished(engine))
+                            .tip("Publish the five drafts as new immutable revisions"),
+                    ],
+                },
+            ],
+            notice: None,
+        }
+    }
+
+    pub fn on_tab(&mut self, tab: &str) {
+        self.view = match tab {
+            "footprint" => View::Footprint,
+            "mapping" => View::Mapping,
+            "model" => View::Model,
+            _ => View::Symbol,
+        };
+    }
+
+    pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
+        self.sync(engine);
+        match tool {
+            "passive" => self.load_template(Template::TwoTerminal),
+            "connector" => self.load_template(Template::Header),
+            "terminal" => self.add_terminal(),
+            "pad" => self.add_pad(),
+            "remove-terminal" => self.remove_selected(),
+            "publish" => return self.publish(engine),
+            _ => {}
+        }
+        None
+    }
+
+    /// The properties title band.
+    pub fn header(&self, _engine: &Engine) -> crate::shell::Header {
+        use crate::shell::Header;
+        if self.update.is_open() {
+            return Header::new("component", "Update placed instances", "Review");
+        }
+        match &self.draft {
+            Some(set) => Header::new("component", set.metas.component.name.clone(), "Component"),
+            None => Header::new("component", "No component", ""),
+        }
+    }
+
+    /// The component lineage being authored.
+    pub fn lineage(&self) -> Option<DefinitionId> {
+        self.lineage
+    }
+
+    /// Author a component lineage, drafting it from its latest revision when
+    /// it has no draft yet.
+    pub fn open(&mut self, id: DefinitionId, engine: &Engine) {
+        if engine.drafts().get(id).is_none()
+            && let Some(published) = engine
+                .project()
+                .library
+                .latest_components()
+                .into_iter()
+                .find(|c| c.id == id)
+        {
+            self.request = Some(Request::Draft(ComponentRef::new(id, published.revision)));
+        }
+        self.lineage = Some(id);
+        self.source = None;
+        self.notice.clear();
+    }
+
+    /// Return the 2D views to their fitted scale.
+    pub fn fit(&mut self) {
+        self.drag_scale = None;
     }
 
     fn publish(&mut self, engine: &Engine) -> Option<Operation> {

@@ -1,6 +1,7 @@
 //! Pcbcraft desktop editor.
 mod app;
 mod file_ui;
+mod kit;
 mod palette;
 mod part_editor;
 mod pcb_editor;

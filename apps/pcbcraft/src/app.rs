@@ -4,6 +4,7 @@
 //! an [`Operation`], which [`App::apply`] sends through the engine, the same
 //! path the CLI and MCP use. Long work (3D builds, file I/O, recovery) runs on
 //! background threads and reports back with the input it was made from.
+mod browser;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};
@@ -23,9 +24,11 @@ pub struct App {
     pcb: pcb_editor::PcbEditor,
     scene: SceneController,
     files: FileUi,
-    status: String,
+    status: Option<chrome::Status>,
     show_browser: bool,
     closing: bool,
+    /// Input time of the current frame, for status messages.
+    now: f64,
 }
 
 impl App {
@@ -53,9 +56,10 @@ impl App {
             part: Default::default(),
             schematic: Default::default(),
             pcb: Default::default(),
-            status: "Ready".into(),
+            status: None,
             show_browser: true,
             closing: false,
+            now: 0.0,
         })
     }
 
@@ -65,13 +69,29 @@ impl App {
             return;
         };
         if self.files.busy() {
-            self.status = "Wait for the file operation to finish".into();
+            self.say("Wait for the file operation to finish", false);
             return;
         }
-        self.status = match self.engine.apply(self.engine.revision(), operation) {
-            Ok(_) => "Ready".into(),
-            Err(error) => error.to_string(),
-        };
+        match self.engine.apply(self.engine.revision(), operation) {
+            Ok(_) => self.clear_error(),
+            Err(error) => self.say(error.to_string(), true),
+        }
+    }
+
+    /// Show a status message in the canvas; errors stay until the next
+    /// successful action.
+    fn say(&mut self, text: impl Into<String>, error: bool) {
+        self.status = Some(chrome::Status {
+            text: text.into(),
+            error,
+            at: self.now,
+        });
+    }
+
+    fn clear_error(&mut self) {
+        if self.status.as_ref().is_some_and(|s| s.error) {
+            self.status = None;
+        }
     }
 
     /// Requests that need several public commands, such as reserving new
@@ -81,13 +101,13 @@ impl App {
             return;
         };
         if self.files.busy() {
-            self.status = "Wait for the file operation to finish".into();
+            self.say("Wait for the file operation to finish", false);
             return;
         }
-        self.status = match part_editor::run(&mut self.engine, request) {
-            Ok(()) => "Ready".into(),
-            Err(error) => error.to_string(),
-        };
+        match part_editor::run(&mut self.engine, request) {
+            Ok(()) => self.clear_error(),
+            Err(error) => self.say(error.to_string(), true),
+        }
     }
 
     fn history(&mut self, redo: bool) {
@@ -96,8 +116,9 @@ impl App {
         } else {
             self.engine.undo()
         };
-        if let Err(error) = result {
-            self.status = error.to_string();
+        match result {
+            Ok(_) => self.clear_error(),
+            Err(error) => self.say(error.to_string(), true),
         }
     }
 
@@ -107,15 +128,15 @@ impl App {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| document.project.name.clone());
         if let Err(error) = self.engine.replace_document(document) {
-            self.status = format!("Open failed: {error}");
+            self.say(format!("Open failed: {error}"), true);
             return;
         }
         self.pcb.set_selection(None, None, None);
-        self.status = match self.files.adopt(&self.engine, path, recovered) {
-            Ok(()) if recovered => format!("Recovered {name}; save it to keep it"),
-            Ok(()) => format!("Opened {name}"),
-            Err(error) => error,
-        };
+        match self.files.adopt(&self.engine, path, recovered) {
+            Ok(()) if recovered => self.say(format!("Recovered {name}; save it to keep it"), false),
+            Ok(()) => self.say(format!("Opened {name}"), false),
+            Err(error) => self.say(error, true),
+        }
     }
 
     fn file_effects(&mut self, ctx: &egui::Context) {
@@ -133,7 +154,8 @@ impl App {
             }
         }
         if let Some(status) = self.files.take_status() {
-            self.status = status;
+            let error = status.to_ascii_lowercase().contains("fail");
+            self.say(status, error);
         }
     }
 
@@ -154,15 +176,6 @@ impl App {
         if let Some(key) = self.model_key() {
             self.scene.request(key, self.part.preview_package());
         }
-    }
-
-    fn tools(&mut self, ui: &mut egui::Ui) {
-        let operation = match self.workspace {
-            Workspace::Part => self.part.tools(ui, &self.engine),
-            Workspace::Schematic => self.schematic.tools(ui, &self.engine),
-            Workspace::Pcb => self.pcb.tools(ui, &self.engine),
-        };
-        self.apply(operation);
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
@@ -249,12 +262,12 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
         self.scene.receive();
         self.file_effects(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
-        self.status_bar(ui);
         self.workspace_area(ui);
         // Draft edits commit once their gesture ends, as one undo step.
         self.part_requests();

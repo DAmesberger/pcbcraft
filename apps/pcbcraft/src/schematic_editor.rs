@@ -178,33 +178,118 @@ impl SchematicEditor {
         }
     }
 
-    pub fn tools(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
-        for (label, icon, tool) in [
-            ("Select", "select", Tool::Select),
-            ("Place part", "component", Tool::Place),
-            ("Wire", "line", Tool::Wire),
-        ] {
-            if crate::shell::tool(
-                ui,
-                icon,
-                label,
-                (tool != Tool::Place || !engine.project().library.components.is_empty())
-                    && (tool == Tool::Select || !self.update.is_open()),
-                self.tool == tool,
-            )
-            .clicked()
-            {
-                self.tool = tool;
-                self.wire_from = None;
+    pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
+        use crate::shell::{Group, Ribbon, Tab, Tool as Button};
+        let reviewing = self.update.is_open();
+        let has_parts = !engine.project().library.components.is_empty();
+        Ribbon {
+            tabs: vec![Tab {
+                id: "sheet",
+                label: "Sheet",
+                active: true,
+            }],
+            groups: vec![
+                Group {
+                    label: "Select",
+                    tools: vec![
+                        Button::new("select", "select", "Select")
+                            .selected(self.tool == Tool::Select)
+                            .tip("Select and move symbols and wires"),
+                    ],
+                },
+                Group {
+                    label: "Create",
+                    tools: vec![
+                        Button::new("place", "component", "Place")
+                            .enabled(has_parts && !reviewing)
+                            .selected(self.tool == Tool::Place)
+                            .tip("Place the chosen component revision"),
+                        Button::new("wire", "line", "Wire")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Wire)
+                            .tip("Connect two terminals"),
+                    ],
+                },
+                Group {
+                    label: "Inspect",
+                    tools: vec![
+                        Button::new("check", "inspect", "Check")
+                            .selected(self.show_checks)
+                            .tip("Show the electrical rule checks"),
+                    ],
+                },
+            ],
+            notice: None,
+        }
+    }
+
+    pub fn on_tool(&mut self, tool: &str, _engine: &Engine) -> Option<Operation> {
+        let next = match tool {
+            "select" => Tool::Select,
+            "place" => Tool::Place,
+            "wire" => Tool::Wire,
+            "check" => {
+                self.show_checks = !self.show_checks;
+                return None;
             }
-        }
-        if crate::shell::tool(ui, "fit", "Fit", true, false).clicked() {
-            self.fit_requested = true;
-        }
-        if crate::shell::tool(ui, "inspect", "Check", true, self.show_checks).clicked() {
-            self.show_checks = !self.show_checks;
-        }
+            _ => return None,
+        };
+        self.tool = next;
+        self.wire_from = None;
         None
+    }
+
+    pub fn header(&self, engine: &Engine) -> crate::shell::Header {
+        use crate::shell::Header;
+        let project = engine.project();
+        if self.update.is_open() {
+            return Header::new("component", "Review change", "Review");
+        }
+        if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
+            return Header::new("component", instance.designator.clone(), "Instance");
+        }
+        if let Some(net) = self.selected_net(engine).and_then(|id| project.net(id)) {
+            return Header::new("line", net.name.clone(), "Net");
+        }
+        match self.tool {
+            Tool::Place => Header::new("component", "Place component", "Tool"),
+            Tool::Wire => Header::new("line", "Wire", "Tool"),
+            Tool::Select => Header::new("sketch", "Sheet", "Schematic"),
+        }
+    }
+
+    pub fn fit(&mut self) {
+        self.fit_requested = true;
+    }
+
+    pub fn selected_instance(&self) -> Option<Id> {
+        self.selected
+    }
+
+    /// The net of the selected wire.
+    pub fn selected_net(&self, engine: &Engine) -> Option<Id> {
+        let project = engine.project();
+        let wire = self
+            .selected_wire
+            .and_then(|id| project.wires.iter().find(|w| w.id == id))?;
+        project.net_of(wire.from).map(|n| n.id)
+    }
+
+    /// Select an instance from outside the canvas (the Browser).
+    pub fn select_instance(&mut self, id: Option<Id>, project: &Project) {
+        self.select(id, None, project);
+        self.tool = Tool::Select;
+    }
+
+    /// Select a net through its first wire.
+    pub fn select_net(&mut self, net: Id, project: &Project) {
+        let wire = project
+            .wires
+            .iter()
+            .find(|w| project.net_of(w.from).is_some_and(|n| n.id == net));
+        self.select(None, None, project);
+        self.selected_wire = wire.map(|w| w.id);
+        self.tool = Tool::Select;
     }
 
     /// Select an instance, through one of its occurrences when given.
