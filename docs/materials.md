@@ -15,9 +15,9 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 | Body kind | Look | Base colour (linear) | Metallic | Rough | IOR | Source |
 |---|---|---|---|---|---|---|
 | `copper_track`, `pad_copper` | Bare copper | (0.955, 0.638, 0.538) | 1 | 0.30 | – | Cu F0 from Johnson & Christy 1972 (Hoffman's table). Exposed only with Hide substrate; under the mask it is covered by the mask cap. |
-| `pad_finish` | Per pad finish | see [pad finishes](#pad-finishes) | 1 | 0.20–0.35 | – | The board's pad finish; ENIG by default. |
-| `termination` | Matte tin | (0.70, 0.70, 0.72) | 1 | 0.35 | – | **est.** Same Sn F0 as HASL. Electroplated matte tin is rougher than reflowed solder. |
-| `solder` | Reflowed solder fillet | (0.70, 0.70, 0.72) | 1 | 0.15 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. A reflowed meniscus freezes smooth and bright. |
+| `pad_finish` | Per pad finish | see [pad finishes](#pad-finishes) | 1 | 0.16–0.35 | – | The board's pad finish; ENIG by default. |
+| `termination` | Matte tin | (0.64, 0.64, 0.66) | 1 | 0.28 | – | **est.** Same Sn F0 as lead-free HASL. Electroplated matte tin is rougher than reflowed solder. |
+| `solder` | Reflowed solder fillet | (0.64, 0.64, 0.66) | 1 | 0.14 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. A reflowed meniscus freezes smooth and bright. |
 | `chip_resistor` | Alumina ceramic | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | **est.** 96 % alumina thick-film substrates reflect 0.75–0.85 across 400–700 nm (published substrate data); n from sapphire (n_o = 1.77, handbook). |
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
 | `overcoat` | Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | **est.** Glass or epoxy overcoat with a black marking layer over the resistive film. |
@@ -56,14 +56,14 @@ Everything else is a display-only layer built on the model worker as meshes in S
 
 | Layer | Size | Why |
 |---|---|---|
-| Soldermask slabs | 0.020 mm over each board face | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. |
+| Soldermask slabs | 0.020 mm over each board face, 0.03 mm in from the board outline | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. The pull-back (**est.**; fabricators pull mask back from a routed edge) keeps the mask's walls off the laminate's, which drew a dashed line along the far edge at the silhouette. |
 | Mask cap over a track | 0.015 mm above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
 | Mask opening | Land + 0.05 mm | A common fabrication default. |
 | Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
 | Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages whose `body` is `chip_resistor` or `chip_capacitor` (publication requires exactly two package terminals for these). The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
 | Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only `chip_resistor` bodies get it; `chip_capacitor` bodies are MLCC ceramic without an overcoat. |
-| Solder fillet | Concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe; h = 0.4 × body height (at most 0.4 mm); 92 % of the termination width | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. |
+| Solder fillet | A closed solid: concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe, rounding down to the land at both sides as 1 − u⁴ across 92 % of the termination width; h = 0.4 × body height (at most 0.4 mm) | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. No vertical side walls: a flat metal wall mirrored the studio's dark lower walls and read as a black hollow. |
 
 There is no silkscreen: the core has no outline or reference-designator graphics yet. The silkscreen colour is saved with the design and will be drawn once legend graphics exist.
 
@@ -79,17 +79,19 @@ Every value in this table is **est.**: no soldermask colour standard exists, and
 |---|---|---|---|---|---|
 | Green | (0.10, 0.45, 0.18) | (0.010, 0.085, 0.030) | (0.012, 0.116, 0.032) | (0.064, 0.237, 0.069) | 2.1× |
 | Blue | (0.03, 0.10, 0.35) | (0.006, 0.025, 0.110) | (0.006, 0.027, 0.119) | (0.019, 0.050, 0.196) | 1.9× |
-| Red | (0.18, 0.03, 0.03) | (0.145, 0.008, 0.008) | (0.151, 0.008, 0.008) | (0.254, 0.014, 0.013) | 1.7× |
+| Red | (0.30, 0.03, 0.03) | (0.280, 0.014, 0.012) | (0.296, 0.014, 0.012) | (0.482, 0.020, 0.017) | 1.6× |
 | Purple | (0.14, 0.035, 0.22) | (0.074, 0.008, 0.102) | (0.077, 0.008, 0.106) | (0.155, 0.015, 0.151) | 1.8× |
-| Yellow | (0.30, 0.26, 0.03) | (0.420, 0.305, 0.020) | (0.436, 0.315, 0.020) | (0.622, 0.384, 0.025) | 1.3× |
-| Black | (0.011, 0.012, 0.015) | (0.008, 0.008, 0.008) | (0.008, 0.008, 0.008) | (0.012, 0.010, 0.010) | 1.3× |
+| Yellow | (0.30, 0.26, 0.03) | (0.600, 0.440, 0.022) | (0.616, 0.450, 0.022) | (0.802, 0.519, 0.027) | 1.2× |
+| Black | (0.011, 0.012, 0.015) | (0.024, 0.024, 0.026) | (0.024, 0.024, 0.026) | (0.028, 0.026, 0.028) | 1.1× |
 | White | (0.08, 0.087, 0.06) | (0.70, 0.70, 0.66) | (0.701, 0.701, 0.660) | (0.741, 0.721, 0.670) | 1.03× |
 | Clear | (0.92, 0.88, 0.87) | (0.005, 0.011, 0.002) | (0.154, 0.128, 0.057) | (0.780, 0.350, 0.259) | 3.4× |
 
 Calibration notes:
 
+- **Brightness (second pass, 30 October 2026).** A visual check of the product-look pictures found red a dark maroon, yellow a dark mustard and black crushed to pure black, against the scarlet, lemon-ochre and dark-grey gloss boards the cited articles show. None of the cited sources gives a measured colour, so the values stay **est.**; red and yellow now carry more pigment scatter (red also more transmission, so traces still read at 1.6×), and black scatters about 2.4 % (L* ≈ 17), a dark grey under its lacquer rather than a void. The show-through order below is unchanged.
+
 - **Opacity order.** Taiyo's minimum exposure energy is a rough proxy for how much a pigment blocks light: black, white and yellow ≥ 800 mJ/cm²; blue and red ≥ 300; clear ≥ 200 ([Taiyo PSR-4000 BN DI colours](https://sc-c.digikeyassets.com/-/media/Images/Marketing/Resources/DKRed/TDS_PSR-4000_BN_DI_Colors_October-6-2020.pdf)). Peters calls its green "green transparent" ([Elpemer 2467](https://www.wedirekt.com/web/cms/content/_files//pdf1/technical_report_elpemer_2467.pdf)).
-- **Trace contrast.** Observers report traces nearly invisible under black, least visible under white, murky under yellow, and noticeably less visible under red than under green ([Andy Brown](https://andybrown.me.uk/?p=4010), [JLCPCB](https://jlcpcb.com/blog/pcb-solder-mask-colors-performance)). A first estimate gave red 2.1× and purple 2.3×, at or above green, which contradicts that; both were recalibrated with more pigment scatter and less transmission (now 1.7× and 1.8×). The first yellow estimate put the mask over copper at 0.77 red, too bright for a murky mask; it is now 0.62 (1.3×). Tests hold this order: clear above 3×, red, purple and blue at least 0.2 below green (blue's place is **est.**: no cited observation compares blue with green; it follows from blue's opacity class, which Taiyo groups with red), yellow and black below 1.4×, white below 1.1×.
+- **Trace contrast.** Observers report traces nearly invisible under black, least visible under white, murky under yellow, and noticeably less visible under red than under green ([Andy Brown](https://andybrown.me.uk/?p=4010), [JLCPCB](https://jlcpcb.com/blog/pcb-solder-mask-colors-performance)). A first estimate gave red 2.1× and purple 2.3×, at or above green, which contradicts that; both were recalibrated with more pigment scatter and less transmission (1.7× and 1.8×; red is now 1.6× after the brightness pass below). The first yellow estimate put the mask over copper at 0.77 red, too bright for a murky mask; it was lowered to 0.62 (1.3×), which the brightness pass found too dark, so it is now 0.80 with traces barely lightening it (1.2×). Tests hold this order: clear above 3×, red, purple and blue at least 0.2 below green (blue's place is **est.**: no cited observation compares blue with green; it follows from blue's opacity class, which Taiyo groups with red), yellow and black below 1.4×, white below 1.1×.
 - **Clear** assumes natural FR-4 under it. Black FR-4 (as in clear-over-black boards) would need its own laminate reflectance.
 - **White** is scatter-dominated, where the two-flux layer model is crude.
 - Colours offered: JLCPCB lists green, blue, red, black, white, purple and yellow; PCBWay adds matte red and blue, orange, grey, pink and transparent ([circuitstate](https://circuitstate.com/?p=6823)). Orange, grey and pink are not offered here yet.
@@ -110,19 +112,21 @@ Drawn by the product look from the world position in millimetres (display only).
 
 | Body | Pattern | Strength |
 |---|---|---|
-| FR-4 laminate (routed edge, bare laminate) | Weave (colour and relief) | 1 |
+| FR-4 laminate (routed edge, bare laminate) | Weave (colour and relief); a routed edge shows it at a quarter of a face's swing | 1 |
 | Mask over laminate | Orange peel, plus the weave in colour only | Weave show-through: clear 0.6, green 0.12, purple 0.10, blue and red 0.08; black, white and yellow none (peel only) |
 | Mask over copper | Orange peel | 1 |
 
-Show-through is **est.** No measured print-through was found ([research](#sources): the mask levels the surface; the weave changes the colour beneath). It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Silkscreen grain is available but unused until legend graphics exist.
+The weave is a plain weave of continuous warp and weft bundles that rise over one crossing and dip under the next, with filament striations along each bundle; only the windows between four crossings are gaps, so it reads as cloth, not tiles. It and its striations fade out by the time their period falls to about three pixels, so there is no moiré at board distance. Orange peel is a long, shallow waviness (2.4 and 0.9 mm wavelengths, 6 and 1 µm relief, slopes of a few milliradians) so a gloss mask's softbox reflection keeps its shape; all relief fades out toward grazing views. These amplitudes are Solidcraft's visual estimates, lowered after a visual check found the earlier peel turned the softbox into ripples and the weave into a brick-like grid.
+
+Show-through is **est.** No measured print-through value was found in public sources; the mask levels the surface and the weave changes the colour beneath. It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Silkscreen grain is available but unused until legend graphics exist.
 
 ### Pad finishes
 
 | Pad finish | Base colour (linear F0) | Rough | Source |
 |---|---|---|---|
-| ENIG (default) | (0.95, 0.76, 0.37) | 0.25 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin. |
-| HASL (tin-lead) | (0.68, 0.68, 0.69) | 0.20 | **est.** Eutectic Sn63Pb37 is about 30 % lead by volume; lead reflects less than tin, so the blend sits a little below tin. Eutectic solder freezes bright. To be confirmed against Palik's Sn and Pb n, k. |
-| Lead-free HASL | (0.70, 0.70, 0.72) | 0.30 | **est.** Lead-free solders (SAC, SnCuNi) are over 95 % tin: polished tin reflects ≈ 0.7, flat across the visible. They freeze duller and grainier than eutectic tin-lead, hence the higher roughness. |
+| ENIG (default) | (0.95, 0.76, 0.37) | 0.30 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin (**est.** roughness, raised from 0.25 so a typical view averages more of the studio and reads as pale gold, not brass). |
+| HASL (tin-lead) | (0.62, 0.62, 0.63) | 0.16 | **est.** Eutectic Sn63Pb37 is about 30 % lead by volume; lead reflects less than tin, so the blend sits a little below tin. Eutectic solder freezes bright. To be confirmed against Palik's Sn and Pb n, k. |
+| Lead-free HASL | (0.64, 0.64, 0.66) | 0.20 | **est.** Lead-free solders (SAC, SnCuNi) are over 95 % tin. Polished tin reflects ≈ 0.7, flat across the visible; a reflowed or plated surface carries an oxide film, so it is taken lower. They freeze duller and grainier than eutectic tin-lead, hence the higher roughness. |
 | OSP | (0.955, 0.638, 0.538) | 0.35 | Bare copper F0 (as `copper_track`). The organic film is sub-micrometre and transparent (**est.**: its thin-film tint is ignored); the copper under it is micro-etched, hence the roughness. |
 | Immersion silver | (0.972, 0.960, 0.915) | 0.20 | Ag F0 from Hoffman's table (measured optical constants). Immersion silver (IPC-4553) is many optical penetration depths thick, so the copper does not show. |
 
@@ -132,7 +136,9 @@ White (default), black or yellow. Saved and exposed to CLI and MCP; not drawn un
 
 ## PCB 3D look
 
-The PCB 3D view and Component 3D preview draw with Solidcraft's opt-in product look (`Frame::product_look`): a procedural studio environment (the Product preset: softboxes over a grey cyclorama, a dark floor), turned 90° about +Z and fixed in the world; Khronos PBR Neutral tone mapping at exposure 1; a dithered sRGB encode; clear coats; surface patterns; and ambient occlusion on the studio's light, radius 2 % of the model's diagonal within 0.15–1.2 mm (about a chip's height on a board). Over it, a key (point), fill and rim light turn with the camera, and four floor-bounce lights 25° below the horizon stay in the world, so vertical metal (termination ends, fillets) does not mirror the studio's dark lower walls. Seen from below, the board faces the dark floor, so the direct lights are 2.5× stronger and an ambient light (0.6) is added. All of these are tuned by screenshot (**est.**); pictures are written by `cargo test -p pcbcraft --release write_pictures -- --include-ignored` with `PCBCRAFT_PICTURES` set.
+The PCB 3D view and Component 3D preview draw with Solidcraft's opt-in product look (`Frame::product_look`): a procedural studio environment (the Product preset: softboxes over a grey cyclorama, a dark floor), turned 90° about +Z and fixed in the world; Khronos PBR Neutral tone mapping at exposure 1; a dithered sRGB encode; clear coats; surface patterns; and ambient occlusion on the studio's light, radius 2 % of the model's diagonal within 0.15–1.2 mm (about a chip's height on a board). Over it, a key (point), fill and rim light turn with the camera, and four floor-bounce lights 25° below the horizon stay in the world, so vertical metal (termination ends, fillets) does not mirror the studio's dark lower walls. Seen from below, the board faces the dark floor, so the direct lights are 2.5× stronger and an ambient light (0.6) is added. The look treats each direct light as a small softbox on a clear coat (Solidcraft widens the coat's lobe for it), so the key light leaves a soft highlight on gloss mask rather than a clipped dot. All of these are tuned by screenshot (**est.**); pictures are written by `cargo test -p pcbcraft --release write_pictures -- --include-ignored` with `PCBCRAFT_PICTURES` set.
+
+Tin and tin-lead were lowered (from 0.70 and 0.68) and made smoother (HASL from 0.20, solder from 0.15, terminations from 0.35) after the visual check found HASL pads and fillets reading as flat white paper: at a high F0 and moderate roughness the studio's average saturated to a uniform white, with no reflection detail. Both changes are **est.**
 
 ## Sources
 

@@ -5,7 +5,9 @@
 //! helper (MIT, revision 4f3ac07; see ATTRIBUTION.md).
 //!
 //! Without a GPU adapter the tests return early: they measure what the
-//! renderer draws and cannot run without one.
+//! renderer draws and cannot run without one. With `PCBCRAFT_REQUIRE_GPU`
+//! set, a missing adapter is a failure instead, so a green run there is
+//! evidence of the look.
 use super::*;
 use egui_wgpu::wgpu;
 use pcbcraft_core::{Fabrication, MaskColour, PadFinish, Project};
@@ -249,6 +251,11 @@ fn luminance(p: &[u8]) -> f64 {
 #[test]
 fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {
+        // A machine that has a GPU sets PCBCRAFT_REQUIRE_GPU, so a missing
+        // adapter fails there instead of passing without measuring.
+        if std::env::var_os("PCBCRAFT_REQUIRE_GPU").is_some() {
+            return Err("PCBCRAFT_REQUIRE_GPU is set but no GPU adapter was found".into());
+        }
         eprintln!("no GPU adapter: skipped");
         return Ok(());
     };
@@ -357,7 +364,13 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
         v.fit_to(4.0 / 3.0);
         save(&mut v, &format!("component-preview-{k}"))?;
     }
-    for (pad_finish, name) in [(PadFinish::Enig, "enig"), (PadFinish::Hasl, "hasl")] {
+    for (pad_finish, name) in [
+        (PadFinish::Enig, "enig"),
+        (PadFinish::Hasl, "hasl"),
+        (PadFinish::LeadFreeHasl, "lead-free-hasl"),
+        (PadFinish::Osp, "osp"),
+        (PadFinish::ImmersionSilver, "silver"),
+    ] {
         let mut v = viewport(&project(Fabrication {
             pad_finish,
             ..Fabrication::default()

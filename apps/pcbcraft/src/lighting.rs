@@ -145,8 +145,9 @@ pub fn studio(camera: &Camera, bounds: &Aabb3) -> Vec<[f32; 16]> {
 }
 
 /// The product look: the studio fixed in the world (it does not turn with
-/// the camera), patterns in millimetres at glass style 7628.
-pub fn look(_camera: &Camera, _bounds: &Aabb3) -> ProductLook {
+/// the camera), patterns in millimetres at glass style 7628. The same for
+/// every view and model.
+pub fn look() -> ProductLook {
     ProductLook {
         exposure: EXPOSURE,
         studio: STUDIO,
@@ -304,18 +305,17 @@ pub(crate) mod tests {
         assert_eq!(floor(0.0), floor(90.0));
     }
 
-    /// The studio is fixed in the world, so highlights slide across the
-    /// board as it is orbited; patterns keep their physical size.
+    /// The studio is fixed in the world (the look takes no view), so
+    /// highlights slide across the board as it is orbited; patterns keep
+    /// their physical size.
     #[test]
     fn the_look_is_fixed_in_the_world_and_in_millimetres() {
-        let looks: Vec<ProductLook> = views().map(|c| look(&c, &board())).collect();
-        for l in &looks {
-            assert_eq!(*l, looks[0]);
-            assert_eq!(l.sanitized(), *l, "every value is within range");
-        }
-        assert_eq!(looks[0].units_per_mm, 1.0);
-        assert_eq!(looks[0].weave_pitch, ProductLook::WEAVE_7628);
-        assert_eq!(looks[0].ply_thickness, ProductLook::PLY_7628);
+        let l = look();
+        assert_eq!(l.sanitized(), l, "every value is within range");
+        assert_eq!(l.studio, STUDIO);
+        assert_eq!(l.units_per_mm, 1.0);
+        assert_eq!(l.weave_pitch, ProductLook::WEAVE_7628);
+        assert_eq!(l.ply_thickness, ProductLook::PLY_7628);
     }
 
     #[test]

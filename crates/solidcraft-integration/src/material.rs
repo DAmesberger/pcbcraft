@@ -177,14 +177,16 @@ pub fn pigment(colour: MaskColour) -> Pigment {
     let (t20, scatter) = match colour {
         MaskColour::Green => ([0.10, 0.45, 0.18], [0.010, 0.085, 0.030]),
         MaskColour::Blue => ([0.03, 0.10, 0.35], [0.006, 0.025, 0.110]),
-        // Red and purple scatter more and transmit less than green, so
-        // copper shows through less (about 1.7× and 1.8× against green's
-        // 2.1×).
-        MaskColour::Red => ([0.18, 0.03, 0.03], [0.145, 0.008, 0.008]),
+        // Red and purple scatter more than green, so copper shows through
+        // less (about 1.6× and 1.8× against green's 2.1×). Red is a
+        // scarlet, not a maroon: most of its colour is pigment scatter.
+        MaskColour::Red => ([0.30, 0.03, 0.03], [0.280, 0.014, 0.012]),
         MaskColour::Purple => ([0.14, 0.035, 0.22], [0.074, 0.008, 0.102]),
-        // Murky yellow: mostly scatter, so traces barely lighten it.
-        MaskColour::Yellow => ([0.30, 0.26, 0.03], [0.420, 0.305, 0.020]),
-        MaskColour::Black => ([0.011, 0.012, 0.015], [0.008, 0.008, 0.008]),
+        // Lemon-ochre yellow: mostly scatter, so traces barely lighten it.
+        MaskColour::Yellow => ([0.30, 0.26, 0.03], [0.600, 0.440, 0.022]),
+        // Black pigment in a resin still scatters a little: a dark grey
+        // body (about 2.4 % luminance), never a crushed black.
+        MaskColour::Black => ([0.011, 0.012, 0.015], [0.024, 0.024, 0.026]),
         MaskColour::White => ([0.08, 0.087, 0.06], [0.70, 0.70, 0.66]),
         MaskColour::Clear => ([0.92, 0.88, 0.87], [0.005, 0.011, 0.002]),
     };
@@ -266,11 +268,12 @@ pub const MASK_OVER_COPPER_UM: f64 = 12.0;
 const EPOXY_IOR: f64 = 1.55;
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
-/// Tin F0, flat across the visible (est.; Palik's Sn n, k to confirm).
-const TIN: [f64; 3] = [0.70, 0.70, 0.72];
+/// Tin F0 of a reflowed or plated surface, flat across the visible (est.;
+/// below polished tin, for its oxide film; Palik's Sn n, k to confirm).
+const TIN: [f64; 3] = [0.64, 0.64, 0.66];
 /// Eutectic tin-lead (Sn63Pb37) F0: about 30 % lead by volume, which
 /// reflects less than tin (est.).
-const TIN_LEAD: [f64; 3] = [0.68, 0.68, 0.69];
+const TIN_LEAD: [f64; 3] = [0.62, 0.62, 0.63];
 /// Silver F0 (Hoffman's table, from measured optical constants).
 const SILVER: [f64; 3] = [0.972, 0.960, 0.915];
 /// 96 % alumina substrate diffuse reflectance (est. from published
@@ -357,19 +360,19 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         BodyKind::PadFinish => match fabrication.pad_finish {
             // 85 % Au F0 (1.000, 0.782, 0.344) over 15 % Ni F0 (0.660, 0.609,
             // 0.526): the immersion gold is only 1–2 penetration depths thick.
-            PadFinish::Enig => metal("ENIG gold", [0.95, 0.76, 0.37], 0.25),
+            PadFinish::Enig => metal("ENIG gold", [0.95, 0.76, 0.37], 0.30),
             // Eutectic tin-lead freezes bright; lead-free tin alloys freeze
             // duller and grainier.
-            PadFinish::Hasl => metal("HASL tin-lead", TIN_LEAD, 0.20),
-            PadFinish::LeadFreeHasl => metal("Lead-free HASL tin", TIN, 0.30),
+            PadFinish::Hasl => metal("HASL tin-lead", TIN_LEAD, 0.16),
+            PadFinish::LeadFreeHasl => metal("Lead-free HASL tin", TIN, 0.20),
             // A sub-micrometre transparent film over micro-etched copper.
             PadFinish::Osp => metal("OSP copper", COPPER, 0.35),
             // Immersion silver is many optical penetration depths thick.
             PadFinish::ImmersionSilver => metal("Immersion silver", SILVER, 0.20),
         },
-        BodyKind::Termination => metal("Matte tin", TIN, 0.35),
+        BodyKind::Termination => metal("Matte tin", TIN, 0.28),
         // Reflowed SAC solder freezes with a smooth, bright meniscus.
-        BodyKind::Solder => metal("Reflowed solder", TIN, 0.15),
+        BodyKind::Solder => metal("Reflowed solder", TIN, 0.14),
         BodyKind::PackageBody | BodyKind::PartBody => dielectric(
             "Epoxy mould compound",
             [0.022, 0.022, 0.024],
@@ -544,11 +547,11 @@ mod tests {
             );
             (m.metallic, m.base_linear, m.roughness)
         };
-        assert_eq!(pad(PadFinish::Enig), (1.0, [0.95, 0.76, 0.37], 0.25));
-        assert_eq!(pad(PadFinish::Hasl), (1.0, [0.68, 0.68, 0.69], 0.20));
+        assert_eq!(pad(PadFinish::Enig), (1.0, [0.95, 0.76, 0.37], 0.30));
+        assert_eq!(pad(PadFinish::Hasl), (1.0, [0.62, 0.62, 0.63], 0.16));
         assert_eq!(
             pad(PadFinish::LeadFreeHasl),
-            (1.0, [0.70, 0.70, 0.72], 0.30)
+            (1.0, [0.64, 0.64, 0.66], 0.20)
         );
         assert_eq!(pad(PadFinish::Osp), (1.0, COPPER, 0.35));
         assert_eq!(
@@ -637,8 +640,8 @@ mod tests {
             ),
             (
                 MaskColour::Red,
-                [0.151, 0.008, 0.008],
-                [0.254, 0.014, 0.013],
+                [0.296, 0.014, 0.012],
+                [0.482, 0.020, 0.017],
             ),
             (
                 MaskColour::Purple,
@@ -647,13 +650,13 @@ mod tests {
             ),
             (
                 MaskColour::Yellow,
-                [0.436, 0.315, 0.020],
-                [0.622, 0.384, 0.025],
+                [0.616, 0.450, 0.022],
+                [0.802, 0.519, 0.027],
             ),
             (
                 MaskColour::Black,
-                [0.008, 0.008, 0.008],
-                [0.012, 0.010, 0.010],
+                [0.024, 0.024, 0.026],
+                [0.028, 0.026, 0.028],
             ),
             (
                 MaskColour::White,
@@ -723,7 +726,8 @@ mod tests {
                 MaskColour::Red => r > 5.0 * g && r > 5.0 * b,
                 MaskColour::Purple => r > 5.0 * g && b > 5.0 * g,
                 MaskColour::Yellow => r > 10.0 * b && g > 10.0 * b,
-                MaskColour::Black => luminance(laminate) < 0.01,
+                // Dark grey, neither crushed to black nor washed out.
+                MaskColour::Black => (0.015..0.035).contains(&luminance(laminate)),
                 MaskColour::White => luminance(laminate) > 0.6,
                 MaskColour::Clear => r > g && g > b,
             };

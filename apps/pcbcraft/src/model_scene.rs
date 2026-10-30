@@ -21,9 +21,10 @@ use solidcraft_ui_egui::gpu::{
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Upper bound on PBR vertex bytes per model (about 350 000 triangles of
-/// detailed vertices).
-pub const MAX_PBR_BYTES: usize = 64 << 20;
+/// Upper bound on PBR vertex bytes per model: about 480 000 triangles of
+/// detailed (64-byte) vertices, a little above what the earlier 48-byte
+/// stream accepted under 64 MiB, so no board that loaded before is refused.
+pub const MAX_PBR_BYTES: usize = 88 << 20;
 
 /// Solidcraft's pattern for a body's procedural detail.
 pub fn surface_pattern(pattern: Pattern) -> SurfacePattern {

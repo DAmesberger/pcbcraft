@@ -108,7 +108,7 @@ impl Viewport {
     /// draws with the direct lights only.
     fn bake_studio(rs: &egui_wgpu::RenderState, ctx: &egui::Context) {
         let (rs, ctx) = (rs.clone(), ctx.clone());
-        let preset = lighting::look(&Camera::default(), &Self::initial_bounds()).studio;
+        let preset = lighting::STUDIO;
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-studio".into())
             .spawn(move || {
@@ -458,7 +458,7 @@ impl Viewport {
         let eye = self.camera.eye().to_f32();
         Frame {
             product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
-            product_look: Some(lighting::look(&self.camera, &self.bounds)),
+            product_look: Some(lighting::look()),
             product: false,
             key: self.key,
             slot: self.slot.clone(),
