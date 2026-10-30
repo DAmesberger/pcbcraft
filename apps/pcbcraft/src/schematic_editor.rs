@@ -24,6 +24,7 @@ use solidcraft_ui_egui::{
     ui_kit::{self, Button},
 };
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 /// An edit buffer for one field shown on the symbol: its lineage, label,
 /// the effective text when loaded and the text being typed.
@@ -78,7 +79,11 @@ pub struct SchematicEditor {
     issues: Vec<pcbcraft_core::Finding>,
     /// What each occurrence draws, resolved by core once per revision so
     /// selection and hover never re-resolve.
-    placed: BTreeMap<Id, PlacedUnit>,
+    /// Shared so a frame can hold it while selection mutates the editor.
+    placed: Arc<BTreeMap<Id, PlacedUnit>>,
+    /// The Place tool's ghost: the component's first unit as core draws it
+    /// in its own frame, resolved once per component and revision.
+    ghost: Option<(ComponentRef, u64, PlacedUnit)>,
     update: crate::update_preview::UpdatePreview,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
@@ -110,7 +115,8 @@ impl Default for SchematicEditor {
             nets_revision: None,
             nets: Vec::new(),
             issues: Vec::new(),
-            placed: BTreeMap::new(),
+            placed: Arc::default(),
+            ghost: None,
             update: Default::default(),
             palette: PlacePalette::default(),
         }
@@ -134,6 +140,26 @@ fn unit_of<'a>(
         .units
         .iter()
         .find(|u| u.id == occurrence.unit)
+}
+
+/// The unit placing `component` puts down, drawn by core in its own frame.
+/// Pin numbers are hidden: the ghost is an outline only.
+fn ghost_unit(project: &Project, component: ComponentRef) -> Option<PlacedUnit> {
+    let library = &project.library;
+    let published = library.component(component)?;
+    let symbol = library.symbol(*published.definition.representations.first()?)?;
+    let unit = symbol.definition.units.first()?;
+    schematic::definition_unit(
+        library,
+        schematic::DefinitionUnit {
+            symbol: &symbol.definition,
+            unit: unit.id,
+            component: &published.definition,
+            component_name: &published.meta.name,
+            physical: None,
+        },
+    )
+    .ok()
 }
 
 /// What placing `component` creates: its first representation and unit and
@@ -180,12 +206,16 @@ impl SchematicEditor {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
             self.issues = erc::checks(engine.project());
-            self.placed = engine
-                .project()
-                .occurrences
-                .iter()
-                .filter_map(|o| Some((o.id, schematic::placed_unit(engine.project(), o.id).ok()?)))
-                .collect();
+            self.placed = Arc::new(
+                engine
+                    .project()
+                    .occurrences
+                    .iter()
+                    .filter_map(|o| {
+                        Some((o.id, schematic::placed_unit(engine.project(), o.id).ok()?))
+                    })
+                    .collect(),
+            );
             self.nets_revision = Some(engine.revision());
         }
     }
@@ -954,10 +984,20 @@ impl SchematicEditor {
                 }
             }
         }
+        if self.tool == Tool::Place
+            && let Some(component) = self.component
+            && self
+                .ghost
+                .as_ref()
+                .is_none_or(|(c, revision, _)| *c != component || *revision != engine.revision())
+        {
+            self.ghost = ghost_unit(project, component).map(|u| (component, engine.revision(), u));
+        }
         let m = TextMetric::default();
         let tolerance = f64::from(HIT_PX / scale);
+        let placed_units = Arc::clone(&self.placed);
         for occurrence in &project.occurrences {
-            let Some(placed) = self.placed.get(&occurrence.id) else {
+            let Some(placed) = placed_units.get(&occurrence.id) else {
                 continue;
             };
             // A dragged occurrence is drawn and picked at its preview.
@@ -971,11 +1011,9 @@ impl SchematicEditor {
                 origin: screen(delta),
                 scale,
             };
-            let at =
-                schematic::occurrence_transform(occurrence).then(&Transform2::translation(delta));
-            if let Some(unit) = unit_of(project, occurrence) {
-                body_hits.push((occurrence.instance, occurrence.id, unit, at.inverse()));
-            }
+            // Picking uses the cached resolved drawing, so what is drawn
+            // is what is picked and nothing re-resolves per frame.
+            body_hits.push((occurrence.instance, occurrence.id, placed, delta));
             let selected = self.selected == Some(occurrence.instance);
             symbol_view::paint(
                 &painter,
@@ -1006,8 +1044,10 @@ impl SchematicEditor {
             body_hits
                 .iter()
                 .rev()
-                .find(|(_, _, unit, inverse)| {
-                    unit.hit(inverse.apply(view.world(p)), tolerance, m)
+                .find(|(_, _, placed, delta)| {
+                    let [x, y] = view.world(p);
+                    placed
+                        .hit([x - delta[0], y - delta[1]], tolerance, m)
                         .is_some()
                 })
                 .map(|(id, occurrence, _, _)| (*id, *occurrence))
@@ -1022,24 +1062,24 @@ impl SchematicEditor {
             }
             if self.tool == Tool::Place
                 && !self.palette.is_open()
-                && let Some((_, unit)) = self.component.and_then(|c| first_choices(project, c))
+                && let Some((_, _, unit)) = self
+                    .ghost
+                    .as_ref()
+                    .filter(|(c, _, _)| Some(*c) == self.component)
             {
-                // The ghost outlines the unit's own graphics and pins.
+                // The ghost outlines the shapes and pin stubs core resolves
+                // for the unit, at the snapped pointer.
                 let ghost = symbol_view::View {
                     origin: screen(world(pointer)),
                     scale,
                 };
                 let stroke = Stroke::new(1.5, t.accent);
-                for graphic in &unit.graphics {
-                    if let pcbcraft_core::library::Item::Shape { shape, .. } = &graphic.item {
-                        symbol_view::paint_shape(&painter, ghost, shape, None, Some(stroke));
-                    }
+                for shape in &unit.shapes {
+                    symbol_view::paint_shape(&painter, ghost, &shape.shape, None, Some(stroke));
                 }
                 for pin in &unit.pins {
-                    painter.line_segment(
-                        [ghost.screen(pin.position), ghost.screen(pin.body_end())],
-                        stroke,
-                    );
+                    painter
+                        .line_segment([ghost.screen(pin.end), ghost.screen(pin.body_end)], stroke);
                 }
             }
             if let Some(from) = self
@@ -2026,6 +2066,29 @@ mod tests {
         // The designator above the body (bottom at 1.5 mm) picks it too.
         click_at(&mut editor, &engine, &ctx, r1_body + vec2(0.0, -2.2 * 12.0));
         assert_eq!(editor.selected_instance(), Some(r1));
+        // What is drawn is what is picked: the end of the resolved name
+        // (wider than the body) and the value stacked below the body.
+        let occurrence = engine.project().occurrences_of(r1).next().ok_or("R1")?.id;
+        let placed = schematic::placed_unit(engine.project(), occurrence)?;
+        let m = TextMetric::default();
+        let name = placed
+            .texts
+            .iter()
+            .find(|t| t.text == "Resistor")
+            .ok_or("name")?
+            .bounds(m);
+        let value = placed.fields.first().ok_or("stacked value")?.bounds(m);
+        let sheet = |p: Point| pos2(400.0 + p[0] as f32 * 12.0, 400.0 - p[1] as f32 * 12.0);
+        for p in [
+            [name.min[0] + 0.1, (name.min[1] + name.max[1]) / 2.0],
+            [name.max[0] - 0.1, (name.min[1] + name.max[1]) / 2.0],
+            [-12.0, (value.min[1] + value.max[1]) / 2.0],
+        ] {
+            click_at(&mut editor, &engine, &ctx, pos2(600.0, 650.0));
+            assert_eq!(editor.selected_instance(), None);
+            click_at(&mut editor, &engine, &ctx, sheet(p));
+            assert_eq!(editor.selected_instance(), Some(r1), "click at {p:?}");
+        }
         Ok(())
     }
 

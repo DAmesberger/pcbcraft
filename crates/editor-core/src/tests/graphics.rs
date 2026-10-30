@@ -805,6 +805,61 @@ fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
 }
 
 #[test]
+fn placed_units_pick_what_they_draw() -> Result<()> {
+    let engine = Engine::demo()?;
+    let r1 = by_designator(&engine, "R1")?;
+    let occurrence = engine
+        .project()
+        .occurrences_of(r1)
+        .next()
+        .map(|o| o.id)
+        .ok_or_else(|| Error::NotFound("occurrence".into()))?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    let m = TextMetric::default();
+    let tol = 0.2;
+    // The end of the resolved component name, wider than the four
+    // characters a placeholder is assumed to have in the definition.
+    let name = placed
+        .texts
+        .iter()
+        .find(|t| t.text == "Resistor")
+        .ok_or_else(|| Error::NotFound("name".into()))?;
+    let b = name.bounds(m);
+    let end = [b.max[0] - 0.05, (b.min[1] + b.max[1]) / 2.0];
+    assert!(
+        b.max[0] - b.min[0] > m.bounds([0.0; 2], name.height, 0.0, name.justify, 4).max[0] * 2.0
+    );
+    assert!(name.graphic.is_some());
+    assert_eq!(
+        placed.hit(end, tol, m),
+        name.graphic.map(SymbolHit::Graphic)
+    );
+    // The stacked value below the body.
+    let [value] = placed.fields.as_slice() else {
+        return Err(Error::Invalid(format!("{:?}", placed.fields)));
+    };
+    let v = value.bounds(m);
+    let inside = [(v.min[0] + v.max[0]) / 2.0, (v.min[1] + v.max[1]) / 2.0];
+    assert_eq!(placed.hit(inside, tol, m), Some(SymbolHit::Field));
+    // Pins and the body, in sheet coordinates; empty sheet misses.
+    assert_eq!(
+        placed.hit([-16.0, 0.1], tol, m),
+        Some(SymbolHit::Pin(TerminalId(1)))
+    );
+    assert_eq!(
+        placed.hit([-12.0, 0.9], tol, m),
+        Some(SymbolHit::Graphic(placed.shapes[0].graphic))
+    );
+    assert_eq!(placed.hit([-12.0, 20.0], tol, m), None);
+    // Every hit lies within the drawn bounds the views fit to.
+    let bounds = placed
+        .bounds(m)
+        .ok_or_else(|| Error::NotFound("bounds".into()))?;
+    assert!(bounds.contains(end) && bounds.contains(inside));
+    Ok(())
+}
+
+#[test]
 fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()> {
     let engine = Engine::demo()?;
     let f = demo_fixture(&engine)?;

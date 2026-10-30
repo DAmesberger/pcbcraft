@@ -684,6 +684,9 @@ pub fn text(id: GraphicId, content: TextContent, at: Point, justify: Justify) ->
 pub enum SymbolHit {
     Pin(TerminalId),
     Graphic(GraphicId),
+    /// A shown field value a placed unit stacks below its drawing; it has
+    /// no graphic of its own and stands for the unit as a whole.
+    Field,
 }
 
 /// Advisory findings for one draft against the authoring grid. They never

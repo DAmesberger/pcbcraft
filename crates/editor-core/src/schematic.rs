@@ -3,13 +3,13 @@
 //! never imply a connection. [`placed_unit`] resolves what an occurrence
 //! draws and [`definition_unit`] what a unit being authored draws.
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid};
+use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 use crate::library::graphics::SYMBOL_TEXT_HEIGHT_MM;
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
-    PackageDefinition, SymbolDefinition, TextContent, TextMetric, Unit, VAlign,
+    PackageDefinition, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit, VAlign,
 };
 use crate::model::{EditPolicy, Net, Project, SymbolOccurrence, Wire};
 use crate::nets;
@@ -343,6 +343,10 @@ pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
 /// Resolved text placed on the sheet.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PlacedText {
+    /// The text graphic drawn; `None` for pin names and numbers and for
+    /// stacked field values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphic: Option<GraphicId>,
     pub text: String,
     pub at: Point,
     pub height: f64,
@@ -422,6 +426,51 @@ impl PlacedUnit {
         let texts = self.texts.iter().chain(&self.fields).map(|t| t.bounds(m));
         shapes.chain(pins).chain(texts).reduce(Bounds::union)
     }
+
+    /// The topmost drawn object within `tol_mm` of `p`, in the same
+    /// coordinates and with the same resolved text as [`Self::bounds`], so
+    /// what is drawn is what is picked: pins (stub, decorations, name and
+    /// number) first, then text graphics and stacked field values (drawn
+    /// over shapes), then shapes, later ones before earlier ones.
+    pub fn hit(&self, p: Point, tol_mm: f64, m: TextMetric) -> Option<SymbolHit> {
+        let near_text =
+            |t: &PlacedText| !t.text.is_empty() && t.bounds(m).inflated(tol_mm).contains(p);
+        let pin = self
+            .pins
+            .iter()
+            .filter_map(|pin| {
+                let stub = segment_distance(p, pin.end, pin.body_end);
+                let decoration = pin
+                    .decorations
+                    .iter()
+                    .map(|d| d.distance(p, false))
+                    .fold(f64::INFINITY, f64::min);
+                let text = pin.name.iter().chain(&pin.number).any(near_text);
+                let d = if text { 0.0 } else { stub.min(decoration) };
+                (d <= tol_mm).then_some((d, pin.terminal))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, terminal)) = pin {
+            return Some(SymbolHit::Pin(terminal));
+        }
+        if self.fields.iter().any(near_text) {
+            return Some(SymbolHit::Field);
+        }
+        if let Some(graphic) = self
+            .texts
+            .iter()
+            .rev()
+            .find(|t| near_text(t))
+            .and_then(|t| t.graphic)
+        {
+            return Some(SymbolHit::Graphic(graphic));
+        }
+        self.shapes
+            .iter()
+            .rev()
+            .find(|s| s.shape.distance(p, s.fill != Fill::None) <= tol_mm + s.width / 2.0)
+            .map(|s| SymbolHit::Graphic(s.graphic))
+    }
 }
 
 /// Gap between a unit and the shown field values stacked below it, mm.
@@ -474,15 +523,20 @@ fn draw(
     r: &Resolution<'_>,
     occurrence: Option<Id>,
 ) -> PlacedUnit {
-    let place =
-        |text: String, at: Point, height: f64, rotation_deg: f64, justify: Justify| PlacedText {
-            text,
-            at: t.apply(at),
-            height,
-            rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
-            justify,
-            mirrored: t.mirror,
-        };
+    let place = |graphic: Option<GraphicId>,
+                 text: String,
+                 at: Point,
+                 height: f64,
+                 rotation_deg: f64,
+                 justify: Justify| PlacedText {
+        graphic,
+        text,
+        at: t.apply(at),
+        height,
+        rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
+        justify,
+        mirrored: t.mirror,
+    };
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
     let mut drawn_fields = BTreeSet::new();
@@ -514,6 +568,7 @@ fn draw(
                         .unwrap_or_default(),
                 };
                 texts.push(place(
+                    Some(graphic.id),
                     content,
                     text.at,
                     text.height,
@@ -534,7 +589,7 @@ fn draw(
                 .filter(|_| pin.name.visible)
                 .map(|terminal| {
                     let (at, rotation, justify) = pin.name_anchor();
-                    place(terminal.name.clone(), at, height, rotation, justify)
+                    place(None, terminal.name.clone(), at, height, rotation, justify)
                 });
             let number = r
                 .physical
@@ -542,7 +597,7 @@ fn draw(
                 .filter(|_| pin.number.visible)
                 .map(|text| {
                     let (at, rotation, justify) = pin.number_anchor();
-                    place(text, at, height, rotation, justify)
+                    place(None, text, at, height, rotation, justify)
                 });
             PlacedPin {
                 terminal: pin.terminal,
@@ -576,6 +631,7 @@ fn draw(
             continue;
         }
         placed.fields.push(PlacedText {
+            graphic: None,
             text: field.text.clone(),
             at: [below.center()[0], y],
             height: SYMBOL_TEXT_HEIGHT_MM,
@@ -658,8 +714,7 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
         designator.push_str(&unit.label);
     }
     // A field shows its default, or its name when it has none.
-    let fields = instances::default_fields(library, d.component)
-        .unwrap_or_default()
+    let fields = instances::default_fields(library, d.component)?
         .into_iter()
         .map(|f| ShownField {
             lineage: f.field.id,

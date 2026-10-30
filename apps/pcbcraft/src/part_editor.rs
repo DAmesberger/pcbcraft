@@ -1419,15 +1419,10 @@ impl PartEditor {
                 };
                 painter.circle_filled(view.screen(pin.end), stub / 2.0 + 4.0, ink);
             }
-            // Picking goes through the core hit test in the unit frame:
-            // pins before graphics.
+            // Picking goes through the core hit test of the resolved
+            // drawing, so what is drawn is what is picked: pins first.
             let tolerance = f64::from(PICK_PX / scale);
-            let hit = |p: Pos2| {
-                set.symbol
-                    .units
-                    .first()
-                    .and_then(|u| u.hit(view.world(p), tolerance, m))
-            };
+            let hit = |p: Pos2| drawn.hit(view.world(p), tolerance, m);
             let pressed = if response.drag_started() {
                 ui.input(|i| i.pointer.press_origin())
             } else if response.clicked() {
