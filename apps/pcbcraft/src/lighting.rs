@@ -1,9 +1,11 @@
 //! Studio lighting for the PCB 3D view: a key/fill/rim product-shot rig
-//! that turns with the camera, a sheen light whose mirror image through the
-//! board lies behind the view centre, and a ring of dim lights around the
-//! mirror direction that stands in for a softbox reflected by horizontal
-//! metal and soldermask. Solidcraft's PBR viewport has no environment map,
-//! so these lights are the only reflections. Materials and lights do not
+//! that turns with the camera, so the model always reads, and reflection
+//! lights fixed in the world (a studio around the board), so highlights on
+//! the soldermask and metals slide across the board as it is orbited instead
+//! of following the view centre. Every light mirrors to the side of the
+//! board the camera sees. Solidcraft's PBR viewport (revision 4f3ac07) has no
+//! environment map, so these lights are the only reflections; see
+//! `docs/editor-evidence.md` for that limit. Materials and lights do not
 //! follow the UI theme.
 //!
 //! Records use Solidcraft's product-light layout, packed as its render
@@ -21,20 +23,33 @@ pub const MAX_LIGHTS: usize = 21;
 /// diffuse reads about 0.3–0.5 after the shader's fixed Reinhard curve.
 pub const EXPOSURE: f64 = 3.0;
 
-const KEY: (f64, f64, f64, [f64; 3]) = (-35.0, 50.0, 1.0, [1.0, 0.97, 0.92]);
+/// Camera-relative (azimuth, elevation in degrees, intensity, colour).
+const KEY: (f64, f64, f64, [f64; 3]) = (-35.0, 50.0, 0.9, [1.0, 0.97, 0.92]);
 const FILL: (f64, f64, f64, [f64; 3]) = (60.0, 25.0, 0.30, [1.0, 1.0, 1.0]);
 const RIM: (f64, f64, f64, [f64; 3]) = (165.0, 35.0, 0.12, [0.92, 0.96, 1.0]);
-/// The sheen light's turn about the vertical, past the mirror direction.
-const SHEEN_TURN: f64 = 195.0;
-const SHEEN: f64 = 0.10;
-/// Reflection softbox around the mirror direction: rings of (half-angle in
-/// degrees, lights). Twelve lights 6° out are close enough that their
-/// lobes merge into one disc on gloss mask and metal instead of dots, even
-/// where a grazing view stretches them.
-const RING: [(f64, usize); 2] = [(0.0, 1), (6.0, 12)];
-const RING_LIGHTS: usize = 13;
-const RING_SHARE: f64 = 0.0035;
-const AMBIENT: f64 = 0.15;
+/// World-fixed reflection lights: (azimuth from +X, elevation, intensity).
+/// A high softbox, rings of dim panels at mid and low height (the studio's
+/// walls) whose glints make metal read as metal from any side, and light bounced off a pale studio
+/// floor below the horizon, which only vertical faces (termination ends,
+/// solder fillets, package sides) see.
+pub const STUDIO: [(f64, f64, f64); 15] = [
+    (120.0, 62.0, 0.05),
+    (20.0, 38.0, 0.045),
+    (75.0, 30.0, 0.045),
+    (140.0, 38.0, 0.045),
+    (200.0, 30.0, 0.045),
+    (260.0, 38.0, 0.045),
+    (320.0, 30.0, 0.045),
+    (0.0, 16.0, 0.035),
+    (90.0, 18.0, 0.035),
+    (180.0, 16.0, 0.035),
+    (270.0, 18.0, 0.035),
+    (45.0, -25.0, 0.06),
+    (135.0, -25.0, 0.06),
+    (225.0, -25.0, 0.06),
+    (315.0, -25.0, 0.06),
+];
+const AMBIENT: f64 = 0.18;
 
 fn record(position: Vec3, kind: f32, rgb: [f64; 3], scale: f64, ref2: f64) -> [f32; 16] {
     let mut value = [0.0_f32; 16];
@@ -50,6 +65,11 @@ fn record(position: Vec3, kind: f32, rgb: [f64; 3], scale: f64, ref2: f64) -> [f
     value
 }
 
+/// Up toward the side of the board the camera sees.
+fn side(camera: &Camera) -> f64 {
+    if camera.pitch < 0.0 { -1.0 } else { 1.0 }
+}
+
 /// A unit direction `azimuth` degrees around the camera's horizontal frame
 /// (0 toward the camera, negative to its left) and `elevation` degrees above
 /// the board on the side the camera looks from.
@@ -57,10 +77,18 @@ fn around(camera: &Camera, azimuth: f64, elevation: f64) -> Vec3 {
     let (sy, cy) = camera.yaw.sin_cos();
     let toward = Vec3::new(-sy, -cy, 0.0);
     let right = Vec3::new(cy, -sy, 0.0);
-    let up = Vec3::new(0.0, 0.0, if camera.pitch < 0.0 { -1.0 } else { 1.0 });
+    let up = Vec3::new(0.0, 0.0, side(camera));
     let (sa, ca) = azimuth.to_radians().sin_cos();
     let (se, ce) = elevation.to_radians().sin_cos();
     (toward * ca + right * sa) * ce + up * se
+}
+
+/// A world direction `azimuth` degrees from +X and `elevation` degrees above
+/// the board on the side the camera looks from.
+fn fixed(camera: &Camera, azimuth: f64, elevation: f64) -> Vec3 {
+    let (sa, ca) = azimuth.to_radians().sin_cos();
+    let (se, ce) = elevation.to_radians().sin_cos();
+    Vec3::new(ca * ce, sa * ce, se * side(camera))
 }
 
 /// The light rig for `camera` looking at a model within `bounds`.
@@ -71,7 +99,7 @@ pub fn studio(camera: &Camera, bounds: &Aabb3, exposure: f64) -> Vec<[f32; 16]> 
         bounds.diagonal().max(1.0)
     };
     let target = camera.target;
-    let mut rig = Vec::with_capacity(5 + RING_LIGHTS);
+    let mut rig = Vec::with_capacity(4 + STUDIO.len());
     let (az, el, i, rgb) = KEY;
     let distance = 1.6 * diagonal;
     rig.push(record(
@@ -84,33 +112,14 @@ pub fn studio(camera: &Camera, bounds: &Aabb3, exposure: f64) -> Vec<[f32; 16]> 
     for (az, el, i, rgb) in [FILL, RIM] {
         rig.push(record(around(camera, az, el), 0.0, rgb, i * exposure, 1.0));
     }
-    let eye = camera.eye() - target;
-    let (s, c) = SHEEN_TURN.to_radians().sin_cos();
-    let sheen = Vec3::new(eye.x * c - eye.y * s, eye.x * s + eye.y * c, eye.z);
-    let reach = sheen.len().max(1e-3);
-    rig.push(record(
-        target + sheen,
-        1.0,
-        [1.0; 3],
-        SHEEN * exposure,
-        reach * reach,
-    ));
-    let b = camera.back();
-    let mirror = Vec3::new(-b.x, -b.y, b.z).normalized().unwrap_or(Vec3::Z);
-    let seed = if mirror.z.abs() > 0.9 {
-        Vec3::X
-    } else {
-        Vec3::Z
-    };
-    let e1 = mirror.cross(seed).normalized().unwrap_or(Vec3::X);
-    let e2 = mirror.cross(e1).normalized().unwrap_or(Vec3::Y);
-    for (half, lights) in RING {
-        let (st, ct) = half.to_radians().sin_cos();
-        for k in 0..lights {
-            let phi = k as f64 / lights as f64 * std::f64::consts::TAU;
-            let d = mirror * ct + (e1 * phi.cos() + e2 * phi.sin()) * st;
-            rig.push(record(d, 0.0, [1.0; 3], RING_SHARE * exposure, 1.0));
-        }
+    for (az, el, i) in STUDIO {
+        rig.push(record(
+            fixed(camera, az, el),
+            0.0,
+            [1.0; 3],
+            i * exposure,
+            1.0,
+        ));
     }
     rig.push(record(Vec3::ZERO, 4.0, [1.0; 3], AMBIENT * exposure, 1.0));
     rig.truncate(MAX_LIGHTS);
@@ -190,9 +199,16 @@ pub(crate) mod tests {
             .flat_map(|pitch| (0..12).map(move |k| camera(f64::from(k) * 30.0, pitch)))
     }
 
+    /// Exposed gold seen flat from 48 views. With reflections fixed in the
+    /// world, metal brightens and darkens as the board turns, as real metal
+    /// does: some views catch the softbox, a typical view reads as metal and
+    /// none goes black. (Discrete lights cannot do better; an environment
+    /// term in Solidcraft's PBR shader would.)
     #[test]
-    fn exposed_gold_is_never_black() -> Result<(), Box<dyn std::error::Error>> {
+    fn exposed_gold_reads_as_metal_from_most_views_and_is_never_black()
+    -> Result<(), Box<dyn std::error::Error>> {
         let enig = material(BodyKind::PadFinish, DEFAULT_FINISH).surface()?;
+        let mut values = vec![];
         for camera in views() {
             let rig = studio(&camera, &board(), EXPOSURE);
             let n = if camera.pitch < 0.0 {
@@ -200,14 +216,21 @@ pub(crate) mod tests {
             } else {
                 Vec3::Z
             };
-            let lum = luminance(shade(&rig, enig, n, camera.eye(), camera.target)?);
-            assert!(
-                lum >= 0.15,
-                "yaw {} pitch {}: {lum}",
-                camera.yaw,
-                camera.pitch
-            );
+            values.push(luminance(shade(
+                &rig,
+                enig,
+                n,
+                camera.eye(),
+                camera.target,
+            )?));
         }
+        values.sort_by(f64::total_cmp);
+        let (lowest, median) = (values[0], values[values.len() / 2]);
+        let highest = values[values.len() - 1];
+        // Luminance 0.025 still encodes to about 45/255 after sRGB.
+        assert!(lowest >= 0.025, "darkest view {lowest}");
+        assert!(median >= 0.10, "median {median}");
+        assert!(highest >= 0.5, "no view catches the softbox: {highest}");
         Ok(())
     }
 
@@ -295,12 +318,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn rig_is_bounded_finite_and_turns_with_the_camera() {
+    fn rig_is_bounded_finite_and_reflections_stay_in_the_world() {
         for camera in views() {
             let rig = studio(&camera, &board(), EXPOSURE);
             assert!(rig.len() <= MAX_LIGHTS);
-            assert_eq!(RING.iter().map(|r| r.1).sum::<usize>(), RING_LIGHTS);
-            assert_eq!(rig.len(), 3 + 1 + RING_LIGHTS + 1);
+            assert_eq!(rig.len(), 3 + STUDIO.len() + 1);
             for light in &rig {
                 assert!(light.iter().all(|x| x.is_finite()));
                 if light[3] == 0.0 {
@@ -309,15 +331,27 @@ pub(crate) mod tests {
                 }
             }
         }
-        let key = |yaw: f64| {
+        let at = |yaw: f64, index: usize| {
             let camera = camera(yaw, 45.0);
             let rig = studio(&camera, &board(), EXPOSURE);
-            Vec3::new(rig[0][0].into(), rig[0][1].into(), rig[0][2].into()) - camera.target
+            Vec3::new(
+                rig[index][0].into(),
+                rig[index][1].into(),
+                rig[index][2].into(),
+            ) - if index == 0 {
+                camera.target
+            } else {
+                Vec3::ZERO
+            }
         };
-        let (a, b) = (key(0.0), key(90.0));
+        let (a, b) = (at(0.0, 0), at(90.0, 0));
         assert!((a.len() - b.len()).abs() < 1e-3);
-        // Turning the camera 90° about the vertical turns the key with it.
+        // Turning the camera 90° about the vertical turns the key with it…
         let turned = Vec3::new(a.y, -a.x, a.z);
         assert!((turned - b).len() < 1e-3 * a.len(), "{a:?} {b:?}");
+        // …but not the studio's reflection lights.
+        for index in 3..3 + STUDIO.len() {
+            assert!((at(0.0, index) - at(90.0, index)).len() < 1e-6);
+        }
     }
 }

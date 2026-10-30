@@ -79,7 +79,7 @@ impl App {
     }
 
     /// Show a status message in the canvas; errors stay until the next
-    /// successful action.
+    /// successful action, a workspace change or a timeout.
     fn say(&mut self, text: impl Into<String>, error: bool) {
         self.status = Some(chrome::Status {
             text: text.into(),

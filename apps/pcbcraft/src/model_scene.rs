@@ -1,7 +1,9 @@
 //! GPU-ready form of a built native model, prepared on the model worker so
 //! the UI thread only publishes it. PBR vertices carry each body's physical
-//! look; shadows are theme-free geometry with alpha weights; highlight blocks
-//! are flat copies keyed by pick identity, so selection only recolours.
+//! look in one buffer, parts first and board-level bodies after, so the
+//! buffer moves into the viewport once and is never copied on the UI thread;
+//! shadows are theme-free geometry with alpha weights; highlight blocks are
+//! flat copies keyed by pick identity, so selection only recolours.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! revision 4f3ac07; see ATTRIBUTION.md), adapted to a Z-up board.
@@ -14,6 +16,7 @@ use pcbcraft_solidcraft::{
 use solidcraft_ui_egui::gpu::{
     BlockBuilder, GpuScene, PBR_SIZE, PaletteIndex, SceneBlock, TriClass,
 };
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upper bound on PBR vertex bytes per model (about 466 000 triangles).
@@ -27,7 +30,7 @@ pub fn next_key() -> u64 {
 }
 
 /// Board-level bodies (hidden with the substrate) or everything else.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Segment {
     Board,
     Parts,
@@ -59,8 +62,10 @@ pub struct Shadows {
 
 pub struct ModelScene {
     pub geometry: Vec<pcbcraft_solidcraft::scene::Geometry>,
-    pub board_pbr: Vec<u8>,
-    pub parts_pbr: Vec<u8>,
+    /// PBR vertices: parts, then board-level bodies. The viewport takes it.
+    pub pbr: Vec<u8>,
+    /// Bytes of `pbr` that are parts; the prefix shown without the board.
+    pub parts_bytes: usize,
     pub shadows: Shadows,
     /// One flat block per pick identity and segment, drawn over the model in
     /// the selection colour.
@@ -68,74 +73,85 @@ pub struct ModelScene {
     pub bounds: Aabb3,
 }
 
+/// PBR vertex bytes of `geometry`: parts first, then board-level bodies
+/// when `board` is set. Returns the bytes and the parts' share.
+pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), String> {
+    let bytes_of = |board: bool| {
+        geometry
+            .iter()
+            .filter(|g| g.kind.is_board() == board)
+            .try_fold(0usize, |n, g| {
+                g.mesh
+                    .triangles
+                    .len()
+                    .checked_mul(3 * PBR_SIZE)
+                    .and_then(|b| n.checked_add(b))
+            })
+    };
+    let too_large = || "model too large for the 3D view".to_string();
+    let parts = bytes_of(false).ok_or_else(too_large)?;
+    let total = if board {
+        parts
+            .checked_add(bytes_of(true).ok_or_else(too_large)?)
+            .ok_or_else(too_large)?
+    } else {
+        parts
+    };
+    if total > MAX_PBR_BYTES {
+        return Err(too_large());
+    }
+    let mut scene = GpuScene::default();
+    scene
+        .pbr
+        .try_reserve_exact(total)
+        .map_err(|e| e.to_string())?;
+    for segment in [false, true] {
+        if segment && !board {
+            break;
+        }
+        for g in geometry.iter().filter(|g| g.kind.is_board() == segment) {
+            for indices in &g.mesh.triangles {
+                let Some(p) = g.mesh.tri(indices) else {
+                    continue;
+                };
+                let face = (p[1] - p[0]).cross(p[2] - p[0]);
+                let face = unit_direction(face).unwrap_or(Vec3::Z);
+                for (corner, index) in p.iter().zip(indices) {
+                    let normal = usize::try_from(*index)
+                        .ok()
+                        .and_then(|i| g.mesh.normals.get(i))
+                        .and_then(|n| unit_direction(*n).ok())
+                        .unwrap_or(face);
+                    scene.pbr_tri(corner.to_f32(), normal.to_f32(), g.surface);
+                }
+            }
+        }
+    }
+    Ok((scene.pbr, parts))
+}
+
 pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
-    let triangles = geometry
-        .iter()
-        .try_fold(0usize, |n, g| n.checked_add(g.mesh.triangles.len()))
-        .ok_or("model too large for the 3D view")?;
-    let bytes = triangles
-        .checked_mul(3 * PBR_SIZE)
-        .filter(|b| *b <= MAX_PBR_BYTES)
-        .ok_or("model too large for the 3D view")?;
-    let mut board = GpuScene::default();
-    let mut parts = GpuScene::default();
-    let board_bytes = geometry
-        .iter()
-        .filter(|g| g.kind.is_board())
-        .map(|g| g.mesh.triangles.len() * 3 * PBR_SIZE)
-        .sum::<usize>();
-    board
-        .pbr
-        .try_reserve_exact(board_bytes)
-        .map_err(|e| e.to_string())?;
-    parts
-        .pbr
-        .try_reserve_exact(bytes.saturating_sub(board_bytes))
-        .map_err(|e| e.to_string())?;
+    let (pbr, parts_bytes) = pack(&geometry, true)?;
     let mut bounds = Aabb3::EMPTY;
     let mut flat: Vec<(u64, Segment, BlockBuilder)> = Vec::new();
+    let mut index: HashMap<(u64, Segment), usize> = HashMap::new();
     for g in &geometry {
         bounds.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
         bounds.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
-        let segment = Segment::of(g.kind);
-        let scene = match segment {
-            Segment::Board => &mut board,
-            Segment::Parts => &mut parts,
+        let Some(item) = g.item else {
+            continue;
         };
-        let block = g.item.map(|item| {
-            match flat
-                .iter()
-                .position(|(i, s, _)| *i == item && *s == segment)
-            {
-                Some(index) => index,
-                None => {
-                    flat.push((item, segment, BlockBuilder::default()));
-                    flat.len() - 1
-                }
-            }
+        let segment = Segment::of(g.kind);
+        let at = *index.entry((item, segment)).or_insert_with(|| {
+            flat.push((item, segment, BlockBuilder::default()));
+            flat.len() - 1
         });
-        if let Some(index) = block
-            && let Some((_, _, builder)) = flat.get_mut(index)
-        {
-            builder.begin_body();
-        }
+        let Some((_, _, builder)) = flat.get_mut(at) else {
+            continue;
+        };
+        builder.begin_body();
         for indices in &g.mesh.triangles {
-            let Some(p) = g.mesh.tri(indices) else {
-                continue;
-            };
-            let face = (p[1] - p[0]).cross(p[2] - p[0]);
-            let face = unit_direction(face).unwrap_or(Vec3::Z);
-            for (corner, index) in p.iter().zip(indices) {
-                let normal = usize::try_from(*index)
-                    .ok()
-                    .and_then(|i| g.mesh.normals.get(i))
-                    .and_then(|n| unit_direction(*n).ok())
-                    .unwrap_or(face);
-                scene.pbr_tri(corner.to_f32(), normal.to_f32(), g.surface);
-            }
-            if let Some(index) = block
-                && let Some((_, _, builder)) = flat.get_mut(index)
-            {
+            if let Some(p) = g.mesh.tri(indices) {
                 builder.triangle(
                     p.map(|p| p.to_f32()),
                     [[0.0; 3]; 3],
@@ -144,17 +160,13 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
                 );
             }
         }
-        if let Some(index) = block
-            && let Some((_, _, builder)) = flat.get_mut(index)
-        {
-            builder.end_body();
-        }
+        builder.end_body();
     }
     let shadows = shadows(&geometry, &bounds);
     Ok(ModelScene {
         geometry,
-        board_pbr: board.pbr,
-        parts_pbr: parts.pbr,
+        pbr,
+        parts_bytes,
         shadows,
         highlight: flat
             .into_iter()
@@ -200,7 +212,7 @@ fn shadows(geometry: &[Geometry], bounds: &Aabb3) -> Shadows {
     ) else {
         return out;
     };
-    for body in geometry.iter().filter(|g| g.kind == BodyKind::PackageBody) {
+    for body in geometry.iter().filter(|g| g.kind.is_envelope()) {
         let corners = footprint(body);
         if body.min[2] >= top - 1e-6 {
             contact(&mut out.top, &corners, top + CONTACT_LIFT);
@@ -378,9 +390,15 @@ pub(crate) mod tests {
                 .map(|g| g.mesh.triangles.len())
                 .sum::<usize>()
         };
-        assert_eq!(scene.board_pbr.len(), 3 * PBR_SIZE * triangles(true));
-        assert_eq!(scene.parts_pbr.len(), 3 * PBR_SIZE * triangles(false));
+        assert_eq!(scene.parts_bytes, 3 * PBR_SIZE * triangles(false));
+        assert_eq!(
+            scene.pbr.len(),
+            3 * PBR_SIZE * (triangles(true) + triangles(false))
+        );
         assert!(triangles(true) > 0 && triangles(false) > 0);
+        let (parts, share) = pack(&scene.geometry, false)?;
+        assert_eq!((parts.len(), share), (scene.parts_bytes, scene.parts_bytes));
+        assert_eq!(parts.as_slice(), &scene.pbr[..scene.parts_bytes]);
         Ok(())
     }
 
@@ -393,26 +411,26 @@ pub(crate) mod tests {
                 .and_then(|b| b.try_into().ok())
                 .map(f32::from_le_bytes)
         };
-        for bytes in [&scene.board_pbr, &scene.parts_pbr] {
-            for vertex in bytes.chunks_exact(PBR_SIZE) {
-                let v: Vec<f32> = (0..6).filter_map(|i| word(vertex, 4 * i)).collect();
-                assert_eq!(v.len(), 6);
-                let n = &v[3..6];
-                let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-                assert!((length - 1.0).abs() < 1e-4, "{n:?}");
-                assert!(v.iter().all(|x| x.is_finite()));
-            }
+        for vertex in scene.pbr.chunks_exact(PBR_SIZE) {
+            let v: Vec<f32> = (0..6).filter_map(|i| word(vertex, 4 * i)).collect();
+            assert_eq!(v.len(), 6);
+            let n = &v[3..6];
+            let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            assert!((length - 1.0).abs() < 1e-4, "{n:?}");
+            assert!(v.iter().all(|x| x.is_finite()));
         }
-        // Outward: every body's vertices lie on the side of its own centre
-        // their normals point away from.
+        // Outward: every body encloses a positive volume and each
+        // triangle's winding agrees with its vertex normals (solder fillets
+        // are concave, so a centre test would not do).
         for g in &scene.geometry {
-            let c = Vec3::new(
-                (g.min[0] + g.max[0]) / 2.0,
-                (g.min[1] + g.max[1]) / 2.0,
-                (g.min[2] + g.max[2]) / 2.0,
-            );
-            for (p, n) in g.mesh.positions.iter().zip(&g.mesh.normals) {
-                assert!((*p - c).dot(*n) > 0.0, "{:?}: {p:?} {n:?}", g.kind);
+            assert!(g.mesh.measure().volume > 0.0, "{:?}", g.kind);
+            for t in &g.mesh.triangles {
+                let p = g.mesh.tri(t).ok_or("bad triangle")?;
+                let face = (p[1] - p[0]).cross(p[2] - p[0]);
+                for i in t {
+                    let n = g.mesh.normals[*i as usize];
+                    assert!(face.dot(n) > 0.0, "{:?}: {face:?} vs {n:?}", g.kind);
+                }
             }
         }
         Ok(())
@@ -442,8 +460,9 @@ pub(crate) mod tests {
         let packages = scene
             .geometry
             .iter()
-            .filter(|g| g.kind == BodyKind::PackageBody)
+            .filter(|g| g.kind.is_envelope())
             .count();
+        assert_eq!(packages, 2);
         assert_eq!(
             scene.shadows.top.len() + scene.shadows.bottom.len(),
             packages * per_body

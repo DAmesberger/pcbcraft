@@ -38,56 +38,49 @@ After slice 1 (30 October 2026) the app was launched and inspected: the PCB view
 
 ## Photoreal PCB 3D view
 
-30 October 2026. The PCB 3D view and the Component 3D preview draw through Solidcraft's PBR path. Each body carries the physical look stored in its native file; [materials](materials.md) gives the values and their sources.
+30 October 2026, revised after review the same day. The PCB 3D view and the Component 3D preview draw through Solidcraft's PBR path. Native bodies carry the physical look stored in the file; display-only layers use the same table. [Materials](materials.md) gives the values, sources and layer dimensions.
 
 - **What the model shows:**
-  - glossy green soldermask slabs, with conforming mask caps that show traces as raised, lighter-green lines;
-  - ENIG pads as metal finish shells around exact pad copper;
+  - glossy green soldermask, with round-ended mask caps that show traces as raised, lighter-green lines, interrupted at every mask opening (tracks passing through a land included);
+  - ENIG finish over every land and over any track copper inside its mask opening, so no bare copper shows at a track/pad junction;
   - the FR-4 board edge;
-  - black mould-compound envelopes, with tinned terminations on small two-pad packages.
-- **Identity:** every body kind is recorded in the native metadata (`org.pcbcraft.electronics.bodies.N`, split to stay below Solidcraft's 64 KiB value limit), so a reopened file renders and picks the same way. Mask caps pick as their track.
-- **Lighting:** a perspective camera (0.5 rad field of view) and a camera-relative studio rig of 18 analytic lights:
-  - key, fill and rim;
-  - a sheen light whose mirror image lies behind the view centre;
-  - a 13-light softbox around the mirror direction;
-  - an ambient term.
+  - chip resistors with white alumina sides, a black overcoat, tinned terminations wrapped over both ends, and bright concave solder fillets to the lands; MLCC (C designators) in tan ceramic; moulded packages with low lead bands.
+- **Saved model:** only physical bodies (laminate, copper, envelopes) are native. They are disjoint except copper joining copper, so interference checks and mass properties of the saved file are physical. Display layers are meshes built on the worker and never saved.
+- **Identity:** every native body kind is recorded in the native metadata (`org.pcbcraft.electronics.bodies.N`, measured as serialized so escaped names stay below Solidcraft's 64 KiB value limit). Mask caps and finish strips pick as their track; terminations, overcoat and solder as their part.
+- **Lighting:** a perspective camera (0.5 rad field of view). Key, fill and rim turn with the camera so the model always reads; fifteen reflection lights are fixed in the world (a high softbox, wall panels at two heights, and light bounced off the studio floor that only vertical faces see), so highlights slide across the board when it is orbited. The 13-light ring around the view's mirror direction is gone, and with it the light streaks at grazing angles and the headlight blob at the view centre.
+- **Navigation:** Fit frames the eight corners of the model's box in both the vertical and the horizontal field of view with an 8 % margin, using the view's real aspect (fitted again on the first draw and when the first model arrives). Scroll zooms toward the surface under the pointer; right-drag orbits about the surface point under the pointer.
 - **Shadows, AA and background:** a soft ground shadow and per-package contact shadows; 2× supersampling once the view settles; a neutral gradient background that follows the theme.
-- **Selection:** highlight is recolour-only. Cached flat blocks per pick identity go into the highlight slot, and shadows go into the otherwise unused sketch slot, so neither selection nor a theme flip re-uploads the model's PBR vertices. Hide substrate republishes the PBR buffer once. The worker packs GPU vertices, so the UI thread never walks a mesh.
-- **Stale models:** while a newer model builds, the last model of the same kind stays up under an "Updating 3D model…" note, and clicks on it are ignored. A component preview never shows the board model, and the board never shows a preview.
+- **Selection and uploads:** highlight is recolour-only (cached flat blocks per pick identity in the highlight slot; blocks indexed by a hash map on the worker). The worker packs one PBR buffer, parts first and board after, which moves into the viewport's slot without a copy and is not kept twice. Hide substrate repacks on a background thread; shadows and selection change at once.
+- **Stale models:** while a newer model builds, the last model of the same kind stays up under an "Updating 3D model…" note, and clicks on it are ignored.
+- **Status messages:** errors now fade after 12 s and clear on a workspace change, as well as on the next successful action.
 
 Measured on macOS arm64, `ci` profile, with the ignored `build_timings` test in `crates/solidcraft-integration/src/project/tests.rs`:
 
-| Board | Native bodies | Build p50 | Build p95 |
-|---|---|---|---|
-| Demo (2 parts, no tracks) | 17 | 32 ms | 35 ms |
-| Demo + 400 tracks, without mask caps (baseline) | 417 | 12.6 s | 12.7 s |
-| Demo + 400 tracks, with mask caps | 817 | 25.3 s | 25.3 s |
+| Board | Native bodies | Drawn bodies | Build p50 | Build p95 |
+|---|---|---|---|---|
+| Demo (2 parts, no tracks) | 7 | 23 | 16 ms | 17 ms |
+| Demo + 400 tracks, mask caps as native bodies (previous) | 817 | 817 | 25.3 s | 25.3 s |
+| Demo + 400 tracks, display-only layers (now) | 407 | 823 | 11.8 s | 11.8 s |
 
-The appearance layers roughly double native bodies and build time (p95 1.99×). Construction cost per body grows with model size, about 2 ms per body for the demo and 30 ms per body at 800 bodies, so large boards remain slow. That predates this change and is an open issue. A PBR byte cap of 64 MiB bounds GPU uploads.
+Moving the appearance layers out of native construction restores the pre-appearance baseline (12.6 s for 417 bodies). Native construction cost per body still grows with model size, so large boards remain slow; that is an open issue of its own. A PBR byte cap of 64 MiB bounds GPU uploads.
 
-Checked by screenshot on macOS:
+Checked by screenshot on macOS (dark theme, narrow 860 pt window): Fit shows the whole 60 × 40 mm board in the portrait view; the soldermask shows a bounded sheen that no longer clips to white; zooming toward R1 keeps it under the pointer; close-ups show the wrapped terminations, alumina sides, overcoat, solder fillets and a routed track whose round-ended cap stops at the mask opening, with the net highlighted.
 
-- PCB 3D in the dark theme: overview, close-up of the parts, an orbit to the bottom side, and Hide substrate showing bare copper;
-- picking R2, which highlighted its body, pads and terminations;
-- the Component 3D preview.
+The CPU tests cover:
 
-The light theme was not switched during this check because the app follows the system theme. The CPU tests cover:
-
-- the light rig: gold is never black from 48 views, and mask shading varies across the board;
-- material validity and the sRGB round trip;
-- the mask composites;
-- byte layout, the size cap and shadow counts;
-- recolour-only highlighting;
-- perspective fit and picking.
+- appearance meshes: closed outward prisms, stadium ends, cap interruption at openings (end and pass-through), finish over exposed track copper, terminations, overcoat and fillets on both sides;
+- native bodies pairwise disjoint (copper joins excepted) and the saved volume;
+- metadata chunks measured with escaping;
+- the light rig: reflection lights stay fixed in the world, gold never goes black over 48 views, catches the softbox in some and reads as metal at the median, and mask shading varies across the board;
+- byte layout, the size cap, the parts prefix and shadow counts; recolour-only highlighting; the background repack;
+- fit in wide, narrow and very wide views from four directions; zoom keeps the anchor under the pointer; perspective picking.
 
 Limits:
 
-- **Not modelled:** no silkscreen, because the core has no outline or reference-designator graphics.
-- **Mask:** no translucent mask (a baked two-flux composite instead) and no mask expansion ring. Mask caps are trimmed numerically at pads.
-- **Rendering:** the shader's fixed Reinhard tone map, with no environment map; analytic reflection lights stand in for one. Contact decals replace SSAO, and there is no ambient occlusion.
-- **Terminations:** placed by a geometric rule. Some two-pad parts under 3.2 mm are not chip resistors.
-- **Native file:** mask slabs, caps and finish shells overlap the copper volume (appearance layers). Interference checks and mass properties of the saved model see the overlap.
-- **Camera:** the 3D view is now perspective instead of orthographic, which changes fit and zoom feel.
+- **Renderer (needs a Solidcraft change):** Solidcraft's PBR shader at revision 4f3ac07 has no environment term, no ambient occlusion and a fixed Reinhard tone curve with 8-bit output. Metals therefore reflect only the discrete studio lights: ENIG reads as satin gold from most views but has no mirror-like reflection contrast, and a highlight's shape is the GGX lobe of one light, not a softbox. Ambient occlusion is not delivered; contact decals stand in for it. The fix is image-based (or area-light) specular, SSAO in `fs_pbr` and a highlight-preserving tone curve with dither in the shared renderer, made in an isolated Solidcraft checkout and published before Pcbcraft can pin it.
+- **Not modelled:** no silkscreen (the core has no outline or reference-designator graphics), no bare-laminate ring inside mask openings, no body edge chamfers, no FR-4 fibre texture or edge plating. Track copper ends square under round mask caps.
+- **Terminations:** placed by package rules; two-terminal parts under 3.2 mm are drawn as chip resistors unless their designator starts with C.
+- **Camera:** the 3D view is perspective, which changes fit and zoom feel compared with the earlier orthographic view.
 
 ## Copper fixture and performance boundary
 

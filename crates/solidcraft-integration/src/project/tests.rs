@@ -86,6 +86,10 @@ fn source_geometry(
     Ok(geometry)
 }
 
+fn native(model: &NativeModel) -> impl Iterator<Item = &Geometry> {
+    model.geometry.iter().filter(|g| !g.kind.is_appearance())
+}
+
 fn count(model: &NativeModel, kind: BodyKind) -> usize {
     model.geometry.iter().filter(|g| g.kind == kind).count()
 }
@@ -102,16 +106,19 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     let project = fixture()?;
     let (r1, r2) = instances(&project)?;
     let model = build(&project)?;
-    // Substrate and two mask slabs; per placement an envelope and one
-    // termination (the offset body covers one land); per pad copper and its
-    // finish; per trace copper and its mask cap.
-    assert_eq!(model.geometry.len(), 19);
+    // Native: the substrate, per placement a chip-resistor envelope, per
+    // pad its copper and per trace its copper. Display: two mask slabs, per
+    // chip two wrapped terminations and an overcoat, per pad its finish and
+    // per free trace one mask cap.
+    assert_eq!(native(&model).count(), 9);
     for (kind, n) in [
         (BodyKind::Substrate, 1),
         (BodyKind::MaskTop, 1),
         (BodyKind::MaskBottom, 1),
-        (BodyKind::PackageBody, 2),
-        (BodyKind::Termination, 2),
+        (BodyKind::ChipResistor, 2),
+        (BodyKind::PackageBody, 0),
+        (BodyKind::Termination, 4),
+        (BodyKind::Overcoat, 2),
         (BodyKind::PadCopper, 4),
         (BodyKind::PadFinish, 4),
         (BodyKind::CopperTrack, 2),
@@ -128,12 +135,12 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     assert_eq!(substrate.item, None);
     bounds(substrate, [0.0, 0.0, 0.0], [60.0, 40.0, 1.6]);
     near(substrate.volume, 60.0 * 40.0 * 1.6);
-    let top = source_geometry(&model, BodyKind::PackageBody, |s| {
+    let top = source_geometry(&model, BodyKind::ChipResistor, |s| {
         s.instance == Some(r1) && s.pad.is_none()
     })?;
     bounds(top, [9.8, 11.25, 1.835], [11.0, 13.25, 2.435]);
     near(top.volume, 2.0 * 1.2 * 0.6);
-    let bottom = source_geometry(&model, BodyKind::PackageBody, |s| {
+    let bottom = source_geometry(&model, BodyKind::ChipResistor, |s| {
         s.instance == Some(r2) && s.pad.is_none()
     })?;
     bounds(bottom, [29.0, 11.25, -0.835], [30.2, 13.25, -0.235]);
@@ -223,8 +230,10 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         serde_json::to_value(&original.sources)?
     );
     let before = finish(reopened, retained)?;
-    assert_eq!(before.geometry.len(), original.geometry.len());
-    for previous in &original.geometry {
+    // The file holds the native bodies only; display layers are not saved.
+    assert_eq!(before.geometry.len(), native(&original).count());
+    assert!(before.geometry.iter().all(|g| !g.kind.is_appearance()));
+    for previous in native(&original) {
         let mut same = before
             .geometry
             .iter()
@@ -251,12 +260,12 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
     }
     reopened.change_parameters(changes)?;
     let changed = finish(reopened, before.sources)?;
-    let top = source_geometry(&changed, BodyKind::PackageBody, |s| {
+    let top = source_geometry(&changed, BodyKind::ChipResistor, |s| {
         s.instance == Some(r1) && s.pad.is_none()
     })?;
     bounds(top, [13.25, 17.0, 2.67], [17.25, 18.2, 3.27]);
     near(top.volume, 4.0 * 1.2 * 0.6);
-    let bottom = source_geometry(&changed, BodyKind::PackageBody, |s| {
+    let bottom = source_geometry(&changed, BodyKind::ChipResistor, |s| {
         s.instance == Some(r2) && s.pad.is_none()
     })?;
     bounds(bottom, [28.75, 11.0, -0.87], [30.75, 12.2, -0.27]);
@@ -303,6 +312,25 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     looks_match_the_native_file(&model)?;
     bounds(&model.geometry[0], [-0.5, -3.5, 0.4], [3.5, -0.5, 2.4]);
     near(model.geometry[0].volume, 24.0);
+    // A chip-sized two-terminal package previews as a chip resistor, with
+    // the wrapped terminations and overcoat it shows on the board.
+    package.body_size = [2.0, 1.25, 0.5];
+    package.model_offset = [0.0; 3];
+    let chip = preview(&package)?;
+    assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
+    assert_eq!(count(&chip, BodyKind::Termination), 2);
+    assert_eq!(count(&chip, BodyKind::Overcoat), 1);
+    looks_match_the_native_file(&chip)?;
+    for end in chip
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::Termination)
+    {
+        // 0.4 mm bands (a fifth of 2 mm), 10 µm proud of the body.
+        near(end.max[0] - end.min[0], 0.41);
+        bounds(end, [end.min[0], -0.635, 0.0], [end.max[0], 0.635, 0.51]);
+        assert!(end.min[0] <= -1.01 + 1e-9 || end.max[0] >= 1.01 - 1e-9);
+    }
     package.body_size[0] = 0.0;
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
@@ -341,17 +369,19 @@ fn build_timings() -> Result<()> {
     }
     for (name, project, runs) in [("demo", &demo, 15), ("400 tracks", &tracks, 3)] {
         let mut times = vec![];
-        let mut bodies = 0;
+        let mut bodies = (0, 0);
         for _ in 0..runs {
             let start = std::time::Instant::now();
             let model = build(project)?;
             times.push(start.elapsed().as_secs_f64() * 1e3);
-            bodies = model.geometry.len();
+            bodies = (native(&model).count(), model.geometry.len());
         }
         times.sort_by(f64::total_cmp);
         let at = |q: f64| times[((times.len() - 1) as f64 * q).round() as usize];
         println!(
-            "{name}: {bodies} bodies, build p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
+            "{name}: {} native bodies, {} drawn, build p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
+            bodies.0,
+            bodies.1,
             at(0.5),
             at(0.95)
         );
@@ -364,8 +394,8 @@ fn build_timings() -> Result<()> {
 fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {
     let scene = solidcraft_engine::product_scene::extract(model.native.session())
         .map_err(|e| Error::Verification(e.to_string()))?;
-    assert_eq!(scene.meshes.len(), model.geometry.len());
-    for (mesh, geometry) in scene.meshes.iter().zip(&model.geometry) {
+    assert_eq!(scene.meshes.len(), native(model).count());
+    for (mesh, geometry) in scene.meshes.iter().zip(native(model)) {
         assert_eq!(mesh.surface, Some(geometry.surface), "{}", mesh.name);
         let expected = material::material(geometry.kind, DEFAULT_FINISH);
         assert_eq!(mesh.color, expected.srgb8(), "{}", mesh.name);
@@ -382,14 +412,20 @@ fn top_z(model: &NativeModel, kind: BodyKind) -> Result<f64> {
         .ok_or_else(|| Error::Verification(format!("no {kind:?}")))
 }
 
-/// The first board-level or copper body a vertical ray meets (packages are
-/// left out: they may cover a land).
+/// The first board-level or copper body a vertical ray meets (parts and
+/// their solder are left out: they may cover a land).
 fn first_hit(model: &NativeModel, at: [f64; 2], down: bool) -> Option<&Geometry> {
     let (z, dz) = if down { (10.0, -1.0) } else { (-10.0, 1.0) };
     model
         .geometry
         .iter()
-        .filter(|g| !matches!(g.kind, BodyKind::PackageBody | BodyKind::Termination))
+        .filter(|g| {
+            g.kind.is_board()
+                || matches!(
+                    g.kind,
+                    BodyKind::CopperTrack | BodyKind::PadCopper | BodyKind::PadFinish
+                )
+        })
         .filter_map(|g| {
             g.mesh
                 .raycast(Vec3::new(at[0], at[1], z), Vec3::new(0.0, 0.0, dz))
@@ -430,11 +466,12 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         let track = source_geometry(&model, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
         })?;
-        // Free ends: the cap overhangs the copper on every side.
-        for axis in 0..2 {
-            near(cap.min[axis], track.min[axis] - 0.01);
-            near(cap.max[axis], track.max[axis] + 0.01);
-        }
+        // Free ends are round: the cap overhangs the copper by its margin
+        // along the sides and by half its width at the ends.
+        near(cap.min[0], track.min[0] - 0.21);
+        near(cap.max[0], track.max[0] + 0.21);
+        near(cap.min[1], track.min[1] - 0.01);
+        near(cap.max[1], track.max[1] + 0.01);
     }
     Ok(())
 }
@@ -491,8 +528,49 @@ fn exposed_pads_stand_above_the_mask_and_tracks_are_capped() -> Result<()> {
     Ok(())
 }
 
+/// The top-side pad finishes (not the finish over track copper).
+fn pad_finishes(model: &NativeModel) -> Vec<&Geometry> {
+    model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::PadFinish && g.max[2] > 1.0)
+        .filter(|g| {
+            model
+                .sources
+                .iter()
+                .any(|s| Some(s.pick_id) == g.item && s.pad.is_some())
+        })
+        .collect()
+}
+
+/// A track's display pieces of `kind`.
+fn pieces(model: &NativeModel, track: Id, kind: BodyKind) -> Vec<&Geometry> {
+    let Some(source) = model.sources.iter().find(|s| s.track == Some(track)) else {
+        return vec![];
+    };
+    model
+        .geometry
+        .iter()
+        .filter(|g| g.item == Some(source.pick_id) && g.kind == kind)
+        .collect()
+}
+
+fn no_cap_over_a_pad(model: &NativeModel, caps: &[&Geometry]) {
+    for cap in caps {
+        for p in &cap.mesh.positions {
+            for f in pad_finishes(model) {
+                let over = p.x > f.min[0] + 1e-6
+                    && p.x < f.max[0] - 1e-6
+                    && p.y > f.min[1] + 1e-6
+                    && p.y < f.max[1] - 1e-6;
+                assert!(!over, "cap vertex {p:?} over a pad finish");
+            }
+        }
+    }
+}
+
 #[test]
-fn mask_caps_stop_at_pad_finishes_and_short_in_pad_tracks_have_none() -> Result<()> {
+fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Result<()> {
     let mut project = fixture()?;
     let (r1, _) = instances(&project)?;
     let net = project.tracks[0].net;
@@ -519,42 +597,117 @@ fn mask_caps_stop_at_pad_finishes_and_short_in_pad_tracks_have_none() -> Result<
     let straight = add(c, [c[0], c[1] + 5.0])?;
     let diagonal = add(c, [c[0] - 4.0, c[1] + 3.0])?;
     let inside = add([c[0] - 0.2, c[1]], [c[0] + 0.2, c[1]])?;
+    // Across the land's 1.4 mm world width, clear of the part's other land.
+    let through = add([c[0] - 4.0, c[1] + 0.1], [c[0] + 4.0, c[1] + 0.1])?;
     let model = build(&project)?;
-    let finishes: Vec<&Geometry> = model
-        .geometry
-        .iter()
-        .filter(|g| g.kind == BodyKind::PadFinish && g.max[2] > 1.0)
-        .collect();
-    let cap = |track: Id| {
-        model
-            .sources
-            .iter()
-            .find(|s| s.track == Some(track))
-            .and_then(|s| {
-                model
-                    .geometry
-                    .iter()
-                    .find(|g| g.item == Some(s.pick_id) && g.kind == BodyKind::MaskCap)
-            })
-    };
-    assert!(cap(inside).is_none(), "a track inside its pad has no cap");
+    assert!(
+        pieces(&model, inside, BodyKind::MaskCap).is_empty(),
+        "a track inside its pad has no cap"
+    );
     for track in [straight, diagonal] {
-        let cap = cap(track).ok_or_else(|| Error::Verification("missing cap".into()))?;
-        // No corner of the (convex) cap box lies over a top-side finish.
-        for p in &cap.mesh.positions {
-            for f in &finishes {
-                let over = p.x > f.min[0] + 1e-6
-                    && p.x < f.max[0] - 1e-6
-                    && p.y > f.min[1] + 1e-6
-                    && p.y < f.max[1] - 1e-6;
-                assert!(!over, "cap vertex {p:?} over a pad finish");
+        let caps = pieces(&model, track, BodyKind::MaskCap);
+        assert_eq!(caps.len(), 1);
+        no_cap_over_a_pad(&model, &caps);
+    }
+    // Rotated 90°, the 1 × 1.4 mm land is 1 mm deep along +Y. The straight
+    // cap starts at the mask opening, 0.5 + 0.05 mm from the centre, and the
+    // copper between the land and the opening is plated like the land.
+    let straight_cap = pieces(&model, straight, BodyKind::MaskCap);
+    near(straight_cap[0].min[1], c[1] + 0.55);
+    let strip = pieces(&model, straight, BodyKind::PadFinish);
+    assert_eq!(strip.len(), 1);
+    near(strip[0].min[1], c[1]);
+    near(strip[0].max[1], c[1] + 0.55);
+    near(strip[0].max[2], 1.6 + 0.035 + 0.004);
+    // A track passing through the land: capped on both sides, plated across.
+    let caps = pieces(&model, through, BodyKind::MaskCap);
+    assert_eq!(caps.len(), 2, "pass-through cap is split at the opening");
+    no_cap_over_a_pad(&model, &caps);
+    let mut ends: Vec<f64> = caps.iter().flat_map(|g| [g.min[0], g.max[0]]).collect();
+    ends.sort_by(f64::total_cmp);
+    near(ends[1], c[0] - 0.75);
+    near(ends[2], c[0] + 0.75);
+    let strip = pieces(&model, through, BodyKind::PadFinish);
+    assert_eq!(strip.len(), 1);
+    near(strip[0].min[0], c[0] - 0.75);
+    near(strip[0].max[0], c[0] + 0.75);
+    // Every finish stands above the mask and below any cap top.
+    for f in pad_finishes(&model) {
+        near(f.max[2], 1.6 + 0.035 + 0.005);
+    }
+    Ok(())
+}
+
+#[test]
+fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
+    let mut project = fixture()?;
+    let (r1, _) = instances(&project)?;
+    let pad = layout::pads(&project)
+        .into_iter()
+        .find(|p| p.instance == r1)
+        .ok_or_else(|| Error::Verification("missing R1 pad".into()))?;
+    let id = project
+        .allocate()
+        .map_err(|error| Error::Verification(error.to_string()))?;
+    project.tracks.push(Track {
+        id,
+        net: pad.net,
+        start: pad.position,
+        end: [pad.position[0] + 6.0, pad.position[1]],
+        width: 0.25,
+        layer: Layer::Top,
+        locked: false,
+    });
+    let model = build(&project)?;
+    let bodies: Vec<&Geometry> = native(&model).collect();
+    let copper = |g: &Geometry| matches!(g.kind, BodyKind::CopperTrack | BodyKind::PadCopper);
+    for (i, a) in bodies.iter().enumerate() {
+        for b in &bodies[i + 1..] {
+            if copper(a) && copper(b) {
+                continue;
             }
+            // Every body here is a box lying in its own z band, so a shared
+            // interior needs overlapping axis-aligned boxes.
+            let overlap: f64 = (0..3)
+                .map(|k| (a.max[k].min(b.max[k]) - a.min[k].max(b.min[k])).max(0.0))
+                .product();
+            assert!(
+                overlap < 1e-9,
+                "{:?} and {:?} overlap by {overlap} mm³",
+                a.kind,
+                b.kind
+            );
         }
     }
-    // Rotated 90°, the 1 × 1.4 mm land is 1 mm deep along +Y: the straight cap
-    // starts at its finish edge, 0.5 + 0.005 mm from the centre.
-    let straight_cap = cap(straight).ok_or_else(|| Error::Verification("missing cap".into()))?;
-    near(straight_cap.min[1], c[1] + 0.505);
+    // The saved model's volume is the laminate, copper and envelopes only.
+    let volume: f64 = bodies.iter().map(|g| g.volume).sum();
+    let expected = 60.0 * 40.0 * 1.6
+        + 2.0 * (2.0 * 1.2 * 0.6)
+        + 4.0 * (1.0 * 1.4 * 0.035)
+        + (2.0 * 10.0 * 0.4 + 6.0 * 0.25) * 0.035;
+    near(volume, expected);
+    Ok(())
+}
+
+#[test]
+fn body_kind_chunks_measure_escaped_names() -> Result<()> {
+    let mut bodies = BTreeMap::new();
+    // Quotes and backslashes serialize at twice their length.
+    for k in 0..3000 {
+        let kind = BodyKind::ALL[k % BodyKind::ALL.len()];
+        bodies.insert(format!("{k:05} \\\"{}", "\\".repeat(20)), kind);
+    }
+    let chunks = kind_chunks(&bodies)?;
+    assert!(chunks.len() > 1);
+    let mut names = 0;
+    for chunk in &chunks {
+        let bytes = serde_json::to_string(chunk)?.len();
+        assert!(bytes <= BODIES_CHUNK_BYTES, "{bytes} bytes");
+        names += chunk.values().map(Vec::len).sum::<usize>();
+    }
+    assert_eq!(names, bodies.len());
+    bodies.insert("x".repeat(BODIES_CHUNK_BYTES), BodyKind::Substrate);
+    assert!(matches!(kind_chunks(&bodies), Err(Error::Invalid(_))));
     Ok(())
 }
 
@@ -602,40 +755,85 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
 }
 
 #[test]
-fn terminations_lie_within_their_lands_on_both_sides() -> Result<()> {
-    let model = build(&fixture()?)?;
+fn chip_terminations_wrap_the_ends_and_solder_wets_the_lands_on_both_sides() -> Result<()> {
+    // The demo's centred chips get a fillet at every land; the fixture's
+    // offset bodies leave one end hanging off its land, which gets none.
+    let demo = build(
+        Engine::demo()
+            .map_err(|error| Error::Verification(error.to_string()))?
+            .project(),
+    )?;
+    assert_eq!(count(&demo, BodyKind::Solder), 4);
+    assert!(count(&build(&fixture()?)?, BodyKind::Solder) >= 1);
+    check_chip_parts(&demo)?;
+    check_chip_parts(&build(&fixture()?)?)?;
+    Ok(())
+}
+
+fn check_chip_parts(model: &NativeModel) -> Result<()> {
     let envelopes = model
         .sources
         .iter()
         .filter(|s| s.pad.is_none() && s.instance.is_some());
     for source in envelopes {
-        let termination = source_geometry(&model, BodyKind::Termination, |s| {
+        let body = source_geometry(model, BodyKind::ChipResistor, |s| {
             s.pick_id == source.pick_id
         })?;
-        let body = source_geometry(&model, BodyKind::PackageBody, |s| {
-            s.pick_id == source.pick_id
-        })?;
-        let within = model
+        let of = |kind| {
+            model
+                .geometry
+                .iter()
+                .filter(move |g| g.item == Some(source.pick_id) && g.kind == kind)
+                .collect::<Vec<_>>()
+        };
+        let ends = of(BodyKind::Termination);
+        assert_eq!(ends.len(), 2, "{}", source.label);
+        let top = source.layer == Some(Layer::Top);
+        for end in &ends {
+            // Each cap wraps 10 µm past the body's top and underside (the
+            // fixture lifts the body 0.2 mm), its sides and one end face.
+            near(end.max[2], body.max[2] + 0.01);
+            near(end.min[2], body.min[2] - 0.01);
+            let outside = (0..2).any(|a| {
+                (end.min[a] - (body.min[a] - 0.01)).abs() < 1e-9
+                    || (end.max[a] - (body.max[a] + 0.01)).abs() < 1e-9
+            });
+            assert!(outside, "{} termination misses an end face", source.label);
+        }
+        let overcoat = source_geometry(model, BodyKind::Overcoat, |s| s.pick_id == source.pick_id)?;
+        assert!(overcoat.max[2] > body.max[2] || overcoat.min[2] < body.min[2]);
+        let lands: Vec<&Geometry> = model
             .sources
             .iter()
             .filter(|s| s.instance == source.instance && s.pad.is_some())
             .filter_map(|s| {
-                source_geometry(&model, BodyKind::PadCopper, |x| x.pick_id == s.pick_id).ok()
+                source_geometry(model, BodyKind::PadCopper, |x| x.pick_id == s.pick_id).ok()
             })
-            .any(|pad| {
+            .collect();
+        for solder in of(BodyKind::Solder) {
+            let on_land = lands.iter().any(|pad| {
                 (0..2).all(|a| {
-                    termination.min[a] >= pad.min[a] - 1e-9
-                        && termination.max[a] <= pad.max[a] + 1e-9
+                    solder.min[a] >= pad.min[a] - 1e-6 && solder.max[a] <= pad.max[a] + 1e-6
                 })
             });
-        assert!(within, "{} termination outside its land", source.label);
-        // It reaches from the land to just beyond the body.
-        if source.layer == Some(Layer::Top) {
-            near(termination.min[2], 1.635);
-            near(termination.max[2], body.max[2] + 0.01);
-        } else {
-            near(termination.max[2], -0.035);
-            near(termination.min[2], body.min[2] - 0.01);
+            assert!(on_land, "{} fillet off its land", source.label);
+            let touches = ends.iter().any(|end| {
+                (0..2).any(|a| {
+                    (solder.min[a] - end.max[a]).abs() < 1e-6
+                        || (solder.max[a] - end.min[a]).abs() < 1e-6
+                })
+            });
+            assert!(
+                touches,
+                "{} fillet does not meet its termination",
+                source.label
+            );
+            if top {
+                near(solder.min[2], 1.6 + 0.035 + 0.005);
+            } else {
+                near(solder.max[2], -0.035 - 0.005);
+            }
+            assert!(solder.volume > 0.0);
         }
     }
     Ok(())

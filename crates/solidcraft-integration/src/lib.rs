@@ -1,7 +1,10 @@
 //! Electronics → native Solidcraft. Builds the parametric `.solidcraft` model
-//! of a Pcbcraft project; all geometry, evaluation and persistence belong to
-//! Solidcraft's engine, reached only through [`native`].
+//! of a Pcbcraft project; its geometry, evaluation and persistence belong to
+//! Solidcraft's engine, reached only through [`native`]. Thin display-only
+//! layers over it (soldermask, plated finish, terminations, solder) are
+//! meshes in Solidcraft's mesh type ([`appearance`]), never saved.
 
+pub mod appearance;
 pub mod material;
 pub mod native;
 pub mod project;

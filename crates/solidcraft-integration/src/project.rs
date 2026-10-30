@@ -1,11 +1,13 @@
 //! Electronics → native Solidcraft. Parametric pads, traces and envelopes are
 //! ordinary native features and planar joints, editable without Pcbcraft.
 //!
-//! Besides exact copper, the model carries appearance layers: soldermask
-//! slabs over the laminate, a conforming mask cap over each track, a plated
-//! finish shell around each pad and tinned terminations on small packages.
-//! They overlap the copper volume on purpose (see `docs/materials.md`); the
-//! copper bodies themselves keep their exact volumes and identities.
+//! The native model holds only physical bodies: the laminate, exact copper
+//! and package envelopes. They are disjoint except where copper joins copper
+//! (a track ending in its pad), so Solidcraft's interference checks and mass
+//! properties of the saved file are physical. Soldermask, plated finish,
+//! terminations and solder fillets are display-only layers
+//! ([`crate::appearance`]) added to the drawn geometry, never to the file.
+use crate::appearance::{self, Body, Land, Part, Path};
 use crate::material::{self, BodyKind, DEFAULT_FINISH};
 use crate::native::{BoardJoint, BoxBody, Expr, Native, mm};
 use crate::scene::Geometry;
@@ -18,26 +20,6 @@ use std::collections::BTreeMap;
 
 const BOARD_THICKNESS_MM: f64 = 1.6;
 const COPPER_THICKNESS_MM: f64 = 0.035;
-/// Soldermask over bare laminate. Thinner than real LPI (25–35 µm) so exposed
-/// pads stand clearly proud of it; the optical thickness is in `material`.
-const MASK_THICKNESS_MM: f64 = 0.020;
-/// Soldermask above a track's copper.
-const MASK_CAP_MM: f64 = 0.015;
-/// ENIG nickel (3–6 µm, IPC-4552); the immersion gold is negligible.
-const FINISH_THICKNESS_MM: f64 = 0.005;
-/// How far a track's mask cap overhangs its copper on each side and at a free
-/// end, so no visible face is coplanar with copper.
-const CAP_MARGIN_MM: f64 = 0.01;
-/// Shorter caps are skipped (a track lying wholly inside its pads).
-const CAP_MIN_MM: f64 = 0.01;
-/// Termination plating beyond the body faces (real terminations are 10–30 µm).
-const TERMINATION_GROWTH_MM: f64 = 0.01;
-/// Two-pad packages shorter than this read as chip parts (est. 1206 class).
-const CHIP_MAX_LENGTH_MM: f64 = 3.2;
-/// Height share of a non-chip termination band.
-const LEAD_HEIGHT_SHARE: f64 = 0.15;
-/// The core's bound on placed pads (`layout::MAX_PLACED_PADS`).
-const MAX_PADS: usize = 4_096;
 const METADATA_KEY: &str = "org.pcbcraft.electronics";
 /// Body kinds: `org.pcbcraft.electronics.bodies.0`, `.1`, … each
 /// `{kind: [body names]}`, below Solidcraft's 64 KiB value limit.
@@ -118,32 +100,48 @@ impl Builder {
         }
         self.native
             .set_metadata(METADATA_KEY, json!({"version": 1, "sources": sources}))?;
-        // Solidcraft caps each metadata value at 64 KiB, so the body → kind
-        // map is split over keys of its own, grouped by kind.
-        let mut chunks: Vec<BTreeMap<BodyKind, Vec<&str>>> = vec![BTreeMap::new()];
-        let mut size = 0;
-        for (name, kind) in &self.bodies {
-            let entry = name.len() + 4;
-            if size + entry > BODIES_CHUNK_BYTES {
-                chunks.push(BTreeMap::new());
-                size = 0;
-            }
-            if let Some(chunk) = chunks.last_mut() {
-                chunk.entry(*kind).or_default().push(name);
-                size += entry;
-            }
-        }
-        if chunks.len() > MAX_BODY_CHUNKS {
-            return Err(Error::Invalid(
-                "the model has too many bodies to record their kinds".into(),
-            ));
-        }
+        let chunks = kind_chunks(&self.bodies)?;
         for (index, chunk) in chunks.iter().enumerate() {
             self.native
                 .set_metadata(&format!("{BODIES_KEY}{index}"), json!(chunk))?;
         }
         finish(self.native, sources)
     }
+}
+
+/// The body → kind map split over metadata values: Solidcraft caps each
+/// value at 64 KiB. Sizes are measured as serialized (escaping included).
+fn kind_chunks(bodies: &BTreeMap<String, BodyKind>) -> Result<Vec<BTreeMap<BodyKind, Vec<&str>>>> {
+    let mut chunks: Vec<BTreeMap<BodyKind, Vec<&str>>> = vec![BTreeMap::new()];
+    let mut size = 2;
+    for (name, kind) in bodies {
+        // The escaped name and its comma, plus the kind's key, colon and
+        // brackets when it is the chunk's first body of that kind.
+        let entry = serde_json::to_string(name)?.len() + 1;
+        let key = serde_json::to_string(kind)?.len() + 4;
+        let new_kind = chunks.last().is_some_and(|c| !c.contains_key(kind));
+        let needed = entry + if new_kind { key } else { 0 };
+        if needed + 2 > BODIES_CHUNK_BYTES {
+            return Err(Error::Invalid(format!("body name too long: {name}")));
+        }
+        if size + needed > BODIES_CHUNK_BYTES {
+            chunks.push(BTreeMap::new());
+            size = 2;
+        }
+        if let Some(chunk) = chunks.last_mut() {
+            if !chunk.contains_key(kind) {
+                size += key;
+            }
+            chunk.entry(*kind).or_default().push(name);
+            size += entry;
+        }
+    }
+    if chunks.len() > MAX_BODY_CHUNKS {
+        return Err(Error::Invalid(
+            "the model has too many bodies to record their kinds".into(),
+        ));
+    }
+    Ok(chunks)
 }
 
 /// The body → kind map stored with the model.
@@ -245,9 +243,10 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
             .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
         let footprint = &physical.footprint.definition;
         for pad in &footprint.pads {
-            if result.len() >= MAX_PADS {
+            if result.len() >= layout::MAX_PLACED_PADS {
                 return Err(Error::Invalid(format!(
-                    "the board has more than {MAX_PADS} pads"
+                    "the board has more than {} pads",
+                    layout::MAX_PLACED_PADS
                 )));
             }
             let net = physical
@@ -276,111 +275,6 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
     Ok(result)
 }
 
-/// A pad's finish rectangle in board coordinates.
-struct Land {
-    center: Point,
-    half: Point,
-    angle: f64,
-    layer: Layer,
-}
-
-impl Land {
-    fn local(&self, v: Point) -> Point {
-        let (s, c) = self.angle.sin_cos();
-        [c * v[0] + s * v[1], -s * v[0] + c * v[1]]
-    }
-
-    fn contains(&self, point: Point) -> bool {
-        let q = self.local([point[0] - self.center[0], point[1] - self.center[1]]);
-        (0..2).all(|i| q[i].abs() <= self.half[i] + 1e-9)
-    }
-
-    /// Where the line `point + t·direction` (unit direction) leaves this
-    /// rectangle, if it crosses it ahead of `point`.
-    fn exit(&self, point: Point, direction: Point) -> Option<f64> {
-        let q = self.local([point[0] - self.center[0], point[1] - self.center[1]]);
-        let v = self.local(direction);
-        let (mut enter, mut leave) = (f64::NEG_INFINITY, f64::INFINITY);
-        for i in 0..2 {
-            if v[i].abs() < 1e-12 {
-                if q[i].abs() > self.half[i] {
-                    return None;
-                }
-                continue;
-            }
-            let a = (-self.half[i] - q[i]) / v[i];
-            let b = (self.half[i] - q[i]) / v[i];
-            enter = enter.max(a.min(b));
-            leave = leave.min(a.max(b));
-        }
-        (enter <= leave && leave > 0.0).then_some(leave)
-    }
-}
-
-/// How far a track's cap is trimmed back from `end` (towards unit
-/// `direction`) when the end lies in a same-layer pad: far enough that the
-/// whole cap width (`half_width`) has left that pad's finish.
-fn trim(
-    lands: &[Land],
-    layer: Layer,
-    end: Point,
-    direction: Point,
-    half_width: f64,
-) -> Option<f64> {
-    let normal = [-direction[1], direction[0]];
-    lands
-        .iter()
-        .filter(|land| land.layer == layer && land.contains(end))
-        .flat_map(|land| {
-            [0.0, half_width, -half_width]
-                .into_iter()
-                .filter_map(move |o| {
-                    land.exit([end[0] + normal[0] * o, end[1] + normal[1] * o], direction)
-                })
-        })
-        .fold(None, |best: Option<f64>, t| {
-            Some(best.map_or(t, |b| b.max(t)))
-        })
-}
-
-/// The termination box of a pad under a package body, in the envelope's own
-/// (unmirrored) footprint frame: the pad ∩ body rectangle, grown outward where
-/// it reaches the body's faces. `None` when they do not overlap.
-fn termination(
-    package: &PackageDefinition,
-    footprint: &FootprintDefinition,
-    pad: &pcbcraft_core::library::Pad,
-) -> Option<([f64; 2], [f64; 2])> {
-    let [length, width, _] = package.body_size;
-    let offset = package.model_offset;
-    let body_min = [offset[0] - length / 2.0, offset[1] - width / 2.0];
-    let body_max = [offset[0] + length / 2.0, offset[1] + width / 2.0];
-    let mut min = [0.0; 2];
-    let mut max = [0.0; 2];
-    for axis in 0..2 {
-        let center = pad.position[axis] - footprint.datum_offset[axis];
-        let lo = (center - pad.size[axis] / 2.0).max(body_min[axis]);
-        let hi = (center + pad.size[axis] / 2.0).min(body_max[axis]);
-        if (hi - lo).partial_cmp(&1e-6) != Some(std::cmp::Ordering::Greater) {
-            return None;
-        }
-        let on = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        min[axis] = lo
-            - if on(lo, body_min[axis]) {
-                TERMINATION_GROWTH_MM
-            } else {
-                0.0
-            };
-        max[axis] = hi
-            + if on(hi, body_max[axis]) {
-                TERMINATION_GROWTH_MM
-            } else {
-                0.0
-            };
-    }
-    Some((min, max))
-}
-
 pub fn build(project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     let mut b = Builder::new(&project.name)?;
@@ -389,9 +283,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         ("board_depth", project.board_size[1]),
         ("board_thickness", BOARD_THICKNESS_MM),
         ("copper_thickness", COPPER_THICKNESS_MM),
-        ("mask_thickness", MASK_THICKNESS_MM),
-        ("mask_cap", MASK_CAP_MM),
-        ("finish_thickness", FINISH_THICKNESS_MM),
     ] {
         b.param(name, value, "mm")?;
     }
@@ -408,28 +299,8 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ],
         },
     )?;
-    for (kind, name, z) in [
-        (BodyKind::MaskTop, "Soldermask top", "board_thickness"),
-        (
-            BodyKind::MaskBottom,
-            "Soldermask bottom",
-            "0 mm - mask_thickness",
-        ),
-    ] {
-        b.body(
-            kind,
-            BoxBody {
-                name,
-                corner: [0.into(), 0.into(), z.into()],
-                size: [
-                    "board_width".into(),
-                    "board_depth".into(),
-                    "mask_thickness".into(),
-                ],
-            },
-        )?;
-    }
     let mut sources = vec![];
+    let mut parts = vec![];
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -452,13 +323,16 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         }
         let label = format!("{} envelope", instance.designator);
         let created = b.native.component(&label, false)?;
-        let size = package.body_size;
-        for (axis, value) in ["length", "width", "height"].into_iter().zip(size) {
+        for (axis, value) in ["length", "width", "height"]
+            .into_iter()
+            .zip(package.body_size)
+        {
             b.param(&format!("{prefix}_{axis}"), value, "mm")?;
         }
         let offset = package.model_offset;
+        let body = Body::of(package, Some(&instance.designator));
         b.body(
-            BodyKind::PackageBody,
+            body.kind(),
             BoxBody {
                 name: &label,
                 corner: [
@@ -473,40 +347,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 ],
             },
         )?;
-        // Chip parts are plated over their ends; other small packages show
-        // a low tinned band where a lead meets the land.
-        if footprint.pads.len() <= 2 {
-            let chip = footprint.pads.len() == 2 && size[0].max(size[1]) < CHIP_MAX_LENGTH_MM;
-            let top = if chip {
-                offset[2] + size[2] + TERMINATION_GROWTH_MM
-            } else {
-                offset[2] + LEAD_HEIGHT_SHARE * size[2]
-            };
-            for pad in &footprint.pads {
-                let Some((min, max)) = termination(package, footprint, pad) else {
-                    continue;
-                };
-                if top.partial_cmp(&0.001) != Some(std::cmp::Ordering::Greater) {
-                    continue;
-                }
-                b.body(
-                    BodyKind::Termination,
-                    BoxBody {
-                        name: &format!("{label} termination {}", pad.id),
-                        corner: [
-                            mm(min[0]).into(),
-                            mm(min[1]).into(),
-                            "copper_thickness".into(),
-                        ],
-                        size: [
-                            mm(max[0] - min[0]).into(),
-                            mm(max[1] - min[1]).into(),
-                            mm(top).into(),
-                        ],
-                    },
-                )?;
-            }
-        }
         b.native.board_joint(BoardJoint {
             board,
             occurrence: created.occurrence,
@@ -515,16 +355,23 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             angle: format!("{prefix}_angle").into(),
             layer: placement.layer,
         })?;
-        let component = created.component;
+        let pick = next_pick(&sources);
+        parts.push(Part {
+            pick: Some(pick),
+            package,
+            footprint: Some(footprint),
+            body,
+            placement: Some(placement),
+        });
         sources.push(Source {
-            pick_id: next_pick(&sources),
+            pick_id: pick,
             instance: Some(instance.id),
             pad: None,
             track: None,
             net: None,
             layer: Some(placement.layer),
             label,
-            component,
+            component: created.component,
         });
     }
     let pads = placed_pads(project)?;
@@ -556,24 +403,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 ],
             },
         )?;
-        // The plated finish encloses the copper (sidewalls included), so the
-        // pad's visible surface is never coplanar with a track's copper.
-        b.body(
-            BodyKind::PadFinish,
-            BoxBody {
-                name: &format!("{pp} finish"),
-                corner: [
-                    format!("-{pp}_length / 2 - finish_thickness").into(),
-                    format!("-{pp}_width / 2 - finish_thickness").into(),
-                    0.into(),
-                ],
-                size: [
-                    format!("{pp}_length + 2 * finish_thickness").into(),
-                    format!("{pp}_width + 2 * finish_thickness").into(),
-                    "copper_thickness + finish_thickness".into(),
-                ],
-            },
-        )?;
         let x =
             format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
         let y =
@@ -586,27 +415,26 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             angle: format!("{prefix}_angle").into(),
             layer: pad.layer,
         })?;
+        let pick = next_pick(&sources);
         lands.push(Land {
+            pick,
             center: pad.center,
-            half: [
-                local.size[0] / 2.0 + FINISH_THICKNESS_MM,
-                local.size[1] / 2.0 + FINISH_THICKNESS_MM,
-            ],
+            half: [local.size[0] / 2.0, local.size[1] / 2.0],
             angle: pad.rotation_deg.to_radians(),
             layer: pad.layer,
         });
-        let component = created.component;
         sources.push(Source {
-            pick_id: next_pick(&sources),
+            pick_id: pick,
             instance: Some(pad.instance),
             pad: Some(local.id),
             track: None,
             net: pad.net,
             layer: Some(pad.layer),
             label: format!("{} pad {}", pad.designator, local.id),
-            component,
+            component: created.component,
         });
     }
+    let mut paths = Vec::with_capacity(project.tracks.len());
     for track in &project.tracks {
         let prefix = format!("trace_{}", track.id);
         for (suffix, value) in [
@@ -627,42 +455,12 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 name: &prefix,
                 corner: [0.into(), format!("-{prefix}_width / 2").into(), 0.into()],
                 size: [
-                    length.clone().into(),
+                    length.into(),
                     format!("{prefix}_width").into(),
                     "copper_thickness".into(),
                 ],
             },
         )?;
-        // The mask cap ends where the track enters a pad's finish and
-        // overhangs a free end. The trims are numeric: moving a pad in the
-        // native file outside Pcbcraft does not move them.
-        let delta = [track.end[0] - track.start[0], track.end[1] - track.start[1]];
-        let numeric_length = delta[0].hypot(delta[1]);
-        if numeric_length > 0.0 {
-            let u = [delta[0] / numeric_length, delta[1] / numeric_length];
-            let half = track.width / 2.0 + CAP_MARGIN_MM;
-            let start = trim(&lands, track.layer, track.start, u, half).unwrap_or(-CAP_MARGIN_MM);
-            let end = trim(&lands, track.layer, track.end, [-u[0], -u[1]], half)
-                .unwrap_or(-CAP_MARGIN_MM);
-            if numeric_length - start - end >= CAP_MIN_MM {
-                b.body(
-                    BodyKind::MaskCap,
-                    BoxBody {
-                        name: &format!("{prefix} mask"),
-                        corner: [
-                            mm(start).into(),
-                            format!("-{prefix}_width / 2 - {}", mm(CAP_MARGIN_MM)).into(),
-                            "copper_thickness - mask_thickness".into(),
-                        ],
-                        size: [
-                            format!("{length} - ({})", mm(start + end)).into(),
-                            format!("{prefix}_width + {}", mm(2.0 * CAP_MARGIN_MM)).into(),
-                            "mask_thickness + mask_cap".into(),
-                        ],
-                    },
-                )?;
-            }
-        }
         b.native.board_joint(BoardJoint {
             board,
             occurrence: created.occurrence,
@@ -671,22 +469,43 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             angle: angle.into(),
             layer: track.layer,
         })?;
-        let component = created.component;
+        let pick = next_pick(&sources);
+        paths.push(Path {
+            pick,
+            start: track.start,
+            end: track.end,
+            width: track.width,
+            layer: track.layer,
+        });
         sources.push(Source {
-            pick_id: next_pick(&sources),
+            pick_id: pick,
             instance: None,
             pad: None,
             track: Some(track.id),
             net: Some(track.net),
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),
-            component,
+            component: created.component,
         });
     }
-    b.finish(sources)
+    let mut model = b.finish(sources)?;
+    let layers = appearance::board(
+        &appearance::Board {
+            width: project.board_size[0],
+            depth: project.board_size[1],
+            thickness: BOARD_THICKNESS_MM,
+            copper: COPPER_THICKNESS_MM,
+        },
+        &lands,
+        &paths,
+        &parts,
+    )?;
+    model.geometry.extend(layers);
+    Ok(model)
 }
 
-/// The native envelope of one package definition, draft or published.
+/// The native envelope of one package definition, draft or published, with
+/// the same terminations and overcoat a placed chip part shows.
 pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
     if !package.envelope_valid() {
         return Err(Error::Invalid(
@@ -701,8 +520,13 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
         b.param(name, value, "mm")?;
     }
     let offset = package.model_offset;
+    let body = Body::of(package, None);
+    let kind = match body {
+        Body::Moulded => BodyKind::PartBody,
+        chip => chip.kind(),
+    };
     b.body(
-        BodyKind::PartBody,
+        kind,
         BoxBody {
             name: "Package envelope",
             corner: [
@@ -713,7 +537,15 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
             size: ["length".into(), "width".into(), "height".into()],
         },
     )?;
-    b.finish(vec![])
+    let mut model = b.finish(vec![])?;
+    model.geometry.extend(appearance::preview(&Part {
+        pick: None,
+        package,
+        footprint: None,
+        body,
+        placement: None,
+    })?);
+    Ok(model)
 }
 
 #[cfg(test)]

@@ -32,14 +32,22 @@ pub enum BodyKind {
     PadFinish,
     /// A placed package's moulded envelope.
     PackageBody,
+    /// A chip resistor's alumina body.
+    ChipResistor,
+    /// A multilayer ceramic chip capacitor's body.
+    ChipCapacitor,
     /// A package's tinned termination.
     Termination,
+    /// The black overcoat over a chip resistor's top.
+    Overcoat,
+    /// A reflowed solder fillet between a termination and its land.
+    Solder,
     /// The envelope in the component authoring preview.
     PartBody,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 10] = [
+    pub const ALL: [BodyKind; 14] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -48,15 +56,46 @@ impl BodyKind {
         BodyKind::PadCopper,
         BodyKind::PadFinish,
         BodyKind::PackageBody,
+        BodyKind::ChipResistor,
+        BodyKind::ChipCapacitor,
         BodyKind::Termination,
+        BodyKind::Overcoat,
+        BodyKind::Solder,
         BodyKind::PartBody,
     ];
 
-    /// Board-level appearance layers: hidden with the substrate.
+    /// Board-level layers: hidden with the substrate.
     pub fn is_board(self) -> bool {
         matches!(
             self,
             BodyKind::Substrate | BodyKind::MaskTop | BodyKind::MaskBottom | BodyKind::MaskCap
+        )
+    }
+
+    /// A package's envelope body (placed or previewed).
+    pub fn is_envelope(self) -> bool {
+        matches!(
+            self,
+            BodyKind::PackageBody
+                | BodyKind::ChipResistor
+                | BodyKind::ChipCapacitor
+                | BodyKind::PartBody
+        )
+    }
+
+    /// Display-only appearance layers ([`crate::appearance`]): drawn and
+    /// picked, never native bodies, so the saved model stays physically
+    /// valid.
+    pub fn is_appearance(self) -> bool {
+        matches!(
+            self,
+            BodyKind::MaskTop
+                | BodyKind::MaskBottom
+                | BodyKind::MaskCap
+                | BodyKind::PadFinish
+                | BodyKind::Termination
+                | BodyKind::Overcoat
+                | BodyKind::Solder
         )
     }
 }
@@ -99,15 +138,27 @@ const MASK_INTERNAL: f64 = 0.60;
 /// Normal-incidence reflectance of the mask surface, ((1.52−1)/(1.52+1))².
 const MASK_F0: f64 = 0.043;
 const MASK_IOR: f64 = 1.52;
-/// Soldermask over bare laminate (20 µm) and over copper (15 µm), in µm.
+/// Soldermask over bare laminate (20 µm) and over a track's crown (12 µm;
+/// LPI thins over copper edges and crowns to 10–15 µm), in µm.
 pub const MASK_OVER_LAMINATE_UM: f64 = 20.0;
-pub const MASK_OVER_COPPER_UM: f64 = 15.0;
+pub const MASK_OVER_COPPER_UM: f64 = 12.0;
 /// Glossy LPI (gloss "L" texture code) as perceptual roughness (est.).
 const MASK_ROUGHNESS: f64 = 0.20;
 /// Silica-filled epoxy and glass-epoxy laminate index (handbook values).
 const EPOXY_IOR: f64 = 1.55;
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
+/// Tin F0, flat across the visible (est.; Palik's Sn n, k to confirm).
+const TIN: [f64; 3] = [0.70, 0.70, 0.72];
+/// 96 % alumina substrate diffuse reflectance (est. from published
+/// 400–700 nm reflectance of thick-film substrates, 0.75–0.85).
+const ALUMINA: [f64; 3] = [0.78, 0.77, 0.73];
+/// Alumina refractive index (sapphire, n_o = 1.77; handbook value).
+const ALUMINA_IOR: f64 = 1.77;
+/// Sintered barium-titanate MLCC body, tan (est.).
+const MLCC: [f64; 3] = [0.32, 0.25, 0.15];
+/// Barium titanate is n ≈ 2.4; Solidcraft's dielectric IOR is at most 3.
+const MLCC_IOR: f64 = 2.4;
 
 /// Reflectance of a soldermask layer `thickness_um` thick over a diffuse
 /// substrate of reflectance `under` (two-flux layer with a Saunderson
@@ -160,15 +211,23 @@ pub fn material(kind: BodyKind, finish: PadFinish) -> Material {
             // 85 % Au F0 (1.000, 0.782, 0.344) over 15 % Ni F0 (0.660, 0.609,
             // 0.526): the immersion gold is only 1–2 penetration depths thick.
             PadFinish::Enig => metal("ENIG gold", [0.95, 0.76, 0.37], 0.25),
-            PadFinish::Hasl => metal("HASL tin", [0.70, 0.70, 0.72], 0.25),
+            PadFinish::Hasl => metal("HASL tin", TIN, 0.25),
         },
-        BodyKind::Termination => metal("Matte tin", [0.68, 0.68, 0.70], 0.40),
+        BodyKind::Termination => metal("Matte tin", TIN, 0.35),
+        // Reflowed SAC solder freezes with a smooth, bright meniscus.
+        BodyKind::Solder => metal("Reflowed solder", TIN, 0.15),
         BodyKind::PackageBody | BodyKind::PartBody => dielectric(
             "Epoxy mould compound",
             [0.022, 0.022, 0.024],
             0.45,
             EPOXY_IOR,
         ),
+        BodyKind::ChipResistor => dielectric("Alumina ceramic", ALUMINA, 0.55, ALUMINA_IOR),
+        BodyKind::ChipCapacitor => dielectric("MLCC ceramic", MLCC, 0.55, MLCC_IOR),
+        // Glass or epoxy overcoat with a black marking layer.
+        BodyKind::Overcoat => {
+            dielectric("Resistor overcoat", [0.025, 0.025, 0.027], 0.30, EPOXY_IOR)
+        }
     }
 }
 
@@ -239,13 +298,18 @@ mod tests {
         assert_eq!((enig.metallic, enig.base_linear), (1.0, [0.95, 0.76, 0.37]));
         let hasl = material(BodyKind::PadFinish, PadFinish::Hasl);
         assert_eq!((hasl.metallic, hasl.base_linear), (1.0, [0.70, 0.70, 0.72]));
-        let tin = material(BodyKind::Termination, DEFAULT_FINISH);
-        assert_eq!((tin.metallic, tin.base_linear), (1.0, [0.68, 0.68, 0.70]));
+        for kind in [BodyKind::Termination, BodyKind::Solder] {
+            let tin = material(kind, DEFAULT_FINISH);
+            assert_eq!((tin.metallic, tin.base_linear), (1.0, TIN), "{kind:?}");
+        }
         for kind in [
             BodyKind::Substrate,
             BodyKind::MaskTop,
             BodyKind::MaskCap,
             BodyKind::PackageBody,
+            BodyKind::ChipResistor,
+            BodyKind::ChipCapacitor,
+            BodyKind::Overcoat,
         ] {
             assert_eq!(material(kind, DEFAULT_FINISH).metallic, 0.0, "{kind:?}");
         }

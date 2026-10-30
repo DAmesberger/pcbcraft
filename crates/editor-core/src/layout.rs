@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const CLEARANCE_MM: f64 = 0.2;
 const EPS: f64 = 1e-8;
 const MAX_TRACKS: usize = 2_000;
-const MAX_PLACED_PADS: usize = 4_096;
+/// Most footprint pads placed on one board.
+pub const MAX_PLACED_PADS: usize = 4_096;
 const MAX_CHECK_PAIRS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

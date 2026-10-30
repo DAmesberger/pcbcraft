@@ -1,29 +1,35 @@
 //! Solidcraft's GPU renderer and camera over cached geometry. Solidcraft's full
 //! navigation handler is private to its app, so this applies the same camera
-//! operations (middle-drag pan, right-drag orbit, scroll zoom) directly.
+//! operations (middle-drag pan, right-drag orbit about the surface under the
+//! pointer, scroll zoom toward the pointer) directly.
 //!
 //! The model is drawn through Solidcraft's PBR path with the studio rig in
 //! [`crate::lighting`]. Three slots are published separately so each change
 //! uploads only what it touches: the model's PBR vertices (`slot`: a new
-//! model or the Hide-substrate toggle), shadows (`sketch_slot`: theme, side
-//! or toggle) and the selection (`hl_slot`: cached flat blocks recoloured).
-//! Adaptive supersampling follows Solidcraft's viewport `supersampling` and
+//! model, moved in without a copy, or the Hide-substrate toggle, repacked off
+//! the UI thread), shadows (`sketch_slot`: theme, side or toggle) and the
+//! selection (`hl_slot`: cached flat blocks recoloured). Adaptive
+//! supersampling follows Solidcraft's viewport `supersampling` and
 //! `view_settled` (MIT, revision 4f3ac07; see ATTRIBUTION.md).
 use crate::lighting;
-use crate::model_scene::{ModelScene, Segment, ShadowVertex, next_key};
+use crate::model_scene::{self, ModelScene, Segment, ShadowVertex, next_key};
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     render::Camera,
+    scene::Geometry,
 };
 use solidcraft_ui_egui::gpu::{
     self, Frame, GpuScene, GpuTarget, Palette, SceneSlot, ViewportCallback,
 };
 use solidcraft_ui_egui::theme;
 use std::hash::{Hash, Hasher};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 
 /// Vertical field of view: a gentle perspective, as a product photograph.
 const FIELD_OF_VIEW: f64 = 0.5;
+/// Share of the view a fitted model leaves free at its widest edge.
+const FIT_MARGIN: f64 = 0.08;
 /// How long the view holds still before it is drawn supersampled (s).
 const SETTLE: f64 = 0.25;
 const SUPERSAMPLE: f32 = 2.0;
@@ -36,14 +42,25 @@ const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
 /// substrate hidden.
 type ShadowView = (bool, bool, bool);
 
+/// A PBR repack running off the UI thread: the model generation and
+/// substrate state it is for.
+struct Repack {
+    generation: u64,
+    hidden: bool,
+    result: Receiver<Result<Vec<u8>, String>>,
+}
+
 pub struct Viewport {
     model: Option<ModelScene>,
+    /// Counts models shown, so a late repack never lands on a newer one.
+    generation: u64,
+    repack: Option<Repack>,
     bounds: Aabb3,
     highlighted: Vec<u64>,
     slot: SceneSlot,
     key: u64,
-    sketch_slot: SceneSlot,
     sketch_key: u64,
+    sketch_slot: SceneSlot,
     hl_slot: SceneSlot,
     hl_key: u64,
     empty: SceneSlot,
@@ -51,7 +68,13 @@ pub struct Viewport {
     /// The view's hash and when it last changed.
     settle: (u64, f64),
     camera: Camera,
-    pub hide_substrate: bool,
+    /// Width over height of the last drawn view.
+    aspect: f64,
+    /// Fit again once the view's shape is known (the next draw).
+    fit_pending: bool,
+    /// The point a right-drag orbits about.
+    pivot: Option<Vec3>,
+    hide_substrate: bool,
 }
 
 impl Viewport {
@@ -80,6 +103,8 @@ impl Viewport {
         };
         let mut result = Self {
             model: None,
+            generation: 0,
+            repack: None,
             bounds: Self::initial_bounds(),
             highlighted: vec![],
             slot: Arc::new(Mutex::new(None)),
@@ -92,12 +117,16 @@ impl Viewport {
             shadow_view: None,
             settle: (0, 0.0),
             camera,
+            aspect: 1.6,
+            fit_pending: false,
+            pivot: None,
             hide_substrate: false,
         };
         result.fit();
         result
     }
 
+    /// A placeholder until the first model arrives, which is fitted again.
     fn initial_bounds() -> Aabb3 {
         Aabb3 {
             min: Vec3::new(0.0, 0.0, -0.1),
@@ -105,26 +134,127 @@ impl Viewport {
         }
     }
 
+    /// Fit the model to the view now, and again on the next draw, when the
+    /// view's shape is known.
     pub fn fit(&mut self) {
-        self.camera.fit(&self.bounds);
+        self.fit_to(self.aspect);
+        self.fit_pending = true;
     }
 
-    /// Show a model built on the worker. Only its prepared bytes are moved
-    /// into the slots; nothing is packed here.
-    pub fn set_model(&mut self, model: ModelScene) {
+    /// Frame the bounds' eight corners inside both the vertical and the
+    /// horizontal field of view, with [`FIT_MARGIN`] to spare.
+    fn fit_to(&mut self, aspect: f64) {
+        let b = self.bounds;
+        if b.is_empty() || !b.min.is_finite() || !b.max.is_finite() {
+            return;
+        }
+        let aspect = if aspect.is_finite() && aspect > 1e-3 {
+            aspect
+        } else {
+            1.0
+        };
+        self.camera.target = b.center();
+        let (right, up, back) = self.camera.basis();
+        let keep = 1.0 - FIT_MARGIN;
+        let corners = (0..8).map(|k| {
+            Vec3::new(
+                if k & 1 == 0 { b.min.x } else { b.max.x },
+                if k & 2 == 0 { b.min.y } else { b.max.y },
+                if k & 4 == 0 { b.min.z } else { b.max.z },
+            ) - b.center()
+        });
+        if self.camera.fov > 0.0 {
+            let vertical = (self.camera.fov * 0.5).tan() * keep;
+            let horizontal = vertical * aspect;
+            let distance = corners
+                .map(|v| {
+                    let toward = v.dot(back);
+                    (toward + v.dot(right).abs() / horizontal)
+                        .max(toward + v.dot(up).abs() / vertical)
+                })
+                .fold(1e-3, f64::max);
+            self.camera.distance = distance;
+        } else {
+            // Solidcraft's parallel view shows 0.4 × distance above the centre.
+            let half = corners
+                .map(|v| (v.dot(up).abs() / keep).max(v.dot(right).abs() / (aspect * keep)))
+                .fold(1e-3, f64::max);
+            self.camera.distance = half / 0.4;
+        }
+    }
+
+    /// Show a model built on the worker. Its PBR bytes move into the slot.
+    pub fn set_model(&mut self, mut model: ModelScene) {
         if !model.bounds.is_empty() {
             self.bounds = model.bounds;
         }
+        let mut pbr = std::mem::take(&mut model.pbr);
+        if self.hide_substrate {
+            pbr.truncate(model.parts_bytes);
+        }
         self.model = Some(model);
-        self.refresh();
-    }
-
-    /// Publish everything again (a new model or the Hide-substrate toggle).
-    pub fn refresh(&mut self) {
-        self.publish_model();
+        self.generation = self.generation.wrapping_add(1);
+        self.repack = None;
+        self.publish_pbr(pbr);
         self.shadow_view = None;
         self.publish_shadows();
         self.publish_highlight();
+    }
+
+    pub fn hide_substrate(&self) -> bool {
+        self.hide_substrate
+    }
+
+    /// Show or hide the board-level bodies. Shadows and selection change at
+    /// once; the model's vertices are repacked on a background thread.
+    pub fn set_hide_substrate(&mut self, hidden: bool) {
+        if self.hide_substrate == hidden {
+            return;
+        }
+        self.hide_substrate = hidden;
+        self.shadow_view = None;
+        self.publish_shadows();
+        self.publish_highlight();
+        let Some(model) = &self.model else {
+            return;
+        };
+        let geometry: Vec<Geometry> = model.geometry.clone();
+        let (send, result) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("pcb-3d-repack".into())
+            .spawn(move || {
+                let packed = model_scene::pack(&geometry, !hidden).map(|(bytes, _)| bytes);
+                let _ = send.send(packed);
+            });
+        self.repack = match spawned {
+            Ok(_) => Some(Repack {
+                generation: self.generation,
+                hidden,
+                result,
+            }),
+            Err(_) => None,
+        };
+    }
+
+    /// Take a finished repack if it is still current; whether one is due.
+    fn receive_repack(&mut self) -> bool {
+        let Some(repack) = &self.repack else {
+            return false;
+        };
+        match repack.result.try_recv() {
+            Ok(Ok(bytes))
+                if repack.generation == self.generation && repack.hidden == self.hide_substrate =>
+            {
+                self.repack = None;
+                self.publish_pbr(bytes);
+                false
+            }
+            Ok(_) | Err(mpsc::TryRecvError::Disconnected) => {
+                self.repack = None;
+                false
+            }
+            Err(mpsc::TryRecvError::Empty) => true,
+        }
     }
 
     fn publish(slot: &SceneSlot, key: &mut u64, scene: GpuScene) {
@@ -134,25 +264,11 @@ impl Viewport {
         }
     }
 
-    fn publish_model(&mut self) {
-        let mut scene = GpuScene::default();
-        if let Some(model) = &self.model {
-            let board = if self.hide_substrate {
-                0
-            } else {
-                model.board_pbr.len()
-            };
-            if scene
-                .pbr
-                .try_reserve_exact(model.parts_pbr.len().saturating_add(board))
-                .is_ok()
-            {
-                scene.pbr.extend_from_slice(&model.parts_pbr);
-                if !self.hide_substrate {
-                    scene.pbr.extend_from_slice(&model.board_pbr);
-                }
-            }
-        }
+    fn publish_pbr(&mut self, pbr: Vec<u8>) {
+        let scene = GpuScene {
+            pbr,
+            ..GpuScene::default()
+        };
         Self::publish(&self.slot, &mut self.key, scene);
     }
 
@@ -220,17 +336,35 @@ impl Viewport {
         Self::publish(&self.hl_slot, &mut self.hl_key, scene);
     }
 
-    /// The pick identity under a pixel of a `width` × `height` view.
-    pub fn pick(&self, x: f64, y: f64, width: f64, height: f64) -> Option<u64> {
+    /// The nearest shown body under a pixel of a `width` × `height` view
+    /// and the distance along the pointer ray.
+    fn hit(&self, x: f64, y: f64, width: f64, height: f64) -> Option<(f64, &Geometry)> {
         let model = self.model.as_ref()?;
         let (origin, direction) = self.camera.ray(x, y, width, height);
         model
             .geometry
             .iter()
             .filter(|g| !(self.hide_substrate && g.kind.is_board()))
-            .filter_map(|g| g.mesh.raycast(origin, direction).map(|(d, _)| (d, g.item)))
+            .filter(|g| box_hit(g, origin, direction))
+            .filter_map(|g| g.mesh.raycast(origin, direction).map(|(d, _)| (d, g)))
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .and_then(|(_, id)| id)
+    }
+
+    /// The pick identity under a pixel of a `width` × `height` view.
+    pub fn pick(&self, x: f64, y: f64, width: f64, height: f64) -> Option<u64> {
+        self.hit(x, y, width, height).and_then(|(_, g)| g.item)
+    }
+
+    /// The model point under a pixel, or where the pointer ray meets the
+    /// board's mid-plane: the anchor for zooming and orbiting.
+    fn surface_point(&self, x: f64, y: f64, width: f64, height: f64) -> Option<Vec3> {
+        let (origin, direction) = self.camera.ray(x, y, width, height);
+        if let Some((d, _)) = self.hit(x, y, width, height) {
+            return Some(origin + direction * d);
+        }
+        let plane = self.bounds.center().z;
+        let t = (plane - origin.z) / direction.z;
+        (t.is_finite() && t > 0.0).then(|| origin + direction * t)
     }
 
     /// Supersampling once the view has held still (Solidcraft's adaptive
@@ -295,19 +429,44 @@ impl Viewport {
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
+        let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
+        self.aspect = w / h;
+        if self.fit_pending {
+            self.fit_pending = false;
+            self.fit_to(self.aspect);
+        }
+        if self.receive_repack() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        let local = |p: egui::Pos2| (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()));
         if response.dragged_by(egui::PointerButton::Middle) {
             let d = ui.input(|i| i.pointer.delta());
-            self.camera
-                .pan(f64::from(d.x), f64::from(d.y), f64::from(rect.height()));
+            self.camera.pan(f64::from(d.x), f64::from(d.y), h);
+        }
+        if response.drag_started_by(egui::PointerButton::Secondary) {
+            self.pivot = ui.input(|i| i.pointer.press_origin()).and_then(|p| {
+                let (x, y) = local(p);
+                self.surface_point(x, y, w, h)
+            });
         }
         if response.dragged_by(egui::PointerButton::Secondary) {
             let d = ui.input(|i| i.pointer.delta());
-            self.camera.orbit(f64::from(d.x), f64::from(d.y));
+            let (dx, dy) = (f64::from(d.x), f64::from(d.y));
+            match self.pivot {
+                Some(pivot) => self.camera.orbit_about(dx, dy, pivot),
+                None => self.camera.orbit(dx, dy),
+            }
         }
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
-                self.camera.zoom_at((f64::from(scroll) * 0.002).exp(), None);
+                let anchor = response.hover_pos().and_then(|p| {
+                    let (x, y) = local(p);
+                    self.surface_point(x, y, w, h)
+                });
+                self.camera
+                    .zoom_at((f64::from(scroll) * 0.002).exp(), anchor);
             }
         }
         if self.shadow_view != Some(self.current_shadow_view()) {
@@ -366,21 +525,39 @@ impl Viewport {
         if response.clicked()
             && let Some(p) = response.interact_pointer_pos()
         {
-            return Some(self.pick(
-                f64::from(p.x - rect.left()),
-                f64::from(p.y - rect.top()),
-                f64::from(rect.width()),
-                f64::from(rect.height()),
-            ));
+            let (x, y) = local(p);
+            return Some(self.pick(x, y, w, h));
         }
         None
     }
 }
 
+/// Whether the ray meets a body's bounding box ahead of its origin: a cheap
+/// test before the triangles.
+fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
+    let (o, d) = (
+        [origin.x, origin.y, origin.z],
+        [direction.x, direction.y, direction.z],
+    );
+    let (mut enter, mut leave) = (0.0_f64, f64::INFINITY);
+    for k in 0..3 {
+        if d[k].abs() < 1e-15 {
+            if o[k] < g.min[k] || o[k] > g.max[k] {
+                return false;
+            }
+            continue;
+        }
+        let a = (g.min[k] - o[k]) / d[k];
+        let b = (g.max[k] - o[k]) / d[k];
+        enter = enter.max(a.min(b));
+        leave = leave.min(a.max(b));
+    }
+    enter <= leave + 1e-9
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_solidcraft::material::BodyKind;
 
     fn demo() -> Result<Viewport, Box<dyn std::error::Error>> {
         let project = crate::model_scene::tests::demo_project()?;
@@ -449,8 +626,14 @@ mod tests {
             blocks(&viewport.hl_slot),
             pbr_len(&viewport.slot),
         );
-        viewport.hide_substrate = true;
-        viewport.refresh();
+        viewport.set_hide_substrate(true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while viewport.receive_repack() {
+            if std::time::Instant::now() > deadline {
+                return Err("the repack did not finish".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         let after = (
             viewport.key,
             blocks(&viewport.hl_slot),
@@ -482,34 +665,91 @@ mod tests {
         Ok(())
     }
 
+    /// The bounds' corners on screen, as shares of the view (0..1 inside).
+    fn corner_shares(viewport: &Viewport, w: f64, h: f64) -> Result<Vec<(f64, f64)>, String> {
+        let b = viewport.bounds;
+        (0..8)
+            .map(|corner| {
+                let p = Vec3::new(
+                    if corner & 1 == 0 { b.min.x } else { b.max.x },
+                    if corner & 2 == 0 { b.min.y } else { b.max.y },
+                    if corner & 4 == 0 { b.min.z } else { b.max.z },
+                );
+                viewport
+                    .camera
+                    .to_screen(p, w, h, b.diagonal())
+                    .map(|(x, y, _)| (x / w, y / h))
+                    .ok_or_else(|| "behind the eye".to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fit_frames_the_whole_board_in_wide_and_narrow_views()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = demo()?;
+        for (w, h) in [
+            (1500.0, 800.0),
+            (830.0, 900.0),
+            (400.0, 900.0),
+            (1600.0, 300.0),
+        ] {
+            for (yaw, pitch) in [(0.0, 0.6), (0.785, 0.615), (2.0, 1.5), (4.0, -0.4)] {
+                viewport.camera.yaw = yaw;
+                viewport.camera.pitch = pitch;
+                viewport.fit_to(w / h);
+                let shares = corner_shares(&viewport, w, h)?;
+                let inside = |v: f64| (0.0..=1.0).contains(&v);
+                assert!(
+                    shares.iter().all(|(x, y)| inside(*x) && inside(*y)),
+                    "{w}×{h} at {yaw}/{pitch}: {shares:?}"
+                );
+                // Snug: the widest corner reaches the margin on one axis.
+                let reach = shares
+                    .iter()
+                    .flat_map(|(x, y)| [(x - 0.5).abs(), (y - 0.5).abs()])
+                    .fold(0.0, f64::max);
+                assert!(reach > 0.40 && reach <= 0.5, "{w}×{h}: {reach}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scrolling_zooms_toward_the_point_under_the_pointer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut viewport = demo()?;
+        let (w, h) = (800.0, 600.0);
+        let (x, y) = (610.0, 220.0);
+        let anchor = viewport.surface_point(x, y, w, h).ok_or("no anchor")?;
+        let radius = viewport.bounds.diagonal();
+        for factor in [0.5, 0.5, 1.7] {
+            viewport.camera.zoom_at(factor, Some(anchor));
+            let (sx, sy, _) = viewport
+                .camera
+                .to_screen(anchor, w, h, radius)
+                .ok_or("behind the eye")?;
+            assert!((sx - x).abs() < 1e-6 && (sy - y).abs() < 1e-6, "{sx}, {sy}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn the_perspective_view_fits_and_picks_the_part_under_the_pointer()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut viewport = demo()?;
         assert!(viewport.camera.fov > 0.0);
         let (w, h) = (800.0, 600.0);
+        viewport.fit_to(w / h);
         let radius = viewport.bounds.diagonal();
-        for corner in 0..8 {
-            let b = viewport.bounds;
-            let p = Vec3::new(
-                if corner & 1 == 0 { b.min.x } else { b.max.x },
-                if corner & 2 == 0 { b.min.y } else { b.max.y },
-                if corner & 4 == 0 { b.min.z } else { b.max.z },
-            );
-            let (x, y, _) = viewport
-                .camera
-                .to_screen(p, w, h, radius)
-                .ok_or("behind the eye")?;
-            assert!(
-                (0.0..=w).contains(&x) && (0.0..=h).contains(&y),
-                "{p:?} at {x}, {y}"
-            );
+        for (x, y) in corner_shares(&viewport, w, h)? {
+            assert!((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y));
         }
         let model = viewport.model.as_ref().ok_or("no model")?;
         let body = model
             .geometry
             .iter()
-            .find(|g| g.kind == BodyKind::PackageBody && g.min[2] > 1.0)
+            .find(|g| g.kind.is_envelope() && g.min[2] > 1.0)
             .ok_or("no top package")?;
         let item = body.item;
         let top = Vec3::new(
@@ -523,17 +763,17 @@ mod tests {
             .to_screen(top, w, h, radius)
             .ok_or("behind the eye")?;
         assert_eq!(viewport.pick(x, y, w, h), item);
-        viewport.hide_substrate = true;
-        let edge = viewport
+        let (x, y, _) = viewport
             .camera
-            .to_screen(Vec3::new(0.5, 0.5, 1.6), w, h, radius);
-        if let Some((x, y, _)) = edge {
-            assert_eq!(
-                viewport.pick(x, y, w, h),
-                None,
-                "hidden board is not picked"
-            );
-        }
+            .to_screen(Vec3::new(0.5, 0.5, 1.6), w, h, radius)
+            .ok_or("behind the eye")?;
+        assert_eq!(viewport.pick(x, y, w, h), None, "laminate has no item");
+        assert!(viewport.hit(x, y, w, h).is_some(), "the board is hit");
+        viewport.set_hide_substrate(true);
+        assert!(
+            viewport.hit(x, y, w, h).is_none(),
+            "hidden board is not hit"
+        );
         Ok(())
     }
 }

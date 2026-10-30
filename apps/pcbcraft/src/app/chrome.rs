@@ -23,8 +23,10 @@ const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
 /// Upstream Browser card width.
 const BROWSER_WIDTH: f32 = 260.0;
 /// Informational status messages fade after this many seconds; errors stay
-/// until the next action.
+/// until the next successful action, a workspace change or this many
+/// seconds, whichever comes first.
 const STATUS_SECONDS: f64 = 6.0;
+const ERROR_SECONDS: f64 = 12.0;
 
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
@@ -173,7 +175,12 @@ impl App {
             Workspace::Pcb => self.pcb.ribbon(&self.engine),
         };
         match shell::ribbon(ui, self.workspace, &ribbon) {
-            Some(RibbonEvent::Workspace(workspace)) => self.workspace = workspace,
+            Some(RibbonEvent::Workspace(workspace)) => {
+                if workspace != self.workspace {
+                    self.clear_error();
+                }
+                self.workspace = workspace;
+            }
             Some(RibbonEvent::Tab(tab)) => match self.workspace {
                 Workspace::Part => self.part.on_tab(tab),
                 Workspace::Schematic => {}
@@ -347,7 +354,7 @@ impl App {
             }
         }
         if pcb_3d {
-            let hidden = self.scene.viewport.hide_substrate;
+            let hidden = self.scene.viewport.hide_substrate();
             let label = if hidden {
                 "Show substrate"
             } else {
@@ -372,28 +379,32 @@ impl App {
                 );
             }
             if response.clicked() {
-                self.scene.viewport.hide_substrate = !hidden;
-                self.scene.viewport.refresh();
+                self.scene.viewport.set_hide_substrate(!hidden);
             }
         }
     }
 
     /// The latest status message, bottom-left in the canvas. Errors stay
-    /// until the next action; other messages fade.
+    /// longer than other messages; both fade.
     fn status_chip(&mut self, ui: &mut egui::Ui, canvas: Rect) {
         let t = Tokens::get();
         let Some(status) = &self.status else {
             return;
         };
         let now = ui.input(|i| i.time);
-        if !status.error && now - status.at > STATUS_SECONDS {
+        let lasts = if status.error {
+            ERROR_SECONDS
+        } else {
+            STATUS_SECONDS
+        };
+        if now - status.at > lasts {
             self.status = None;
             return;
         }
-        if !status.error {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64(STATUS_SECONDS));
-        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(
+                lasts - (now - status.at) + 0.05,
+            ));
         let ink = if status.error { t.error } else { t.text };
         let mut job = egui::text::LayoutJob::simple(
             status.text.clone(),

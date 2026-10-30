@@ -320,18 +320,20 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
         if !m.volume.is_finite() || m.volume <= 0.0 {
             return Err(Error::Verification("copper must be a closed volume".into()));
         }
-        let item = manifest
+        let source = manifest
             .items
             .iter()
-            .find(|i| i.component == body.component)
-            .map(|i| i.id);
-        let kind = if item.is_some() {
-            crate::material::BodyKind::CopperTrack
-        } else {
-            crate::material::BodyKind::Substrate
+            .find(|i| i.component == body.component);
+        let kind = match source.map(|i| i.kind.as_str()) {
+            Some("Pad") => crate::material::BodyKind::PadCopper,
+            // Trace, via and zone copper.
+            Some(_) => crate::material::BodyKind::CopperTrack,
+            None => crate::material::BodyKind::Substrate,
         };
+        // The fixture's native file stores colours only, not physical looks,
+        // so its surfaces come from the kind's look rather than the file.
         geometry.push(Geometry {
-            item,
+            item: source.map(|i| i.id),
             kind,
             surface: crate::material::material(kind, crate::material::DEFAULT_FINISH).surface()?,
             mesh: body.mesh(),
