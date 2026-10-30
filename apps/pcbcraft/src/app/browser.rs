@@ -3,9 +3,10 @@
 //! there. The tree reads state only; the app applies the returned
 //! [`Pick`] through the editors.
 use crate::kit::{self, Row};
+use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS};
 use pcbcraft_core::library::Definition;
 use pcbcraft_core::{DefinitionId, Engine, Id, Query, QueryResult};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What the Browser highlights: the active workspace's selection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -71,21 +72,25 @@ fn components(engine: &Engine) -> Vec<ComponentRow> {
 /// The Components filter text, kept in egui memory.
 const FILTER: &str = "browser-component-filter";
 
+/// The lineages one filter text keeps, in rank order, and how many matched
+/// in all (the list holds at most [`MAX_RESULTS`]).
+#[derive(Clone, Debug, PartialEq)]
+struct Matches {
+    order: Vec<DefinitionId>,
+    total: usize,
+}
+
 /// One filter result per document revision and text.
 #[derive(Clone)]
 struct Filtered {
     revision: u64,
     text: String,
-    result: Result<Option<Vec<DefinitionId>>, String>,
+    result: Result<Option<Matches>, String>,
 }
 
 /// The lineages a filter text keeps, ranked by the engine's
 /// `library.search` (drafts included); `None` for an empty filter.
-fn filtered(
-    ctx: &egui::Context,
-    engine: &Engine,
-    text: &str,
-) -> Result<Option<Vec<DefinitionId>>, String> {
+fn filtered(ctx: &egui::Context, engine: &Engine, text: &str) -> Result<Option<Matches>, String> {
     if text.trim().is_empty() {
         return Ok(None);
     }
@@ -98,12 +103,13 @@ fn filtered(
     }
     let result = match engine.query(Query::Search {
         query: text.into(),
-        limit: Some(pcbcraft_core::catalog::MAX_RESULTS),
+        limit: Some(MAX_RESULTS),
         include_drafts: true,
     }) {
-        Ok(QueryResult::Search(report)) => Ok(Some(
-            report.results.iter().map(|h| h.entry.lineage).collect(),
-        )),
+        Ok(QueryResult::Search(report)) => Ok(Some(Matches {
+            order: report.results.iter().map(|h| h.entry.lineage).collect(),
+            total: report.total,
+        })),
         Ok(_) => Err("unexpected report".into()),
         Err(error) => Err(error.to_string()),
     };
@@ -115,9 +121,24 @@ fn filtered(
                 text: text.into(),
                 result: result.clone(),
             },
-        )
+        );
+        // A text that fails to parse keeps the list of the last one that
+        // did, so the rows do not jump while a predicate is typed.
+        if let Ok(matches) = &result {
+            d.insert_temp(
+                egui::Id::new((FILTER, "last-good")),
+                (engine.revision(), matches.clone()),
+            );
+        }
     });
     result
+}
+
+/// The rows of the last filter text that parsed, at this revision.
+fn last_good(ctx: &egui::Context, engine: &Engine) -> Option<Matches> {
+    ctx.data(|d| d.get_temp::<(u64, Option<Matches>)>(egui::Id::new((FILTER, "last-good"))))
+        .filter(|(revision, _)| *revision == engine.revision())
+        .and_then(|(_, matches)| matches)
 }
 
 /// Fold state, persisted in egui memory per row key.
@@ -142,8 +163,22 @@ fn folder(
     branch: bool,
     default_open: bool,
 ) -> bool {
-    let open = folded(ui, key, default_open);
     let count = count.map(|c| c.to_string()).unwrap_or_default();
+    folder_labelled(ui, key, depth, label, &count, branch, default_open)
+}
+
+/// A folder row with its secondary text; returns whether it is open after
+/// this frame.
+fn folder_labelled(
+    ui: &mut egui::Ui,
+    key: &str,
+    depth: usize,
+    label: &str,
+    count: &str,
+    branch: bool,
+    default_open: bool,
+) -> bool {
+    let open = folded(ui, key, default_open);
     let response = kit::tree_row(
         ui,
         egui::Id::new(("browser", key)),
@@ -152,7 +187,7 @@ fn folder(
             fold: Some(open),
             icon: "folder",
             label,
-            secondary: &count,
+            secondary: count,
             branch,
             ..Default::default()
         },
@@ -184,41 +219,66 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
         .data(|d| d.get_temp::<String>(egui::Id::new(FILTER)))
         .unwrap_or_default();
     let matched = filtered(ui.ctx(), engine, &filter);
-    let components: Vec<&ComponentRow> = match &matched {
-        Ok(Some(order)) => order
-            .iter()
-            .filter_map(|id| all.iter().find(|c| c.id == *id))
-            .collect(),
-        _ => all.iter().collect(),
+    let shown_matches = match &matched {
+        Ok(matches) => matches.clone(),
+        Err(_) => last_good(ui.ctx(), engine),
     };
-    if folder(
+    let by_id: BTreeMap<DefinitionId, &ComponentRow> = all.iter().map(|c| (c.id, c)).collect();
+    let components: Vec<&ComponentRow> = match &shown_matches {
+        Some(matches) => matches
+            .order
+            .iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .collect(),
+        None => all.iter().collect(),
+    };
+    // While filtering, the count reads "shown of all" so an active filter
+    // is visible from every workspace.
+    let count = if shown_matches.is_some() {
+        format!("{} of {}", components.len(), all.len())
+    } else {
+        all.len().to_string()
+    };
+    if folder_labelled(
         ui,
         "components",
         1,
         "Components",
-        Some(components.len()),
+        &count,
         lit.component.is_some(),
         true,
     ) {
         ui.add_space(2.0);
-        let response = kit::text_field(
+        let field = kit::filter_field(
             ui,
-            FILTER,
+            egui::Id::new((FILTER, "field")),
             &mut filter,
-            "Filter: name, 10k, R>=1k, pkg:0603",
+            "Filter: name, 10k, res>=1k, pkg:0603",
             matched.is_err(),
+            MAX_QUERY,
         );
-        if response.changed() {
+        if field.changed {
             ui.ctx()
                 .data_mut(|d| d.insert_temp(egui::Id::new(FILTER), filter.clone()));
         }
         ui.add_space(2.0);
         match &matched {
             Err(error) => {
-                kit::status(ui, error, kit::Tone::Error);
+                kit::search_message(ui, error, true);
             }
-            Ok(Some(order)) if order.is_empty() => {
-                kit::note(ui, "No components match.");
+            Ok(Some(matches)) if matches.order.is_empty() => {
+                kit::search_message(ui, "No components match.", false);
+            }
+            Ok(Some(matches)) if matches.total > matches.order.len() => {
+                kit::search_message(
+                    ui,
+                    &format!(
+                        "Showing the best {} of {} matches; refine the filter.",
+                        matches.order.len(),
+                        matches.total
+                    ),
+                    false,
+                );
             }
             _ => {}
         }
@@ -460,13 +520,16 @@ mod tests {
         let set = |text: &str| {
             ctx.data_mut(|d| d.insert_temp(egui::Id::new(FILTER), text.to_owned()));
         };
-        set("R>=10k pkg:0603");
+        set("res>=10k pkg:0603");
         let shown = frame(&ctx, &engine, vec![]);
         let rows: Vec<&String> = shown.iter().filter(|t| t.starts_with("EX-")).collect();
         assert_eq!(
             rows,
             ["EX-R0603-10K0-F", "EX-R0603-1M00-J", "EX-R0603-22K0-D"]
         );
+        assert!(shown.iter().any(|t| t == "3 of 24"), "{shown:?}");
+        // A text that does not parse shows its error and keeps the rows of
+        // the last one that did; the count matches what is listed.
         set("V>=10k");
         let shown = frame(&ctx, &engine, vec![]);
         assert!(
@@ -474,11 +537,44 @@ mod tests {
                 .iter()
                 .any(|t| t == "V>=10k: 10 k has no unit of voltage")
         );
-        assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 24);
+        assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 3);
+        assert!(shown.iter().any(|t| t == "3 of 24"), "{shown:?}");
         set("nothing-like-this");
         let shown = frame(&ctx, &engine, vec![]);
         assert!(shown.iter().any(|t| t == "No components match."));
         assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 0);
+        assert!(shown.iter().any(|t| t == "0 of 24"), "{shown:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn esc_and_the_clear_button_empty_the_filter() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::from_file(pcbcraft_core::format::EditorFile {
+            version: pcbcraft_core::format::FILE_VERSION,
+            project: pcbcraft_core::catalog::synthetic::project(24)?,
+            drafts: Default::default(),
+        })?;
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let text = || ctx.data(|d| d.get_temp::<String>(egui::Id::new(FILTER)));
+        let field = egui::Id::new((FILTER, "field"));
+        frame(&ctx, &engine, vec![]);
+        ctx.memory_mut(|m| m.request_focus(field));
+        frame(&ctx, &engine, vec![egui::Event::Text("hdr".into())]);
+        assert_eq!(text().as_deref(), Some("hdr"));
+        let shown = frame(&ctx, &engine, vec![]);
+        assert!(shown.iter().any(|t| t == "8 of 24"), "{shown:?}");
+        let esc = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &engine, vec![esc]);
+        assert_eq!(text().as_deref(), Some(""));
+        let shown = frame(&ctx, &engine, vec![]);
+        assert!(shown.iter().any(|t| t == "24"), "{shown:?}");
         Ok(())
     }
 }

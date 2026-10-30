@@ -206,7 +206,6 @@ fn field_keys_resolve_from_data_and_report_unknown_or_ambiguous_keys() -> TestRe
     // Exact name, unique prefix and a unit alias all reach the field.
     for text in [
         "resistance>=10k",
-        "R>=10k",
         "res>=10k",
         "R>=10kΩ",
         "Ω>=10000",
@@ -216,9 +215,13 @@ fn field_keys_resolve_from_data_and_report_unknown_or_ambiguous_keys() -> TestRe
         let query = index.parse(text)?;
         assert_eq!(reading(&query.terms[0], resistance), Some(10e3), "{text}");
     }
-    // A unit key refuses the bare multiplier, as for volts.
-    let error = index.parse("Ω>=10k").err().ok_or("Ω>=10k parsed")?;
-    assert_eq!(error.message, "10 k has no unit of resistance");
+    // A unit key refuses the bare multiplier, as for volts; `R` is a unit
+    // alias of this data, so it is a unit key even though it also begins
+    // the field name.
+    for text in ["Ω>=10k", "R>=10k"] {
+        let error = index.parse(text).err().ok_or("bare multiplier parsed")?;
+        assert_eq!(error.message, "10 k has no unit of resistance", "{text}");
+    }
     let error = index.parse("wattage>=1").err().ok_or("unknown key")?;
     assert!(
         error
@@ -227,6 +230,9 @@ fn field_keys_resolve_from_data_and_report_unknown_or_ambiguous_keys() -> TestRe
         "{error}"
     );
     assert!(error.message.contains("Resistance"));
+    assert!(error.message.contains("filters: pkg, has"), "{error}");
+    // `kind:component` keeps every entry; it is not the source filter.
+    assert_eq!(index.parse("kind:component")?.terms, [Term::Components]);
     // `ma` is a prefix of one field only; `t` of none; `c`/`ca` only one.
     assert!(index.parse("ma>=10").is_ok());
     assert!(
@@ -254,10 +260,70 @@ fn field_keys_resolve_from_data_and_report_unknown_or_ambiguous_keys() -> TestRe
     Ok(())
 }
 
+/// The synthetic vocabulary with `Max voltage` renamed to `Voltage` and a
+/// second field whose name also begins with `R`.
+fn renamed_vocabulary(index: &Index) -> Result<Vocabulary> {
+    let mut vocabulary = index.vocabulary().clone();
+    let mut extra = vocabulary
+        .fields
+        .iter()
+        .find(|f| f.name == "Max voltage")
+        .cloned()
+        .ok_or_else(|| Error::NotFound("Max voltage".into()))?;
+    for field in &mut vocabulary.fields {
+        if field.name == "Max voltage" {
+            field.name = "Voltage".into();
+        }
+    }
+    extra.name = "Rated power".into();
+    extra.field = DefinitionId(u64::MAX);
+    vocabulary.fields.push(extra);
+    Ok(vocabulary)
+}
+
+#[test]
+fn unit_keys_do_not_depend_on_which_other_fields_exist() -> TestResult {
+    let index = index(24)?;
+    let resistance = field_id(&index, "Resistance")?;
+    let voltage = field_id(&index, "Max voltage")?;
+    let renamed = renamed_vocabulary(&index)?;
+    for vocabulary in [index.vocabulary(), &renamed] {
+        // `V` and `R` are unit keys whatever the field names are: a field
+        // named `Voltage` does not make `V>=10k` mean 10 kV, and `Rated
+        // power` does not change how `R` reads.
+        let error = parse_query("V>=10k", vocabulary)
+            .err()
+            .ok_or("V>=10k parsed")?;
+        assert_eq!(error.to_string(), "V>=10k: 10 k has no unit of voltage");
+        let error = parse_query("R>=10k", vocabulary)
+            .err()
+            .ok_or("R>=10k parsed")?;
+        assert_eq!(error.to_string(), "R>=10k: 10 k has no unit of resistance");
+        let query = parse_query("R>=10kΩ", vocabulary)?;
+        assert_eq!(reading(&query.terms[0], resistance), Some(10e3));
+        let query = parse_query("V>=25", vocabulary)?;
+        assert_eq!(reading(&query.terms[0], voltage), Some(25.0));
+        // A field-name key reads a bare multiplier in the default unit.
+        let query = parse_query("res>=10k", vocabulary)?;
+        assert_eq!(reading(&query.terms[0], resistance), Some(10e3));
+    }
+    // In the renamed data `volt` names the field and `r` is ambiguous.
+    let query = parse_query("volt>=10k", &renamed)?;
+    assert_eq!(reading(&query.terms[0], voltage), Some(10e3));
+    let error = parse_query("r>=1", &renamed).err().ok_or("r>=1 parsed")?;
+    assert!(
+        error
+            .message
+            .contains("matches several fields: Rated power, Resistance"),
+        "{error}"
+    );
+    Ok(())
+}
+
 #[test]
 fn ranges_and_tolerances_mean_meets_not_equals() -> TestResult {
     let index = index(24)?;
-    let found = search(&index, "R:4k7..22k")?;
+    let found = search(&index, "res:4k7..22k")?;
     let mut got = names(&found);
     got.sort_unstable();
     assert_eq!(
@@ -281,7 +347,7 @@ fn ranges_and_tolerances_mean_meets_not_equals() -> TestResult {
     assert_eq!(tight.total, 2);
     assert!(search(&index, "tol:1..2").is_err());
     // Predicates and filters combine with text.
-    let found = search(&index, "R>=10k pkg:0603")?;
+    let found = search(&index, "res>=10k pkg:0603")?;
     let mut got = names(&found);
     got.sort_unstable();
     // 100 kΩ is the only ≥ 10 kΩ part in 0402.
@@ -306,7 +372,16 @@ fn ranking_is_deterministic_and_follows_the_tiers() -> TestResult {
     entries.reverse();
     entries.rotate_left(7);
     let shuffled = Index::new(entries, vocabulary)?;
-    for text in ["ex", "ex-r", "10k", "0603", "R>=1k", "hdr", "capacitor", ""] {
+    for text in [
+        "ex",
+        "ex-r",
+        "10k",
+        "0603",
+        "res>=1k",
+        "hdr",
+        "capacitor",
+        "",
+    ] {
         let a = search(&forward, text)?;
         let b = search(&shuffled, text)?;
         assert_eq!(a, b, "{text}");
@@ -510,7 +585,7 @@ fn bench_search_on_synthetic_entries() -> TestResult {
     const RUNS: usize = 60;
     let queries = [
         "10k",
-        "R>=10k pkg:0603",
+        "res>=10k pkg:0603",
         "tol<=1%",
         "ex-c",
         "hdr",

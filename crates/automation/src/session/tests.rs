@@ -371,11 +371,11 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
     let mut session = parts_session()?;
     let reply = session.dispatch(query(
         "library.search",
-        json!({"query": "R:4k7..22k pkg:0603"}),
+        json!({"query": "res:4k7..22k pkg:0603"}),
     ));
     assert_eq!(reply["ok"], true, "{reply}");
     let direct = session.engine().query(Query::Search {
-        query: "R:4k7..22k pkg:0603".into(),
+        query: "res:4k7..22k pkg:0603".into(),
         limit: None,
         include_drafts: false,
     })?;

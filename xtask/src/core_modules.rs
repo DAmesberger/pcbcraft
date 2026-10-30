@@ -114,8 +114,6 @@ const MAP: &[(&str, &[&str])] = &[
             "fields",
             "library",
             "model",
-            "instances",
-            "completeness",
         ],
     ),
     ("scripting", &["ids", "diagnostics", "quantity", "library"]),

@@ -2,7 +2,9 @@
 //! `CommandSearch::{field, sheet, footer, heading}` and
 //! `MenuItem::search_row` with its `SearchBadge` looks). Upstream keeps them
 //! crate-private, so their geometry is reproduced on the public tokens,
-//! fonts and icons. Ranking and what a row does stay with the caller.
+//! fonts and icons. Ranking and what a row does stay with the caller. The
+//! compact `filter_field` and `search_message` are local additions in the
+//! same look.
 use egui::{FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use solidcraft_ui_egui::{
     fonts,
@@ -50,14 +52,13 @@ fn inner_radius() -> u8 {
     t.radius_xl.saturating_sub(t.space_6 as u8)
 }
 
-/// The upstream menu frame the search sheet uses.
+/// The upstream menu frame the search sheet paints behind its content.
 fn sheet_frame() -> egui::Frame {
     let t = Tokens::get();
     egui::Frame::NONE
         .fill(t.dialog_body)
         .stroke(t.primary_border(t.dialog_border))
         .corner_radius(t.radius_xl)
-        .inner_margin(egui::Margin::symmetric(t.space_6 as i8, t.space_6 as i8))
         .shadow(egui::Shadow {
             offset: [0, t.space_14 as i8],
             blur: (t.space_24 + t.space_12) as u8,
@@ -67,12 +68,16 @@ fn sheet_frame() -> egui::Frame {
 }
 
 /// A floating search sheet of `width` at `top` (its top-left corner), above
-/// the canvas and cards. Returns the sheet's rectangle.
+/// the canvas and cards, with the key-hint `footer` along its bottom edge
+/// (upstream `CommandSearch::sheet`: content inset 6 pt at the sides and
+/// 4 pt at the top, then an edge-to-edge footer). Returns the sheet's
+/// rectangle.
 pub fn search_sheet(
     ctx: &egui::Context,
     id: impl std::hash::Hash + std::fmt::Debug,
     top: egui::Pos2,
     width: f32,
+    footer: &str,
     add: impl FnOnce(&mut Ui),
 ) -> Rect {
     let host = Container::new(ctx, Surface::Popup);
@@ -81,35 +86,43 @@ pub fn search_sheet(
         .movable(false)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            sheet_frame()
+            let t = Tokens::get();
+            let origin = ui.cursor().min;
+            let background = ui.painter().add(egui::Shape::Noop);
+            ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: t.space_6 as i8,
+                    right: t.space_6 as i8,
+                    top: t.space_4 as i8,
+                    bottom: 0,
+                })
                 .show(ui, |ui| {
-                    let t = Tokens::get();
-                    ui.set_width((width - t.space_6 * 2.0 - 2.0).max(0.0));
+                    ui.set_width((width - t.space_12).max(0.0));
                     ui.spacing_mut().item_spacing.y = 0.0;
                     super::form(ui, add);
-                })
-                .response
-                .rect
+                });
+            ui.add_space(t.space_6);
+            search_footer(ui, width, footer);
+            let sheet = Rect::from_min_size(origin, vec2(width, ui.min_rect().bottom() - origin.y));
+            let frame = sheet_frame();
+            ui.painter()
+                .set(background, frame.paint(sheet.shrink(frame.stroke.width)));
+            // The edge-to-edge footer shares the card silhouette; keep the
+            // outer rule above its fill.
+            ui.painter()
+                .rect_stroke(sheet, t.radius_xl, frame.stroke, egui::StrokeKind::Inside);
+            sheet
         })
         .inner
 }
 
-/// The search field (upstream `CommandSearch::field`, fully expanded): a
-/// zoom icon, the editor and a key cap. `focus` requests keyboard focus.
-pub fn search_field(
-    ui: &mut Ui,
-    id: egui::Id,
-    value: &mut String,
-    hint: &str,
-    invalid: bool,
-    focus: bool,
-    limit: usize,
-) -> Response {
+/// The field outline shared by the search field and the filter field: the
+/// focus halo, the input fill and one error look (a red ring on the error
+/// fill halo while focused).
+fn field_frame(ui: &Ui, r: Rect, radius: f32, focused: bool, invalid: bool) {
     let t = Tokens::get();
-    let height = search_row_height();
-    let radius = f32::from(t.radius_xl);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    let focused = focus || ui.memory(|m| m.has_focus(id));
     let ink = if invalid {
         t.form_error
     } else if focused {
@@ -117,7 +130,7 @@ pub fn search_field(
     } else {
         t.control_border
     };
-    if focused {
+    if focused || invalid {
         let outset = t.space_3;
         ui.painter().rect_filled(
             r.expand(outset),
@@ -140,6 +153,37 @@ pub fn search_field(
         },
         egui::StrokeKind::Inside,
     );
+}
+
+/// Cut `value` to at most `limit` bytes on a character boundary: the core
+/// bounds queries in bytes, and `Ω` or `µ` take two.
+fn bound_bytes(value: &mut String, limit: usize) {
+    if value.len() > limit {
+        let mut end = limit;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+    }
+}
+
+/// The search field (upstream `CommandSearch::field`, fully expanded): a
+/// zoom icon, the editor and a key cap. `focus` requests keyboard focus.
+pub fn search_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    value: &mut String,
+    hint: &str,
+    invalid: bool,
+    focus: bool,
+    limit: usize,
+) -> Response {
+    let t = Tokens::get();
+    let height = search_row_height();
+    let radius = f32::from(t.radius_xl);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let focused = focus || ui.memory(|m| m.has_focus(id));
+    field_frame(ui, r, radius, focused, invalid);
     super::icon(
         ui.painter(),
         r.left_center() + vec2(t.space_12 + t.space_16 / 2.0, 0.0),
@@ -173,10 +217,138 @@ pub fn search_field(
             )
         })
         .inner;
+    bound_bytes(value, limit);
     if focus {
         response.request_focus();
     }
     response
+}
+
+/// What the compact filter field reports for one frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FilterResponse {
+    /// The text changed: typed, cleared with Esc or with the clear button.
+    pub changed: bool,
+}
+
+/// A compact search-style filter field (one control high): a zoom icon,
+/// proportional text, and a clear button while it holds text. Esc clears a
+/// non-empty filter. `limit` bounds the text in bytes.
+pub fn filter_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    value: &mut String,
+    hint: &str,
+    invalid: bool,
+    limit: usize,
+) -> FilterResponse {
+    let t = Tokens::get();
+    let height = t.control_height;
+    let radius = f32::from(t.control_radius);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    // egui drops focus on Esc before the field runs, so the field also
+    // remembers whether it held focus in the previous frame.
+    let held = id.with("held");
+    let focused = ui.memory(|m| m.has_focus(id));
+    let had_focus = focused || ui.data(|d| d.get_temp::<bool>(held).unwrap_or(false));
+    let mut changed = false;
+    if had_focus
+        && !value.is_empty()
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        value.clear();
+        changed = true;
+    }
+    field_frame(ui, r, radius, focused, invalid);
+    let icon_size = t.space_14;
+    super::icon(
+        ui.painter(),
+        r.left_center() + vec2(t.space_8 + icon_size / 2.0, 0.0),
+        icon_size,
+        "zoom",
+        0.8,
+    );
+    let clear_size = height - t.space_6;
+    let clear = Rect::from_center_size(
+        r.right_center() - vec2(t.space_4 + clear_size / 2.0, 0.0),
+        vec2(clear_size, clear_size),
+    );
+    if !value.is_empty() {
+        let response = ui
+            .interact(clear, id.with("clear"), Sense::click())
+            .on_hover_text("Clear the filter (Esc)");
+        let ink = if response.hovered() {
+            t.form_ink
+        } else {
+            t.form_dim
+        };
+        let arm = clear_size * 0.18;
+        let c = clear.center();
+        let stroke = Stroke::new(1.3, ink);
+        ui.painter()
+            .line_segment([c - vec2(arm, arm), c + vec2(arm, arm)], stroke);
+        ui.painter()
+            .line_segment([c + vec2(-arm, arm), c + vec2(arm, -arm)], stroke);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Clear filter")
+        });
+        if response.clicked() {
+            value.clear();
+            changed = true;
+        }
+    }
+    let editor_left = (r.left() + t.space_8 + icon_size + t.space_4).min(r.right());
+    let editor = Rect::from_min_max(
+        pos2(editor_left, r.top()),
+        pos2((clear.left() - t.space_2).max(editor_left), r.bottom()),
+    );
+    let response = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(editor), |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(editor));
+            ui.add_sized(
+                editor.size(),
+                egui::TextEdit::singleline(value)
+                    .vertical_align(egui::Align::Center)
+                    .min_size(vec2(0.0, height))
+                    .margin(vec2(t.space_4, 0.0))
+                    .id(id)
+                    .char_limit(limit)
+                    .frame(egui::Frame::NONE)
+                    .hint_text(hint)
+                    .font(FontId::proportional(t.font_label)),
+            )
+        })
+        .inner;
+    bound_bytes(value, limit);
+    let focused = response.has_focus();
+    ui.data_mut(|d| d.insert_temp(held, focused));
+    FilterResponse {
+        changed: changed || response.changed(),
+    }
+}
+
+/// A message under a search field, inset like the group captions and
+/// wrapped: the parse error (in the error ink) or the empty state.
+pub fn search_message(ui: &mut Ui, text: &str, error: bool) {
+    let t = Tokens::get();
+    let ink = if error { t.form_error } else { t.form_dim };
+    let inset = t.space_8;
+    let width = (ui.available_width() - inset * 2.0).max(0.0);
+    let mut job = egui::text::LayoutJob::simple(
+        text.to_owned(),
+        FontId::proportional(t.font_small),
+        ink,
+        width,
+    );
+    job.wrap.max_rows = 3;
+    let galley = ui.painter().layout_job(job);
+    let (r, response) = ui.allocate_exact_size(
+        vec2(ui.available_width(), galley.size().y + t.space_6 * 2.0),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter()
+        .galley(pos2(r.left() + inset, r.top() + t.space_6), galley, ink);
 }
 
 /// A key cap right-aligned at `right`; returns its width.
@@ -223,11 +395,10 @@ pub fn search_heading(ui: &mut Ui, label: &str, count: usize) {
 }
 
 /// The key-hint footer along the sheet's bottom edge (upstream
-/// `CommandSearch::footer`).
-pub fn search_footer(ui: &mut Ui, text: &str) {
+/// `CommandSearch::footer`): edge to edge, with the sheet's bottom corners
+/// and a rule along its top.
+fn search_footer(ui: &mut Ui, width: f32, text: &str) {
     let t = Tokens::get();
-    ui.add_space(t.space_6);
-    let width = ui.available_width();
     let galley = ui.painter().layout_no_wrap(
         text.to_owned(),
         FontId::proportional(t.font_small),
@@ -237,7 +408,16 @@ pub fn search_footer(ui: &mut Ui, text: &str) {
         vec2(width, galley.size().y + t.space_3 * 2.0),
         Sense::hover(),
     );
-    ui.painter().rect_filled(r, inner_radius(), t.dialog_footer);
+    ui.painter().rect_filled(
+        r,
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: t.radius_xl,
+            se: t.radius_xl,
+        },
+        t.dialog_footer,
+    );
     t.secondary_hline(ui.painter(), r.x_range(), r.top(), t.dialog_rule);
     ui.painter().with_clip_rect(r).galley(
         pos2(r.left() + t.space_14, r.center().y - galley.size().y / 2.0),
@@ -249,6 +429,9 @@ pub fn search_footer(ui: &mut Ui, text: &str) {
 /// Parsed query chips under the field, and a dim trailing note.
 pub fn search_chips(ui: &mut Ui, chips: &[String], trailing: &str) {
     let t = Tokens::get();
+    if chips.is_empty() && trailing.is_empty() {
+        return;
+    }
     let (r, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), t.space_24 + t.space_4),
         Sense::hover(),
@@ -320,10 +503,14 @@ pub fn search_row(ui: &mut Ui, id: egui::Id, row: &SearchRow<'_>) -> Response {
         Sense::hover(),
     );
     let response = ui.interact(r, id, Sense::click());
-    let hot = row.highlighted || response.hovered();
+    // Only the highlighted row (the one Enter places and the preview shows)
+    // takes the accent; hover is a neutral wash.
+    let hot = row.highlighted;
     let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(r));
     if hot {
         painter.rect_filled(r, inner_radius(), t.accent_soft);
+    } else if response.hovered() {
+        painter.rect_filled(r, inner_radius(), t.dialog_footer);
     }
     let tile_size = t.space_24 + t.space_2;
     let tile = Rect::from_center_size(
@@ -411,10 +598,19 @@ pub fn search_row(ui: &mut Ui, id: egui::Id, row: &SearchRow<'_>) -> Response {
     response
 }
 
-/// The first case-insensitive occurrence of `query` in `label`, by
-/// character boundaries (case mappings may change UTF-8 lengths).
+/// The first free-text term of `query` that occurs in `label`,
+/// case-insensitively and by character boundaries (case mappings may change
+/// UTF-8 lengths). Predicates and filters (`key>=…`, `pkg:…`) are skipped;
+/// quotes are dropped.
 fn highlight(label: &str, query: &str) -> Option<(usize, usize)> {
-    let q = query.trim().to_lowercase();
+    query
+        .split_whitespace()
+        .filter(|term| !term.contains(['>', '<', '=', ':']))
+        .find_map(|term| occurrence(label, term.trim_matches('"')))
+}
+
+fn occurrence(label: &str, term: &str) -> Option<(usize, usize)> {
+    let q = term.to_lowercase();
     if q.is_empty() {
         return None;
     }
@@ -443,5 +639,20 @@ mod tests {
         assert_eq!(highlight("EX-C0402", "c0603"), None);
         assert_eq!(highlight("µ-Part", "µ-p"), Some((0, 4)));
         assert_eq!(highlight("anything", "  "), None);
+        // Several terms: the first one found in the label; predicates skip.
+        assert_eq!(highlight("EX-R0603-10K0-F", "10k 0603"), Some((9, 12)));
+        assert_eq!(highlight("EX-R0603-10K0-F", "res>=1k 0603"), Some((4, 8)));
+        assert_eq!(highlight("EX-R0603-10K0-F", "zz 0603"), Some((4, 8)));
+        assert_eq!(highlight("EX-R0603", "pkg:0603"), None);
+    }
+
+    #[test]
+    fn bound_bytes_cuts_on_a_character_boundary() {
+        let mut text = "ΩΩΩ".to_owned();
+        super::bound_bytes(&mut text, 5);
+        assert_eq!(text, "ΩΩ");
+        let mut short = "10k".to_owned();
+        super::bound_bytes(&mut short, 5);
+        assert_eq!(short, "10k");
     }
 }

@@ -17,6 +17,8 @@ const ROWS: usize = 40;
 const RECENT: usize = 16;
 /// Key names are spelled out: the bundled fonts have no ⏎ or ⇧ glyphs.
 const KEYS: &str = "↑↓ move   Enter place   Shift+Enter place & keep open   click pick   Esc close";
+/// The footer while nothing can be placed.
+const KEYS_IDLE: &str = "↑↓ move   Esc close";
 
 /// What the user chose in the palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,11 @@ pub struct PlacePalette {
     results: Option<Results>,
     preview: Option<(u64, ComponentRef, Result<ItemReport, String>)>,
     recent: Vec<DefinitionId>,
+    /// Counts openings and query changes; it salts the result list so each
+    /// starts scrolled to the top.
+    generation: u64,
+    /// Why the last Enter or click placed nothing, shown under the field.
+    notice: Option<String>,
 }
 
 impl PlacePalette {
@@ -63,6 +70,9 @@ impl PlacePalette {
         self.query.clear();
         self.focus = true;
         self.highlighted = 0;
+        self.generation = self.generation.wrapping_add(1);
+        self.scroll = true;
+        self.notice = None;
     }
 
     pub fn close(&mut self) {
@@ -106,6 +116,9 @@ impl PlacePalette {
         // row as far as it still exists.
         if self.results.as_ref().is_none_or(|r| r.query != self.query) {
             self.highlighted = 0;
+            self.generation = self.generation.wrapping_add(1);
+            self.scroll = true;
+            self.notice = None;
         }
         self.results = Some(Results {
             revision: engine.revision(),
@@ -128,8 +141,31 @@ impl PlacePalette {
             .and_then(|h| h.entry.component())
     }
 
+    /// The highlighted revision if `placeable` accepts it; otherwise the
+    /// reason is kept as the palette's notice and nothing is returned.
+    fn choose(&mut self, placeable: &dyn Fn(ComponentRef) -> bool) -> Option<ComponentRef> {
+        let hit = self.hits().get(self.highlighted)?;
+        let name = hit.entry.name.clone();
+        let component = hit.entry.component()?;
+        if placeable(component) {
+            self.notice = None;
+            Some(component)
+        } else {
+            self.notice = Some(format!("{name} has no symbol to place."));
+            None
+        }
+    }
+
     /// The sheet at the top of `area`. Owns the navigation keys while open.
-    pub fn show(&mut self, ui: &mut Ui, area: Rect, engine: &Engine) -> Option<PaletteAction> {
+    /// `placeable` says whether a revision has a symbol unit to put down; a
+    /// row without one keeps the palette open with a notice.
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        area: Rect,
+        engine: &Engine,
+        placeable: &dyn Fn(ComponentRef) -> bool,
+    ) -> Option<PaletteAction> {
         if !self.open {
             return None;
         }
@@ -144,15 +180,17 @@ impl PlacePalette {
         if keys.down && count > 0 {
             self.highlighted = (self.highlighted + 1).min(count - 1);
             self.scroll = true;
+            self.notice = None;
         }
         if keys.up {
             self.highlighted = self.highlighted.saturating_sub(1);
             self.scroll = true;
+            self.notice = None;
         }
         self.highlighted = self.highlighted.min(count.saturating_sub(1));
         let mut action = None;
         if keys.enter
-            && let Some(component) = self.highlighted()
+            && let Some(component) = self.choose(placeable)
         {
             action = Some(PaletteAction::Place {
                 component,
@@ -169,13 +207,19 @@ impl PlacePalette {
         let scroll = std::mem::take(&mut self.scroll);
         let mut picked = None;
         let mut focused = false;
-        kit::search_sheet(&ctx, "place-palette", top, width, |ui| {
+        let generation = self.generation;
+        let footer = if self.highlighted().is_some_and(placeable) {
+            KEYS
+        } else {
+            KEYS_IDLE
+        };
+        kit::search_sheet(&ctx, "place-palette", top, width, footer, |ui| {
             let invalid = matches!(self.results.as_ref().map(|r| &r.report), Some(Err(_)));
             let field = kit::search_field(
                 ui,
                 egui::Id::new("place-palette-query"),
                 &mut self.query,
-                "Find a part: 10k 0603, R>=10k, tol<=1%",
+                "Find a part: 10k 0603, res>=10k, tol<=1%",
                 invalid,
                 focus,
                 MAX_QUERY,
@@ -185,11 +229,12 @@ impl PlacePalette {
             if field.changed() {
                 self.refresh(engine);
             }
+            if let Some(notice) = &self.notice {
+                kit::search_message(ui, notice, true);
+            }
             match self.results.as_ref().map(|r| &r.report) {
                 Some(Err(error)) => {
-                    ui.add_space(t.space_4);
-                    kit::status(ui, error, Tone::Error);
-                    ui.add_space(t.space_4);
+                    kit::search_message(ui, error, true);
                 }
                 Some(Ok(report)) => {
                     let hidden: Vec<String> = report
@@ -199,11 +244,11 @@ impl PlacePalette {
                         .collect();
                     kit::search_chips(ui, &report.chips, &hidden.join(", "));
                     if report.results.is_empty() {
-                        kit::note(ui, "No published component matches.");
+                        kit::search_message(ui, "No component matches.", false);
                     } else {
                         kit::search_heading(ui, "In this project", report.total);
                         egui::ScrollArea::vertical()
-                            .id_salt("place-palette-rows")
+                            .id_salt(("place-palette-rows", generation))
                             .max_height(list_height)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
@@ -221,14 +266,13 @@ impl PlacePalette {
                 }
                 None => {}
             }
-            kit::search_footer(ui, KEYS);
         });
         if focused {
             self.focus = false;
         }
         if let Some(i) = picked {
             self.highlighted = i;
-            if let Some(component) = self.highlighted() {
+            if let Some(component) = self.choose(placeable) {
                 action = Some(PaletteAction::Pick(component));
             }
         }
@@ -258,7 +302,7 @@ impl PlacePalette {
                 kit::note(
                     ui,
                     "Type to find a published component. Field values filter by \
-                     meaning: R>=10k, tol<=1%, C:1n..100n. pkg: matches package \
+                     meaning: res>=10k, tol<=1%, C:1n..100n. pkg: matches package \
                      names only.",
                 );
             });

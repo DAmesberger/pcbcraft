@@ -11,8 +11,8 @@ mod query;
 pub mod synthetic;
 
 pub use query::{
-    Badge, CatalogQuery, FieldTest, MAX_QUERY, MAX_TERMS, Op, QueryError, Term, Test, Vocabulary,
-    VocabularyField, VocabularyKind, fold, parse, parse_query, rkm,
+    Badge, CatalogQuery, FieldTest, MAX_QUERY, MAX_TERMS, Op, QueryError, RESERVED, Term, Test,
+    Vocabulary, VocabularyField, VocabularyKind, fold, parse, parse_query, rkm,
 };
 
 use crate::diagnostics::{Error, Result};
@@ -366,6 +366,7 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                 }
                 None
             }
+            Term::Components => None,
         };
         if let Some(tier) = tier {
             text_seen = true;

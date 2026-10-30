@@ -848,6 +848,7 @@ impl SchematicEditor {
             && !self.update.is_open()
             && !project.library.components.is_empty()
             && !ui.ctx().egui_wants_keyboard_input()
+            && !ui.ctx().any_popup_open()
             && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P))
         {
             self.select(None, None, project);
@@ -856,15 +857,16 @@ impl SchematicEditor {
             self.palette.open();
         }
         // The palette owns Esc, arrows and Enter while it is open.
-        match self.palette.show(ui, rect, engine) {
+        let placeable = |c: ComponentRef| first_choices(project, c).is_some();
+        match self.palette.show(ui, rect, engine, &placeable) {
             Some(PaletteAction::Place {
                 component,
                 keep_open,
             }) => {
-                if let Some((request, _)) = first_choices(project, component) {
+                if let Some((request, unit)) = first_choices(project, component) {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
                         designator: next_reference(project),
-                        position: self.drop_point(project),
+                        position: self.drop_point(project, unit, rect),
                         ..request
                     })));
                 }
@@ -1161,25 +1163,66 @@ impl SchematicEditor {
         output
     }
 
-    /// Where the palette's Enter places: the view centre on the 5 mm grid,
-    /// moved along the grid until it clears every drawn symbol.
-    fn drop_point(&self, project: &Project) -> Point {
-        let snap = |v: f32| (f64::from(v) / 5.0).round() * 5.0;
+    /// Where the palette's Enter places `unit`: the free 5 mm grid point
+    /// nearest the view centre whose symbol bounds (body and pin ends, plus
+    /// a margin) clear every drawn symbol and lie inside the visible canvas
+    /// `rect`, which already excludes the Browser and properties cards.
+    /// Falls back to the view centre when the view has no free spot.
+    fn drop_point(&self, project: &Project, unit: &Unit, rect: Rect) -> Point {
+        const GRID: f64 = 5.0;
+        const MARGIN: f32 = 2.5;
+        let snap = |v: f64| (v / GRID).round() * GRID;
+        let scale = f64::from(self.scale);
         let centre = [
-            snap(-self.pan.x / self.scale),
-            snap(self.pan.y / self.scale),
+            snap(f64::from(-self.pan.x) / scale),
+            snap(f64::from(self.pan.y) / scale),
         ];
-        (0..64i32)
-            .map(|k| {
+        // The visible world, y up.
+        let half = [
+            f64::from(rect.width()) / scale / 2.0,
+            f64::from(rect.height()) / scale / 2.0,
+        ];
+        let view_centre = [
+            f64::from(-self.pan.x) / scale,
+            f64::from(self.pan.y) / scale,
+        ];
+        let visible = Rect::from_min_max(
+            pos2(
+                (view_centre[0] - half[0]) as f32,
+                (view_centre[1] - half[1]) as f32,
+            ),
+            pos2(
+                (view_centre[0] + half[0]) as f32,
+                (view_centre[1] + half[1]) as f32,
+            ),
+        );
+        let taken: Vec<Rect> = project
+            .occurrences
+            .iter()
+            .filter_map(|o| Some(symbol_bounds(unit_of(project, o)?, o.position)))
+            .collect();
+        let steps = |extent: f64| ((extent / GRID).ceil() as i32).clamp(0, 64);
+        let (nx, ny) = (steps(half[0]), steps(half[1]));
+        let mut candidates: Vec<(f64, i32, i32)> = (-ny..=ny)
+            .flat_map(|j| (-nx..=nx).map(move |i| (i, j)))
+            .map(|(i, j)| {
+                let d = f64::from(i * i + j * j);
+                (d, j, i)
+            })
+            .collect();
+        // Nearest first; ties go down the sheet, then to the right.
+        candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+        candidates
+            .into_iter()
+            .map(|(_, j, i)| {
                 [
-                    centre[0] + f64::from(k % 8) * 10.0,
-                    centre[1] - f64::from(k / 8) * 10.0,
+                    centre[0] + f64::from(i) * GRID,
+                    centre[1] + f64::from(j) * GRID,
                 ]
             })
             .find(|p| {
-                project.occurrences.iter().all(|o| {
-                    (o.position[0] - p[0]).abs() >= 8.0 || (o.position[1] - p[1]).abs() >= 6.0
-                })
+                let bounds = symbol_bounds(unit, *p).expand(MARGIN);
+                visible.contains_rect(bounds) && taken.iter().all(|r| !r.intersects(bounds))
             })
             .unwrap_or(centre)
     }
@@ -1250,6 +1293,20 @@ fn symbol_text(project: &Project, instance: &pcbcraft_core::ComponentInstance) -
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A unit's extent in sheet millimetres (y up) when placed at `at`: its body
+/// and every pin end.
+fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
+    let centre = pos2(at[0] as f32, at[1] as f32);
+    let mut bounds = Rect::from_center_size(
+        centre,
+        vec2(unit.body_size[0] as f32, unit.body_size[1] as f32),
+    );
+    for anchor in &unit.anchors {
+        bounds.extend_with(centre + vec2(anchor.position[0] as f32, anchor.position[1] as f32));
+    }
+    bounds
 }
 
 fn next_reference(project: &Project) -> String {
@@ -1679,7 +1736,7 @@ mod tests {
             &mut editor,
             &engine,
             &ctx,
-            vec![egui::Event::Text("R>=10k pkg:0603".into())],
+            vec![egui::Event::Text("res>=10k pkg:0603".into())],
         );
         let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
         // Ranked by name: 10 kΩ, 1 MΩ, 22 kΩ, each with its key values,
@@ -1788,6 +1845,18 @@ mod tests {
             return Err("expected two occurrences".into());
         };
         assert_ne!(a.position, b.position);
+        // Their symbols, pin ends included, keep a gap: no pin lands on
+        // the other part's pin.
+        let bounds = |o: &pcbcraft_core::SymbolOccurrence| {
+            unit_of(engine.project(), o).map(|unit| symbol_bounds(unit, o.position))
+        };
+        let (Some(first), Some(second)) = (bounds(a), bounds(b)) else {
+            return Err("no symbol bounds".into());
+        };
+        assert!(
+            !first.expand(1.0).intersects(second),
+            "{first:?} touches {second:?}"
+        );
         // A typing error shows inline and Enter does nothing.
         workspace_frame(
             &mut editor,
@@ -1819,6 +1888,142 @@ mod tests {
         assert!(!editor.palette.is_open());
         assert_eq!(editor.tool, Tool::Select);
         assert_eq!(engine.revision(), revision);
+        Ok(())
+    }
+
+    /// Hover, press and release at `at` over three frames; returns the
+    /// operations of all three.
+    fn click_at(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        at: Pos2,
+    ) -> (Vec<String>, Vec<Operation>) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut operations = Vec::new();
+        let mut labels = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![button(true)],
+            vec![button(false)],
+        ] {
+            let (output, ops) = workspace_frame(editor, engine, ctx, events);
+            operations.extend(ops);
+            labels = shown(&output).into_iter().map(|(t, _)| t).collect();
+        }
+        (labels, operations)
+    }
+
+    /// Clicking a row picks it: the palette closes, the Place tool is armed
+    /// with that revision, and one click on the sheet places it once.
+    #[test]
+    fn clicking_a_row_arms_place_and_the_sheet_click_places_it_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = parts_engine()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        editor.on_tool("place", &engine);
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::Text("EX-C0402".into())],
+        );
+        let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        // The last row label on the canvas side (the preview's copy of the
+        // name is in the panel, right of x = 800).
+        let (_, at) = shown(&output)
+            .into_iter()
+            .rfind(|(t, p)| t.starts_with("EX-C0402") && p.x < 800.0)
+            .ok_or("no row")?;
+        let row = at + vec2(4.0, 4.0);
+        let (_, operations) = click_at(&mut editor, &engine, &ctx, row);
+        assert!(
+            operations.is_empty(),
+            "a pick places nothing: {operations:?}"
+        );
+        assert!(!editor.palette.is_open());
+        assert_eq!(editor.tool, Tool::Place);
+        let picked = editor.component.ok_or("nothing armed")?;
+        let name = engine
+            .project()
+            .library
+            .component(picked)
+            .map(|c| c.meta.name.clone())
+            .ok_or("unknown component")?;
+        assert!(name.starts_with("EX-C0402"), "{name}");
+        // Release the pointer elsewhere, then click an empty spot.
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let (_, operations) = click_at(&mut editor, &engine, &ctx, pos2(120.0, 680.0));
+        let [Operation::Instance(InstanceCommand::Place(request))] = &operations[..] else {
+            return Err(format!("expected one component.place, got {operations:?}").into());
+        };
+        assert_eq!(request.component, picked);
+        assert_eq!(editor.tool, Tool::Place);
+        Ok(())
+    }
+
+    /// A row with no symbol to place keeps the palette open with a notice;
+    /// Enter and a click choose nothing.
+    #[test]
+    fn a_row_without_a_symbol_keeps_the_palette_open_with_a_notice()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = parts_engine()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut palette = PlacePalette::default();
+        palette.open();
+        let run = |palette: &mut PlacePalette, events: Vec<egui::Event>| {
+            let mut action = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let area = ui.max_rect();
+                    action = palette.show(ui, area, &engine, &|_| false);
+                },
+            );
+            output.textures_delta.clear();
+            (output, action)
+        };
+        run(&mut palette, vec![]);
+        run(&mut palette, vec![egui::Event::Text("hdr".into())]);
+        let (output, action) = run(
+            &mut palette,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert_eq!(action, None);
+        assert!(palette.is_open());
+        let (output, _) = if shown(&output)
+            .iter()
+            .any(|(t, _)| t.ends_with("has no symbol to place."))
+        {
+            (output, None)
+        } else {
+            run(&mut palette, vec![])
+        };
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        assert!(
+            labels
+                .iter()
+                .any(|t| t == "EX-HDR-1X2-001 has no symbol to place."),
+            "{labels:?}"
+        );
+        // Nothing can be placed, so the footer drops the Enter hints.
+        assert!(
+            labels.iter().any(|t| t == "↑↓ move   Esc close"),
+            "{labels:?}"
+        );
         Ok(())
     }
 }

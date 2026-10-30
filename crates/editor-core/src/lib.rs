@@ -66,7 +66,7 @@ pub enum Query {
     CheckDrafts {},
     /// Ranked component lineages at their latest published revision for a
     /// one-line query: free text, `pkg:`/`has:`/`missing:` filters and
-    /// unit-aware field predicates such as `R>=10k`, `tol<=1%` or
+    /// unit-aware field predicates such as `res>=10k`, `tol<=1%` or
     /// `C:1n..100n`. Field keys resolve against the project's field
     /// definitions.
     #[serde(rename = "library.search")]

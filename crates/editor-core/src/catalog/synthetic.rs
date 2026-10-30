@@ -46,6 +46,10 @@ const CAPACITORS: &[(f64, &str)] = &[
 const VOLTAGES: &[f64] = &[16.0, 50.0, 25.0, 6.3];
 /// Size labels: plain text, as package names are.
 const SIZES: &[&str] = &["0603", "0402"];
+/// Invented 0402 geometry: envelope (mm), pad centres and land size. The
+/// 0603 parts keep the shared sample's geometry.
+const SMALL: ([f64; 3], [[f64; 2]; 2], [f64; 2]) =
+    ([1.0, 0.5, 0.35], [[-0.5, 0.0], [0.5, 0.0]], [0.5, 0.6]);
 const HEADER: &str = "TH 2.54";
 
 struct Allocator(u64);
@@ -214,13 +218,23 @@ fn shared_package(
     } else {
         samples::two_terminal(label, refs)
     };
+    let small = label == "0402";
     for mut edit in edits {
-        match edit.definition {
-            Definition::Package(_) => {
+        match &mut edit.definition {
+            Definition::Package(package) => {
+                if small {
+                    package.body_size = SMALL.0;
+                }
                 edit.meta = meta(label, "Synthetic two-terminal package");
                 push(library, edit);
             }
-            Definition::Footprint(_) => {
+            Definition::Footprint(footprint) => {
+                if small {
+                    for (pad, position) in footprint.pads.iter_mut().zip(SMALL.1) {
+                        pad.position = position;
+                        pad.size = SMALL.2;
+                    }
+                }
                 edit.meta = meta(&format!("{label} lands"), "Synthetic two-land footprint");
                 push(library, edit);
             }

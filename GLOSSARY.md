@@ -171,7 +171,7 @@ _Avoid_: Part (a part is an exact manufacturer part)
 One line of free text, reserved filters (`pkg:`, `has:`, `missing:`, `src:`) and field predicates, parsed in core against the library's field definitions and ANDed.
 
 **Field predicate**:
-A query term that compares a typed field value by meaning, such as `R>=10k`, `tol<=1%` or `C:1n..100n`. Its key resolves through the data's field names and units; its value is parsed in the field's own units, and a comparison means "meets", not "equals".
+A query term that compares a typed field value by meaning, such as `res>=10k`, `tol<=1%` or `C:1n..100n`. Its key resolves through the data's field names and units; its value is parsed in the field's own units, and a comparison means "meets", not "equals".
 
 **RKM shorthand**:
 Writing the decimal point as a multiplier or unit letter, as in `4k7` for 4.7 k or `R47` for 0.47 Ω. Unit letters come from the field's unit set, so `R` reads as a decimal point only where the data declares `R`.

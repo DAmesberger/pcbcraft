@@ -286,6 +286,9 @@ pub enum Term {
     Has { badge: Badge, present: bool },
     /// `src:project` — the only source before library folders exist.
     Project,
+    /// `kind:component` — the only entry kind before manufacturer parts
+    /// exist; it keeps every entry.
+    Components,
 }
 
 impl Term {
@@ -313,6 +316,7 @@ impl Term {
                 )
             }
             Self::Project => "in this project".into(),
+            Self::Components => "components".into(),
         }
     }
 }
@@ -341,8 +345,13 @@ pub fn fold(text: &str) -> String {
     text.to_lowercase().replace('\u{b5}', "\u{3bc}")
 }
 
-/// Reserved filter keys. `tag`, `shelf`, `mpn` and `life` name data that
-/// arrives with library labels and manufacturer parts.
+/// Reserved filter keys, checked before field names and units: a field
+/// named like one of them is reached through a shorter prefix (`kin:`).
+pub const RESERVED: &[&str] = &[
+    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life",
+];
+/// Reserved keys that name data arriving with library labels and
+/// manufacturer parts.
 const LATER: &[&str] = &["tag", "shelf", "mpn", "life"];
 
 /// Parse one query line against a vocabulary.
@@ -484,7 +493,7 @@ fn predicate(
         "kind" => {
             filter_op()?;
             return if fold(value) == "component" {
-                Ok(Term::Project)
+                Ok(Term::Components)
             } else {
                 Err("the catalog lists components only until manufacturer parts exist".into())
             };
@@ -516,13 +525,28 @@ fn predicate(
     })
 }
 
-/// The fields a key names: an exact field name, else a unique name prefix,
-/// else the fields measured in a unit the key spells (`V`, `kV`, `Ω`). The
-/// flag is set for a unit key.
+/// The fields a key names. A key that spells a unit of some field's
+/// quantity kind (`V`, `kV`, `Ω`, an alias such as `R`) is always a unit key
+/// and names every field measured in that unit; only otherwise is it matched
+/// against field names, exactly and then as a unique prefix. The order never
+/// depends on which other fields exist, so adding a field cannot turn a unit
+/// key into a name key or back. The flag is set for a unit key.
 fn resolve_key<'a>(
     key: &str,
     vocabulary: &'a Vocabulary,
 ) -> std::result::Result<(Vec<&'a VocabularyField>, bool), String> {
+    let measured: Vec<_> = vocabulary
+        .fields
+        .iter()
+        .filter(|f| {
+            f.kind
+                .as_ref()
+                .is_some_and(|k| k.quantity.units.resolve(key).is_some())
+        })
+        .collect();
+    if !measured.is_empty() {
+        return Ok((measured, true));
+    }
     let folded = fold(key);
     let exact: Vec<_> = vocabulary
         .fields
@@ -539,18 +563,6 @@ fn resolve_key<'a>(
         .collect();
     if prefixed.len() == 1 {
         return Ok((prefixed, false));
-    }
-    let measured: Vec<_> = vocabulary
-        .fields
-        .iter()
-        .filter(|f| {
-            f.kind
-                .as_ref()
-                .is_some_and(|k| k.quantity.units.resolve(key).is_some())
-        })
-        .collect();
-    if !measured.is_empty() {
-        return Ok((measured, true));
     }
     let names = |fields: &[&VocabularyField]| {
         let mut names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
@@ -572,8 +584,9 @@ fn resolve_key<'a>(
         ))
     } else {
         Err(format!(
-            "‘{key}’ is not a field or filter (fields: {})",
-            names(&all)
+            "‘{key}’ is not a field or filter (fields: {}; filters: {})",
+            names(&all),
+            RESERVED.join(", ")
         ))
     }
 }
@@ -676,9 +689,10 @@ fn field_test(
 ///
 /// After a field-name key, the value reads like a property entry: a plain
 /// number or a bare multiplier is in the kind's default unit. A unit key
-/// (`V`, `kV`) filters every field measured in that unit, so its value is a
-/// plain number in the key's unit or states a unit of the same kind; a bare
-/// multiplier (`V>=10k`) is refused rather than guessed.
+/// (`V`, `kV`, `R`) filters every field measured in that unit, so its value
+/// is a plain number in the key's unit or states a unit of the same kind; a
+/// bare multiplier (`V>=10k`, `R>=10k`) is always refused rather than
+/// guessed.
 fn quantity_value(
     text: &str,
     kind: &VocabularyKind,
