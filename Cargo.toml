@@ -30,8 +30,8 @@ rhai = { version = "=1.27.0", default-features = false, features = ["std", "sync
 egui = "0.36"
 egui-wgpu = "0.36"
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
-solidcraft-ui-egui = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-solidcraft-engine = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -66,10 +66,10 @@ debug = false
 # Cargo does not inherit a dependency workspace's patches. Keep Solidcraft's
 # geometry fixes pinned to the exact same revision as its engine.
 [patch.crates-io]
-egui-wgpu = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-winit = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-truck-geometry = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-truck-stepio = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
-matext4cgmath = { git = "https://github.com/tangency-labs/solidcraft.git", rev = "4f3ac07aec69489183185071f07d7fbcf4f51e64" }
+egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+truck-geometry = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+truck-shapeops = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+truck-stepio = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+truck-meshalgo = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+matext4cgmath = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }

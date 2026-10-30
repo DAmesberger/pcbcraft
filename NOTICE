@@ -10,11 +10,16 @@ notices. `cargo xtask licences --check` (part of `cargo xtask ci`) rejects any r
 that cannot be used without a GPL, LGPL or AGPL license, and any unreviewed license.
 
 The 3D engine and desktop UI come from Solidcraft (https://github.com/tangency-labs/solidcraft),
-pinned to revision 4f3ac07aec69489183185071f07d7fbcf4f51e64 and linked as the solidcraft-engine
+built from the fork https://github.com/DAmesberger/solidcraft at revision
+87b1009b029a1b381ad1799fe72bfec44a4b1a66 (upstream 4f3ac07aec69489183185071f07d7fbcf4f51e64
+plus an opt-in product look) and linked as the solidcraft-engine
 and solidcraft-ui-egui crates together with Solidcraft's patched geometry and windowing crates.
 Copyright (c) 2026 SolidCraft contributors; MIT OR Apache-2.0. Agent instructions, build
 conventions and some UI and transport source are adapted from the same revision under its MIT
 option; ATTRIBUTION.md lists the files and licenses/solidcraft-MIT.txt preserves the notice.
+The fork's renderer contains Apache-2.0 code adapted from the Khronos PBR Neutral tone mapper
+(Copyright The Khronos Group Inc.); the fork's NOTICE carries that attribution and applies to the
+built renderer.
 
 Expression scripting embeds Rhai 1.27.0 (https://github.com/rhaiscript/rhai), MIT OR Apache-2.0,
 used as a library.

@@ -8,7 +8,8 @@
 //! flat copies keyed by pick identity, so selection only recolours.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
-//! revision 4f3ac07; see ATTRIBUTION.md), adapted to a Z-up board.
+//! upstream revision 4f3ac07, unchanged in the pinned fork; see
+//! ATTRIBUTION.md), adapted to a Z-up board.
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     material::{BodyKind, Pattern},
