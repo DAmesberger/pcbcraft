@@ -396,7 +396,7 @@ fn exact_revisions_and_connectivity_survive_engine_history() -> Result<()> {
     let anchor = schematic::pin_position(engine.project(), ep(r1, 2));
     cascade(&mut engine, &fixture, |engine| {
         with(engine, fixture.symbol, symbol_body, |s| {
-            s.units[0].anchors[1].position = [15.0, 0.0]
+            s.units[0].pins[1].position = [15.0, 0.0]
         })
     })?;
     assert_eq!(engine.project().library.symbols.len(), 2);
@@ -439,8 +439,19 @@ fn routed_project_and_incomplete_drafts_roundtrip_through_the_document() -> Resu
     )?;
     let empty = new_draft(&mut engine, crate::DefinitionKind::Component)?;
     with(&mut engine, fixture.symbol, symbol_body, |s| {
-        s.units[0].anchors[0].terminal = crate::TerminalId(999);
-        s.units[0].body_size = [0.0, -1.0];
+        s.units[0].pins[0].terminal = crate::TerminalId(999);
+        // Finite but degenerate: a draft keeps it; publishing would not.
+        s.units[0].graphics.push(crate::library::Graphic {
+            id: crate::GraphicId(999),
+            item: crate::library::Item::Shape {
+                shape: crate::geometry::Shape::Rect {
+                    a: [0.0, 0.0],
+                    b: [0.0, -1.0],
+                },
+                width: 0.0,
+                fill: crate::library::Fill::Solid,
+            },
+        });
     })?;
     let bytes = format::encode(&engine.to_file())?;
     let opened = Engine::from_file(format::decode(&bytes)?)?;
@@ -472,7 +483,8 @@ fn corrupt_newer_and_invalid_documents_leave_engine_and_history_unchanged() -> R
     let mut net = serde_json::to_value(&before)?;
     net["project"]["nets"][0]["terminals"] = json!([]);
     let mut draft = serde_json::to_value(&before)?;
-    draft["drafts"]["items"][1]["definition"]["body"]["units"][0]["body_size"] = json!([null, 2]);
+    draft["drafts"]["items"][1]["definition"]["body"]["units"][0]["pins"][0]["position"] =
+        json!([null, 2]);
     let mut legacy = serde_json::to_value(&before)?;
     legacy["authoring_draft"] = json!(null);
     let mut unplaced_wire = serde_json::to_value(&before)?;

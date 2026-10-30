@@ -1,7 +1,7 @@
-use super::Outcome;
+use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{DefinitionId, DefinitionRef};
-use crate::library::{self, Definition, DefinitionMeta, DraftEdit, drafts};
+use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
 use schemars::JsonSchema;
@@ -36,6 +36,11 @@ pub enum LibraryCommand {
         draft: DefinitionId,
         script: scripting::Script,
     },
+    /// Replace the authoring grid (an undoable editor setting saved with the
+    /// drafts). Geometry never moves; the outcome lists draft pins that are
+    /// now off the symbol grid.
+    #[serde(rename = "library.set_grid")]
+    SetGrid { grid: Grid },
 }
 
 pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) -> Result<Outcome> {
@@ -103,6 +108,30 @@ pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) ->
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
             Ok(Outcome::None)
+        }
+        LibraryCommand::SetGrid { grid } => {
+            let drafts = Arc::make_mut(&mut document.drafts);
+            drafts::set_grid(drafts, grid)?;
+            let off_grid = drafts
+                .items
+                .iter()
+                .filter_map(|d| match &d.definition {
+                    Definition::Symbol(symbol) => Some((d.id, symbol)),
+                    _ => None,
+                })
+                .flat_map(|(draft, symbol)| {
+                    symbol
+                        .units
+                        .iter()
+                        .flat_map(|u| u.pins.iter())
+                        .filter(|p| !library::graphics::on_grid(p.position, grid.symbol_mm))
+                        .map(move |p| OffGridPin {
+                            draft,
+                            terminal: p.terminal,
+                        })
+                })
+                .collect();
+            Ok(Outcome::GridSet { off_grid })
         }
     }
 }

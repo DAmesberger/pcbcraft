@@ -180,7 +180,7 @@ fn resolve_functions(
 
 /// The unit that draws `terminal`.
 pub fn owning_unit(symbol: &SymbolDefinition, terminal: TerminalId) -> Option<UnitId> {
-    symbol.anchor(terminal).map(|(unit, _)| unit.id)
+    symbol.pin(terminal).map(|(unit, _)| unit.id)
 }
 
 /// Every unit of the resolved representation with its derived state.
@@ -309,7 +309,7 @@ fn check_with<'a>(
         }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {
             invalid(format!(
-                "{name}: terminal {} has no anchor in its representation.",
+                "{name}: terminal {} has no pin in its representation.",
                 terminal.id
             ))
         })?;
@@ -1037,7 +1037,7 @@ pub(crate) fn wired_terminals(project: &Project, id: Id) -> BTreeSet<TerminalId>
         .collect()
 }
 
-/// The decision for a wired terminal whose anchor moves into a unit that is
+/// The decision for a wired terminal whose pin moves into a unit that is
 /// not placed.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -1056,7 +1056,7 @@ pub(crate) struct Regroup {
     pub disconnects: BTreeSet<TerminalId>,
 }
 
-/// The regroup rule: every wired terminal of instance `id` whose anchor in
+/// The regroup rule: every wired terminal of instance `id` whose pin in
 /// `symbol` lies in a unit outside `placed` needs an explicit decision from
 /// `decide`, either placing that unit or accepting the disconnect. Pure: the
 /// caller applies the result through `schematic`.

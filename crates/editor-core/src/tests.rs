@@ -5,6 +5,7 @@ mod ce06;
 mod designators;
 mod engine;
 mod fields;
+mod graphics;
 mod library;
 mod staged;
 pub(crate) mod support;

@@ -205,18 +205,18 @@ impl ComponentDefinition {
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
-            let anchored: BTreeSet<TerminalId> = symbol
+            let pinned: BTreeSet<TerminalId> = symbol
                 .definition
                 .units
                 .iter()
-                .flat_map(|u| u.anchors.iter().map(|a| a.terminal))
+                .flat_map(|u| u.pins.iter().map(|p| p.terminal))
                 .collect();
             for terminal in &self.terminals {
-                if !anchored.contains(&terminal.id) {
+                if !pinned.contains(&terminal.id) {
                     out.push(issue(
-                        "component.anchor_missing",
+                        "component.pin_missing",
                         format!(
-                            "Symbol {r} has no anchor for terminal {} ‘{}’.",
+                            "Symbol {r} has no pin for terminal {} ‘{}’.",
                             terminal.id, terminal.name
                         ),
                         vec![
@@ -226,12 +226,23 @@ impl ComponentDefinition {
                     ));
                 }
             }
-            for terminal in anchored.difference(&terminals) {
+            for terminal in pinned.difference(&terminals) {
                 out.push(issue(
-                    "component.anchor_unknown",
-                    format!("Symbol {r} anchors unknown terminal {terminal}."),
+                    "component.pin_unknown",
+                    format!("Symbol {r} has a pin for unknown terminal {terminal}."),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
+            }
+            for field in symbol.definition.text_fields() {
+                if self.field(field).is_none() {
+                    out.push(issue(
+                        "component.text_field_unknown",
+                        format!(
+                            "Symbol {r} shows field {field}, which this component does not select."
+                        ),
+                        vec![this, ObjectRef::Definition { id: field }],
+                    ));
+                }
             }
         }
         if !unique_lineages(self.implementations.iter().map(|r| r.id)) {

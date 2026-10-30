@@ -7,6 +7,7 @@ mod binding;
 mod component;
 pub mod drafts;
 mod footprint;
+pub mod graphics;
 mod package;
 mod publish;
 pub mod samples;
@@ -18,9 +19,13 @@ pub use component::{
 };
 pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{FootprintDefinition, Pad};
+pub use graphics::{
+    Decorations, Fill, Graphic, Grid, HAlign, Item, Justify, Pin, PinDirection, PinText, Rotation,
+    SymbolHit, Text, TextContent, TextMetric, VAlign, lint,
+};
 pub use package::{PackageBody, PackageDefinition, PackageTerminal};
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
-pub use symbol::{Anchor, SymbolDefinition, Unit};
+pub use symbol::{SymbolDefinition, Unit};
 
 use crate::diagnostics::{Error, Result};
 use crate::fields::{FieldDefinition, QuantityKind};
@@ -387,7 +392,7 @@ pub fn check_bounds(meta: &DefinitionMeta, definition: &Definition) -> Result<()
     };
     if !finite {
         return Err(Error::Invalid(
-            "definition geometry must be finite and within ±10000 mm, and values finite".into(),
+            "definition geometry must be finite, within ±10000 mm and within its supported ranges, and values finite".into(),
         ));
     }
     Ok(())

@@ -1,10 +1,12 @@
 //! Single-sheet capture: symbol occurrences and wires. Wire endpoints
-//! reference electrical identities; drawn crossings and coincident anchors
-//! never imply a connection.
+//! reference electrical identities; drawn crossings and coincident pins
+//! never imply a connection. [`placed_unit`] resolves what an occurrence
+//! draws.
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Point, point_valid};
-use crate::ids::{Endpoint, Id, TerminalId, UnitId};
+use crate::geometry::{Point, Shape, Transform2, point_valid};
+use crate::ids::{Endpoint, GraphicId, Id, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
+use crate::library::{Fill, Item, Justify, TextContent};
 use crate::model::{EditPolicy, Net, Project, SymbolOccurrence, Wire};
 use crate::nets;
 use schemars::JsonSchema;
@@ -312,22 +314,195 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-/// Global schematic anchor in millimetres: the occurrence of the terminal's
-/// owning unit plus its anchor. `None` while that unit is not placed.
+/// The frame an occurrence draws its unit in. Translation only today; the
+/// single seam for rotating and mirroring occurrences later.
+pub fn occurrence_transform(occurrence: &SymbolOccurrence) -> Transform2 {
+    Transform2::translation(occurrence.position)
+}
+
+/// Global schematic pin position in millimetres: the pin's connection end in
+/// the frame of the occurrence of its owning unit. `None` while that unit is
+/// not placed.
 pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
     let instance = project.instance(endpoint.instance)?;
     let symbol = &instances::resolve(&project.library, instance)
         .ok()?
         .symbol
         .definition;
-    let (unit, anchor) = symbol.anchor(endpoint.terminal)?;
+    let (unit, pin) = symbol.pin(endpoint.terminal)?;
     let occurrence = project
         .occurrences_of(instance.id)
         .find(|o| o.unit == unit.id)?;
-    Some([
-        occurrence.position[0] + anchor.position[0],
-        occurrence.position[1] + anchor.position[1],
-    ])
+    Some(occurrence_transform(occurrence).apply(pin.position))
+}
+
+/// Resolved text placed on the sheet.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedText {
+    pub text: String,
+    pub at: Point,
+    pub height: f64,
+    pub rotation_deg: f64,
+    pub justify: Justify,
+    /// Drawn reflected (an occurrence or board side mirror).
+    pub mirrored: bool,
+}
+
+/// One drawn shape of a placed unit.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedShape {
+    pub graphic: GraphicId,
+    pub shape: Shape,
+    pub width: f64,
+    pub fill: Fill,
+}
+
+/// One pin of a placed unit, in sheet coordinates.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedPin {
+    pub terminal: TerminalId,
+    /// The connection end wires attach to.
+    pub end: Point,
+    /// Where the pin meets the body.
+    pub body_end: Point,
+    /// Where the drawn stub stops (short of an inversion bubble).
+    pub line_end: Point,
+    pub decorations: Vec<Shape>,
+    pub name: Option<PlacedText>,
+    /// The designations the instance's binding maps to the terminal; `None`
+    /// without a physical choice, never guessed.
+    pub number: Option<PlacedText>,
+}
+
+/// Everything one occurrence draws, resolved against its instance's exact
+/// revisions. Views draw only from this.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedUnit {
+    pub occurrence: Id,
+    pub shapes: Vec<PlacedShape>,
+    pub texts: Vec<PlacedText>,
+    pub pins: Vec<PlacedPin>,
+}
+
+/// Resolve one occurrence's drawing: graphics in order, visible text with
+/// designator, name, unit label and field values substituted, and pins with
+/// their names and binding numbers.
+pub fn placed_unit(project: &Project, occurrence: Id) -> Result<PlacedUnit> {
+    let item = project
+        .occurrence(occurrence)
+        .ok_or_else(|| not_found("Unknown symbol occurrence."))?;
+    let instance = project
+        .instance(item.instance)
+        .ok_or_else(|| not_found("Unknown component instance."))?;
+    let resolved = instances::resolve(&project.library, instance)?;
+    let symbol = &resolved.symbol.definition;
+    let unit = symbol
+        .unit(item.unit)
+        .ok_or_else(|| invalid("The occurrence's unit is not in its symbol."))?;
+    let fields = instances::effective_fields(&project.library, instance)?;
+    let t = occurrence_transform(item);
+    let place =
+        |text: String, at: Point, height: f64, rotation_deg: f64, justify: Justify| PlacedText {
+            text,
+            at: t.apply(at),
+            height,
+            rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
+            justify,
+            mirrored: t.mirror,
+        };
+    let mut shapes = Vec::new();
+    let mut texts = Vec::new();
+    for graphic in &unit.graphics {
+        match &graphic.item {
+            Item::Shape { shape, width, fill } => shapes.push(PlacedShape {
+                graphic: graphic.id,
+                shape: shape.transformed(&t),
+                width: *width,
+                fill: *fill,
+            }),
+            Item::Text(text) if text.visible => {
+                let content = match &text.content {
+                    TextContent::Literal(s) => s.clone(),
+                    TextContent::Designator => instances::display_label(project, instance, unit.id),
+                    TextContent::ComponentName => resolved.component.meta.name.clone(),
+                    TextContent::UnitLabel => unit.label.clone(),
+                    TextContent::Field(lineage) => fields
+                        .iter()
+                        .find(|f| f.field.id == *lineage)
+                        .and_then(|f| f.text.clone())
+                        .unwrap_or_default(),
+                };
+                texts.push(place(
+                    content,
+                    text.at,
+                    text.height,
+                    text.rotation.degrees(),
+                    text.justify,
+                ));
+            }
+            Item::Text(_) => {}
+        }
+    }
+    let component = &resolved.component.definition;
+    let numbers = |terminal: TerminalId| -> Option<String> {
+        let physical = resolved.physical?;
+        let designations: Vec<&str> = physical
+            .package
+            .definition
+            .terminals
+            .iter()
+            .filter(|pt| {
+                physical
+                    .binding
+                    .definition
+                    .mappings
+                    .iter()
+                    .any(|m| m.terminal == terminal && m.package_terminal == pt.id)
+            })
+            .map(|pt| pt.designation.as_str())
+            .collect();
+        (!designations.is_empty()).then(|| designations.join(","))
+    };
+    let height = symbol.pin_text_height;
+    let pins = unit
+        .pins
+        .iter()
+        .map(|pin| {
+            let [_, line_end] = pin.line();
+            let name = component
+                .terminal(pin.terminal)
+                .filter(|_| pin.name.visible)
+                .map(|terminal| {
+                    let (at, rotation, justify) = pin.name_anchor();
+                    place(terminal.name.clone(), at, height, rotation, justify)
+                });
+            let number = numbers(pin.terminal)
+                .filter(|_| pin.number.visible)
+                .map(|text| {
+                    let (at, rotation, justify) = pin.number_anchor();
+                    place(text, at, height, rotation, justify)
+                });
+            PlacedPin {
+                terminal: pin.terminal,
+                end: t.apply(pin.position),
+                body_end: t.apply(pin.body_end()),
+                line_end: t.apply(line_end),
+                decorations: pin
+                    .decoration_shapes()
+                    .iter()
+                    .map(|s| s.transformed(&t))
+                    .collect(),
+                name,
+                number,
+            }
+        })
+        .collect();
+    Ok(PlacedUnit {
+        occurrence,
+        shapes,
+        texts,
+        pins,
+    })
 }
 
 /// The project's nets, sorted by ID.

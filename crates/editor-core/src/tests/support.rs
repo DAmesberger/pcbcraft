@@ -3,7 +3,7 @@ use crate::completeness::{CheckTarget, DefinitionReport, InstanceReport};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::instances::NewInstance;
 use crate::library::{
-    Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
+    BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
     FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
     Terminal, TerminalClass, TerminalMap, Unit,
 };
@@ -173,7 +173,13 @@ pub fn codes(findings: &[crate::Finding]) -> Vec<(String, Vec<crate::ObjectRef>)
     all
 }
 
-/// A unit: ID, label and (terminal, anchor) pairs.
+/// The body every fixture unit's pins point into.
+const FIXTURE_BODY: crate::geometry::Bounds = crate::geometry::Bounds {
+    min: [-3.0, -3.0],
+    max: [3.0, 3.0],
+};
+
+/// A unit: ID, label and (terminal, pin connection end) pairs.
 pub type UnitSpec<'a> = (u32, &'a str, Vec<(u32, Point)>);
 
 /// A synthetic component: terminals, units with anchors, package
@@ -303,18 +309,22 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
     let symbol = SymbolDefinition {
         component: f.component,
         next_local: next_local(spec.units.iter().map(|u| u.0)),
+        pin_text_height: crate::library::graphics::PIN_TEXT_HEIGHT_MM,
         units: spec
             .units
             .iter()
             .map(|(id, label, anchors)| Unit {
                 id: UnitId(*id),
                 label: (*label).into(),
-                body_size: [6.0, 6.0],
-                anchors: anchors
+                graphics: vec![],
+                pins: anchors
                     .iter()
-                    .map(|(terminal, position)| Anchor {
-                        terminal: TerminalId(*terminal),
-                        position: *position,
+                    .map(|(terminal, position)| {
+                        crate::library::graphics::pin_toward(
+                            TerminalId(*terminal),
+                            *position,
+                            FIXTURE_BODY,
+                        )
                     })
                     .collect(),
             })

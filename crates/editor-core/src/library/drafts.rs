@@ -1,6 +1,7 @@
 //! Unfinished definitions. Drafts live outside the project, so editing one
 //! neither revalidates the project nor changes the board model. Only
 //! persistence bounds and finite geometry are enforced.
+use super::graphics::Grid;
 use super::{Definition, DefinitionMeta, Library, check_bounds};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{DefinitionId, DefinitionKind, Revision};
@@ -16,6 +17,9 @@ pub const MAX_EDITS: usize = 16;
 #[serde(deny_unknown_fields)]
 pub struct Drafts {
     pub items: Vec<Draft>,
+    /// The authoring grid: saved and undoable with the drafts, never part of
+    /// revision data.
+    pub grid: Grid,
 }
 
 /// At most one draft per lineage. Its pending revision is `base + 1`, or 1.
@@ -139,6 +143,17 @@ pub fn edit(drafts: &mut Drafts, edits: Vec<DraftEdit>) -> Result<()> {
     Ok(())
 }
 
+/// Replace the authoring grid. Geometry never moves.
+pub fn set_grid(drafts: &mut Drafts, grid: Grid) -> Result<()> {
+    if !grid.valid() {
+        return Err(Error::Invalid(
+            "grid steps must be finite and 0.01–10 mm".into(),
+        ));
+    }
+    drafts.grid = grid;
+    Ok(())
+}
+
 /// Remove a draft. A reserved new-lineage identity stays allocated.
 pub fn discard(drafts: &mut Drafts, id: DefinitionId) -> Result<()> {
     let before = drafts.items.len();
@@ -153,6 +168,11 @@ pub fn discard(drafts: &mut Drafts, id: DefinitionId) -> Result<()> {
 pub fn validate(drafts: &Drafts, library: &Library) -> Result<()> {
     if drafts.items.len() > MAX_DRAFTS {
         return Err(Error::Invalid("too many drafts".into()));
+    }
+    if !drafts.grid.valid() {
+        return Err(Error::Invalid(
+            "grid steps must be finite and 0.01–10 mm".into(),
+        ));
     }
     let mut seen = BTreeSet::new();
     for draft in &drafts.items {

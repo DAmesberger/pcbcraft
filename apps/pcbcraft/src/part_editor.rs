@@ -8,19 +8,22 @@
 mod working_set;
 
 use crate::kit::{self, Tone};
+use crate::schematic_editor::body_bounds;
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::functions::{
     Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
 };
+use pcbcraft_core::geometry::{Bounds, Shape};
+use pcbcraft_core::library::graphics::{self, PIN_TEXT_HEIGHT_MM};
 use pcbcraft_core::library::{
-    Anchor, ComponentDefinition, Drafts, FieldView, Library, PackageBody, PackageTerminal, Pad,
-    Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
+    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
+    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, Id, LibraryCommand, Operation,
-    PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
+    ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
+    Operation, PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{
     fonts,
@@ -617,15 +620,25 @@ impl PartEditor {
             return;
         };
         if set.symbol.units.is_empty() {
-            let Some(unit) = allocate(&mut set.symbol.next_local) else {
+            let (Some(unit), Some(body)) = (
+                allocate(&mut set.symbol.next_local),
+                allocate(&mut set.symbol.next_local),
+            ) else {
                 self.notice = "Unit identity exhausted".into();
                 return;
             };
+            set.symbol.pin_text_height = PIN_TEXT_HEIGHT_MM;
             set.symbol.units.push(Unit {
                 id: UnitId(unit),
                 label: "A".into(),
-                body_size: [6.0, 4.0],
-                anchors: vec![],
+                graphics: vec![graphics::body_rect(
+                    GraphicId(body),
+                    Bounds {
+                        min: [-2.5, -2.5],
+                        max: [2.5, 2.5],
+                    },
+                )],
+                pins: vec![],
             });
         }
         let row = set.component.terminals.len() as f64;
@@ -640,10 +653,12 @@ impl PartEditor {
             )),
         });
         if let Some(unit) = set.symbol.units.first_mut() {
-            unit.anchors.push(Anchor {
-                terminal: electrical,
-                position: [-5.0, -row * 2.5],
-            });
+            unit.pins.push(Pin::new(
+                electrical,
+                [-5.0, -row * 2.5],
+                PinDirection::Right,
+                2.5,
+            ));
         }
         set.package.terminals.push(PackageTerminal {
             id: physical,
@@ -679,7 +694,7 @@ impl PartEditor {
             .collect();
         set.component.terminals.retain(|t| t.id != selected);
         for unit in &mut set.symbol.units {
-            unit.anchors.retain(|a| a.terminal != selected);
+            unit.pins.retain(|p| p.terminal != selected);
         }
         set.binding.mappings.retain(|m| m.terminal != selected);
         set.package.terminals.retain(|t| !physical.contains(&t.id));
@@ -1030,9 +1045,25 @@ impl PartEditor {
     }
 
     fn symbol_inspector(&mut self, ui: &mut Ui) {
-        if let Some(unit) = self.draft.as_mut().and_then(|s| s.symbol.units.first_mut()) {
+        // The first rectangle is edited as the body until drawing tools
+        // arrive.
+        if let Some((a, b)) = self
+            .draft
+            .as_mut()
+            .and_then(|s| s.symbol.units.first_mut())
+            .and_then(|u| {
+                u.graphics.iter_mut().find_map(|g| match &mut g.item {
+                    Item::Shape {
+                        shape: Shape::Rect { a, b },
+                        ..
+                    } => Some((a, b)),
+                    _ => None,
+                })
+            })
+        {
             kit::section(ui, "symbol-body", "Body", true, None, |ui| {
-                kit::pair_row(ui, "Size", &mut unit.body_size, "mm", 0.01..=10000.0);
+                kit::pair_row(ui, "Corner", a, "mm", -10000.0..=10000.0);
+                kit::pair_row(ui, "Opposite corner", b, "mm", -10000.0..=10000.0);
             });
         }
         self.terminal_list(ui);
@@ -1052,19 +1083,13 @@ impl PartEditor {
                 if let Some(terminal) = component.terminals.iter_mut().find(|t| t.id == id) {
                     kit::text_row(ui, "Name", &mut terminal.name);
                 }
-                if let Some(anchor) = symbol
+                if let Some(pin) = symbol
                     .units
                     .iter_mut()
-                    .flat_map(|u| u.anchors.iter_mut())
-                    .find(|a| a.terminal == id)
+                    .flat_map(|u| u.pins.iter_mut())
+                    .find(|p| p.terminal == id)
                 {
-                    kit::pair_row(
-                        ui,
-                        "Pin anchor",
-                        &mut anchor.position,
-                        "mm",
-                        -10000.0..=10000.0,
-                    );
+                    kit::pair_row(ui, "Pin end", &mut pin.position, "mm", -10000.0..=10000.0);
                 }
                 if let Some(mut class) = component.terminal(id).map(ClassChoice::of) {
                     let options: Vec<_> = CLASS_CHOICES
@@ -1077,7 +1102,7 @@ impl PartEditor {
                         *notice = message.into();
                     }
                 }
-                kit::note(ui, "Drag a pin anchor on the canvas to move it.");
+                kit::note(ui, "Drag a pin end on the canvas to move it.");
             },
         );
         functions_section(ui, component, id, notice);
@@ -1275,20 +1300,24 @@ impl PartEditor {
         let empty_unit = Unit {
             id: UnitId(0),
             label: String::new(),
-            body_size: [1.0, 1.0],
-            anchors: vec![],
+            graphics: vec![],
+            pins: vec![],
         };
-        let body_size = set.symbol.units.first().unwrap_or(&empty_unit).body_size;
+        let unit_body = body_bounds(set.symbol.units.first().unwrap_or(&empty_unit));
         let (extent_x, extent_y) = if self.view == View::Symbol {
             set.symbol
                 .units
                 .first()
                 .unwrap_or(&empty_unit)
-                .anchors
+                .pins
                 .iter()
-                .fold((body_size[0] / 2.0, body_size[1] / 2.0), |(x, y), a| {
-                    (x.max(a.position[0].abs()), y.max(a.position[1].abs()))
-                })
+                .fold(
+                    (
+                        unit_body.min[0].abs().max(unit_body.max[0].abs()),
+                        unit_body.min[1].abs().max(unit_body.max[1].abs()),
+                    ),
+                    |(x, y), p| (x.max(p.position[0].abs()), y.max(p.position[1].abs())),
+                )
         } else {
             set.footprint.pads.iter().fold(
                 (
@@ -1342,10 +1371,7 @@ impl PartEditor {
         let mut selected = self.selected;
         let mut drag_scale = self.drag_scale;
         if self.view == View::Symbol {
-            let body = Rect::from_center_size(
-                origin,
-                egui::vec2(body_size[0] as f32, body_size[1] as f32) * scale,
-            );
+            let body = Rect::from_two_pos(transform(unit_body.min), transform(unit_body.max));
             painter.rect(
                 body,
                 t.radius_sm,
@@ -1367,10 +1393,10 @@ impl PartEditor {
                 .map(|t| (t.id, t.name.clone()))
                 .collect();
             if let Some(unit) = set.symbol.units.first_mut() {
-                for anchor in &mut unit.anchors {
-                    let at = transform(anchor.position);
+                for pin in &mut unit.pins {
+                    let at = transform(pin.position);
                     let edge = body.clamp(at);
-                    let ink = if selected == Some(anchor.terminal) {
+                    let ink = if selected == Some(pin.terminal) {
                         t.body_selected
                     } else {
                         t.accent
@@ -1379,7 +1405,7 @@ impl PartEditor {
                     painter.circle_filled(at, 4.0, ink);
                     let label = names
                         .iter()
-                        .find(|(id, _)| *id == anchor.terminal)
+                        .find(|(id, _)| *id == pin.terminal)
                         .map(|(_, name)| name.as_str())
                         .unwrap_or("?");
                     painter.text(
@@ -1391,11 +1417,11 @@ impl PartEditor {
                     );
                     let response = ui.interact(
                         Rect::from_center_size(at, Vec2::splat(18.0)),
-                        ui.id().with(("symbol-pin", anchor.terminal.0)),
+                        ui.id().with(("symbol-pin", pin.terminal.0)),
                         Sense::click_and_drag(),
                     );
                     if response.clicked() || response.drag_started() {
-                        selected = Some(anchor.terminal);
+                        selected = Some(pin.terminal);
                     }
                     if response.drag_started() {
                         drag_scale = Some(scale);
@@ -1403,7 +1429,7 @@ impl PartEditor {
                     if response.dragged()
                         && let Some(p) = response.interact_pointer_pos()
                     {
-                        anchor.position = [
+                        pin.position = [
                             f64::from((p.x - origin.x) / scale),
                             f64::from((origin.y - p.y) / scale),
                         ];

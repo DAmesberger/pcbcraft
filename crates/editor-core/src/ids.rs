@@ -187,6 +187,11 @@ local_id!(
     UnitId
 );
 local_id!(
+    /// A drawn primitive or text of one symbol (or footprint) lineage, stable
+    /// across its revisions. Shares the lineage's local namespace.
+    GraphicId
+);
+local_id!(
     /// A package's physical terminal.
     PackageTerminalId
 );

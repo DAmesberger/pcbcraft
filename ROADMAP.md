@@ -20,7 +20,7 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 ## Working editor foundation
 
 - [x] Shared Solidcraft UI dependency, source-referenced shell, fonts, controls and renderer.
-- [x] Initial component forms for symbol anchors/body, rectangular footprint pads and mappings, with immutable local snapshots; complete authoring scenarios remain pending below.
+- [x] Initial component forms for symbol pins/body, rectangular footprint pads and mappings, with immutable local snapshots; complete authoring scenarios remain pending below.
 - [x] Single-sheet terminal wiring, schematic properties and basic electrical checks.
 - [x] Explicit schematic-to-board sync, placement, manual routing and physical-island checks.
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.

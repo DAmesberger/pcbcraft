@@ -2,17 +2,18 @@
 //! two-terminal arrangements, not component categories; every value,
 //! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
+use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
 use super::{
-    Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
+    BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
     FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
     Terminal, TerminalClass, TerminalMap, Unit,
 };
 use crate::fields::{FieldDefinition, QuantityKind, ValueType};
 use crate::functions::{Direction, TerminalFunctions};
-use crate::geometry::Point;
+use crate::geometry::{Bounds, Point};
 use crate::ids::{
-    BindingRef, DefinitionId, FootprintRef, FunctionId, PackageRef, PackageTerminalId, PadId,
-    QuantityKindRef, SymbolRef, TerminalId, UnitId,
+    BindingRef, DefinitionId, FootprintRef, FunctionId, GraphicId, PackageRef, PackageTerminalId,
+    PadId, QuantityKindRef, SymbolRef, TerminalId, UnitId,
 };
 use crate::quantity::{UnitOfMeasure, UnitSet};
 
@@ -61,8 +62,10 @@ impl Kind<'static> {
 }
 
 struct Layout {
-    body: Point,
-    anchors: [Point; 2],
+    /// The body rectangle, in the unit frame.
+    body: Bounds,
+    /// Pin connection ends.
+    pins: [Point; 2],
     envelope: [f64; 3],
     offset: [f64; 3],
     pads: [Point; 2],
@@ -102,23 +105,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         DraftEdit {
             id: refs.symbol.id,
             meta: meta(&format!("{name} symbol")),
-            definition: Definition::Symbol(SymbolDefinition {
-                component: refs.component,
-                next_local: 2,
-                units: vec![Unit {
-                    id: UnitId(1),
-                    label: "A".into(),
-                    body_size: layout.body,
-                    anchors: terminals
-                        .iter()
-                        .zip(layout.anchors)
-                        .map(|(terminal, position)| Anchor {
-                            terminal: *terminal,
-                            position,
-                        })
-                        .collect(),
-                }],
-            }),
+            definition: Definition::Symbol(symbol(refs.component, &terminals, &layout)),
         },
         DraftEdit {
             id: refs.package.id,
@@ -178,6 +165,49 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
     ]
 }
 
+/// One unit: a body rectangle, a pin per terminal pointing into it, the
+/// designator above the body and the component name below it. Unit 1 and
+/// graphics 2–4 use the symbol's local IDs.
+fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) -> SymbolDefinition {
+    let body = layout.body;
+    let gap = 0.5;
+    SymbolDefinition {
+        component,
+        next_local: 5,
+        pin_text_height: PIN_TEXT_HEIGHT_MM,
+        units: vec![Unit {
+            id: UnitId(1),
+            label: "A".into(),
+            graphics: vec![
+                graphics::body_rect(GraphicId(2), body),
+                graphics::text(
+                    GraphicId(3),
+                    TextContent::Designator,
+                    [body.center()[0], body.max[1] + gap],
+                    Justify {
+                        h: HAlign::Center,
+                        v: VAlign::Bottom,
+                    },
+                ),
+                graphics::text(
+                    GraphicId(4),
+                    TextContent::ComponentName,
+                    [body.center()[0], body.min[1] - gap],
+                    Justify {
+                        h: HAlign::Center,
+                        v: VAlign::Top,
+                    },
+                ),
+            ],
+            pins: terminals
+                .iter()
+                .zip(layout.pins)
+                .map(|(terminal, position)| graphics::pin_toward(*terminal, position, body))
+                .collect(),
+        }],
+    }
+}
+
 /// A two-terminal component with an axial symbol, a small two-land footprint
 /// and a straight terminal mapping.
 pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
@@ -186,8 +216,11 @@ pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEd
         kind,
         refs,
         Layout {
-            body: [6.0, 3.0],
-            anchors: [[-5.0, 0.0], [5.0, 0.0]],
+            body: Bounds {
+                min: [-2.5, -1.0],
+                max: [2.5, 1.0],
+            },
+            pins: [[-5.0, 0.0], [5.0, 0.0]],
             envelope: [2.0, 1.2, 0.6],
             offset: [0.0, 0.0, 0.05],
             pads: [[-1.2, 0.0], [1.2, 0.0]],
@@ -196,7 +229,7 @@ pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEd
     )
 }
 
-/// The same two terminals with both anchors on one side and a 2.54 mm land
+/// The same two terminals with both pins on one side and a 2.54 mm land
 /// pitch.
 pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     sample(
@@ -204,8 +237,11 @@ pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<
         kind,
         refs,
         Layout {
-            body: [4.0, 6.0],
-            anchors: [[-5.0, 1.5], [-5.0, -1.5]],
+            body: Bounds {
+                min: [-2.5, -3.75],
+                max: [2.5, 3.75],
+            },
+            pins: [[-5.0, 2.5], [-5.0, -2.5]],
             envelope: [5.0, 3.5, 4.0],
             offset: [0.0, 0.0, 0.05],
             pads: [[-1.27, 0.0], [1.27, 0.0]],

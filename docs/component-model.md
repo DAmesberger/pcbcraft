@@ -64,7 +64,7 @@ ComponentInstance ──pins──▶ ComponentRef ──pins──▶ SymbolRef
 | Pinner | Pins exactly | Records lineage only | Never pins |
 | --- | --- | --- | --- |
 | Component revision | Allowed representations (`Vec<SymbolRef>`, at most one per symbol lineage); allowed implementations (`Vec<BindingRef>`, at most one per binding lineage); slice 2: selected fields (`Vec<FieldSelection { field: FieldRef, … }>`, at most one per field lineage) | — | Packages or footprints directly |
-| Symbol revision | — | Owning component lineage, so its anchor terminal IDs are interpreted in that component's namespace | Component revision |
+| Symbol revision | — | Owning component lineage, so its pins' terminal IDs are interpreted in that component's namespace | Component revision |
 | Binding revision | `package: PackageRef`; allowed footprints `Vec<FootprintRef>`, at most one per footprint lineage, each pinning the same `PackageRef` | Owning component lineage. A binding can be listed only by revisions of that component, so a package shared by two components never shares bindings. | Component revision |
 | Footprint revision | `package: PackageRef` | — | — |
 | Package revision | — (native model assets are deferred; the envelope stays inline) | — | — |
@@ -95,14 +95,14 @@ Revisions are immutable. Publishing appends and never rewrites. The snapshot is 
 
 - `library.publish` changes only the library. Instances, occurrences, wires, nets, placements and tracks are untouched, and existing instances keep their pins.
 - An instance changes revision only through `project.preview_update` / `project.apply_update` with `Change::ComponentRevision { instances, target: ComponentRef, resolutions }`. The target must have the same component lineage. The plan diffs everything reachable from the old and new pins:
-  - Units and anchors (slice 1).
+  - Units and pins (slice 1); graphics by ID, pin presentation and pin text height ([G1a](#drawable-symbol-graphics-g1a)).
   - Binding mapping, footprint pads, datum and package envelope (slice 1, as today's part-revision plan).
   - Field schemas, defaults and effective values (slice 2).
   - Terminal functions and selections (slice 3).
 - A plan is **blocked** when an instance's current choice is not offered by the target, until `resolutions` supplies an explicit replacement. Examples: its representation, binding or footprint lineage is no longer listed; an occurrence's unit no longer exists in the same symbol lineage; an override no longer fits; a selected function is gone. Nothing is inferred from names, order or pad count.
 - **Unit IDs are lineage-local.** Unit 2 of symbol X and unit 2 of symbol Y are unrelated. When a `ChoiceResolution` changes the representation lineage, the plan is blocked until every occurrence and every `unused_units` entry of that instance has an explicit `UnitResolution`. A unit is never kept by numeric match across lineages.
 - Within one symbol lineage, a unit ID keeps its meaning. A target revision that removes a unit with an occurrence blocks until a `UnitResolution` is given. A target that removes a unit listed in `unused_units` lists that flag's removal in the plan; it does not block, because no presentation or connectivity is lost.
-- **Regrouping never disconnects silently.** When a terminal's anchor moves to another unit and the terminal is wired, the plan is blocked unless the target unit is placed. A `RegroupResolution` either places the target unit at a given position or explicitly accepts disconnecting the listed wires. There is no default.
+- **Regrouping never disconnects silently.** When a terminal's pin moves to another unit and the terminal is wired, the plan is blocked unless the target unit is placed. A `RegroupResolution` either places the target unit at a given position or explicitly accepts disconnecting the listed wires. There is no default.
 - Cancel means not applying, so the old pins remain. Apply is one undo step. A stale plan fails without changes, as today.
 
 ## (b) Incomplete drafts and completeness
@@ -164,11 +164,11 @@ Publish rules per kind are owned by `library::publish_findings` and use domain v
 - **Every kind with local IDs:** the [local-ID rules](#identity).
 - **Component:**
   - 1–256 terminals with unique nonzero IDs and printable names.
-  - ≥ 1 representation, at most one per symbol lineage. Each listed symbol has the same owner lineage and gives every terminal exactly one anchor.
+  - ≥ 1 representation, at most one per symbol lineage. Each listed symbol has the same owner lineage and gives every terminal exactly one pin (`component.pin_missing`, `component.pin_unknown`); every `Field` text it shows is a field the component selects (`component.text_field_unknown`).
   - Implementations at most one per binding lineage. Each listed binding has the same owner lineage, maps every terminal to at least one package terminal and maps no unknown terminal.
   - Slice 2: field selections are unique per field lineage, and defaults satisfy their field.
   - Slice 3: function declarations are valid (`functions::declaration_findings`); every `FunctionKey` in constraints and in listed bindings' `unavailable` names a function of its own terminal; the default resolution (fixed functions and design defaults, no explicit selections) has no conflicts under the component's capacity and `Excludes` constraints; no listed binding marks a fixed function or a design default unavailable (`functions::binding_findings`).
-- **Symbol:** 1–64 units with unique IDs and labels; anchors with unique terminals across all units; finite geometry; positive body.
+- **Symbol:** 1–64 units with unique IDs and labels; pins with unique terminals across all units (`symbol.pin_duplicate`); every unit draws something or has a pin (`symbol.unit_empty`); finite geometry within the [graphics bounds](#drawable-symbol-graphics-g1a); each graphic passes the `graphic.*` and `text.empty` rules.
 - **Package:** 1–512 terminals with unique IDs and unique printable designations; positive finite envelope.
 - **Footprint:** 1–1024 pads with unique IDs and positive finite size; every pad's package terminal exists in the pinned package; every package terminal has ≥ 1 pad; finite datum.
 - **Binding:**
@@ -202,17 +202,17 @@ Command handlers in `commands` orchestrate: they look up, clone a candidate, cal
 
 | # | Module | Responsibility | Owns (types) | Public functions | May use |
 | --- | --- | --- | --- | --- | --- |
-| 0 | `geometry` (slice 1 addition) | Plain 2D coordinate vocabulary and persistence bounds | `Point` | `point_valid`, `finite_within`, `size_valid` | — |
-| 1 | `ids` | Identity vocabulary, and the one display-label rule | `Id`, `DefinitionId`, `Revision`, `DefinitionKind`, exact `*Ref`s, `DefinitionRef` (kind-tagged), local ID newtypes, `FunctionKey`, `Endpoint`, `MAX_LABEL` | `Revision::next` (checked), `printable` (slice 3) | — |
+| 0 | `geometry` (slice 1 addition; G1a shapes) | Plain 2D coordinate vocabulary, drawn shapes, rigid transforms and persistence bounds | `Point`, `Shape`, `Transform2`, `Bounds` | `point_valid`, `finite_within`, `size_valid`, `cos_sin`, `Transform2::{apply, then, apply_angle}`, `Shape::{is_closed, bounds, distance, flatten, transformed}`, `segment_distance`, `polygon_contains`, `polygons_overlap`, `polygon_self_intersects`, `polyline_polygon_distance`, `stroke_outline` | — |
+| 1 | `ids` | Identity vocabulary, and the one display-label rule | `Id`, `DefinitionId`, `Revision`, `DefinitionKind`, exact `*Ref`s, `DefinitionRef` (kind-tagged), local ID newtypes (G1a: `GraphicId`), `FunctionKey`, `Endpoint`, `MAX_LABEL` | `Revision::next` (checked), `printable` (slice 3) | — |
 | 2 | `diagnostics` | Command errors and findings | `Error`, `Diagnostic`, `Finding`, `ObjectRef` (gains `Definition`, `LibraryObject`, `Occurrence`, `Unit`; slice 2: `Property`), `Stage` | `Error::code`, `Finding::new`, `Finding::blocking`, `Finding::blocks_stage` | `ids` |
 | 3 | `quantity` (slice 2, moved from `scripting/quantity.rs`) | Checked dimensional arithmetic and the one unit-scaling and unit-text rule over **data-supplied** units | `Dimension`, `Quantity`, `UnitOfMeasure`, `UnitSet`, `ResolvedUnit`, `Parsed`, `SI_PREFIXES` | `Quantity::{new, checked_add, checked_sub, checked_mul, checked_div, scale, scale_integer, value, dimension}`, `UnitSet::{check, unit, resolve, to_si}`, `parse(text, &UnitSet, default_unit)`, `format(si, &UnitSet, default_unit, display_unit)`, `format_number` | `diagnostics` |
 | 4 | `fields` (slice 2) | Value types and value semantics | `QuantityKind`, `FieldDefinition`, `ValueType`, `Choice`, `ToleranceBasis`, `FieldValue`, `FieldSelection`, `FieldOverride`, `InstanceFields`, `PropertyEdit`, `PropertyInput`, `EffectiveField`, `Origin` | `parse_value`, `check_value`, `apply_input`, `compatible`, `effective`, `unmet`, `display`, `tolerance_interval`, `definition_findings`, `kind_findings` | `ids`, `diagnostics`, `quantity` |
 | 5 | `functions` (slice 3) | Terminal function declarations, selection resolution and resource constraints | `TerminalFunctions`, `Function`, `Direction`, `SignalKind`, `Drive`, `ResourceRole`, `Resource`, `Role`, `FunctionConstraint`, `FunctionSelections`, `FunctionEdit`, `TerminalDeclaration`, `Resolution`, `ActiveFunction`, `ActiveOrigin`, `Conflict`, `Requirement` | `declaration_findings`, `binding_findings`, `resolve`, `apply_edits`, `declarations_within_bounds`, `TerminalFunctions::{fixed, implicit, within_bounds}` | `ids`, `diagnostics` |
-| 6 | `library` (`mod`, `component`, `symbol`, `package`, `footprint`, `binding`, `drafts`, `publish`, `samples`) | Definition data, the snapshot store, drafts and publication | `DefinitionMeta`, `Definition`, `Library`, `Published<T>`, `FieldView` (slice 2), `ComponentDefinition`, `Terminal`, `TerminalClass` (slice 3), `SymbolDefinition`, `Unit`, `Anchor`, `PackageDefinition`, `PackageBody`, `PackageTerminal`, `FootprintDefinition`, `Pad`, `BindingDefinition`, `TerminalMap`, `Drafts`, `Draft` | `Library::{component, symbol, package, footprint, binding, field, quantity_kind, field_view, latest}`, `check_bounds`, `publish_findings`, `publish`, `validate`, `designator_prefix_valid`, `drafts::{create, edit, discard}`, `samples::{two_terminal, two_terminal_header, Kind}` | `geometry`, `ids`, `diagnostics`, `quantity`, `fields`, `functions` |
+| 6 | `library` (`mod`, `component`, `symbol`, `graphics`, `package`, `footprint`, `binding`, `drafts`, `publish`, `samples`) | Definition data, the snapshot store, drafts and publication | `DefinitionMeta`, `Definition`, `Library`, `Published<T>`, `FieldView` (slice 2), `ComponentDefinition`, `Terminal`, `TerminalClass` (slice 3), `SymbolDefinition`, `Unit`, G1a: `Pin`, `PinDirection`, `Decorations`, `PinText`, `Graphic`, `Item`, `Fill`, `Text`, `TextContent`, `Rotation`, `Justify`, `Grid`, `TextMetric`, `SymbolHit`; `PackageDefinition`, `PackageBody`, `PackageTerminal`, `FootprintDefinition`, `Pad`, `BindingDefinition`, `TerminalMap`, `Drafts`, `Draft` | `Library::{component, symbol, package, footprint, binding, field, quantity_kind, field_view, latest}`, `check_bounds`, `publish_findings`, `publish`, `validate`, `designator_prefix_valid`, `drafts::{create, edit, discard, set_grid}`, `samples::{two_terminal, two_terminal_header, Kind}`, G1a: `lint`, `Unit::{bounds, hit}`, `SymbolDefinition::pin`, `graphics::{pin_toward, body_rect, text, on_grid}` | `geometry`, `ids`, `diagnostics`, `quantity`, `fields`, `functions` |
 | 7 | `model` | Document aggregate: data only, no rules | `Project`, `Document`, `ComponentInstance`, `PhysicalChoice`, `SymbolOccurrence`, `Wire`, `Net`, `Placement`, `Track`, `Layer`, `Point`, `EditPolicy` | `Project::{allocate, allocate_net, instance, occurrence, occurrences_of, wires_at, placement_of, net, net_of, net_name}` (lookups only) | `geometry`, `ids`, `diagnostics`, `library`, `fields`, `functions` |
 | 8 | `instances` | Instance configuration rules and choice resolution | `Resolved`, `PhysicalView`, `UnitState`, `UnitTarget`, `RegroupAction` | `resolve`, `owning_unit`, `unit_states`, `function_resolution`, `effective_fields`, `display_label`, `check_instance`, `check_designators`, `next_designator`, `place`, `remove`, `set_designator`, `set_unit_unused`, `set_no_connect`, `set_properties`, `carry_properties` (slice 2), `select_functions`, `carry_functions` (slice 3), `carry_units`, `regroup`, `wired_terminals` (cleanup) | `geometry`, `ids`, `diagnostics`, `library`, `model`, `fields`, `functions` |
 | 9 | `nets` | Persistent net identity and connectivity | `NetChanges` | `terminals`, `components`, `accounted_for`, `reconcile`, `validate`, `name_valid` | `ids`, `diagnostics`, `library`, `model`, `instances` |
-| 10 | `schematic` | Capture rules: wires, occurrences, pin geometry | `SchematicCommand` | `apply`, `connect`, `disconnect`, `rename_net`, `place_unit`, `move_unit`, `unplace_unit`, `detach_instance`, `pin_position`, `validate`, `protect_routed_nets` | `geometry`, `ids`, `diagnostics`, `library`, `model`, `instances`, `nets` |
+| 10 | `schematic` | Capture rules: wires, occurrences, pin geometry, what an occurrence draws | `SchematicCommand`, G1a: `PlacedUnit`, `PlacedShape`, `PlacedPin`, `PlacedText` | `apply`, `connect`, `disconnect`, `rename_net`, `place_unit`, `move_unit`, `unplace_unit`, `detach_instance`, `pin_position`, `validate`, `protect_routed_nets`, G1a: `occurrence_transform`, `placed_unit` | `geometry`, `ids`, `diagnostics`, `library`, `model`, `instances`, `nets` |
 | 11 | `layout` | Placement, routing, board checks | `LayoutCommand`, `WorldPad`, `RouteRequest`, `RouteEditSet`, `ManualRouter` | `apply`, `pads`, `sync_preview`, `place`, `route`, `set_physical`, `detach_instance`, `checks`, `airwires`, `validate` | `geometry`, `ids`, `diagnostics`, `library`, `model`, `instances` |
 | 12 | `erc` (extracted from `schematic::checks`) | Net-level electrical rules over active terminal behavior | — | `checks` | `ids`, `diagnostics`, `library`, `model`, `instances`, `functions`, `nets` |
 | 13 | `completeness` | Derived instance and definition states | `InstanceReport`, `UnitReport`, `DefinitionReport`, `CheckTarget` | `instance`, `definition`, `drafts` | `ids`, `diagnostics`, `library`, `model`, `instances`, `fields`, `functions`, `nets` |
@@ -220,7 +220,7 @@ Command handlers in `commands` orchestrate: they look up, clone a candidate, cal
 | 15 | `scripting` | Bounded Rhai execution only | `Script`, `Input` | `evaluate_quantity`, `generate_pads` | `ids`, `diagnostics`, `quantity`, `library` |
 | 16 | `validate` | Whole-document invariants, aggregating domain validators | — | `project`, `document` | `ids`, `diagnostics`, `library`, `model`, `instances`, `nets`, `schematic`, `layout` |
 | 17 | `updates` | Revision-bound impact plans and consequential edits | `Change`, `InstanceChange`, `Resolutions`, `ChoiceResolution`, `UnitResolution`, `RegroupResolution`, `FieldResolution` (slice 2), `FunctionResolution` (slice 3), `ApplyUpdate`, `UpdatePlan` | `preview`, `candidate`, `stage` | 0–16 |
-| 18 | `commands` (`library`, `instance`) | Wire-level library and instance command families; dispatch only | `LibraryCommand`, `InstanceCommand`, `Outcome` | `apply_library`, `apply_instance` | 0–17 |
+| 18 | `commands` (`library`, `instance`) | Wire-level library and instance command families; dispatch only | `LibraryCommand`, `InstanceCommand`, `Outcome`, `OffGridPin` | `apply_library`, `apply_instance` | 0–17 |
 | 19 | `format` | `.pcbcraft` version and bounded encoding | `EditorFile` | `decode`, `encode`, `encode_bounded` | `diagnostics`, `model`, `library`, `validate` |
 | 20 | crate root (`lib.rs`) | Engine, `Operation`, `Query`, schema discovery | `Engine`, `Operation`, `Query`, `QueryResult` | `Engine::{apply, query, query_with, preview_update, apply_update, undo, redo, …}`, `schemas` | all |
 
@@ -281,6 +281,7 @@ All mutations are `Operation` variants: `Library(LibraryCommand)`, `Instance(Ins
 - `UnitPlaced { occurrence }`
 - `PropertiesSet { effective: Vec<EffectiveField> }` (slice 2)
 - `FunctionsSelected { resolution: functions::Resolution }` (slice 3)
+- `GridSet { off_grid: Vec<OffGridPin> }` (G1a)
 
 Every successful mutation is one undo step.
 
@@ -294,10 +295,11 @@ The spec's proposed `component.new` is served by `library.new_draft` with a comp
 | --- | --- | --- | --- | --- |
 | `library.new_draft` | `LibraryCommand` | `{ meta: DefinitionMeta, definition: Definition }` | `DraftCreated` | New lineage of any kind. The body may be empty. No category or template. |
 | `library.draft_from` | `LibraryCommand` | `{ revision: DefinitionRef }` | `DraftCreated` | Draft of an existing lineage with `base` = that revision. Fails if a draft of that lineage exists. |
-| `library.edit` | `LibraryCommand` | `{ edits: Vec<DraftEdit { id, meta, definition }> }` (1–16) | `None` | Replaces draft bodies atomically. The kind must match. One gesture that touches several definitions (for example, a terminal plus its anchor and mapping) is one undo step. |
+| `library.edit` | `LibraryCommand` | `{ edits: Vec<DraftEdit { id, meta, definition }> }` (1–16) | `None` | Replaces draft bodies atomically. The kind must match. One gesture that touches several definitions (for example, a terminal plus its pin and mapping) is one undo step. |
 | `library.discard_draft` | `LibraryCommand` | `{ id }` | `None` | Removes the draft. A reserved new-lineage ID stays allocated. |
 | `library.publish` | `LibraryCommand` | `{ drafts: Vec<DefinitionId> }` (1–32) | `Published` | [Rules above](#what-librarypublish-validates). |
 | `library.generate_pads` | `LibraryCommand` | `{ draft, script }` | `None` | Replaces `part.generate_pads`, with the same proof semantics on a footprint draft. |
+| `library.set_grid` (G1a) | `LibraryCommand` | `{ grid: Grid { symbol_mm, footprint_mm } }` (each 0.01–10 mm) | `GridSet { off_grid: Vec<OffGridPin { draft, terminal }> }` | Replaces the authoring grid saved with the drafts. Undoable; never moves geometry; lists the symbol-draft pins now off the symbol grid. |
 | `component.place` | `InstanceCommand` | `{ component: ComponentRef, designator: Option<String>, properties, representation: DefinitionId, unit: UnitId, position, physical: Option<PhysicalChoice> }` | `InstancePlaced { instance, occurrence, designator }` | Creates one instance and its first occurrence (`instances::place`). Without a designator the core takes the lowest free `{prefix}{n}` (n ≥ 1, case-insensitive) under the pinned revision's `designator_prefix` (`instances::next_designator`); an explicit one is checked like `instance.set_designator`. |
 | `component.remove` | `InstanceCommand` | `{ instance }` | `None` | `updates::stage(Remove, Direct)`: direct only when the instance has no wires and no placement. Otherwise `conflict`, directing the caller to `Change::Instance`. |
 | `instance.set_designator` | `InstanceCommand` | `{ instance, designator }` | `None` | Unique case-insensitively; 1–64 bytes, no whitespace or control characters. |
@@ -388,7 +390,7 @@ The spec's proposed `component.new` is served by `library.new_draft` with a comp
 
 - Every terminal of every instance has exactly one net, whatever its unit's state. This is unchanged from today.
 - A wire endpoint's owning unit must be placed. A wire endpoint must not be project no-connect or device NC (`instances::check_instance`).
-- `schematic::pin_position` is the occurrence position plus the terminal's anchor in its owning unit.
+- `schematic::pin_position` is the terminal's pin connection end in its owning unit, mapped by `schematic::occurrence_transform` (the occurrence position).
 - `layout::pads` resolves the binding and footprint through `instances::resolve`. A placement exists only for a resolvable physical choice.
 
 Designator display is `designator` plus the unit label (`Q7` + `A` → `Q7A`) when the representation has more than one unit. The label is presentation only.
@@ -400,7 +402,7 @@ Designator display is `designator` plus the unit label (`Q7` + `A` → `Q7A`) wh
 Where the code had to settle something this contract left open, it chose the option that keeps concerns separate. These choices are now part of the contract:
 
 - **`geometry` module.** `Point`, `point_valid` and `size_valid` live in a new `geometry` module below `ids`, because `library` (6) stores coordinates and cannot use `model` (7). `model` re-exports `Point`. `geometry` uses no other module.
-- **Unit bodies.** `SymbolDefinition { component, next_local, units }`; each `Unit { id, label, body_size, anchors }` has its own body, since units are drawn independently. Bindings allocate no local IDs and have no `next_local`.
+- **Unit bodies.** `SymbolDefinition { component, next_local, units }`; each unit has its own body, since units are drawn independently. (G1a replaced `body_size` and anchors with graphics and pins; see [below](#drawable-symbol-graphics-g1a).) Bindings allocate no local IDs and have no `next_local`.
 - **Field names.** `PackageTerminal.designation`, `TerminalMap { package_terminal, terminal }`, `BindingDefinition { component, package, mappings, footprints }`, `FootprintDefinition { package, next_local, pads, datum_offset }`. `ObjectRef::LibraryObject { definition, local }` names any local object of a definition.
 - **Advisory finding.** A component revision without implementations carries `component.no_implementation` with `blocks: None`; it publishes, reopens and is placeable.
 - **Draft checks.** `component.check` on a draft evaluates its pending revision against the snapshot plus every other current draft's pending revision, so references inside a publish set resolve as they would on publish. `library::candidate` stages them, the same staging `library.publish` uses. A draft whose base is stale, invalid or out of bounds is not staged; its report carries only the blocking `definition.stale_base`, `definition.base_invalid`, `definition.revisions_exhausted` or `definition.bounds` finding and is never answered from a stored revision with the same number. `component.check_drafts` stages every draft once and reports them all.
@@ -591,18 +593,37 @@ Two authored values that other parts of the editor used to guess from names:
 
 Both fields are required in the file; the format is pre-release, so there is no migration. The samples take them from `samples::Kind` (`RESISTOR`: R, chip resistor; `CAPACITOR`: C, chip capacitor; `CONNECTOR`: J, moulded); the demo and the Resistor template are resistors, the Connector template a connector, and the synthetic catalog gives resistors, capacitors and headers separate packages.
 
+## Drawable symbol graphics (G1a)
+
+A symbol unit is an ordered list of drawn graphics plus pins (`library/graphics.rs`; shapes and their maths in `geometry`). The design is in the reviewed graphics design; this section is the delivered contract of slice G1a. Footprint graphics, layers, polarity and courtyards are G3.
+
+- **Data.** `Unit { id, label, graphics: Vec<Graphic>, pins: Vec<Pin> }` and `SymbolDefinition.pin_text_height` (1.25 mm by default). `Graphic { id: GraphicId, item }` with `Item::Shape { shape, width, fill }` or `Item::Text(Text { content, at, height, rotation, justify, visible })`. `Shape` is a line, open polyline, axis-aligned rectangle, circle, arc (counter-clockwise start and sweep in degrees) or closed polygon, in f64 millimetres with y up. `Fill` is `none`, `body` (theme symbol background) or `solid`. `TextContent` is a structured reference (`literal`, `designator`, `component_name`, `unit_label`, `field(lineage)`), never a placeholder string. The "value" is a `field` text of the lineage the author chooses.
+- **Pins.** `Pin { terminal, position, direction, length, decorations, name, number }`. A pin is identified by its terminal; there is no pin ID and no stored electrical type or number. `position` is the connection end wires attach to; `direction` (right, up, left, down) points from it into the body. `Pin::decoration_shapes` defines the inversion bubble (0.4 × the 2.5 mm module, replacing the body end of the stub) and the clock wedge (inside the body edge) for every view.
+- **Identity.** Unit and graphic IDs share the symbol's local namespace, so the local-ID rules protect graphic IDs: unique, below `next_local` and never a retired ID.
+- **Removed (pre-release, no legacy reader).** `Unit.body_size`, `Anchor`, `SymbolDefinition::anchor()` (now `pin()`), `symbol.body` (now `symbol.unit_empty`), `symbol.anchor_duplicate` (now `symbol.pin_duplicate`) and `component.anchor_missing`/`anchor_unknown` (now `component.pin_missing`/`pin_unknown`).
+- **Bounds (targets, enforced by `check_bounds`).** Limit errors: 256 graphics per unit, 1024 per definition, 1024 points per polyline or polygon, 8192 stored vertices per definition, literal text ≤ 256 bytes. Invalid-input errors: every point within ±10000 mm; stroke 0–5 mm; text height and `pin_text_height` 0.1–50 mm; radius not negative; finite angles with |sweep| ≤ 360°; pin length 0–50 mm; |pin text offset| ≤ 10 mm.
+- **Blocking publish findings.** `graphic.degenerate` (no length or area, too few points, radius below 0.01 mm or zero sweep), `graphic.polygon_self_intersecting`, `graphic.invisible` (width 0 and no fill), `graphic.fill_open` (a fill on a line, polyline or arc), `text.empty`, `symbol.pin_duplicate`, `symbol.unit_empty`, `component.text_field_unknown`.
+- **Advisory lint.** `library::lint(&Draft, &Library, &Grid)`, appended to `component.check`/`component.check_drafts` for drafts only (stored revisions and decode never see it): `symbol.pin_off_grid` (1e-6 mm tolerance), `symbol.field_missing` (a unit without `designator` text) and `symbol.grid_sheet` (the symbol grid does not divide the 5 mm sheet grid, e.g. 2.54 mm).
+- **Authoring grid.** `Drafts.grid: Grid { symbol_mm: 2.5, footprint_mm: 0.05 }` by default, each 0.01–10 mm. It is saved in `EditorFile.drafts`, undoable through `Document` and never revision data; `library.set_grid` replaces it. A per-source grid waits for folder libraries.
+- **Core queries.** `Unit::bounds(TextMetric)` (graphics and pin stubs; text uses the stated approximation `chars × 0.6 × height` by `height`, four characters for unresolved content) and `Unit::hit(p, tol, TextMetric)` (pins before graphics, topmost graphic first; pin text belongs to its pin). `schematic::occurrence_transform` (translation only; the seam for occurrence rotation and mirroring) and `schematic::placed_unit(project, occurrence)`, which resolves graphics, visible text (designator with unit label, component name, unit label, effective field text), pins, pin names and pin numbers through `instances::resolve`, `display_label` and `effective_fields`. Pin numbers are the designations the instance's binding maps to the terminal, joined by commas; without a physical choice they are `None`, never guessed.
+- **Updates.** `Change::ComponentRevision` plans report graphics added, removed and changed by ID per unit, pin direction/length/decoration/text changes and `pin_text_height` changes as presentation only, separately from pin moves.
+- **Samples and templates.** `samples::two_terminal`/`two_terminal_header` (and the desktop templates and the synthetic catalog that use them) draw a 0.25 mm body rectangle with body fill, one pin per terminal pointing into it (`graphics::pin_toward`: direction from the side, length to the body edge, one module when 0), `designator` text above and `component_name` text below, all pins on the 2.5 mm grid.
+- **Encoded size (measured, pretty JSON).** A symbol at every graphics limit (1024 graphics, 8192 vertices, 256 pins, long coordinates) encodes to 1 428 985 bytes, so eleven such revisions fit the 16 MiB file; 100 sample symbols encode to 260 402 bytes.
+- **Deviations from the design.** Decoration sizes use the fixed 2.5 mm module instead of the authoring grid, because a placed instance has no grid. `Unit::bounds` takes no symbol argument and leaves out pin names and numbers, which resolve only on instances. `PlacedUnit.shapes` are `PlacedShape` records rather than tuples, and `PlacedPin` adds `line_end`. A zero arc sweep is the `graphic.degenerate` finding rather than a bound, so a draft can hold it.
+- **Desktop (until G1b).** The schematic and the Component editor still draw a unit as the box of its shapes plus pin stubs; the Component editor's Body rows edit the first rectangle's corners.
+
 ## (f) Scenario walk-throughs
 
 Each step names the commands and the data that represent it. Headless proofs drive these through `Engine::apply`, `Engine::query` and the automation session. UI evidence (CE-C1) and native-model evidence (CE-C6) for full scenarios remain with the CE delivery. Coordinates are millimetres.
 
 ### CE-04 — two transistors in one package (slice 1 proof)
 
-**Fixture anchors.** Unit A (id 1) anchors terminal 1 at (−5, 0), 2 at (5, 2.5) and 3 at (5, −2.5). Unit B (id 2) anchors 4, 5 and 6 at the same three offsets.
+**Fixture pins.** Unit A (id 1) has pins for terminal 1 at (−5, 0), 2 at (5, 2.5) and 3 at (5, −2.5). Unit B (id 2) has pins for 4, 5 and 6 at the same three offsets.
 
 | Step | Representation |
 | --- | --- |
 | Author terminals | `library.new_draft` with a component body; `library.edit` with terminals B_A=1, C_A=2, E_A=3, B_B=4, C_B=5, E_B=6, all `Passive` (slice 3: one passive function each). |
-| Units A, B | Symbol draft owned by the component, with the fixture anchors above. |
+| Units A, B | Symbol draft owned by the component, with the fixture pins above. |
 | Six-terminal package and explicit mapping | Package terminals with designations "1"–"6"; footprint with 6 pads pinning the package; binding with mappings 1→"2", 2→"1", 3→"3", 4→"5", 5→"6", 6→"4" listing that footprint; component lists symbol and binding. One `library.publish` of all five drafts. |
 | Native model | Package envelope only. `model.attach` is deferred. |
 | Place Q1A; Q1B unplaced | `component.place { unit: A, position: (10, 10) }` → `InstancePlaced`. `component.inspect` shows A `Placed`, B `Unplaced`, finding `instance.unit_unplaced` (blocks `ElectricallyResolved`). |
@@ -616,7 +637,7 @@ Each step names the commands and the data that represent it. Headless proofs dri
 
 ### CE-05 — dual amplifier with power unit (slice 1 proof; field independence in slice 2)
 
-**Fixture.** Terminals A+=1, A−=2, Aout=3, B+=4, B−=5, Bout=6, V+=7, V−=8. V+/V− are `PowerInput` (slice 3: `PowerInput` function); the others are fixed. Units A {1, 2, 3}, B {4, 5, 6}, P {7, 8}. Each supply terminal has exactly one anchor, in P. 8-terminal package with an explicit synthetic mapping. Probe components: a one-terminal passive probe and a one-terminal `PowerOutput` supply source.
+**Fixture.** Terminals A+=1, A−=2, Aout=3, B+=4, B−=5, Bout=6, V+=7, V−=8. V+/V− are `PowerInput` (slice 3: `PowerInput` function); the others are fixed. Units A {1, 2, 3}, B {4, 5, 6}, P {7, 8}. Each supply terminal has exactly one pin, in P. 8-terminal package with an explicit synthetic mapping. Probe components: a one-terminal passive probe and a one-terminal `PowerOutput` supply source.
 
 | Step | Representation |
 | --- | --- |
@@ -625,7 +646,7 @@ Each step names the commands and the data that represent it. Headless proofs dri
 | Mark B unused; explicit decisions | `instance.set_unit_unused { B, true }`. B's terminals still have `instance.terminal_unaccounted` findings until `instance.set_no_connect { [4, 5, 6] }`. Unused never sets no-connect automatically. |
 | Wire U1 | Wire terminals 1, 2 and 3 each to its own passive probe. Wire V+ (7) to a supply source on net VP and V− (8) to a second supply source on net VN, so each net has two terminals. U1 has no `ElectricallyResolved` findings. |
 | U2B without U2P | Place only U2's unit B and wire 4, 5 and 6 each to a passive probe. Exact `ElectricallyResolved` findings: `instance.unit_unplaced` for A and P; `instance.terminal_unaccounted` for 1, 2, 3, 7 and 8. Marking A and P unused and setting no-connect on 1, 2, 3, 7 and 8 leaves exactly `instance.required_terminal_no_connect` for 7 and 8, so U2 can never become electrically resolved without P. Power is not duplicated per amplifier unit. |
-| Regroup a terminal in a draft revision | `library.draft_from` the symbol and `library.draft_from` the component. In the symbol draft, move terminal 6's anchor from unit B to unit A; in the component draft, change the representation to the pending symbol r2. Publish symbol r2 and component r2 together. `Change::ComponentRevision { [U1], target }` preview reports "U1 terminal 6 moves from unit B to unit A" with its anchor change. Terminal ID 6, its no-connect marker and nets are unchanged. |
+| Regroup a terminal in a draft revision | `library.draft_from` the symbol and `library.draft_from` the component. In the symbol draft, move terminal 6's pin from unit B to unit A; in the component draft, change the representation to the pending symbol r2. Publish symbol r2 and component r2 together. `Change::ComponentRevision { [U1], target }` preview reports "U1 terminal 6 moves from unit B to unit A" with its pin change. Terminal ID 6, its no-connect marker and nets are unchanged. |
 | Regroup with a wired terminal | The same plan for U2, whose terminal 6 is wired and whose unit A is now unused, is blocked. It applies only with `RegroupResolution { U2, 6, PlaceUnit { position } }` (which also clears A's unused flag, as `Placed` and `Unused` are exclusive) or `AcceptDisconnect`, which lists the removed wire. If a unit with an occurrence disappears, the plan is blocked until a `UnitResolution` is given. |
 
 ### CE-06 — multi-function IO and exposed pad (slice 3 proof; pads from slice 1)
@@ -696,7 +717,7 @@ Expected values are hand-derived from the synthetic fixtures above. Tests drive 
 
 - **Publication:**
   - Atomic five-definition publish.
-  - Any single blocking finding publishes nothing, and revision, history and drafts are unchanged. Cases: missing mapping; an anchor for an unknown terminal; a binding of another lineage; a footprint of another package revision; a dangling reference; a reused retired ID; a local ID at or above the revision's own `next_local`; a component listing two revisions of one symbol lineage; a component listing two revisions of one binding lineage; a binding listing two revisions of one footprint lineage.
+  - Any single blocking finding publishes nothing, and revision, history and drafts are unchanged. Cases: missing mapping; a pin for an unknown terminal; a binding of another lineage; a footprint of another package revision; a dangling reference; a reused retired ID; a local ID at or above the revision's own `next_local`; a component listing two revisions of one symbol lineage; a component listing two revisions of one binding lineage; a binding listing two revisions of one footprint lineage.
   - A stale base gives `conflict`.
   - Decode rejects a file whose published revision has a `Publish`-blocking finding, and reopens one whose revision has only advisory findings.
 - **Drafts:**
@@ -781,6 +802,9 @@ Each slice ends with `cargo xtask ci` passing: fmt, layers, ui-containers, stric
 | Occurrences | 16384 |
 | Edits per batch | as listed per command |
 | Labels and names | ≤ 256 bytes, printable |
+| Graphics per symbol unit / per definition (G1a, targets) | 256 / 1024 |
+| Points per polyline or polygon (G1a, target) | 1024 |
+| Stored graphic vertices per definition (G1a, target) | 8192 |
 
 These are admission limits, not measured performance.
 
@@ -788,6 +812,6 @@ These are admission limits, not measured performance.
 
 | Item | Status | Owner |
 | --- | --- | --- |
-| Cross-component symbol reuse | Deferred. Symbols and bindings belong to one component lineage, so the spec's "reuse an existing symbol where suitable" is narrowed to reuse within a lineage and to forking. Sharing a symbol between components needs a terminal-mapping layer between the symbol's anchors and each component's terminals, with its own update rules. No accepted scenario requires it. | Revisit with `library.duplicate` (CE-01) or shared library folders |
+| Cross-component symbol reuse | Deferred. Symbols and bindings belong to one component lineage, so the spec's "reuse an existing symbol where suitable" is narrowed to reuse within a lineage and to forking. Sharing a symbol between components needs a terminal-mapping layer between the symbol's pins and each component's terminals, with its own update rules. No accepted scenario requires it. | Revisit with `library.duplicate` (CE-01) or shared library folders |
 | Collision-free `DefinitionId`s across projects | Deferred. The opaque newtype keeps the representation replaceable. | Shared library folders |
 | Intra-crate module dependency table | Not enforced by `cargo xtask layers`, which checks crates. Until a module-level check exists, the [module map](#d-module-map) is a reviewed contract. A follow-up could extend `xtask layers` to reject `use crate::` edges outside the table. | Slice 1 review |

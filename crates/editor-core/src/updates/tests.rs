@@ -358,7 +358,7 @@ fn removed_terminal_is_not_reconnected_by_name_and_lists_wire_loss() -> Result<(
             c.next_local = 21;
         })?;
         with(e, f.symbol, symbol_body, |s| {
-            s.units[0].anchors[1].terminal = twenty
+            s.units[0].pins[1].terminal = twenty
         })?;
         with(e, f.binding, binding_body, |b| {
             b.mappings[1].terminal = twenty
@@ -741,8 +741,8 @@ fn removing_an_unused_unit_in_the_same_lineage_lists_the_flag_without_blocking()
     )?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.symbol, symbol_body, |s| {
-            let moved: Vec<_> = s.units[1].anchors.drain(..).collect();
-            s.units[0].anchors.extend(moved);
+            let moved: Vec<_> = s.units[1].pins.drain(..).collect();
+            s.units[0].pins.extend(moved);
             s.units.remove(1);
         })
     })?;
@@ -767,5 +767,67 @@ fn removing_an_unused_unit_in_the_same_lineage_lists_the_flag_without_blocking()
             .instance(x1)
             .is_some_and(|i| i.unused_units.is_empty())
     );
+    Ok(())
+}
+
+#[test]
+fn symbol_drawing_changes_are_reported_as_presentation_only() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.symbol, symbol_body, |s| {
+            s.next_local = 6;
+            // Move the designator, add a line and decorate pin 1 without
+            // moving its connection end.
+            if let crate::library::Item::Text(t) = &mut s.units[0].graphics[1].item {
+                t.at[1] += 1.0;
+            }
+            s.units[0].graphics.push(crate::library::Graphic {
+                id: crate::GraphicId(5),
+                item: crate::library::Item::Shape {
+                    shape: crate::geometry::Shape::Line {
+                        a: [-2.5, 0.0],
+                        b: [2.5, 0.0],
+                    },
+                    width: 0.25,
+                    fill: crate::library::Fill::None,
+                },
+            });
+            s.units[0].pins[0].decorations.inverted = true;
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let graphics = "R1: unit A graphics: 1 added, 0 removed, 1 changed (presentation only; terminals and nets unchanged).";
+    assert!(
+        plan.changes.iter().any(|c| c == graphics),
+        "{:?}",
+        plan.changes
+    );
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.starts_with("R1 terminal 1 pin in unit A: direction")),
+        "{:?}",
+        plan.changes
+    );
+    // No connection point moved, so no pin move is reported and the routed
+    // copper is untouched.
+    assert!(
+        !plan
+            .changes
+            .iter()
+            .any(|c| c.contains("pin in unit") && c.contains(" → ")),
+        "{:?}",
+        plan.changes
+    );
+    assert!(plan.conflicting_tracks.is_empty());
+    engine.apply_update(engine.revision(), revision_change(r1, target), false)?;
+    assert!(engine.project().tracks.iter().any(|t| t.id == shared));
     Ok(())
 }

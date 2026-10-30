@@ -7,8 +7,9 @@ use egui::{Align2, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use pcbcraft_core::completeness::InstanceReport;
 use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::functions::{FunctionEdit, Resolution, TerminalFunctions};
+use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::instances::{self, NewInstance, UnitState};
-use pcbcraft_core::library::{Terminal, Unit};
+use pcbcraft_core::library::{Item, Terminal, Unit};
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, Operation,
     PhysicalChoice, Point, Project, Query, QueryResult, erc,
@@ -802,19 +803,12 @@ impl SchematicEditor {
             let mut bounds = Rect::NOTHING;
             for occurrence in &project.occurrences {
                 if let Some(unit) = unit_of(project, occurrence) {
-                    let center = pos2(
-                        occurrence.position[0] as f32,
-                        -occurrence.position[1] as f32,
-                    );
-                    bounds = bounds.union(Rect::from_center_size(
-                        center,
-                        vec2(unit.body_size[0] as f32, unit.body_size[1] as f32),
+                    // Sheet extent with y flipped to screen orientation.
+                    let extent = symbol_bounds(unit, occurrence.position);
+                    bounds = bounds.union(Rect::from_min_max(
+                        pos2(extent.min.x, -extent.max.y),
+                        pos2(extent.max.x, -extent.min.y),
                     ));
-                    for anchor in &unit.anchors {
-                        bounds.extend_with(
-                            center + vec2(anchor.position[0] as f32, -anchor.position[1] as f32),
-                        );
-                    }
                 }
             }
             if bounds.is_finite() {
@@ -970,12 +964,11 @@ impl SchematicEditor {
                 .filter(|(id, _)| *id == occurrence.id)
                 .map(|(_, p)| p)
                 .unwrap_or(occurrence.position);
-            let center = screen(position);
-            let size = vec2(
-                unit.body_size[0] as f32 * scale,
-                unit.body_size[1] as f32 * scale,
+            let extent = body_bounds(unit);
+            let body = Rect::from_two_pos(
+                screen([position[0] + extent.min[0], position[1] + extent.min[1]]),
+                screen([position[0] + extent.max[0], position[1] + extent.max[1]]),
             );
-            let body = Rect::from_center_size(center, size);
             body_hits.push((instance.id, occurrence.id, body.expand(t.space_6)));
             let selected = self.selected == Some(instance.id);
             painter.rect_filled(body, t.control_radius, t.panel);
@@ -1004,15 +997,12 @@ impl SchematicEditor {
                 fonts::medium(t.font_small),
                 t.text_dim,
             );
-            for anchor in &unit.anchors {
+            for pin in &unit.pins {
                 let endpoint = Endpoint {
                     instance: instance.id,
-                    terminal: anchor.terminal,
+                    terminal: pin.terminal,
                 };
-                let p = screen([
-                    position[0] + anchor.position[0],
-                    position[1] + anchor.position[1],
-                ]);
+                let p = screen([position[0] + pin.position[0], position[1] + pin.position[1]]);
                 let edge = pos2(
                     p.x.clamp(body.left(), body.right()),
                     p.y.clamp(body.top(), body.bottom()),
@@ -1022,8 +1012,7 @@ impl SchematicEditor {
                 painter.line_segment([edge, p], Stroke::new(1.5, color));
                 painter.circle_stroke(p, if active { 5.0 } else { 3.5 }, Stroke::new(1.5, color));
                 pin_hits.push((endpoint, p));
-                if let Some(terminal) =
-                    component.and_then(|c| c.definition.terminal(anchor.terminal))
+                if let Some(terminal) = component.and_then(|c| c.definition.terminal(pin.terminal))
                 {
                     painter.text(
                         p + vec2(0.0, -t.space_6),
@@ -1047,13 +1036,13 @@ impl SchematicEditor {
                 && !self.palette.is_open()
                 && let Some((_, unit)) = self.component.and_then(|c| first_choices(project, c))
             {
-                let p = screen(world(pointer));
-                let size = vec2(
-                    unit.body_size[0] as f32 * scale,
-                    unit.body_size[1] as f32 * scale,
-                );
+                let at = world(pointer);
+                let extent = body_bounds(unit);
                 painter.rect_stroke(
-                    Rect::from_center_size(p, size),
+                    Rect::from_two_pos(
+                        screen([at[0] + extent.min[0], at[1] + extent.min[1]]),
+                        screen([at[0] + extent.max[0], at[1] + extent.max[1]]),
+                    ),
                     t.control_radius,
                     Stroke::new(1.5, t.accent),
                     egui::StrokeKind::Inside,
@@ -1293,16 +1282,42 @@ fn symbol_text(project: &Project, instance: &pcbcraft_core::ComponentInstance) -
         .join(" ")
 }
 
+/// The extent of a unit's drawn shapes in its own frame, or a one-module
+/// square around the origin when it draws none. The schematic still draws a
+/// unit as this box with pin stubs; drawing every graphic is the next slice.
+pub(crate) fn body_bounds(unit: &Unit) -> Bounds {
+    unit.graphics
+        .iter()
+        .filter_map(|g| match &g.item {
+            Item::Shape { shape, width, .. } => Some(shape.bounds(*width)),
+            Item::Text(_) => None,
+        })
+        .reduce(Bounds::union)
+        .unwrap_or(Bounds {
+            min: [-1.25, -1.25],
+            max: [1.25, 1.25],
+        })
+}
+
 /// A unit's extent in sheet millimetres (y up) when placed at `at`: its body
 /// and every pin end.
 fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
-    let centre = pos2(at[0] as f32, at[1] as f32);
-    let mut bounds = Rect::from_center_size(
-        centre,
-        vec2(unit.body_size[0] as f32, unit.body_size[1] as f32),
+    let extent = body_bounds(unit);
+    let mut bounds = Rect::from_min_max(
+        pos2(
+            (at[0] + extent.min[0]) as f32,
+            (at[1] + extent.min[1]) as f32,
+        ),
+        pos2(
+            (at[0] + extent.max[0]) as f32,
+            (at[1] + extent.max[1]) as f32,
+        ),
     );
-    for anchor in &unit.anchors {
-        bounds.extend_with(centre + vec2(anchor.position[0] as f32, anchor.position[1] as f32));
+    for pin in &unit.pins {
+        bounds.extend_with(pos2(
+            (at[0] + pin.position[0]) as f32,
+            (at[1] + pin.position[1]) as f32,
+        ));
     }
     bounds
 }
