@@ -76,7 +76,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
             designator: "R1".into(),
-            value: String::new(),
+            properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
             position: [0.0, 0.0],
@@ -85,7 +85,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
             designator: "R5".into(),
-            value: String::new(),
+            properties: vec![],
             representation: f.package,
             unit: UnitId(1),
             position: [0.0, 0.0],
@@ -94,7 +94,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
             designator: "R5".into(),
-            value: String::new(),
+            properties: vec![],
             representation: f.symbol,
             unit: UnitId(9),
             position: [0.0, 0.0],
@@ -103,7 +103,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
             designator: "R5".into(),
-            value: String::new(),
+            properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
             position: [0.0, 0.0],
@@ -122,9 +122,9 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             instance: r1,
             designator: "r2".into(),
         }),
-        Operation::Instance(InstanceCommand::SetValue {
+        Operation::Instance(InstanceCommand::SetProperties {
             instance: 999,
-            value: "1k".into(),
+            edits: vec![],
         }),
         Operation::Instance(InstanceCommand::SetUnitUnused {
             instance: r1,
@@ -223,6 +223,10 @@ fn schemas_name_the_new_operations_queries_and_drafts() -> Result<()> {
         "instance.set_unit_unused",
         "instance.set_no_connect",
         "instance.set_physical",
+        "instance.set_properties",
+        "properties_set",
+        "quantity_kind",
+        "FieldResolution",
         "symbol.place_unit",
         "symbol.unplace_unit",
         "component.inspect",
@@ -237,6 +241,8 @@ fn schemas_name_the_new_operations_queries_and_drafts() -> Result<()> {
         "schematic.place",
         "PartRevision",
         "authoring_draft",
+        "instance.set_value",
+        "UnitDefinition",
     ] {
         assert!(!schemas.contains(removed), "{removed}");
     }

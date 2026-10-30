@@ -73,6 +73,21 @@ A reusable library definition of a component property's meaning, value type, per
 **Instance property value**:
 The value assigned to a component property for a particular project instance, such as R12's resistance of 10 kΩ. It describes the same component in both schematic and PCB views.
 
+**Quantity kind**:
+A library definition of what a quantity measures: a dimension and the units that measure it, with a default unit. Two kinds with the same dimension, such as resistance and reactance, are different kinds; a unit symbol never establishes kind identity.
+
+**Unit set**:
+A dimension with its linear units, each with a symbol, aliases, a scale to SI and whether it accepts SI prefixes. Field parsing and scripts scale units through the same set.
+
+**Field selection**:
+A component revision's choice of one exact field revision, with an optional component default and whether the value is shown on the symbol.
+
+**Field override**:
+An instance's decision for one selected field, keyed by field lineage: an assigned value or an explicit unset. Without an override the field is inherited.
+
+**Effective value**:
+The value a field has on an instance, with its origin: assigned, component default, field default, explicitly unset or no value. It is derived, never stored. Assigned zero is a value, distinct from explicitly unset.
+
 **Net**:
 A set of electrical connection points intended to be joined. Each net has a persistent ID and an editable name; tracks refer to the ID. Connecting merges nets (the routed, else older, ID survives) and disconnecting splits them (the larger group keeps the ID). Sharing a net does not establish that PCB copper actually connects those points.
 
@@ -80,16 +95,16 @@ A set of electrical connection points intended to be joined. Each net has a pers
 A project decision to leave a particular connection point unconnected. It is distinct from a manufacturer's declaration that a package terminal must not be connected.
 
 **Definition lineage**:
-The stable identity of one library definition across all its revisions, such as one footprint. A lineage has exactly one kind (component, symbol, package, footprint or binding).
+The stable identity of one library definition across all its revisions, such as one footprint. A lineage has exactly one kind (component, symbol, package, footprint, binding, quantity kind or field).
 
 **Definition draft**:
 An editable, possibly incomplete body of one definition lineage, saved and recovered with the project. Publishing turns it into a new immutable revision; nothing marks a draft as verified.
 
 **Local ID**:
-An ID that is unique only inside one definition lineage, such as a terminal, unit, package-terminal or pad ID. Each revision allocates new local IDs from its `next_local` counter; an ID retired by an earlier revision is never reused, so it cannot come back with a different meaning.
+An ID that is unique only inside one definition lineage, such as a terminal, unit, package-terminal, pad or enumeration-choice ID. Each revision allocates new local IDs from its `next_local` counter; an ID retired by an earlier revision is never reused, so it cannot come back with a different meaning.
 
 **Publish set**:
-Several drafts published together as one transaction, in dependency order (package, footprint, binding, symbol, component). References inside the set may name each other's pending revisions; any blocking finding publishes nothing. Publishing a changed definition together with the revisions that must reference it is a _revision cascade_.
+Several drafts published together as one transaction, in dependency order (quantity kind, field, package, footprint, binding, symbol, component). References inside the set may name each other's pending revisions; any blocking finding publishes nothing. Publishing a changed definition together with the revisions that must reference it is a _revision cascade_.
 
 **Representation**:
 A symbol lineage a component revision offers for drawing it. An instance chooses one; its units are that symbol's units.

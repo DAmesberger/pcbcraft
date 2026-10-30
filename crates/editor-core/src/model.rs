@@ -1,5 +1,6 @@
 //! The document aggregate: data and lookups only. Rules over this data live
 //! in `instances`, `nets`, `schematic` and `layout`.
+use crate::fields::InstanceFields;
 pub use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
 use crate::library::{Drafts, Library};
@@ -25,7 +26,8 @@ pub struct ComponentInstance {
     pub id: Id,
     pub component: ComponentRef,
     pub designator: String,
-    pub value: String,
+    /// Field overrides by field lineage; a missing field is inherited.
+    pub properties: InstanceFields,
     /// A symbol lineage listed by the pinned component.
     pub representation: DefinitionId,
     pub physical: Option<PhysicalChoice>,

@@ -3,11 +3,12 @@
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use egui::{Align2, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use pcbcraft_core::completeness::InstanceReport;
+use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::instances::{self, NewInstance, UnitState};
 use pcbcraft_core::library::Unit;
 use pcbcraft_core::{
-    ComponentRef, Endpoint, Engine, Id, InstanceCommand, Net, Operation, PhysicalChoice, Point,
-    Project, Query, QueryResult, erc,
+    ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, Operation,
+    PhysicalChoice, Point, Project, Query, QueryResult, erc,
     schematic::{self, SchematicCommand},
     updates::{Change, InstanceChange},
 };
@@ -16,6 +17,18 @@ use solidcraft_ui_egui::{
     theme::Tokens,
     ui_kit::{self, Button},
 };
+use std::collections::BTreeMap;
+
+/// An edit buffer for one field shown on the symbol: its lineage, label,
+/// the effective text when loaded and the text being typed.
+#[derive(Clone)]
+struct FieldBuffer {
+    field: DefinitionId,
+    revision: pcbcraft_core::FieldRef,
+    label: String,
+    loaded: String,
+    text: String,
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Tool {
@@ -36,7 +49,7 @@ pub struct SchematicEditor {
     net_label: Option<(Id, String)>,
     wire_from: Option<Endpoint>,
     draft_reference: String,
-    draft_value: String,
+    draft_fields: Vec<FieldBuffer>,
     draft_position: Point,
     draft_id: Option<Id>,
     pan: Vec2,
@@ -54,6 +67,9 @@ pub struct SchematicEditor {
     nets_revision: Option<u64>,
     nets: Vec<Net>,
     issues: Vec<pcbcraft_core::Finding>,
+    /// Effective texts of fields shown on each instance's symbol, per
+    /// revision.
+    symbol_texts: BTreeMap<Id, String>,
     update: crate::update_preview::UpdatePreview,
 }
 
@@ -68,7 +84,7 @@ impl Default for SchematicEditor {
             net_label: None,
             wire_from: None,
             draft_reference: String::new(),
-            draft_value: String::new(),
+            draft_fields: Vec::new(),
             draft_position: [0.0; 2],
             draft_id: None,
             pan: Vec2::ZERO,
@@ -83,6 +99,7 @@ impl Default for SchematicEditor {
             nets_revision: None,
             nets: Vec::new(),
             issues: Vec::new(),
+            symbol_texts: BTreeMap::new(),
             update: Default::default(),
         }
     }
@@ -127,7 +144,7 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
         NewInstance {
             component,
             designator: String::new(),
-            value: String::new(),
+            properties: Vec::new(),
             representation: symbol_ref.id,
             unit: unit.id,
             position: [0.0, 0.0],
@@ -151,6 +168,12 @@ impl SchematicEditor {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
             self.issues = erc::checks(engine.project());
+            self.symbol_texts = engine
+                .project()
+                .instances
+                .iter()
+                .map(|i| (i.id, symbol_text(engine.project(), i)))
+                .collect();
             self.nets_revision = Some(engine.revision());
         }
     }
@@ -193,7 +216,7 @@ impl SchematicEditor {
         if self.draft_id != id {
             if let Some(instance) = id.and_then(|id| project.instance(id)) {
                 self.draft_reference = instance.designator.clone();
-                self.draft_value = instance.value.clone();
+                self.draft_fields = shown_fields(project, instance);
             }
             self.draft_id = id;
         }
@@ -280,7 +303,13 @@ impl SchematicEditor {
         for instance in &project.instances {
             if ui_kit::button(
                 ui,
-                format!("{}  {}", instance.designator, instance.value),
+                format!(
+                    "{}  {}",
+                    instance.designator,
+                    self.symbol_texts
+                        .get(&instance.id)
+                        .map_or("", String::as_str)
+                ),
                 if self.selected == Some(instance.id) {
                     Button::SmallSelected
                 } else {
@@ -331,7 +360,17 @@ impl SchematicEditor {
                 "schematic-reference",
                 &mut self.draft_reference,
             );
-            field(ui, "Value", "schematic-value", &mut self.draft_value);
+            for (i, buffer) in self.draft_fields.iter_mut().enumerate() {
+                field(
+                    ui,
+                    &buffer.label,
+                    &format!("schematic-field-{i}"),
+                    &mut buffer.text,
+                );
+                if let Some(error) = typed_error(project, buffer) {
+                    ui.colored_label(t.form_error, error);
+                }
+            }
             if ui_kit::button(ui, "Apply properties", Button::Normal).clicked() {
                 let designator = (self.draft_reference != instance.designator).then(|| {
                     Operation::Instance(InstanceCommand::SetDesignator {
@@ -339,12 +378,27 @@ impl SchematicEditor {
                         designator: self.draft_reference.clone(),
                     })
                 });
-                let value = (self.draft_value != instance.value).then(|| {
-                    Operation::Instance(InstanceCommand::SetValue {
-                        instance: instance.id,
-                        value: self.draft_value.clone(),
+                // Text is parsed and checked in core; an empty box returns the
+                // field to its default. Invalid text fails the whole batch.
+                let edits: Vec<PropertyEdit> = self
+                    .draft_fields
+                    .iter()
+                    .filter(|b| b.text.trim() != b.loaded)
+                    .map(|b| PropertyEdit {
+                        field: b.field,
+                        input: if b.text.trim().is_empty() {
+                            PropertyInput::Inherit
+                        } else {
+                            PropertyInput::Text(b.text.clone())
+                        },
                     })
-                });
+                    .collect();
+                let value = (!edits.is_empty()).then_some(Operation::Instance(
+                    InstanceCommand::SetProperties {
+                        instance: instance.id,
+                        edits,
+                    },
+                ));
                 match (designator, value) {
                     (Some(first), second) => {
                         output = Some(first);
@@ -641,7 +695,9 @@ impl SchematicEditor {
             painter.text(
                 body.center(),
                 Align2::CENTER_CENTER,
-                &instance.value,
+                self.symbol_texts
+                    .get(&instance.id)
+                    .map_or("", String::as_str),
                 fonts::medium(t.font_small),
                 t.text_dim,
             );
@@ -816,6 +872,55 @@ impl SchematicEditor {
     }
 }
 
+/// Fields the pinned component shows on the symbol, with their effective
+/// text as formatted in core.
+fn shown_fields(
+    project: &Project,
+    instance: &pcbcraft_core::ComponentInstance,
+) -> Vec<FieldBuffer> {
+    instances::effective_fields(&project.library, instance)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| f.show_on_symbol)
+        .map(|f| {
+            let text = f.text.unwrap_or_default();
+            FieldBuffer {
+                field: f.field.id,
+                revision: f.field,
+                label: f.label,
+                loaded: text.clone(),
+                text,
+            }
+        })
+        .collect()
+}
+
+/// Why the typed text would be rejected, from the same core parser the
+/// engine applies; the engine still decides when the edit is sent.
+fn typed_error(project: &Project, buffer: &FieldBuffer) -> Option<String> {
+    let text = buffer.text.trim();
+    if text.is_empty() || text == buffer.loaded {
+        return None;
+    }
+    let view = project.library.field_view(buffer.revision)?;
+    pcbcraft_core::fields::parse_value(
+        &buffer.text,
+        &view.field.definition.value_type,
+        view.kind_body(),
+    )
+    .err()
+    .map(|e| e.to_string())
+}
+
+fn symbol_text(project: &Project, instance: &pcbcraft_core::ComponentInstance) -> String {
+    shown_fields(project, instance)
+        .into_iter()
+        .map(|f| f.loaded)
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn field(ui: &mut egui::Ui, label: &str, id: &str, value: &mut String) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
@@ -884,6 +989,135 @@ mod tests {
         assert!(editor.drag.is_none());
         assert!(editor.preview.is_none());
         assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    fn frame(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Option<Operation>) {
+        let mut command = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(700.0, 1400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| command = editor.inspector(ui, engine),
+        );
+        (output, command)
+    }
+
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                text.pos + text.galley.size() * 0.5,
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+
+    fn shown(output: &egui::FullOutput) -> Vec<(String, Pos2)> {
+        let mut out = Vec::new();
+        for shape in &output.shapes {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    /// Click a button and return the operation the inspector emits.
+    fn click(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        label: &str,
+    ) -> Result<Option<Operation>, Box<dyn std::error::Error>> {
+        let (output, _) = frame(editor, engine, ctx, vec![]);
+        let point = shown(&output)
+            .into_iter()
+            .find(|(text, _)| text == label)
+            .map(|(_, p)| p)
+            .ok_or_else(|| format!("missing button {label}"))?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            editor,
+            engine,
+            ctx,
+            vec![egui::Event::PointerMoved(point), press(true)],
+        );
+        Ok(frame(editor, engine, ctx, vec![press(false)]).1)
+    }
+
+    #[test]
+    fn typed_fields_are_edited_through_set_properties_with_core_diagnostics()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let r1 = engine.project().instances[0].id;
+        let mut editor = SchematicEditor::default();
+        editor.select(Some(r1), None, engine.project());
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        assert!(labels.iter().any(|t| t == "Resistance"), "{labels:?}");
+        assert!(labels.iter().any(|t| t == "R1  10 kΩ"), "{labels:?}");
+        assert_eq!(editor.draft_fields[0].text, "10 kΩ");
+
+        // Text of another kind shows the core diagnostic before sending,
+        // and the engine rejects it without changing the document.
+        editor.draft_fields[0].text = "10 µF".into();
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            shown(&output)
+                .iter()
+                .any(|(t, _)| t.contains("µF") && t.contains("not a unit")),
+            "no inline diagnostic"
+        );
+        let rejected = click(&mut editor, &engine, &ctx, "Apply properties")?
+            .ok_or("no operation for invalid text")?;
+        let before = engine.document().clone();
+        let revision = engine.revision();
+        assert!(engine.apply(revision, rejected).is_err());
+        assert_eq!(engine.document(), &before);
+        assert_eq!(engine.revision(), revision);
+
+        editor.draft_fields[0].text = "4.7k".into();
+        let operation =
+            click(&mut editor, &engine, &ctx, "Apply properties")?.ok_or("no operation")?;
+        let Operation::Instance(InstanceCommand::SetProperties { instance, edits }) = &operation
+        else {
+            return Err("properties bypassed instance.set_properties".into());
+        };
+        assert_eq!(*instance, r1);
+        assert_eq!(
+            edits[0].input,
+            PropertyInput::Text("4.7k".into()),
+            "text is parsed in core"
+        );
+        engine.apply(engine.revision(), operation)?;
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(shown(&output).iter().any(|(t, _)| t == "R1  4.7 kΩ"));
+        assert_eq!(editor.draft_fields[0].text, "4.7 kΩ");
+        // Clearing the box returns the field to its default.
+        editor.draft_fields[0].text.clear();
+        let operation =
+            click(&mut editor, &engine, &ctx, "Apply properties")?.ok_or("no operation")?;
+        engine.apply(engine.revision(), operation)?;
+        assert!(
+            engine
+                .project()
+                .instance(r1)
+                .is_some_and(|i| i.properties.is_empty())
+        );
         Ok(())
     }
 

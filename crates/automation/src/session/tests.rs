@@ -81,7 +81,9 @@ fn pad_generator_is_available_through_the_shared_transport_contract() -> TestRes
             "command": "library.generate_pads", "params": {"draft": footprint, "script": {
                 "api_version": 1,
                 "source": "for i in 0..2 { footprint.pad(i + 1, i * pitch, q(0.0, \"mm\"), pitch, pitch); }",
-                "units": [{"symbol": "mm", "dimension": [1,0,0,0,0,0,0], "scale": 0.001}],
+                "units": [{"dimension": [1,0,0,0,0,0,0], "units": [
+                    {"symbol": "m", "scale": 1.0, "si_prefixes": true}
+                ]}],
                 "inputs": {"pitch": {"type": "quantity", "value": 2.0, "unit": "mm"}}
             }}
         }
@@ -197,7 +199,7 @@ fn placing_and_inspecting_through_json_matches_the_engine() -> TestResult {
     let place = Operation::Instance(InstanceCommand::Place(NewInstance {
         component,
         designator: "R3".into(),
-        value: "1k".into(),
+        properties: vec![],
         representation: first.representation,
         unit: UnitId(1),
         position: [30.0, 0.0],
@@ -245,5 +247,51 @@ fn placing_and_inspecting_through_json_matches_the_engine() -> TestResult {
         "queries change nothing"
     );
     assert!(!session.engine().can_redo());
+    Ok(())
+}
+
+/// `instance.set_properties` sent as JSON text returns the same effective
+/// values as the engine; invalid text is a typed error that changes nothing.
+#[test]
+fn set_properties_through_json_returns_the_engine_effective_values() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let mut engine = Engine::demo()?;
+    let instance = r1(&engine);
+    let field = engine
+        .project()
+        .library
+        .fields
+        .first()
+        .map(|f| f.id)
+        .ok_or("demo field")?;
+    let request = |text: &str, revision: u64| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Instance", "operation": {
+                "command": "instance.set_properties",
+                "params": {"instance": instance, "edits": [
+                    {"field": field, "input": {"input": "text", "value": text}}
+                ]}
+            }}
+        }})
+    };
+    let reply = session.dispatch(request("4.7k", session.engine().revision()));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let operation: Operation =
+        serde_json::from_value(request("4.7k", engine.revision())["params"]["operation"].clone())?;
+    let outcome = engine.apply(engine.revision(), operation)?;
+    assert_eq!(reply["result"]["outcome"], serde_json::to_value(&outcome)?);
+    let effective = &reply["result"]["outcome"]["effective"][0];
+    assert_eq!(effective["value"]["value"]["si"], 4700.0);
+    assert_eq!(effective["value"]["value"]["display_unit"], "kΩ");
+    assert_eq!(effective["origin"], "assigned");
+    assert_eq!(effective["text"], "4.7 kΩ");
+    assert_eq!(session.engine().project(), engine.project());
+
+    let revision = session.engine().revision();
+    let rejected = session.dispatch(request("10 µF", revision));
+    assert_eq!(rejected["error"]["code"], "invalid_input", "{rejected}");
+    assert_eq!(session.engine().revision(), revision);
+    assert_eq!(session.engine().project(), engine.project());
     Ok(())
 }

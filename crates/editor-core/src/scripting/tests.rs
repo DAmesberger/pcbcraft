@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use super::*;
+use crate::quantity::{Dimension, UnitOfMeasure, UnitSet};
 use crate::{
     DefinitionId, Engine as DocumentEngine, LibraryCommand, Operation, Outcome,
     library::{Definition, DefinitionMeta},
@@ -15,26 +16,29 @@ fn generated(engine: &DocumentEngine) -> FootprintDefinition {
     }
 }
 
+/// One unit set of a single unit.
+fn set(dimension: Dimension, symbol: &str, scale: f64, si_prefixes: bool) -> UnitSet {
+    UnitSet {
+        dimension,
+        units: vec![UnitOfMeasure {
+            symbol: symbol.into(),
+            aliases: vec![],
+            scale,
+            si_prefixes,
+        }],
+    }
+}
+
 fn script(source: &str) -> Script {
     Script {
         api_version: 1,
         source: source.into(),
+        // Millimetres and kilohms are SI prefixes on prefix-accepting units:
+        // the same unit data and scaling rule fields use.
         units: vec![
-            UnitDefinition {
-                symbol: "mm".into(),
-                dimension: quantity::LENGTH,
-                scale: 0.001,
-            },
-            UnitDefinition {
-                symbol: "V".into(),
-                dimension: [2, 1, -3, -1, 0, 0, 0],
-                scale: 1.0,
-            },
-            UnitDefinition {
-                symbol: "kΩ".into(),
-                dimension: [2, 1, -3, -2, 0, 0, 0],
-                scale: 1000.0,
-            },
+            set(crate::quantity::LENGTH, "m", 1.0, true),
+            set([2, 1, -3, -1, 0, 0, 0], "V", 1.0, true),
+            set([2, 1, -3, -2, 0, 0, 0], "Ω", 1.0, true),
         ],
         inputs: BTreeMap::from([
             (
@@ -122,11 +126,9 @@ fn electrical_arithmetic_returns_power_in_si_units() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn units_are_data_and_versions_are_explicit() {
     let mut request = script(r#"q(3.0, "custom")"#);
-    request.units.push(UnitDefinition {
-        symbol: "custom".into(),
-        dimension: [0, 0, 1, 0, 0, 0, 0],
-        scale: 60.0,
-    });
+    request
+        .units
+        .push(set([0, 0, 1, 0, 0, 0, 0], "custom", 60.0, false));
     let value = evaluate_quantity(&request).unwrap();
     assert_eq!(value.value(), 180.0);
     assert_eq!(value.dimension(), [0, 0, 1, 0, 0, 0, 0]);
@@ -162,11 +164,9 @@ fn dimensional_errors_and_nonfinite_results_are_rejected() {
     );
     assert!(evaluate_quantity(&request).is_err());
     request = script(r#"q(1.0, "high") * q(1.0, "high")"#);
-    request.units.push(UnitDefinition {
-        symbol: "high".into(),
-        dimension: [16, 0, 0, 0, 0, 0, 0],
-        scale: 1.0,
-    });
+    request
+        .units
+        .push(set([16, 0, 0, 0, 0, 0, 0], "high", 1.0, false));
     assert!(
         evaluate_quantity(&request)
             .unwrap_err()
@@ -303,7 +303,7 @@ fn limits_malformed_input_and_stale_revision_have_structured_errors() {
         "invalid_input"
     );
     request = script(ARRAY);
-    request.units[0].scale = 0.0;
+    request.units[0].units[0].scale = 0.0;
     assert!(generate_pads(&request, &draft()).is_err());
     assert!(
         serde_json::from_str::<Script>(

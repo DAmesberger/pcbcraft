@@ -3,6 +3,7 @@
 use super::drafts::{Draft, Drafts};
 use super::{Definition, Library, check_bounds, printable, publish_rank};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
+use crate::fields;
 use crate::ids::{DefinitionId, DefinitionRef, Revision};
 use std::collections::BTreeSet;
 
@@ -25,7 +26,8 @@ fn local_scope(body: &Definition) -> Option<(Vec<u32>, u32)> {
         Definition::Symbol(d) => Some((d.local_ids(), d.next_local)),
         Definition::Package(d) => Some((d.local_ids(), d.next_local)),
         Definition::Footprint(d) => Some((d.local_ids(), d.next_local)),
-        Definition::Binding(_) => None,
+        Definition::Field(d) => Some((d.local_ids(), d.next_local)),
+        Definition::Binding(_) | Definition::QuantityKind(_) => None,
     }
 }
 
@@ -121,6 +123,19 @@ pub fn publish_findings(library: &Library, r: DefinitionRef) -> Vec<Finding> {
         Definition::Package(d) => d.findings(r.id, &mut out),
         Definition::Footprint(d) => d.findings(r.id, library, &mut out),
         Definition::Binding(d) => d.findings(r.id, library, &mut out),
+        Definition::QuantityKind(d) => out.extend(fields::kind_findings(r.id, d)),
+        Definition::Field(d) => {
+            let kind = d.value_type.kind().map(|k| (k, library.quantity_kind(k)));
+            if let Some((k, None)) = kind {
+                out.push(issue(
+                    "reference.missing",
+                    format!("Quantity kind {k} is not in the project library."),
+                    vec![this, ObjectRef::Definition { id: k.id }],
+                ));
+            }
+            let kind = kind.and_then(|(_, p)| p).map(|p| &p.definition);
+            out.extend(fields::definition_findings(r.id, d, kind));
+        }
     }
     out
 }

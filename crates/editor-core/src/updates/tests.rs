@@ -669,6 +669,7 @@ fn a_representation_lineage_change_needs_explicit_unit_resolutions() -> Result<(
                 choices: vec![choice.clone()],
                 units,
                 regroups: vec![],
+                fields: vec![],
             },
         };
         let blocked = engine.preview_update(change(vec![]));

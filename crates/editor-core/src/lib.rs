@@ -7,6 +7,7 @@ pub mod commands;
 pub mod completeness;
 pub mod diagnostics;
 pub mod erc;
+pub mod fields;
 pub mod format;
 pub mod geometry;
 pub mod ids;
@@ -15,6 +16,7 @@ pub mod layout;
 pub mod library;
 pub mod model;
 pub mod nets;
+pub mod quantity;
 pub mod schematic;
 pub mod scripting;
 #[cfg(test)]
@@ -95,17 +97,32 @@ impl Engine {
         Ok(engine)
     }
 
-    /// Two connected two-terminal components, placed on the board. The
-    /// sample library is built through the public commands and its drafts
-    /// stay open for editing.
+    /// Two connected two-terminal components, placed on the board, with a
+    /// typed resistance field shown on the symbol. The sample library is
+    /// built through the public commands and its drafts stay open for
+    /// editing.
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
         let refs = engine.reserve_lineages()?;
+        let kind = engine.reserve(DefinitionKind::QuantityKind)?;
+        let field = engine.reserve(DefinitionKind::Field)?;
+        let mut edits = samples::two_terminal("Resistor", refs);
+        for edit in &mut edits {
+            if let Definition::Component(component) = &mut edit.definition {
+                component.fields.push(fields::FieldSelection {
+                    field: FieldRef::new(field, Revision::FIRST),
+                    default: None,
+                    show_on_symbol: true,
+                });
+            }
+        }
+        edits.extend(samples::resistance_field(
+            QuantityKindRef::new(kind, Revision::FIRST),
+            field,
+        ));
         engine.apply(
             engine.revision,
-            Operation::Library(LibraryCommand::Edit {
-                edits: samples::two_terminal("Resistor", refs),
-            }),
+            Operation::Library(LibraryCommand::Edit { edits }),
         )?;
         engine.apply(
             engine.revision,
@@ -116,6 +133,8 @@ impl Engine {
                     refs.package.id,
                     refs.footprint.id,
                     refs.binding.id,
+                    kind,
+                    field,
                 ],
             }),
         )?;
@@ -126,7 +145,10 @@ impl Engine {
                 Operation::Instance(InstanceCommand::Place(instances::NewInstance {
                     component: ComponentRef::new(refs.component, Revision::FIRST),
                     designator: designator.into(),
-                    value: "10k".into(),
+                    properties: vec![fields::PropertyEdit {
+                        field,
+                        input: fields::PropertyInput::Text("10k".into()),
+                    }],
                     representation: refs.symbol.id,
                     unit: UnitId(1),
                     position,
@@ -165,6 +187,20 @@ impl Engine {
         Ok(engine)
     }
 
+    /// Reserve one empty draft lineage of `kind`.
+    fn reserve(&mut self, kind: DefinitionKind) -> Result<DefinitionId> {
+        match self.apply(
+            self.revision,
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta::default(),
+                definition: Definition::empty(kind),
+            }),
+        )? {
+            Outcome::DraftCreated { id } => Ok(id),
+            _ => Err(Error::Invalid("draft reservation failed".into())),
+        }
+    }
+
     /// Reserve one empty draft lineage of each kind and return the pending
     /// first revisions they would pin of each other.
     fn reserve_lineages(&mut self) -> Result<SampleRefs> {
@@ -176,16 +212,7 @@ impl Engine {
             DefinitionKind::Footprint,
             DefinitionKind::Binding,
         ] {
-            let outcome = self.apply(
-                self.revision,
-                Operation::Library(LibraryCommand::NewDraft {
-                    meta: DefinitionMeta::default(),
-                    definition: Definition::empty(kind),
-                }),
-            )?;
-            if let Outcome::DraftCreated { id } = outcome {
-                ids.push(id);
-            }
+            ids.push(self.reserve(kind)?);
         }
         let [component, symbol, package, footprint, binding] = ids[..] else {
             return Err(Error::Invalid("draft reservation failed".into()));

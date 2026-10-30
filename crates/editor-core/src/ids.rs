@@ -76,6 +76,10 @@ pub enum DefinitionKind {
     Package,
     Footprint,
     Binding,
+    /// A quantity kind: a unit set with its own identity.
+    QuantityKind,
+    /// A reusable typed field.
+    Field,
 }
 
 /// Any exact revision, tagged with its kind.
@@ -146,6 +150,16 @@ exact_ref!(
     BindingRef,
     Binding
 );
+exact_ref!(
+    /// An exact quantity-kind revision.
+    QuantityKindRef,
+    QuantityKind
+);
+exact_ref!(
+    /// An exact field revision.
+    FieldRef,
+    Field
+);
 
 macro_rules! local_id {
     ($(#[$doc:meta])* $name:ident) => {
@@ -179,6 +193,10 @@ local_id!(
 local_id!(
     /// A footprint pad (copper land).
     PadId
+);
+local_id!(
+    /// An enumeration choice of a field, stable across its revisions.
+    ChoiceId
 );
 
 /// One terminal of one component instance: the electrical identity wires,

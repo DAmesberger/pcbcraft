@@ -89,7 +89,7 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
         instances::NewInstance {
             component: f.r1(),
             designator: "R3".into(),
-            value: "1k".into(),
+            properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
             position: [40.0, 0.0],

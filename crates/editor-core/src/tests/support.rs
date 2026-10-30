@@ -28,9 +28,9 @@ pub fn prime_history(engine: &mut Engine) -> Result<()> {
         .ok_or_else(|| Error::NotFound("no instance".into()))?;
     apply(
         engine,
-        Operation::Instance(InstanceCommand::SetValue {
+        Operation::Instance(InstanceCommand::SetDesignator {
             instance,
-            value: "primed".into(),
+            designator: "PRIMED".into(),
         }),
     )?;
     engine.undo()?;
@@ -245,6 +245,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
         } else {
             vec![]
         },
+        fields: vec![],
     };
     let symbol = SymbolDefinition {
         component: f.component,
@@ -404,7 +405,7 @@ pub fn place_ref(
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component,
             designator: designator.into(),
-            value: String::new(),
+            properties: vec![],
             representation: fixture.symbol,
             unit: UnitId(unit),
             position,
@@ -516,7 +517,10 @@ pub fn retarget(engine: &mut Engine, f: &Fixture) -> Result<()> {
                     }
                 }
             }
-            Definition::Symbol(_) | Definition::Package(_) => {}
+            Definition::Symbol(_)
+            | Definition::Package(_)
+            | Definition::QuantityKind(_)
+            | Definition::Field(_) => {}
         }
         edits.push(DraftEdit {
             id,
@@ -588,4 +592,92 @@ pub fn with<T>(
         Err(error) => failure = Some(error),
     })?;
     failure.map_or(Ok(()), Err)
+}
+
+/// Draft and publish one definition of any kind, returning its revision.
+pub fn publish_one(
+    engine: &mut Engine,
+    name: &str,
+    definition: Definition,
+) -> Result<DefinitionRef> {
+    let id = new_draft(engine, definition.kind())?;
+    edit(
+        engine,
+        vec![DraftEdit {
+            id,
+            meta: meta(name),
+            definition,
+        }],
+    )?;
+    publish(engine, vec![id])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::Invalid("nothing published".into()))
+}
+
+pub fn publish_kind(
+    engine: &mut Engine,
+    name: &str,
+    kind: crate::fields::QuantityKind,
+) -> Result<crate::QuantityKindRef> {
+    let r = publish_one(engine, name, Definition::QuantityKind(kind))?;
+    Ok(crate::QuantityKindRef::new(r.id, r.revision))
+}
+
+pub fn publish_field(
+    engine: &mut Engine,
+    name: &str,
+    field: crate::fields::FieldDefinition,
+) -> Result<crate::FieldRef> {
+    let r = publish_one(engine, name, Definition::Field(field))?;
+    Ok(crate::FieldRef::new(r.id, r.revision))
+}
+
+/// Draft `spec`, select `fields` on its component and publish it.
+pub fn component_with_fields(
+    engine: &mut Engine,
+    spec: &Spec<'_>,
+    fields: Vec<crate::fields::FieldSelection>,
+) -> Result<Fixture> {
+    let fixture = draft(engine, spec)?;
+    with(engine, fixture.component, component_body, |c| {
+        c.fields = fields
+    })?;
+    let ids = if spec.physical {
+        fixture.all()
+    } else {
+        vec![fixture.component, fixture.symbol]
+    };
+    publish(engine, ids)?;
+    Ok(fixture)
+}
+
+/// A field selection shown on the symbol, without a component default.
+pub fn select(field: crate::FieldRef) -> crate::fields::FieldSelection {
+    crate::fields::FieldSelection {
+        field,
+        default: None,
+        show_on_symbol: true,
+    }
+}
+
+pub fn set_properties(
+    engine: &mut Engine,
+    instance: Id,
+    edits: Vec<crate::fields::PropertyEdit>,
+) -> Result<Vec<crate::fields::EffectiveField>> {
+    match apply(
+        engine,
+        Operation::Instance(InstanceCommand::SetProperties { instance, edits }),
+    )? {
+        Outcome::PropertiesSet { effective } => Ok(effective),
+        other => Err(Error::Invalid(format!("unexpected outcome {other:?}"))),
+    }
+}
+
+pub fn text(field: crate::FieldRef, text: &str) -> crate::fields::PropertyEdit {
+    crate::fields::PropertyEdit {
+        field: field.id,
+        input: crate::fields::PropertyInput::Text(text.into()),
+    }
 }

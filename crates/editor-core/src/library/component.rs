@@ -1,8 +1,9 @@
-//! Component definitions: electrical terminals and the exact symbols and
-//! bindings a revision allows.
+//! Component definitions: electrical terminals and the exact symbols,
+//! bindings and fields a revision allows.
 use super::publish::{issue, object};
 use super::{Library, MAX_COMPONENT_LISTS, MAX_LABEL, MAX_TERMINALS, printable};
 use crate::diagnostics::{Finding, ObjectRef};
+use crate::fields::{self, FieldSelection, MAX_FIELDS};
 use crate::ids::{BindingRef, DefinitionId, SymbolRef, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,9 @@ pub struct ComponentDefinition {
     /// Allowed physical implementations, at most one revision per binding
     /// lineage. A revision with none is schematic-usable only.
     pub implementations: Vec<BindingRef>,
+    /// Selected fields, at most one revision per field lineage, with
+    /// component defaults.
+    pub fields: Vec<FieldSelection>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -59,11 +63,27 @@ impl ComponentDefinition {
             .find(|r| r.id == lineage)
     }
 
+    /// The selection of a field lineage.
+    pub fn field(&self, lineage: DefinitionId) -> Option<&FieldSelection> {
+        self.fields.iter().find(|f| f.field.id == lineage)
+    }
+
     pub(super) fn within_bounds(&self) -> bool {
         self.terminals.len() <= MAX_TERMINALS
             && self.representations.len() <= MAX_COMPONENT_LISTS
             && self.implementations.len() <= MAX_COMPONENT_LISTS
+            && self.fields.len() <= MAX_FIELDS
             && self.terminals.iter().all(|t| t.name.len() <= MAX_LABEL)
+            && self
+                .fields
+                .iter()
+                .all(|f| f.default.as_ref().is_none_or(|d| d.within_bounds()))
+    }
+
+    pub(super) fn values_finite(&self) -> bool {
+        self.fields
+            .iter()
+            .all(|f| f.default.as_ref().is_none_or(|d| d.values_finite()))
     }
 
     pub(super) fn local_ids(&self) -> Vec<u32> {
@@ -200,6 +220,7 @@ impl ComponentDefinition {
                 ));
             }
         }
+        self.field_findings(id, library, out);
         if self.implementations.is_empty() {
             out.push(Finding::new(
                 "component.no_implementation",
@@ -207,6 +228,48 @@ impl ComponentDefinition {
                     .into(),
                 vec![this],
             ));
+        }
+    }
+}
+
+impl ComponentDefinition {
+    /// Selections are unique per field lineage, resolve in the snapshot and
+    /// have defaults that satisfy their field.
+    fn field_findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
+        let this = ObjectRef::Definition { id };
+        if !unique_lineages(self.fields.iter().map(|f| f.field.id)) {
+            out.push(issue(
+                "component.duplicate_field_lineage",
+                "A component selects at most one revision of each field lineage.".into(),
+                vec![this],
+            ));
+        }
+        for selection in &self.fields {
+            let r = selection.field;
+            let Some(view) = library.field_view(r) else {
+                out.push(issue(
+                    "reference.missing",
+                    format!("Field {r} or its quantity kind is not in the project library."),
+                    vec![this, ObjectRef::Definition { id: r.id }],
+                ));
+                continue;
+            };
+            if let Some(default) = &selection.default
+                && let Err(error) = fields::check_value(
+                    default,
+                    &view.field.definition.value_type,
+                    view.kind_body(),
+                )
+            {
+                out.push(issue(
+                    "component.field_default_invalid",
+                    format!(
+                        "The component default for field ‘{}’ is invalid: {error}.",
+                        view.field.meta.name
+                    ),
+                    vec![this, ObjectRef::Definition { id: r.id }],
+                ));
+            }
         }
     }
 }

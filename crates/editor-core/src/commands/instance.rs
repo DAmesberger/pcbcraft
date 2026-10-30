@@ -1,5 +1,6 @@
 use super::Outcome;
 use crate::diagnostics::Result;
+use crate::fields::PropertyEdit;
 use crate::ids::{Id, TerminalId, UnitId};
 use crate::instances::{self, NewInstance};
 use crate::model::{EditPolicy, PhysicalChoice, Project};
@@ -19,9 +20,13 @@ pub enum InstanceCommand {
     Remove { instance: Id },
     #[serde(rename = "instance.set_designator")]
     SetDesignator { instance: Id, designator: String },
-    /// Free-text value until typed fields replace it.
-    #[serde(rename = "instance.set_value")]
-    SetValue { instance: Id, value: String },
+    /// Apply 1–64 typed field edits atomically. Text is parsed in core; any
+    /// invalid edit rejects the whole batch.
+    #[serde(rename = "instance.set_properties")]
+    SetProperties {
+        instance: Id,
+        edits: Vec<PropertyEdit>,
+    },
     #[serde(rename = "instance.set_unit_unused")]
     SetUnitUnused {
         instance: Id,
@@ -61,8 +66,9 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
             instance,
             designator,
         } => instances::set_designator(project, instance, designator)?,
-        InstanceCommand::SetValue { instance, value } => {
-            instances::set_value(project, instance, value)?
+        InstanceCommand::SetProperties { instance, edits } => {
+            let effective = instances::set_properties(project, instance, &edits)?;
+            return Ok(Outcome::PropertiesSet { effective });
         }
         InstanceCommand::SetUnitUnused {
             instance,

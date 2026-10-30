@@ -9,6 +9,7 @@ pub(crate) use instance::apply_instance;
 pub use library::LibraryCommand;
 pub(crate) use library::apply_library;
 
+use crate::fields::EffectiveField;
 use crate::ids::{DefinitionId, DefinitionRef, Id};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -32,5 +33,9 @@ pub enum Outcome {
     },
     UnitPlaced {
         occurrence: Id,
+    },
+    /// Every effective field of the instance after `instance.set_properties`.
+    PropertiesSet {
+        effective: Vec<EffectiveField>,
     },
 }

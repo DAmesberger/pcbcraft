@@ -90,7 +90,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: q.r1(),
             designator: "Q1".into(),
-            value: String::new(),
+            properties: vec![],
             representation: q.symbol,
             unit: A,
             position: [10.0, 10.0],

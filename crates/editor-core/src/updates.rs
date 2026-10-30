@@ -5,6 +5,7 @@
 //! until an explicit resolution is supplied. Nothing is inferred from names,
 //! order or pad count.
 use crate::diagnostics::{Error, Result};
+use crate::fields::{EffectiveField, PropertyEdit, PropertyInput};
 use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
 use crate::instances::{self, Resolved};
@@ -65,6 +66,20 @@ pub struct Resolutions {
     pub units: Vec<UnitResolution>,
     #[serde(default)]
     pub regroups: Vec<RegroupResolution>,
+    #[serde(default)]
+    pub fields: Vec<FieldResolution>,
+}
+
+/// An explicit decision for an instance field whose assigned value the
+/// target revision no longer accepts: a new input against the target field,
+/// or `Inherit` to drop the override.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldResolution {
+    pub instance: Id,
+    /// The field lineage.
+    pub field: DefinitionId,
+    pub input: PropertyInput,
 }
 
 fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
@@ -275,7 +290,8 @@ fn revise(
         .iter()
         .map(|r| r.instance)
         .chain(resolutions.units.iter().map(|r| r.instance))
-        .chain(resolutions.regroups.iter().map(|r| r.instance));
+        .chain(resolutions.regroups.iter().map(|r| r.instance))
+        .chain(resolutions.fields.iter().map(|r| r.instance));
     for instance in named {
         if !selected.contains(&instance) {
             return Err(invalid(
@@ -312,6 +328,17 @@ fn revise_instance(
         .cloned()
         .ok_or_else(|| not_found("Update refers to an unknown instance."))?;
     let name = old.designator.clone();
+    let field_resolutions: Vec<PropertyEdit> = resolutions
+        .fields
+        .iter()
+        .filter(|r| r.instance == id)
+        .map(|r| PropertyEdit {
+            field: r.field,
+            input: r.input.clone(),
+        })
+        .collect();
+    let properties =
+        instances::carry_properties(&next.library, &old, target_component, &field_resolutions)?;
     let choice = resolutions.choices.iter().find(|c| c.instance == id);
     let representation = choice
         .and_then(|c| c.representation)
@@ -455,6 +482,7 @@ fn revise_instance(
             physical,
             unused_units: unused,
             units: moved,
+            properties,
         },
     )?;
     if physical.is_none() {
@@ -760,11 +788,14 @@ fn instance_details(
     mapping_endpoints: &mut BTreeSet<Endpoint>,
 ) {
     let designator = old.designator.as_str();
-    if old.designator != new.designator || old.value != new.value {
+    if old.designator != new.designator {
         plan.detail(format!(
-            "Instance {}: designator/value {:?} / {:?} → {:?} / {:?}.",
-            old.id, old.designator, old.value, new.designator, new.value
+            "Instance {}: designator {:?} → {:?}.",
+            old.id, old.designator, new.designator
         ));
+    }
+    if old.component != new.component || old.properties != new.properties {
+        field_details(plan, project, next, old, new);
     }
     if old.component != new.component {
         plan.detail(format!(
@@ -812,6 +843,60 @@ fn instance_details(
         plan.detail(format!(
             "{designator}: terminal {terminal} is marked no-connect."
         ));
+    }
+}
+
+/// Effective-value changes per field lineage, including label-only field
+/// revisions, which keep their assignments.
+fn field_details(
+    plan: &mut UpdatePlan,
+    project: &Project,
+    next: &Project,
+    old: &ComponentInstance,
+    new: &ComponentInstance,
+) {
+    let designator = old.designator.as_str();
+    let fields = |p: &Project, i: &ComponentInstance| -> BTreeMap<DefinitionId, EffectiveField> {
+        instances::effective_fields(&p.library, i)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| (f.field.id, f))
+            .collect()
+    };
+    let before = fields(project, old);
+    let after = fields(next, new);
+    let show = |f: Option<&EffectiveField>| {
+        f.map_or_else(
+            || "not selected".to_string(),
+            |f| {
+                format!(
+                    "{} ({:?})",
+                    f.text.as_deref().unwrap_or("no value"),
+                    f.origin
+                )
+            },
+        )
+    };
+    for lineage in before.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
+        let (a, b) = (before.get(lineage), after.get(lineage));
+        if let (Some(a), Some(b)) = (a, b)
+            && a.label != b.label
+        {
+            plan.detail(format!(
+                "{designator}: field ‘{}’ is renamed ‘{}’; its assignment is kept.",
+                a.label, b.label
+            ));
+        }
+        if a.map(|f| (&f.value, f.origin)) != b.map(|f| (&f.value, f.origin)) {
+            let label = b
+                .or(a)
+                .map_or_else(|| lineage.to_string(), |f| f.label.clone());
+            plan.detail(format!(
+                "{designator}: field ‘{label}’ {} → {}.",
+                show(a),
+                show(b)
+            ));
+        }
     }
 }
 

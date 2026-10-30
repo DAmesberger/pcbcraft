@@ -2,14 +2,15 @@
 //! public requests/results contain only ordinary Rust/serde types.
 //! No file, network, clock, module-loading or document-mutation APIs are exposed.
 //! Native callbacks are bounded independently of the interpreter operation cap.
-mod quantity;
+//! Quantity arithmetic and unit scaling are `crate::quantity`'s; this module
+//! only registers them with the interpreter, and Rhai values never leave it.
 #[cfg(test)]
 mod tests;
-pub use quantity::{Dimension, Quantity, UnitDefinition};
 
 use crate::diagnostics::{Error, Result};
 use crate::ids::PadId;
 use crate::library::{self, Definition, DefinitionMeta, FootprintDefinition, Pad};
+use crate::quantity::{LENGTH, Quantity, UnitSet};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Scope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,8 @@ pub enum Input {
 pub struct Script {
     pub api_version: u32,
     pub source: String,
-    pub units: Vec<UnitDefinition>,
+    /// Unit sets; every symbol and alias is unique across the sets.
+    pub units: Vec<UnitSet>,
     pub inputs: BTreeMap<String, Input>,
 }
 
@@ -63,18 +65,40 @@ fn script_error(error: Box<EvalAltResult>) -> Error {
     }
 }
 
-fn make_quantity(
-    units: &BTreeMap<String, UnitDefinition>,
-    value: f64,
-    unit: &str,
-) -> Result<Quantity> {
+/// Scale through the one set that names `unit`: an exact symbol or alias
+/// first, then a prefixed unit, which must not be ambiguous across sets.
+fn make_quantity(sets: &[UnitSet], value: f64, unit: &str) -> Result<Quantity> {
     if unit.len() > 32 {
         return Err(Error::Invalid("unit symbol exceeds 32 bytes".into()));
     }
-    let definition = units
-        .get(unit)
-        .ok_or_else(|| Error::Invalid("unknown unit".into()))?;
-    Quantity::new(value, definition.dimension)?.scale(definition.scale)
+    let set = match sets.iter().find(|s| s.unit(unit).is_some()) {
+        Some(set) => set,
+        None => {
+            let mut prefixed = sets.iter().filter(|s| s.resolve(unit).is_some());
+            match (prefixed.next(), prefixed.next()) {
+                (Some(set), None) => set,
+                (Some(_), Some(_)) => {
+                    return Err(Error::Invalid(format!("ambiguous unit ‘{unit}’")));
+                }
+                (None, _) => return Err(Error::Invalid("unknown unit".into())),
+            }
+        }
+    };
+    set.to_si(value, unit)
+}
+
+/// Pad geometry is a length in millimetres within ±10000 mm.
+fn millimetres(quantity: &Quantity) -> Result<f64> {
+    if quantity.dimension() != LENGTH {
+        return Err(Error::Invalid(
+            "pad geometry requires a length quantity".into(),
+        ));
+    }
+    let mm = quantity.value() * 1000.0;
+    if !mm.is_finite() || mm.abs() > 10000.0 {
+        return Err(Error::Invalid("pad geometry exceeds ±10000 mm".into()));
+    }
+    Ok(mm)
 }
 
 fn prepare(script: &Script) -> Result<(Engine, Scope<'static>)> {
@@ -89,21 +113,16 @@ fn prepare(script: &Script) -> Result<(Engine, Scope<'static>)> {
             "script source, units or input count exceeds limit".into(),
         ));
     }
-    let mut units = BTreeMap::new();
-    for unit in &script.units {
-        if unit.symbol.is_empty()
-            || unit.symbol.len() > 32
-            || unit.symbol.chars().any(char::is_control)
-            || !unit.scale.is_finite()
-            || !(1e-30..=1e30).contains(&unit.scale)
-        {
-            return Err(Error::Invalid("invalid linear unit definition".into()));
-        }
-        Quantity::new(0.0, unit.dimension)?;
-        if units.insert(unit.symbol.clone(), unit.clone()).is_some() {
-            return Err(Error::Invalid("duplicate unit symbol".into()));
+    let mut texts = std::collections::BTreeSet::new();
+    for set in &script.units {
+        set.check()?;
+        for text in set.texts() {
+            if !texts.insert(text) {
+                return Err(Error::Invalid("duplicate unit symbol".into()));
+            }
         }
     }
+    let units = &script.units;
     let mut scope = Scope::new();
     for (name, input) in &script.inputs {
         if name.is_empty()
@@ -116,7 +135,7 @@ fn prepare(script: &Script) -> Result<(Engine, Scope<'static>)> {
         }
         match input {
             Input::Quantity { value, unit } => {
-                scope.push_constant(name.clone(), make_quantity(&units, *value, unit)?);
+                scope.push_constant(name.clone(), make_quantity(units, *value, unit)?);
             }
             Input::Integer { value } => {
                 scope.push_constant(name.clone(), *value);
@@ -139,21 +158,21 @@ fn prepare(script: &Script) -> Result<(Engine, Scope<'static>)> {
         .disable_symbol("print")
         .disable_symbol("debug");
     engine.register_type_with_name::<Quantity>("Quantity");
-    let units = Arc::new(units);
+    let units = Arc::new(script.units.clone());
     engine.register_fn("q", move |value: f64, unit: ImmutableString| {
         make_quantity(&units, value, &unit).map_err(callback_error)
     });
     engine.register_fn("+", |a: Quantity, b: Quantity| {
-        a.add(b).map_err(callback_error)
+        a.checked_add(b).map_err(callback_error)
     });
     engine.register_fn("-", |a: Quantity, b: Quantity| {
-        a.sub(b).map_err(callback_error)
+        a.checked_sub(b).map_err(callback_error)
     });
     engine.register_fn("*", |a: Quantity, b: Quantity| {
-        a.product(b, false).map_err(callback_error)
+        a.checked_mul(b).map_err(callback_error)
     });
     engine.register_fn("/", |a: Quantity, b: Quantity| {
-        a.product(b, true).map_err(callback_error)
+        a.checked_div(b).map_err(callback_error)
     });
     engine.register_fn("*", |a: Quantity, b: f64| {
         a.scale(b).map_err(callback_error)
@@ -208,12 +227,12 @@ impl PadArray {
             .cloned()
             .ok_or_else(|| failure("unknown pad ID"))?;
         pad.position = [
-            x.millimetres().map_err(callback_error)?,
-            y.millimetres().map_err(callback_error)?,
+            millimetres(&x).map_err(callback_error)?,
+            millimetres(&y).map_err(callback_error)?,
         ];
         pad.size = [
-            width.millimetres().map_err(callback_error)?,
-            height.millimetres().map_err(callback_error)?,
+            millimetres(&width).map_err(callback_error)?,
+            millimetres(&height).map_err(callback_error)?,
         ];
         if pad.size.iter().any(|v| *v < 0.01) {
             return Err(failure("pad dimensions must be at least 0.01 mm"));

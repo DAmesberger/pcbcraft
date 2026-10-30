@@ -950,7 +950,7 @@ mod tests {
                 pcbcraft_core::instances::NewInstance {
                     component: first.component,
                     designator: "R3".into(),
-                    value: "1k".into(),
+                    properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),
                     position: [30.0, 0.0],
@@ -972,9 +972,9 @@ mod tests {
         editor.update.begin(&engine, Change::SyncPcb {});
         engine.apply(
             engine.revision(),
-            Operation::Instance(pcbcraft_core::InstanceCommand::SetValue {
+            Operation::Instance(pcbcraft_core::InstanceCommand::SetDesignator {
                 instance: first.id,
-                value: "22k".into(),
+                designator: "R9".into(),
             }),
         )?;
         assert!(click(&mut editor, &engine, &ctx, "Apply update")?.is_none());

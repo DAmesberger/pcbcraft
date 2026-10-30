@@ -1,6 +1,7 @@
 //! Derived completeness. Nothing stores a "complete" or "verified" flag; a
 //! state holds when no current finding blocks it.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
+use crate::fields::{self, EffectiveField};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, FootprintRef,
     Id, PackageRef, Revision, SymbolRef, UnitId,
@@ -39,6 +40,8 @@ pub struct InstanceReport {
     pub representation: SymbolRef,
     pub physical: Option<PhysicalReport>,
     pub units: Vec<UnitReport>,
+    /// Effective value and origin of every selected field.
+    pub properties: Vec<EffectiveField>,
     pub occurrences: usize,
     /// 0 or 1.
     pub board_placements: usize,
@@ -128,6 +131,23 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             ));
         }
     }
+    let properties = instances::effective_fields(&project.library, item)?;
+    for field in &properties {
+        if let Some(stage) = fields::unmet(field) {
+            findings.push(Finding::blocking(
+                "instance.field_required",
+                format!(
+                    "{} needs a value for required field ‘{}’.",
+                    item.designator, field.label
+                ),
+                vec![ObjectRef::Property {
+                    instance: id,
+                    field: field.field.id,
+                }],
+                stage,
+            ));
+        }
+    }
     if resolved.physical.is_none() {
         findings.push(Finding::blocking(
             "instance.no_physical_choice",
@@ -154,6 +174,7 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
         electrically_resolved: !blocked(Stage::ElectricallyResolved),
         purchasing: "not computed: there is no manufacturer-part model yet".into(),
         units,
+        properties,
         findings,
     })
 }

@@ -3,13 +3,18 @@
 //! exact symbol, binding, footprint and package revisions it uses, so there is
 //! one source of truth for each. [`check_instance`] is the one owner of the
 //! per-instance invariants that commands, update plans and document
-//! validation all apply.
+//! validation all apply. Field values are checked, applied and resolved
+//! through `fields`; this module only looks up the definitions they need.
 use crate::diagnostics::{Error, Result};
+use crate::fields::{
+    self, EffectiveField, FieldOverride, InstanceFields, MAX_FIELDS, MAX_PROPERTY_EDITS,
+    PropertyEdit, PropertyInput,
+};
 use crate::geometry::{Point, point_valid};
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, TerminalId, UnitId};
 use crate::library::{
-    BindingDefinition, ComponentDefinition, FootprintDefinition, Library, PackageDefinition,
-    PinKind, Published, SymbolDefinition,
+    BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
+    PackageDefinition, PinKind, Published, SymbolDefinition,
 };
 use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
 use schemars::JsonSchema;
@@ -19,7 +24,6 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_INSTANCES: usize = 4096;
 /// Symbol occurrences in one project; [`add_occurrence`] enforces it.
 pub const MAX_OCCURRENCES: usize = 16384;
-pub const MAX_VALUE: usize = 256;
 /// Terminals one `instance.set_no_connect` changes.
 pub const MAX_NO_CONNECT_EDIT: usize = 256;
 
@@ -212,11 +216,7 @@ fn check_with<'a>(
     let component = &resolved.component.definition;
     let symbol = &resolved.symbol.definition;
     let name = &instance.designator;
-    if instance.value.len() > MAX_VALUE || instance.value.chars().any(char::is_control) {
-        return Err(invalid(format!(
-            "{name}: value must be at most 256 bytes without control characters."
-        )));
-    }
+    check_properties(&project.library, component, instance)?;
     let mut placed = BTreeSet::new();
     for occurrence in occurrences {
         if symbol.unit(occurrence.unit).is_none() {
@@ -297,6 +297,83 @@ fn check_with<'a>(
     Ok(())
 }
 
+fn field_view(library: &Library, r: FieldRef) -> Result<FieldView<'_>> {
+    library.field_view(r).ok_or_else(|| {
+        invalid(format!(
+            "Field {r} or its quantity kind is not in the project library."
+        ))
+    })
+}
+
+/// A field error naming the instance, the field and its quantity kind.
+fn in_field(name: &str, view: &FieldView<'_>, error: Error) -> Error {
+    let kind = view
+        .kind
+        .map(|k| format!(" ({})", k.meta.name))
+        .unwrap_or_default();
+    let message = format!("{name} {}{kind}: {error}", view.field.meta.name);
+    match error {
+        Error::Limit(_) => Error::Limit(message),
+        _ => Error::Invalid(message),
+    }
+}
+
+/// Overrides name fields the pinned component selects, and assigned values
+/// satisfy those field revisions.
+fn check_properties(
+    library: &Library,
+    component: &ComponentDefinition,
+    instance: &ComponentInstance,
+) -> Result<()> {
+    let name = &instance.designator;
+    if instance.properties.len() > MAX_FIELDS {
+        return Err(invalid(format!("{name}: at most 64 field overrides.")));
+    }
+    for (lineage, value) in &instance.properties {
+        let selection = component.field(*lineage).ok_or_else(|| {
+            invalid(format!(
+                "{name}: field {lineage} is not selected by component {}.",
+                instance.component
+            ))
+        })?;
+        if let FieldOverride::Assigned(value) = value {
+            let view = field_view(library, selection.field)?;
+            fields::check_value(value, &view.field.definition.value_type, view.kind_body())
+                .map_err(|e| in_field(name, &view, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// The effective value of every field the pinned component selects, in
+/// selection order.
+pub fn effective_fields(
+    library: &Library,
+    instance: &ComponentInstance,
+) -> Result<Vec<EffectiveField>> {
+    let component = library.component(instance.component).ok_or_else(|| {
+        invalid(format!(
+            "{} pins component {}, which is not in the project library.",
+            instance.designator, instance.component
+        ))
+    })?;
+    component
+        .definition
+        .fields
+        .iter()
+        .map(|selection| {
+            let view = field_view(library, selection.field)?;
+            Ok(fields::effective(
+                &view.field.meta.name,
+                &view.field.definition,
+                view.kind_body(),
+                selection,
+                instance.properties.get(&selection.field.id),
+            ))
+        })
+        .collect()
+}
+
 /// Choices offered by the pinned component; unit IDs exist in the resolved
 /// representation; placed and unused exclusive; no-connect only on terminals
 /// that are not device NC; every wire endpoint's unit placed, not device NC
@@ -369,7 +446,9 @@ pub fn check_designators(project: &Project) -> Result<()> {
 pub struct NewInstance {
     pub component: ComponentRef,
     pub designator: String,
-    pub value: String,
+    /// Initial field values, applied as one `instance.set_properties` batch.
+    #[serde(default)]
+    pub properties: Vec<PropertyEdit>,
     pub representation: DefinitionId,
     pub unit: UnitId,
     pub position: Point,
@@ -425,13 +504,14 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         id,
         component: request.component,
         designator: request.designator,
-        value: request.value,
+        properties: InstanceFields::new(),
         representation: request.representation,
         physical: request.physical,
         unused_units: BTreeSet::new(),
         no_connect: BTreeSet::new(),
     });
     let occurrence = add_occurrence(project, id, request.unit, request.position)?;
+    apply_properties(project, id, &request.properties)?;
     check_instance(project, id)?;
     check_designators(project)?;
     Ok((id, occurrence))
@@ -467,6 +547,8 @@ pub(crate) struct Retarget {
     pub unused_units: BTreeSet<UnitId>,
     /// Each remaining occurrence of the instance and the target unit it draws.
     pub units: Vec<(Id, UnitId)>,
+    /// Field overrides carried by [`carry_properties`].
+    pub properties: InstanceFields,
 }
 
 /// Pin an instance to another revision of its lineage. Project no-connect
@@ -504,6 +586,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.representation = target.representation;
     instance.physical = target.physical;
     instance.unused_units = target.unused_units;
+    instance.properties = target.properties;
     instance.no_connect.retain(|t| wirable(&component, *t));
     Ok(())
 }
@@ -514,10 +597,157 @@ pub fn set_designator(project: &mut Project, id: Id, designator: String) -> Resu
     check_designators(project)
 }
 
-/// Slice 1 free-text value; replaced by typed fields in slice 2.
-pub fn set_value(project: &mut Project, id: Id, value: String) -> Result<()> {
-    instance_mut(project, id)?.value = value;
-    check_instance(project, id)
+/// Apply up to 64 field edits to one instance's overrides as one batch.
+/// Each field must be selected by the pinned component; any invalid edit
+/// fails the whole batch.
+fn apply_properties(project: &mut Project, id: Id, edits: &[PropertyEdit]) -> Result<()> {
+    if edits.len() > MAX_PROPERTY_EDITS {
+        return Err(invalid("Change between 1 and 64 fields at a time.".into()));
+    }
+    let instance = project
+        .instance(id)
+        .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
+    let library = &project.library;
+    let component = library.component(instance.component).ok_or_else(|| {
+        Error::NotFound("The pinned component revision is not in the project library.".into())
+    })?;
+    let mut overrides = instance.properties.clone();
+    let mut seen = BTreeSet::new();
+    for edit in edits {
+        if !seen.insert(edit.field) {
+            return Err(invalid(format!(
+                "{}: field {} is edited twice.",
+                instance.designator, edit.field
+            )));
+        }
+        let selection = component.definition.field(edit.field).ok_or_else(|| {
+            invalid(format!(
+                "{}: field {} is not selected by component {}.",
+                instance.designator, edit.field, instance.component
+            ))
+        })?;
+        let view = field_view(library, selection.field)?;
+        fields::apply_input(
+            &mut overrides,
+            edit.field,
+            &edit.input,
+            &view.field.definition,
+            view.kind_body(),
+        )
+        .map_err(|e| in_field(&instance.designator, &view, e))?;
+    }
+    instance_mut(project, id)?.properties = overrides;
+    Ok(())
+}
+
+/// `instance.set_properties`: apply 1–64 field edits atomically and return
+/// every effective field of the instance.
+pub fn set_properties(
+    project: &mut Project,
+    id: Id,
+    edits: &[PropertyEdit],
+) -> Result<Vec<EffectiveField>> {
+    if edits.is_empty() {
+        return Err(invalid("Change between 1 and 64 fields at a time.".into()));
+    }
+    apply_properties(project, id, edits)?;
+    check_instance(project, id)?;
+    let instance = project
+        .instance(id)
+        .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
+    effective_fields(&project.library, instance)
+}
+
+/// The overrides an instance keeps when it moves to `target`, another
+/// revision of its component lineage. A valid override is preserved. An
+/// assigned value whose field the target no longer selects, whose value type
+/// or quantity-kind lineage changes, or which no longer satisfies the target
+/// field blocks until `resolutions` names that field; an explicit unset of a
+/// removed field is dropped. Resolutions are applied as property edits
+/// against the target fields; `Inherit` also resolves a removed field.
+pub(crate) fn carry_properties(
+    library: &Library,
+    old: &ComponentInstance,
+    target: &ComponentDefinition,
+    resolutions: &[PropertyEdit],
+) -> Result<InstanceFields> {
+    let name = &old.designator;
+    let current = library.component(old.component).ok_or_else(|| {
+        Error::NotFound("The pinned component revision is not in the project library.".into())
+    })?;
+    let mut resolved = BTreeSet::new();
+    for resolution in resolutions {
+        if !resolved.insert(resolution.field) {
+            return Err(invalid(format!(
+                "{name}: field {} is resolved twice.",
+                resolution.field
+            )));
+        }
+    }
+    let current_field = |lineage: DefinitionId| {
+        current
+            .definition
+            .field(lineage)
+            .and_then(|s| library.field(s.field))
+    };
+    let label = |lineage: DefinitionId| {
+        current_field(lineage).map_or_else(|| lineage.to_string(), |f| f.meta.name.clone())
+    };
+    let mut next = InstanceFields::new();
+    for (lineage, value) in &old.properties {
+        if resolved.contains(lineage) {
+            next.insert(*lineage, value.clone());
+            continue;
+        }
+        let Some(selection) = target.field(*lineage) else {
+            if matches!(value, FieldOverride::Assigned(_)) {
+                return Err(Error::Conflict(format!(
+                    "{name}: field ‘{}’ has an assigned value and the target revision no longer selects it; supply a FieldResolution.",
+                    label(*lineage)
+                )));
+            }
+            continue;
+        };
+        if let FieldOverride::Assigned(assigned) = value {
+            let view = field_view(library, selection.field)?;
+            let new_type = &view.field.definition.value_type;
+            let same_meaning = current_field(*lineage)
+                .is_some_and(|f| fields::compatible(&f.definition.value_type, new_type));
+            if !same_meaning || fields::check_value(assigned, new_type, view.kind_body()).is_err() {
+                return Err(Error::Conflict(format!(
+                    "{name}: the assigned value of field ‘{}’ does not fit field revision {}; supply a FieldResolution.",
+                    label(*lineage),
+                    selection.field
+                )));
+            }
+        }
+        next.insert(*lineage, value.clone());
+    }
+    for resolution in resolutions {
+        match target.field(resolution.field) {
+            Some(selection) => {
+                let view = field_view(library, selection.field)?;
+                fields::apply_input(
+                    &mut next,
+                    resolution.field,
+                    &resolution.input,
+                    &view.field.definition,
+                    view.kind_body(),
+                )
+                .map_err(|e| in_field(name, &view, e))?;
+            }
+            None if resolution.input == PropertyInput::Inherit => {
+                next.remove(&resolution.field);
+            }
+            None => {
+                return Err(invalid(format!(
+                    "{name}: the target revision does not select field {}; only Inherit resolves it.",
+                    resolution.field
+                )));
+            }
+        }
+    }
+    Ok(next)
 }
 
 /// Mark a unit unused or clear the mark. Rejected while the unit is placed;

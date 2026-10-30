@@ -6,11 +6,13 @@ use super::{
     FootprintDefinition, PackageDefinition, PackageTerminal, Pad, PinKind, SymbolDefinition,
     Terminal, TerminalMap, Unit,
 };
+use crate::fields::{FieldDefinition, QuantityKind, ValueType};
 use crate::geometry::Point;
 use crate::ids::{
-    BindingRef, DefinitionId, FootprintRef, PackageRef, PackageTerminalId, PadId, SymbolRef,
-    TerminalId, UnitId,
+    BindingRef, DefinitionId, FootprintRef, PackageRef, PackageTerminalId, PadId, QuantityKindRef,
+    SymbolRef, TerminalId, UnitId,
 };
+use crate::quantity::{UnitOfMeasure, UnitSet};
 
 /// The five lineages of one sample and the revisions they pin of each other
 /// (normally the drafts' pending revisions).
@@ -62,6 +64,7 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
                     .collect(),
                 representations: vec![refs.symbol],
                 implementations: vec![refs.binding],
+                fields: vec![],
             }),
         },
         DraftEdit {
@@ -173,4 +176,41 @@ pub fn two_terminal_header(name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
             land: [1.5, 2.0],
         },
     )
+}
+
+/// A resistance quantity kind (ohm, SI prefixes) and a non-negative
+/// quantity field of that kind: ordinary library data, not a category.
+pub fn resistance_field(kind: QuantityKindRef, field: DefinitionId) -> Vec<DraftEdit> {
+    vec![
+        DraftEdit {
+            id: kind.id,
+            meta: meta("Resistance"),
+            definition: Definition::QuantityKind(QuantityKind {
+                units: UnitSet {
+                    dimension: [2, 1, -3, -2, 0, 0, 0],
+                    units: vec![UnitOfMeasure {
+                        symbol: "Ω".into(),
+                        aliases: vec!["ohm".into(), "R".into()],
+                        scale: 1.0,
+                        si_prefixes: true,
+                    }],
+                },
+                default_unit: "Ω".into(),
+            }),
+        },
+        DraftEdit {
+            id: field,
+            meta: meta("Resistance"),
+            definition: Definition::Field(FieldDefinition {
+                next_local: 1,
+                value_type: ValueType::Quantity {
+                    kind,
+                    min: Some(0.0),
+                    max: None,
+                },
+                default: None,
+                required_at: None,
+            }),
+        },
+    ]
 }

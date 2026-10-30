@@ -111,6 +111,11 @@ pub enum ObjectRef {
         instance: Id,
         unit: UnitId,
     },
+    /// One field of one instance, by field lineage.
+    Property {
+        instance: Id,
+        field: DefinitionId,
+    },
 }
 
 /// A derived completeness state a finding can block. Nothing stores these

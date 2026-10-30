@@ -113,19 +113,24 @@ fn expect(mut items: Vec<(&str, ObjectRef)>) -> Vec<(String, Vec<ObjectRef>)> {
 #[test]
 fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     let mut engine = Engine::default();
-    let amp = component(&mut engine, &spec())?;
+    // A typed gain field, selected by the amplifier component.
+    let gain = publish_field(
+        &mut engine,
+        "Gain",
+        crate::fields::FieldDefinition {
+            next_local: 1,
+            value_type: crate::fields::ValueType::Integer { min: 1, max: 1000 },
+            default: Some(crate::fields::FieldValue::Integer(1)),
+            required_at: None,
+        },
+    )?;
+    let amp = component_with_fields(&mut engine, &spec(), vec![select(gain)])?;
     let supply = component(&mut engine, &probe("Supply", PinKind::PowerOutput))?;
     let probe = component(&mut engine, &probe("Probe", PinKind::Passive))?;
 
     // Two independent instances.
     let (u1, _) = place(&mut engine, &amp, "U1", 1, [0.0, 0.0])?;
-    apply(
-        &mut engine,
-        Operation::Instance(InstanceCommand::SetValue {
-            instance: u1,
-            value: "gain 10".into(),
-        }),
-    )?;
+    set_properties(&mut engine, u1, vec![text(gain, "10")])?;
 
     // U1A + U1P, B unplaced.
     apply(
@@ -205,7 +210,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: amp.r1(),
             designator: "U2".into(),
-            value: "gain 2".into(),
+            properties: vec![text(gain, "2")],
             representation: amp.symbol,
             unit: B,
             position: [60.0, 0.0],
@@ -224,9 +229,38 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         )?;
         connect(&mut engine, ep(u2, t), ep(p, 1))?;
     }
+    let gain_of = |engine: &Engine, instance| -> Result<_> {
+        Ok(inspect(engine, instance)?
+            .properties
+            .into_iter()
+            .map(|f| (f.value, f.origin))
+            .collect::<Vec<_>>())
+    };
+    use crate::fields::{FieldValue, Origin};
     assert_eq!(
-        engine.project().instance(u1).map(|i| i.value.as_str()),
-        Some("gain 10")
+        gain_of(&engine, u1)?,
+        vec![(Some(FieldValue::Integer(10)), Origin::Assigned)]
+    );
+    assert_eq!(
+        gain_of(&engine, u2)?,
+        vec![(Some(FieldValue::Integer(2)), Origin::Assigned)]
+    );
+    // Editing one instance leaves the other's effective values unchanged.
+    set_properties(
+        &mut engine,
+        u2,
+        vec![crate::fields::PropertyEdit {
+            field: gain.id,
+            input: crate::fields::PropertyInput::Inherit,
+        }],
+    )?;
+    assert_eq!(
+        gain_of(&engine, u2)?,
+        vec![(Some(FieldValue::Integer(1)), Origin::FieldDefault)]
+    );
+    assert_eq!(
+        gain_of(&engine, u1)?,
+        vec![(Some(FieldValue::Integer(10)), Origin::Assigned)]
     );
     assert_eq!(
         electrical(&engine, u2)?,
