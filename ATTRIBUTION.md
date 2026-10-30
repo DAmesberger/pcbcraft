@@ -14,7 +14,7 @@ The Cargo development/CI profiles, pinned geometry patches and `xtask` workflow 
 
 Pcbcraft directly depends on `solidcraft-engine` and its geometry patches at that revision. Cargo retrieves the original packages with their upstream license notices; `Cargo.lock` records resolved dependencies. Pcbcraft does not maintain a separate CAD engine or native-file writer. Record further adopted source/assets and their notices here.
 
-This notice does not choose a project-wide license for original Pcbcraft application code.
+Original Pcbcraft code is licensed MIT OR Apache-2.0, like Solidcraft; see [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Every workspace crate declares this license, and `cargo xtask licences --check` enforces it together with the dependency license policy.
 
 ## Embedded scripting dependency
 
@@ -31,6 +31,7 @@ Adapted source references, under the MIT option above:
 - `apps/pcbcraft/src/file_ui.rs`: upstream `apps/solidcraft/src/main.rs` picker services and `documents.rs` unsaved-work choices; prompts use the public `ui_kit::Window`.
 - `crates/automation/src/mcp.rs` and `lines.rs`: upstream `crates/mcp/src/server.rs` conventions (newline-delimited JSON-RPC, bounded lines, protocol-version negotiation, tool errors as results). Tools and their schemas are generated from Pcbcraft's own request types.
 - `xtask/src/ui_containers.rs` and `layers.rs`: upstream `xtask/src/ui_containers.rs` and `layers.rs` boundary checks, reduced to Pcbcraft's crates.
+- `xtask/src/licenses.rs`: follows the upstream `xtask/src/licenses.rs` convention of reading `cargo metadata --locked` from an xtask subcommand. The SPDX expression evaluation, GPL-family policy and reviewed-exception list are original.
 - `flake.nix`: upstream `flake.nix` Linux runtime-library list; the pinned toolchain comes from `rust-overlay` (MIT).
 - Editor content: upstream `ui_kit/layout.rs`, `ui_kit/fields.rs`, `dialogs_library.rs`, `tools.rs` and `drag_snap.rs` for forms and interaction conventions. Electronics commands, mapping and geometry checks are original.
 - `viewport.rs`: upstream `gpu` renderer API and `solidcraft-render` camera API via the engine. Navigation is adapted locally because the complete upstream event handler is private to `SolveApp`.

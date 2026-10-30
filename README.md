@@ -30,7 +30,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
-`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`.
+`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses.
 
 ## CLI, JSON lines and MCP
 
@@ -69,3 +69,7 @@ Solidcraft and its required patches are pinned to `4f3ac07aec69489183185071f07d7
 - [Roadmap](ROADMAP.md) and [agent instructions](AGENTS.md)
 
 Push-and-shove remains a release-2 requirement if absent from release 1. Manual routing already passes through an atomic route edit set and strategy interface. Large-board performance, incremental native rebuilds, arbitrary Solidcraft model composition and manufacturing outputs remain future work.
+
+## License
+
+Pcbcraft is licensed under the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option, like Solidcraft. Third-party notices are in [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md). Pcbcraft is an independent clean-room implementation; it does not use code or library data from GPL-family or commercial EDA tools.

@@ -1,0 +1,34 @@
+Pcbcraft
+Copyright (c) 2026 Pcbcraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+Third-party material
+
+Software dependencies are listed in Cargo.lock and retrieved by Cargo with their own license
+notices. `cargo xtask licences --check` (part of `cargo xtask ci`) rejects any resolved dependency
+that cannot be used without a GPL, LGPL or AGPL license, and any unreviewed license.
+
+The 3D engine and desktop UI come from Solidcraft (https://github.com/tangency-labs/solidcraft),
+pinned to revision 4f3ac07aec69489183185071f07d7fbcf4f51e64 and linked as the solidcraft-engine
+and solidcraft-ui-egui crates together with Solidcraft's patched geometry and windowing crates.
+Copyright (c) 2026 SolidCraft contributors; MIT OR Apache-2.0. Agent instructions, build
+conventions and some UI and transport source are adapted from the same revision under its MIT
+option; ATTRIBUTION.md lists the files and licenses/solidcraft-MIT.txt preserves the notice.
+
+Expression scripting embeds Rhai 1.27.0 (https://github.com/rhaiscript/rhai), MIT OR Apache-2.0,
+used as a library.
+
+IBM Plex Sans and IBM Plex Mono are bundled by the Solidcraft UI package and licensed under the
+SIL Open Font License 1.1; the notices are in licenses/ibm-plex-sans-OFL.txt and
+licenses/ibm-plex-mono-OFL.txt. Copyright (c) 2017 IBM Corp., Reserved Font Name "Plex".
+
+Pcbcraft's electronics model, commands, checks and test fixtures are original. No source code,
+library data (symbols, footprints, 3D models) or other material is taken from GPL/LGPL/AGPL
+electronics tools or from commercial EDA tools.
+
+Pcbcraft is an independent project and is not affiliated with, sponsored by or endorsed by KiCad,
+LibrePCB, Horizon EDA, Altium, Autodesk, Cadence, Siemens, Zuken or any other EDA vendor or
+project. KiCad, LibrePCB, Horizon EDA, Altium Designer, Eagle, Fusion, OrCAD and other product
+names are trademarks of their respective owners. They appear only to describe this independence
+or compatibility, such as file formats implemented from public documentation.

@@ -1,4 +1,5 @@
 mod layers;
+mod licences;
 mod ui_containers;
 
 use std::path::{Path, PathBuf};
@@ -39,12 +40,14 @@ fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let command = match args.as_slice() {
         [command] => command.as_str(),
+        [command, flag] if command == "licences" && flag == "--check" => "licences --check",
         _ => "help",
     };
     match command {
         "ci" | "ci-native" => {
             cargo(&["fmt", "--all", "--", "--check"])?;
             layers::check()?;
+            licences::check()?;
             ui_containers::check()?;
             cargo(&[
                 "clippy",
@@ -66,9 +69,11 @@ fn run() -> Result<()> {
         "wasm" => wasm(),
         "wasm-scripting" => wasm_scripting(),
         "layers" => layers::check(),
+        "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | ui-containers"
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | licences --check \
+             | ui-containers"
                 .into(),
         ),
     }
