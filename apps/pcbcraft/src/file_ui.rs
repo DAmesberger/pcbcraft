@@ -698,20 +698,26 @@ impl FileUi {
             )
             .required()
             .show_body(ctx, |ui| {
-                ui.label("The project or component draft has unsaved changes.");
-                if let Some(status) = &self.status {
-                    ui.weak(status);
-                }
-                ui.horizontal_wrapped(|ui| {
-                    if ui_kit::button(ui, "Save", Button::Normal).clicked() {
-                        choice = Some(Choice::Save);
+                dialog_body(ui, |ui| {
+                    crate::kit::status(
+                        ui,
+                        "The project or component draft has unsaved changes.",
+                        crate::kit::Tone::Dim,
+                    );
+                    if let Some(status) = &self.status {
+                        crate::kit::note(ui, status);
                     }
-                    if ui_kit::button(ui, "Discard", Button::Ghost).clicked() {
-                        choice = Some(Choice::Discard);
-                    }
-                    if ui_kit::button(ui, "Cancel", Button::Ghost).clicked() {
-                        choice = Some(Choice::Cancel);
-                    }
+                    crate::kit::actions(ui, |ui| {
+                        if crate::kit::primary(ui, "Save", true).clicked() {
+                            choice = Some(Choice::Save);
+                        }
+                        if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
+                            choice = Some(Choice::Discard);
+                        }
+                        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
+                            choice = Some(Choice::Cancel);
+                        }
+                    });
                 });
             });
             match choice {
@@ -732,7 +738,6 @@ impl FileUi {
         let Some(entry) = self.recoveries.first().cloned() else {
             return;
         };
-        let t = Tokens::get();
         let busy = self.busy();
         let mut choice = None;
         ui_kit::Window::new(
@@ -742,27 +747,30 @@ impl FileUi {
         )
         .required()
         .show_body(ctx, |ui| {
-            ui.label(&entry.project_name);
-            if let Some(path) = &entry.original_path {
-                ui.weak(path.display().to_string());
-            }
-            if let Some(error) = &entry.error {
-                ui.colored_label(t.form_error, error);
-            }
-            ui.label("Restore opens an unsaved copy. The original file is unchanged.");
-            ui.add_enabled_ui(!busy, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if ui_kit::button(ui, "Restore", Button::Enabled(entry.error.is_none()))
-                        .clicked()
-                    {
-                        choice = Some(Choice::Save);
-                    }
-                    if ui_kit::button(ui, "Keep for later", Button::Normal).clicked() {
-                        choice = Some(Choice::Cancel);
-                    }
-                    if ui_kit::button(ui, "Discard", Button::Ghost).clicked() {
-                        choice = Some(Choice::Discard);
-                    }
+            dialog_body(ui, |ui| {
+                crate::kit::value_row(ui, "Project", &entry.project_name);
+                if let Some(path) = &entry.original_path {
+                    crate::kit::value_row(ui, "File", &path.display().to_string());
+                }
+                if let Some(error) = &entry.error {
+                    crate::kit::status(ui, error, crate::kit::Tone::Error);
+                }
+                crate::kit::note(
+                    ui,
+                    "Restore opens an unsaved copy. The original file is unchanged.",
+                );
+                ui.add_enabled_ui(!busy, |ui| {
+                    crate::kit::actions(ui, |ui| {
+                        if crate::kit::primary(ui, "Restore", entry.error.is_none()).clicked() {
+                            choice = Some(Choice::Save);
+                        }
+                        if ui_kit::button(ui, "Keep for later", Button::Normal).clicked() {
+                            choice = Some(Choice::Cancel);
+                        }
+                        if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
+                            choice = Some(Choice::Discard);
+                        }
+                    });
                 });
             });
         });
@@ -857,4 +865,15 @@ mod tests {
         assert!(controller.prompt.is_none());
         Ok(())
     }
+}
+
+/// Dialog content inset like the kit's cards, in the kit's form scope.
+fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let t = Tokens::get();
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
+        .show(ui, |ui| {
+            ui.set_min_width(360.0);
+            crate::kit::form(ui, add);
+        });
 }
