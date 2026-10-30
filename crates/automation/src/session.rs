@@ -2,7 +2,10 @@
 //! document mutation through [`Engine::apply`], or an external file effect.
 //! File effects never enter undo history.
 use crate::{Error, Result};
-use pcbcraft_core::{Engine, Operation, Project, format::EditorFile, layout, schematic, updates};
+use pcbcraft_core::{
+    Engine, Operation, Project, Query, QueryResult, erc, format::EditorFile, layout,
+    library::Drafts, updates,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -47,9 +50,14 @@ pub enum Request {
     /// Apply one document operation at an expected revision.
     #[serde(rename = "project.apply")]
     Apply(ApplyParams),
-    /// Return the document, draft and design checks.
+    /// Return the document, drafts with their findings and design checks.
     #[serde(rename = "project.inspect")]
     Inspect(NoParams),
+    /// Answer one read-only core query (`component.inspect`,
+    /// `component.check`, `component.check_drafts`), passed unchanged to
+    /// `Engine::query`.
+    #[serde(rename = "project.query")]
+    Query(Query),
     #[serde(rename = "project.undo")]
     Undo(NoParams),
     #[serde(rename = "project.redo")]
@@ -89,18 +97,22 @@ impl Request {
         vec![
             info::<ApplyParams>(
                 "project.apply",
-                "Apply one typed document operation (part, schematic, layout or update) at an expected revision. Fails without changes on stale revisions or invalid input.",
+                "Apply one typed document operation (library, instance, schematic, layout or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
             info::<NoParams>(
                 "project.inspect",
-                "Return the revision, project, component draft, ERC and board-check findings.",
+                "Return the revision, project, drafts with their publish findings, ERC and board-check findings.",
+            ),
+            info::<Query>(
+                "project.query",
+                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once. Nothing is stored.",
             ),
             info::<NoParams>("project.undo", "Undo the last document change."),
             info::<NoParams>("project.redo", "Redo the last undone document change."),
             info::<NoParams>("project.new", "Start a new empty project; clears history."),
             info::<PathParams>(
                 "project.open",
-                "Open a .pcbcraft project file; older versions migrate. Failure leaves the session unchanged.",
+                "Open a .pcbcraft project file of the current format version; other versions are refused. Failure leaves the session unchanged.",
             ),
             info::<SaveParams>(
                 "project.save",
@@ -108,7 +120,7 @@ impl Request {
             ),
             info::<PreviewParams>(
                 "project.preview_update",
-                "Preview a revision-bound schematic, part-revision or PCB-sync change and its routed-copper impact.",
+                "Preview a revision-bound component-revision, instance, schematic or PCB-sync change and its routed-copper impact.",
             ),
             info::<updates::ApplyUpdate>(
                 "project.apply_update",
@@ -151,17 +163,24 @@ impl Session {
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         match request {
             Request::Apply(params) => {
-                self.engine
+                let outcome = self
+                    .engine
                     .apply(params.expected_revision, params.operation)?;
+                let mut snapshot = self.snapshot();
+                snapshot["outcome"] = serde_json::to_value(outcome)?;
+                return Ok(snapshot);
             }
             Request::Inspect(_) => {}
+            Request::Query(query) => {
+                return Ok(serde_json::to_value(self.engine.query(query)?)?);
+            }
             Request::Undo(_) => self.engine.undo()?,
             Request::Redo(_) => self.engine.redo()?,
             Request::New(_) => {
                 self.engine.replace_document(EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,
                     project: Project::default(),
-                    authoring_draft: None,
+                    drafts: Drafts::default(),
                 })?;
                 self.path = None;
             }
@@ -206,16 +225,40 @@ impl Session {
         Ok(self.snapshot())
     }
 
-    /// The document state every mutation and inspection returns.
+    /// The document state every mutation and inspection returns. Each draft
+    /// carries the core's `component.check` report, from one staged
+    /// `component.check_drafts` query.
     pub fn snapshot(&self) -> Value {
         let project = self.engine.project();
+        let items = &self.engine.drafts().items;
+        let drafts: Vec<Value> = match self.engine.query(Query::CheckDrafts {}) {
+            Ok(QueryResult::Drafts(reports)) => items
+                .iter()
+                .zip(reports)
+                .map(|(draft, report)| {
+                    let check = serde_json::to_value(QueryResult::Definition(report))
+                        .unwrap_or(Value::Null);
+                    json!({"draft": draft, "check": check})
+                })
+                .collect(),
+            other => {
+                let error = match other {
+                    Err(error) => json!({"error": error.diagnostic()}),
+                    Ok(_) => json!({"error": "unexpected report"}),
+                };
+                items
+                    .iter()
+                    .map(|draft| json!({"draft": draft, "check": error}))
+                    .collect()
+            }
+        };
         json!({
             "revision": self.engine.revision(),
             "project": project,
-            "draft": self.engine.draft(),
+            "drafts": drafts,
             "can_undo": self.engine.can_undo(),
             "can_redo": self.engine.can_redo(),
-            "erc": schematic::checks(project),
+            "erc": erc::checks(project),
             "board_checks": layout::checks(project),
         })
     }

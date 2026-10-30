@@ -130,7 +130,7 @@ Code licensing and library-data licensing are distinct. KiCad publishes its libr
 
 ## Accepted authoring contract
 
-This section specifies target behavior; [component model](component-model.md) defines how its definitions, revisions, instances, fields and terminal functions are represented in the first three implementation slices. The existing monolithic `Part`, text-valued instances, single-unit UI and numeric Rhai pad proof do not yet implement this contract. Fixture values below are original synthetic test data, not recommended land patterns or verified manufacturer specifications.
+This section specifies target behavior; [component model](component-model.md) defines how its definitions, revisions, instances, fields and terminal functions are represented in the first three implementation slices. Its first slice is implemented: revisioned definitions, drafts, exact references and multi-unit symbol occurrences replace the monolithic `Part`, with headless CE-04/CE-05 proofs. Text-valued instances (slice 2), `PinKind` terminals (slice 3), the single-unit authoring UI and the numeric Rhai pad proof do not yet implement the rest of this contract. Fixture values below are original synthetic test data, not recommended land patterns or verified manufacturer specifications.
 
 ### Definition relationships and completeness
 
@@ -220,7 +220,7 @@ A generator recipe pins source, execution API/version, input-field references an
 
 Generated objects have stable generation keys mapped to persistent object IDs. Manual edits to generated objects are recorded as explicit property overrides; hand-authored objects remain distinct. Regeneration computes a new baseline, reapplies valid overrides and displays both. If a generated object disappears, changes type or invalidates an override, applying is blocked until the user discards the override, retains/detaches the object as manual geometry, or supplies an explicit correspondence. No silent overwrite or name-based electrical remapping is permitted. Reset override is a visible undoable action.
 
-Generators may add/remove pads only with explicit stable-terminal associations and an impact preview. Existing routing obligations are preserved or listed as affected. The current `part.generate_pads` proof only rearranges existing pads and does not satisfy recipe persistence, overrides or this add/remove contract.
+Generators may add/remove pads only with explicit stable-terminal associations and an impact preview. Existing routing obligations are preserved or listed as affected. The current `library.generate_pads` proof only rearranges existing pads and does not satisfy recipe persistence, overrides or this add/remove contract.
 
 Models belong to packages, aligned through explicit footprint-datum and model transforms. Native models retain parameter interfaces and dependencies; supported supplier geometry is imported through Solidcraft with unsupported features reported. Changing footprint land dimensions does not enlarge the package body or replace its model. Repeated instances share model definitions with independent placements. All seven scenarios exercise top/bottom alignment, snapshots and native reopen. Detailed appearance editing and photorealistic rendering remain a separately scoped enhancement; generic envelope quality is always labeled.
 
@@ -240,7 +240,7 @@ The following names are **proposed command families**, not claims that endpoints
 | `model.attach`, `reference.attach` | Stage validated model/reference data through the engine. Import/read/download and opening external URLs are explicit external effects outside document undo; programmatic requests never open dialogs. |
 | `component.inspect`, `component.check` | Return exact references, effective properties, unit/function state and structured findings with source IDs. Read-only calls do not create undo entries. |
 
-Rhai values do not escape into persistence or transport schemas. Keep quantities, library definitions, symbol/footprint geometry, bindings, instance configuration and update planning in cohesive core modules; retain filesystem effects in I/O and native modeling in the Solidcraft adapter. No new crate is required just to mirror every noun. Final per-command schemas accompany implementation of each family; the existing `part.*` commands remain the currently implemented interface until deliberately replaced.
+Rhai values do not escape into persistence or transport schemas. Keep quantities, library definitions, symbol/footprint geometry, bindings, instance configuration and update planning in cohesive core modules; retain filesystem effects in I/O and native modeling in the Solidcraft adapter. No new crate is required just to mirror every noun. Final per-command schemas accompany implementation of each family; the `part.*` commands have been replaced by `library.*`, `component.*`, `instance.*` and `symbol.*` (see [component model](component-model.md#delivered-by-slice-1)); the other families above remain proposed.
 
 ## Component editor acceptance scenarios
 
@@ -333,7 +333,7 @@ All seven full scenarios are pending. The Rhai proof below supplies evidence onl
 
 ## Rhai integration proof
 
-The initial [scripting module](../crates/editor-core/src/scripting/mod.rs) embeds Rhai 1.27.0 behind ordinary Rust/serde request and result types. The [quantity arithmetic](../crates/editor-core/src/scripting/quantity.rs) is independent of Rhai. This proves the execution seam before implementing independently revisioned field schemas, footprint choices or a new component-authoring UI. New Component remains the intended entry point; the existing template-based editor has not yet been replaced.
+The initial [scripting module](../crates/editor-core/src/scripting/mod.rs) embeds Rhai 1.27.0 behind ordinary Rust/serde request and result types. The [quantity arithmetic](../crates/editor-core/src/scripting/quantity.rs) is independent of Rhai. This proves the execution seam before implementing independently revisioned field schemas, footprint choices or a new component-authoring UI. New Component remains the intended entry point; the desktop editor still starts from templates, now as a working set of five drafts.
 
 `Script` contains `api_version: 1`, source, explicit unit definitions and named inputs. A unit definition has a symbol, seven SI dimension exponents (length, mass, time, current, temperature, amount, luminous intensity) and a positive scale to SI base units. Quantity inputs contain a numeric value and unit symbol; integer inputs support generator counts. No resistor or other component type is known to the interpreter. Unit symbols such as `kΩ` are explicitly defined data, not a built-in catalog.
 
@@ -341,7 +341,7 @@ The initial [scripting module](../crates/editor-core/src/scripting/mod.rs) embed
 
 ### Pad generation contract
 
-`part.generate_pads { script: Script }` is a typed operation inside `project.apply`, using its expected revision and generated JSON schema. It requires a structurally valid current component draft. The script receives a `footprint` builder with:
+`library.generate_pads { draft, script: Script }` is a typed operation inside `project.apply`, using its expected revision and generated JSON schema. It requires a footprint draft whose existing pads have unique nonzero IDs. The script receives a `footprint` builder with:
 
 ```text
 footprint.pad(existing_pad_id, x, y, width, height)
@@ -356,7 +356,7 @@ for i in 0..4 {
 }
 ```
 
-The proof emits every existing pad exactly once and preserves each pad's ID, package-terminal association and vector order. It does not allocate terminals or pads. Missing, duplicate or unknown IDs fail. Output changes only the authoring draft; published snapshots and placed instances remain unchanged. A successful changed result is one engine undo step. A failed or stale request leaves document, revision and undo/redo history unchanged, even after successful builder calls. `generate_pads` also exposes a pure candidate-producing function for future preview consumers.
+The proof emits every existing pad exactly once and preserves each pad's ID, package-terminal association and vector order. It does not allocate terminals or pads. Missing, duplicate or unknown IDs fail. Output changes only that footprint draft; published snapshots and placed instances remain unchanged. A successful changed result is one engine undo step. A failed or stale request leaves document, revision and undo/redo history unchanged, even after successful builder calls. `generate_pads` also exposes a pure candidate-producing function for future preview consumers.
 
 ### Resource and persistence limits
 

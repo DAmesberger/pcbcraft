@@ -1,10 +1,11 @@
 //! The 3D model pipeline: builds native Solidcraft models off the UI thread,
 //! keeps only results for the current input, and maps picks back to
 //! electronics objects. Selection and highlight recolour cached meshes; only a
-//! changed project or component preview rebuilds geometry.
+//! changed project or package preview rebuilds geometry.
 use crate::palette;
 use crate::viewport::Viewport;
-use pcbcraft_core::{Id, Part, Project};
+use pcbcraft_core::library::PackageDefinition;
+use pcbcraft_core::{Id, Project};
 use pcbcraft_solidcraft::{project::Source, scene::Geometry};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -14,31 +15,32 @@ use std::sync::mpsc::{self, Receiver, Sender};
 #[derive(Clone, Debug)]
 pub enum ModelKey {
     Project(Arc<Project>),
-    Part(Vec<u8>),
+    /// A package envelope preview, keyed by its content.
+    Package(Vec<u8>),
 }
 
 impl PartialEq for ModelKey {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Project(a), Self::Project(b)) => Arc::ptr_eq(a, b),
-            (Self::Part(a), Self::Part(b)) => a == b,
+            (Self::Package(a), Self::Package(b)) => a == b,
             _ => false,
         }
     }
 }
 
 impl ModelKey {
-    pub fn part(part: &Part) -> Option<Self> {
-        serde_json::to_vec(part).ok().map(Self::Part)
+    pub fn package(package: &PackageDefinition) -> Option<Self> {
+        serde_json::to_vec(package).ok().map(Self::Package)
     }
-    fn is_part(&self) -> bool {
-        matches!(self, Self::Part(_))
+    fn is_package(&self) -> bool {
+        matches!(self, Self::Package(_))
     }
 }
 
 enum Job {
     Project(u64, Arc<Project>),
-    Part(u64, Box<Part>),
+    Package(u64, Box<PackageDefinition>),
 }
 
 struct Built {
@@ -66,8 +68,8 @@ impl Worker {
                     Job::Project(ticket, project) => {
                         (ticket, pcbcraft_solidcraft::project::build(&project))
                     }
-                    Job::Part(ticket, part) => {
-                        (ticket, pcbcraft_solidcraft::project::preview(&part))
+                    Job::Package(ticket, package) => {
+                        (ticket, pcbcraft_solidcraft::project::preview(&package))
                     }
                 };
                 let result = result
@@ -123,7 +125,7 @@ impl SceneController {
     }
 
     /// Ask for a model of `key` unless it is already requested.
-    pub fn request(&mut self, key: ModelKey, part: Option<&Part>) {
+    pub fn request(&mut self, key: ModelKey, package: Option<&PackageDefinition>) {
         if self.key.as_ref() == Some(&key) {
             return;
         }
@@ -131,10 +133,12 @@ impl SceneController {
             self.status = Status::Failed("model request identity exhausted".into());
             return;
         };
-        let job = match (&key, part) {
+        let job = match (&key, package) {
             (ModelKey::Project(project), _) => Job::Project(ticket, Arc::clone(project)),
-            (ModelKey::Part(_), Some(part)) => Job::Part(ticket, Box::new(part.clone())),
-            (ModelKey::Part(_), None) => return,
+            (ModelKey::Package(_), Some(package)) => {
+                Job::Package(ticket, Box::new(package.clone()))
+            }
+            (ModelKey::Package(_), None) => return,
         };
         match self.worker.sender.send(job) {
             Ok(()) => {
@@ -154,10 +158,10 @@ impl SceneController {
             }
             match built.result {
                 Ok((geometry, sources)) => {
-                    let part = self.key.as_ref().is_some_and(ModelKey::is_part);
+                    let part = self.key.as_ref().is_some_and(ModelKey::is_package);
                     let colors = model_colors(&geometry, &sources, part);
-                    let kind_changed = self.shown.as_ref().map(ModelKey::is_part)
-                        != self.key.as_ref().map(ModelKey::is_part);
+                    let kind_changed = self.shown.as_ref().map(ModelKey::is_package)
+                        != self.key.as_ref().map(ModelKey::is_package);
                     self.viewport.set_geometry(geometry, colors);
                     if kind_changed {
                         self.viewport.fit();
@@ -216,23 +220,46 @@ fn model_colors(geometry: &[Geometry], sources: &[Source], part: bool) -> Vec<[u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::{Engine, Operation, layout::LayoutCommand};
+    use pcbcraft_core::library::{Definition, DraftEdit};
+    use pcbcraft_core::{DefinitionKind, Engine, LibraryCommand, Operation, layout::LayoutCommand};
+
+    fn demo_package() -> Result<PackageDefinition, Box<dyn std::error::Error>> {
+        Ok(Engine::demo()?.project().library.packages[0]
+            .definition
+            .clone())
+    }
 
     #[test]
     fn project_keys_follow_identity_so_draft_edits_keep_the_board_model()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = Engine::demo()?;
         let key = ModelKey::Project(Arc::clone(engine.project_arc()));
-        let draft = pcbcraft_core::parts::passive_template("C");
+        let mut draft = engine
+            .drafts()
+            .items
+            .iter()
+            .find(|d| d.definition.kind() == DefinitionKind::Package)
+            .cloned()
+            .ok_or("demo package draft")?;
+        if let Definition::Package(package) = &mut draft.definition {
+            package.body_size[0] += 1.0;
+        }
         engine.apply(
             engine.revision(),
-            Operation::Part(pcbcraft_core::parts::PartCommand::SetDraft { draft }),
+            Operation::Library(LibraryCommand::Edit {
+                edits: vec![DraftEdit {
+                    id: draft.id,
+                    meta: draft.meta,
+                    definition: draft.definition,
+                }],
+            }),
         )?;
         assert_eq!(key, ModelKey::Project(Arc::clone(engine.project_arc())));
+        let instance = engine.project().instances[0].id;
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::Move {
-                instance: 2,
+                instance,
                 position: [12.0, 12.0],
                 rotation_deg: 0.0,
                 layer: pcbcraft_core::Layer::Top,
@@ -245,11 +272,12 @@ mod tests {
     }
 
     #[test]
-    fn edited_component_previews_get_new_keys() {
-        let mut part = pcbcraft_core::parts::passive_template("R");
-        let key = ModelKey::part(&part);
-        part.package.body_size[0] += 1.0;
-        assert_ne!(key, ModelKey::part(&part));
+    fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let mut package = demo_package()?;
+        let key = ModelKey::package(&package);
+        package.body_size[0] += 1.0;
+        assert_ne!(key, ModelKey::package(&package));
+        Ok(())
     }
 
     #[test]
@@ -259,10 +287,9 @@ mod tests {
         let mut broken = (*project).clone();
         broken.board_size[0] = 0.0;
         worker.sender.send(Job::Project(1, Arc::new(broken)))?;
-        worker.sender.send(Job::Part(
-            2,
-            Box::new(pcbcraft_core::parts::passive_template("P")),
-        ))?;
+        worker
+            .sender
+            .send(Job::Package(2, Box::new(demo_package()?)))?;
         let mut last = None;
         while let Ok(built) = worker
             .receiver

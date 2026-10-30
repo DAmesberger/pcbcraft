@@ -6,14 +6,14 @@ use serde_json::{Value, json};
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-/// JSON-lines requests carry at most one component draft.
+/// Large enough for one batch of draft definition edits.
 const MAX_REQUEST: usize = 4 * 1024 * 1024;
 
 const USAGE: &str = "usage: pcbcraft-cli <command>
   commands                         print request, document and diagnostic schemas
   stdio [FILE.pcbcraft]            JSON-lines requests on stdin, replies on stdout
   mcp [FILE.pcbcraft]              Model Context Protocol server on stdio
-  demo NEW_FILE.pcbcraft           write the two-resistor demo project
+  demo NEW_FILE.pcbcraft           write the two-component demo project
   export FILE.pcbcraft NEW_FILE.solidcraft
                                    export a project as a native Solidcraft model";
 

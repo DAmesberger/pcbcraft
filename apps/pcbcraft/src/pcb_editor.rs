@@ -3,7 +3,7 @@
 //! drag_snap.rs. The root owns the native Solidcraft viewport and its camera.
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Id, Layer, Operation, Placement, Point, Project,
+    Engine, Id, Layer, Operation, Placement, Point, Project, instances,
     layout::{self, LayoutCommand, RouteRequest, WorldPad},
     schematic,
     updates::Change,
@@ -269,7 +269,7 @@ impl PcbEditor {
         {
             let reference = project
                 .instance(placement.instance)
-                .map(|i| i.reference.as_str())
+                .map(|i| i.designator.as_str())
                 .unwrap_or("Component");
             ui.separator();
             ui.label(egui::RichText::new(reference).font(fonts::semibold(t.font_panel)));
@@ -387,7 +387,7 @@ impl PcbEditor {
             for placement in &project.placements {
                 let label = project
                     .instance(placement.instance)
-                    .map(|i| i.reference.as_str())
+                    .map(|i| i.designator.as_str())
                     .unwrap_or("Component");
                 if ui_kit::button(
                     ui,
@@ -615,7 +615,7 @@ impl PcbEditor {
                 }
                 let reference = project
                     .instance(shown.instance)
-                    .map(|i| i.reference.as_str())
+                    .map(|i| i.designator.as_str())
                     .unwrap_or("?");
                 painter.text(
                     screen(shown.position) + egui::vec2(0.0, -12.0),
@@ -734,9 +734,13 @@ fn layer_row(ui: &mut Ui, layer: &mut Layer) {
 }
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
     let instance = project.instance(placement.instance)?;
-    let part = project.part(instance.part)?;
-    let [x, y, _] = part.package.body_size;
-    let [dx, dy, _] = part.package.model_offset;
+    let package = &instances::resolve(&project.library, instance)
+        .ok()?
+        .physical?
+        .package
+        .definition;
+    let [x, y, _] = package.body_size;
+    let [dx, dy, _] = package.model_offset;
     Some(
         [
             [-x / 2.0 + dx, -y / 2.0 + dy],
@@ -769,13 +773,23 @@ fn pick_instance(project: &Project, pads: &[WorldPad], at: Point) -> Option<Id> 
 mod tests {
     use super::*;
 
+    fn ids(engine: &Engine) -> (Id, Id) {
+        let id = |d| {
+            engine
+                .project()
+                .instance_by_designator(d)
+                .map_or(0, |i| i.id)
+        };
+        (id("R1"), id("R2"))
+    }
+
     fn routed_board() -> pcbcraft_core::Result<Engine> {
         let mut engine = Engine::demo()?;
         let net = engine
             .project()
             .net_of(pcbcraft_core::Endpoint {
-                instance: 2,
-                terminal: 2,
+                instance: ids(&engine).0,
+                terminal: pcbcraft_core::TerminalId(2),
             })
             .map(|n| n.id)
             .ok_or_else(|| pcbcraft_core::Error::NotFound("demo net".into()))?;
@@ -798,6 +812,7 @@ mod tests {
     fn drag_reconnects_airwires_live_and_cancel_preserves_document_and_history()
     -> pcbcraft_core::Result<()> {
         let mut engine = routed_board()?;
+        let (_, r2) = ids(&engine);
         let original = engine.project().clone();
         let revision = engine.revision();
         let mut editor = PcbEditor::default();
@@ -807,7 +822,7 @@ mod tests {
             .project()
             .placements
             .iter()
-            .find(|p| p.instance == 3)
+            .find(|p| p.instance == r2)
             .cloned()
             .ok_or_else(|| pcbcraft_core::Error::Invalid("fixture placement missing".into()))?;
         editor.drag = Some((placement.clone(), placement.position));
@@ -817,7 +832,7 @@ mod tests {
         assert_eq!(first.len(), 1);
         let moved = [&first[0].0, &first[0].1]
             .into_iter()
-            .find(|pad| pad.instance == 3)
+            .find(|pad| pad.instance == r2)
             .ok_or_else(|| pcbcraft_core::Error::Invalid("drag endpoint missing".into()))?;
         assert!((moved.position[0] - 18.8).abs() < 1e-9);
         assert_eq!(moved.position[1], 13.0);
@@ -835,7 +850,7 @@ mod tests {
         engine.apply(
             revision,
             Operation::Layout(LayoutCommand::Move {
-                instance: 3,
+                instance: r2,
                 position: [22.0, 15.0],
                 rotation_deg: placement.rotation_deg,
                 layer: placement.layer,
@@ -928,14 +943,20 @@ mod tests {
     fn sync_preview_cancels_cleanly_and_requires_recompute_after_document_edit()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = Engine::demo()?;
+        let first = engine.project().instances[0].clone();
         engine.apply(
             engine.revision(),
-            Operation::Schematic(schematic::SchematicCommand::Place {
-                part: pcbcraft_core::PartRef { id: 1, revision: 1 },
-                reference: "R3".into(),
-                value: "1k".into(),
-                position: [30.0, 0.0],
-            }),
+            Operation::Instance(pcbcraft_core::InstanceCommand::Place(
+                pcbcraft_core::instances::NewInstance {
+                    component: first.component,
+                    designator: "R3".into(),
+                    value: "1k".into(),
+                    representation: first.representation,
+                    unit: pcbcraft_core::UnitId(1),
+                    position: [30.0, 0.0],
+                    physical: first.physical,
+                },
+            )),
         )?;
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
@@ -951,9 +972,8 @@ mod tests {
         editor.update.begin(&engine, Change::SyncPcb {});
         engine.apply(
             engine.revision(),
-            Operation::Schematic(schematic::SchematicCommand::Edit {
-                instance: 2,
-                reference: "R1".into(),
+            Operation::Instance(pcbcraft_core::InstanceCommand::SetValue {
+                instance: first.id,
                 value: "22k".into(),
             }),
         )?;

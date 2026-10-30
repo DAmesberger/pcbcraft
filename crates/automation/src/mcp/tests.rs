@@ -39,6 +39,7 @@ fn initialize_negotiates_versions_and_lists_generated_tools() {
         .collect();
     assert!(names.contains(&"project_apply"));
     assert!(names.contains(&"project_export_native"));
+    assert!(names.contains(&"project_query"));
     assert_eq!(names.len(), Request::catalog().len());
 }
 
@@ -93,5 +94,23 @@ fn serve_bounds_lines_and_survives_bad_input() -> std::io::Result<()> {
     assert_eq!(replies[1]["error"]["code"], INVALID_REQUEST);
     assert_eq!(replies[2]["error"]["code"], PARSE_ERROR);
     assert_eq!(replies[3]["id"], 7);
+    Ok(())
+}
+
+#[test]
+fn query_tools_return_the_engine_report() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::demo()?;
+    let instance = engine.project().instances[0].id;
+    let direct =
+        serde_json::to_value(engine.query(pcbcraft_core::Query::InspectInstance { instance })?)?;
+    let mut server = Server::new(Session::new(engine));
+    let reply = call(
+        &mut server,
+        1,
+        "tools/call",
+        json!({"name": "project_query", "arguments": {"query": "component.inspect", "params": {"instance": instance}}}),
+    );
+    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    assert_eq!(reply["result"]["structuredContent"], direct);
     Ok(())
 }

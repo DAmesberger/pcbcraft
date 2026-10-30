@@ -4,7 +4,10 @@
 //!
 //! Pcbcraft is pre-release: only the current format version is accepted and
 //! there are no migrations. Any other version is refused, never guessed at.
-use crate::{Document, Error, Part, Project, Result, parts::validate_draft};
+use crate::diagnostics::{Error, Result};
+use crate::library::Drafts;
+use crate::model::{Document, Project};
+use crate::validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -19,7 +22,8 @@ pub const EXTENSION: &str = "pcbcraft";
 pub struct EditorFile {
     pub version: u32,
     pub project: Project,
-    pub authoring_draft: Option<Part>,
+    /// Unfinished definitions, saved and recovered exactly as written.
+    pub drafts: Drafts,
 }
 
 impl EditorFile {
@@ -27,13 +31,13 @@ impl EditorFile {
         Self {
             version: FILE_VERSION,
             project: (*document.project).clone(),
-            authoring_draft: document.draft.as_deref().cloned(),
+            drafts: (*document.drafts).clone(),
         }
     }
     pub fn into_document(self) -> Document {
         Document {
             project: Arc::new(self.project),
-            draft: self.authoring_draft.map(Arc::new),
+            drafts: Arc::new(self.drafts),
         }
     }
     pub fn validate(&self) -> Result<()> {
@@ -43,11 +47,7 @@ impl EditorFile {
                 self.version
             )));
         }
-        crate::validate(&self.project)?;
-        if let Some(draft) = &self.authoring_draft {
-            validate_draft(draft)?;
-        }
-        Ok(())
+        validate::document(&self.project, &self.drafts)
     }
 }
 
@@ -98,6 +98,3 @@ pub fn encode_bounded(value: &impl Serialize) -> Result<Vec<u8>> {
         .map_err(|_| Error::Limit("editor file exceeds 16 MiB".into()))?;
     Ok(buffer.0)
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,6 +1,6 @@
 //! Typed command failures and design-check findings. Codes are stable strings
 //! for automation; messages are for people and may change wording.
-use crate::{Endpoint, Id};
+use crate::ids::{DefinitionId, Endpoint, Id, PadId, UnitId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -76,28 +76,89 @@ pub struct Diagnostic {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ObjectRef {
-    Instance { id: Id },
-    Terminal { endpoint: Endpoint },
-    Net { id: Id },
-    Track { id: Id },
-    Pad { instance: Id, pad: Id },
+    Instance {
+        id: Id,
+    },
+    Terminal {
+        endpoint: Endpoint,
+    },
+    Net {
+        id: Id,
+    },
+    Track {
+        id: Id,
+    },
+    Pad {
+        instance: Id,
+        pad: PadId,
+    },
+    /// A definition lineage (draft or published revision).
+    Definition {
+        id: DefinitionId,
+    },
+    /// A local object of a definition (terminal, unit, package terminal or
+    /// pad), by its local ID within that lineage.
+    LibraryObject {
+        definition: DefinitionId,
+        local: u32,
+    },
+    /// A symbol occurrence on the sheet.
+    Occurrence {
+        id: Id,
+    },
+    /// One unit of one instance, placed or not.
+    Unit {
+        instance: Id,
+        unit: UnitId,
+    },
 }
 
-/// One electrical-rule or board-check result.
+/// A derived completeness state a finding can block. Nothing stores these
+/// states; they hold when no current finding blocks them.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Stage {
+    /// A definition revision may be published.
+    Publish,
+    /// An instance can be placed on the board.
+    BoardPlaceable,
+    /// Every unit and terminal of an instance has an explicit decision.
+    ElectricallyResolved,
+}
+
+/// One check result: an electrical rule, a board check or a completeness
+/// finding. Circuit and board findings never block a component stage.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Finding {
     /// Stable machine-readable rule code, e.g. `board.clearance`.
     pub code: String,
     pub message: String,
     pub objects: Vec<ObjectRef>,
+    /// The stage this finding prevents, if any. Advisory findings have none.
+    #[serde(default)]
+    pub blocks: Option<Stage>,
 }
 
 impl Finding {
+    /// An advisory finding that blocks no stage.
     pub fn new(code: &str, message: String, objects: Vec<ObjectRef>) -> Self {
         Self {
             code: code.into(),
             message,
             objects,
+            blocks: None,
         }
+    }
+    /// A finding that prevents `stage` while it exists.
+    pub fn blocking(code: &str, message: String, objects: Vec<ObjectRef>, stage: Stage) -> Self {
+        Self {
+            blocks: Some(stage),
+            ..Self::new(code, message, objects)
+        }
+    }
+    pub fn blocks_stage(&self, stage: Stage) -> bool {
+        self.blocks == Some(stage)
     }
 }

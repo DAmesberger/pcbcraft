@@ -6,7 +6,10 @@
 //! the routed (or else oldest) ID; split-off groups and new terminals receive new
 //! IDs. Tracks are never retagged here: callers decide whether a change to
 //! routed nets is acceptable.
-use crate::{Endpoint, Error, Id, Net, Project, Result};
+use crate::diagnostics::{Error, Result};
+use crate::ids::{Endpoint, Id};
+use crate::library::PinKind;
+use crate::model::{Net, Project};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_NETS: usize = 262_144;
@@ -23,12 +26,13 @@ pub struct NetChanges {
     pub removed: Vec<Id>,
 }
 
-/// All terminals of placed schematic instances, in sorted order.
+/// Every terminal of every instance, whatever its unit's state, in sorted
+/// order.
 pub fn terminals(project: &Project) -> BTreeSet<Endpoint> {
     let mut result = BTreeSet::new();
     for instance in &project.instances {
-        if let Some(part) = project.part(instance.part) {
-            for terminal in &part.component.terminals {
+        if let Some(component) = project.library.component(instance.component) {
+            for terminal in &component.definition.terminals {
                 result.insert(Endpoint {
                     instance: instance.id,
                     terminal: terminal.id,
@@ -37,6 +41,25 @@ pub fn terminals(project: &Project) -> BTreeSet<Endpoint> {
         }
     }
     result
+}
+
+/// A terminal is accounted for when it is connected (its net has at least two
+/// terminals), marked project no-connect, or device-declared NC, which needs
+/// no decision.
+pub fn accounted_for(project: &Project, terminal: Endpoint) -> bool {
+    let Some(instance) = project.instance(terminal.instance) else {
+        return false;
+    };
+    let device_nc = project
+        .library
+        .component(instance.component)
+        .and_then(|c| c.definition.terminal(terminal.terminal))
+        .is_some_and(|t| t.kind == PinKind::NotConnected);
+    device_nc
+        || instance.no_connect.contains(&terminal.terminal)
+        || project
+            .net_of(terminal)
+            .is_some_and(|net| net.terminals.len() >= 2)
 }
 
 /// Wire-connected terminal groups, ordered by their smallest terminal.

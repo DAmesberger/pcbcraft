@@ -25,12 +25,12 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 - [x] Explicit schematic-to-board sync, placement, manual routing and physical-island checks.
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.
 - [x] Atomic `.pcbcraft` save, offline reopen, shared command engine and undo/redo.
-- [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned component drafts; file dialogs, background saves and crash recovery.
+- [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned definition drafts; file dialogs, background saves and crash recovery.
 - [ ] Complete first-release editors, library updates and manufacturing workflow.
 
 ## Component-editor acceptance
 
-The [accepted authoring contract and scenarios](docs/part-library-design.md#accepted-authoring-contract) define target behavior, not current capability. New Component is the entry point; component categories and templates are optional. Basic multi-unit symbols and structured multi-function IOs with instance-level selection belong to the first complete editor. Establish unit/function identities against CE-04–CE-06 before implementing the CE-01 UI, then deliver the scenarios in order within the component-editor phase. The [component model](docs/component-model.md) is the implementation contract for the definition, typed-field and terminal-function slices that precede CE-01.
+The [accepted authoring contract and scenarios](docs/part-library-design.md#accepted-authoring-contract) define target behavior, not current capability. New Component is the entry point; component categories and templates are optional. Basic multi-unit symbols and structured multi-function IOs with instance-level selection belong to the first complete editor. Establish unit/function identities against CE-04–CE-06 before implementing the CE-01 UI, then deliver the scenarios in order within the component-editor phase. The [component model](docs/component-model.md) is the implementation contract for the definition, typed-field and terminal-function slices that precede CE-01. Slice 1 (revisioned definitions, drafts, exact references and multi-unit symbol occurrences) is implemented, and the headless CE-04/CE-05 steps listed in the [editor evidence](docs/editor-evidence.md#verification) pass through the engine; slices 2 and 3 are not implemented. The scenario boxes below stay open until their UI, automation and native-model evidence exists.
 
 - [ ] CE-01: generic resistor, reusable typed fields, alternate symbols and independently revisioned physical choices.
 - [ ] CE-02: non-polarized/polarized capacitors, tolerance semantics, polarity and manufacturer requirements.

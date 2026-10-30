@@ -3,18 +3,31 @@
 //! This crate is pure and wasm-compatible: no files, threads, windows or
 //! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
+pub mod commands;
+pub mod completeness;
 pub mod diagnostics;
+pub mod erc;
 pub mod format;
+pub mod geometry;
+pub mod ids;
+pub mod instances;
 pub mod layout;
+pub mod library;
 pub mod model;
 pub mod nets;
-pub mod parts;
 pub mod schematic;
 pub mod scripting;
 #[cfg(test)]
 mod tests;
 pub mod updates;
-pub use diagnostics::{Diagnostic, Error, Finding, ObjectRef, Result};
+pub mod validate;
+pub use commands::{InstanceCommand, LibraryCommand, Outcome};
+use completeness::{CheckTarget, DefinitionReport, InstanceReport};
+pub use diagnostics::{Diagnostic, Error, Finding, ObjectRef, Result, Stage};
+pub use geometry::point_valid;
+pub use ids::*;
+use library::samples::{self, SampleRefs};
+use library::{Definition, DefinitionMeta, Drafts};
 pub use model::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,10 +39,35 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "editor", content = "operation", deny_unknown_fields)]
 pub enum Operation {
-    Part(parts::PartCommand),
+    Library(LibraryCommand),
+    Instance(InstanceCommand),
     Schematic(schematic::SchematicCommand),
     Layout(layout::LayoutCommand),
     Update(Box<updates::ApplyUpdate>),
+}
+
+/// Every read-only report. Queries never change the document, its revision
+/// or history.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "query", content = "params", deny_unknown_fields)]
+pub enum Query {
+    /// Exact pins, resolved choices, unit states and completeness.
+    #[serde(rename = "component.inspect")]
+    InspectInstance { instance: Id },
+    /// Publish findings of exactly one draft or published revision.
+    #[serde(rename = "component.check")]
+    CheckDefinition { target: CheckTarget },
+    /// `component.check` of every draft, in draft order, staged once.
+    #[serde(rename = "component.check_drafts")]
+    CheckDrafts {},
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "report", content = "result", rename_all = "snake_case")]
+pub enum QueryResult {
+    Instance(InstanceReport),
+    Definition(DefinitionReport),
+    Drafts(Vec<DefinitionReport>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -57,37 +95,64 @@ impl Engine {
         Ok(engine)
     }
 
-    /// Two connected resistors, placed on the board, with a resistor draft.
+    /// Two connected two-terminal components, placed on the board. The
+    /// sample library is built through the public commands and its drafts
+    /// stay open for editing.
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
+        let refs = engine.reserve_lineages()?;
         engine.apply(
-            0,
-            Operation::Part(parts::PartCommand::Publish {
-                draft: Some(parts::passive_template("Resistor")),
+            engine.revision,
+            Operation::Library(LibraryCommand::Edit {
+                edits: samples::two_terminal("Resistor", refs),
             }),
         )?;
-        let part = PartRef { id: 1, revision: 1 };
-        for (reference, position) in [("R1", [-12.0, 0.0]), ("R2", [12.0, 0.0])] {
-            engine.apply(
+        engine.apply(
+            engine.revision,
+            Operation::Library(LibraryCommand::Publish {
+                drafts: vec![
+                    refs.component,
+                    refs.symbol.id,
+                    refs.package.id,
+                    refs.footprint.id,
+                    refs.binding.id,
+                ],
+            }),
+        )?;
+        let mut placed = Vec::new();
+        for (designator, position) in [("R1", [-12.0, 0.0]), ("R2", [12.0, 0.0])] {
+            let outcome = engine.apply(
                 engine.revision,
-                Operation::Schematic(schematic::SchematicCommand::Place {
-                    part,
-                    reference: reference.into(),
+                Operation::Instance(InstanceCommand::Place(instances::NewInstance {
+                    component: ComponentRef::new(refs.component, Revision::FIRST),
+                    designator: designator.into(),
                     value: "10k".into(),
+                    representation: refs.symbol.id,
+                    unit: UnitId(1),
                     position,
-                }),
+                    physical: Some(PhysicalChoice {
+                        binding: refs.binding.id,
+                        footprint: refs.footprint.id,
+                    }),
+                })),
             )?;
+            if let Outcome::InstancePlaced { instance, .. } = outcome {
+                placed.push(instance);
+            }
         }
+        let [first, second] = placed[..] else {
+            return Err(Error::Invalid("demo placement failed".into()));
+        };
         engine.apply(
             engine.revision,
             Operation::Schematic(schematic::SchematicCommand::Connect {
                 from: Endpoint {
-                    instance: 2,
-                    terminal: 2,
+                    instance: first,
+                    terminal: TerminalId(2),
                 },
                 to: Endpoint {
-                    instance: 3,
-                    terminal: 1,
+                    instance: second,
+                    terminal: TerminalId(1),
                 },
             }),
         )?;
@@ -100,6 +165,40 @@ impl Engine {
         Ok(engine)
     }
 
+    /// Reserve one empty draft lineage of each kind and return the pending
+    /// first revisions they would pin of each other.
+    fn reserve_lineages(&mut self) -> Result<SampleRefs> {
+        let mut ids = Vec::new();
+        for kind in [
+            DefinitionKind::Component,
+            DefinitionKind::Symbol,
+            DefinitionKind::Package,
+            DefinitionKind::Footprint,
+            DefinitionKind::Binding,
+        ] {
+            let outcome = self.apply(
+                self.revision,
+                Operation::Library(LibraryCommand::NewDraft {
+                    meta: DefinitionMeta::default(),
+                    definition: Definition::empty(kind),
+                }),
+            )?;
+            if let Outcome::DraftCreated { id } = outcome {
+                ids.push(id);
+            }
+        }
+        let [component, symbol, package, footprint, binding] = ids[..] else {
+            return Err(Error::Invalid("draft reservation failed".into()));
+        };
+        Ok(SampleRefs {
+            component,
+            symbol: SymbolRef::new(symbol, Revision::FIRST),
+            package: PackageRef::new(package, Revision::FIRST),
+            footprint: FootprintRef::new(footprint, Revision::FIRST),
+            binding: BindingRef::new(binding, Revision::FIRST),
+        })
+    }
+
     pub fn document(&self) -> &Document {
         &self.document
     }
@@ -110,8 +209,8 @@ impl Engine {
     pub fn project_arc(&self) -> &Arc<Project> {
         &self.document.project
     }
-    pub fn draft(&self) -> Option<&Part> {
-        self.document.draft.as_deref()
+    pub fn drafts(&self) -> &Drafts {
+        &self.document.drafts
     }
     pub fn to_file(&self) -> format::EditorFile {
         format::EditorFile::from_document(&self.document)
@@ -138,7 +237,9 @@ impl Engine {
         Ok(())
     }
 
-    pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<()> {
+    /// Apply one operation at an expected revision as one undo step. A
+    /// failure leaves document, revision and history unchanged.
+    pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Outcome> {
         if expected_revision != self.revision {
             return Err(Error::Stale {
                 expected: expected_revision,
@@ -146,15 +247,25 @@ impl Engine {
             });
         }
         let mut candidate = self.document.clone();
-        match operation {
-            Operation::Part(command) => parts::apply(&mut candidate, command)?,
-            Operation::Schematic(command) => schematic::apply_staged(
-                &self.document.project,
-                Arc::make_mut(&mut candidate.project),
-                command,
-            )?,
+        let reviewed = matches!(operation, Operation::Update(_));
+        let outcome = match operation {
+            Operation::Library(command) => commands::apply_library(&mut candidate, command)?,
+            Operation::Instance(command) => {
+                commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+            }
+            Operation::Schematic(command) => {
+                match schematic::apply(
+                    Arc::make_mut(&mut candidate.project),
+                    command,
+                    EditPolicy::Direct,
+                )? {
+                    Some(occurrence) => Outcome::UnitPlaced { occurrence },
+                    None => Outcome::None,
+                }
+            }
             Operation::Layout(command) => {
-                layout::apply_staged(Arc::make_mut(&mut candidate.project), command)?
+                layout::apply_staged(Arc::make_mut(&mut candidate.project), command)?;
+                Outcome::None
             }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
@@ -162,15 +273,43 @@ impl Engine {
                     self.revision,
                     *update,
                 )?);
+                Outcome::None
             }
+        };
+        if !Arc::ptr_eq(&candidate.project, &self.document.project) {
+            let project = Arc::make_mut(&mut candidate.project);
+            nets::reconcile(project)?;
+            if !reviewed {
+                schematic::protect_routed_nets(&self.document.project, project)?;
+            }
+            validate::edited_document(
+                &self.document.project,
+                &candidate.project,
+                &candidate.drafts,
+            )?;
+        } else if candidate.drafts == self.document.drafts {
+            return Ok(outcome);
+        } else {
+            validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
-        let project_changed = !Arc::ptr_eq(&candidate.project, &self.document.project);
-        if project_changed {
-            validate(&candidate.project)?;
-        } else if candidate.draft == self.document.draft {
-            return Ok(());
+        self.commit(candidate)?;
+        Ok(outcome)
+    }
+
+    /// Answer a read-only query.
+    pub fn query(&self, query: Query) -> Result<QueryResult> {
+        match query {
+            Query::InspectInstance { instance } => Ok(QueryResult::Instance(
+                completeness::instance(&self.document.project, instance)?,
+            )),
+            Query::CheckDefinition { target } => Ok(QueryResult::Definition(
+                completeness::definition(&self.document.project, &self.document.drafts, target)?,
+            )),
+            Query::CheckDrafts {} => Ok(QueryResult::Drafts(completeness::drafts(
+                &self.document.project,
+                &self.document.drafts,
+            )?)),
         }
-        self.commit(candidate)
     }
 
     pub fn preview_update(&self, change: updates::Change) -> updates::UpdatePlan {
@@ -191,6 +330,7 @@ impl Engine {
                 remove_conflicting_tracks,
             })),
         )
+        .map(|_| ())
     }
 
     pub fn undo(&mut self) -> Result<()> {
@@ -236,39 +376,13 @@ impl Engine {
     }
 }
 
-pub fn validate(p: &Project) -> Result<()> {
-    if p.name.trim().is_empty() || p.name.len() > 256 {
-        return Err(Error::Invalid("project name is empty or too long".into()));
-    }
-    let mut ids = std::collections::BTreeSet::new();
-    for id in p
-        .parts
-        .iter()
-        .map(|p| p.id)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .chain(p.instances.iter().map(|i| i.id))
-        .chain(p.wires.iter().map(|w| w.id))
-        .chain(p.tracks.iter().map(|t| t.id))
-    {
-        if id == 0 || id >= p.next_id || !ids.insert(id) {
-            return Err(Error::Invalid("invalid global identity allocation".into()));
-        }
-    }
-    parts::validate(p)?;
-    schematic::validate(p)?;
-    nets::validate(p)?;
-    layout::validate(p)?;
-    Ok(())
-}
-pub fn point_valid(p: Point) -> bool {
-    p.iter().all(|v| v.is_finite() && v.abs() <= 10000.0)
-}
-
 /// JSON schemas of the document types every transport shares.
 pub fn schemas() -> serde_json::Value {
     serde_json::json!({
         "operation": schemars::schema_for!(Operation),
+        "outcome": schemars::schema_for!(Outcome),
+        "query": schemars::schema_for!(Query),
+        "query_result": schemars::schema_for!(QueryResult),
         "project": schemars::schema_for!(Project),
         "update_plan": schemars::schema_for!(updates::UpdatePlan),
         "editor_file": schemars::schema_for!(format::EditorFile),

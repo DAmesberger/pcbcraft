@@ -202,13 +202,16 @@ impl App {
         let rows = [
             (
                 Workspace::Part,
-                format!("Components  ·  {}", project.parts.len()),
+                format!(
+                    "Components  ·  {}",
+                    project.library.latest_components().len()
+                ),
             ),
             (
                 Workspace::Schematic,
                 format!(
                     "Schematic  ·  {} symbols, {} nets",
-                    project.instances.len(),
+                    project.occurrences.len(),
                     project.nets.len()
                 ),
             ),

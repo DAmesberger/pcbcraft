@@ -1,18 +1,18 @@
 use super::*;
-use crate::{Engine, Operation, PartRef, parts, schematic};
+use crate::tests::support::{by_designator, demo_fixture, ep};
+use crate::{Engine, Operation, PadId, TerminalId, UnitId, instances, nets};
+
+fn ids() -> Result<(Id, Id)> {
+    let engine = Engine::demo()?;
+    Ok((by_designator(&engine, "R1")?, by_designator(&engine, "R2")?))
+}
 
 fn fixture() -> Result<Project> {
     let mut project = Engine::demo()?.project().clone();
-    let net = |terminal| {
-        project
-            .net_of(Endpoint {
-                instance: 2,
-                terminal,
-            })
-            .map(|n| n.id)
-    };
+    let (r1, r2) = ids()?;
+    let net = |terminal| project.net_of(ep(r1, terminal)).map(|n| n.id);
     assert_eq!((net(1), net(2)), (Some(R1_1), Some(SHARED)));
-    for (instance, position) in [(2, [10.0, 10.0]), (3, [25.0, 10.0])] {
+    for (instance, position) in [(r1, [10.0, 10.0]), (r2, [25.0, 10.0])] {
         apply(
             &mut project,
             LayoutCommand::Move {
@@ -59,7 +59,7 @@ fn physical_connectivity_changes_when_a_pad_moves() -> Result<()> {
     apply(
         &mut project,
         LayoutCommand::Move {
-            instance: 3,
+            instance: ids()?.1,
             position: [25.0, 13.0],
             rotation_deg: 0.0,
             layer: Layer::Top,
@@ -83,16 +83,20 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
     apply(&mut project, LayoutCommand::Route { request: request() })?;
     let old_placements = project.placements.clone();
     let old_tracks = project.tracks.clone();
-    schematic::apply(
+    let f = demo_fixture(&Engine::demo()?)?;
+    let (expected, _) = instances::place(
         &mut project,
-        schematic::SchematicCommand::Place {
-            part: PartRef { id: 1, revision: 1 },
-            reference: "R3".into(),
+        instances::NewInstance {
+            component: f.r1(),
+            designator: "R3".into(),
             value: "1k".into(),
+            representation: f.symbol,
+            unit: UnitId(1),
             position: [40.0, 0.0],
+            physical: Some(f.physical()),
         },
     )?;
-    let expected = project.instances[2].id;
+    nets::reconcile(&mut project)?;
     assert_eq!(sync_preview(&project), vec![expected]);
     apply(&mut project, LayoutCommand::Sync)?;
     assert_eq!(&project.placements[..2], old_placements);
@@ -104,12 +108,16 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
 #[test]
 fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
     let mut project = fixture()?;
-    project.parts[0].footprint.datum_offset = [1.0, 1.0];
-    project.parts[0].footprint.pads[0].position = [3.0, 4.0];
+    let (r1, _) = ids()?;
+    // Exact snapshots are immutable through commands; this fixture substitutes
+    // a stored footprint to exercise the placement transform alone.
+    let footprint = &mut project.library.footprints[0].definition;
+    footprint.datum_offset = [1.0, 1.0];
+    footprint.pads[0].position = [3.0, 4.0];
     apply(
         &mut project,
         LayoutCommand::Move {
-            instance: 2,
+            instance: r1,
             position: [10.0, 20.0],
             rotation_deg: 90.0,
             layer: Layer::Bottom,
@@ -120,13 +128,7 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
     assert!((pad.position[0] - 13.0).abs() < 1e-8);
     assert!((pad.position[1] - 22.0).abs() < 1e-8);
     assert_eq!(pad.layer, Layer::Bottom);
-    assert_eq!(
-        pad.terminal,
-        Endpoint {
-            instance: 2,
-            terminal: 1
-        }
-    );
+    assert_eq!(pad.terminal, ep(r1, 1));
     assert_eq!(pad.net, R1_1);
     Ok(())
 }
@@ -158,10 +160,11 @@ fn rejects_foreign_nets_malformed_geometry_and_short_circuits_atomically() -> Re
 #[test]
 fn locked_placements_and_tracks_reject_edits() -> Result<()> {
     let mut project = fixture()?;
+    let (r1, _) = ids()?;
     apply(
         &mut project,
         LayoutCommand::SetPlacementLock {
-            instance: 2,
+            instance: r1,
             locked: true,
         },
     )?;
@@ -170,7 +173,7 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
         apply(
             &mut project,
             LayoutCommand::Move {
-                instance: 2,
+                instance: r1,
                 position: [20.0, 20.0],
                 rotation_deg: 0.0,
                 layer: Layer::Bottom
@@ -240,16 +243,14 @@ fn multi_segment_edit_is_one_atomic_engine_operation() -> Result<()> {
 #[test]
 fn electrical_mapping_connects_the_right_physical_pads() -> Result<()> {
     let mut project = fixture()?;
-    let mut part = parts::passive_template("Mapped");
-    part.binding.mappings[0].physical = 2;
-    part.binding.mappings[1].physical = 1;
     // Exact snapshots are immutable through commands; this fixture substitutes
-    // a valid alternate definition to exercise geometry's explicit mapping.
-    part.id = 1;
-    part.revision = 1;
-    project.parts[0] = part;
+    // a valid alternate mapping to exercise geometry's explicit mapping.
+    let binding = &mut project.library.bindings[0].definition;
+    binding.mappings[0].terminal = TerminalId(2);
+    binding.mappings[1].terminal = TerminalId(1);
     let world = pads(&project);
-    assert_eq!(world[0].terminal.terminal, 2);
+    assert_eq!(world[0].pad, PadId(1));
+    assert_eq!(world[0].terminal.terminal, TerminalId(2));
     assert_eq!(world[0].net, SHARED);
     Ok(())
 }
@@ -290,7 +291,7 @@ fn matching_xy_on_opposite_layers_does_not_connect_copper() -> Result<()> {
     apply(
         &mut project,
         LayoutCommand::Move {
-            instance: 3,
+            instance: ids()?.1,
             position: [25.0, 10.0],
             rotation_deg: 0.0,
             layer: Layer::Bottom,

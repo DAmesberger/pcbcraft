@@ -14,9 +14,9 @@ cargo run --locked --profile ci -p pcbcraft [FILE.pcbcraft]
 cargo xtask ci
 ```
 
-The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the component draft is one undo step, and Publish creates an immutable project snapshot. In Schematic, choose a snapshot and Place part, connect terminals with Wire, and rename a selected wire's net. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
+The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, choose a component revision and Place part, connect terminals with Wire, and rename a selected wire's net. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
 
-File offers New, Open, Save, Save as and Export to Solidcraft through native dialogs; reads, writes and exports run in the background. Unsaved work is snapshotted for crash recovery and offered at the next launch. Project files contain the exact component snapshots and the component draft, so they reopen offline. Native export writes a new parametric `.solidcraft` file; package models are clearly identified envelopes.
+File offers New, Open, Save, Save as and Export to Solidcraft through native dialogs; reads, writes and exports run in the background. Unsaved work is snapshotted for crash recovery and offered at the next launch. Project files contain the revisioned library snapshot and the definition drafts, so they reopen offline. Native export writes a new parametric `.solidcraft` file; package models are clearly identified envelopes.
 
 Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S saves, +Shift+S saves as, +O opens, +N starts a new project, +Z/+Shift+Z undo and redo.
 
@@ -24,7 +24,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 
 | Crate | Responsibility |
 | --- | --- |
-| `pcbcraft-core` | Pure, wasm-compatible document: parts, schematic, persistent nets, layout, impact plans, typed `Operation`s, the one `Engine` (shared undo, engine-owned draft), file format, typed errors and check findings. |
+| `pcbcraft-core` | Pure, wasm-compatible document: revisioned library definitions and drafts, component instances and symbol occurrences, schematic, persistent nets, layout, impact plans, completeness findings, typed `Operation`s and `Query`s, the one `Engine` (shared undo, engine-owned drafts), file format, typed errors and check findings. |
 | `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
@@ -46,7 +46,7 @@ cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
 
 ## Scripting integration proof
 
-The core contains a bounded Rhai integration for unit-aware expressions and draft pad-array generation. Units are request data; the interpreter has no component-specific property schema. `part.generate_pads` is available inside `project.apply` through CLI/MCP, with ordinary revision checks and undo. This is a headless feasibility slice, not a new component editor or a complete library scripting format. See the [contract and limits](docs/part-library-design.md#rhai-integration-proof).
+The core contains a bounded Rhai integration for unit-aware expressions and draft pad-array generation. Units are request data; the interpreter has no component-specific property schema. `library.generate_pads` (on a footprint draft) is available inside `project.apply` through CLI/MCP, with ordinary revision checks and undo. This is a headless feasibility slice, not a new component editor or a complete library scripting format. See the [contract and limits](docs/part-library-design.md#rhai-integration-proof).
 
 Native scripting tests run in `cargo xtask ci`. To also execute the seven scripting tests as WebAssembly under Node (rather than only compile wasm), install Node and the test runner matching the locked `wasm-bindgen` version:
 

@@ -1,8 +1,5 @@
 use super::*;
-use pcbcraft_core::{
-    Engine, Operation,
-    parts::{self, PartCommand},
-};
+use pcbcraft_core::Engine;
 
 #[test]
 fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft() -> Result<()> {
@@ -11,12 +8,7 @@ fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft()
     std::fs::write(&original, b"original is never overwritten by recovery")?;
     let mut engine = Engine::demo()?;
     let plain = engine.to_file();
-    let mut draft = parts::passive_template("unfinished");
-    draft.binding.mappings.clear();
-    engine.apply(
-        engine.revision(),
-        Operation::Part(PartCommand::SetDraft { draft }),
-    )?;
+    crate::persistence::tests::unfinished(&mut engine)?;
     let document = engine.to_file();
     let first = RecoveryStore::new(directory.path())?;
     let second = RecoveryStore::new(directory.path())?;

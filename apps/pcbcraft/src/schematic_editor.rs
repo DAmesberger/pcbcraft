@@ -2,10 +2,14 @@
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use egui::{Align2, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use pcbcraft_core::completeness::InstanceReport;
+use pcbcraft_core::instances::{self, NewInstance, UnitState};
+use pcbcraft_core::library::Unit;
 use pcbcraft_core::{
-    Endpoint, Engine, Id, Net, Operation, PartRef, Point, Project,
+    ComponentRef, Endpoint, Engine, Id, InstanceCommand, Net, Operation, PhysicalChoice, Point,
+    Project, Query, QueryResult, erc,
     schematic::{self, SchematicCommand},
-    updates::Change,
+    updates::{Change, InstanceChange},
 };
 use solidcraft_ui_egui::{
     fonts,
@@ -23,8 +27,10 @@ enum Tool {
 
 pub struct SchematicEditor {
     tool: Tool,
-    part: Option<PartRef>,
+    component: Option<ComponentRef>,
+    /// The selected instance and the occurrence that was picked.
     selected: Option<Id>,
+    selected_occurrence: Option<Id>,
     selected_wire: Option<Id>,
     /// Net-name edit buffer for the selected wire's net.
     net_label: Option<(Id, String)>,
@@ -35,8 +41,13 @@ pub struct SchematicEditor {
     draft_id: Option<Id>,
     pan: Vec2,
     scale: f32,
+    /// Dragged occurrence and the pointer's offset from its position.
     drag: Option<(Id, Point)>,
+    /// Occurrence being dragged and its previewed position.
     preview: Option<(Id, Point)>,
+    /// A second property edit sent after the first one applies.
+    queued: Option<Operation>,
+    report: Option<(u64, Id, InstanceReport)>,
     show_checks: bool,
     fit_requested: bool,
     observed_revision: Option<u64>,
@@ -50,8 +61,9 @@ impl Default for SchematicEditor {
     fn default() -> Self {
         Self {
             tool: Tool::Select,
-            part: None,
+            component: None,
             selected: None,
+            selected_occurrence: None,
             selected_wire: None,
             net_label: None,
             wire_from: None,
@@ -63,6 +75,8 @@ impl Default for SchematicEditor {
             scale: 12.0,
             drag: None,
             preview: None,
+            queued: None,
+            report: None,
             show_checks: false,
             fit_requested: false,
             observed_revision: None,
@@ -78,9 +92,54 @@ fn operation(command: SchematicCommand) -> Option<Operation> {
     Some(Operation::Schematic(command))
 }
 
+/// The drawn unit of an occurrence.
+fn unit_of<'a>(
+    project: &'a Project,
+    occurrence: &pcbcraft_core::SymbolOccurrence,
+) -> Option<&'a Unit> {
+    let instance = project.instance(occurrence.instance)?;
+    instances::resolve(&project.library, instance)
+        .ok()?
+        .symbol
+        .definition
+        .units
+        .iter()
+        .find(|u| u.id == occurrence.unit)
+}
+
+/// What placing `component` creates: its first representation and unit and
+/// its first offered implementation, if any.
+fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInstance, &Unit)> {
+    let library = &project.library;
+    let published = library.component(component)?;
+    let symbol_ref = *published.definition.representations.first()?;
+    let symbol = library.symbol(symbol_ref)?;
+    let unit = symbol.definition.units.first()?;
+    let physical = published.definition.implementations.first().and_then(|b| {
+        let binding = library.binding(*b)?;
+        let footprint = binding.definition.footprints.first()?;
+        Some(PhysicalChoice {
+            binding: b.id,
+            footprint: footprint.id,
+        })
+    });
+    Some((
+        NewInstance {
+            component,
+            designator: String::new(),
+            value: String::new(),
+            representation: symbol_ref.id,
+            unit: unit.id,
+            position: [0.0, 0.0],
+            physical,
+        },
+        unit,
+    ))
+}
+
 impl SchematicEditor {
-    fn stage_update(&mut self, engine: &Engine, command: SchematicCommand) -> Option<Operation> {
-        self.update.begin(engine, Change::Schematic { command });
+    fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
+        self.update.begin(engine, change);
         self.tool = Tool::Select;
         self.wire_from = None;
         self.drag = None;
@@ -91,7 +150,7 @@ impl SchematicEditor {
     fn refresh_connectivity(&mut self, engine: &Engine) {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
-            self.issues = schematic::checks(engine.project());
+            self.issues = erc::checks(engine.project());
             self.nets_revision = Some(engine.revision());
         }
     }
@@ -106,7 +165,7 @@ impl SchematicEditor {
                 ui,
                 icon,
                 label,
-                (tool != Tool::Place || !engine.project().parts.is_empty())
+                (tool != Tool::Place || !engine.project().library.components.is_empty())
                     && (tool == Tool::Select || !self.update.is_open()),
                 self.tool == tool,
             )
@@ -125,17 +184,38 @@ impl SchematicEditor {
         None
     }
 
-    fn select(&mut self, id: Option<Id>, project: &Project) {
+    /// Select an instance, through one of its occurrences when given.
+    fn select(&mut self, id: Option<Id>, occurrence: Option<Id>, project: &Project) {
         self.selected = id;
+        self.selected_occurrence = occurrence
+            .or_else(|| id.and_then(|id| project.occurrences_of(id).next().map(|o| o.id)));
         self.selected_wire = None;
         if self.draft_id != id {
             if let Some(instance) = id.and_then(|id| project.instance(id)) {
-                self.draft_reference = instance.reference.clone();
+                self.draft_reference = instance.designator.clone();
                 self.draft_value = instance.value.clone();
-                self.draft_position = instance.position;
             }
             self.draft_id = id;
         }
+        if let Some(o) = self.selected_occurrence.and_then(|o| project.occurrence(o)) {
+            self.draft_position = o.position;
+        }
+    }
+
+    /// Unit states of the selected instance, read from `component.inspect`.
+    fn report(&mut self, engine: &Engine) -> Option<&InstanceReport> {
+        let instance = self.selected?;
+        let fresh = self
+            .report
+            .as_ref()
+            .is_some_and(|(revision, id, _)| *revision == engine.revision() && *id == instance);
+        if !fresh {
+            self.report = match engine.query(Query::InspectInstance { instance }) {
+                Ok(QueryResult::Instance(report)) => Some((engine.revision(), instance, report)),
+                _ => None,
+            };
+        }
+        self.report.as_ref().map(|(_, _, report)| report)
     }
 
     pub fn inspector(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
@@ -149,33 +229,40 @@ impl SchematicEditor {
         let project = engine.project();
         let t = Tokens::get();
         let mut output = None;
+        if let Some(queued) = self.queued.take() {
+            return Some(queued);
+        }
         if self.observed_revision != Some(engine.revision()) {
             self.draft_id = None;
             if self.selected.is_some() {
-                self.select(self.selected, project);
+                let occurrence = self
+                    .selected_occurrence
+                    .filter(|o| project.occurrence(*o).is_some());
+                self.select(self.selected, occurrence, project);
             }
             self.observed_revision = Some(engine.revision());
         }
         ui.spacing_mut().item_spacing.y = t.form_gap_y;
-        if self.part.is_none_or(|p| project.part(p).is_none()) {
-            self.part = project.parts.last().map(|p| PartRef {
-                id: p.id,
-                revision: p.revision,
-            });
+        if self
+            .component
+            .is_none_or(|c| project.library.component(c).is_none())
+        {
+            self.component = project
+                .library
+                .components
+                .last()
+                .map(|c| ComponentRef::new(c.id, c.revision));
         }
         ui.label(egui::RichText::new("Library snapshot").font(fonts::semibold(t.font_label)));
-        if project.parts.is_empty() {
-            ui.label("Publish a part in the Part workspace, then place it here.");
+        if project.library.components.is_empty() {
+            ui.label("Publish a component in the Component workspace, then place it here.");
         }
-        for part in &project.parts {
-            let reference = PartRef {
-                id: part.id,
-                revision: part.revision,
-            };
+        for component in &project.library.components {
+            let reference = ComponentRef::new(component.id, component.revision);
             if ui_kit::button(
                 ui,
-                format!("{} · rev {}", part.name, part.revision),
-                if self.part == Some(reference) {
+                format!("{} · rev {}", component.meta.name, component.revision.0),
+                if self.component == Some(reference) {
                     Button::SmallSelected
                 } else {
                     Button::Ghost
@@ -183,7 +270,7 @@ impl SchematicEditor {
             )
             .clicked()
             {
-                self.part = Some(reference);
+                self.component = Some(reference);
                 self.tool = Tool::Place;
                 self.wire_from = None;
             }
@@ -193,7 +280,7 @@ impl SchematicEditor {
         for instance in &project.instances {
             if ui_kit::button(
                 ui,
-                format!("{}  {}", instance.reference, instance.value),
+                format!("{}  {}", instance.designator, instance.value),
                 if self.selected == Some(instance.id) {
                     Button::SmallSelected
                 } else {
@@ -202,7 +289,7 @@ impl SchematicEditor {
             )
             .clicked()
             {
-                self.select(Some(instance.id), project);
+                self.select(Some(instance.id), None, project);
                 self.tool = Tool::Select;
             }
         }
@@ -210,25 +297,61 @@ impl SchematicEditor {
             .selected
             .is_some_and(|id| project.instance(id).is_none())
         {
-            self.select(None, project);
+            self.select(None, None, project);
         }
+        let units: Vec<(String, UnitState)> = self
+            .report(engine)
+            .map(|r| {
+                r.units
+                    .iter()
+                    .map(|u| (u.display.clone(), u.state))
+                    .collect()
+            })
+            .unwrap_or_default();
         if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
             ui.separator();
             ui.label(egui::RichText::new("Instance").font(fonts::semibold(t.font_label)));
-            ui.label(format!("Part revision {}", instance.part.revision));
+            ui.label(format!(
+                "Component revision {}",
+                instance.component.revision.0
+            ));
+            for (label, state) in &units {
+                ui.weak(format!(
+                    "{label} · {}",
+                    match state {
+                        UnitState::Placed { .. } => "placed",
+                        UnitState::Unplaced => "unplaced",
+                        UnitState::Unused => "unused",
+                    }
+                ));
+            }
             field(
                 ui,
-                "Reference",
+                "Designator",
                 "schematic-reference",
                 &mut self.draft_reference,
             );
             field(ui, "Value", "schematic-value", &mut self.draft_value);
             if ui_kit::button(ui, "Apply properties", Button::Normal).clicked() {
-                output = operation(SchematicCommand::Edit {
-                    instance: instance.id,
-                    reference: self.draft_reference.clone(),
-                    value: self.draft_value.clone(),
+                let designator = (self.draft_reference != instance.designator).then(|| {
+                    Operation::Instance(InstanceCommand::SetDesignator {
+                        instance: instance.id,
+                        designator: self.draft_reference.clone(),
+                    })
                 });
+                let value = (self.draft_value != instance.value).then(|| {
+                    Operation::Instance(InstanceCommand::SetValue {
+                        instance: instance.id,
+                        value: self.draft_value.clone(),
+                    })
+                });
+                match (designator, value) {
+                    (Some(first), second) => {
+                        output = Some(first);
+                        self.queued = second;
+                    }
+                    (None, value) => output = value,
+                }
             }
             ui.horizontal(|ui| {
                 ui.label("X");
@@ -244,9 +367,11 @@ impl SchematicEditor {
                         .suffix(" mm"),
                 );
             });
-            if ui_kit::button(ui, "Move instance", Button::Normal).clicked() {
-                output = operation(SchematicCommand::Move {
-                    instance: instance.id,
+            if let Some(occurrence) = self.selected_occurrence
+                && ui_kit::button(ui, "Move symbol", Button::Normal).clicked()
+            {
+                output = operation(SchematicCommand::MoveUnit {
+                    occurrence,
                     position: self.draft_position,
                 });
             }
@@ -258,8 +383,10 @@ impl SchematicEditor {
             {
                 output = self.stage_update(
                     engine,
-                    SchematicCommand::Remove {
-                        instance: instance.id,
+                    Change::Instance {
+                        edit: InstanceChange::Remove {
+                            instance: instance.id,
+                        },
                     },
                 );
             }
@@ -270,10 +397,16 @@ impl SchematicEditor {
         {
             ui.separator();
             ui.label("Selected wire");
-            ui.label(format!(
-                "{}:{} → {}:{}",
-                wire.from.instance, wire.from.terminal, wire.to.instance, wire.to.terminal
-            ));
+            let label = |e: Endpoint| {
+                format!(
+                    "{}.{}",
+                    project
+                        .instance(e.instance)
+                        .map_or("?", |i| i.designator.as_str()),
+                    e.terminal
+                )
+            };
+            ui.label(format!("{} → {}", label(wire.from), label(wire.to)));
             if let Some(net) = project.net_of(wire.from) {
                 if self.net_label.as_ref().is_none_or(|(id, _)| *id != net.id) {
                     self.net_label = Some((net.id, net.name.clone()));
@@ -302,13 +435,18 @@ impl SchematicEditor {
                 ));
             }
             if ui_kit::button(ui, "Disconnect wire", Button::Normal).clicked() {
-                output = self.stage_update(engine, SchematicCommand::Disconnect { wire: wire.id });
+                output = self.stage_update(
+                    engine,
+                    Change::Schematic {
+                        command: SchematicCommand::Disconnect { wire: wire.id },
+                    },
+                );
             }
         }
         ui.separator();
         ui.label(match self.tool {
             Tool::Select => "Click to select. Drag a symbol to move.",
-            Tool::Place => "Click the sheet to place the selected part.",
+            Tool::Place => "Click the sheet to place the selected component.",
             Tool::Wire => {
                 if self.wire_from.is_some() {
                     "Click a second terminal. Esc cancels."
@@ -327,7 +465,7 @@ impl SchematicEditor {
             for issue in &self.issues {
                 ui.colored_label(t.form_error, &issue.message);
             }
-            ui.small("Checks: unconnected inputs/power and multiple outputs.");
+            ui.small("Checks: undriven power inputs and multiple outputs. Unconnected terminals are completeness findings of each instance.");
         }
         output
     }
@@ -342,19 +480,19 @@ impl SchematicEditor {
         }
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;
-            for instance in &project.instances {
-                if let Some(part) = project.part(instance.part) {
-                    let center = pos2(instance.position[0] as f32, -instance.position[1] as f32);
+            for occurrence in &project.occurrences {
+                if let Some(unit) = unit_of(project, occurrence) {
+                    let center = pos2(
+                        occurrence.position[0] as f32,
+                        -occurrence.position[1] as f32,
+                    );
                     bounds = bounds.union(Rect::from_center_size(
                         center,
-                        vec2(
-                            part.symbol.body_size[0] as f32,
-                            part.symbol.body_size[1] as f32,
-                        ),
+                        vec2(unit.body_size[0] as f32, unit.body_size[1] as f32),
                     ));
-                    for pin in &part.symbol.pins {
+                    for anchor in &unit.anchors {
                         bounds.extend_with(
-                            center + vec2(pin.position[0] as f32, -pin.position[1] as f32),
+                            center + vec2(anchor.position[0] as f32, -anchor.position[1] as f32),
                         );
                     }
                 }
@@ -462,44 +600,41 @@ impl SchematicEditor {
                 }
             }
         }
-        for instance in &project.instances {
-            let Some(part) = project.part(instance.part) else {
+        for occurrence in &project.occurrences {
+            let (Some(instance), Some(unit)) = (
+                project.instance(occurrence.instance),
+                unit_of(project, occurrence),
+            ) else {
                 continue;
             };
+            let component = project.library.component(instance.component);
             let position = self
                 .preview
-                .filter(|(id, _)| *id == instance.id)
+                .filter(|(id, _)| *id == occurrence.id)
                 .map(|(_, p)| p)
-                .unwrap_or(instance.position);
+                .unwrap_or(occurrence.position);
             let center = screen(position);
             let size = vec2(
-                part.symbol.body_size[0] as f32 * scale,
-                part.symbol.body_size[1] as f32 * scale,
+                unit.body_size[0] as f32 * scale,
+                unit.body_size[1] as f32 * scale,
             );
             let body = Rect::from_center_size(center, size);
-            body_hits.push((instance.id, body.expand(t.space_6)));
+            body_hits.push((instance.id, occurrence.id, body.expand(t.space_6)));
+            let selected = self.selected == Some(instance.id);
             painter.rect_filled(body, t.control_radius, t.panel);
             painter.rect_stroke(
                 body,
                 t.control_radius,
                 Stroke::new(
-                    if self.selected == Some(instance.id) {
-                        2.5
-                    } else {
-                        1.5
-                    },
-                    if self.selected == Some(instance.id) {
-                        t.accent
-                    } else {
-                        t.text
-                    },
+                    if selected { 2.5 } else { 1.5 },
+                    if selected { t.accent } else { t.text },
                 ),
                 egui::StrokeKind::Inside,
             );
             painter.text(
                 body.center_top() - vec2(0.0, t.space_6),
                 Align2::CENTER_BOTTOM,
-                &instance.reference,
+                instances::display_label(project, instance, unit.id),
                 fonts::semibold(t.font_label),
                 t.text,
             );
@@ -510,12 +645,15 @@ impl SchematicEditor {
                 fonts::medium(t.font_small),
                 t.text_dim,
             );
-            for pin in &part.symbol.pins {
+            for anchor in &unit.anchors {
                 let endpoint = Endpoint {
                     instance: instance.id,
-                    terminal: pin.terminal,
+                    terminal: anchor.terminal,
                 };
-                let p = screen([position[0] + pin.position[0], position[1] + pin.position[1]]);
+                let p = screen([
+                    position[0] + anchor.position[0],
+                    position[1] + anchor.position[1],
+                ]);
                 let edge = pos2(
                     p.x.clamp(body.left(), body.right()),
                     p.y.clamp(body.top(), body.bottom()),
@@ -525,11 +663,8 @@ impl SchematicEditor {
                 painter.line_segment([edge, p], Stroke::new(1.5, color));
                 painter.circle_stroke(p, if active { 5.0 } else { 3.5 }, Stroke::new(1.5, color));
                 pin_hits.push((endpoint, p));
-                if let Some(terminal) = part
-                    .component
-                    .terminals
-                    .iter()
-                    .find(|terminal| terminal.id == pin.terminal)
+                if let Some(terminal) =
+                    component.and_then(|c| c.definition.terminal(anchor.terminal))
                 {
                     painter.text(
                         p + vec2(0.0, -t.space_6),
@@ -550,12 +685,12 @@ impl SchematicEditor {
                 painter.circle_stroke(*p, 7.0, Stroke::new(1.0, t.accent));
             }
             if self.tool == Tool::Place
-                && let Some(part) = self.part.and_then(|p| project.part(p))
+                && let Some((_, unit)) = self.component.and_then(|c| first_choices(project, c))
             {
                 let p = screen(world(pointer));
                 let size = vec2(
-                    part.symbol.body_size[0] as f32 * scale,
-                    part.symbol.body_size[1] as f32 * scale,
+                    unit.body_size[0] as f32 * scale,
+                    unit.body_size[1] as f32 * scale,
                 );
                 painter.rect_stroke(
                     Rect::from_center_size(p, size),
@@ -586,22 +721,26 @@ impl SchematicEditor {
                 .map(|(e, _)| *e);
             match self.tool {
                 Tool::Place => {
-                    if let Some(part) = self.part {
-                        let reference = next_reference(project);
-                        output = operation(SchematicCommand::Place {
-                            part,
-                            reference,
-                            value: String::new(),
+                    if let Some((request, _)) =
+                        self.component.and_then(|c| first_choices(project, c))
+                    {
+                        output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
+                            designator: next_reference(project),
                             position: world(pointer),
-                        });
+                            ..request
+                        })));
                     }
                 }
                 Tool::Wire => {
                     if let Some(to) = pin {
                         if let Some(from) = self.wire_from.take() {
                             if from != to {
-                                output = self
-                                    .stage_update(engine, SchematicCommand::Connect { from, to });
+                                output = self.stage_update(
+                                    engine,
+                                    Change::Schematic {
+                                        command: SchematicCommand::Connect { from, to },
+                                    },
+                                );
                             }
                         } else {
                             self.wire_from = Some(to);
@@ -609,17 +748,16 @@ impl SchematicEditor {
                     }
                 }
                 Tool::Select => {
-                    let id = pin.map(|p| p.instance).or_else(|| {
-                        body_hits
-                            .iter()
-                            .rev()
-                            .find(|(_, r)| r.contains(pointer))
-                            .map(|(id, _)| *id)
-                    });
+                    let body = body_hits
+                        .iter()
+                        .rev()
+                        .find(|(_, _, r)| r.contains(pointer))
+                        .map(|(id, occurrence, _)| (*id, *occurrence));
+                    let id = pin.map(|p| p.instance).or(body.map(|b| b.0));
                     if id.is_some() {
-                        self.select(id, project);
+                        self.select(id, body.map(|b| b.1), project);
                     } else {
-                        self.select(None, project);
+                        self.select(None, None, project);
                         self.selected_wire = hit_wire;
                     }
                 }
@@ -629,15 +767,16 @@ impl SchematicEditor {
             && !self.update.is_open()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
-            && let Some((id, _)) = body_hits.iter().rev().find(|(_, r)| r.contains(pointer))
-            && let Some(instance) = project.instance(*id)
+            && let Some((id, occurrence_id, _)) =
+                body_hits.iter().rev().find(|(_, _, r)| r.contains(pointer))
+            && let Some(occurrence) = project.occurrence(*occurrence_id)
         {
             let p = world(pointer);
             self.drag = Some((
-                *id,
-                [p[0] - instance.position[0], p[1] - instance.position[1]],
+                *occurrence_id,
+                [p[0] - occurrence.position[0], p[1] - occurrence.position[1]],
             ));
-            self.select(Some(*id), project);
+            self.select(Some(*id), Some(*occurrence_id), project);
         }
         if let Some((id, offset)) = self.drag
             && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
@@ -646,23 +785,31 @@ impl SchematicEditor {
             self.preview = Some((id, [p[0] - offset[0], p[1] - offset[1]]));
         }
         if response.drag_stopped_by(egui::PointerButton::Primary)
-            && let Some((instance, position)) = self.preview.take()
+            && let Some((occurrence, position)) = self.preview.take()
         {
             self.drag = None;
             self.draft_position = position;
-            output = operation(SchematicCommand::Move { instance, position });
+            output = operation(SchematicCommand::MoveUnit {
+                occurrence,
+                position,
+            });
         }
         output
     }
 
+    /// Where a wire end is drawn while its unit's occurrence is dragged.
     fn preview_endpoint(&self, project: &Project, endpoint: Endpoint, original: Point) -> Point {
         if let Some((id, position)) = self.preview
-            && id == endpoint.instance
-            && let Some(instance) = project.instance(id)
+            && let Some(occurrence) = project.occurrence(id)
+            && occurrence.instance == endpoint.instance
+            && let Some(instance) = project.instance(endpoint.instance)
+            && let Ok(resolved) = instances::resolve(&project.library, instance)
+            && instances::owning_unit(&resolved.symbol.definition, endpoint.terminal)
+                == Some(occurrence.unit)
         {
             return [
-                original[0] + position[0] - instance.position[0],
-                original[1] + position[1] - instance.position[1],
+                original[0] + position[0] - occurrence.position[0],
+                original[1] + position[1] - occurrence.position[1],
             ];
         }
         original
@@ -687,7 +834,7 @@ fn next_reference(project: &Project) -> String {
             !project
                 .instances
                 .iter()
-                .any(|i| i.reference.eq_ignore_ascii_case(reference))
+                .any(|i| i.designator.eq_ignore_ascii_case(reference))
         })
         .unwrap_or_else(|| "U_new".into())
 }
@@ -711,18 +858,25 @@ mod tests {
     {
         let engine = Engine::demo()?;
         let before = engine.project().clone();
+        let r1 = engine.project().instances[0].id;
+        let occurrence = engine.project().occurrences[0].id;
         let mut editor = SchematicEditor {
             wire_from: Some(Endpoint {
-                instance: 2,
-                terminal: 2,
+                instance: r1,
+                terminal: pcbcraft_core::TerminalId(2),
             }),
-            drag: Some((2, [0.0, 0.0])),
-            preview: Some((2, [10.0, 10.0])),
+            drag: Some((occurrence, [0.0, 0.0])),
+            preview: Some((occurrence, [10.0, 10.0])),
             ..Default::default()
         };
         assert!(
             editor
-                .stage_update(&engine, SchematicCommand::Remove { instance: 2 })
+                .stage_update(
+                    &engine,
+                    Change::Instance {
+                        edit: InstanceChange::Remove { instance: r1 }
+                    }
+                )
                 .is_none()
         );
         assert!(editor.update.is_open());
@@ -730,6 +884,31 @@ mod tests {
         assert!(editor.drag.is_none());
         assert!(editor.preview.is_none());
         assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    #[test]
+    fn placing_uses_the_components_first_representation_and_implementation()
+    -> pcbcraft_core::Result<()> {
+        let mut engine = Engine::demo()?;
+        let component = engine.project().instances[0].component;
+        let (request, unit) = first_choices(engine.project(), component)
+            .ok_or_else(|| pcbcraft_core::Error::NotFound("choices".into()))?;
+        assert_eq!(unit.id, pcbcraft_core::UnitId(1));
+        assert!(request.physical.is_some());
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                designator: next_reference(engine.project()),
+                position: [30.0, 0.0],
+                ..request
+            })),
+        )?;
+        let placed = engine
+            .project()
+            .instance_by_designator("U1")
+            .ok_or_else(|| pcbcraft_core::Error::NotFound("U1".into()))?;
+        assert_eq!(engine.project().occurrences_of(placed.id).count(), 1);
         Ok(())
     }
 }

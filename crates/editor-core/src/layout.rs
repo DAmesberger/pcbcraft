@@ -1,9 +1,10 @@
 //! Placement and manual routing over the electrical document. Geometry here is
 //! electronics checking geometry; native 3D remains in the Solidcraft adapter.
-use crate::{
-    Endpoint, Error, Finding, Id, Layer, ObjectRef, Placement, Point, Project, Result, Track,
-    point_valid,
-};
+use crate::diagnostics::{Error, Finding, ObjectRef, Result};
+use crate::geometry::{Point, point_valid};
+use crate::ids::{Endpoint, Id, PadId};
+use crate::instances;
+use crate::model::{EditPolicy, Layer, PhysicalChoice, Placement, Project, Track};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,7 +87,7 @@ impl RoutingStrategy for ManualRouter {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct WorldPad {
     pub instance: Id,
-    pub pad: Id,
+    pub pad: PadId,
     pub terminal: Endpoint,
     pub net: Id,
     pub position: Point,
@@ -128,21 +129,20 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
         let Some(instance) = project.instance(placement.instance) else {
             continue;
         };
-        let Some(part) = project.part(instance.part) else {
+        let Some(physical) = instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+        else {
             continue;
         };
-        for pad in &part.footprint.pads {
-            let Some(mapping) = part
-                .binding
-                .mappings
-                .iter()
-                .find(|m| m.physical == pad.terminal)
-            else {
+        let footprint = &physical.footprint.definition;
+        for pad in &footprint.pads {
+            let Some(electrical) = physical.binding.definition.terminal_of(pad.terminal) else {
                 continue;
             };
             let terminal = Endpoint {
                 instance: instance.id,
-                terminal: mapping.electrical,
+                terminal: electrical,
             };
             let Some(net) = net_by_terminal.get(&terminal) else {
                 continue;
@@ -152,7 +152,7 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                 pad: pad.id,
                 terminal,
                 net: *net,
-                position: placed_point(placement, pad.position, part.footprint.datum_offset),
+                position: placed_point(placement, pad.position, footprint.datum_offset),
                 size: pad.size,
                 rotation_deg: placement.rotation_deg,
                 layer: placement.layer,
@@ -162,14 +162,60 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
     result
 }
 
-/// IDs shown in the update preview. Existing placement/routing is never replaced.
+/// Whether an instance has a resolvable physical choice.
+pub fn board_placeable(project: &Project, instance: Id) -> bool {
+    project
+        .instance(instance)
+        .and_then(|i| instances::resolve(&project.library, i).ok())
+        .is_some_and(|r| r.physical.is_some())
+}
+
+/// IDs shown in the update preview: board-placeable instances without a
+/// placement. Existing placement/routing is never replaced.
 pub fn sync_preview(project: &Project) -> Vec<Id> {
     project
         .instances
         .iter()
-        .filter(|instance| !project.placements.iter().any(|p| p.instance == instance.id))
+        .filter(|instance| {
+            project.placement_of(instance.id).is_none() && board_placeable(project, instance.id)
+        })
         .map(|i| i.id)
         .collect()
+}
+
+/// Change an instance's physical choice. Direct only without a board
+/// placement; a consequential change keeps the placement, or removes it when
+/// the choice is cleared.
+pub fn set_physical(
+    project: &mut Project,
+    instance: Id,
+    choice: Option<PhysicalChoice>,
+    policy: EditPolicy,
+) -> Result<()> {
+    let placed = project.placement_of(instance).is_some();
+    if placed && policy == EditPolicy::Direct {
+        return Err(Error::Conflict(
+            "This instance is on the board. Preview the change with project.preview_update (Change::Instance) to review its copper impact.".into(),
+        ));
+    }
+    instances::instance_mut(project, instance)?.physical = choice;
+    if choice.is_none() {
+        project.placements.retain(|p| p.instance != instance);
+    }
+    instances::check_instance(project, instance)
+}
+
+/// Remove an instance's board placement. Direct only without one.
+pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) -> Result<()> {
+    if project.placement_of(instance).is_some() {
+        if policy == EditPolicy::Direct {
+            return Err(Error::Conflict(
+                "Remove the PCB placement first, or preview the removal with project.preview_update (Change::Instance).".into(),
+            ));
+        }
+        project.placements.retain(|p| p.instance != instance);
+    }
+    Ok(())
 }
 
 /// Atomic when invoked directly: a failure leaves `project` unchanged.
@@ -214,7 +260,12 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
             layer,
         } => {
             if project.instance(instance).is_none() {
-                return Err(Error::NotFound("unknown schematic instance".into()));
+                return Err(Error::NotFound("unknown component instance".into()));
+            }
+            if !board_placeable(project, instance) {
+                return Err(Error::Conflict(
+                    "choose a physical implementation before placing this instance".into(),
+                ));
             }
             if project.placements.iter().any(|p| p.instance == instance) {
                 return Err(Error::Conflict("component is already placed".into()));
@@ -467,14 +518,16 @@ pub fn validate(project: &Project) -> Result<()> {
         if !placed.insert(placement.instance) || project.instance(placement.instance).is_none() {
             return invalid("duplicate or unknown placement instance");
         }
-        if let Some(part) = project
+        let physical = project
             .instance(placement.instance)
-            .and_then(|instance| project.part(instance.part))
-        {
-            pad_count = pad_count.saturating_add(part.footprint.pads.len());
-            if pad_count > MAX_PLACED_PADS {
-                return invalid("prototype supports at most 4096 placed pads");
-            }
+            .and_then(|instance| instances::resolve(&project.library, instance).ok())
+            .and_then(|r| r.physical);
+        let Some(physical) = physical else {
+            return invalid("a placement requires a resolvable physical choice");
+        };
+        pad_count = pad_count.saturating_add(physical.footprint.definition.pads.len());
+        if pad_count > MAX_PLACED_PADS {
+            return invalid("prototype supports at most 4096 placed pads");
         }
         if !point_valid(placement.position)
             || !placement.rotation_deg.is_finite()
@@ -653,7 +706,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     for id in sync_preview(project) {
         let reference = project
             .instance(id)
-            .map(|i| i.reference.as_str())
+            .map(|i| i.designator.as_str())
             .unwrap_or("component");
         issues.push(Finding::new(
             "board.unplaced",
@@ -673,7 +726,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 "{} pad {}",
                 project
                     .instance(pad.instance)
-                    .map(|i| i.reference.as_str())
+                    .map(|i| i.designator.as_str())
                     .unwrap_or("component"),
                 pad.pad
             ),

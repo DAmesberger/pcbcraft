@@ -1,6 +1,6 @@
 //! Checked quantity arithmetic. Unit definitions are supplied as data, not
 //! selected by component names. This proof supports linear SI units only.
-use crate::{Error, Result};
+use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

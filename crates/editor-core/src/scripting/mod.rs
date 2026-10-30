@@ -7,7 +7,9 @@ mod quantity;
 mod tests;
 pub use quantity::{Dimension, Quantity, UnitDefinition};
 
-use crate::{Error, Id, Pad, Part, Result, parts};
+use crate::diagnostics::{Error, Result};
+use crate::ids::PadId;
+use crate::library::{self, Definition, DefinitionMeta, FootprintDefinition, Pad};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Scope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -178,8 +180,8 @@ pub fn evaluate_quantity(script: &Script) -> Result<Quantity> {
 
 #[derive(Clone)]
 struct PadArray {
-    allowed: Arc<BTreeMap<Id, Pad>>,
-    generated: BTreeMap<Id, Pad>,
+    allowed: Arc<BTreeMap<PadId, Pad>>,
+    generated: BTreeMap<PadId, Pad>,
 }
 
 impl PadArray {
@@ -191,7 +193,9 @@ impl PadArray {
         width: Quantity,
         height: Quantity,
     ) -> ScriptResult<()> {
-        let id = Id::try_from(id).map_err(|_| failure("pad ID must be positive"))?;
+        let id = u32::try_from(id)
+            .map(PadId)
+            .map_err(|_| failure("pad ID must be positive"))?;
         if self.generated.contains_key(&id) {
             return Err(failure("pad ID generated more than once"));
         }
@@ -219,32 +223,32 @@ impl PadArray {
     }
 }
 
-/// Produces a candidate only. Callers commit through `part.generate_pads`.
-/// This proof requires an existing, structurally valid draft and emits each
-/// existing pad exactly once, preserving IDs and terminal associations.
-pub fn generate_pads(script: &Script, draft: &Part) -> Result<Part> {
+/// Produces a candidate only. Callers commit through `library.generate_pads`.
+/// This proof emits each existing pad of a footprint draft exactly once,
+/// preserving pad IDs and package-terminal associations and allocating
+/// nothing.
+pub fn generate_pads(script: &Script, draft: &FootprintDefinition) -> Result<FootprintDefinition> {
     // Check bounds before copying data into interpreter-owned values.
-    parts::validate_draft(draft)?;
-    if draft.footprint.pads.len() > MAX_PADS {
+    let bounded = Definition::Footprint(draft.clone());
+    library::check_bounds(&DefinitionMeta::default(), &bounded)?;
+    if draft.pads.len() > MAX_PADS {
         return Err(Error::Limit(
             "generator proof supports at most 128 pads".into(),
         ));
     }
-    parts::validate_part(draft)?;
+    let mut ids = std::collections::BTreeSet::new();
+    if draft.pads.is_empty() || !draft.pads.iter().all(|p| p.id.0 > 0 && ids.insert(p.id)) {
+        return Err(Error::Invalid(
+            "pad generation needs existing pads with unique nonzero IDs".into(),
+        ));
+    }
     let (mut engine, mut scope) = prepare(script)?;
     engine.register_type_with_name::<PadArray>("PadArray");
     engine.register_fn("pad", PadArray::pad);
     scope.push(
         "footprint",
         PadArray {
-            allowed: Arc::new(
-                draft
-                    .footprint
-                    .pads
-                    .iter()
-                    .map(|p| (p.id, p.clone()))
-                    .collect(),
-            ),
+            allowed: Arc::new(draft.pads.iter().map(|p| (p.id, p.clone())).collect()),
             generated: BTreeMap::new(),
         },
     );
@@ -254,19 +258,22 @@ pub fn generate_pads(script: &Script, draft: &Part) -> Result<Part> {
     let output = scope
         .get_value::<PadArray>("footprint")
         .ok_or_else(|| Error::Invalid("script replaced footprint output".into()))?;
-    if output.generated.len() != draft.footprint.pads.len() {
+    if output.generated.len() != draft.pads.len() {
         return Err(Error::Invalid(
             "generator must emit every existing pad exactly once".into(),
         ));
     }
     let mut candidate = draft.clone();
-    for pad in &mut candidate.footprint.pads {
+    for pad in &mut candidate.pads {
         *pad = output
             .generated
             .get(&pad.id)
             .cloned()
             .ok_or_else(|| Error::Invalid("missing generated pad".into()))?;
     }
-    parts::validate_part(&candidate)?;
+    library::check_bounds(
+        &DefinitionMeta::default(),
+        &Definition::Footprint(candidate.clone()),
+    )?;
     Ok(candidate)
 }

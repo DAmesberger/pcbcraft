@@ -3,7 +3,7 @@
 use crate::native::{BoardJoint, BoxBody, Expr, Native, mm};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::{Id, Layer, Part, Project};
+use pcbcraft_core::{Id, Layer, PadId, Project, instances, library::PackageDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -19,7 +19,7 @@ const METADATA_KEY: &str = "org.pcbcraft.electronics";
 pub struct Source {
     pub pick_id: u64,
     pub instance: Option<Id>,
-    pub pad: Option<Id>,
+    pub pad: Option<PadId>,
     pub track: Option<Id>,
     pub net: Option<Id>,
     pub layer: Option<Layer>,
@@ -77,7 +77,7 @@ fn next_pick(sources: &[Source]) -> u64 {
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
-    pcbcraft_core::validate(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     let mut native = Native::new(&project.name)?;
     let s = &mut native;
     for (name, value) in [
@@ -104,9 +104,13 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let instance = project
             .instance(placement.instance)
             .ok_or_else(|| Error::Invalid("missing instance".into()))?;
-        let part = project
-            .part(instance.part)
-            .ok_or_else(|| Error::Invalid("missing part snapshot".into()))?;
+        let physical = instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+            .ok_or_else(|| {
+                Error::Invalid("placed instance has no physical implementation".into())
+            })?;
+        let package = &physical.package.definition;
         let prefix = format!("instance_{}", instance.id);
         for (suffix, value, unit) in [
             ("x", placement.position[0], "mm"),
@@ -115,13 +119,13 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         ] {
             param(s, &format!("{prefix}_{suffix}"), value, unit)?;
         }
-        let label = format!("{} envelope", instance.reference);
+        let label = format!("{} envelope", instance.designator);
         let created = s.component(&label, false)?;
-        let size = part.package.body_size;
+        let size = package.body_size;
         for (axis, value) in ["length", "width", "height"].into_iter().zip(size) {
             param(s, &format!("{prefix}_{axis}"), value, "mm")?;
         }
-        let offset = part.package.model_offset;
+        let offset = package.model_offset;
         s.solid_box(BoxBody {
             name: &label,
             corner: [
@@ -159,19 +163,19 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let instance = project
             .instance(pad.instance)
             .ok_or_else(|| Error::Invalid("missing pad instance".into()))?;
-        let part = project
-            .part(instance.part)
-            .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
-        let local = part
+        let footprint = &instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+            .ok_or_else(|| Error::Invalid("missing pad definition".into()))?
             .footprint
-            .pads
-            .iter()
-            .find(|p| p.id == pad.pad)
+            .definition;
+        let local = footprint
+            .pad(pad.pad)
             .ok_or_else(|| Error::Invalid("missing pad".into()))?;
         let prefix = format!("instance_{}", pad.instance);
         let pp = format!("pad_{}_{}", pad.instance, pad.pad);
-        let dx = local.position[0] - part.footprint.datum_offset[0];
-        let dy = (local.position[1] - part.footprint.datum_offset[1])
+        let dx = local.position[0] - footprint.datum_offset[0];
+        let dy = (local.position[1] - footprint.datum_offset[1])
             * if pad.layer == Layer::Top { 1.0 } else { -1.0 };
         param(s, &format!("{pp}_length"), pad.size[0], "mm")?;
         param(s, &format!("{pp}_width"), pad.size[1], "mm")?;
@@ -209,7 +213,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             track: None,
             net: Some(pad.net),
             layer: Some(pad.layer),
-            label: format!("{} pad {}", instance.reference, pad.pad),
+            label: format!("{} pad {}", instance.designator, pad.pad),
             component,
         });
     }
@@ -259,16 +263,21 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     finish(native, sources)
 }
 
-pub fn preview(part: &Part) -> Result<NativeModel> {
-    pcbcraft_core::parts::validate_part(part).map_err(|e| Error::Invalid(e.to_string()))?;
-    let mut s = Native::new(&format!("{} — package envelope", part.name))?;
+/// The native envelope of one package definition, draft or published.
+pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
+    if !package.envelope_valid() {
+        return Err(Error::Invalid(
+            "package envelope dimensions must be finite and positive".into(),
+        ));
+    }
+    let mut s = Native::new("Package envelope")?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
-        .zip(part.package.body_size)
+        .zip(package.body_size)
     {
         param(&mut s, name, value, "mm")?;
     }
-    let offset = part.package.model_offset;
+    let offset = package.model_offset;
     s.solid_box(BoxBody {
         name: "Package envelope",
         corner: [

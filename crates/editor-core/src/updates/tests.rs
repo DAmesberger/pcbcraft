@@ -1,25 +1,16 @@
 use super::*;
+use crate::library::{Definition, PinKind};
+use crate::tests::support::*;
 use crate::{
-    Engine, Layer, Operation, Part,
+    DefinitionKind, Engine, InstanceCommand, Layer, Operation, Revision, SymbolRef,
     layout::{LayoutCommand, RouteRequest},
-    parts::PartCommand,
     schematic::SchematicCommand,
 };
 
-fn apply(engine: &mut Engine, operation: Operation) -> Result<()> {
-    engine.apply(engine.revision(), operation)
-}
-/// Route on the net of `terminal` (instance, terminal).
-fn route(engine: &mut Engine, terminal: (Id, Id), start: [f64; 2], end: [f64; 2]) -> Result<Id> {
+/// Route on the net of `terminal`.
+fn route(engine: &mut Engine, terminal: Endpoint, start: [f64; 2], end: [f64; 2]) -> Result<Id> {
     let id = engine.project().next_id;
-    let net = engine
-        .project()
-        .net_of(Endpoint {
-            instance: terminal.0,
-            terminal: terminal.1,
-        })
-        .map(|net| net.id)
-        .ok_or_else(|| Error::NotFound("terminal has no net".into()))?;
+    let net = net_of(engine, terminal)?;
     apply(
         engine,
         Operation::Layout(LayoutCommand::Route {
@@ -34,48 +25,56 @@ fn route(engine: &mut Engine, terminal: (Id, Id), start: [f64; 2], end: [f64; 2]
     )?;
     Ok(id)
 }
-fn routed() -> Result<(Engine, Id, Id)> {
+
+struct Routed {
+    engine: Engine,
+    fixture: Fixture,
+    r1: Id,
+    shared: Id,
+    unaffected: Id,
+}
+
+fn routed() -> Result<Routed> {
     let mut engine = Engine::demo()?;
-    let shared = route(&mut engine, (2, 2), [9.2, 8.0], [14.8, 8.0])?;
-    let unaffected = route(&mut engine, (3, 2), [17.2, 8.0], [21.0, 8.0])?;
-    Ok((engine, shared, unaffected))
-}
-fn publish(engine: &mut Engine, edit: impl FnOnce(&mut Part)) -> Result<PartRef> {
-    let mut draft = engine
-        .project()
-        .parts
-        .last()
-        .ok_or_else(|| invalid("test part missing"))?
-        .clone();
-    edit(&mut draft);
-    let target = PartRef {
-        id: draft.id,
-        revision: draft.revision + 1,
-    };
-    apply(
+    let fixture = demo_fixture(&engine)?;
+    let (r1, r2) = (by_designator(&engine, "R1")?, by_designator(&engine, "R2")?);
+    let shared = route(&mut engine, ep(r1, 2), [9.2, 8.0], [14.8, 8.0])?;
+    let unaffected = route(&mut engine, ep(r2, 2), [17.2, 8.0], [21.0, 8.0])?;
+    Ok(Routed {
         engine,
-        Operation::Part(PartCommand::Publish { draft: Some(draft) }),
-    )?;
-    Ok(target)
+        fixture,
+        r1,
+        shared,
+        unaffected,
+    })
 }
-fn revision_change(target: PartRef) -> Change {
-    Change::PartRevision {
-        instances: vec![2],
+
+fn revision_change(instance: Id, target: ComponentRef) -> Change {
+    Change::ComponentRevision {
+        instances: vec![instance],
         target,
+        resolutions: Resolutions::default(),
     }
 }
 
 #[test]
 fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offline_reopen()
 -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.footprint.pads[1].position = [1.2, 2.0];
-        part.package.body_size[2] = 2.0;
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            fp.pads[1].position = [1.2, 2.0]
+        })?;
+        with(e, f.package, package_body, |p| p.body_size[2] = 2.0)
     })?;
     let before = engine.project().clone();
     let revision = engine.revision();
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     assert!(plan.conflicting_tracks.is_empty());
     assert!(plan.warnings.iter().any(|w| w.contains("detached")));
@@ -93,8 +92,11 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
     assert_eq!(engine.revision(), revision);
     engine.apply_update(plan.revision, plan.change, false)?;
     assert_eq!(engine.project().tracks, before.tracks);
-    assert_eq!(engine.project().instances[0].part, target);
-    assert_eq!(engine.project().instances[1].part.revision, 1);
+    assert_eq!(engine.project().instances[0].component, target);
+    assert_eq!(
+        engine.project().instances[1].component.revision,
+        Revision(1)
+    );
     let after = engine.project().clone();
     engine.undo()?;
     assert_eq!(engine.project(), &before);
@@ -108,17 +110,26 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
 
 #[test]
 fn mapping_changes_require_listed_track_removal_without_retagging_others() -> Result<()> {
-    let (mut engine, shared, unaffected) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.binding.mappings[0].electrical = 2;
-        part.binding.mappings[1].electrical = 1;
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        unaffected,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.binding, binding_body, |b| {
+            b.mappings[0].terminal = crate::TerminalId(2);
+            b.mappings[1].terminal = crate::TerminalId(1);
+        })
     })?;
     let before = engine.project().clone();
     let revision = engine.revision();
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert_eq!(
         schematic::nets(&before),
-        schematic::nets(&stage(&before, &plan.change)?)
+        schematic::nets(&stage_change(&before, &plan.change)?)
     );
     assert_eq!(plan.conflicting_tracks, vec![shared]);
     assert!(plan.changes.iter().any(|c| c.contains("maps electrical")));
@@ -147,7 +158,13 @@ fn mapping_changes_require_listed_track_removal_without_retagging_others() -> Re
 
 #[test]
 fn disconnect_and_remove_plan_wires_placements_and_conflicts_atomically() -> Result<()> {
-    let (mut engine, shared, unaffected) = routed()?;
+    let Routed {
+        mut engine,
+        r1,
+        shared,
+        unaffected,
+        ..
+    } = routed()?;
     let wire = engine.project().wires[0].id;
     let plan = engine.preview_update(Change::Schematic {
         command: SchematicCommand::Disconnect { wire },
@@ -160,14 +177,15 @@ fn disconnect_and_remove_plan_wires_placements_and_conflicts_atomically() -> Res
     assert_eq!(engine.project().tracks[0].id, unaffected);
     engine.undo()?;
     assert_eq!(engine.project(), &before);
-    let plan = engine.preview_update(Change::Schematic {
-        command: SchematicCommand::Remove { instance: 2 },
+    let plan = engine.preview_update(Change::Instance {
+        edit: InstanceChange::Remove { instance: r1 },
     });
-    assert_eq!(plan.removed_placements, vec![2]);
+    assert_eq!(plan.removed_placements, vec![r1]);
     assert_eq!(plan.removed_wires, vec![wire]);
     assert_eq!(plan.conflicting_tracks, vec![shared]);
     engine.apply_update(plan.revision, plan.change, true)?;
-    assert!(engine.project().instance(2).is_none());
+    assert!(engine.project().instance(r1).is_none());
+    assert!(engine.project().occurrences_of(r1).next().is_none());
     assert_eq!(engine.project().placements.len(), 1);
     assert_eq!(engine.project().tracks[0].id, unaffected);
     engine.undo()?;
@@ -177,15 +195,36 @@ fn disconnect_and_remove_plan_wires_placements_and_conflicts_atomically() -> Res
 
 #[test]
 fn stale_preview_and_malformed_changes_do_not_touch_history() -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let target = publish(&mut engine, |part| part.name = "Renamed".into())?;
-    let plan = engine.preview_update(revision_change(target));
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        let draft = e
+            .drafts()
+            .get(f.component)
+            .cloned()
+            .ok_or_else(|| invalid("draft"))?;
+        edit(
+            e,
+            vec![crate::library::DraftEdit {
+                id: f.component,
+                meta: crate::library::DefinitionMeta {
+                    name: "Renamed".into(),
+                    ..draft.meta
+                },
+                definition: draft.definition,
+            }],
+        )
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
     apply(
         &mut engine,
-        Operation::Schematic(SchematicCommand::Edit {
-            instance: 2,
-            reference: "R9".into(),
-            value: "1k".into(),
+        Operation::Instance(InstanceCommand::SetDesignator {
+            instance: r1,
+            designator: "R9".into(),
         }),
     )?;
     let before = engine.project().clone();
@@ -205,24 +244,29 @@ fn stale_preview_and_malformed_changes_do_not_touch_history() -> Result<()> {
         ),
         Err(Error::Stale { .. })
     ));
-    let bad = Change::PartRevision {
-        instances: vec![999],
-        target,
-    };
+    let bad = revision_change(999, target);
     assert!(!engine.preview_update(bad.clone()).blockers.is_empty());
     assert!(engine.apply_update(revision, bad, true).is_err());
     assert_eq!(engine.project(), &before);
     assert_eq!(engine.revision(), revision);
     engine.undo()?;
-    assert_eq!(engine.project().instances[0].reference, "R1");
+    assert_eq!(engine.project().instances[0].designator, "R1");
     Ok(())
 }
 
 #[test]
 fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Result<()> {
-    let (mut engine, shared, _) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.footprint.pads[1].position = [1.2, 2.0]
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            fp.pads[1].position = [1.2, 2.0]
+        })
     })?;
     apply(
         &mut engine,
@@ -231,7 +275,7 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
             locked: true,
         }),
     )?;
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert!(
         plan.blockers
             .iter()
@@ -254,12 +298,16 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
     apply(
         &mut engine,
         Operation::Layout(LayoutCommand::SetPlacementLock {
-            instance: 2,
+            instance: r1,
             locked: true,
         }),
     )?;
-    let plan = engine.preview_update(revision_change(target));
-    assert!(plan.blockers.iter().any(|b| b.contains("Placement 2")));
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.contains(&format!("Placement {r1}")))
+    );
     assert!(
         engine
             .apply_update(plan.revision, plan.change, true)
@@ -270,11 +318,19 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
 
 #[test]
 fn moved_foreign_pad_cannot_silently_short_retained_track() -> Result<()> {
-    let (mut engine, shared, _) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.footprint.pads[0].position = [3.0, 0.0]
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            fp.pads[0].position = [3.0, 0.0]
+        })
     })?;
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert_eq!(plan.conflicting_tracks, vec![shared]);
     let before = engine.project().clone();
     assert!(
@@ -288,35 +344,43 @@ fn moved_foreign_pad_cannot_silently_short_retained_track() -> Result<()> {
 
 #[test]
 fn removed_terminal_is_not_reconnected_by_name_and_lists_wire_loss() -> Result<()> {
-    let (mut engine, shared, _) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.component.terminals[1].id = 20;
-        part.symbol.pins[1].terminal = 20;
-        part.binding.mappings[1].electrical = 20;
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let twenty = crate::TerminalId(20);
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.component, component_body, |c| {
+            c.terminals[1].id = twenty;
+            c.next_local = 21;
+        })?;
+        with(e, f.symbol, symbol_body, |s| {
+            s.units[0].anchors[1].terminal = twenty
+        })?;
+        with(e, f.binding, binding_body, |b| {
+            b.mappings[1].terminal = twenty
+        })
     })?;
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert_eq!(plan.removed_wires, vec![engine.project().wires[0].id]);
     assert_eq!(plan.conflicting_tracks, vec![shared]);
     engine.apply_update(plan.revision, plan.change, true)?;
     assert!(engine.project().wires.is_empty());
-    assert!(
-        engine
-            .project()
-            .net_of(Endpoint {
-                instance: 2,
-                terminal: 20
-            })
-            .is_some()
-    );
+    assert!(engine.project().net_of(ep(r1, 20)).is_some());
     Ok(())
 }
 
 #[test]
 fn preview_and_apply_roundtrip_through_serialized_operations_and_schema() -> Result<()> {
     let mut engine = Engine::demo()?;
-    let target = publish(&mut engine, |part| part.name = "New caption".into())?;
+    let f = demo_fixture(&engine)?;
+    let r1 = by_designator(&engine, "R1")?;
+    let target = cascade(&mut engine, &f, |_| Ok(()))?;
     let revision = engine.revision();
-    let value = serde_json::to_value(engine.preview_update(revision_change(target)))?;
+    let value = serde_json::to_value(engine.preview_update(revision_change(r1, target)))?;
     let plan: UpdatePlan = serde_json::from_value(value)?;
     assert_eq!(plan.revision, revision);
     let operation: Operation = serde_json::from_value(serde_json::to_value(Operation::Update(
@@ -327,7 +391,7 @@ fn preview_and_apply_roundtrip_through_serialized_operations_and_schema() -> Res
         }),
     ))?)?;
     apply(&mut engine, operation)?;
-    assert_eq!(engine.project().instances[0].part, target);
+    assert_eq!(engine.project().instances[0].component, target);
     assert!(crate::schemas().get("update_plan").is_some());
     let before = engine.project().clone();
     let plan = engine.preview_update(Change::SyncPcb {});
@@ -343,12 +407,19 @@ fn preview_and_apply_roundtrip_through_serialized_operations_and_schema() -> Res
 
 #[test]
 fn label_only_terminal_changes_warn_and_preserve_all_routed_copper() -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let target = publish(&mut engine, |part| {
-        part.component.terminals[1].name = "Signal".into()
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.component, component_body, |c| {
+            c.terminals[1].name = "Signal".into()
+        })
     })?;
     let before = engine.project().clone();
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert!(plan.conflicting_tracks.is_empty());
     assert!(
         plan.warnings
@@ -363,17 +434,25 @@ fn label_only_terminal_changes_warn_and_preserve_all_routed_copper() -> Result<(
 
 #[test]
 fn unrelated_definition_with_matching_terminal_names_is_blocked() -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let id = engine.project().next_id;
-    apply(
+    let Routed { mut engine, r1, .. } = routed()?;
+    let other = component(
         &mut engine,
-        Operation::Part(PartCommand::Publish {
-            draft: Some(crate::parts::passive_template("Resistor")),
-        }),
+        &Spec {
+            name: "Resistor",
+            terminals: vec![(1, "1", PinKind::Passive), (2, "2", PinKind::Passive)],
+            units: vec![(1, "A", vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0])])],
+            package: vec![(1, "1"), (2, "2")],
+            mapping: vec![(1, 1), (2, 2)],
+            physical: true,
+        },
     )?;
     let before = engine.project().clone();
-    let plan = engine.preview_update(revision_change(PartRef { id, revision: 1 }));
-    assert!(plan.blockers.iter().any(|b| b.contains("definition ID")));
+    let plan = engine.preview_update(revision_change(r1, other.r1()));
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("definition lineage"))
+    );
     assert!(
         engine
             .apply_update(plan.revision, plan.change, true)
@@ -385,17 +464,12 @@ fn unrelated_definition_with_matching_terminal_names_is_blocked() -> Result<()> 
 
 #[test]
 fn pcb_sync_preview_adds_only_missing_placement_and_preserves_copper() -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let id = engine.project().next_id;
-    apply(
-        &mut engine,
-        Operation::Schematic(SchematicCommand::Place {
-            part: PartRef { id: 1, revision: 1 },
-            reference: "R3".into(),
-            value: "10k".into(),
-            position: [30.0, 0.0],
-        }),
-    )?;
+    let Routed {
+        mut engine,
+        fixture: f,
+        ..
+    } = routed()?;
+    let (id, _) = place(&mut engine, &f, "R3", 1, [30.0, 0.0])?;
     let before = engine.project().clone();
     let plan = engine.preview_update(Change::SyncPcb {});
     assert_eq!(plan.affected_placements, vec![id]);
@@ -410,12 +484,19 @@ fn pcb_sync_preview_adds_only_missing_placement_and_preserves_copper() -> Result
 
 #[test]
 fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Result<()> {
-    let (mut engine, _, _) = routed()?;
-    let nc_track = route(&mut engine, (2, 1), [6.8, 8.0], [6.8, 5.0])?;
-    let target = publish(&mut engine, |part| {
-        part.component.terminals[0].kind = PinKind::NotConnected
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let nc_track = route(&mut engine, ep(r1, 1), [6.8, 8.0], [6.8, 5.0])?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.component, component_body, |c| {
+            c.terminals[0].kind = PinKind::NotConnected
+        })
     })?;
-    let plan = engine.preview_update(revision_change(target));
+    let plan = engine.preview_update(revision_change(r1, target));
     assert_eq!(plan.conflicting_tracks, vec![nc_track]);
     let before = engine.project().clone();
     assert!(
@@ -426,5 +507,263 @@ fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Re
     assert_eq!(engine.project(), &before);
     engine.apply_update(plan.revision, plan.change, true)?;
     assert_eq!(engine.project().tracks.len(), 2);
+    Ok(())
+}
+
+/// A second binding lineage of the demo component on the same package and
+/// footprint, published in component r2 as its only implementation.
+fn alternative_binding(engine: &mut Engine, f: &Fixture) -> Result<(DefinitionId, ComponentRef)> {
+    let binding = new_draft(engine, DefinitionKind::Binding)?;
+    let body = match body(engine, f.binding)? {
+        Definition::Binding(b) => b,
+        _ => return Err(invalid("binding draft")),
+    };
+    rewrite(engine, binding, |d| *d = Definition::Binding(body))?;
+    let draft = engine
+        .drafts()
+        .get(binding)
+        .cloned()
+        .ok_or_else(|| invalid("draft"))?;
+    edit(
+        engine,
+        vec![crate::library::DraftEdit {
+            id: binding,
+            meta: meta("Alternative binding"),
+            definition: draft.definition,
+        }],
+    )?;
+    with(engine, f.component, component_body, |c| {
+        c.implementations = vec![crate::BindingRef::new(binding, Revision(1))]
+    })?;
+    let revisions = publish(engine, vec![binding, f.component])?;
+    let target = revisions
+        .into_iter()
+        .find(|r| r.id == f.component)
+        .map(|r| ComponentRef::new(r.id, r.revision))
+        .ok_or_else(|| invalid("component revision"))?;
+    Ok((binding, target))
+}
+
+#[test]
+fn a_choice_no_longer_offered_blocks_until_resolved() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let (binding, target) = alternative_binding(&mut engine, &f)?;
+    let before = engine.document().clone();
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.contains("not offered") && b.contains("ChoiceResolution")),
+        "{:?}",
+        plan.blockers
+    );
+    assert!(
+        engine
+            .apply_update(plan.revision, plan.change, true)
+            .is_err()
+    );
+    assert_eq!(engine.document(), &before);
+    let choice = PhysicalChoice {
+        binding,
+        footprint: f.footprint,
+    };
+    let resolved = Change::ComponentRevision {
+        instances: vec![r1],
+        target,
+        resolutions: Resolutions {
+            choices: vec![ChoiceResolution {
+                instance: r1,
+                representation: None,
+                physical: Some(Some(choice)),
+            }],
+            ..Default::default()
+        },
+    };
+    // The resolution survives the transport form, including `physical`.
+    let resolved: Change = serde_json::from_value(serde_json::to_value(&resolved)?)?;
+    let plan = engine.preview_update(resolved);
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.contains("physical implementation"))
+    );
+    engine.apply_update(plan.revision, plan.change, false)?;
+    assert_eq!(
+        engine.project().instance(r1).and_then(|i| i.physical),
+        Some(choice)
+    );
+    // Direct implementation changes are refused while the instance is placed.
+    let r2 = by_designator(&engine, "R2")?;
+    let direct = engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SetPhysical {
+            instance: r2,
+            choice: Some(choice),
+        }),
+    );
+    assert_eq!(direct.err().map(|e| e.code()), Some("conflict"));
+    Ok(())
+}
+
+#[test]
+fn a_representation_lineage_change_needs_explicit_unit_resolutions() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    // R3 has only an unused flag, no occurrence.
+    let (r3, occurrence) = place(&mut engine, &f, "R3", 1, [40.0, 0.0])?;
+    apply(
+        &mut engine,
+        Operation::Schematic(SchematicCommand::UnplaceUnit { occurrence }),
+    )?;
+    apply(
+        &mut engine,
+        Operation::Instance(InstanceCommand::SetUnitUnused {
+            instance: r3,
+            unit: UnitId(1),
+            unused: true,
+        }),
+    )?;
+    // A new symbol lineage whose only unit also has ID 1.
+    let symbol = new_draft(&mut engine, DefinitionKind::Symbol)?;
+    let body = match self::body(&engine, f.symbol)? {
+        Definition::Symbol(s) => s,
+        _ => return Err(invalid("symbol draft")),
+    };
+    edit(
+        &mut engine,
+        vec![crate::library::DraftEdit {
+            id: symbol,
+            meta: meta("Alternative symbol"),
+            definition: Definition::Symbol(body),
+        }],
+    )?;
+    with(&mut engine, f.component, component_body, |c| {
+        c.representations = vec![SymbolRef::new(symbol, Revision(1))]
+    })?;
+    let revisions = publish(&mut engine, vec![symbol, f.component])?;
+    let target = revisions
+        .into_iter()
+        .find(|r| r.id == f.component)
+        .map(|r| ComponentRef::new(r.id, r.revision))
+        .ok_or_else(|| invalid("component revision"))?;
+    for (instance, drop) in [(r1, false), (r3, true)] {
+        let choice = ChoiceResolution {
+            instance,
+            representation: Some(symbol),
+            physical: None,
+        };
+        let change = |units| Change::ComponentRevision {
+            instances: vec![instance],
+            target,
+            resolutions: Resolutions {
+                choices: vec![choice.clone()],
+                units,
+                regroups: vec![],
+            },
+        };
+        let blocked = engine.preview_update(change(vec![]));
+        assert!(
+            blocked
+                .blockers
+                .iter()
+                .any(|b| b.contains("UnitResolution")),
+            "{instance}: {:?}",
+            blocked.blockers
+        );
+        let resolution = UnitResolution {
+            instance,
+            unit: UnitId(1),
+            target: if drop {
+                UnitTarget::Drop
+            } else {
+                UnitTarget::Unit(UnitId(1))
+            },
+        };
+        let plan = engine.preview_update(change(vec![resolution]));
+        assert!(plan.blockers.is_empty(), "{instance}: {:?}", plan.blockers);
+        engine.apply_update(plan.revision, plan.change, false)?;
+        let after = engine
+            .project()
+            .instance(instance)
+            .cloned()
+            .ok_or_else(|| invalid("instance"))?;
+        assert_eq!(after.representation, symbol);
+        assert!(after.unused_units.is_empty());
+        assert_eq!(
+            engine
+                .project()
+                .occurrences_of(instance)
+                .map(|o| o.unit)
+                .collect::<Vec<_>>(),
+            if drop { vec![] } else { vec![UnitId(1)] }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn removing_an_unused_unit_in_the_same_lineage_lists_the_flag_without_blocking() -> Result<()> {
+    let mut engine = Engine::default();
+    let f = component(
+        &mut engine,
+        &Spec {
+            name: "Split pair",
+            terminals: vec![(1, "1", PinKind::Passive), (2, "2", PinKind::Passive)],
+            units: vec![
+                (1, "A", vec![(1, [-5.0, 0.0])]),
+                (2, "B", vec![(2, [5.0, 0.0])]),
+            ],
+            package: vec![(1, "1"), (2, "2")],
+            mapping: vec![(1, 1), (2, 2)],
+            physical: true,
+        },
+    )?;
+    let (x1, _) = place(&mut engine, &f, "X1", 1, [0.0, 0.0])?;
+    apply(
+        &mut engine,
+        Operation::Instance(InstanceCommand::SetUnitUnused {
+            instance: x1,
+            unit: UnitId(2),
+            unused: true,
+        }),
+    )?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.symbol, symbol_body, |s| {
+            let moved: Vec<_> = s.units[1].anchors.drain(..).collect();
+            s.units[0].anchors.extend(moved);
+            s.units.remove(1);
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(x1, target));
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c == "X1: unit 2 is no longer marked unused."),
+        "{:#?}",
+        plan.changes
+    );
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.contains("unit B (2) is removed"))
+    );
+    engine.apply_update(plan.revision, plan.change, false)?;
+    assert!(
+        engine
+            .project()
+            .instance(x1)
+            .is_some_and(|i| i.unused_units.is_empty())
+    );
     Ok(())
 }

@@ -6,7 +6,7 @@ Implementation contract, 30 October 2026. This document says how the [accepted a
 2. **Typed fields and quantities.** This slice replaces `Instance.value: String` and the scripting proof's `UnitDefinition`.
 3. **Terminal functions and selections.** This slice replaces `PinKind`.
 
-Nothing here is implemented yet. Command names, type names and fixture values are design decisions for these slices. They are not claims about existing endpoints. The slices add no feature scope beyond the contract. When something is deferred, this document says so and names the scenario that owns it.
+**Status (30 October 2026):** slice 1 is implemented as described here, with the [recorded deviations](#slice-1-implementation-notes); slices 2 and 3 are not implemented. For slices 2 and 3, command names, type names and fixture values are design decisions, not claims about existing endpoints. The slices add no feature scope beyond the contract. When something is deferred, this document says so and names the scenario that owns it.
 
 All fixtures are original synthetic data. Behavior comes from this project's specification, general electronics conventions and public specifications. No GPL/LGPL/AGPL EDA implementation, library or proprietary tool data is consulted (see [attribution](../ATTRIBUTION.md)).
 
@@ -198,10 +198,11 @@ Each row is one cohesive concern with a narrow public surface. "May use" is the 
 - **Data before rules.** `model` holds the project aggregate, including instance and occurrence data, with no rules. The rule modules above it (`instances`, `nets`, `schematic`, `layout`) take `&Project`, so a rule that needs whole-project state has an owner below `validate`, `updates` and `commands`.
 - **Payloads live where they execute.** A command payload type lives in the lowest module that can execute it. `SchematicCommand` and `LayoutCommand` stay in `schematic` and `layout` with an `apply(&mut Project, command, EditPolicy)` that holds their rules, as today. The project carries its library snapshot, so rule functions that take `&Project` need no separate `&Library`. `LibraryCommand` and `InstanceCommand` span several domain modules, so they live in `commands`, which only dispatches. `updates` never names a `commands` type.
 
-Command handlers in `commands` orchestrate: they look up, clone a candidate, call domain functions and commit. They hold no domain rules. `Engine::apply` ends every candidate with `nets::reconcile` and `validate::project`.
+Command handlers in `commands` orchestrate: they look up, clone a candidate, call domain functions and commit. They hold no domain rules. `Engine::apply` ends every candidate with `nets::reconcile` and `validate::edited`, which is `validate::project` except that the library snapshot is revalidated only when it changed.
 
 | # | Module | Responsibility | Owns (types) | Public functions | May use |
 | --- | --- | --- | --- | --- | --- |
+| 0 | `geometry` (slice 1 addition) | Plain 2D coordinate vocabulary and persistence bounds | `Point` | `point_valid`, `finite_within`, `size_valid` | — |
 | 1 | `ids` | Identity vocabulary | `Id`, `DefinitionId`, `Revision`, `DefinitionKind`, exact `*Ref`s, `DefinitionRef` (kind-tagged), local ID newtypes, `FunctionKey`, `Endpoint` | `Revision::next` (checked) | — |
 | 2 | `diagnostics` | Command errors and findings | `Error`, `Diagnostic`, `Finding`, `ObjectRef` (gains `Definition`, `LibraryObject`, `Occurrence`, `Unit`), `Stage` | `Error::code`, `Finding::new`, `Finding::blocking`, `Finding::blocks_stage` | `ids` |
 | 3 | `quantity` (slice 2, moved from `scripting/quantity.rs`) | Checked dimensional arithmetic and the one unit-scaling and unit-text rule over **data-supplied** units | `Dimension`, `Quantity`, `UnitOfMeasure`, `UnitSet`, `SI_PREFIXES` | `Quantity::{new, add, sub, mul, div, scale, scale_integer, value, dimension}`, `UnitSet::to_si`, `parse(text, &UnitSet, default_unit)`, `format` | `diagnostics` |
@@ -214,7 +215,7 @@ Command handlers in `commands` orchestrate: they look up, clone a candidate, cal
 | 10 | `schematic` | Capture rules: wires, occurrences, pin geometry | `SchematicCommand` | `apply`, `connect`, `disconnect`, `rename_net`, `place_unit`, `move_unit`, `unplace_unit`, `detach_instance`, `pin_position`, `validate`, `protect_routed_nets` | `ids`, `diagnostics`, `library`, `model`, `instances`, `nets` |
 | 11 | `layout` | Placement, routing, board checks | `LayoutCommand`, `WorldPad`, `RouteRequest`, `RouteEditSet`, `ManualRouter` | `apply`, `pads`, `sync_preview`, `place`, `route`, `set_physical`, `detach_instance`, `checks`, `airwires`, `validate` | `ids`, `diagnostics`, `library`, `model`, `instances` |
 | 12 | `erc` (extracted from `schematic::checks`) | Net-level electrical rules over active terminal behavior | — | `checks` | `ids`, `diagnostics`, `library`, `model`, `instances`, `functions`, `nets` |
-| 13 | `completeness` | Derived instance and definition states | `InstanceReport`, `UnitReport`, `DefinitionReport`, `CheckTarget` | `instance`, `definition` | `ids`, `diagnostics`, `library`, `model`, `instances`, `fields`, `functions`, `nets` |
+| 13 | `completeness` | Derived instance and definition states | `InstanceReport`, `UnitReport`, `DefinitionReport`, `CheckTarget` | `instance`, `definition`, `drafts` | `ids`, `diagnostics`, `library`, `model`, `instances`, `fields`, `functions`, `nets` |
 | 14 | `scripting` | Bounded Rhai execution only | `Script`, `Input` | `evaluate_quantity`, `generate_pads` | `ids`, `diagnostics`, `quantity`, `library` |
 | 15 | `validate` | Whole-document invariants, aggregating domain validators | — | `project`, `document` | `ids`, `diagnostics`, `library`, `model`, `instances`, `nets`, `schematic`, `layout` |
 | 16 | `updates` | Revision-bound impact plans and consequential edits | `Change`, `InstanceChange`, `Resolutions`, `ChoiceResolution`, `UnitResolution`, `RegroupResolution`, `FieldResolution` (slice 2), `FunctionResolution` (slice 3), `ApplyUpdate`, `UpdatePlan` | `preview`, `candidate`, `stage` | 1–15 |
@@ -226,9 +227,14 @@ Command handlers in `commands` orchestrate: they look up, clone a candidate, cal
 
 | Rule | Owner | Called from |
 | --- | --- | --- |
-| Choices offered by the pinned component; unit IDs exist in the resolved representation; `Placed` and `Unused` exclusive; no-connect only on `Electrical` terminals; every wire endpoint's owning unit placed, `Electrical` and not project no-connect (so no-connect and wiring exclude each other); field values valid (slice 2); selections structurally valid and conflict-free, including availability in the chosen binding (slice 3) | `instances::check_instance(&Project, InstanceId)` | Every `instances::*` edit, `schematic::{connect, place_unit}`, `layout::set_physical`, `updates::candidate`, `validate::project` |
+| Choices offered by the pinned component; unit IDs exist in the resolved representation; `Placed` and `Unused` exclusive; no-connect only on `Electrical` terminals; every wire endpoint's owning unit placed, `Electrical` and not project no-connect (so no-connect and wiring exclude each other); field values valid (slice 2); selections structurally valid and conflict-free, including availability in the chosen binding (slice 3) | `instances::check_instance(&Project, InstanceId)` | Every `instances::*` edit, `schematic::{connect, place_units}`, `layout::set_physical`, `updates::candidate`, `validate::project` |
 | Designators unique case-insensitively and well formed | `instances::check_designators(&Project)` | `instances::{place, set_designator}`, `validate::project` |
-| Unplacing a unit: direct only when no wire touches its terminals; consequential removes and lists those wires | `schematic::unplace_unit(&mut Project, occurrence, EditPolicy)` | `SchematicCommand::UnplaceUnit` with `Direct` or (through `Change::Schematic`) `Consequential` |
+| Unplacing a unit: direct only when no wire touches its terminals; consequential removes and lists those wires | `schematic::unplace_unit(&mut Project, occurrence, EditPolicy)` | `SchematicCommand::UnplaceUnit` with `Direct` or (through `Change::Schematic`) `Consequential`; dropped units in a component-revision update |
+| Creating a symbol occurrence within `MAX_OCCURRENCES` | `instances::add_occurrence` (unchecked constructor), composed by `schematic::place_units` and `instances::place`, which then check the instance | `SchematicCommand::PlaceUnit`, `component.place`, `RegroupAction::PlaceUnit` |
+| Removing the wires on some terminals of one instance: direct only when none is wired | `schematic::disconnect_terminals(&mut Project, instance, terminals, EditPolicy)` | Component-revision updates (terminals removed or made NC, `RegroupAction::AcceptDisconnect`) |
+| A terminal may carry wires or a project no-connect: it exists and is not device NC | `instances::wirable(&ComponentDefinition, TerminalId)` | `instances::retarget`, component-revision updates |
+| Pinning an instance to another revision of its lineage, dropping no-connect markers on terminals that are no longer wirable | `instances::retarget(&mut Project, instance, Retarget)` | Component-revision updates, which first unplace dropped units and disconnect unwirable terminals, then check the instance |
+| A draft's pending revision: first revision of a new lineage, or the next of a base that is still the latest | `library::pending_revision` (and `library::stageable`, which adds bounds and the finding a draft that cannot be staged carries) | `library.publish` through `library::candidate`, `component.check`, `component.check_drafts` |
 | Removing an instance's occurrences: direct only without wires | `schematic::detach_instance(&mut Project, instance, EditPolicy)` | `updates::stage` |
 | Removing an instance's placement and tracks: direct only without a placement | `layout::detach_instance(&mut Project, instance, EditPolicy)` | `updates::stage` |
 | Changing the physical choice: direct only without a board placement | `layout::set_physical(&mut Project, instance, choice, EditPolicy)` | `updates::stage` |
@@ -257,7 +263,7 @@ Notes on the boundaries:
 | --- | --- | --- | --- |
 | `crates/io` | 1 | Fixture and test updates only. `EditorFile` with `drafts` flows through existing atomic save/recovery. | File effects stay here. The new shape is a core type. |
 | `crates/solidcraft-integration` | 1 | `project::build` resolves package envelope, footprint pads and datum through `instances::resolve`. `preview(&Part)` becomes `preview(&PackageDefinition)`. | Native modeling stays in the adapter. It reads resolved definitions and never the library internals. |
-| `crates/automation` | 1–3 | Session returns `outcome` with each applied operation; the snapshot reports `drafts` with their findings; `component.inspect` and `component.check` are passed unchanged to `Engine::query`; MCP instructions and the catalog text are updated. The catalog's false "older versions migrate" claim is corrected. | Transports translate. Schemas are generated from the core types. No report is assembled outside core. |
+| `crates/automation` | 1–3 | Session returns `outcome` with each applied operation; the snapshot reports `drafts` with their findings; the `project.query` request carries a core `Query` (`component.inspect`, `component.check`, `component.check_drafts`) unchanged to `Engine::query`; MCP instructions and the catalog text are updated. The catalog's false "older versions migrate" claim is corrected. | Transports translate. Schemas are generated from the core types. No report is assembled outside core. |
 | `apps/pcbcraft` | 1–3 | The part editor edits a working set of drafts (component, one symbol, package, footprint, binding) and commits through `library.edit`/`library.publish`. The schematic editor places through `component.place`, draws every occurrence and shows unit states read-only from `Engine::query`. The scene keys native previews by package. Slice 2 edits fields marked `show_on_symbol` through `instance.set_properties`. Slice 3 maps today's terminal-kind dropdown to one fixed function. | The desktop keeps its current capability on the new model. New multi-unit/function UI belongs to the CE UI work. |
 | `apps/pcbcraft-cli` | 1 | Comment wording only. | Thin transport. |
 | `xtask` | — | No change. | Crate layers are unchanged. No new crate is created. |
@@ -276,7 +282,7 @@ All mutations are `Operation` variants: `Library(LibraryCommand)`, `Instance(Ins
 
 Every successful mutation is one undo step.
 
-Read-only reports are `Query` variants answered by `Engine::query(&self, Query) -> Result<QueryResult>`: `Query::InspectInstance { instance }` returns `completeness::InstanceReport` and `Query::CheckDefinition { target: CheckTarget }` returns `completeness::DefinitionReport`. Queries never create undo entries or change the revision. CLI, MCP and the desktop call `Engine::query` and present its result unchanged.
+Read-only reports are `Query` variants answered by `Engine::query(&self, Query) -> Result<QueryResult>`: `Query::InspectInstance { instance }` returns `completeness::InstanceReport`, `Query::CheckDefinition { target: CheckTarget }` returns `completeness::DefinitionReport` and `Query::CheckDrafts {}` returns one `DefinitionReport` per draft, in draft order, from a single staging. Queries never create undo entries or change the revision. CLI, MCP and the desktop call `Engine::query` and present its result unchanged.
 
 ### Delivered by slice 1
 
@@ -305,6 +311,7 @@ The spec's proposed `component.new` is served by `library.new_draft` with a comp
 | `project.preview_update` / `project.apply_update` | `Update` | `Change::{ComponentRevision { instances, target, resolutions }, Instance { edit: InstanceChange }, Schematic { command: SchematicCommand }, SyncPcb {}}` | `UpdatePlan` / `None` | `InstanceChange` is `Remove { instance }` or `SetPhysical { instance, choice }`, staged with `EditPolicy::Consequential`. `Change::Schematic` stages a schematic command the same way (for example, unplacing a wired unit). Plans list removed wires, affected nets and placements, and conflicting tracks, using the existing plan fields. |
 | `component.inspect` | `Query::InspectInstance` | `{ instance }` | `InstanceReport` | Exact pins and resolved choices; per-unit `Placed { occurrence }`/`Unplaced`/`Unused`; `occurrences`, `board_placements` (0 or 1), `bom_quantity` (always 1 per instance); completeness states and findings. |
 | `component.check` | `Query::CheckDefinition` | `{ target: CheckTarget::{Draft(DefinitionId), Revision(DefinitionRef)} }` | `DefinitionReport` | Findings with `blocks` for exactly the named draft or published revision. |
+| `component.check_drafts` | `Query::CheckDrafts` | `{}` | `Vec<DefinitionReport>` (`QueryResult::Drafts`) | `component.check` of every draft, staged once; used by session snapshots and the component editor. |
 
 `Resolutions` (slice 1) contains:
 
@@ -385,6 +392,25 @@ The spec's proposed `component.new` is served by `library.new_draft` with a comp
 Designator display is `designator` plus the unit label (`Q7` + `A` → `Q7A`) when the representation has more than one unit. The label is presentation only.
 
 **Demo and templates.** `Engine::demo` builds its sample library through the public commands, then places, connects and syncs as today. `library::samples::two_terminal(name)` returns a draft set (component, one-unit symbol, package, footprint, binding). That is generic data, not a category.
+
+### Slice 1 implementation notes
+
+Where the code had to settle something this contract left open, it chose the option that keeps concerns separate. These choices are now part of the contract:
+
+- **`geometry` module.** `Point`, `point_valid` and `size_valid` live in a new `geometry` module below `ids`, because `library` (6) stores coordinates and cannot use `model` (7). `model` re-exports `Point`. `geometry` uses no other module.
+- **Unit bodies.** `SymbolDefinition { component, next_local, units }`; each `Unit { id, label, body_size, anchors }` has its own body, since units are drawn independently. Bindings allocate no local IDs and have no `next_local`.
+- **Field names.** `PackageTerminal.designation`, `TerminalMap { package_terminal, terminal }`, `BindingDefinition { component, package, mappings, footprints }`, `FootprintDefinition { package, next_local, pads, datum_offset }`. `ObjectRef::LibraryObject { definition, local }` names any local object of a definition.
+- **Advisory finding.** A component revision without implementations carries `component.no_implementation` with `blocks: None`; it publishes, reopens and is placeable.
+- **Draft checks.** `component.check` on a draft evaluates its pending revision against the snapshot plus every other current draft's pending revision, so references inside a publish set resolve as they would on publish. `library::candidate` stages them, the same staging `library.publish` uses. A draft whose base is stale, invalid or out of bounds is not staged; its report carries only the blocking `definition.stale_base`, `definition.base_invalid`, `definition.revisions_exhausted` or `definition.bounds` finding and is never answered from a stored revision with the same number. `component.check_drafts` stages every draft once and reports them all.
+- **Error codes.** Blocking findings make `library.publish` fail with `conflict` and document decode fail with `invalid_input`. `library.draft_from` accepts any stored revision as the base; publishing a non-latest base is the stale `conflict`.
+- **One-pass validation.** `instances::check_all` runs `check_instance`'s single rule body for every instance with one pass over occurrences and wires; `validate::project` calls it instead of looping `check_instance`.
+- **Routed-net protection.** `Engine::apply` calls `schematic::protect_routed_nets` after `nets::reconcile` for every operation except `Update`; reviewed updates list affected copper instead.
+- **`layout::apply` takes no `EditPolicy`.** Layout commands have no consequential form; the consequential layout edits are `layout::set_physical` and `layout::detach_instance`, called by `updates::stage`.
+- **Payload types.** `component.place` carries `instances::NewInstance`. `Query` is tagged `query`/`params` with the command names `component.inspect`/`component.check`; `QueryResult` is tagged `report`/`result`; `CheckTarget` is tagged `target`/`id`. `UnitTarget` serializes as `{"unit": n}` or `"drop"`. In `ChoiceResolution`, an absent `physical` keeps the current choice, `null` clears it and a value replaces it.
+- **Resolution checks.** A resolution naming an instance outside the update, or a `UnitResolution` for a unit with neither an occurrence nor an unused flag, is `invalid_input`. A `RegroupResolution` for a terminal that needs none is ignored. A dropped unit takes the wires of the terminals it drew in the current representation.
+- **Samples.** `library::samples` has `two_terminal` and `two_terminal_header` (the desktop's Connector template). Both take `SampleRefs`, the lineages and the revisions they pin of each other; neither is a category.
+- **Inspection report.** `InstanceReport` also carries `display` labels per unit, `board_placeable`, `electrically_resolved` and `purchasing: "not computed: …"`.
+- **Desktop.** The part editor authors one working set of five drafts. Publishing always publishes all five, so unchanged siblings get identical new revisions. In a project without drafts, a template creates its lineages with five `library.new_draft` calls and one `library.edit`, which are six undo steps, not one. Applying designator and value together is two commands.
 
 ## Slice 2 — typed fields and quantities
 

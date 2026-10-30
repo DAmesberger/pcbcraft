@@ -1,17 +1,47 @@
 use super::*;
-use pcbcraft_core::{Engine, Operation, parts, schematic::SchematicCommand};
+use pcbcraft_core::{
+    DefinitionKind, Engine, InstanceCommand, LibraryCommand, Operation,
+    library::{Definition, DefinitionMeta},
+};
+
+/// An empty component draft and the demo binding draft emptied of mappings.
+pub(crate) fn unfinished(engine: &mut Engine) -> Result<()> {
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::NewDraft {
+            meta: DefinitionMeta::default(),
+            definition: Definition::empty(DefinitionKind::Component),
+        }),
+    )?;
+    let mut binding = engine
+        .drafts()
+        .items
+        .iter()
+        .find(|d| d.definition.kind() == DefinitionKind::Binding)
+        .cloned()
+        .ok_or_else(|| Error::Invalid("demo binding draft".into()))?;
+    if let Definition::Binding(b) = &mut binding.definition {
+        b.mappings.clear();
+    }
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Edit {
+            edits: vec![pcbcraft_core::library::DraftEdit {
+                id: binding.id,
+                meta: binding.meta,
+                definition: binding.definition,
+            }],
+        }),
+    )?;
+    Ok(())
+}
 
 #[test]
-fn saved_project_reopens_offline_with_exact_revisions_and_draft() -> Result<()> {
+fn saved_project_reopens_offline_with_exact_revisions_and_drafts() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("offline.pcbcraft");
     let mut engine = Engine::demo()?;
-    let mut draft = parts::passive_template("unfinished");
-    draft.binding.mappings.clear();
-    engine.apply(
-        engine.revision(),
-        Operation::Part(parts::PartCommand::SetDraft { draft }),
-    )?;
+    unfinished(&mut engine)?;
     write_project(&path, &engine.to_file())?;
     let reopened = Engine::from_file(read_project(&path)?)?;
     assert_eq!(reopened.to_file(), engine.to_file());
@@ -24,12 +54,12 @@ fn invalid_files_are_refused_without_side_effects() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("bad.pcbcraft");
     let mut engine = Engine::demo()?;
+    let r1 = engine.project().instances[0].id;
     engine.apply(
         engine.revision(),
-        Operation::Schematic(SchematicCommand::Edit {
-            instance: 2,
-            reference: "R10".into(),
-            value: "22k".into(),
+        Operation::Instance(InstanceCommand::SetDesignator {
+            instance: r1,
+            designator: "R10".into(),
         }),
     )?;
     let before = engine.to_file();

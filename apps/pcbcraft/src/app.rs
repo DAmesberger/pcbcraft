@@ -69,6 +69,22 @@ impl App {
             return;
         }
         self.status = match self.engine.apply(self.engine.revision(), operation) {
+            Ok(_) => "Ready".into(),
+            Err(error) => error.to_string(),
+        };
+    }
+
+    /// Requests that need several public commands, such as reserving new
+    /// lineages for a component. Each command is its own undo step.
+    fn part_requests(&mut self) {
+        let Some(request) = self.part.take_request() else {
+            return;
+        };
+        if self.files.busy() {
+            self.status = "Wait for the file operation to finish".into();
+            return;
+        }
+        self.status = match part_editor::run(&mut self.engine, request) {
             Ok(()) => "Ready".into(),
             Err(error) => error.to_string(),
         };
@@ -125,7 +141,7 @@ impl App {
     fn model_key(&self) -> Option<ModelKey> {
         match self.workspace {
             Workspace::Part if self.part.is_model_view() => {
-                self.part.preview_part().and_then(ModelKey::part)
+                self.part.preview_package().and_then(ModelKey::package)
             }
             Workspace::Pcb if self.pcb.is_3d() => {
                 Some(ModelKey::Project(Arc::clone(self.engine.project_arc())))
@@ -136,7 +152,7 @@ impl App {
 
     fn request_model(&mut self) {
         if let Some(key) = self.model_key() {
-            self.scene.request(key, self.part.preview_part());
+            self.scene.request(key, self.part.preview_package());
         }
     }
 
@@ -241,6 +257,7 @@ impl eframe::App for App {
         self.status_bar(ui);
         self.workspace_area(ui);
         // Draft edits commit once their gesture ends, as one undo step.
+        self.part_requests();
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(draft);
         self.shortcuts(&ctx);

@@ -1,6 +1,19 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use super::*;
-use crate::{Engine as DocumentEngine, Operation, parts::PartCommand};
+use crate::{
+    DefinitionId, Engine as DocumentEngine, LibraryCommand, Operation, Outcome,
+    library::{Definition, DefinitionMeta},
+};
+
+/// The footprint draft every engine fixture creates first.
+const DRAFT: DefinitionId = DefinitionId(1);
+
+fn generated(engine: &DocumentEngine) -> FootprintDefinition {
+    match &engine.drafts().get(DRAFT).unwrap().definition {
+        Definition::Footprint(f) => f.clone(),
+        _ => panic!("not a footprint draft"),
+    }
+}
 
 fn script(source: &str) -> Script {
     Script {
@@ -49,60 +62,20 @@ fn script(source: &str) -> Script {
     }
 }
 
-fn draft() -> Part {
-    use crate::*;
-    Part {
-        id: 0,
-        revision: 0,
-        name: "Four-terminal proof fixture".into(),
-        component: Component {
-            terminals: (0..4)
-                .map(|i| Terminal {
-                    id: 100 + i,
-                    name: format!("T{i}"),
-                    kind: PinKind::Passive,
-                })
-                .collect(),
-        },
-        symbol: Symbol {
-            body_size: [6.0, 4.0],
-            pins: (0..4)
-                .map(|i| SymbolPin {
-                    terminal: 100 + i,
-                    position: [-5.0, i as f64 * 2.0],
-                })
-                .collect(),
-        },
-        package: Package {
-            terminals: (0..4)
-                .map(|i| PackageTerminal {
-                    id: 200 + i,
-                    number: (i + 1).to_string(),
-                })
-                .collect(),
-            body_size: [8.0, 4.0, 2.0],
-            model_offset: [0.0; 3],
-        },
-        footprint: Footprint {
-            datum_offset: [0.0; 2],
-            pads: (0..4)
-                .map(|i| Pad {
-                    id: 10 + i,
-                    terminal: 200 + i,
-                    position: [0.0, i as f64 * 2.0],
-                    size: [1.0, 1.0],
-                })
-                .collect(),
-        },
-        binding: Binding {
-            mappings: (0..4)
-                .map(|i| TerminalMap {
-                    electrical: 100 + i,
-                    physical: 200 + i,
-                })
-                .collect(),
-        },
-        provenance: "Original scripting test fixture".into(),
+fn draft() -> FootprintDefinition {
+    use crate::{PackageRef, PackageTerminalId};
+    FootprintDefinition {
+        package: PackageRef::default(),
+        next_local: 14,
+        datum_offset: [0.0; 2],
+        pads: (0..4)
+            .map(|i| Pad {
+                id: PadId(10 + i),
+                terminal: PackageTerminalId(200 + i),
+                position: [0.0, i as f64 * 2.0],
+                size: [1.0, 1.0],
+            })
+            .collect(),
     }
 }
 
@@ -113,16 +86,24 @@ const ARRAY: &str = r#"
 "#;
 
 fn command(source: &str) -> Operation {
-    Operation::Part(PartCommand::GeneratePads {
+    Operation::Library(LibraryCommand::GeneratePads {
+        draft: DRAFT,
         script: script(source),
     })
 }
 
 fn engine() -> DocumentEngine {
     let mut engine = DocumentEngine::default();
-    engine
-        .apply(0, Operation::Part(PartCommand::SetDraft { draft: draft() }))
+    let outcome = engine
+        .apply(
+            0,
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta::default(),
+                definition: Definition::Footprint(draft()),
+            }),
+        )
         .unwrap();
+    assert_eq!(outcome, Outcome::DraftCreated { id: DRAFT });
     engine
 }
 
@@ -224,15 +205,15 @@ fn generated_array_preserves_mapping_and_commits_as_one_undo_step() {
     engine
         .apply(engine.revision(), serde_json::from_str(&json).unwrap())
         .unwrap();
-    let generated = engine.draft().unwrap();
-    assert_eq!(generated.binding, draft().binding);
-    for (pad, (id, terminal, x)) in generated.footprint.pads.iter().zip([
+    let generated = generated(&engine);
+    assert_eq!(generated.package, draft().package);
+    for (pad, (id, terminal, x)) in generated.pads.iter().zip([
         (10, 200, 0.0),
         (11, 201, 2.54),
         (12, 202, 5.08),
         (13, 203, 7.62),
     ]) {
-        assert_eq!((pad.id, pad.terminal), (id, terminal));
+        assert_eq!((pad.id.0, pad.terminal.0), (id, terminal));
         assert!((pad.position[0] - x).abs() < 1e-12);
         assert_eq!(pad.position[1], 0.0);
         assert!((pad.size[0] - 1.2).abs() < 1e-12);
@@ -279,7 +260,7 @@ fn partial_generation_failures_preserve_document_revision_and_redo() {
         assert!(engine.can_redo());
     }
     engine.redo().unwrap();
-    assert!((engine.draft().unwrap().footprint.pads[3].position[0] - 7.62).abs() < 1e-12);
+    assert!((generated(&engine).pads[3].position[0] - 7.62).abs() < 1e-12);
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

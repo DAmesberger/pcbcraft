@@ -1,5 +1,16 @@
 use super::*;
-use pcbcraft_core::{Endpoint, Engine, Track};
+use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
+
+/// The demo's two instances, by designator.
+fn instances(project: &Project) -> Result<(Id, Id)> {
+    let id = |designator| {
+        project
+            .instance_by_designator(designator)
+            .map(|i| i.id)
+            .ok_or_else(|| Error::Verification(format!("demo has no {designator}")))
+    };
+    Ok((id("R1")?, id("R2")?))
+}
 
 fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
@@ -13,8 +24,8 @@ fn fixture() -> Result<Project> {
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
-    project.parts[0].package.model_offset = [0.25, -0.4, 0.2];
-    project.parts[0].footprint.datum_offset = [0.3, -0.4];
+    project.library.packages[0].definition.model_offset = [0.25, -0.4, 0.2];
+    project.library.footprints[0].definition.datum_offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
         .iter_mut()
@@ -26,8 +37,8 @@ fn fixture() -> Result<Project> {
     }
     let shared = project
         .net_of(Endpoint {
-            instance: 2,
-            terminal: 2,
+            instance: instances(&project)?.0,
+            terminal: TerminalId(2),
         })
         .map(|net| net.id)
         .ok_or_else(|| Error::Verification("demo has no shared net".into()))?;
@@ -71,6 +82,7 @@ fn bounds(geometry: &Geometry, min: [f64; 3], max: [f64; 3]) {
 #[test]
 fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() -> Result<()> {
     let project = fixture()?;
+    let (r1, r2) = instances(&project)?;
     let model = build(&project)?;
     assert_eq!(model.geometry.len(), 9); // substrate, 2 envelopes, 4 pads, 2 traces
     assert_eq!(model.sources.len(), 8);
@@ -81,16 +93,18 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
         .ok_or_else(|| Error::Verification("missing substrate".into()))?;
     bounds(substrate, [0.0, 0.0, 0.0], [60.0, 40.0, 1.6]);
     near(substrate.volume, 60.0 * 40.0 * 1.6);
-    let top = source_geometry(&model, |s| s.instance == Some(2) && s.pad.is_none())?;
+    let top = source_geometry(&model, |s| s.instance == Some(r1) && s.pad.is_none())?;
     bounds(top, [9.8, 11.25, 1.835], [11.0, 13.25, 2.435]);
     near(top.volume, 2.0 * 1.2 * 0.6);
-    let bottom = source_geometry(&model, |s| s.instance == Some(3) && s.pad.is_none())?;
+    let bottom = source_geometry(&model, |s| s.instance == Some(r2) && s.pad.is_none())?;
     bounds(bottom, [29.0, 11.25, -0.835], [30.2, 13.25, -0.235]);
     for (instance, center, z) in [
-        (2, [9.6, 10.5], [1.6, 1.635]),
-        (3, [30.4, 10.5], [-0.035, 0.0]),
+        (r1, [9.6, 10.5], [1.6, 1.635]),
+        (r2, [30.4, 10.5], [-0.035, 0.0]),
     ] {
-        let pad = source_geometry(&model, |s| s.instance == Some(instance) && s.pad == Some(1))?;
+        let pad = source_geometry(&model, |s| {
+            s.instance == Some(instance) && s.pad == Some(PadId(1))
+        })?;
         // A 1 × 1.4 mm land rotated 90° has a 1.4 × 1 mm world footprint.
         bounds(
             pad,
@@ -148,7 +162,9 @@ fn diagonal_traces_have_analytic_butt_caps_on_both_copper_layers() -> Result<()>
 
 #[test]
 fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -> Result<()> {
-    let original = build(&fixture()?)?;
+    let project = fixture()?;
+    let (r1, r2) = instances(&project)?;
+    let original = build(&project)?;
     let temporary = tempfile::tempdir()?;
     let path = temporary
         .path()
@@ -175,20 +191,27 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         near(restored.volume, previous.volume);
     }
     let mut reopened = before.native;
-    reopened.change_parameters(json!({
-            "board_thickness":"2.4 mm", "copper_thickness":"0.07 mm",
-            "instance_2_x":"15 mm", "instance_2_y":"18 mm", "instance_2_angle":"0 deg",
-            "instance_2_length":"4 mm", "instance_3_angle":"180 deg"
-    }))?;
+    let mut changes = json!({"board_thickness": "2.4 mm", "copper_thickness": "0.07 mm"});
+    for (name, value) in [
+        (format!("instance_{r1}_x"), "15 mm"),
+        (format!("instance_{r1}_y"), "18 mm"),
+        (format!("instance_{r1}_angle"), "0 deg"),
+        (format!("instance_{r1}_length"), "4 mm"),
+        (format!("instance_{r2}_angle"), "180 deg"),
+    ] {
+        changes[name] = json!(value);
+    }
+    reopened.change_parameters(changes)?;
     let changed = finish(reopened, before.sources)?;
-    let top = source_geometry(&changed, |s| s.instance == Some(2) && s.pad.is_none())?;
+    let top = source_geometry(&changed, |s| s.instance == Some(r1) && s.pad.is_none())?;
     bounds(top, [13.25, 17.0, 2.67], [17.25, 18.2, 3.27]);
     near(top.volume, 4.0 * 1.2 * 0.6);
-    let bottom = source_geometry(&changed, |s| s.instance == Some(3) && s.pad.is_none())?;
+    let bottom = source_geometry(&changed, |s| s.instance == Some(r2) && s.pad.is_none())?;
     bounds(bottom, [28.75, 11.0, -0.87], [30.75, 12.2, -0.27]);
-    let top_pad = source_geometry(&changed, |s| s.instance == Some(2) && s.pad == Some(1))?;
+    let pad1 = Some(PadId(1));
+    let top_pad = source_geometry(&changed, |s| s.instance == Some(r1) && s.pad == pad1)?;
     bounds(top_pad, [13.0, 17.7, 2.4], [14.0, 19.1, 2.47]);
-    let bottom_pad = source_geometry(&changed, |s| s.instance == Some(3) && s.pad == Some(1))?;
+    let bottom_pad = source_geometry(&changed, |s| s.instance == Some(r2) && s.pad == pad1)?;
     bounds(bottom_pad, [31.0, 11.7, -0.07], [32.0, 13.1, 0.0]);
     for source in changed.sources.iter().filter(|s| s.track.is_some()) {
         let geometry = source_geometry(&changed, |s| s.pick_id == source.pick_id)?;
@@ -207,12 +230,20 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
 
 #[test]
 fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
-    let mut part = pcbcraft_core::parts::passive_template("Offset body");
-    part.package.body_size = [4.0, 3.0, 2.0];
-    part.package.model_offset = [1.5, -2.0, 0.4];
-    let model = preview(&part)?;
+    let mut package = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .library
+        .packages[0]
+        .definition
+        .clone();
+    package.body_size = [4.0, 3.0, 2.0];
+    package.model_offset = [1.5, -2.0, 0.4];
+    let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
     bounds(&model.geometry[0], [-0.5, -3.5, 0.4], [3.5, -0.5, 2.4]);
     near(model.geometry[0].volume, 24.0);
+    package.body_size[0] = 0.0;
+    assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
 }

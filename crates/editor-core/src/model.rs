@@ -1,118 +1,51 @@
+//! The document aggregate: data and lookups only. Rules over this data live
+//! in `instances`, `nets`, `schematic` and `layout`.
+pub use crate::geometry::Point;
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
+use crate::library::{Drafts, Library};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
-pub type Id = u64;
-pub type Point = [f64; 2];
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Terminal {
-    pub id: Id,
-    pub name: String,
-    pub kind: PinKind,
-}
+/// The physical implementation an instance uses, as lineages resolved
+/// through its pinned component revision.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum PinKind {
-    Passive,
-    Input,
-    Output,
-    PowerInput,
-    PowerOutput,
-    NotConnected,
+#[serde(deny_unknown_fields)]
+pub struct PhysicalChoice {
+    pub binding: DefinitionId,
+    pub footprint: DefinitionId,
 }
+
+/// One use of a component in the project. It pins one exact component
+/// revision; every other choice is a lineage that revision offers.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct Component {
-    pub terminals: Vec<Terminal>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolPin {
-    pub terminal: Id,
-    pub position: Point,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Symbol {
-    pub pins: Vec<SymbolPin>,
-    pub body_size: Point,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct PackageTerminal {
+pub struct ComponentInstance {
     pub id: Id,
-    pub number: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Package {
-    pub terminals: Vec<PackageTerminal>,
-    pub body_size: [f64; 3],
-    pub model_offset: [f64; 3],
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Pad {
-    pub id: Id,
-    pub terminal: Id,
-    pub position: Point,
-    pub size: Point,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Footprint {
-    pub pads: Vec<Pad>,
-    pub datum_offset: Point,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct TerminalMap {
-    pub electrical: Id,
-    pub physical: Id,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Binding {
-    pub mappings: Vec<TerminalMap>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Part {
-    pub id: Id,
-    pub revision: u32,
-    pub name: String,
-    pub component: Component,
-    pub symbol: Symbol,
-    pub package: Package,
-    pub footprint: Footprint,
-    pub binding: Binding,
-    pub provenance: String,
-}
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
-)]
-#[serde(deny_unknown_fields)]
-pub struct PartRef {
-    pub id: Id,
-    pub revision: u32,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Instance {
-    pub id: Id,
-    pub part: PartRef,
-    pub reference: String,
+    pub component: ComponentRef,
+    pub designator: String,
     pub value: String,
+    /// A symbol lineage listed by the pinned component.
+    pub representation: DefinitionId,
+    pub physical: Option<PhysicalChoice>,
+    /// Units deliberately left off the sheet.
+    pub unused_units: BTreeSet<UnitId>,
+    /// Project decisions that these terminals stay unconnected.
+    pub no_connect: BTreeSet<TerminalId>,
+}
+
+/// One unit of one instance drawn on the sheet. Each (instance, unit) has at
+/// most one occurrence.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolOccurrence {
+    pub id: Id,
+    pub instance: Id,
+    pub unit: UnitId,
     pub position: Point,
 }
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
-)]
-#[serde(deny_unknown_fields)]
-pub struct Endpoint {
-    pub instance: Id,
-    pub terminal: Id,
-}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Wire {
@@ -120,6 +53,7 @@ pub struct Wire {
     pub from: Endpoint,
     pub to: Endpoint,
 }
+
 /// A persistent electrical net. Its ID survives renaming, unrelated edits and
 /// saving; the name is a display label. Every instance terminal belongs to
 /// exactly one net, and a net's terminals are joined by its wires.
@@ -130,11 +64,13 @@ pub struct Net {
     pub name: String,
     pub terminals: Vec<Endpoint>,
 }
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum Layer {
     Top,
     Bottom,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Placement {
@@ -144,6 +80,7 @@ pub struct Placement {
     pub layer: Layer,
     pub locked: bool,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Track {
@@ -155,13 +92,17 @@ pub struct Track {
     pub layer: Layer,
     pub locked: bool,
 }
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub name: String,
+    /// Object and definition-lineage identities share this allocator.
     pub next_id: Id,
-    pub parts: Vec<Part>,
-    pub instances: Vec<Instance>,
+    /// Every published revision this project can reference.
+    pub library: Library,
+    pub instances: Vec<ComponentInstance>,
+    pub occurrences: Vec<SymbolOccurrence>,
     pub wires: Vec<Wire>,
     /// Net IDs have their own allocation space, independent of object IDs.
     pub next_net: Id,
@@ -170,13 +111,15 @@ pub struct Project {
     pub tracks: Vec<Track>,
     pub board_size: Point,
 }
+
 impl Default for Project {
     fn default() -> Self {
         Self {
             name: "Untitled".into(),
             next_id: 1,
-            parts: vec![],
+            library: Library::default(),
             instances: vec![],
+            occurrences: vec![],
             wires: vec![],
             next_net: 1,
             nets: vec![],
@@ -186,6 +129,7 @@ impl Default for Project {
         }
     }
 }
+
 impl Project {
     pub fn allocate(&mut self) -> crate::Result<Id> {
         let id = self.next_id;
@@ -201,6 +145,32 @@ impl Project {
             .ok_or_else(|| crate::Error::Limit("net identity space exhausted".into()))?;
         Ok(id)
     }
+    pub fn instance(&self, id: Id) -> Option<&ComponentInstance> {
+        self.instances.iter().find(|i| i.id == id)
+    }
+    /// The instance with this designator, compared case-insensitively.
+    pub fn instance_by_designator(&self, designator: &str) -> Option<&ComponentInstance> {
+        self.instances
+            .iter()
+            .find(|i| i.designator.eq_ignore_ascii_case(designator))
+    }
+    pub fn occurrence(&self, id: Id) -> Option<&SymbolOccurrence> {
+        self.occurrences.iter().find(|o| o.id == id)
+    }
+    pub fn occurrences_of(&self, instance: Id) -> impl Iterator<Item = &SymbolOccurrence> {
+        self.occurrences
+            .iter()
+            .filter(move |o| o.instance == instance)
+    }
+    /// Wires with an endpoint on `terminal`.
+    pub fn wires_at(&self, terminal: Endpoint) -> impl Iterator<Item = &Wire> {
+        self.wires
+            .iter()
+            .filter(move |w| w.from == terminal || w.to == terminal)
+    }
+    pub fn placement_of(&self, instance: Id) -> Option<&Placement> {
+        self.placements.iter().find(|p| p.instance == instance)
+    }
     pub fn net(&self, id: Id) -> Option<&Net> {
         self.nets.iter().find(|n| n.id == id)
     }
@@ -213,20 +183,20 @@ impl Project {
     pub fn net_name(&self, id: Id) -> &str {
         self.net(id).map_or("unknown net", |n| n.name.as_str())
     }
-    pub fn part(&self, reference: PartRef) -> Option<&Part> {
-        self.parts
-            .iter()
-            .find(|p| p.id == reference.id && p.revision == reference.revision)
-    }
-    pub fn instance(&self, id: Id) -> Option<&Instance> {
-        self.instances.iter().find(|i| i.id == id)
-    }
 }
 
-/// Everything one undo step restores: the project and the component draft
-/// being authored. Unchanged halves are shared between history entries.
+/// Whether an edit may make consequential changes (remove wires, placements)
+/// that a reviewed update plan lists, or must refuse them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditPolicy {
+    Direct,
+    Consequential,
+}
+
+/// Everything one undo step restores: the project and the drafts being
+/// authored. Unchanged halves are shared between history entries.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Document {
-    pub project: std::sync::Arc<Project>,
-    pub draft: Option<std::sync::Arc<Part>>,
+    pub project: Arc<Project>,
+    pub drafts: Arc<Drafts>,
 }

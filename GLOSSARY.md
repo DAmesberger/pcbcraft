@@ -48,7 +48,7 @@ _Avoid_: Revision when describing an alternative pattern
 A copper land in a footprint, associated with a package terminal when electrically connected. Several lands may belong to the same terminal without being connected by PCB copper.
 
 **Device binding**:
-An explicit association between a component definition and a package, including the mapping from electrical terminals to package terminals.
+An explicit association between a component definition and a package, including the mapping from electrical terminals to package terminals and the footprint variants it allows. A binding belongs to one component lineage, and component revisions list the bindings they allow.
 _Avoid_: Footprint assignment when a pin mapping is also required
 
 **Manufacturer part**:
@@ -78,6 +78,36 @@ A set of electrical connection points intended to be joined. Each net has a pers
 
 **No-connect marker**:
 A project decision to leave a particular connection point unconnected. It is distinct from a manufacturer's declaration that a package terminal must not be connected.
+
+**Definition lineage**:
+The stable identity of one library definition across all its revisions, such as one footprint. A lineage has exactly one kind (component, symbol, package, footprint or binding).
+
+**Definition draft**:
+An editable, possibly incomplete body of one definition lineage, saved and recovered with the project. Publishing turns it into a new immutable revision; nothing marks a draft as verified.
+
+**Local ID**:
+An ID that is unique only inside one definition lineage, such as a terminal, unit, package-terminal or pad ID. Each revision allocates new local IDs from its `next_local` counter; an ID retired by an earlier revision is never reused, so it cannot come back with a different meaning.
+
+**Publish set**:
+Several drafts published together as one transaction, in dependency order (package, footprint, binding, symbol, component). References inside the set may name each other's pending revisions; any blocking finding publishes nothing. Publishing a changed definition together with the revisions that must reference it is a _revision cascade_.
+
+**Representation**:
+A symbol lineage a component revision offers for drawing it. An instance chooses one; its units are that symbol's units.
+
+**Implementation**:
+A device-binding lineage a component revision offers for building it physically. Together with one of the binding's footprints it forms the instance's physical choice.
+
+**Exact reference**:
+A reference to one lineage at one revision. A component instance pins exactly one component revision; its symbol and implementation choices are lineages resolved through that revision.
+
+**Physical choice**:
+The binding and footprint lineages an instance uses, offered by its pinned component revision. An instance without one can be drawn and wired but not placed on the board.
+
+**Unit state**:
+Whether a symbol unit of an instance is placed (has an occurrence), deliberately unused or unplaced. Placed and unused exclude each other; unused never implies a no-connect decision.
+
+**Completeness finding**:
+A finding that blocks a derived stage: publication, board placement or electrical resolution. A state holds when no current finding blocks it; it is never stored.
 
 **Library revision**:
 A specific saved version of a library definition. Later edits produce a different revision of that definition; alternative definitions such as footprint variants retain separate identities.

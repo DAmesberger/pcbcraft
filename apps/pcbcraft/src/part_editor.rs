@@ -1,10 +1,20 @@
 //! Component authoring content for the shared shell. Form spacing, controls and
 //! typography follow Solidcraft ui_kit/layout.rs and fields.rs at the pinned revision.
+//!
+//! The editor authors a working set of five drafts (component, symbol,
+//! package, footprint, binding). Widgets edit a working copy; a finished
+//! gesture commits it as one `library.edit`, so every finished edit is one
+//! shared undo step. Publishing sends one `library.publish` of the five.
+mod working_set;
+
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use pcbcraft_core::completeness::CheckTarget;
+use pcbcraft_core::library::{
+    Anchor, Drafts, PackageTerminal, Pad, PinKind, Terminal, TerminalMap, Unit,
+};
 use pcbcraft_core::{
-    Engine, Id, Operation, PackageTerminal, Pad, Part, PinKind, Point, SymbolPin, Terminal,
-    TerminalMap,
-    parts::{self, PartCommand},
+    ComponentRef, DefinitionId, Engine, Id, LibraryCommand, Operation, PackageTerminalId, PadId,
+    Point, Query, QueryResult, Stage, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{
     fonts,
@@ -12,6 +22,7 @@ use solidcraft_ui_egui::{
     ui_kit::{self, Button},
 };
 use std::sync::Arc;
+pub use working_set::{Template, WorkingSet};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum View {
@@ -22,45 +33,57 @@ enum View {
     Model,
 }
 
-/// Component authoring. The authoring draft lives in the engine; this editor
-/// holds a working copy that widgets edit during a gesture and commits as one
-/// `part.draft_set` operation once no pointer button or text field is active.
-/// Every finished edit is therefore one shared undo step.
+/// A request the editor cannot express as one operation; the app runs it
+/// through the engine with public commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    /// Reserve five new lineages and fill them from a template.
+    Create(Template),
+    /// Draft the lineages of a published component revision.
+    Draft(ComponentRef),
+}
+
 pub struct PartEditor {
     /// Working copy edited by widgets.
-    draft: Part,
+    draft: Option<WorkingSet>,
     /// What the working copy was loaded from; a difference is uncommitted work.
-    baseline: Part,
-    /// The engine draft last loaded, compared by identity to notice undo,
+    baseline: Option<WorkingSet>,
+    /// The engine drafts last loaded, compared by identity to notice undo,
     /// redo, open and publish.
-    source: Option<Arc<Part>>,
-    loaded: bool,
-    /// A commit was sent; resync from the engine whatever its outcome (the
-    /// draft may even return to `source` through an undo).
+    source: Option<Arc<Drafts>>,
+    /// The component lineage being authored.
+    lineage: Option<DefinitionId>,
+    /// A commit was sent; resync from the engine whatever its outcome.
     awaiting: bool,
     publishing: bool,
+    /// Publish once the edit sent before it has been applied.
+    publish_next: bool,
+    request: Option<Request>,
     view: View,
-    selected: Option<Id>,
+    selected: Option<TerminalId>,
     notice: String,
     drag_scale: Option<f32>,
+    findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
 }
 
 impl Default for PartEditor {
     fn default() -> Self {
-        let starter = parts::passive_template("Resistor");
         Self {
-            draft: starter.clone(),
-            baseline: starter,
+            draft: None,
+            baseline: None,
             source: None,
-            loaded: false,
+            lineage: None,
             awaiting: false,
             publishing: false,
+            publish_next: false,
+            request: None,
             view: View::Symbol,
-            selected: Some(1),
+            selected: Some(TerminalId(1)),
             notice: String::new(),
             drag_scale: None,
+            findings: None,
             update: Default::default(),
             update_instances: Default::default(),
         }
@@ -68,51 +91,58 @@ impl Default for PartEditor {
 }
 
 impl PartEditor {
-    pub fn preview_part(&self) -> Option<&Part> {
-        Some(&self.draft)
+    /// The package envelope the 3D preview shows.
+    pub fn preview_package(&self) -> Option<&pcbcraft_core::library::PackageDefinition> {
+        self.draft.as_ref().map(|set| &set.package)
     }
     pub fn is_model_view(&self) -> bool {
         self.view == View::Model
     }
-
-    /// Whether the working copy differs from its published snapshot.
-    fn unpublished(&self, engine: &Engine) -> bool {
-        unpublished(engine, &self.draft)
+    /// A multi-command request for the app to run, if one is pending.
+    pub fn take_request(&mut self) -> Option<Request> {
+        self.request.take()
     }
 
-    /// Reload the working copy when the engine's draft changed elsewhere.
+    fn unpublished(&self, engine: &Engine) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|set| set.unpublished(engine))
+    }
+
+    /// Reload the working copy when the engine's drafts changed elsewhere.
     fn sync(&mut self, engine: &Engine) {
-        let current = engine.document().draft.clone();
-        let changed = match (&current, &self.source) {
-            (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-            (None, None) => false,
-            _ => true,
-        };
-        if !changed && self.loaded && !self.awaiting {
+        let current = Arc::clone(&engine.document().drafts);
+        let changed = self
+            .source
+            .as_ref()
+            .is_none_or(|s| !Arc::ptr_eq(s, &current));
+        if !changed && !self.awaiting {
             return;
         }
         self.awaiting = false;
-        let part = current
-            .as_deref()
-            .cloned()
-            .unwrap_or_else(|| parts::passive_template("Resistor"));
-        if self
-            .selected
-            .is_none_or(|id| !part.component.terminals.iter().any(|t| t.id == id))
+        let set = WorkingSet::find(&current, self.lineage);
+        self.lineage = set.as_ref().map(|s| s.ids.component);
+        if let Some(set) = &set
+            && self
+                .selected
+                .is_none_or(|id| set.component.terminal(id).is_none())
         {
-            self.selected = part.component.terminals.first().map(|t| t.id);
+            self.selected = set.component.terminals.first().map(|t| t.id);
         }
-        if self.publishing && !unpublished(engine, &part) {
+        if self.publishing
+            && let Some(set) = &set
+            && !set.unpublished(engine)
+            && let Some(published) = set.published(engine)
+        {
             self.notice = format!(
                 "Revision {} published. Existing instances retain their snapshots.",
-                part.revision
+                published.revision.0
             );
         }
         self.publishing = false;
-        self.baseline = part.clone();
-        self.draft = part;
-        self.source = current;
-        self.loaded = true;
+        self.baseline = set.clone();
+        self.draft = set;
+        self.source = Some(current);
         self.drag_scale = None;
     }
 
@@ -125,16 +155,32 @@ impl PartEditor {
         if interacting || self.draft == self.baseline {
             return None;
         }
-        // Sent once; the next sync shows what the engine accepted.
+        self.send(engine)
+    }
+
+    /// Send the working copy with sibling references at their pending
+    /// revisions; the next sync shows what the engine accepted.
+    fn send(&mut self, engine: &Engine) -> Option<Operation> {
+        let set = self.draft.as_ref()?.retargeted(engine.drafts());
         self.baseline = self.draft.clone();
         self.awaiting = true;
-        Some(Operation::Part(PartCommand::SetDraft {
-            draft: self.draft.clone(),
+        Some(Operation::Library(LibraryCommand::Edit {
+            edits: set.edits(),
         }))
     }
 
     pub fn tools(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        if self.publish_next && !self.awaiting {
+            self.publish_next = false;
+            if self.draft == self.baseline
+                && let Some(set) = &self.draft
+            {
+                self.publishing = true;
+                self.awaiting = true;
+                return Some(set.publish());
+            }
+        }
         let unpublished = self.unpublished(engine);
         if self.update.is_open() {
             ui.label("Review the update in properties");
@@ -153,202 +199,203 @@ impl PartEditor {
                 }
             }
             ui.separator();
-            if crate::shell::tool(ui, "component", "Passive", true, false).clicked() {
-                self.load(parts::passive_template("Resistor"));
+            for (label, template) in [
+                ("Passive", Template::TwoTerminal),
+                ("Connector", Template::Header),
+            ] {
+                if crate::shell::tool(ui, "component", label, true, false).clicked() {
+                    self.load_template(template);
+                }
             }
-            if crate::shell::tool(ui, "component", "Connector", true, false).clicked() {
-                self.load(parts::connector_template("Connector"));
-            }
-            if crate::shell::tool(ui, "point", "Terminal", true, false).clicked() {
-                self.add_terminal(engine);
+            if crate::shell::tool(ui, "point", "Terminal", self.draft.is_some(), false).clicked() {
+                self.add_terminal();
             }
             if crate::shell::tool(ui, "save", "Publish", unpublished, false).clicked() {
-                match parts::validate_part(&self.draft) {
-                    Ok(()) => {
-                        self.publishing = true;
-                        self.baseline = self.draft.clone();
-                        self.awaiting = true;
-                        command = Some(Operation::Part(PartCommand::Publish {
-                            draft: Some(self.draft.clone()),
-                        }));
-                    }
-                    Err(error) => self.notice = error.to_string(),
-                }
+                command = self.publish(engine);
             }
         });
         command
     }
 
-    /// Replace the working copy; the next commit makes it one undoable step.
-    fn load(&mut self, part: Part) {
-        self.selected = part.component.terminals.first().map(|t| t.id);
-        self.draft = part;
+    fn publish(&mut self, engine: &Engine) -> Option<Operation> {
+        let set = self.draft.as_ref()?;
+        let committed = engine.drafts();
+        let pending_refs = set.retargeted(committed) != *set;
+        if self.draft != self.baseline || pending_refs {
+            self.publish_next = true;
+            return self.send(engine);
+        }
+        self.publishing = true;
+        self.awaiting = true;
+        Some(set.publish())
+    }
+
+    /// Replace the working copy with a template; the next commit makes it
+    /// one undoable step. Without a working set the app creates the lineages.
+    fn load_template(&mut self, template: Template) {
+        match &mut self.draft {
+            Some(set) => {
+                set.load_template(template);
+                self.selected = set.component.terminals.first().map(|t| t.id);
+            }
+            None => self.request = Some(Request::Create(template)),
+        }
         self.notice.clear();
         self.drag_scale = None;
     }
 
-    fn add_terminal(&mut self, engine: &Engine) {
-        let electrical = self
-            .draft
-            .component
-            .terminals
-            .iter()
-            .map(|t| t.id)
-            .chain(
-                engine
-                    .project()
-                    .parts
-                    .iter()
-                    .filter(|p| p.id == self.draft.id)
-                    .flat_map(|p| p.component.terminals.iter().map(|t| t.id)),
-            )
-            .max()
-            .unwrap_or(0)
-            .checked_add(1);
-        let physical = self
-            .draft
-            .package
-            .terminals
-            .iter()
-            .map(|t| t.id)
-            .chain(
-                engine
-                    .project()
-                    .parts
-                    .iter()
-                    .filter(|p| p.id == self.draft.id)
-                    .flat_map(|p| p.package.terminals.iter().map(|t| t.id)),
-            )
-            .max()
-            .unwrap_or(0)
-            .checked_add(1);
-        let pad = self
-            .draft
-            .footprint
-            .pads
-            .iter()
-            .map(|p| p.id)
-            .chain(
-                engine
-                    .project()
-                    .parts
-                    .iter()
-                    .filter(|p| p.id == self.draft.id)
-                    .flat_map(|p| p.footprint.pads.iter().map(|p| p.id)),
-            )
-            .max()
-            .unwrap_or(0)
-            .checked_add(1);
+    fn add_terminal(&mut self) {
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        if set.component.terminals.len() >= pcbcraft_core::library::MAX_TERMINALS {
+            self.notice = format!(
+                "Maximum {} terminals in this edition",
+                pcbcraft_core::library::MAX_TERMINALS
+            );
+            return;
+        }
+        let allocate = |next: &mut u32| {
+            let id = *next;
+            next.checked_add(1).map(|n| {
+                *next = n;
+                id
+            })
+        };
+        let electrical = allocate(&mut set.component.next_local);
+        let physical = allocate(&mut set.package.next_local);
+        let pad = allocate(&mut set.footprint.next_local);
         let (Some(electrical), Some(physical), Some(pad)) = (electrical, physical, pad) else {
             self.notice = "Terminal identity exhausted".into();
             return;
         };
-        if self.draft.component.terminals.len() >= 256 {
-            self.notice = "Maximum 256 terminals in this edition".into();
-            return;
+        if set.symbol.units.is_empty() {
+            let Some(unit) = allocate(&mut set.symbol.next_local) else {
+                self.notice = "Unit identity exhausted".into();
+                return;
+            };
+            set.symbol.units.push(Unit {
+                id: UnitId(unit),
+                label: "A".into(),
+                body_size: [6.0, 4.0],
+                anchors: vec![],
+            });
         }
-        let row = self.draft.component.terminals.len() as f64;
-        self.draft.component.terminals.push(Terminal {
+        let row = set.component.terminals.len() as f64;
+        let electrical = TerminalId(electrical);
+        let physical = PackageTerminalId(physical);
+        set.component.terminals.push(Terminal {
             id: electrical,
             name: electrical.to_string(),
             kind: PinKind::Passive,
         });
-        self.draft.symbol.pins.push(SymbolPin {
-            terminal: electrical,
-            position: [-5.0, -row * 2.5],
-        });
-        self.draft.package.terminals.push(PackageTerminal {
+        if let Some(unit) = set.symbol.units.first_mut() {
+            unit.anchors.push(Anchor {
+                terminal: electrical,
+                position: [-5.0, -row * 2.5],
+            });
+        }
+        set.package.terminals.push(PackageTerminal {
             id: physical,
-            number: physical.to_string(),
+            designation: physical.to_string(),
         });
-        self.draft.footprint.pads.push(Pad {
-            id: pad,
+        set.footprint.pads.push(Pad {
+            id: PadId(pad),
             terminal: physical,
             position: [0.0, row * 2.0],
             size: [1.0, 1.4],
         });
-        self.draft.binding.mappings.push(TerminalMap {
-            electrical,
-            physical,
+        set.binding.mappings.push(TerminalMap {
+            package_terminal: physical,
+            terminal: electrical,
         });
         self.selected = Some(electrical);
     }
 
     fn remove_selected(&mut self) {
-        let Some(selected) = self.selected else {
+        let (Some(selected), Some(set)) = (self.selected, &mut self.draft) else {
             return;
         };
-        if self.draft.component.terminals.len() <= 1 {
+        if set.component.terminals.len() <= 1 {
             self.notice = "A component needs at least one terminal".into();
             return;
         }
-        let physical = self
-            .draft
+        let physical: Vec<_> = set
             .binding
             .mappings
             .iter()
-            .filter(|m| m.electrical == selected)
-            .map(|m| m.physical)
-            .collect::<Vec<_>>();
-        self.draft.component.terminals.retain(|t| t.id != selected);
-        self.draft.symbol.pins.retain(|p| p.terminal != selected);
-        self.draft
-            .binding
-            .mappings
-            .retain(|m| m.electrical != selected);
-        self.draft
-            .package
-            .terminals
-            .retain(|t| !physical.contains(&t.id));
-        self.draft
-            .footprint
+            .filter(|m| m.terminal == selected)
+            .map(|m| m.package_terminal)
+            .collect();
+        set.component.terminals.retain(|t| t.id != selected);
+        for unit in &mut set.symbol.units {
+            unit.anchors.retain(|a| a.terminal != selected);
+        }
+        set.binding.mappings.retain(|m| m.terminal != selected);
+        set.package.terminals.retain(|t| !physical.contains(&t.id));
+        set.footprint
             .pads
             .retain(|p| !physical.contains(&p.terminal));
-        self.selected = self.draft.component.terminals.first().map(|t| t.id);
+        self.selected = set.component.terminals.first().map(|t| t.id);
     }
 
-    fn add_pad(&mut self, engine: &Engine) {
-        let Some(terminal) = self
-            .draft
+    fn add_pad(&mut self) {
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        let Some(terminal) = set
             .binding
             .mappings
             .iter()
-            .find(|mapping| Some(mapping.electrical) == self.selected)
-            .map(|mapping| mapping.physical)
+            .find(|m| Some(m.terminal) == self.selected)
+            .map(|m| m.package_terminal)
         else {
             return;
         };
-        if self.draft.footprint.pads.len() >= 1024 {
-            self.notice = "Maximum 1024 pads in this edition".into();
+        if set.footprint.pads.len() >= pcbcraft_core::library::MAX_PADS {
+            self.notice = format!(
+                "Maximum {} pads in this edition",
+                pcbcraft_core::library::MAX_PADS
+            );
             return;
         }
-        let Some(id) = self
-            .draft
-            .footprint
-            .pads
-            .iter()
-            .map(|pad| pad.id)
-            .chain(
-                engine
-                    .project()
-                    .parts
-                    .iter()
-                    .filter(|p| p.id == self.draft.id)
-                    .flat_map(|p| p.footprint.pads.iter().map(|p| p.id)),
-            )
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-        else {
+        let id = set.footprint.next_local;
+        let Some(next) = id.checked_add(1) else {
             self.notice = "Pad identity exhausted".into();
             return;
         };
-        self.draft.footprint.pads.push(Pad {
-            id,
+        set.footprint.next_local = next;
+        set.footprint.pads.push(Pad {
+            id: PadId(id),
             terminal,
             position: [0.0, 0.0],
             size: [1.0, 1.4],
         });
+    }
+
+    /// Blocking publish findings of the committed drafts, from the engine.
+    fn findings(&mut self, engine: &Engine) -> Vec<String> {
+        if let Some((revision, findings)) = &self.findings
+            && *revision == engine.revision()
+        {
+            return findings.clone();
+        }
+        let mut messages = Vec::new();
+        if let Some(set) = &self.draft
+            && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
+        {
+            let ids = set.ids.all();
+            messages.extend(
+                reports
+                    .into_iter()
+                    .filter(|r| matches!(r.target, CheckTarget::Draft(id) if ids.contains(&id)))
+                    .flat_map(|r| r.findings)
+                    .filter(|f| f.blocks_stage(Stage::Publish))
+                    .map(|f| f.message),
+            );
+        }
+        self.findings = Some((engine.revision(), messages.clone()));
+        messages
     }
 
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -360,82 +407,72 @@ impl PartEditor {
         ui.spacing_mut().item_spacing = egui::vec2(t.space_4, t.form_gap_y);
         ui.spacing_mut().interact_size.y = t.control_height;
         ui.label(egui::RichText::new("Component definition").font(fonts::semibold(t.font_panel)));
-        text_row(ui, "Name", &mut self.draft.name);
-        ui.weak(if self.draft.id == 0 {
-            "New project-local draft".into()
-        } else {
-            format!(
+        let unpublished = self.unpublished(engine);
+        let findings = self.findings(engine);
+        let Some(set) = &mut self.draft else {
+            ui.label("Start a component from the Passive or Connector template.");
+            self.snapshots(ui, engine);
+            return None;
+        };
+        text_row(ui, "Name", &mut set.metas.component.name);
+        let published = set.published(engine);
+        ui.weak(match published {
+            None => "New project-local draft".into(),
+            Some(r) => format!(
                 "Definition {} · revision {}{}",
-                self.draft.id,
-                self.draft.revision,
-                if self.unpublished(engine) {
+                r.id.0,
+                r.revision.0,
+                if unpublished {
                     " · unpublished edits"
                 } else {
                     ""
                 }
-            )
+            ),
         });
         ui.label(
-            "Publishing creates an immutable snapshot. Placed parts keep their existing revision.",
+            "Publishing creates immutable revisions. Placed components keep their existing revision.",
         );
         if !self.notice.is_empty() {
             ui.colored_label(t.form_primary, &self.notice);
         }
-        if let Err(error) = parts::validate_part(&self.draft) {
-            ui.colored_label(t.form_error, error.to_string());
+        for message in findings.iter().take(6) {
+            ui.colored_label(t.form_error, message);
         }
         ui.separator();
         match self.view {
             View::Symbol => self.symbol_inspector(ui),
-            View::Footprint => self.footprint_inspector(ui, engine),
+            View::Footprint => self.footprint_inspector(ui),
             View::Mapping => self.mapping_inspector(ui),
             View::Model => {
-                ui.label("Parametric package envelope");
-                ui.weak("Approximate body; not a verified supplier model.");
-                for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                    number_row(
-                        ui,
-                        label,
-                        &mut self.draft.package.body_size[index],
-                        0.01..=10000.0,
-                    );
+                if let Some(set) = &mut self.draft {
+                    ui.label("Parametric package envelope");
+                    ui.weak("Approximate body; not a verified supplier model.");
+                    for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
+                        number_row(ui, label, &mut set.package.body_size[index], 0.01..=10000.0);
+                    }
+                    for (index, label) in
+                        ["Offset X", "Offset Y", "Offset Z"].into_iter().enumerate()
+                    {
+                        number_row(
+                            ui,
+                            label,
+                            &mut set.package.model_offset[index],
+                            -10000.0..=10000.0,
+                        );
+                    }
+                    ui.weak("The live model and native export use Solidcraft.");
                 }
-                for (index, label) in ["Offset X", "Offset Y", "Offset Z"].into_iter().enumerate() {
-                    number_row(
-                        ui,
-                        label,
-                        &mut self.draft.package.model_offset[index],
-                        -10000.0..=10000.0,
-                    );
-                }
-                ui.weak("The live model and native export use Solidcraft.");
             }
         }
         ui.separator();
-        ui.collapsing("Project component snapshots", |ui| {
-            for part in &engine.project().parts {
-                let label = format!("{} · r{}", part.name, part.revision);
-                if ui_kit::button(ui, label, Button::Ghost)
-                    .on_hover_text("Load this snapshot into the authoring draft")
-                    .clicked()
-                {
-                    self.load(part.clone());
-                }
-            }
-            if engine.project().parts.is_empty() {
-                ui.weak("Publish a draft to make it available in the schematic.");
-            }
-        });
-        if !self.unpublished(engine) {
-            let target = pcbcraft_core::PartRef {
-                id: self.draft.id,
-                revision: self.draft.revision,
-            };
+        self.snapshots(ui, engine);
+        if !unpublished && let Some(target) = self.draft.as_ref().and_then(|s| s.published(engine))
+        {
             let candidates: Vec<_> = engine
                 .project()
                 .instances
                 .iter()
-                .filter(|i| i.part.id == target.id && i.part.revision != target.revision)
+                .filter(|i| i.component.id == target.id && i.component.revision != target.revision)
                 .collect();
             self.update_instances
                 .retain(|id| candidates.iter().any(|i| i.id == *id));
@@ -444,7 +481,7 @@ impl PartEditor {
                 ui.strong("Update placed instances");
                 ui.weak(format!(
                     "Use published revision {} for the selected instances.",
-                    target.revision
+                    target.revision.0
                 ));
                 for instance in candidates {
                     let mut checked = self.update_instances.contains(&instance.id);
@@ -453,7 +490,7 @@ impl PartEditor {
                             &mut checked,
                             format!(
                                 "{} · revision {}",
-                                instance.reference, instance.part.revision
+                                instance.designator, instance.component.revision.0
                             ),
                         )
                         .changed()
@@ -474,23 +511,62 @@ impl PartEditor {
                 {
                     self.update.begin(
                         engine,
-                        pcbcraft_core::updates::Change::PartRevision {
+                        pcbcraft_core::updates::Change::ComponentRevision {
                             instances: self.update_instances.iter().copied().collect(),
                             target,
+                            resolutions: Default::default(),
                         },
                     );
                 }
             }
         }
-        ui.collapsing("Provenance", |ui| {
-            text_row(ui, "Source", &mut self.draft.provenance);
-            ui.weak("Structural validation does not replace a datasheet review.");
-        });
+        if let Some(set) = &mut self.draft {
+            ui.collapsing("Provenance", |ui| {
+                text_row(ui, "Source", &mut set.metas.component.provenance);
+                ui.weak("Structural validation does not replace a datasheet review.");
+            });
+        }
         None
     }
 
+    /// The project's published components; choosing one authors its lineage.
+    fn snapshots(&mut self, ui: &mut Ui, engine: &Engine) {
+        ui.collapsing("Project components", |ui| {
+            let library = &engine.project().library;
+            for component in library.latest_components() {
+                let label = format!("{} · r{}", component.meta.name, component.revision.0);
+                let current = self.lineage == Some(component.id);
+                if ui_kit::button(
+                    ui,
+                    label,
+                    if current {
+                        Button::SmallSelected
+                    } else {
+                        Button::Ghost
+                    },
+                )
+                .on_hover_text("Author this component's drafts")
+                .clicked()
+                {
+                    let reference = ComponentRef::new(component.id, component.revision);
+                    if engine.drafts().get(component.id).is_none() {
+                        self.request = Some(Request::Draft(reference));
+                    }
+                    self.lineage = Some(component.id);
+                    self.source = None;
+                }
+            }
+            if library.components.is_empty() {
+                ui.weak("Publish a draft to make it available in the schematic.");
+            }
+        });
+    }
+
     fn terminal_choices(&mut self, ui: &mut Ui) {
-        for terminal in &self.draft.component.terminals {
+        let Some(set) = &self.draft else {
+            return;
+        };
+        for terminal in &set.component.terminals {
             if ui_kit::button(
                 ui,
                 format!("{} · {:?}", terminal.name, terminal.kind),
@@ -508,24 +584,16 @@ impl PartEditor {
     }
 
     fn symbol_inspector(&mut self, ui: &mut Ui) {
-        pair_row(
-            ui,
-            "Body size",
-            &mut self.draft.symbol.body_size,
-            0.01..=10000.0,
-        );
+        if let Some(unit) = self.draft.as_mut().and_then(|s| s.symbol.units.first_mut()) {
+            pair_row(ui, "Body size", &mut unit.body_size, 0.01..=10000.0);
+        }
         self.terminal_choices(ui);
-        if let Some(id) = self.selected {
-            if let Some(terminal) = self
-                .draft
-                .component
-                .terminals
-                .iter_mut()
-                .find(|t| t.id == id)
-            {
+        let mut remove = false;
+        if let (Some(id), Some(set)) = (self.selected, &mut self.draft) {
+            if let Some(terminal) = set.component.terminals.iter_mut().find(|t| t.id == id) {
                 ui.separator();
                 text_row(ui, "Pin name", &mut terminal.name);
-                egui::ComboBox::from_id_salt(("pin-kind", id))
+                egui::ComboBox::from_id_salt(("pin-kind", id.0))
                     .selected_text(format!("{:?}", terminal.kind))
                     .show_ui(ui, |ui| {
                         for kind in [
@@ -541,96 +609,106 @@ impl PartEditor {
                         }
                     });
             }
-            if let Some(pin) = self.draft.symbol.pins.iter_mut().find(|p| p.terminal == id) {
-                pair_row(ui, "Pin anchor", &mut pin.position, -10000.0..=10000.0);
+            if let Some(anchor) = set
+                .symbol
+                .units
+                .iter_mut()
+                .flat_map(|u| u.anchors.iter_mut())
+                .find(|a| a.terminal == id)
+            {
+                pair_row(ui, "Pin anchor", &mut anchor.position, -10000.0..=10000.0);
             }
-            if ui_kit::button(ui, "Remove terminal", Button::Small).clicked() {
-                self.remove_selected();
-            }
+            remove = ui_kit::button(ui, "Remove terminal", Button::Small).clicked();
+        }
+        if remove {
+            self.remove_selected();
         }
         ui.weak("Drag a pin anchor on the canvas; publish when the draft is ready.");
     }
 
-    fn footprint_inspector(&mut self, ui: &mut Ui, engine: &Engine) {
-        pair_row(
-            ui,
-            "Package datum",
-            &mut self.draft.footprint.datum_offset,
-            -10000.0..=10000.0,
-        );
-        self.terminal_choices(ui);
-        let physical = self
-            .draft
-            .binding
-            .mappings
-            .iter()
-            .filter(|m| Some(m.electrical) == self.selected)
-            .map(|m| m.physical)
-            .collect::<Vec<_>>();
-        for pad in self
-            .draft
-            .footprint
-            .pads
-            .iter_mut()
-            .filter(|p| physical.contains(&p.terminal))
-        {
-            ui.separator();
-            ui.label(format!(
-                "Pad {} · package terminal {}",
-                pad.id, pad.terminal
-            ));
-            egui::ComboBox::from_id_salt(("pad-terminal", pad.id))
-                .selected_text(format!("Package terminal {}", pad.terminal))
-                .show_ui(ui, |ui| {
-                    for terminal in &self.draft.package.terminals {
-                        ui.selectable_value(&mut pad.terminal, terminal.id, &terminal.number)
-                            .changed();
-                    }
-                });
-            pair_row(ui, "Position", &mut pad.position, -10000.0..=10000.0);
-            pair_row(ui, "Land size", &mut pad.size, 0.01..=10000.0);
+    fn footprint_inspector(&mut self, ui: &mut Ui) {
+        if let Some(set) = &mut self.draft {
+            pair_row(
+                ui,
+                "Package datum",
+                &mut set.footprint.datum_offset,
+                -10000.0..=10000.0,
+            );
         }
-        if ui_kit::button(ui, "Add pad to selected terminal", Button::Small).clicked() {
-            self.add_pad(engine);
+        self.terminal_choices(ui);
+        let mut add = false;
+        if let Some(set) = &mut self.draft {
+            let physical: Vec<_> = set
+                .binding
+                .mappings
+                .iter()
+                .filter(|m| Some(m.terminal) == self.selected)
+                .map(|m| m.package_terminal)
+                .collect();
+            for pad in set
+                .footprint
+                .pads
+                .iter_mut()
+                .filter(|p| physical.contains(&p.terminal))
+            {
+                ui.separator();
+                ui.label(format!(
+                    "Pad {} · package terminal {}",
+                    pad.id, pad.terminal
+                ));
+                egui::ComboBox::from_id_salt(("pad-terminal", pad.id.0))
+                    .selected_text(format!("Package terminal {}", pad.terminal))
+                    .show_ui(ui, |ui| {
+                        for terminal in &set.package.terminals {
+                            ui.selectable_value(
+                                &mut pad.terminal,
+                                terminal.id,
+                                &terminal.designation,
+                            )
+                            .changed();
+                        }
+                    });
+                pair_row(ui, "Position", &mut pad.position, -10000.0..=10000.0);
+                pair_row(ui, "Land size", &mut pad.size, 0.01..=10000.0);
+            }
+            add = ui_kit::button(ui, "Add pad to selected terminal", Button::Small).clicked();
+        }
+        if add {
+            self.add_pad();
         }
         ui.weak("Pad size is independent of the package body. Pads remain individual routing obligations.");
     }
 
     fn mapping_inspector(&mut self, ui: &mut Ui) {
+        let Some(set) = &mut self.draft else {
+            return;
+        };
         ui.label("Electrical → package terminal");
         ui.weak("Mappings are explicit; matching names do not establish compatibility.");
-        for physical in &mut self.draft.package.terminals {
+        for physical in &mut set.package.terminals {
             ui.separator();
             text_row(
                 ui,
                 &format!("Terminal {}", physical.id),
-                &mut physical.number,
+                &mut physical.designation,
             );
-            if let Some(mapping) = self
-                .draft
+            if let Some(mapping) = set
                 .binding
                 .mappings
                 .iter_mut()
-                .find(|m| m.physical == physical.id)
+                .find(|m| m.package_terminal == physical.id)
             {
-                let selected = self
-                    .draft
+                let selected = set
                     .component
-                    .terminals
-                    .iter()
-                    .find(|t| t.id == mapping.electrical)
+                    .terminal(mapping.terminal)
                     .map(|t| t.name.as_str())
                     .unwrap_or("Unmapped");
-                egui::ComboBox::from_id_salt(("mapping", physical.id))
+                egui::ComboBox::from_id_salt(("mapping", physical.id.0))
                     .selected_text(selected)
                     .show_ui(ui, |ui| {
-                        for terminal in &self.draft.component.terminals {
-                            ui.selectable_value(
-                                &mut mapping.electrical,
-                                terminal.id,
-                                &terminal.name,
-                            )
-                            .changed();
+                        for terminal in &set.component.terminals {
+                            ui.selectable_value(&mut mapping.terminal, terminal.id, &terminal.name)
+                                .changed();
                         }
                     });
             }
@@ -649,25 +727,38 @@ impl PartEditor {
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
-        let t = Tokens::get();
-        let painter = ui.painter().with_clip_rect(rect);
         if self.view == View::Mapping {
             self.mapping_canvas(ui, rect);
             return None;
         }
+        let Some(set) = &mut self.draft else {
+            ui.put(rect, egui::Label::new("No component draft"));
+            return None;
+        };
+        let t = Tokens::get();
+        let painter = ui.painter().with_clip_rect(rect);
+        let empty_unit = Unit {
+            id: UnitId(0),
+            label: String::new(),
+            body_size: [1.0, 1.0],
+            anchors: vec![],
+        };
+        let body_size = set.symbol.units.first().unwrap_or(&empty_unit).body_size;
         let (extent_x, extent_y) = if self.view == View::Symbol {
-            self.draft.symbol.pins.iter().fold(
-                (
-                    self.draft.symbol.body_size[0] / 2.0,
-                    self.draft.symbol.body_size[1] / 2.0,
-                ),
-                |(x, y), p| (x.max(p.position[0].abs()), y.max(p.position[1].abs())),
-            )
+            set.symbol
+                .units
+                .first()
+                .unwrap_or(&empty_unit)
+                .anchors
+                .iter()
+                .fold((body_size[0] / 2.0, body_size[1] / 2.0), |(x, y), a| {
+                    (x.max(a.position[0].abs()), y.max(a.position[1].abs()))
+                })
         } else {
-            self.draft.footprint.pads.iter().fold(
+            set.footprint.pads.iter().fold(
                 (
-                    self.draft.package.body_size[0] / 2.0,
-                    self.draft.package.body_size[1] / 2.0,
+                    set.package.body_size[0] / 2.0,
+                    set.package.body_size[1] / 2.0,
                 ),
                 |(x, y), p| {
                     (
@@ -713,13 +804,12 @@ impl PartEditor {
             fonts::semibold(t.font_panel),
             t.text,
         );
+        let mut selected = self.selected;
+        let mut drag_scale = self.drag_scale;
         if self.view == View::Symbol {
             let body = Rect::from_center_size(
                 origin,
-                egui::vec2(
-                    self.draft.symbol.body_size[0] as f32,
-                    self.draft.symbol.body_size[1] as f32,
-                ) * scale,
+                egui::vec2(body_size[0] as f32, body_size[1] as f32) * scale,
             );
             painter.rect(
                 body,
@@ -731,59 +821,67 @@ impl PartEditor {
             painter.text(
                 body.center(),
                 Align2::CENTER_CENTER,
-                &self.draft.name,
+                &set.metas.component.name,
                 FontId::proportional(t.font_label),
                 t.text,
             );
-            for pin in &mut self.draft.symbol.pins {
-                let at = transform(pin.position);
-                let edge = body.clamp(at);
-                let selected = self.selected == Some(pin.terminal);
-                let ink = if selected { t.body_selected } else { t.accent };
-                painter.line_segment([at, edge], Stroke::new(2.0, ink));
-                painter.circle_filled(at, 4.0, ink);
-                let label = self
-                    .draft
-                    .component
-                    .terminals
-                    .iter()
-                    .find(|t| t.id == pin.terminal)
-                    .map(|t| t.name.as_str())
-                    .unwrap_or("?");
-                painter.text(
-                    at + egui::vec2(0.0, -t.space_10),
-                    Align2::CENTER_BOTTOM,
-                    label,
-                    FontId::proportional(t.font_label),
-                    t.text,
-                );
-                let response = ui.interact(
-                    Rect::from_center_size(at, Vec2::splat(18.0)),
-                    ui.id().with(("symbol-pin", pin.terminal)),
-                    Sense::click_and_drag(),
-                );
-                if response.clicked() || response.drag_started() {
-                    self.selected = Some(pin.terminal);
-                }
-                if response.drag_started() {
-                    self.drag_scale = Some(scale);
-                }
-                if response.dragged()
-                    && let Some(p) = response.interact_pointer_pos()
-                {
-                    pin.position = [
-                        f64::from((p.x - origin.x) / scale),
-                        f64::from((origin.y - p.y) / scale),
-                    ];
+            let names: Vec<(TerminalId, String)> = set
+                .component
+                .terminals
+                .iter()
+                .map(|t| (t.id, t.name.clone()))
+                .collect();
+            if let Some(unit) = set.symbol.units.first_mut() {
+                for anchor in &mut unit.anchors {
+                    let at = transform(anchor.position);
+                    let edge = body.clamp(at);
+                    let ink = if selected == Some(anchor.terminal) {
+                        t.body_selected
+                    } else {
+                        t.accent
+                    };
+                    painter.line_segment([at, edge], Stroke::new(2.0, ink));
+                    painter.circle_filled(at, 4.0, ink);
+                    let label = names
+                        .iter()
+                        .find(|(id, _)| *id == anchor.terminal)
+                        .map(|(_, name)| name.as_str())
+                        .unwrap_or("?");
+                    painter.text(
+                        at + egui::vec2(0.0, -t.space_10),
+                        Align2::CENTER_BOTTOM,
+                        label,
+                        FontId::proportional(t.font_label),
+                        t.text,
+                    );
+                    let response = ui.interact(
+                        Rect::from_center_size(at, Vec2::splat(18.0)),
+                        ui.id().with(("symbol-pin", anchor.terminal.0)),
+                        Sense::click_and_drag(),
+                    );
+                    if response.clicked() || response.drag_started() {
+                        selected = Some(anchor.terminal);
+                    }
+                    if response.drag_started() {
+                        drag_scale = Some(scale);
+                    }
+                    if response.dragged()
+                        && let Some(p) = response.interact_pointer_pos()
+                    {
+                        anchor.position = [
+                            f64::from((p.x - origin.x) / scale),
+                            f64::from((origin.y - p.y) / scale),
+                        ];
+                    }
                 }
             }
         } else {
-            let body_origin = transform(self.draft.footprint.datum_offset);
+            let body_origin = transform(set.footprint.datum_offset);
             let body = Rect::from_center_size(
                 body_origin,
                 egui::vec2(
-                    self.draft.package.body_size[0] as f32,
-                    self.draft.package.body_size[1] as f32,
+                    set.package.body_size[0] as f32,
+                    set.package.body_size[1] as f32,
                 ) * scale,
             );
             painter.rect_stroke(
@@ -792,30 +890,21 @@ impl PartEditor {
                 Stroke::new(1.0, t.text_dim),
                 StrokeKind::Inside,
             );
-            for pad in &mut self.draft.footprint.pads {
-                let electrical = self
-                    .draft
-                    .binding
-                    .mappings
-                    .iter()
-                    .find(|m| m.physical == pad.terminal)
-                    .map(|m| m.electrical);
+            for pad in &mut set.footprint.pads {
+                let electrical = set.binding.terminal_of(pad.terminal);
                 let at = transform(pad.position);
                 let size = egui::vec2(pad.size[0] as f32, pad.size[1] as f32) * scale;
                 let land = Rect::from_center_size(at, size);
-                let ink = if electrical == self.selected {
+                let ink = if electrical.is_some() && electrical == selected {
                     t.body_selected
                 } else {
                     t.accent
                 };
                 painter.rect_filled(land, 0, ink);
-                let number = self
-                    .draft
+                let number = set
                     .package
-                    .terminals
-                    .iter()
-                    .find(|p| p.id == pad.terminal)
-                    .map(|p| p.number.as_str())
+                    .terminal(pad.terminal)
+                    .map(|p| p.designation.as_str())
                     .unwrap_or("?");
                 painter.text(
                     land.center(),
@@ -826,14 +915,14 @@ impl PartEditor {
                 );
                 let response = ui.interact(
                     land.expand(3.0),
-                    ui.id().with(("footprint-pad", pad.id)),
+                    ui.id().with(("footprint-pad", pad.id.0)),
                     Sense::click_and_drag(),
                 );
                 if response.clicked() || response.drag_started() {
-                    self.selected = electrical;
+                    selected = electrical;
                 }
                 if response.drag_started() {
-                    self.drag_scale = Some(scale);
+                    drag_scale = Some(scale);
                 }
                 if response.dragged()
                     && let Some(p) = response.interact_pointer_pos()
@@ -845,10 +934,15 @@ impl PartEditor {
                 }
             }
         }
+        self.selected = selected;
+        self.drag_scale = drag_scale;
         None
     }
 
     fn mapping_canvas(&mut self, ui: &mut Ui, rect: Rect) {
+        let Some(set) = &self.draft else {
+            return;
+        };
         let t = Tokens::get();
         let painter = ui.painter().with_clip_rect(rect);
         let left = rect.left() + t.space_24;
@@ -868,21 +962,13 @@ impl PartEditor {
             t.text,
         );
         let top = rect.top() + t.form_header_height + t.space_16;
-        for (index, physical) in self.draft.package.terminals.iter().enumerate() {
+        let mut clicked = None;
+        for (index, physical) in set.package.terminals.iter().enumerate() {
             let y = top + index as f32 * (t.control_height + t.space_12);
-            let electrical = self
-                .draft
+            let electrical = set
                 .binding
-                .mappings
-                .iter()
-                .find(|m| m.physical == physical.id)
-                .and_then(|m| {
-                    self.draft
-                        .component
-                        .terminals
-                        .iter()
-                        .find(|e| e.id == m.electrical)
-                });
+                .terminal_of(physical.id)
+                .and_then(|id| set.component.terminal(id));
             let ink = if electrical.is_some_and(|e| Some(e.id) == self.selected) {
                 t.body_selected
             } else {
@@ -892,8 +978,7 @@ impl PartEditor {
                 [Pos2::new(left + 120.0, y), Pos2::new(right - 150.0, y)],
                 Stroke::new(2.0, ink),
             );
-            let pad_ids = self
-                .draft
+            let pad_ids = set
                 .footprint
                 .pads
                 .iter()
@@ -911,7 +996,7 @@ impl PartEditor {
             painter.text(
                 Pos2::new(right, y),
                 Align2::RIGHT_CENTER,
-                format!("{}  ·  pads {}", physical.number, pad_ids),
+                format!("{}  ·  pads {}", physical.designation, pad_ids),
                 FontId::proportional(t.font_label),
                 t.text,
             );
@@ -921,23 +1006,27 @@ impl PartEditor {
                         Pos2::new(left, y - t.control_height / 2.0),
                         Pos2::new(right, y + t.control_height / 2.0),
                     ),
-                    ui.id().with(("mapping-row", physical.id)),
+                    ui.id().with(("mapping-row", physical.id.0)),
                     Sense::click(),
                 )
                 .clicked()
             {
-                self.selected = electrical.map(|e| e.id);
+                clicked = Some(electrical.map(|e| e.id));
             }
+        }
+        if let Some(selected) = clicked {
+            self.selected = selected;
         }
     }
 }
 
-fn unpublished(engine: &Engine, part: &Part) -> bool {
-    part.id == 0
-        || engine.project().part(pcbcraft_core::PartRef {
-            id: part.id,
-            revision: part.revision,
-        }) != Some(part)
+/// Run a request through the engine with public commands. Each command is its
+/// own undo step.
+pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<()> {
+    match request {
+        Request::Create(template) => working_set::create(engine, template),
+        Request::Draft(component) => working_set::draft_closure(engine, component),
+    }
 }
 
 fn text_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
@@ -1006,6 +1095,11 @@ fn pair_row(
 mod draft_tests {
     use super::*;
 
+    fn component_name(engine: &Engine, editor: &PartEditor) -> Option<String> {
+        let id = editor.draft.as_ref()?.ids.component;
+        engine.drafts().get(id).map(|d| d.meta.name.clone())
+    }
+
     #[test]
     fn finished_edits_commit_once_and_engine_changes_reload_the_working_copy()
     -> pcbcraft_core::Result<()> {
@@ -1016,17 +1110,20 @@ mod draft_tests {
             editor.commit(&ctx, &engine).is_none(),
             "loading is not an edit"
         );
-        let original = engine.draft().cloned();
-        editor.draft.name = "Edited".into();
+        let original = editor.draft.clone();
+        assert!(original.is_some());
+        if let Some(set) = &mut editor.draft {
+            set.metas.component.name = "Edited".into();
+        }
         let operation = editor.commit(&ctx, &engine);
         assert!(editor.commit(&ctx, &engine).is_none(), "sent once");
         if let Some(operation) = operation {
             engine.apply(engine.revision(), operation)?;
         }
-        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Edited"));
+        assert_eq!(component_name(&engine, &editor).as_deref(), Some("Edited"));
         engine.undo()?;
         assert!(editor.commit(&ctx, &engine).is_none());
-        assert_eq!(Some(&editor.draft), original.as_ref());
+        assert_eq!(editor.draft, original);
         Ok(())
     }
 
@@ -1036,13 +1133,81 @@ mod draft_tests {
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
         editor.commit(&ctx, &engine);
-        editor.load(parts::connector_template("Replacement"));
+        editor.load_template(Template::Header);
         if let Some(operation) = editor.commit(&ctx, &engine) {
             engine.apply(engine.revision(), operation)?;
         }
-        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Replacement"));
+        assert_eq!(
+            component_name(&engine, &editor).as_deref(),
+            Some("Connector")
+        );
         engine.undo()?;
-        assert_eq!(engine.draft().map(|d| d.name.as_str()), Some("Resistor"));
+        editor.commit(&ctx, &engine);
+        assert_eq!(
+            component_name(&engine, &editor).as_deref(),
+            Some("Resistor")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn publishing_the_working_set_is_one_cascade_through_public_commands()
+    -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        assert!(
+            !editor.unpublished(&engine),
+            "the demo drafts are published"
+        );
+        if let Some(set) = &mut editor.draft {
+            set.footprint.pads[0].position = [-1.5, 0.0];
+        }
+        if let Some(operation) = editor.commit(&ctx, &engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.sync(&engine);
+        assert!(editor.unpublished(&engine));
+        let operation = editor.publish(&engine);
+        assert!(matches!(
+            operation,
+            Some(Operation::Library(LibraryCommand::Publish { .. }))
+        ));
+        if let Some(operation) = operation {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.sync(&engine);
+        assert!(!editor.unpublished(&engine));
+        assert_eq!(engine.project().library.components.len(), 2);
+        assert_eq!(engine.project().library.footprints.len(), 2);
+        assert!(editor.notice.contains("Revision 2 published"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_component_is_created_from_a_template_in_an_empty_project() -> pcbcraft_core::Result<()>
+    {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::default();
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        assert!(editor.draft.is_none());
+        editor.load_template(Template::TwoTerminal);
+        let request = editor.take_request();
+        assert_eq!(request, Some(Request::Create(Template::TwoTerminal)));
+        if let Some(request) = request {
+            run(&mut engine, request)?;
+        }
+        editor.commit(&ctx, &engine);
+        assert_eq!(
+            component_name(&engine, &editor).as_deref(),
+            Some("Resistor")
+        );
+        if let Some(operation) = editor.publish(&engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        assert_eq!(engine.project().library.components.len(), 1);
         Ok(())
     }
 }
