@@ -606,11 +606,7 @@ impl SchematicEditor {
             || moved
             || self.draft_fields.iter().any(|b| b.text.trim() != b.loaded);
         kit::actions(ui, |ui| {
-            if ui
-                .add_enabled_ui(dirty, |ui| ui_kit::button(ui, "Apply", Button::Primary))
-                .inner
-                .clicked()
-            {
+            if kit::primary(ui, "Apply", dirty).clicked() && dirty {
                 let mut operations = self.apply_operations(instance);
                 if let Some(o) = position.filter(|_| moved) {
                     operations.push(Operation::Schematic(SchematicCommand::MoveUnit {

@@ -835,6 +835,17 @@ fn recovery_directory() -> PathBuf {
     }
 }
 
+/// Dialog content inset like the kit's cards, in the kit's form scope.
+fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let t = Tokens::get();
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
+        .show(ui, |ui| {
+            ui.set_min_width(360.0);
+            crate::kit::form(ui, add);
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,15 +876,4 @@ mod tests {
         assert!(controller.prompt.is_none());
         Ok(())
     }
-}
-
-/// Dialog content inset like the kit's cards, in the kit's form scope.
-fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    let t = Tokens::get();
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
-        .show(ui, |ui| {
-            ui.set_min_width(360.0);
-            crate::kit::form(ui, add);
-        });
 }
