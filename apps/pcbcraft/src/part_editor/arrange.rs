@@ -10,6 +10,7 @@ use pcbcraft_core::library::graphics::GRID_TOLERANCE_MM;
 use pcbcraft_core::library::{
     Graphic, HAlign, Item, PinDirection, Rotation, SymbolDefinition, TextMetric, Unit, VAlign,
 };
+use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{GraphicId, Point};
 use std::collections::BTreeSet;
 
@@ -204,48 +205,57 @@ pub fn delete(unit: &mut Unit, selection: &Selection) {
 
 /// Objects a box from `a` to `b` selects. A box dragged to the right is a
 /// window and takes what lies wholly inside; to the left it is a crossing
-/// and also takes what it touches.
-pub fn boxed(unit: &Unit, a: Point, b: Point) -> Selection {
+/// and also takes what it touches. It measures `drawn`, the unit as core
+/// resolves it (the same drawing clicks pick), with the view's text metric
+/// `m`: placeholders measure their resolved text and hidden text, which is
+/// not drawn, is never selected.
+pub fn boxed(drawn: &PlacedUnit, a: Point, b: Point, m: TextMetric) -> Selection {
     let window = b[0] >= a[0];
     let area = Bounds::point(a).including(b);
-    let m = TextMetric::default();
     let inside = |x: &Bounds| {
         area.inflated(GRID_TOLERANCE_MM).contains(x.min)
             && area.inflated(GRID_TOLERANCE_MM).contains(x.max)
     };
     let mut out = Selection::new();
-    for g in &unit.graphics {
-        let extent = g.item.bounds(m);
+    for s in &drawn.shapes {
+        let extent = s.shape.bounds(s.width);
         let hit = if window {
             inside(&extent)
+        } else if !extent.intersects(&area) {
+            false
         } else {
-            match &g.item {
-                Item::Shape { shape, .. } => {
-                    let mut ring = shape.flatten(0.01);
-                    if shape.is_closed()
-                        && let Some(first) = ring.first().copied()
-                    {
-                        ring.push(first);
-                    }
-                    ring.len() == 1 && area.contains(ring[0])
-                        || ring
-                            .windows(2)
-                            .any(|w| segment_touches_box(w[0], w[1], area.min, area.max))
-                        || (shape.is_closed() && shape.distance(area.center(), true) == 0.0)
-                }
-                Item::Text(_) => extent.intersects(&area),
+            let shape = &s.shape;
+            let mut ring = shape.flatten(0.01);
+            if shape.is_closed()
+                && let Some(first) = ring.first().copied()
+            {
+                ring.push(first);
             }
+            ring.len() == 1 && area.contains(ring[0])
+                || ring
+                    .windows(2)
+                    .any(|w| segment_touches_box(w[0], w[1], area.min, area.max))
+                || (shape.is_closed() && shape.distance(area.center(), true) == 0.0)
         };
         if hit {
-            out.insert(Selected::Graphic(g.id));
+            out.insert(Selected::Graphic(s.graphic));
         }
     }
-    for p in &unit.pins {
-        let stub = Bounds::point(p.position).including(p.body_end());
+    for t in &drawn.texts {
+        let Some(graphic) = t.graphic.filter(|_| !t.text.trim().is_empty()) else {
+            continue;
+        };
+        let extent = t.bounds(m);
+        if (window && inside(&extent)) || (!window && extent.intersects(&area)) {
+            out.insert(Selected::Graphic(graphic));
+        }
+    }
+    for p in &drawn.pins {
+        let stub = Bounds::point(p.end).including(p.body_end);
         let hit = if window {
             inside(&stub)
         } else {
-            segment_touches_box(p.position, p.body_end(), area.min, area.max)
+            segment_touches_box(p.end, p.body_end, area.min, area.max)
         };
         if hit {
             out.insert(Selected::Pin(p.terminal));
@@ -360,17 +370,46 @@ mod tests {
         Ok(())
     }
 
+    /// The unit as core draws it in its own frame.
+    fn drawn(u: &Unit) -> PlacedUnit {
+        let symbol = SymbolDefinition {
+            next_local: 10,
+            units: vec![u.clone()],
+            ..Default::default()
+        };
+        let component = pcbcraft_core::library::ComponentDefinition::default();
+        pcbcraft_core::schematic::definition_unit(
+            &pcbcraft_core::library::Library::default(),
+            pcbcraft_core::schematic::DefinitionUnit {
+                symbol: &symbol,
+                unit: u.id,
+                component: &component,
+                component_name: "Part",
+                physical: None,
+            },
+        )
+        .unwrap_or_else(|_| PlacedUnit {
+            occurrence: None,
+            shapes: vec![],
+            texts: vec![],
+            pins: vec![],
+            fields: vec![],
+        })
+    }
+
     #[test]
     fn window_boxes_take_what_is_inside_and_crossing_boxes_what_they_touch() {
-        let u = unit();
+        let u = drawn(&unit());
+        let m = TextMetric::default();
+        assert_eq!(u.shapes.len(), 1, "the unit resolves");
         // Rightward over the rectangle only.
-        let window = boxed(&u, [-0.5, -0.5], [5.5, 3.0]);
+        let window = boxed(&u, [-0.5, -0.5], [5.5, 3.0], m);
         assert_eq!(
             window,
             [Selected::Graphic(GraphicId(2))].into_iter().collect()
         );
         // Leftward over the rectangle's left edge and the pin stub.
-        let crossing = boxed(&u, [1.0, -0.5], [-1.0, 0.5]);
+        let crossing = boxed(&u, [1.0, -0.5], [-1.0, 0.5], m);
         assert_eq!(
             crossing,
             [
@@ -379,6 +418,30 @@ mod tests {
             ]
             .into_iter()
             .collect()
+        );
+    }
+
+    /// Hidden text is not drawn, so no box selects it, and a crossing box
+    /// over where it would be selects nothing.
+    #[test]
+    fn boxes_never_select_hidden_text() {
+        let mut u = unit();
+        if let Item::Text(text) = &mut u.graphics[1].item {
+            text.visible = false;
+        }
+        let m = TextMetric::default();
+        let placed = drawn(&u);
+        let everything = boxed(&placed, [-50.0, -50.0], [50.0, 50.0], m);
+        assert!(!everything.contains(&Selected::Graphic(GraphicId(3))));
+        assert!(everything.contains(&Selected::Graphic(GraphicId(2))));
+        let crossing = boxed(&placed, [1.0, 4.5], [-1.0, 5.5], m);
+        assert!(crossing.is_empty(), "{crossing:?}");
+        // Shown again, the same crossing box takes it.
+        let shown = drawn(&unit());
+        let crossing = boxed(&shown, [1.0, 4.5], [-1.0, 5.5], m);
+        assert_eq!(
+            crossing,
+            [Selected::Graphic(GraphicId(3))].into_iter().collect()
         );
     }
 }

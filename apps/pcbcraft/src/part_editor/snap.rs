@@ -7,7 +7,7 @@
 //! and otherwise to the library grid. Holding Ctrl/Cmd or Alt suppresses
 //! snapping. Pure: no painting, no document access.
 use pcbcraft_core::Point;
-use pcbcraft_core::geometry::{Shape, distance, segment_distance};
+use pcbcraft_core::geometry::{Bounds, Shape, distance, segment_distance};
 use pcbcraft_core::library::{Item, Unit};
 
 /// Snap distance in screen pixels.
@@ -58,7 +58,8 @@ pub struct Targets {
     pub pin_ends: Vec<Point>,
     pub midpoints: Vec<Point>,
     pub centers: Vec<Point>,
-    pub curves: Vec<Shape>,
+    /// Shapes to snap onto, each with a cheap box that contains it.
+    pub curves: Vec<(Bounds, Shape)>,
 }
 
 impl Targets {
@@ -92,9 +93,11 @@ impl Targets {
                             t.midpoints.push([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]);
                         }
                     }
-                    t.curves.push(shape.clone());
+                    t.curves.push((shape.coarse_bounds(0.0), shape.clone()));
                 }
-                Item::Text(text) => t.vertices.push(text.at),
+                // Hidden text is not drawn, so it offers no snap.
+                Item::Text(text) if text.visible => t.vertices.push(text.at),
+                Item::Text(_) => {}
             }
         }
         for pin in &unit.pins {
@@ -175,8 +178,9 @@ pub fn snap(raw: Point, tol: f64, grid: f64, targets: &Targets, enabled: bool) -
     let curve = targets
         .curves
         .iter()
-        .filter(|s| s.distance(raw, false) <= tol)
-        .filter_map(|s| on_curve(s, raw, (tol / 20.0).max(1e-4)))
+        .filter(|(b, _)| b.inflated(tol).contains(raw))
+        .filter(|(_, s)| s.distance(raw, false) <= tol)
+        .filter_map(|(_, s)| on_curve(s, raw, (tol / 20.0).max(1e-4)))
         .min_by(|a, b| distance(*a, raw).total_cmp(&distance(*b, raw)));
     if let Some(q) = curve {
         return plain(q, Kind::OnCurve);
@@ -246,9 +250,12 @@ mod tests {
             pin_ends: vec![[-5.0, 2.5]],
             midpoints: vec![[5.0, 0.0]],
             centers: vec![[5.0, 5.0]],
-            curves: vec![Shape::Line {
-                a: [0.0, 0.0],
-                b: [10.0, 0.0],
+            curves: vec![{
+                let line = Shape::Line {
+                    a: [0.0, 0.0],
+                    b: [10.0, 0.0],
+                };
+                (line.coarse_bounds(0.0), line)
             }],
         }
     }

@@ -81,6 +81,9 @@ pub struct SchematicEditor {
     /// selection and hover never re-resolve.
     /// Shared so a frame can hold it while selection mutates the editor.
     placed: Arc<BTreeMap<Id, PlacedUnit>>,
+    /// The extent of each resolved occurrence, with a wide text metric, so
+    /// painting skips occurrences outside the view without measuring them.
+    placed_bounds: BTreeMap<Id, Bounds>,
     /// The Place tool's ghost: the component's first unit as core draws it
     /// in its own frame, resolved once per component and revision.
     ghost: Option<(ComponentRef, u64, PlacedUnit)>,
@@ -116,6 +119,7 @@ impl Default for SchematicEditor {
             nets: Vec::new(),
             issues: Vec::new(),
             placed: Arc::default(),
+            placed_bounds: BTreeMap::new(),
             ghost: None,
             update: Default::default(),
             palette: PlacePalette::default(),
@@ -216,6 +220,14 @@ impl SchematicEditor {
                     })
                     .collect(),
             );
+            // Generous: a full em per character, so no drawn text sticks
+            // out of the box the culling uses.
+            let wide = TextMetric { advance: 1.0 };
+            self.placed_bounds = self
+                .placed
+                .iter()
+                .filter_map(|(id, p)| Some((*id, p.bounds(wide)?)))
+                .collect();
             self.nets_revision = Some(engine.revision());
         }
     }
@@ -993,9 +1005,14 @@ impl SchematicEditor {
         {
             self.ghost = ghost_unit(project, component).map(|u| (component, engine.revision(), u));
         }
-        let m = TextMetric::default();
+        let m = symbol_view::metric(&painter);
         let tolerance = f64::from(HIT_PX / scale);
         let placed_units = Arc::clone(&self.placed);
+        // The sheet area in view, with a margin for pin markers and strokes;
+        // occurrences wholly outside it are neither drawn nor picked.
+        let visible = Bounds::point(view.world(rect.left_bottom()))
+            .including(view.world(rect.right_top()))
+            .inflated(f64::from(12.0 / scale.max(f32::EPSILON)));
         for occurrence in &project.occurrences {
             let Some(placed) = placed_units.get(&occurrence.id) else {
                 continue;
@@ -1007,6 +1024,15 @@ impl SchematicEditor {
                 .map_or([0.0, 0.0], |(_, p)| {
                     [p[0] - occurrence.position[0], p[1] - occurrence.position[1]]
                 });
+            if let Some(b) = self.placed_bounds.get(&occurrence.id) {
+                let moved = Bounds {
+                    min: [b.min[0] + delta[0], b.min[1] + delta[1]],
+                    max: [b.max[0] + delta[0], b.max[1] + delta[1]],
+                };
+                if !moved.intersects(&visible) {
+                    continue;
+                }
+            }
             let view = symbol_view::View {
                 origin: screen(delta),
                 scale,

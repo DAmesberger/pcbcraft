@@ -14,6 +14,44 @@ use crate::{
     SymbolRef, TerminalId, UnitId,
 };
 
+/// A draft unit as core draws it in its own frame, the Component editor's
+/// view: the one drawing [`crate::schematic::PlacedUnit::hit`] picks.
+pub fn drawn_unit(
+    engine: &Engine,
+    f: &Fixture,
+    unit: UnitId,
+) -> Result<crate::schematic::PlacedUnit> {
+    let (
+        Definition::Symbol(symbol),
+        Definition::Component(component),
+        Definition::Binding(binding),
+        Definition::Package(package),
+    ) = (
+        body(engine, f.symbol)?,
+        body(engine, f.component)?,
+        body(engine, f.binding)?,
+        body(engine, f.package)?,
+    )
+    else {
+        return Err(Error::Invalid("unexpected draft kinds".into()));
+    };
+    let name = engine
+        .drafts()
+        .get(f.component)
+        .map(|d| d.meta.name.clone())
+        .unwrap_or_default();
+    crate::schematic::definition_unit(
+        &engine.project().library,
+        crate::schematic::DefinitionUnit {
+            symbol: &symbol,
+            unit,
+            component: &component,
+            component_name: &name,
+            physical: Some((&binding, &package)),
+        },
+    )
+}
+
 pub fn apply(engine: &mut Engine, operation: Operation) -> Result<Outcome> {
     engine.apply(engine.revision(), operation)
 }
@@ -182,14 +220,14 @@ const FIXTURE_BODY: crate::geometry::Bounds = crate::geometry::Bounds {
 /// A unit: ID, label and (terminal, pin connection end) pairs.
 pub type UnitSpec<'a> = (u32, &'a str, Vec<(u32, Point)>);
 
-/// A synthetic component: terminals, units with anchors, package
+/// A synthetic component: terminals, units with pins, package
 /// designations and an explicit mapping (package terminal → terminal).
 pub struct Spec<'a> {
     pub name: &'a str,
     /// (terminal id, name, class). Function IDs 0 are placeholders that
     /// [`bodies`] allocates after every other local ID.
     pub terminals: Vec<(u32, &'a str, TerminalClass)>,
-    /// (unit id, label, anchors)
+    /// (unit id, label, pins as (terminal, position))
     pub units: Vec<UnitSpec<'a>>,
     /// (package terminal id, designation)
     pub package: Vec<(u32, &'a str)>,
@@ -313,11 +351,11 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
         units: spec
             .units
             .iter()
-            .map(|(id, label, anchors)| Unit {
+            .map(|(id, label, unit_pins)| Unit {
                 id: UnitId(*id),
                 label: (*label).into(),
                 graphics: vec![],
-                pins: anchors
+                pins: unit_pins
                     .iter()
                     .map(|(terminal, position)| {
                         crate::library::graphics::pin_toward(
@@ -429,7 +467,7 @@ pub fn component(engine: &mut Engine, spec: &Spec<'_>) -> Result<Fixture> {
     Ok(fixture)
 }
 
-/// One terminal, one unit anchored at the origin, one pad.
+/// One terminal, one unit with its pin at the origin, one pad.
 pub fn probe(name: &str, class: TerminalClass) -> Spec<'_> {
     Spec {
         name,

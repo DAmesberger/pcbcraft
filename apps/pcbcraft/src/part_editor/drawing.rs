@@ -10,7 +10,7 @@
 //! shape (a polyline mid-chain) never enters the working copy.
 use pcbcraft_core::Point;
 use pcbcraft_core::geometry::{Shape, distance, fit_corner_radii};
-use pcbcraft_core::library::graphics::MIN_RADIUS_MM;
+use pcbcraft_core::library::graphics::{MAX_SHAPE_POINTS, MIN_RADIUS_MM};
 
 /// One ribbon tool of the Symbol view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +29,8 @@ pub enum Tool {
 }
 
 /// A keyboard shortcut: the key and whether Shift is held. Chosen against
-/// Solidcraft's keymap and the schematic's keys; see docs/editor-evidence.md.
+/// Solidcraft's keymap and the schematic's keys; see
+/// docs/component-model.md#symbol-drawing-g2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Key {
     pub key: egui::Key,
@@ -44,19 +45,20 @@ const fn shift(key: egui::Key) -> Option<Key> {
 }
 
 impl Tool {
-    /// Draw tools, in ribbon order.
-    pub const DRAW: [Tool; 8] = [
-        Tool::Line,
-        Tool::Polyline,
-        Tool::Rect,
-        Tool::RoundedRect,
-        Tool::Circle,
-        Tool::Arc,
-        Tool::Polygon,
-        Tool::Text,
+    /// Split-button families of the Draw group, as Solidcraft's sketch
+    /// ribbon folds Line/Polyline and the rectangle variants; the first is
+    /// shown until another variant is armed. Field (placeholder text such
+    /// as the designator) is a variant of Text.
+    pub const FAMILIES: [[Tool; 2]; 4] = [
+        [Tool::Line, Tool::Polyline],
+        [Tool::Rect, Tool::RoundedRect],
+        [Tool::Circle, Tool::Arc],
+        [Tool::Text, Tool::Field],
     ];
+    /// The Draw group's plain button, between the curve and text families.
+    pub const SINGLE: Tool = Tool::Polygon;
     /// Pin tools, in ribbon order.
-    pub const PINS: [Tool; 2] = [Tool::Pin, Tool::Field];
+    pub const PINS: [Tool; 1] = [Tool::Pin];
     pub const ALL: [Tool; 11] = [
         Tool::Select,
         Tool::Line,
@@ -198,6 +200,8 @@ pub struct Drawing {
     polyline_radius: f64,
     /// Corner radius of the Polygon tool, mm; sharp by default.
     polygon_radius: f64,
+    /// The variant each split button shows: the last armed of its family.
+    shown: [Tool; 4],
 }
 
 impl Default for Drawing {
@@ -210,6 +214,7 @@ impl Default for Drawing {
             rounded_radius: ROUNDED_RADIUS_MM,
             polyline_radius: 0.0,
             polygon_radius: 0.0,
+            shown: Tool::FAMILIES.map(|f| f[0]),
         }
     }
 }
@@ -256,10 +261,21 @@ impl Drawing {
         !self.points.is_empty()
     }
 
+    /// The variant split button `family` (an index of
+    /// [`Tool::FAMILIES`]) shows.
+    pub fn shown(&self, family: usize) -> Tool {
+        self.shown.get(family).copied().unwrap_or(Tool::Select)
+    }
+
     /// Arm `tool`, dropping any unfinished shape.
     pub fn arm(&mut self, tool: Tool) {
         if tool != Tool::Select {
             self.last = Some(tool);
+        }
+        for (shown, family) in self.shown.iter_mut().zip(Tool::FAMILIES) {
+            if family.contains(&tool) {
+                *shown = tool;
+            }
         }
         self.tool = tool;
         self.points.clear();
@@ -434,7 +450,7 @@ impl Drawing {
                 if self.points.last().is_none_or(|q| !same(*q, p)) {
                     self.points.push(p);
                 }
-                None
+                self.finish_at_limit()
             }
             Tool::Polygon => {
                 if self.points.len() >= 3
@@ -448,8 +464,18 @@ impl Drawing {
                 if self.points.last().is_none_or(|q| !same(*q, p)) {
                     self.points.push(p);
                 }
-                None
+                self.finish_at_limit()
             }
+        }
+    }
+
+    /// A chain at the core's point limit finishes by itself, so it never
+    /// collects points that the commit would refuse.
+    fn finish_at_limit(&mut self) -> Option<Placed> {
+        if self.points.len() >= MAX_SHAPE_POINTS {
+            self.finish()
+        } else {
+            None
         }
     }
 
@@ -708,5 +734,43 @@ mod tests {
                 assert!(keys.insert(format!("{k:?}")), "{tool:?} shares a key");
             }
         }
+    }
+
+    /// A chain finishes by itself at the core's point limit, so it never
+    /// holds points a commit would refuse; the next click starts afresh.
+    #[test]
+    fn chains_finish_at_the_core_point_limit() -> Result<(), String> {
+        for tool in [Tool::Polyline, Tool::Polygon] {
+            let mut d = Drawing::default();
+            d.arm(tool);
+            let mut placed = None;
+            for i in 0..MAX_SHAPE_POINTS {
+                // A zigzag, so a polygon never closes on its first point.
+                let p = [i as f64, if i % 2 == 0 { 0.0 } else { 1.0 }];
+                placed = click(&mut d, p);
+                if i + 1 < MAX_SHAPE_POINTS {
+                    assert_eq!(placed, None, "{tool:?} at {i}");
+                }
+            }
+            let Some(Placed::Shape(shape)) = placed else {
+                return Err(format!("{tool:?} did not finish"));
+            };
+            assert_eq!(shape.stored_points(), MAX_SHAPE_POINTS);
+            assert!(!d.busy() && d.tool() == tool);
+        }
+        Ok(())
+    }
+
+    /// Each split button shows the last variant of its family armed.
+    #[test]
+    fn split_buttons_show_the_last_variant_armed() {
+        let mut d = Drawing::default();
+        assert_eq!(d.shown(0), Tool::Line);
+        d.arm(Tool::Polyline);
+        d.arm(Tool::Select);
+        assert_eq!((d.shown(0), d.shown(1)), (Tool::Polyline, Tool::Rect));
+        d.arm(Tool::RoundedRect);
+        d.arm(Tool::Line);
+        assert_eq!((d.shown(0), d.shown(1)), (Tool::Line, Tool::RoundedRect));
     }
 }

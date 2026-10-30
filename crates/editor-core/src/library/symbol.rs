@@ -3,12 +3,12 @@
 //! pins use; unit and graphic IDs share the symbol's local namespace.
 use super::graphics::{
     self, Graphic, Item, MAX_GRAPHICS, MAX_GRAPHICS_PER_UNIT, MAX_VERTICES, PIN_TEXT_HEIGHT_MM,
-    Pin, SymbolHit, TEXT_HEIGHT_MM, TextMetric,
+    Pin, TEXT_HEIGHT_MM, TextMetric,
 };
 use super::publish::{issue, object};
 use super::{Library, MAX_LABEL, MAX_TERMINALS, MAX_UNITS, printable};
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{Bounds, Point, segment_distance};
+use crate::geometry::Bounds;
 use crate::ids::{DefinitionId, GraphicId, TerminalId, UnitId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,29 +68,6 @@ impl Unit {
             .iter()
             .map(|p| Bounds::point(p.position).including(p.body_end()));
         graphics.chain(pins).reduce(Bounds::union)
-    }
-
-    /// The topmost object within `tol_mm` of `p`: pins before graphics, later
-    /// graphics before earlier ones. Hidden text is not hit.
-    pub fn hit(&self, p: Point, tol_mm: f64, m: TextMetric) -> Option<SymbolHit> {
-        let pin = self
-            .pins
-            .iter()
-            .map(|pin| (segment_distance(p, pin.position, pin.body_end()), pin))
-            .filter(|(d, _)| *d <= tol_mm)
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((_, pin)) = pin {
-            return Some(SymbolHit::Pin(pin.terminal));
-        }
-        self.graphics.iter().rev().find_map(|g| {
-            let hit = match &g.item {
-                Item::Shape { shape, width, fill } => {
-                    shape.distance(p, *fill != graphics::Fill::None) <= tol_mm + width / 2.0
-                }
-                Item::Text(t) => t.visible && t.bounds(m).inflated(tol_mm).contains(p),
-            };
-            hit.then_some(SymbolHit::Graphic(g.id))
-        })
     }
 }
 

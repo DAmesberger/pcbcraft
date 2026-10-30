@@ -473,6 +473,7 @@ impl PlacedUnit {
                 let decoration = pin
                     .decorations
                     .iter()
+                    .filter(|d| d.coarse_bounds(0.0).inflated(tol_mm).contains(p))
                     .map(|d| d.distance(p, false))
                     .fold(f64::INFINITY, f64::min);
                 let text = pin.name.iter().chain(&pin.number).any(near_text);
@@ -498,7 +499,12 @@ impl PlacedUnit {
         self.shapes
             .iter()
             .rev()
-            .find(|s| s.shape.distance(p, s.fill != Fill::None) <= tol_mm + s.width / 2.0)
+            .find(|s| {
+                // A cheap box first: most shapes are far from the pointer,
+                // and measuring rounded ones builds their fillets.
+                s.shape.coarse_bounds(s.width).inflated(tol_mm).contains(p)
+                    && s.shape.distance(p, s.fill != Fill::None) <= tol_mm + s.width / 2.0
+            })
             .map(|s| SymbolHit::Graphic(s.graphic))
     }
 }

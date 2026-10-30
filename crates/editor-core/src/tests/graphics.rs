@@ -591,23 +591,26 @@ fn unit_bounds_and_hits_use_hand_derived_extents() -> Result<()> {
             max: [5.0, 3.0]
         })
     );
+    // Picking is one rule, on the drawing core resolves: the designator
+    // reads "R?" and the name "Resistor" there.
+    let drawn = drawn_unit(&engine, &f, unit.id)?;
     assert_eq!(
-        unit.hit([-4.0, 0.1], 0.2, m),
+        drawn.hit([-4.0, 0.1], 0.2, m),
         Some(SymbolHit::Pin(TerminalId(1)))
     );
     assert_eq!(
-        unit.hit([0.0, 0.0], 0.2, m),
+        drawn.hit([0.0, 0.0], 0.2, m),
         Some(SymbolHit::Graphic(GraphicId(2)))
     );
     assert_eq!(
-        unit.hit([1.0, 2.5], 0.2, m),
+        drawn.hit([1.0, 2.5], 0.2, m),
         Some(SymbolHit::Graphic(GraphicId(3)))
     );
     assert_eq!(
-        unit.hit([0.0, -2.5], 0.2, m),
+        drawn.hit([0.0, -2.5], 0.2, m),
         Some(SymbolHit::Graphic(GraphicId(4)))
     );
-    assert_eq!(unit.hit([8.0, 8.0], 0.2, m), None);
+    assert_eq!(drawn.hit([8.0, 8.0], 0.2, m), None);
     Ok(())
 }
 
@@ -1010,12 +1013,21 @@ fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
         let mut graphics = Vec::new();
         while graphics.len() < MAX_GRAPHICS_PER_UNIT && graphics_left > 0 {
             id += 1;
+            // Polylines carry one corner radius per point and one
+            // rectangle is rounded, the largest encoding of each.
             let shape = if graphics_left <= polylines {
-                Shape::polyline(
-                    (0..per_polyline)
+                Shape::Polyline {
+                    points: (0..per_polyline)
                         .map(|i| [coordinate(i), coordinate(i + 1)])
                         .collect(),
-                )
+                    radii: (0..per_polyline).map(|i| coordinate(i).abs()).collect(),
+                }
+            } else if graphics_left == polylines + 1 {
+                Shape::Rect {
+                    a: [coordinate(id as usize), coordinate(1)],
+                    b: [coordinate(2), coordinate(id as usize)],
+                    radius: coordinate(3).abs(),
+                }
             } else {
                 Shape::Line {
                     a: [coordinate(id as usize), coordinate(1)],
@@ -1092,8 +1104,9 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
         "encoded size (pretty JSON): full-limit symbol {full_bytes} B (on-grid coordinates {gridded_bytes} B); 100 typical symbols {typical_bytes} B; budget {} B",
         format::MAX_FILE_BYTES
     );
-    // Measured on this checkout: 1 428 985 B (1 207 043 B on the grid) and
-    // 260 402 B (2.6 kB each), so eleven full-limit revisions fit one file.
+    // Measured on this checkout (G2: per-point corner radii, a rounded
+    // rectangle, text line spacing): 1 670 744 B (1 370 150 B on the grid)
+    // and 267 802 B (2.7 kB each), so ten full-limit revisions fit one file.
     // Require at least eight; typical revisions are negligible. The thin
     // headroom is an open risk recorded in docs/component-model.md.
     assert!(full_bytes * 8 < format::MAX_FILE_BYTES, "{full_bytes}");

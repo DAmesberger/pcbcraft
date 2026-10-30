@@ -380,7 +380,7 @@ fn multi_line_text_publishes_places_and_picks_as_one_block() -> Result<()> {
     let s = symbol(&engine, f.symbol)?;
     // The second line (2 mm below the first) picks the same graphic.
     assert_eq!(
-        s.units[0].hit([0.5, -2.5], 0.1, TextMetric::default()),
+        drawn_unit(&engine, &f, UnitId(1))?.hit([0.5, -2.5], 0.1, TextMetric::default()),
         Some(crate::library::SymbolHit::Graphic(added[0]))
     );
     let bounds = s.units[0].bounds(TextMetric::default());

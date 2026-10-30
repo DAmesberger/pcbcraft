@@ -1,5 +1,5 @@
 //! CE-04: two transistors in one package. Expected positions are the
-//! occurrence position plus the hand-written fixture anchors.
+//! occurrence position plus the hand-written fixture pin positions.
 use super::support::*;
 use crate::instances::{NewInstance, UnitState};
 use crate::layout::{self, LayoutCommand, RouteRequest};
@@ -14,7 +14,7 @@ const A: UnitId = UnitId(1);
 const B: UnitId = UnitId(2);
 
 fn spec() -> Spec<'static> {
-    let anchors = |first: u32| {
+    let pins = |first: u32| {
         vec![
             (first, [-5.0, 0.0]),
             (first + 1, [5.0, 2.5]),
@@ -31,7 +31,7 @@ fn spec() -> Spec<'static> {
             (5, "C_B", passive()),
             (6, "E_B", passive()),
         ],
-        units: vec![(1, "A", anchors(1)), (2, "B", anchors(4))],
+        units: vec![(1, "A", pins(1)), (2, "B", pins(4))],
         package: vec![(1, "1"), (2, "2"), (3, "3"), (4, "4"), (5, "5"), (6, "6")],
         // Terminal 1→"2", 2→"1", 3→"3", 4→"5", 5→"6", 6→"4".
         mapping: vec![(2, 1), (1, 2), (3, 3), (5, 4), (6, 5), (4, 6)],

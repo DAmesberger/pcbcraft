@@ -151,8 +151,11 @@ impl Harness {
     }
 }
 
-/// Every drawing tool is a visible, captioned ribbon button with an icon
-/// on the Symbol tab, in the Select, Draw, Pins, Arrange and Grid groups.
+/// Every drawing tool is on the Symbol ribbon with an icon, in the Select,
+/// Draw, Pins, Arrange and Grid groups. Variants fold into split buttons
+/// (Line ▾ with Polyline, Rectangle ▾ with Rounded, Circle ▾ with Arc,
+/// Text ▾ with Field), as
+/// Solidcraft's sketch ribbon does; the button shows the last variant armed.
 #[test]
 fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
     let mut h = Harness::new()?;
@@ -166,18 +169,9 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
         ("Select", vec!["Select"]),
         (
             "Draw",
-            vec![
-                "Line",
-                "Polyline",
-                "Rectangle",
-                "Rounded",
-                "Circle",
-                "Arc",
-                "Polygon",
-                "Text",
-            ],
+            vec!["Line", "Rectangle", "Circle", "Polygon", "Text"],
         ),
-        ("Pins", vec!["Pin", "Field"]),
+        ("Pins", vec!["Pin"]),
         ("Arrange", vec!["Rotate", "Mirror", "Duplicate", "Delete"]),
         ("Grid", vec!["Grid", "Snap"]),
     ];
@@ -187,8 +181,42 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
             "{label}: {groups:?}"
         );
     }
+    let draw = ribbon
+        .groups
+        .iter()
+        .find(|g| g.label == "Draw")
+        .ok_or("draw group")?;
+    let menus: Vec<Vec<&str>> = draw
+        .tools
+        .iter()
+        .map(|t| t.menu.iter().map(|v| v.label).collect())
+        .collect();
+    assert_eq!(
+        menus,
+        vec![
+            vec!["Line", "Polyline"],
+            vec!["Rectangle", "Rounded"],
+            vec!["Circle", "Arc"],
+            vec![],
+            vec!["Text", "Field"],
+        ]
+    );
+    // Every drawing tool is reachable: a button or a split-button variant.
+    let reachable: Vec<&str> = ribbon
+        .groups
+        .iter()
+        .flat_map(|g| g.tools.iter())
+        .flat_map(|t| std::iter::once(t.id).chain(t.menu.iter().map(|v| v.id)))
+        .collect();
+    for tool in Tool::ALL {
+        assert!(reachable.contains(&tool.id()), "{tool:?}");
+    }
     for group in &ribbon.groups {
-        for tool in &group.tools {
+        for tool in group
+            .tools
+            .iter()
+            .chain(group.tools.iter().flat_map(|t| &t.menu))
+        {
             assert!(
                 !tool.icon.is_empty() && !tool.tip.is_empty(),
                 "{}",
@@ -196,7 +224,8 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
             );
         }
     }
-    // A ribbon click arms the tool and shows it selected.
+    // A ribbon click arms the tool; its split button then shows and runs
+    // it, selected, and keeps showing it after the tool ends.
     h.arm(Tool::Arc);
     let ribbon = h.editor.ribbon(&h.engine);
     let arc = ribbon
@@ -206,6 +235,35 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
         .find(|t| t.id == Tool::Arc.id())
         .ok_or("arc tool")?;
     assert!(arc.selected && arc.enabled);
+    assert_eq!((arc.label, arc.icon), ("Arc", Tool::Arc.icon()));
+    assert!(
+        arc.menu
+            .iter()
+            .any(|v| v.id == Tool::Arc.id() && v.selected)
+    );
+    h.arm(Tool::Select);
+    let ribbon = h.editor.ribbon(&h.engine);
+    assert!(
+        ribbon
+            .groups
+            .iter()
+            .flat_map(|g| g.tools.iter())
+            .any(|t| t.id == Tool::Arc.id() && !t.selected)
+    );
+    Ok(())
+}
+
+/// Arming a drawing tool clears the selection, so Properties shows only
+/// the tool's options.
+#[test]
+fn arming_a_drawing_tool_clears_the_selection() -> TestResult {
+    let mut h = Harness::new()?;
+    h.editor.selection = [Selected::Pin(TerminalId(1))].into_iter().collect();
+    h.arm(Tool::Line);
+    assert!(h.editor.selection.is_empty());
+    h.editor.selection = [Selected::Pin(TerminalId(1))].into_iter().collect();
+    h.arm(Tool::Select);
+    assert!(!h.editor.selection.is_empty(), "Select keeps it");
     Ok(())
 }
 
@@ -498,5 +556,60 @@ fn pins_end_on_the_outline_with_grid_lengths() -> TestResult {
     let pin = unit.pins.last().ok_or("pin")?;
     assert_eq!(pin.direction, PinDirection::Down);
     assert_eq!(pin.length, 4.0);
+    Ok(())
+}
+
+/// A pin placed when every terminal has one adds a terminal named after
+/// its pin number (the next free one), and on a chip body the editor says
+/// where the resulting finding is fixed.
+#[test]
+fn a_new_pin_numbers_its_terminal_and_warns_on_a_chip_body() -> TestResult {
+    let mut h = Harness::new()?;
+    h.arm(Tool::Pin);
+    h.click([-12.5, 0.0]);
+    assert!(h.commit()?);
+    let set = h.editor.draft.as_ref().ok_or("draft")?;
+    let terminal = set.component.terminals.last().ok_or("terminal")?;
+    assert_eq!(terminal.name, "3");
+    let physical = set
+        .binding
+        .mappings
+        .iter()
+        .find(|m| m.terminal == terminal.id)
+        .and_then(|m| set.package.terminal(m.package_terminal))
+        .ok_or("package terminal")?;
+    assert_eq!(physical.designation, "3", "name and number agree");
+    assert!(h.editor.notice.contains("3D tab"), "{}", h.editor.notice);
+    // The publish finding names where to fix it.
+    let findings = h.editor.findings(&h.engine);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.contains("two terminals") && f.contains("3D tab")),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Adding a terminal grows the template's body only, tracked by ID: once
+/// it is deleted, a body-filled rectangle the author drew is left as drawn.
+#[test]
+fn adding_a_terminal_never_stretches_an_authored_rectangle() -> TestResult {
+    let mut h = Harness::new()?;
+    let body = h.editor.body.ok_or("template body tracked")?;
+    // Delete the template body and draw a body-filled rectangle.
+    h.editor.selection = [Selected::Graphic(body.1)].into_iter().collect();
+    h.editor.on_tool(Arrange::Delete.id(), &h.engine);
+    h.commit()?;
+    h.editor.fill = Fill::Body;
+    h.arm(Tool::Rect);
+    h.click([-2.5, -2.5]);
+    h.click([2.5, 2.5]);
+    h.commit()?;
+    let drawn = h.unit()?.graphics.last().cloned().ok_or("rectangle")?;
+    h.editor.add_terminal();
+    let unit = &h.editor.draft.as_ref().ok_or("draft")?.symbol.units[0];
+    assert_eq!(unit.graphic(drawn.id), Some(&drawn), "left as drawn");
+    assert!(unit.pins.len() == 3, "the pin is still added");
     Ok(())
 }

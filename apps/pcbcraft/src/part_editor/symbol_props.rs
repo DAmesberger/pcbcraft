@@ -10,7 +10,7 @@ use egui::Ui;
 use pcbcraft_core::geometry::{Shape, fit_corner_radii};
 use pcbcraft_core::library::graphics::{
     Fill, HAlign, LINE_SPACING, MAX_PIN_LENGTH_MM, MAX_STROKE_MM, TEXT_HEIGHT_MM, TextContent,
-    VAlign, printable_text,
+    VAlign, printable_text, upright,
 };
 use pcbcraft_core::library::{Grid, Item, PinDirection, Rotation};
 use pcbcraft_core::{Engine, LibraryCommand, Operation, UnitId};
@@ -310,6 +310,30 @@ impl PartEditor {
                             (VAlign::Bottom, "Bottom".into()),
                         ];
                         kit::choice_row(ui, "Vertical", &mut text.justify.v, &v);
+                        // The upright rule turns text that would read
+                        // downward or leftward and flips its alignment;
+                        // say so where the stored value no longer shows.
+                        let (_, shown) = upright(text.rotation.degrees(), text.justify);
+                        if shown != text.justify {
+                            let name = |h| match h {
+                                HAlign::Left => "left",
+                                HAlign::Center => "centre",
+                                HAlign::Right => "right",
+                            };
+                            let vname = |v| match v {
+                                VAlign::Top => "top",
+                                VAlign::Middle => "middle",
+                                VAlign::Bottom => "bottom",
+                            };
+                            kit::note(
+                                ui,
+                                &format!(
+                                    "Shown {}-{} aligned so it reads upright.",
+                                    vname(shown.v),
+                                    name(shown.h)
+                                ),
+                            );
+                        }
                         kit::check_row(ui, "Visible", &mut text.visible);
                     });
                 }

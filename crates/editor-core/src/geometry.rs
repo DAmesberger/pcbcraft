@@ -658,6 +658,25 @@ impl Shape {
         }
     }
 
+    /// A cheap box that contains the shape drawn with a stroke of `width`:
+    /// its stored points (a circle or arc its whole circle), never
+    /// building fillets. Rounded corners lie inside it, since each fillet
+    /// stays within the corner it rounds. Hit tests and snapping check it
+    /// before measuring a distance.
+    pub fn coarse_bounds(&self, width: f64) -> Bounds {
+        let half = (width.max(0.0)) / 2.0;
+        let raw = match self {
+            Self::Line { a, b } | Self::Rect { a, b, .. } => Bounds::point(*a).including(*b),
+            Self::Polyline { points, .. } | Self::Polygon { points, .. } => {
+                Bounds::of(points.iter().copied()).unwrap_or(Bounds::point([0.0, 0.0]))
+            }
+            Self::Circle { center, radius } | Self::Arc { center, radius, .. } => {
+                Bounds::point(*center).inflated(*radius)
+            }
+        };
+        raw.inflated(half)
+    }
+
     /// Bounds of the shape drawn with a stroke of `width`. Arc extremes are
     /// exact: the end points plus every axis crossing the sweep passes.
     /// Rounded corners use their fillet arcs, so the box is tight.

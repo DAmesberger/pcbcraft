@@ -341,6 +341,13 @@ pub struct PartEditor {
     focus_text: bool,
     /// Space was pressed on the canvas (momentary pan) and is still down.
     space_held: bool,
+    /// The drawn unit and its snap targets, kept while the working copy and
+    /// engine revision are unchanged so idle frames redo nothing.
+    drawn_cache: Option<symbol_canvas::DrawnCache>,
+    /// The body rectangle a new terminal's pin row grows: the one the
+    /// template or first unit laid out, tracked by ID so a rectangle the
+    /// author drew is never stretched. `None` once it is gone.
+    body: Option<(UnitId, GraphicId)>,
 }
 
 impl Default for PartEditor {
@@ -375,6 +382,8 @@ impl Default for PartEditor {
             field_choice: None,
             focus_text: false,
             space_held: false,
+            drawn_cache: None,
+            body: None,
         }
     }
 }
@@ -416,6 +425,7 @@ impl PartEditor {
             self.selection.clear();
             self.unit = None;
             self.drawing.arm(drawing::Tool::Select);
+            self.body = set.as_ref().and_then(layout_body);
         }
         self.lineage = lineage;
         self.gesture = None;
@@ -586,7 +596,30 @@ impl PartEditor {
             },
             Group {
                 label: "Draw",
-                tools: Draw::DRAW.into_iter().map(tool).collect(),
+                // Variants fold into split buttons (Line ▾, Rectangle ▾,
+                // Circle ▾, Text ▾) so Arrange stays on the ribbon at tiled
+                // widths.
+                tools: {
+                    let family = |i: usize| {
+                        let variants = Draw::FAMILIES[i];
+                        let shown = if variants.contains(&armed) {
+                            armed
+                        } else {
+                            self.drawing.shown(i)
+                        };
+                        crate::shell::Tool::family(
+                            tool(shown),
+                            variants.into_iter().map(tool).collect(),
+                        )
+                    };
+                    vec![
+                        family(0),
+                        family(1),
+                        family(2),
+                        tool(Draw::SINGLE),
+                        family(3),
+                    ]
+                },
             },
             Group {
                 label: "Pins",
@@ -618,6 +651,17 @@ impl PartEditor {
         ]
     }
 
+    /// Arm a Symbol tool. A drawing tool clears the selection, as
+    /// Solidcraft's sketch tools do, so Properties edits the tool's options
+    /// and nothing else looks editable.
+    fn arm_tool(&mut self, tool: drawing::Tool) {
+        self.drawing.arm(tool);
+        if tool != drawing::Tool::Select {
+            self.selection.clear();
+            self.gesture = None;
+        }
+    }
+
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
             "footprint" => View::Footprint,
@@ -630,7 +674,7 @@ impl PartEditor {
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
         if let Some(t) = drawing::Tool::from_id(tool) {
-            self.drawing.arm(t);
+            self.arm_tool(t);
             return None;
         }
         if let Some(action) = symbol_canvas::Arrange::from_id(tool) {
@@ -712,6 +756,7 @@ impl PartEditor {
             Some(set) => {
                 set.load_template(template);
                 self.selected = set.component.terminals.first().map(|t| t.id);
+                self.body = layout_body(set);
             }
             None => self.request = Some(Request::Create(template)),
         }
@@ -732,9 +777,25 @@ impl PartEditor {
             return;
         };
         let row = set.component.terminals.len().saturating_sub(1) as f64;
+        let tracked = self.body;
         if let Some(unit) = set.symbol.units.first_mut() {
             let position = [-2.0 * SYMBOL_MODULE_MM, -row * SYMBOL_MODULE_MM];
-            let pin = match grow_body_to(unit, position[1]) {
+            // Grow the tracked body only; without it nothing is resized and
+            // the pin faces what is drawn.
+            let body = tracked
+                .filter(|(u, _)| *u == unit.id)
+                .and_then(|(_, body)| grow_body_to(unit, body, position[1]))
+                .or_else(|| {
+                    unit.graphics
+                        .iter()
+                        .filter_map(|g| match &g.item {
+                            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+                            Item::Text(_) => None,
+                        })
+                        .reduce(Bounds::union)
+                        .filter(|b| !b.contains(position))
+                });
+            let pin = match body {
                 Some(body) => graphics::pin_toward(electrical, position, body),
                 None => Pin::new(electrical, position, PinDirection::Right, SYMBOL_MODULE_MM),
             };
@@ -786,13 +847,31 @@ impl PartEditor {
                 UnitId(unit),
                 [GraphicId(body), GraphicId(designator), GraphicId(name)],
             ));
+            self.body = Some((UnitId(unit), GraphicId(body)));
         }
         let row = set.component.terminals.len() as f64;
         let electrical = TerminalId(electrical);
         let physical = PackageTerminalId(physical);
+        // Named after its pin number: the next number no terminal or
+        // package terminal uses yet, not the internal ID.
+        let taken = |n: &String| {
+            set.package.terminals.iter().any(|t| t.designation == *n)
+                || set.component.terminals.iter().any(|t| t.name == *n)
+        };
+        let number = (set.package.terminals.len() + 1..)
+            .map(|n| n.to_string())
+            .find(|n| !taken(n))
+            .unwrap_or_else(|| physical.to_string());
+        if set.package.body.is_chip() && set.package.terminals.len() >= 2 {
+            self.notice = format!(
+                "A {} body has exactly two terminals; change Body on the 3D tab to Moulded, \
+                 or remove this terminal",
+                set.package.body.label().to_lowercase()
+            );
+        }
         set.component.terminals.push(Terminal {
             id: electrical,
-            name: electrical.to_string(),
+            name: number.clone(),
             class: TerminalClass::Electrical(TerminalFunctions::fixed(
                 FunctionId(function),
                 Direction::Passive,
@@ -800,7 +879,7 @@ impl PartEditor {
         });
         set.package.terminals.push(PackageTerminal {
             id: physical,
-            designation: physical.to_string(),
+            designation: number,
         });
         set.footprint.pads.push(Pad {
             id: PadId(pad),
@@ -895,7 +974,10 @@ impl PartEditor {
                     .filter(|r| matches!(r.target, CheckTarget::Draft(id) if ids.contains(&id)))
                     .flat_map(|r| r.findings)
                     .filter(|f| f.blocks_stage(Stage::Publish))
-                    .map(|f| f.message),
+                    .map(|f| match fix_hint(&f.code) {
+                        Some(hint) => format!("{} {hint}", f.message),
+                        None => f.message,
+                    }),
             );
         }
         self.findings = Some((engine.revision(), messages.clone()));
@@ -1726,6 +1808,15 @@ fn functions_section(
     });
 }
 
+/// Where an author fixes a blocking finding the Component editor shows,
+/// by finding code.
+fn fix_hint(code: &str) -> Option<&'static str> {
+    match code {
+        "package.body" => Some("Change Body on the 3D tab, or remove terminals."),
+        _ => None,
+    }
+}
+
 /// The first unit of a part built by hand: a one-module body with the
 /// designator above it and the component name below it, as the templates
 /// draw them. `ids` are the body, designator and name graphics.
@@ -1763,18 +1854,40 @@ fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
     }
 }
 
-/// Grow the unit's body rectangle downward so a pin row at `y` meets it one
-/// module above its lower edge, moving text below the body along with it.
-/// Returns the body, or `None` when the unit has no body rectangle.
-fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
-    let (a, b) = unit.graphics.iter_mut().find_map(|g| match &mut g.item {
+/// The body rectangle a template or first unit lays out: the first unit's
+/// first graphic when it is a body-filled rectangle.
+fn layout_body(set: &WorkingSet) -> Option<(UnitId, GraphicId)> {
+    let unit = set.symbol.units.first()?;
+    let first = unit.graphics.first()?;
+    matches!(
+        first.item,
         Item::Shape {
-            shape: Shape::Rect { a, b, .. },
+            shape: Shape::Rect { .. },
             fill: Fill::Body,
             ..
-        } => Some((a, b)),
-        _ => None,
-    })?;
+        }
+    )
+    .then_some((unit.id, first.id))
+}
+
+/// Grow the body rectangle `body` downward so a pin row at `y` meets it one
+/// module above its lower edge, moving text below the body along with it.
+/// Returns the body, or `None` when the unit has no such rectangle.
+fn grow_body_to(unit: &mut Unit, body: GraphicId, y: f64) -> Option<Bounds> {
+    fn rect(g: &mut pcbcraft_core::library::Graphic) -> Option<(&mut Point, &mut Point)> {
+        match &mut g.item {
+            Item::Shape {
+                shape: Shape::Rect { a, b, .. },
+                ..
+            } => Some((a, b)),
+            _ => None,
+        }
+    }
+    let (a, b) = unit
+        .graphics
+        .iter_mut()
+        .find(|g| g.id == body)
+        .and_then(rect)?;
     let bottom = a[1].min(b[1]);
     let wanted = y - SYMBOL_MODULE_MM;
     let shift = wanted - bottom;
@@ -1792,14 +1905,11 @@ fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
             }
         }
     }
-    unit.graphics.iter().find_map(|g| match &g.item {
-        Item::Shape {
-            shape: Shape::Rect { a, b, .. },
-            fill: Fill::Body,
-            ..
-        } => Bounds::of([*a, *b]),
-        _ => None,
-    })
+    unit.graphics
+        .iter_mut()
+        .find(|g| g.id == body)
+        .and_then(rect)
+        .and_then(|(a, b)| Bounds::of([*a, *b]))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use super::drawing::{Click, Placed, Tool};
 use super::snap::{self, SNAP_PX, Snap, Targets};
 use super::{PartEditor, Selected};
 use crate::symbol_view;
-use egui::{Align2, Pos2, Rect, Response, Stroke, Ui, vec2};
+use egui::{Align2, Pos2, Rect, Response, Stroke, Ui, pos2, vec2};
 use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::graphics::{
     self, Fill, HAlign, Justify, SYMBOL_STROKE_MM, TextContent, VAlign,
@@ -19,6 +19,18 @@ use pcbcraft_core::library::{Graphic, Item, Pin, PinDirection, SymbolHit, TextMe
 use pcbcraft_core::schematic;
 use pcbcraft_core::{Engine, GraphicId, Point, TerminalId, UnitId};
 use solidcraft_ui_egui::{fonts, theme::Tokens};
+use std::sync::Arc;
+
+/// The unit being drawn as core resolves it, and its snap targets, for one
+/// working copy at one engine revision.
+pub(super) struct DrawnCache {
+    revision: u64,
+    unit: UnitId,
+    set: super::working_set::WorkingSet,
+    drawn: Arc<schematic::PlacedUnit>,
+    /// Snap targets for the objects being moved and the pending points.
+    targets: Option<(Selection, Vec<Point>, Arc<Targets>)>,
+}
 
 /// Pick tolerance around drawn symbol content, in pixels.
 const PICK_PX: f32 = 6.0;
@@ -222,6 +234,12 @@ impl PartEditor {
         let field = self.field_content(engine);
         let item = match placed {
             Placed::Shape(shape) => {
+                if shape.stored_points() >= graphics::MAX_SHAPE_POINTS {
+                    self.notice = format!(
+                        "Finished at {} points, the most one shape holds",
+                        graphics::MAX_SHAPE_POINTS
+                    );
+                }
                 let fill = if shape.is_closed() {
                     self.fill
                 } else {
@@ -371,6 +389,76 @@ impl PartEditor {
         out
     }
 
+    /// The unit being drawn, as core resolves it; resolved again only when
+    /// the working copy, the unit or the engine revision changed.
+    fn drawn(
+        &mut self,
+        ui: &mut Ui,
+        rect: Rect,
+        engine: &Engine,
+    ) -> Option<Arc<schematic::PlacedUnit>> {
+        let set = self.draft.as_ref()?;
+        let Some(unit) = self.current_unit() else {
+            ui.put(
+                rect,
+                egui::Label::new("Add a terminal or load a template to start drawing"),
+            );
+            return None;
+        };
+        let unit = unit.id;
+        if let Some(cache) = &self.drawn_cache
+            && cache.revision == engine.revision()
+            && cache.unit == unit
+            && cache.set == *set
+        {
+            return Some(Arc::clone(&cache.drawn));
+        }
+        let drawn = Arc::new(
+            schematic::definition_unit(
+                &engine.project().library,
+                schematic::DefinitionUnit {
+                    symbol: &set.symbol,
+                    unit,
+                    component: &set.component,
+                    component_name: &set.metas.component.name,
+                    physical: Some((&set.binding, &set.package)),
+                },
+            )
+            .ok()?,
+        );
+        self.drawn_cache = Some(DrawnCache {
+            revision: engine.revision(),
+            unit,
+            set: set.clone(),
+            drawn: Arc::clone(&drawn),
+            targets: None,
+        });
+        Some(drawn)
+    }
+
+    /// Snap targets of the unit being drawn, skipping `moving`; built again
+    /// only when the drawing, the moved objects or the pending points
+    /// changed.
+    fn targets(&mut self, moving: &Selection) -> Arc<Targets> {
+        let pending = self.drawing.pending().to_vec();
+        if let Some(cache) = &self.drawn_cache
+            && let Some((m, p, targets)) = &cache.targets
+            && m == moving
+            && *p == pending
+        {
+            return Arc::clone(targets);
+        }
+        let targets = Arc::new(
+            self.current_unit()
+                .map(|u| Targets::of(u, |s| moving.contains(s), &pending))
+                .unwrap_or_default(),
+        );
+        if let Some(cache) = &mut self.drawn_cache {
+            cache.targets = Some((moving.clone(), pending, Arc::clone(&targets)));
+        }
+        targets
+    }
+
     /// Keyboard: tools, arrange, finish, cancel and popping points. Plain
     /// letters only act while no text field has the keyboard.
     fn symbol_keys(&mut self, ui: &Ui, grid: f64) {
@@ -397,14 +485,14 @@ impl PartEditor {
         if pressed(Modifiers::SHIFT, Key::X) {
             self.arrange(Arrange::Mirror, grid);
         }
-        if pressed(Modifiers::SHIFT, Key::R) {
-            self.drawing.repeat();
+        if pressed(Modifiers::SHIFT, Key::R) && self.drawing.repeat() {
+            self.selection.clear();
         }
         for tool in Tool::ALL {
             if let Some(k) = tool.key().filter(|k| k.shift)
                 && pressed(Modifiers::SHIFT, k.key)
             {
-                self.drawing.arm(tool);
+                self.arm_tool(tool);
             }
         }
         for tool in Tool::ALL {
@@ -412,7 +500,7 @@ impl PartEditor {
                 && ui.input(|i| !i.modifiers.shift && !i.modifiers.command && !i.modifiers.alt)
                 && ui.input_mut(|i| i.consume_key(Modifiers::NONE, k.key))
             {
-                self.drawing.arm(tool);
+                self.arm_tool(tool);
             }
         }
         if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete))
@@ -459,30 +547,7 @@ impl PartEditor {
             self.place(placed, engine);
         }
         let painter = ui.painter().with_clip_rect(rect);
-        let drawn = {
-            let Some(set) = &self.draft else {
-                return;
-            };
-            let Some(unit) = self.current_unit() else {
-                ui.put(
-                    rect,
-                    egui::Label::new("Add a terminal or load a template to start drawing"),
-                );
-                return;
-            };
-            schematic::definition_unit(
-                &engine.project().library,
-                schematic::DefinitionUnit {
-                    symbol: &set.symbol,
-                    unit: unit.id,
-                    component: &set.component,
-                    component_name: &set.metas.component.name,
-                    physical: Some((&set.binding, &set.package)),
-                },
-            )
-            .ok()
-        };
-        let Some(drawn) = drawn else {
+        let Some(drawn) = self.drawn(ui, rect, engine) else {
             return;
         };
         // Fit once (about the origin), then keep the view stable.
@@ -556,10 +621,7 @@ impl PartEditor {
             Some(Gesture::Move { .. }) => self.selection.clone(),
             _ => Selection::new(),
         };
-        let targets = self
-            .current_unit()
-            .map(|u| Targets::of(u, |s| moving.contains(s), self.drawing.pending()))
-            .unwrap_or_default();
+        let targets = self.targets(&moving);
         let snap_at = |p: Pos2| {
             snap::snap(
                 view.world(p),
@@ -604,24 +666,47 @@ impl PartEditor {
             self.place(placed, engine);
         }
         self.paint_symbol(&painter, rect, view, grid, &drawn, cursor.as_ref());
-        // A cursor hint for the armed tool.
+        // A cursor hint for the armed tool, cut short with … before the
+        // view controls centred at the bottom (Fit), never under them.
         if tool != Tool::Select {
-            painter.text(
-                rect.left_bottom() + vec2(t.space_16, -t.space_16),
-                Align2::LEFT_BOTTOM,
-                format!(
-                    "{} · {}",
-                    tool.label(),
-                    if tool.is_chain() {
-                        "click points; Enter or double-click finishes; Esc ends"
-                    } else {
-                        "click to place; Esc ends the tool"
-                    }
-                ),
+            let hint = format!("{} · {}", tool.label(), self.tool_hint(tool));
+            let left = rect.left() + t.space_16;
+            let reserve = t.control_height / 2.0 + t.space_4 + t.space_16;
+            let width = (rect.center().x - reserve - left).max(0.0);
+            let mut job = egui::text::LayoutJob::simple_singleline(
+                hint,
                 egui::FontId::proportional(t.font_label),
                 t.text_dim,
             );
+            job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+            let galley = painter.layout_job(job);
+            painter.galley(
+                pos2(left, rect.bottom() - t.space_16 - galley.size().y),
+                galley,
+                t.text_dim,
+            );
         }
+    }
+
+    /// The canvas hint for the armed tool.
+    fn tool_hint(&self, tool: Tool) -> &'static str {
+        if tool.is_chain() {
+            return "click points; Enter or double-click finishes; Esc ends";
+        }
+        if tool == Tool::Pin
+            && let Some(set) = &self.draft
+            && set
+                .component
+                .terminals
+                .iter()
+                .all(|t| set.symbol.pin(t.id).is_some())
+            && set.package.body.is_chip()
+            && set.package.terminals.len() >= 2
+        {
+            return "a new pin adds a terminal, which a chip body does not allow \
+                    (change Body on the 3D tab)";
+        }
+        "click to place; Esc ends the tool"
     }
 
     fn select_gestures(
@@ -633,7 +718,7 @@ impl PartEditor {
         grid: f64,
         suppress: bool,
     ) {
-        let m = TextMetric::default();
+        let m = symbol_view::metric(ui.painter());
         let tolerance = f64::from(PICK_PX / view.scale);
         let hit = |p: Pos2| drawn.hit(view.world(p), tolerance, m).and_then(selected_of);
         let shift = ui.input(|i| i.modifiers.shift);
@@ -700,10 +785,8 @@ impl PartEditor {
             }
         }
         if response.drag_stopped() {
-            if let Some(Gesture::Boxing { start, end }) = self.gesture.take()
-                && let Some(unit) = self.current_unit()
-            {
-                let boxed = arrange::boxed(unit, start, end);
+            if let Some(Gesture::Boxing { start, end }) = self.gesture.take() {
+                let boxed = arrange::boxed(drawn, start, end, m);
                 if shift {
                     self.selection.extend(boxed);
                 } else {
@@ -799,7 +882,7 @@ impl PartEditor {
                 }
             }
         }
-        let m = TextMetric::default();
+        let m = symbol_view::metric(painter);
         for text in &drawn.texts {
             if let Some(g) = text.graphic
                 && self.selection.contains(&Selected::Graphic(g))
@@ -814,8 +897,12 @@ impl PartEditor {
             }
         }
         for pin in &drawn.pins {
+            // The terminal list's choice shows only while selecting: an
+            // armed tool edits nothing that is highlighted.
             let chosen = self.selection.contains(&Selected::Pin(pin.terminal))
-                || (self.selection.is_empty() && self.selected == Some(pin.terminal));
+                || (self.selection.is_empty()
+                    && self.drawing.tool() == Tool::Select
+                    && self.selected == Some(pin.terminal));
             let ink = if chosen {
                 painter.line_segment(
                     [view.screen(pin.end), view.screen(pin.body_end)],
