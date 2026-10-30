@@ -91,6 +91,20 @@ fn then_composes_like_sequential_application() {
 }
 
 #[test]
+fn inverse_undoes_every_transform() {
+    let mut rng = Rng(0x5eed_0011);
+    for _ in 0..CASES {
+        let (t, p) = (rng.transform(), rng.point());
+        let back = t.inverse().apply(t.apply(p));
+        assert!(close(back, p, 1e-9), "{t:?} at {p:?}: {back:?}");
+        let forth = t.apply(t.inverse().apply(p));
+        assert!(close(forth, p, 1e-9), "{t:?} at {p:?}: {forth:?}");
+    }
+    let shift = Transform2::translation([3.0, -2.0]);
+    assert_eq!(shift.inverse(), Transform2::translation([-3.0, 2.0]));
+}
+
+#[test]
 fn quarter_turns_are_exact_and_mirror_reflects_across_x() {
     let quarter = Transform2 {
         translate: [0.0, 0.0],

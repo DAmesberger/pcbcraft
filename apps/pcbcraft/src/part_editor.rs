@@ -8,8 +8,8 @@
 mod working_set;
 
 use crate::kit::{self, Tone};
-use crate::schematic_editor::body_bounds;
-use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use crate::symbol_view;
+use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::functions::{
@@ -21,8 +21,10 @@ use pcbcraft_core::library::graphics::{
 };
 use pcbcraft_core::library::{
     ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
-    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
+    PinDirection, Published, SymbolHit, Terminal, TerminalClass, TerminalMap, TextMetric, Unit,
+    designator_prefix_valid,
 };
+use pcbcraft_core::schematic;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
     Operation, PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
@@ -52,6 +54,9 @@ impl ClassChoice {
         }
     }
 }
+
+/// Pick tolerance around drawn symbol content on the canvas, in pixels.
+const PICK_PX: f32 = 6.0;
 
 const CLASS_CHOICES: [(ClassChoice, &str); 3] = [
     (ClassChoice::Electrical, "Electrical"),
@@ -299,6 +304,8 @@ pub struct PartEditor {
     selected: Option<TerminalId>,
     notice: String,
     drag_scale: Option<f32>,
+    /// The pin whose connection end the canvas drag moves.
+    dragged_pin: Option<TerminalId>,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
@@ -321,6 +328,7 @@ impl Default for PartEditor {
             selected: Some(TerminalId(1)),
             notice: String::new(),
             drag_scale: None,
+            dragged_pin: None,
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
@@ -1271,7 +1279,7 @@ impl PartEditor {
         });
     }
 
-    pub fn canvas(&mut self, ui: &mut Ui, _engine: &Engine) -> Option<Operation> {
+    pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         if self.update.is_open() {
             ui.disable();
         }
@@ -1279,7 +1287,7 @@ impl PartEditor {
             ui.label("Native Solidcraft package preview");
             return None;
         }
-        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
@@ -1293,27 +1301,37 @@ impl PartEditor {
         };
         let t = Tokens::get();
         let painter = ui.painter().with_clip_rect(rect);
-        let empty_unit = Unit {
-            id: UnitId(0),
-            label: String::new(),
-            graphics: vec![],
-            pins: vec![],
-        };
-        let unit_body = body_bounds(set.symbol.units.first().unwrap_or(&empty_unit));
-        let (extent_x, extent_y) = if self.view == View::Symbol {
-            set.symbol
-                .units
-                .first()
-                .unwrap_or(&empty_unit)
-                .pins
-                .iter()
-                .fold(
-                    (
-                        unit_body.min[0].abs().max(unit_body.max[0].abs()),
-                        unit_body.min[1].abs().max(unit_body.max[1].abs()),
-                    ),
-                    |(x, y), p| (x.max(p.position[0].abs()), y.max(p.position[1].abs())),
+        let m = TextMetric::default();
+        // The Symbol view draws only what core resolves for the working
+        // set: graphics, pins with names and the working binding's numbers,
+        // and placeholder text.
+        let drawn = if self.view == View::Symbol {
+            set.symbol.units.first().and_then(|unit| {
+                schematic::definition_unit(
+                    &engine.project().library,
+                    schematic::DefinitionUnit {
+                        symbol: &set.symbol,
+                        unit: unit.id,
+                        component: &set.component,
+                        component_name: &set.metas.component.name,
+                        physical: Some((&set.binding, &set.package)),
+                    },
                 )
+                .ok()
+            })
+        } else {
+            None
+        };
+        let (extent_x, extent_y) = if self.view == View::Symbol {
+            drawn
+                .as_ref()
+                .and_then(|d| d.bounds(m))
+                .map_or((2.5, 2.5), |b| {
+                    (
+                        b.min[0].abs().max(b.max[0].abs()),
+                        b.min[1].abs().max(b.max[1].abs()),
+                    )
+                })
         } else {
             set.footprint.pads.iter().fold(
                 (
@@ -1330,6 +1348,7 @@ impl PartEditor {
         };
         if !ui.input(|input| input.pointer.any_down()) {
             self.drag_scale = None;
+            self.dragged_pin = None;
         }
         let fitted_scale = (rect.width() as f64 / (2.0 * extent_x + 6.0))
             .min(rect.height() as f64 / (2.0 * extent_y + 6.0))
@@ -1367,70 +1386,71 @@ impl PartEditor {
         let mut selected = self.selected;
         let mut drag_scale = self.drag_scale;
         if self.view == View::Symbol {
-            let body = Rect::from_two_pos(transform(unit_body.min), transform(unit_body.max));
-            painter.rect(
-                body,
-                t.radius_sm,
-                t.panel,
-                Stroke::new(1.5, t.accent),
-                StrokeKind::Inside,
+            let Some(drawn) = &drawn else {
+                self.selected = selected;
+                return None;
+            };
+            let view = symbol_view::View { origin, scale };
+            symbol_view::paint(
+                &painter,
+                view,
+                drawn,
+                symbol_view::Ink {
+                    stroke: t.text,
+                    body: t.panel,
+                    text: t.text,
+                    pin: t.accent,
+                    pin_text: t.text_dim,
+                },
             );
-            painter.text(
-                body.center(),
-                Align2::CENTER_CENTER,
-                &set.metas.component.name,
-                FontId::proportional(t.font_label),
-                t.text,
-            );
-            let names: Vec<(TerminalId, String)> = set
-                .component
-                .terminals
-                .iter()
-                .map(|t| (t.id, t.name.clone()))
-                .collect();
-            if let Some(unit) = set.symbol.units.first_mut() {
-                for pin in &mut unit.pins {
-                    let at = transform(pin.position);
-                    let edge = body.clamp(at);
-                    let ink = if selected == Some(pin.terminal) {
-                        t.body_selected
-                    } else {
-                        t.accent
-                    };
-                    painter.line_segment([at, edge], Stroke::new(2.0, ink));
-                    painter.circle_filled(at, 4.0, ink);
-                    let label = names
-                        .iter()
-                        .find(|(id, _)| *id == pin.terminal)
-                        .map(|(_, name)| name.as_str())
-                        .unwrap_or("?");
-                    painter.text(
-                        at + egui::vec2(0.0, -t.space_10),
-                        Align2::CENTER_BOTTOM,
-                        label,
-                        FontId::proportional(t.font_label),
-                        t.text,
+            for pin in &drawn.pins {
+                let ink = if selected == Some(pin.terminal) {
+                    painter.line_segment(
+                        [view.screen(pin.end), view.screen(pin.body_end)],
+                        Stroke::new(3.0, t.body_selected),
                     );
-                    let response = ui.interact(
-                        Rect::from_center_size(at, Vec2::splat(18.0)),
-                        ui.id().with(("symbol-pin", pin.terminal.0)),
-                        Sense::click_and_drag(),
-                    );
-                    if response.clicked() || response.drag_started() {
-                        selected = Some(pin.terminal);
-                    }
-                    if response.drag_started() {
-                        drag_scale = Some(scale);
-                    }
-                    if response.dragged()
-                        && let Some(p) = response.interact_pointer_pos()
-                    {
-                        pin.position = [
-                            f64::from((p.x - origin.x) / scale),
-                            f64::from((origin.y - p.y) / scale),
-                        ];
-                    }
+                    t.body_selected
+                } else {
+                    t.accent
+                };
+                painter.circle_filled(view.screen(pin.end), 4.0, ink);
+            }
+            // Picking goes through the core hit test in the unit frame:
+            // pins before graphics.
+            let tolerance = f64::from(PICK_PX / scale);
+            let hit = |p: Pos2| {
+                set.symbol
+                    .units
+                    .first()
+                    .and_then(|u| u.hit(view.world(p), tolerance, m))
+            };
+            let pressed = if response.drag_started() {
+                ui.input(|i| i.pointer.press_origin())
+            } else if response.clicked() {
+                response.interact_pointer_pos()
+            } else {
+                None
+            };
+            if let Some(SymbolHit::Pin(terminal)) = pressed.and_then(hit) {
+                selected = Some(terminal);
+                if response.drag_started() {
+                    drag_scale = Some(scale);
+                    self.dragged_pin = Some(terminal);
                 }
+            }
+            if response.dragged()
+                && let Some(terminal) = self.dragged_pin
+                && let Some(p) = response.interact_pointer_pos()
+                && let Some(pin) = set
+                    .symbol
+                    .units
+                    .iter_mut()
+                    .flat_map(|u| u.pins.iter_mut())
+                    .find(|pin| pin.terminal == terminal)
+            {
+                // The connection end snaps to the symbol grid.
+                let step = engine.drafts().grid.symbol_mm;
+                pin.position = view.world(p).map(|v| (v / step).round() * step);
             }
         } else {
             let body_origin = transform(set.footprint.datum_offset);
@@ -2107,6 +2127,110 @@ mod draft_tests {
             texts(&shape.shape, &mut out);
         }
         out
+    }
+
+    /// Run one canvas frame in a 600 × 400 area; returns the drawn texts.
+    fn canvas_frame(
+        editor: &mut PartEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Vec<String> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                editor.canvas(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        let mut out = Vec::new();
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        for shape in &output.shapes {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    /// The Symbol view draws what core resolves for the working set and
+    /// picks pins through the core hit test; a dragged pin end lands on the
+    /// symbol grid.
+    #[test]
+    fn the_symbol_view_draws_and_picks_through_core_queries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        // The designator placeholder reads prefix + "?"; numbers come from
+        // the working binding; the shown field reads its name (no default).
+        for text in ["R?", "Resistor", "1", "2", "Resistance"] {
+            assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+        }
+        // The view fits the drawn bounds about the origin (3 mm margin).
+        let set = editor.draft.as_ref().ok_or("no draft")?;
+        let bounds = schematic::definition_unit(
+            &engine.project().library,
+            schematic::DefinitionUnit {
+                symbol: &set.symbol,
+                unit: set.symbol.units[0].id,
+                component: &set.component,
+                component_name: &set.metas.component.name,
+                physical: Some((&set.binding, &set.package)),
+            },
+        )?
+        .bounds(TextMetric::default())
+        .ok_or("nothing drawn")?;
+        let half = |lo: f64, hi: f64| lo.abs().max(hi.abs());
+        let scale = (600.0 / (2.0 * half(bounds.min[0], bounds.max[0]) + 6.0))
+            .min(400.0 / (2.0 * half(bounds.min[1], bounds.max[1]) + 6.0))
+            as f32;
+        let at = |p: Point| Pos2::new(300.0 + p[0] as f32 * scale, 200.0 - p[1] as f32 * scale);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Click pin 2's connection end.
+        let end = at([5.0, 0.0]);
+        for events in [
+            vec![egui::Event::PointerMoved(end)],
+            vec![button(end, true)],
+            vec![button(end, false)],
+        ] {
+            canvas_frame(&mut editor, &engine, &ctx, events);
+        }
+        assert_eq!(editor.selected, Some(TerminalId(2)));
+        // Drag pin 1's end to (−6.6, 1.4) mm: it lands on (−7.5, 2.5).
+        let (from, to) = (at([-5.0, 0.0]), at([-6.6, 1.4]));
+        for events in [
+            vec![egui::Event::PointerMoved(from)],
+            vec![button(from, true)],
+            vec![egui::Event::PointerMoved(from + (to - from) * 0.5)],
+            vec![egui::Event::PointerMoved(to)],
+            vec![button(to, false)],
+        ] {
+            canvas_frame(&mut editor, &engine, &ctx, events);
+        }
+        assert_eq!(editor.selected, Some(TerminalId(1)));
+        let set = editor.draft.as_ref().ok_or("no draft")?;
+        let pin = set.symbol.units[0]
+            .pin(TerminalId(1))
+            .ok_or("pin 1 missing")?;
+        assert_eq!(pin.position, [-7.5, 2.5]);
+        Ok(())
     }
 
     /// Click the text `label`, type `typed`, then leave the field.

@@ -170,6 +170,27 @@ impl Transform2 {
         }
     }
 
+    /// The transform that undoes this one: `self.inverse().apply(self.apply(p))`
+    /// is `p`. A reflection is its own inverse and reverses the sense of the
+    /// rotation it follows.
+    pub fn inverse(&self) -> Transform2 {
+        let linear = Transform2 {
+            translate: [0.0, 0.0],
+            rotation_deg: if self.mirror {
+                self.rotation_deg
+            } else {
+                -self.rotation_deg
+            }
+            .rem_euclid(360.0),
+            mirror: self.mirror,
+        };
+        let back = linear.apply_vector(self.translate);
+        Transform2 {
+            translate: [-back[0], -back[1]],
+            ..linear
+        }
+    }
+
     /// Map an angle measured in the local frame.
     pub fn apply_angle(&self, deg: f64) -> f64 {
         let local = if self.mirror { -deg } else { deg };

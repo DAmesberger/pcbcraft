@@ -160,6 +160,39 @@ pub struct Justify {
     pub v: VAlign,
 }
 
+impl Justify {
+    /// The same anchor seen from the opposite side: left and right, top
+    /// and bottom swapped.
+    pub fn turned(self) -> Self {
+        Self {
+            h: match self.h {
+                HAlign::Left => HAlign::Right,
+                HAlign::Center => HAlign::Center,
+                HAlign::Right => HAlign::Left,
+            },
+            v: match self.v {
+                VAlign::Top => VAlign::Bottom,
+                VAlign::Middle => VAlign::Middle,
+                VAlign::Bottom => VAlign::Top,
+            },
+        }
+    }
+}
+
+/// The upright rule every view applies: text that would read downward or
+/// leftward (a rotation in (90°, 270°]) is turned 180° and its
+/// justification swapped, so it reads left to right or bottom to top and
+/// covers the same box. Returns the rotation in `[0, 360)`.
+pub fn upright(rotation_deg: f64, justify: Justify) -> (f64, Justify) {
+    let r = rotation_deg.rem_euclid(360.0);
+    const EPS: f64 = 1e-9;
+    if r > 90.0 + EPS && r <= 270.0 + EPS {
+        ((r - 180.0).rem_euclid(360.0), justify.turned())
+    } else {
+        (r, justify)
+    }
+}
+
 /// A symbol pin: where a terminal connects and how its stub is drawn. A pin
 /// is identified by its terminal; it stores no electrical type (direction
 /// lives on the terminal's functions) and no number (that comes from the

@@ -430,6 +430,28 @@ pub fn effective_fields(
         .collect()
 }
 
+/// The effective value of every field `component` selects when nothing is
+/// assigned, in selection order: what an instance placed now would show.
+pub fn default_fields(
+    library: &Library,
+    component: &ComponentDefinition,
+) -> Result<Vec<EffectiveField>> {
+    component
+        .fields
+        .iter()
+        .map(|selection| {
+            let view = field_view(library, selection.field)?;
+            Ok(fields::effective(
+                &view.field.meta.name,
+                &view.field.definition,
+                view.kind_body(),
+                selection,
+                None,
+            ))
+        })
+        .collect()
+}
+
 /// Choices offered by the pinned component; unit IDs exist in the resolved
 /// representation; placed and unused exclusive; no-connect only on
 /// electrical terminals; every wire endpoint's unit placed, electrical and

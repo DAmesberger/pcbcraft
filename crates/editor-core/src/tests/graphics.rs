@@ -764,6 +764,147 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
 }
 
 #[test]
+fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
+    let engine = Engine::demo()?;
+    let r1 = by_designator(&engine, "R1")?;
+    let occurrence = engine
+        .project()
+        .occurrences_of(r1)
+        .next()
+        .map(|o| o.id)
+        .ok_or_else(|| Error::NotFound("occurrence".into()))?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    assert_eq!(placed.occurrence, Some(occurrence));
+    // The demo shows resistance on the symbol and draws no Field text: the
+    // value sits centred 0.5 mm below the name's bottom edge at −3 mm.
+    let [value] = placed.fields.as_slice() else {
+        return Err(Error::Invalid(format!("{:?}", placed.fields)));
+    };
+    assert_eq!(value.text, "10 kΩ");
+    assert!((value.at[0] + 12.0).abs() < 1e-9, "{:?}", value.at);
+    assert!((value.at[1] + 3.5).abs() < 1e-9, "{:?}", value.at);
+    assert_eq!(
+        value.justify,
+        Justify {
+            h: HAlign::Center,
+            v: VAlign::Top
+        }
+    );
+    // Bounds cover every drawn item, including the stacked value.
+    let m = TextMetric::default();
+    let bounds = placed
+        .bounds(m)
+        .ok_or_else(|| Error::NotFound("bounds".into()))?;
+    for text in placed.texts.iter().chain(&placed.fields) {
+        let b = text.bounds(m);
+        assert!(bounds.contains(b.min) && bounds.contains(b.max), "{text:?}");
+    }
+    assert_eq!(bounds.min[1], -3.5 - 1.5);
+    assert_eq!([bounds.min[0], bounds.max[0]], [-17.0, -7.0]);
+    Ok(())
+}
+
+#[test]
+fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()> {
+    let engine = Engine::demo()?;
+    let f = demo_fixture(&engine)?;
+    let definition = |id| body(&engine, id);
+    let (
+        crate::library::Definition::Symbol(symbol),
+        crate::library::Definition::Component(component),
+        crate::library::Definition::Binding(binding),
+        crate::library::Definition::Package(package),
+    ) = (
+        definition(f.symbol)?,
+        definition(f.component)?,
+        definition(f.binding)?,
+        definition(f.package)?,
+    )
+    else {
+        return Err(Error::Invalid("unexpected kinds".into()));
+    };
+    let library = &engine.project().library;
+    let view = schematic::DefinitionUnit {
+        symbol: &symbol,
+        unit: UnitId(1),
+        component: &component,
+        component_name: "Resistor",
+        physical: Some((&binding, &package)),
+    };
+    let drawn = schematic::definition_unit(library, view)?;
+    assert_eq!(drawn.occurrence, None);
+    // Drawn in the definition frame, untransformed.
+    assert_eq!(
+        drawn.shapes[0].shape,
+        Shape::Rect {
+            a: [-2.5, -1.0],
+            b: [2.5, 1.0]
+        }
+    );
+    let texts: Vec<&str> = drawn.texts.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, vec!["R?", "Resistor"]);
+    let numbers: Vec<Option<&str>> = drawn
+        .pins
+        .iter()
+        .map(|p| p.number.as_ref().map(|t| t.text.as_str()))
+        .collect();
+    assert_eq!(numbers, vec![Some("1"), Some("2")]);
+    assert_eq!(drawn.pins[0].end, [-5.0, 0.0]);
+    // The demo component sets no default, so the shown field reads its name.
+    let fields: Vec<&str> = drawn.fields.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(fields, vec!["Resistance"]);
+
+    // Without a working binding numbers are hidden, never guessed; an
+    // unknown unit is refused.
+    let unbound = schematic::definition_unit(
+        library,
+        schematic::DefinitionUnit {
+            physical: None,
+            ..view
+        },
+    )?;
+    assert!(unbound.pins.iter().all(|p| p.number.is_none()));
+    assert!(
+        schematic::definition_unit(
+            library,
+            schematic::DefinitionUnit {
+                unit: UnitId(99),
+                ..view
+            }
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn upright_text_never_reads_downward_or_leftward() {
+    let j = |h, v| Justify { h, v };
+    let left_bottom = j(HAlign::Left, VAlign::Bottom);
+    let right_top = j(HAlign::Right, VAlign::Top);
+    // Right and up read as authored.
+    assert_eq!(graphics::upright(0.0, left_bottom), (0.0, left_bottom));
+    assert_eq!(graphics::upright(90.0, left_bottom), (90.0, left_bottom));
+    assert_eq!(graphics::upright(-270.0, left_bottom), (90.0, left_bottom));
+    // Left and down are turned half a turn with the anchor swapped, so
+    // they cover the same box.
+    assert_eq!(graphics::upright(180.0, left_bottom), (0.0, right_top));
+    assert_eq!(graphics::upright(270.0, left_bottom), (90.0, right_top));
+    assert_eq!(graphics::upright(-90.0, right_top), (90.0, left_bottom));
+    let centred = j(HAlign::Center, VAlign::Middle);
+    assert_eq!(graphics::upright(540.0, centred), (0.0, centred));
+    let m = TextMetric::default();
+    for rotation in [180.0, 270.0] {
+        let (turned, justify) = graphics::upright(rotation, left_bottom);
+        let a = m.bounds([3.0, 4.0], 1.5, rotation, left_bottom, 5);
+        let b = m.bounds([3.0, 4.0], 1.5, turned, justify, 5);
+        for (p, q) in [(a.min, b.min), (a.max, b.max)] {
+            assert!(crate::geometry::distance(p, q) < 1e-9, "{a:?} vs {b:?}");
+        }
+    }
+}
+
+#[test]
 fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
     let symbol = SymbolDefinition {
         component: DefinitionId(7),

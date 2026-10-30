@@ -3,13 +3,16 @@
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use crate::kit::{self, Tone};
 use crate::place_palette::{PaletteAction, PlacePalette};
-use egui::{Align2, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use crate::symbol_view;
+use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2};
 use pcbcraft_core::completeness::InstanceReport;
 use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::functions::{FunctionEdit, Resolution, TerminalFunctions};
-use pcbcraft_core::geometry::Bounds;
+use pcbcraft_core::geometry::{Bounds, Transform2};
 use pcbcraft_core::instances::{self, NewInstance, UnitState};
-use pcbcraft_core::library::{Item, Terminal, Unit};
+use pcbcraft_core::library::graphics::SHEET_GRID_MM;
+use pcbcraft_core::library::{Terminal, TextMetric, Unit};
+use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, Operation,
     PhysicalChoice, Point, Project, Query, QueryResult, erc,
@@ -17,7 +20,6 @@ use pcbcraft_core::{
     updates::{Change, InstanceChange},
 };
 use solidcraft_ui_egui::{
-    fonts,
     theme::Tokens,
     ui_kit::{self, Button},
 };
@@ -33,6 +35,9 @@ struct FieldBuffer {
     loaded: String,
     text: String,
 }
+
+/// Pick tolerance around drawn symbol content, in pixels.
+const HIT_PX: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Tool {
@@ -71,9 +76,9 @@ pub struct SchematicEditor {
     nets_revision: Option<u64>,
     nets: Vec<Net>,
     issues: Vec<pcbcraft_core::Finding>,
-    /// Effective texts of fields shown on each instance's symbol, per
-    /// revision.
-    symbol_texts: BTreeMap<Id, String>,
+    /// What each occurrence draws, resolved by core once per revision so
+    /// selection and hover never re-resolve.
+    placed: BTreeMap<Id, PlacedUnit>,
     update: crate::update_preview::UpdatePreview,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
@@ -105,7 +110,7 @@ impl Default for SchematicEditor {
             nets_revision: None,
             nets: Vec::new(),
             issues: Vec::new(),
-            symbol_texts: BTreeMap::new(),
+            placed: BTreeMap::new(),
             update: Default::default(),
             palette: PlacePalette::default(),
         }
@@ -175,11 +180,11 @@ impl SchematicEditor {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
             self.issues = erc::checks(engine.project());
-            self.symbol_texts = engine
+            self.placed = engine
                 .project()
-                .instances
+                .occurrences
                 .iter()
-                .map(|i| (i.id, symbol_text(engine.project(), i)))
+                .filter_map(|o| Some((o.id, schematic::placed_unit(engine.project(), o.id).ok()?)))
                 .collect();
             self.nets_revision = Some(engine.revision());
         }
@@ -801,13 +806,12 @@ impl SchematicEditor {
         }
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;
-            for occurrence in &project.occurrences {
-                if let Some(unit) = unit_of(project, occurrence) {
+            for placed in self.placed.values() {
+                if let Some(extent) = placed.bounds(TextMetric::default()) {
                     // Sheet extent with y flipped to screen orientation.
-                    let extent = symbol_bounds(unit, occurrence.position);
                     bounds = bounds.union(Rect::from_min_max(
-                        pos2(extent.min.x, -extent.max.y),
-                        pos2(extent.max.x, -extent.min.y),
+                        pos2(extent.min[0] as f32, -extent.max[1] as f32),
+                        pos2(extent.max[0] as f32, -extent.min[1] as f32),
                     ));
                 }
             }
@@ -859,7 +863,12 @@ impl SchematicEditor {
             }) => {
                 if let Some((request, unit)) = first_choices(project, component) {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
-                        position: self.drop_point(project, unit, rect),
+                        position: self.drop_point(
+                            project,
+                            unit,
+                            rect,
+                            engine.drafts().grid.symbol_mm,
+                        ),
                         ..request
                     })));
                 }
@@ -883,18 +892,12 @@ impl SchematicEditor {
         }
         let origin = rect.center() + self.pan;
         let scale = self.scale;
-        let screen = |p: Point| {
-            pos2(
-                origin.x + p[0] as f32 * scale,
-                origin.y - p[1] as f32 * scale,
-            )
-        };
-        let world = |p: Pos2| {
-            [
-                (f64::from((p.x - origin.x) / scale) * 2.0).round() / 2.0,
-                (f64::from((origin.y - p.y) / scale) * 2.0).round() / 2.0,
-            ]
-        };
+        let view = symbol_view::View { origin, scale };
+        let screen = |p: Point| view.screen(p);
+        // Occurrence origins snap to the symbol grid, so on-grid pins land
+        // on it too.
+        let grid = engine.drafts().grid.symbol_mm;
+        let world = |p: Pos2| snap(view.world(p), grid);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0, t.viewport_bottom);
         let step = 5.0 * scale;
@@ -951,79 +954,64 @@ impl SchematicEditor {
                 }
             }
         }
+        let m = TextMetric::default();
+        let tolerance = f64::from(HIT_PX / scale);
         for occurrence in &project.occurrences {
-            let (Some(instance), Some(unit)) = (
-                project.instance(occurrence.instance),
-                unit_of(project, occurrence),
-            ) else {
+            let Some(placed) = self.placed.get(&occurrence.id) else {
                 continue;
             };
-            let component = project.library.component(instance.component);
-            let position = self
+            // A dragged occurrence is drawn and picked at its preview.
+            let delta = self
                 .preview
                 .filter(|(id, _)| *id == occurrence.id)
-                .map(|(_, p)| p)
-                .unwrap_or(occurrence.position);
-            let extent = body_bounds(unit);
-            let body = Rect::from_two_pos(
-                screen([position[0] + extent.min[0], position[1] + extent.min[1]]),
-                screen([position[0] + extent.max[0], position[1] + extent.max[1]]),
+                .map_or([0.0, 0.0], |(_, p)| {
+                    [p[0] - occurrence.position[0], p[1] - occurrence.position[1]]
+                });
+            let view = symbol_view::View {
+                origin: screen(delta),
+                scale,
+            };
+            let at =
+                schematic::occurrence_transform(occurrence).then(&Transform2::translation(delta));
+            if let Some(unit) = unit_of(project, occurrence) {
+                body_hits.push((occurrence.instance, occurrence.id, unit, at.inverse()));
+            }
+            let selected = self.selected == Some(occurrence.instance);
+            symbol_view::paint(
+                &painter,
+                view,
+                placed,
+                symbol_view::Ink {
+                    stroke: if selected { t.accent } else { t.text },
+                    body: t.panel,
+                    text: if selected { t.accent } else { t.text },
+                    pin: t.form_success,
+                    pin_text: t.text_dim,
+                },
             );
-            body_hits.push((instance.id, occurrence.id, body.expand(t.space_6)));
-            let selected = self.selected == Some(instance.id);
-            painter.rect_filled(body, t.control_radius, t.panel);
-            painter.rect_stroke(
-                body,
-                t.control_radius,
-                Stroke::new(
-                    if selected { 2.5 } else { 1.5 },
-                    if selected { t.accent } else { t.text },
-                ),
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                body.center_top() - vec2(0.0, t.space_6),
-                Align2::CENTER_BOTTOM,
-                instances::display_label(project, instance, unit.id),
-                fonts::semibold(t.font_label),
-                t.text,
-            );
-            painter.text(
-                body.center(),
-                Align2::CENTER_CENTER,
-                self.symbol_texts
-                    .get(&instance.id)
-                    .map_or("", String::as_str),
-                fonts::medium(t.font_small),
-                t.text_dim,
-            );
-            for pin in &unit.pins {
+            for pin in &placed.pins {
                 let endpoint = Endpoint {
-                    instance: instance.id,
+                    instance: occurrence.instance,
                     terminal: pin.terminal,
                 };
-                let p = screen([position[0] + pin.position[0], position[1] + pin.position[1]]);
-                let edge = pos2(
-                    p.x.clamp(body.left(), body.right()),
-                    p.y.clamp(body.top(), body.bottom()),
-                );
+                let p = view.screen(pin.end);
                 let active = self.wire_from == Some(endpoint);
                 let color = if active { t.accent } else { t.form_success };
-                painter.line_segment([edge, p], Stroke::new(1.5, color));
                 painter.circle_stroke(p, if active { 5.0 } else { 3.5 }, Stroke::new(1.5, color));
                 pin_hits.push((endpoint, p));
-                if let Some(terminal) = component.and_then(|c| c.definition.terminal(pin.terminal))
-                {
-                    painter.text(
-                        p + vec2(0.0, -t.space_6),
-                        Align2::CENTER_BOTTOM,
-                        &terminal.name,
-                        fonts::medium(t.font_micro),
-                        t.text_dim,
-                    );
-                }
             }
         }
+        // The topmost occurrence whose drawing core hits under `p`.
+        let body_at = |p: Pos2| {
+            body_hits
+                .iter()
+                .rev()
+                .find(|(_, _, unit, inverse)| {
+                    unit.hit(inverse.apply(view.world(p)), tolerance, m)
+                        .is_some()
+                })
+                .map(|(id, occurrence, _, _)| (*id, *occurrence))
+        };
         if let Some(pointer) = response.hover_pos() {
             let hit = pin_hits
                 .iter()
@@ -1036,17 +1024,23 @@ impl SchematicEditor {
                 && !self.palette.is_open()
                 && let Some((_, unit)) = self.component.and_then(|c| first_choices(project, c))
             {
-                let at = world(pointer);
-                let extent = body_bounds(unit);
-                painter.rect_stroke(
-                    Rect::from_two_pos(
-                        screen([at[0] + extent.min[0], at[1] + extent.min[1]]),
-                        screen([at[0] + extent.max[0], at[1] + extent.max[1]]),
-                    ),
-                    t.control_radius,
-                    Stroke::new(1.5, t.accent),
-                    egui::StrokeKind::Inside,
-                );
+                // The ghost outlines the unit's own graphics and pins.
+                let ghost = symbol_view::View {
+                    origin: screen(world(pointer)),
+                    scale,
+                };
+                let stroke = Stroke::new(1.5, t.accent);
+                for graphic in &unit.graphics {
+                    if let pcbcraft_core::library::Item::Shape { shape, .. } = &graphic.item {
+                        symbol_view::paint_shape(&painter, ghost, shape, None, Some(stroke));
+                    }
+                }
+                for pin in &unit.pins {
+                    painter.line_segment(
+                        [ghost.screen(pin.position), ghost.screen(pin.body_end())],
+                        stroke,
+                    );
+                }
             }
             if let Some(from) = self
                 .wire_from
@@ -1101,11 +1095,7 @@ impl SchematicEditor {
                     }
                 }
                 Tool::Select => {
-                    let body = body_hits
-                        .iter()
-                        .rev()
-                        .find(|(_, _, r)| r.contains(pointer))
-                        .map(|(id, occurrence, _)| (*id, *occurrence));
+                    let body = body_at(pointer);
                     let id = pin.map(|p| p.instance).or(body.map(|b| b.0));
                     if id.is_some() {
                         self.select(id, body.map(|b| b.1), project);
@@ -1120,22 +1110,21 @@ impl SchematicEditor {
             && !self.update.is_open()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
-            && let Some((id, occurrence_id, _)) =
-                body_hits.iter().rev().find(|(_, _, r)| r.contains(pointer))
-            && let Some(occurrence) = project.occurrence(*occurrence_id)
+            && let Some((id, occurrence_id)) = body_at(pointer)
+            && let Some(occurrence) = project.occurrence(occurrence_id)
         {
-            let p = world(pointer);
+            let p = view.world(pointer);
             self.drag = Some((
-                *occurrence_id,
+                occurrence_id,
                 [p[0] - occurrence.position[0], p[1] - occurrence.position[1]],
             ));
-            self.select(Some(*id), Some(*occurrence_id), project);
+            self.select(Some(id), Some(occurrence_id), project);
         }
         if let Some((id, offset)) = self.drag
             && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
         {
-            let p = world(pointer);
-            self.preview = Some((id, [p[0] - offset[0], p[1] - offset[1]]));
+            let p = view.world(pointer);
+            self.preview = Some((id, snap([p[0] - offset[0], p[1] - offset[1]], grid)));
         }
         if response.drag_stopped_by(egui::PointerButton::Primary)
             && let Some((occurrence, position)) = self.preview.take()
@@ -1155,10 +1144,13 @@ impl SchematicEditor {
     /// a margin) clear every drawn symbol and lie inside the visible canvas
     /// `rect`, which already excludes the Browser and properties cards.
     /// Falls back to the view centre when the view has no free spot.
-    fn drop_point(&self, project: &Project, unit: &Unit, rect: Rect) -> Point {
-        const GRID: f64 = 5.0;
+    fn drop_point(&self, project: &Project, unit: &Unit, rect: Rect, grid: f64) -> Point {
         const MARGIN: f32 = 2.5;
-        let snap = |v: f64| (v / GRID).round() * GRID;
+        // Candidates step by the whole number of symbol-grid pitches nearest
+        // the 5 mm sheet grid, so every drop point is on the symbol grid.
+        let pitch = grid.max(f64::EPSILON);
+        let step = pitch * (SHEET_GRID_MM / pitch).round().max(1.0);
+        let snap = |v: f64| (v / pitch).round() * pitch;
         let scale = f64::from(self.scale);
         let centre = [
             snap(f64::from(-self.pan.x) / scale),
@@ -1183,12 +1175,20 @@ impl SchematicEditor {
                 (view_centre[1] + half[1]) as f32,
             ),
         );
-        let taken: Vec<Rect> = project
-            .occurrences
-            .iter()
-            .filter_map(|o| Some(symbol_bounds(unit_of(project, o)?, o.position)))
+        let taken: Vec<Rect> = self
+            .placed
+            .values()
+            .filter_map(|p| p.bounds(TextMetric::default()).map(sheet_rect))
+            .chain(
+                // Occurrences placed this revision are not resolved yet.
+                project
+                    .occurrences
+                    .iter()
+                    .filter(|o| !self.placed.contains_key(&o.id))
+                    .filter_map(|o| Some(symbol_bounds(unit_of(project, o)?, o.position))),
+            )
             .collect();
-        let steps = |extent: f64| ((extent / GRID).ceil() as i32).clamp(0, 64);
+        let steps = |extent: f64| ((extent / step).ceil() as i32).clamp(0, 64);
         let (nx, ny) = (steps(half[0]), steps(half[1]));
         let mut candidates: Vec<(f64, i32, i32)> = (-ny..=ny)
             .flat_map(|j| (-nx..=nx).map(move |i| (i, j)))
@@ -1203,8 +1203,8 @@ impl SchematicEditor {
             .into_iter()
             .map(|(_, j, i)| {
                 [
-                    centre[0] + f64::from(i) * GRID,
-                    centre[1] + f64::from(j) * GRID,
+                    centre[0] + f64::from(i) * step,
+                    centre[1] + f64::from(j) * step,
                 ]
             })
             .find(|p| {
@@ -1273,53 +1273,32 @@ fn typed_error(project: &Project, buffer: &FieldBuffer) -> Option<String> {
     .map(|e| e.to_string())
 }
 
-fn symbol_text(project: &Project, instance: &pcbcraft_core::ComponentInstance) -> String {
-    shown_fields(project, instance)
-        .into_iter()
-        .map(|f| f.loaded)
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The extent of a unit's drawn shapes in its own frame, or a one-module
-/// square around the origin when it draws none. The schematic still draws a
-/// unit as this box with pin stubs; drawing every graphic is the next slice.
-pub(crate) fn body_bounds(unit: &Unit) -> Bounds {
-    unit.graphics
-        .iter()
-        .filter_map(|g| match &g.item {
-            Item::Shape { shape, width, .. } => Some(shape.bounds(*width)),
-            Item::Text(_) => None,
-        })
-        .reduce(Bounds::union)
-        .unwrap_or(Bounds {
-            min: [-1.25, -1.25],
-            max: [1.25, 1.25],
-        })
-}
-
-/// A unit's extent in sheet millimetres (y up) when placed at `at`: its body
-/// and every pin end.
-fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
-    let extent = body_bounds(unit);
-    let mut bounds = Rect::from_min_max(
-        pos2(
-            (at[0] + extent.min[0]) as f32,
-            (at[1] + extent.min[1]) as f32,
-        ),
-        pos2(
-            (at[0] + extent.max[0]) as f32,
-            (at[1] + extent.max[1]) as f32,
-        ),
-    );
-    for pin in &unit.pins {
-        bounds.extend_with(pos2(
-            (at[0] + pin.position[0]) as f32,
-            (at[1] + pin.position[1]) as f32,
-        ));
+/// Snap a sheet point to a grid of pitch `step` through the origin.
+fn snap(p: Point, step: f64) -> Point {
+    if !(step.is_finite() && step > 0.0) {
+        return p;
     }
-    bounds
+    p.map(|v| (v / step).round() * step)
+}
+
+/// A core box in sheet millimetres as an egui rectangle (y still up).
+fn sheet_rect(b: Bounds) -> Rect {
+    Rect::from_min_max(
+        pos2(b.min[0] as f32, b.min[1] as f32),
+        pos2(b.max[0] as f32, b.max[1] as f32),
+    )
+}
+
+/// A unit's extent in sheet millimetres (y up) when placed at `at`, from
+/// the core's unit bounds (graphics, approximate text and pin stubs), or a
+/// point when it draws nothing.
+fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
+    let t = Transform2::translation(at);
+    let local = unit
+        .bounds(TextMetric::default())
+        .unwrap_or(Bounds::point([0.0, 0.0]));
+    let placed = Bounds::of(local.corners().map(|c| t.apply(c))).unwrap_or(Bounds::point(at));
+    sheet_rect(placed)
 }
 
 fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
@@ -1335,6 +1314,8 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::vec2;
+    use solidcraft_ui_egui::fonts;
 
     #[test]
     fn placed_instance_removal_opens_review_without_mutating_the_board() -> pcbcraft_core::Result<()>
@@ -1388,6 +1369,17 @@ mod tests {
         // Tests have no renderer to apply texture deltas.
         output.textures_delta.clear();
         (output, command)
+    }
+
+    /// Shown field values the instance's drawn symbol carries (the demo
+    /// symbol draws no Field text), as core resolved them for the canvas.
+    fn symbol_values(editor: &SchematicEditor, engine: &Engine, instance: Id) -> Vec<String> {
+        engine
+            .project()
+            .occurrences_of(instance)
+            .filter_map(|o| editor.placed.get(&o.id))
+            .flat_map(|p| p.fields.iter().map(|t| t.text.clone()))
+            .collect()
     }
 
     fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
@@ -1451,10 +1443,7 @@ mod tests {
         assert!(labels.iter().any(|t| t == "Resistance"), "{labels:?}");
         assert!(labels.iter().any(|t| t == "10 kΩ"), "{labels:?}");
         assert_eq!(editor.draft_fields[0].text, "10 kΩ");
-        assert_eq!(
-            editor.symbol_texts.get(&r1).map(String::as_str),
-            Some("10 kΩ")
-        );
+        assert_eq!(symbol_values(&editor, &engine, r1), vec!["10 kΩ"]);
         // Nothing changed yet: Apply is disabled and sends nothing.
         assert!(click(&mut editor, &engine, &ctx, "Apply")?.is_none());
 
@@ -1491,10 +1480,7 @@ mod tests {
         engine.apply(engine.revision(), operation)?;
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         assert!(shown(&output).iter().any(|(t, _)| t == "4.7 kΩ"));
-        assert_eq!(
-            editor.symbol_texts.get(&r1).map(String::as_str),
-            Some("4.7 kΩ")
-        );
+        assert_eq!(symbol_values(&editor, &engine, r1), vec!["4.7 kΩ"]);
         assert_eq!(editor.draft_fields[0].text, "4.7 kΩ");
         // Clearing the box returns the field to its default.
         editor.draft_fields[0].text.clear();
@@ -1980,6 +1966,92 @@ mod tests {
             }
             other => return Err(format!("unexpected outcome {other:?}").into()),
         }
+        Ok(())
+    }
+
+    /// Press at `from`, move to `to` and release over five frames; returns
+    /// every operation.
+    fn drag_between(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        from: Pos2,
+        to: Pos2,
+    ) -> Vec<Operation> {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut operations = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(from)],
+            vec![button(from, true)],
+            vec![egui::Event::PointerMoved(from + (to - from) * 0.5)],
+            vec![egui::Event::PointerMoved(to)],
+            vec![button(to, false)],
+        ] {
+            operations.extend(workspace_frame(editor, engine, ctx, events).1);
+        }
+        operations
+    }
+
+    /// The sheet draws what core resolves for each occurrence (designator,
+    /// name, pin names and numbers, the shown value) and picks through the
+    /// core hit test: the body and its text select, empty sheet does not.
+    #[test]
+    fn the_sheet_draws_and_picks_symbols_through_core_queries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let r1 = engine.project().instances[0].id;
+        let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let canvas: Vec<String> = shown(&output)
+            .into_iter()
+            .filter(|(_, p)| p.x < 800.0)
+            .map(|(t, _)| t)
+            .collect();
+        for text in ["R1", "R2", "Resistor", "10 kΩ", "1", "2"] {
+            assert!(canvas.iter().any(|t| t == text), "{text} in {canvas:?}");
+        }
+        // 12 px/mm about the canvas centre (400, 400): R1 sits at (−12, 0).
+        let r1_body = pos2(400.0 - 12.0 * 12.0, 400.0);
+        click_at(&mut editor, &engine, &ctx, r1_body);
+        assert_eq!(editor.selected_instance(), Some(r1));
+        click_at(&mut editor, &engine, &ctx, pos2(600.0, 650.0));
+        assert_eq!(editor.selected_instance(), None);
+        // The designator above the body (bottom at 1.5 mm) picks it too.
+        click_at(&mut editor, &engine, &ctx, r1_body + vec2(0.0, -2.2 * 12.0));
+        assert_eq!(editor.selected_instance(), Some(r1));
+        Ok(())
+    }
+
+    /// Dragging an occurrence moves its origin onto the symbol grid, so its
+    /// on-grid pins stay on the grid; the move is one symbol.move_unit.
+    #[test]
+    fn dragged_occurrences_snap_to_the_symbol_grid() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let from = pos2(400.0 - 12.0 * 12.0, 400.0);
+        // +1.1 mm right, +0.6 mm down: nearest 2.5 mm point is (−10, 0).
+        let operations = drag_between(&mut editor, &engine, &ctx, from, from + vec2(13.0, 7.0));
+        let [Operation::Schematic(SchematicCommand::MoveUnit { position, .. })] = &operations[..]
+        else {
+            return Err(format!("expected one move, got {operations:?}").into());
+        };
+        assert_eq!(*position, [-10.0, 0.0]);
+        let grid = engine.drafts().grid.symbol_mm;
+        assert!(
+            position
+                .iter()
+                .all(|v| ((v / grid).round() * grid - v).abs() < 1e-9)
+        );
         Ok(())
     }
 
