@@ -16,6 +16,11 @@ pub use solidcraft_engine::{geom, render};
 #[cfg(test)]
 mod fixtures;
 
+/// Spike F0: headless parametric-footprint evaluator prototype (tests only,
+/// not a product API; see `docs/footprint-spike.md`).
+#[cfg(test)]
+mod footprint_spike;
+
 pub const SOLIDCRAFT_REVISION: &str = "4f3ac07aec69489183185071f07d7fbcf4f51e64";
 
 #[derive(Debug, thiserror::Error)]

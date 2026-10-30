@@ -2788,6 +2788,7 @@ dependencies = [
 name = "pcbcraft-solidcraft"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "pcbcraft-core",
  "schemars",
  "serde",
@@ -2795,6 +2796,7 @@ dependencies = [
  "solidcraft-engine",
  "tempfile",
  "thiserror 2.0.21",
+ "wasm-bindgen-test",
 ]
 
 [[package]]
