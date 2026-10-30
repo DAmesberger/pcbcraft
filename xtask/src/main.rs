@@ -3,6 +3,7 @@ mod core_modules;
 mod layers;
 mod licences;
 mod ui_containers;
+mod ui_forms;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -53,6 +54,7 @@ fn run() -> Result<()> {
             licences::check()?;
             clean_room::check()?;
             ui_containers::check()?;
+            ui_forms::check()?;
             cargo(&[
                 "clippy",
                 "--locked",
@@ -77,9 +79,10 @@ fn run() -> Result<()> {
         "clean-room" => clean_room::check(),
         "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
+        "ui-forms" => ui_forms::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | core-modules \
-             | licences --check | clean-room | ui-containers"
+             | licences --check | clean-room | ui-containers | ui-forms"
                 .into(),
         ),
     }

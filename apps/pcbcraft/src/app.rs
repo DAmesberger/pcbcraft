@@ -331,22 +331,28 @@ mod tests {
         }
     }
 
+    /// Run one headless frame. Its texture changes are cleared: there is no
+    /// renderer to apply them, and egui's debug check rejects dropping them.
+    fn run(ctx: &egui::Context, input: egui::RawInput, add: impl FnMut(&mut egui::Ui)) {
+        ctx.run_ui(input, add).textures_delta.clear();
+    }
+
     #[test]
     fn typing_owns_undo_instead_of_undoing_the_project() {
         let ctx = egui::Context::default();
         let mut text = "10k".to_owned();
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        run(&ctx, Default::default(), |ui| {
             ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"))
                 .request_focus();
         });
         let mut shortcut = Some(false);
-        let _ = ctx.run_ui(undo_input(), |ui| {
+        run(&ctx, undo_input(), |ui| {
             ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"));
             shortcut = history_shortcut(ui.ctx());
         });
         assert_eq!(shortcut, None);
         let unfocused = egui::Context::default();
-        let _ = unfocused.run_ui(undo_input(), |ui| {
+        run(&unfocused, undo_input(), |ui| {
             shortcut = history_shortcut(ui.ctx());
         });
         assert_eq!(shortcut, Some(false));

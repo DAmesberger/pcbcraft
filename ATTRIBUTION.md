@@ -26,7 +26,9 @@ The desktop links `solidcraft-ui-egui` at the same pinned revision. Fonts, icons
 
 Adapted source references, under the MIT option above:
 
-- `apps/pcbcraft/src/shell.rs`: upstream `crates/ui-egui/src/toolbar.rs`, `shell.rs`, `ui_kit/panel.rs` and `ui_kit/layout.rs` for workspace/ribbon proportions, floating cards and form spacing.
+- `apps/pcbcraft/src/shell.rs`: upstream `crates/ui-egui/src/toolbar.rs` (workspace switcher tile and caption, tab row, ribbon button sizing and section captions, `WORKSPACE_WIDTH` and button constants), `shell.rs` and `ui_kit/panel.rs` for floating cards.
+- `apps/pcbcraft/src/kit/`: upstream `ui_kit/layout.rs` (`scope`, `row`, `status_line`, `section_count`), `ui_kit/fields.rs` (dropdown with the kit chevron, cell editor use), `ui_kit/disclosure.rs`, `ui_kit/panel.rs` (`inspector_header`, workspace chip) and `ui_kit/tree.rs` plus `browser.rs` (`tree_row`, Browser title band, `TREE_ROW_HEIGHT`). Upstream keeps these crate-private; Pcbcraft reproduces their geometry on the public tokens, fonts and icons.
+- `apps/pcbcraft/src/app/browser.rs`: the Browser's fold, selection-bar and branch-mark conventions follow upstream `browser.rs`. Its project tree (components, instances, nets, board, placements, tracks) is original.
 - `apps/pcbcraft/src/app.rs` and `app/chrome.rs`: upstream application bar (`toolbar::APP_BAR_HEIGHT`, `titlebar::TRAFFIC_LIGHTS`), bundled font setup, system-theme default, close-request handling and container layout conventions.
 - `apps/pcbcraft/src/file_ui.rs`: upstream `apps/solidcraft/src/main.rs` picker services and `documents.rs` unsaved-work choices; prompts use the public `ui_kit::Window`.
 - `crates/automation/src/mcp.rs` and `lines.rs`: upstream `crates/mcp/src/server.rs` conventions (newline-delimited JSON-RPC, bounded lines, protocol-version negotiation, tool errors as results). Tools and their schemas are generated from Pcbcraft's own request types.

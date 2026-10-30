@@ -25,6 +25,7 @@ const BUTTON_LABEL_PADDING: f32 = 10.0;
 const SECTION_HEIGHT: f32 = 20.0;
 const TAB_INSET: f32 = 4.0;
 const GROUP_PADDING: f32 = 6.0;
+const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Workspace {
@@ -308,7 +309,7 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .show(|ui| {
             crate::kit::form(ui, |ui| {
-                ui.set_min_width(260.0);
+                ui.set_width(WORKSPACE_MENU_WIDTH);
                 for item in Workspace::ALL {
                     if workspace_item(ui, item, item == workspace).clicked() {
                         chosen = Some(item);
@@ -321,7 +322,7 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
 
 fn workspace_item(ui: &mut Ui, workspace: Workspace, current: bool) -> Response {
     let t = Tokens::get();
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(WORKSPACE_MENU_WIDTH, 44.0), Sense::click());
     if current {
         ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
     } else if response.hovered() {
