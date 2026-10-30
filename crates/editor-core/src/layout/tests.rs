@@ -88,7 +88,7 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
         &mut project,
         instances::NewInstance {
             component: f.r1(),
-            designator: "R3".into(),
+            designator: Some("R3".into()),
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),

@@ -88,7 +88,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
         &mut engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: q.r1(),
-            designator: "Q1".into(),
+            designator: Some("Q1".into()),
             properties: vec![],
             representation: q.symbol,
             unit: A,
@@ -99,6 +99,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     let Outcome::InstancePlaced {
         instance: q1,
         occurrence: occ_a,
+        ..
     } = outcome
     else {
         return Err(Error::Invalid("no placement outcome".into()));

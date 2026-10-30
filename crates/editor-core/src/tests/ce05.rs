@@ -219,7 +219,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         &mut engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: amp.r1(),
-            designator: "U2".into(),
+            designator: Some("U2".into()),
             properties: vec![text(gain, "2")],
             representation: amp.symbol,
             unit: B,

@@ -12,7 +12,7 @@ use crate::ids::{
     BindingRef, DefinitionId, FieldRef, FootprintRef, PackageRef, QuantityKindRef, Revision,
     SymbolRef,
 };
-use crate::library::samples::{self, SampleRefs};
+use crate::library::samples::{self, Kind, SampleRefs};
 use crate::library::{Definition, DefinitionMeta, DraftEdit, Library, Published};
 use crate::model::Project;
 use crate::quantity::{UnitOfMeasure, UnitSet};
@@ -197,12 +197,39 @@ fn fields(library: &mut Library, ids: &mut Allocator) -> Result<Fields> {
     })
 }
 
-/// A package and its footprint, shared by every part of one size.
+/// The three part families, each with its own designator prefix and body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Family {
+    Resistor,
+    Capacitor,
+    Header,
+}
+
+impl Family {
+    fn kind(self) -> Kind<'static> {
+        match self {
+            Self::Resistor => Kind::RESISTOR,
+            Self::Capacitor => Kind::CAPACITOR,
+            Self::Header => Kind::CONNECTOR,
+        }
+    }
+
+    fn edits(self, name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
+        match self {
+            Self::Header => samples::two_terminal_header(name, self.kind(), refs),
+            _ => samples::two_terminal(name, self.kind(), refs),
+        }
+    }
+}
+
+/// A package and its footprint, shared by every part of one family and
+/// size. Resistors and capacitors of one size code are different packages
+/// (different bodies) under the same name.
 fn shared_package(
     library: &mut Library,
     ids: &mut Allocator,
     label: &str,
-    header: bool,
+    family: Family,
 ) -> Result<(PackageRef, FootprintRef)> {
     let package = PackageRef::new(ids.next()?, Revision::FIRST);
     let footprint = FootprintRef::new(ids.next()?, Revision::FIRST);
@@ -213,11 +240,7 @@ fn shared_package(
         footprint,
         binding: BindingRef::default(),
     };
-    let edits = if header {
-        samples::two_terminal_header(label, refs)
-    } else {
-        samples::two_terminal(label, refs)
-    };
+    let edits = family.edits(label, refs);
     let small = label == "0402";
     for mut edit in edits {
         match &mut edit.definition {
@@ -244,11 +267,13 @@ fn shared_package(
     Ok((package, footprint))
 }
 
-/// A synthetic part: its name, description, package and field defaults.
+/// A synthetic part: its name, description, family, package size (an
+/// index into [`SIZES`]; headers have none) and field defaults.
 struct Part {
     name: String,
     description: String,
-    package: usize,
+    family: Family,
+    size: usize,
     values: Vec<(DefinitionId, FieldValue, bool)>,
 }
 
@@ -279,7 +304,8 @@ fn part(index: usize, fields: &Fields) -> Part {
                     generation(RESISTORS.len())
                 ),
                 description: format!("Synthetic thick-film resistor, {} package", SIZES[size]),
-                package: size,
+                family: Family::Resistor,
+                size,
                 values: vec![
                     (fields.resistance, quantity(ohms), true),
                     (
@@ -305,7 +331,8 @@ fn part(index: usize, fields: &Fields) -> Part {
                     generation(CAPACITORS.len())
                 ),
                 description: format!("Synthetic ceramic capacitor, {} package", SIZES[size]),
-                package: size,
+                family: Family::Capacitor,
+                size,
                 values: vec![
                     (fields.capacitance, quantity(farads), true),
                     (fields.voltage, quantity(volts), false),
@@ -315,7 +342,8 @@ fn part(index: usize, fields: &Fields) -> Part {
         _ => Part {
             name: format!("EX-HDR-1X2-{:03}", round + 1),
             description: "Synthetic two-pin header, 2.54 mm pitch".into(),
-            package: SIZES.len(),
+            family: Family::Header,
+            size: 0,
             values: vec![],
         },
     }
@@ -332,14 +360,33 @@ pub fn project(parts: usize) -> Result<Project> {
     let mut ids = Allocator(1);
     let mut library = Library::default();
     let fields = fields(&mut library, &mut ids)?;
-    let mut packages = Vec::new();
+    let mut resistors = Vec::new();
+    let mut capacitors = Vec::new();
     for size in SIZES {
-        packages.push(shared_package(&mut library, &mut ids, size, false)?);
+        resistors.push(shared_package(
+            &mut library,
+            &mut ids,
+            size,
+            Family::Resistor,
+        )?);
+        capacitors.push(shared_package(
+            &mut library,
+            &mut ids,
+            size,
+            Family::Capacitor,
+        )?);
     }
-    packages.push(shared_package(&mut library, &mut ids, HEADER, true)?);
+    let header = shared_package(&mut library, &mut ids, HEADER, Family::Header)?;
     for index in 0..parts {
         let part = part(index, &fields);
-        let (package, footprint) = packages[part.package.min(packages.len() - 1)];
+        let sized = |packages: &[(PackageRef, FootprintRef)]| {
+            packages.get(part.size).copied().unwrap_or(header)
+        };
+        let (package, footprint) = match part.family {
+            Family::Resistor => sized(&resistors),
+            Family::Capacitor => sized(&capacitors),
+            Family::Header => header,
+        };
         let refs = SampleRefs {
             component: ids.next()?,
             symbol: SymbolRef::new(ids.next()?, Revision::FIRST),
@@ -347,12 +394,7 @@ pub fn project(parts: usize) -> Result<Project> {
             footprint,
             binding: BindingRef::new(ids.next()?, Revision::FIRST),
         };
-        let edits = if part.package == SIZES.len() {
-            samples::two_terminal_header(&part.name, refs)
-        } else {
-            samples::two_terminal(&part.name, refs)
-        };
-        for mut edit in edits {
+        for mut edit in part.family.edits(&part.name, refs) {
             match &mut edit.definition {
                 Definition::Component(component) => {
                     component.fields = part

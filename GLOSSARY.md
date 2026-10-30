@@ -51,6 +51,9 @@ A pin function that a particular device binding cannot provide. An instance whos
 A physical component body and its terminal arrangement, independent of the particular PCB land pattern used to mount it.
 _Avoid_: Footprint
 
+**Package body style**:
+The authored construction of a package body (moulded, chip resistor or chip capacitor) that sets its 3D look; never inferred from a designator or name.
+
 **Package terminal**:
 A physical electrical connection on a package, such as a lead, ball or exposed pad, with an explicit designation.
 
@@ -81,6 +84,10 @@ A labeled reference associated with a component, package or manufacturer part, s
 **Component instance**:
 One component used in a project, such as R12, with its electrical connections, chosen implementation and project-specific requirements.
 _Avoid_: Library component when referring to a placed instance
+
+**Designator prefix**:
+The letters a component definition declares for numbering its instances, such as R, C or U; the core assigns the lowest free number under it when a placement gives no designator.
+_Avoid_: Reference class, inferring meaning from a designator
 
 **Component property**:
 A named, typed characteristic of a component, such as resistance, resistance tolerance or rated power. Its meaning includes the quantity and permitted units where applicable, independently of its displayed text.

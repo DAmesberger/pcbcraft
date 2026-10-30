@@ -330,7 +330,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             b.param(&format!("{prefix}_{axis}"), value, "mm")?;
         }
         let offset = package.model_offset;
-        let body = Body::of(package, Some(&instance.designator));
+        let body = Body::of(package);
         b.body(
             body.kind(),
             BoxBody {
@@ -520,7 +520,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
         b.param(name, value, "mm")?;
     }
     let offset = package.model_offset;
-    let body = Body::of(package, None);
+    let body = Body::of(package);
     let kind = match body {
         Body::Moulded => BodyKind::PartBody,
         chip => chip.kind(),

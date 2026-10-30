@@ -13,10 +13,12 @@ pub mod samples;
 mod symbol;
 
 pub use binding::{BindingDefinition, TerminalMap};
-pub use component::{ComponentDefinition, Terminal, TerminalClass};
+pub use component::{
+    ComponentDefinition, MAX_DESIGNATOR_PREFIX, Terminal, TerminalClass, designator_prefix_valid,
+};
 pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{FootprintDefinition, Pad};
-pub use package::{PackageDefinition, PackageTerminal};
+pub use package::{PackageBody, PackageDefinition, PackageTerminal};
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
 pub use symbol::{Anchor, SymbolDefinition, Unit};
 

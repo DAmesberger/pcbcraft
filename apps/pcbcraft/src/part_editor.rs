@@ -15,8 +15,8 @@ use pcbcraft_core::functions::{
     Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
 };
 use pcbcraft_core::library::{
-    Anchor, ComponentDefinition, Drafts, FieldView, Library, PackageTerminal, Pad, Published,
-    Terminal, TerminalClass, TerminalMap, Unit,
+    Anchor, ComponentDefinition, Drafts, FieldView, Library, PackageBody, PackageTerminal, Pad,
+    Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, Id, LibraryCommand, Operation,
@@ -775,6 +775,15 @@ impl PartEditor {
         let published = set.published(engine).map(|r| r.revision.0);
         kit::section(ui, "definition", "Definition", true, None, |ui| {
             kit::text_row(ui, "Name", &mut set.metas.component.name);
+            let prefix = &mut set.component.designator_prefix;
+            let invalid = !designator_prefix_valid(prefix);
+            let response = kit::checked_text_row(ui, "Designator", prefix, "R", invalid)
+                .on_hover_text(
+                    "Prefix new instances are numbered under: 1–8 letters, e.g. R, C, U",
+                );
+            if response.changed() {
+                prefix.make_ascii_uppercase();
+            }
             let revision = match published {
                 None => "Draft · new".to_owned(),
                 Some(r) if unpublished => format!("r{r} · unpublished edits"),
@@ -1208,6 +1217,11 @@ impl PartEditor {
         };
         let package = &mut set.package;
         kit::section(ui, "model-body", "Body", true, None, |ui| {
+            let options: Vec<(PackageBody, String)> = PackageBody::ALL
+                .into_iter()
+                .map(|b| (b, b.label().to_owned()))
+                .collect();
+            kit::choice_row(ui, "Body", &mut package.body, &options);
             for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
                 kit::number_row(
                     ui,
@@ -1992,6 +2006,50 @@ mod draft_tests {
             default,
             Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
         ));
+        Ok(())
+    }
+
+    /// The Designator row edits the component's prefix like the Name row:
+    /// letters are uppercased as typed, the edit commits through
+    /// `library.edit`, and a prefix with a digit is a publish finding.
+    #[test]
+    fn the_designator_row_edits_the_prefix() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let prefix = |editor: &PartEditor| {
+            editor
+                .draft
+                .as_ref()
+                .map(|s| s.component.designator_prefix.clone())
+        };
+        assert_eq!(prefix(&editor).as_deref(), Some("R"));
+        type_into(&mut editor, &engine, &ctx, "R", "n")?;
+        let typed = prefix(&editor).ok_or("no draft")?;
+        assert!(typed == "RN" || typed == "NR", "{typed}");
+        let operation = editor.commit(&ctx, &engine).ok_or("no edit")?;
+        engine.apply(engine.revision(), operation)?;
+        editor.commit(&ctx, &engine);
+        let id = editor.draft.as_ref().ok_or("no draft")?.ids.component;
+        let stored = match engine.drafts().get(id).map(|d| &d.definition) {
+            Some(pcbcraft_core::library::Definition::Component(c)) => c.designator_prefix.clone(),
+            _ => return Err("no component draft".into()),
+        };
+        assert_eq!(stored, typed);
+        let finding = "A component needs a designator prefix of 1–8 uppercase letters A–Z, such as R, C or U.";
+        let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(!shown.iter().any(|(text, _)| text == finding));
+        type_into(&mut editor, &engine, &ctx, &typed, "1")?;
+        let operation = editor.commit(&ctx, &engine).ok_or("no edit")?;
+        engine.apply(engine.revision(), operation)?;
+        let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            shown.iter().any(|(text, _)| text == finding),
+            "{:?}",
+            shown.iter().map(|(t, _)| t).collect::<Vec<_>>()
+        );
         Ok(())
     }
 

@@ -1103,7 +1103,7 @@ mod tests {
             Operation::Instance(pcbcraft_core::InstanceCommand::Place(
                 pcbcraft_core::instances::NewInstance {
                     component: first.component,
-                    designator: "R3".into(),
+                    designator: Some("R3".into()),
                     properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),

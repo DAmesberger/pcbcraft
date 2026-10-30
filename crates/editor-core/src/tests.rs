@@ -2,6 +2,7 @@
 mod ce04;
 mod ce05;
 mod ce06;
+mod designators;
 mod engine;
 mod fields;
 mod library;

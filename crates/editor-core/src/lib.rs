@@ -143,7 +143,7 @@ impl Engine {
         let refs = engine.reserve_lineages()?;
         let kind = engine.reserve(DefinitionKind::QuantityKind)?;
         let field = engine.reserve(DefinitionKind::Field)?;
-        let mut edits = samples::two_terminal("Resistor", refs);
+        let mut edits = samples::two_terminal("Resistor", samples::Kind::RESISTOR, refs);
         for edit in &mut edits {
             if let Definition::Component(component) = &mut edit.definition {
                 component.fields.push(fields::FieldSelection {
@@ -176,12 +176,12 @@ impl Engine {
             }),
         )?;
         let mut placed = Vec::new();
-        for (designator, position) in [("R1", [-12.0, 0.0]), ("R2", [12.0, 0.0])] {
+        for position in [[-12.0, 0.0], [12.0, 0.0]] {
             let outcome = engine.apply(
                 engine.revision,
                 Operation::Instance(InstanceCommand::Place(instances::NewInstance {
                     component: ComponentRef::new(refs.component, Revision::FIRST),
-                    designator: designator.into(),
+                    designator: None,
                     properties: vec![fields::PropertyEdit {
                         field,
                         input: fields::PropertyInput::Text("10k".into()),

@@ -149,7 +149,7 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
     Some((
         NewInstance {
             component,
-            designator: String::new(),
+            designator: None,
             properties: Vec::new(),
             representation: symbol_ref.id,
             unit: unit.id,
@@ -865,7 +865,6 @@ impl SchematicEditor {
             }) => {
                 if let Some((request, unit)) = first_choices(project, component) {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
-                        designator: next_reference(project),
                         position: self.drop_point(project, unit, rect),
                         ..request
                     })));
@@ -1091,7 +1090,6 @@ impl SchematicEditor {
                         self.component.and_then(|c| first_choices(project, c))
                     {
                         output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
-                            designator: next_reference(project),
                             position: world(pointer),
                             ..request
                         })));
@@ -1309,18 +1307,6 @@ fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
     bounds
 }
 
-fn next_reference(project: &Project) -> String {
-    (1..=project.instances.len() + 1)
-        .map(|i| format!("U{i}"))
-        .find(|reference| {
-            !project
-                .instances
-                .iter()
-                .any(|i| i.designator.eq_ignore_ascii_case(reference))
-        })
-        .unwrap_or_else(|| "U_new".into())
-}
-
 fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let delta = b - a;
     let length = delta.length_sq();
@@ -1520,15 +1506,15 @@ mod tests {
         engine.apply(
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
-                designator: next_reference(engine.project()),
                 position: [30.0, 0.0],
                 ..request
             })),
         )?;
+        // The demo holds R1 and R2; the core numbers the next resistor.
         let placed = engine
             .project()
-            .instance_by_designator("U1")
-            .ok_or_else(|| pcbcraft_core::Error::NotFound("U1".into()))?;
+            .instance_by_designator("R3")
+            .ok_or_else(|| pcbcraft_core::Error::NotFound("R3".into()))?;
         assert_eq!(engine.project().occurrences_of(placed.id).count(), 1);
         Ok(())
     }
@@ -1609,7 +1595,7 @@ mod tests {
         match engine.apply(
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
-                designator: "U1".into(),
+                designator: Some("U1".into()),
                 position: [0.0, 20.0],
                 ..request
             })),
@@ -1792,6 +1778,7 @@ mod tests {
         };
         assert_eq!(request.component, second);
         assert!(request.physical.is_some());
+        assert_eq!(request.designator, None, "the core numbers it");
         assert!(!editor.palette.is_open());
         assert_eq!(editor.tool, Tool::Select);
 
@@ -1799,6 +1786,7 @@ mod tests {
         engine.apply(engine.revision(), operation.clone())?;
         let placed = engine.project().instances.last().ok_or("not placed")?;
         assert_eq!(placed.component, second);
+        assert_eq!(placed.designator, "R1", "a resistor takes its prefix");
         engine.undo()?;
         assert_eq!(engine.project(), &before);
         Ok(())
@@ -1967,6 +1955,16 @@ mod tests {
         };
         assert_eq!(request.component, picked);
         assert_eq!(editor.tool, Tool::Place);
+        let [operation] = &operations[..] else {
+            return Err("one operation".into());
+        };
+        let mut engine = engine;
+        match engine.apply(engine.revision(), operation.clone())? {
+            pcbcraft_core::Outcome::InstancePlaced { designator, .. } => {
+                assert_eq!(designator, "C1")
+            }
+            other => return Err(format!("unexpected outcome {other:?}").into()),
+        }
         Ok(())
     }
 

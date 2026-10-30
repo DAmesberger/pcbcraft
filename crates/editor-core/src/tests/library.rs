@@ -115,6 +115,16 @@ fn any_single_blocking_finding_publishes_nothing() -> Result<()> {
         ("local ID at or above next_local", |e, f, _| {
             with(e, f.component, component_body, |c| c.next_local = 2)
         }),
+        ("lowercase designator prefix", |e, f, _| {
+            with(e, f.component, component_body, |c| {
+                c.designator_prefix = "r".into()
+            })
+        }),
+        ("empty designator prefix", |e, f, _| {
+            with(e, f.component, component_body, |c| {
+                c.designator_prefix = String::new()
+            })
+        }),
     ];
     for (name, breaker) in cases {
         let mut engine = Engine::default();

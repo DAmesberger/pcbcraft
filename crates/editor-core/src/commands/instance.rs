@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum InstanceCommand {
-    /// Create one instance and the occurrence of its first unit.
+    /// Create one instance and the occurrence of its first unit. Without a
+    /// designator the core numbers it under the component's prefix.
     #[serde(rename = "component.place")]
     Place(NewInstance),
     /// Direct only without wires or a placement; otherwise preview
@@ -60,9 +61,14 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
     match command {
         InstanceCommand::Place(request) => {
             let (instance, occurrence) = instances::place(project, request)?;
+            let designator = project
+                .instance(instance)
+                .map(|i| i.designator.clone())
+                .unwrap_or_default();
             return Ok(Outcome::InstancePlaced {
                 instance,
                 occurrence,
+                designator,
             });
         }
         InstanceCommand::Remove { instance } => updates::stage(

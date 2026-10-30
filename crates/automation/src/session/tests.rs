@@ -198,7 +198,7 @@ fn placing_and_inspecting_through_json_matches_the_engine() -> TestResult {
     let first = engine.project().instances[0].clone();
     let place = Operation::Instance(InstanceCommand::Place(NewInstance {
         component,
-        designator: "R3".into(),
+        designator: Some("R3".into()),
         properties: vec![],
         representation: first.representation,
         unit: UnitId(1),
@@ -418,7 +418,7 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
             pcbcraft_core::DefinitionId(lineage),
             pcbcraft_core::Revision(u32::try_from(revision)?),
         ),
-        designator: "R1".into(),
+        designator: None,
         properties: vec![],
         representation: id(&report["symbols"][0]["symbol"]["id"]).ok_or("symbol")?,
         unit: UnitId(1),
@@ -429,8 +429,21 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
                 .ok_or("footprint")?,
         }),
     }));
-    let placed = session.dispatch(apply(&place, session.engine().revision()));
+    // Without a designator the request carries none and the core numbers
+    // the resistor under its component's prefix.
+    let request = apply(&place, session.engine().revision());
+    assert!(
+        request["params"]["operation"]["params"]
+            .get("designator")
+            .is_none()
+    );
+    let placed = session.dispatch(request);
     assert_eq!(placed["ok"], true, "{placed}");
+    assert_eq!(placed["result"]["outcome"]["designator"], "R1");
+    assert_eq!(
+        placed["result"]["project"]["instances"][0]["designator"],
+        "R1"
+    );
     // Now used in the project, the part ranks first for a shared prefix.
     let again = session.dispatch(query(
         "library.search",

@@ -4,8 +4,8 @@ use crate::functions::{Direction, TerminalFunctions};
 use crate::instances::NewInstance;
 use crate::library::{
     Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
-    TerminalClass, TerminalMap, Unit,
+    FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
+    Terminal, TerminalClass, TerminalMap, Unit,
 };
 use crate::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, Engine, Error,
@@ -288,6 +288,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
     let (terminals, next) = terminals(&spec.terminals);
     let component = ComponentDefinition {
         next_local: next,
+        designator_prefix: "U".into(),
         terminals,
         resources: vec![],
         constraints: vec![],
@@ -331,6 +332,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
             .collect(),
         body_size: [4.0, 3.0, 1.0],
         model_offset: [0.0; 3],
+        body: PackageBody::Moulded,
     };
     let footprint = FootprintDefinition {
         package: PackageRef::new(f.package, first),
@@ -457,7 +459,7 @@ pub fn place_ref(
         engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component,
-            designator: designator.into(),
+            designator: Some(designator.into()),
             properties: vec![],
             representation: fixture.symbol,
             unit: UnitId(unit),
@@ -468,6 +470,7 @@ pub fn place_ref(
         Outcome::InstancePlaced {
             instance,
             occurrence,
+            ..
         } => Ok((instance, occurrence)),
         other => Err(Error::Invalid(format!("unexpected outcome {other:?}"))),
     }

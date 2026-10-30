@@ -74,7 +74,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
     let operations = vec![
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
-            designator: "R1".into(),
+            designator: Some("R1".into()),
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
@@ -83,7 +83,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
-            designator: "R5".into(),
+            designator: Some("R5".into()),
             properties: vec![],
             representation: f.package,
             unit: UnitId(1),
@@ -92,7 +92,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
-            designator: "R5".into(),
+            designator: Some("R5".into()),
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(9),
@@ -101,7 +101,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: f.r1(),
-            designator: "R5".into(),
+            designator: Some("R5".into()),
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),

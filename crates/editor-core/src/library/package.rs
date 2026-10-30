@@ -16,6 +16,43 @@ pub struct PackageDefinition {
     /// Envelope length, width and height in mm.
     pub body_size: [f64; 3],
     pub model_offset: [f64; 3],
+    /// What the envelope is made of, which sets its 3D look.
+    pub body: PackageBody,
+}
+
+/// The physical construction of a package body. Authored data: the 3D view
+/// never guesses it from designators, names or values.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageBody {
+    /// A body moulded in black epoxy (ICs, transistors, diodes, most
+    /// through-hole parts); pads under it show a low lead band.
+    #[default]
+    Moulded,
+    /// A two-terminal thick-film chip resistor: white alumina substrate with
+    /// a black overcoat on top and tinned terminations wrapped over both
+    /// ends of the long axis.
+    ChipResistor,
+    /// A two-terminal multilayer ceramic chip (capacitor class): tan ceramic
+    /// with tinned terminations wrapped over both ends of the long axis.
+    ChipCapacitor,
+}
+
+impl PackageBody {
+    pub const ALL: [Self; 3] = [Self::Moulded, Self::ChipResistor, Self::ChipCapacitor];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Moulded => "Moulded",
+            Self::ChipResistor => "Chip resistor",
+            Self::ChipCapacitor => "Chip capacitor",
+        }
+    }
+
+    /// A two-terminal chip with wrapped end terminations.
+    pub fn is_chip(self) -> bool {
+        !matches!(self, Self::Moulded)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -74,6 +111,16 @@ impl PackageDefinition {
                     vec![object(id, terminal.id.0)],
                 ));
             }
+        }
+        if self.body.is_chip() && self.terminals.len() != 2 {
+            out.push(issue(
+                "package.body",
+                format!(
+                    "A {} body has exactly two terminals.",
+                    self.body.label().to_lowercase()
+                ),
+                vec![this],
+            ));
         }
         if !self.envelope_valid() {
             out.push(issue(

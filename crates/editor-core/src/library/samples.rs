@@ -1,10 +1,11 @@
 //! Original, unverified starter data for local editing. These are generic
-//! two-terminal arrangements, not component categories; every value is
+//! two-terminal arrangements, not component categories; every value,
+//! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
 use super::{
     Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
-    TerminalClass, TerminalMap, Unit,
+    FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
+    Terminal, TerminalClass, TerminalMap, Unit,
 };
 use crate::fields::{FieldDefinition, QuantityKind, ValueType};
 use crate::functions::{Direction, TerminalFunctions};
@@ -37,6 +38,28 @@ fn meta(name: &str) -> DefinitionMeta {
     }
 }
 
+/// What a sample is: its designator prefix and package body.
+#[derive(Clone, Copy, Debug)]
+pub struct Kind<'a> {
+    pub prefix: &'a str,
+    pub body: PackageBody,
+}
+
+impl Kind<'static> {
+    pub const RESISTOR: Self = Self {
+        prefix: "R",
+        body: PackageBody::ChipResistor,
+    };
+    pub const CAPACITOR: Self = Self {
+        prefix: "C",
+        body: PackageBody::ChipCapacitor,
+    };
+    pub const CONNECTOR: Self = Self {
+        prefix: "J",
+        body: PackageBody::Moulded,
+    };
+}
+
 struct Layout {
     body: Point,
     anchors: [Point; 2],
@@ -46,7 +69,7 @@ struct Layout {
     land: Point,
 }
 
-fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
+fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
     let terminals = [TerminalId(1), TerminalId(2)];
     let package_terminals = [PackageTerminalId(1), PackageTerminalId(2)];
     vec![
@@ -56,6 +79,7 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
             definition: Definition::Component(ComponentDefinition {
                 // Terminals 1–2, then their fixed passive functions 3–4.
                 next_local: 5,
+                designator_prefix: kind.prefix.into(),
                 terminals: terminals
                     .iter()
                     .zip([FunctionId(3), FunctionId(4)])
@@ -110,6 +134,7 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
                     .collect(),
                 body_size: layout.envelope,
                 model_offset: layout.offset,
+                body: kind.body,
             }),
         },
         DraftEdit {
@@ -155,9 +180,10 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
 
 /// A two-terminal component with an axial symbol, a small two-land footprint
 /// and a straight terminal mapping.
-pub fn two_terminal(name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
+pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     sample(
         name,
+        kind,
         refs,
         Layout {
             body: [6.0, 3.0],
@@ -172,9 +198,10 @@ pub fn two_terminal(name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
 
 /// The same two terminals with both anchors on one side and a 2.54 mm land
 /// pitch.
-pub fn two_terminal_header(name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
+pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     sample(
         name,
+        kind,
         refs,
         Layout {
             body: [4.0, 6.0],

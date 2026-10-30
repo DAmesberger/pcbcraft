@@ -16,7 +16,7 @@ use crate::geometry::{Point, point_valid};
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, TerminalId, UnitId};
 use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
-    PackageDefinition, Published, SymbolDefinition,
+    PackageDefinition, Published, SymbolDefinition, designator_prefix_valid,
 };
 use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
 use schemars::JsonSchema;
@@ -503,7 +503,12 @@ pub fn check_designators(project: &Project) -> Result<()> {
 #[serde(deny_unknown_fields)]
 pub struct NewInstance {
     pub component: ComponentRef,
-    pub designator: String,
+    /// An explicit designator, validated like `instance.set_designator`.
+    /// Omitted, the core numbers the instance under the pinned component
+    /// revision's designator prefix: the lowest free `{prefix}{n}`, n ≥ 1,
+    /// unique case-insensitively within the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designator: Option<String>,
     /// Initial field values, applied as one `instance.set_properties` batch.
     #[serde(default)]
     pub properties: Vec<PropertyEdit>,
@@ -552,16 +557,20 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
             "This edition supports at most 4096 component instances.".into(),
         ));
     }
-    if project.library.component(request.component).is_none() {
+    let Some(component) = project.library.component(request.component) else {
         return Err(Error::NotFound(
             "Choose a published component revision first.".into(),
         ));
-    }
+    };
+    let designator = match request.designator {
+        Some(designator) => designator,
+        None => next_designator(project, &component.definition.designator_prefix)?,
+    };
     let id = project.allocate()?;
     project.instances.push(ComponentInstance {
         id,
         component: request.component,
-        designator: request.designator,
+        designator,
         properties: InstanceFields::new(),
         representation: request.representation,
         physical: request.physical,
@@ -574,6 +583,38 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
     check_instance(project, id)?;
     check_designators(project)?;
     Ok((id, occurrence))
+}
+
+/// The lowest free designator `{prefix}{n}`, n ≥ 1, compared
+/// case-insensitively with every designator in the project. Fails for a
+/// prefix that is not 1–8 uppercase letters.
+pub fn next_designator(project: &Project, prefix: &str) -> Result<String> {
+    if !designator_prefix_valid(prefix) {
+        return Err(invalid(format!(
+            "The component's designator prefix ‘{prefix}’ is not 1–8 uppercase letters; give a designator."
+        )));
+    }
+    // Numbers already taken under this prefix. At most MAX_INSTANCES are, so
+    // a free number lies within 1..=MAX_INSTANCES + 1.
+    let taken: BTreeSet<usize> = project
+        .instances
+        .iter()
+        .filter_map(|i| {
+            let (head, digits) = i.designator.split_at_checked(prefix.len())?;
+            if !head.eq_ignore_ascii_case(prefix)
+                || digits.is_empty()
+                || digits.starts_with('0')
+                || !digits.bytes().all(|b| b.is_ascii_digit())
+            {
+                return None;
+            }
+            digits.parse().ok()
+        })
+        .collect();
+    (1..=MAX_INSTANCES + 1)
+        .find(|n| !taken.contains(n))
+        .map(|n| format!("{prefix}{n}"))
+        .ok_or_else(|| Error::Limit("No free designator number is left.".into()))
 }
 
 /// Remove an instance with nothing attached. Occurrences, wires and the

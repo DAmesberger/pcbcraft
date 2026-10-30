@@ -1,4 +1,5 @@
 use super::*;
+use pcbcraft_core::library::PackageBody;
 use pcbcraft_core::{Engine, TerminalId, Track};
 use solidcraft_engine::geom::Vec3;
 
@@ -306,16 +307,18 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .clone();
     package.body_size = [4.0, 3.0, 2.0];
     package.model_offset = [1.5, -2.0, 0.4];
+    package.body = PackageBody::Moulded;
     let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
     assert_eq!(model.geometry[0].kind, BodyKind::PartBody);
     looks_match_the_native_file(&model)?;
     bounds(&model.geometry[0], [-0.5, -3.5, 0.4], [3.5, -0.5, 2.4]);
     near(model.geometry[0].volume, 24.0);
-    // A chip-sized two-terminal package previews as a chip resistor, with
-    // the wrapped terminations and overcoat it shows on the board.
+    // A package declaring a chip-resistor body previews as one, with the
+    // wrapped terminations and overcoat it shows on the board.
     package.body_size = [2.0, 1.25, 0.5];
     package.model_offset = [0.0; 3];
+    package.body = PackageBody::ChipResistor;
     let chip = preview(&package)?;
     assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
     assert_eq!(count(&chip, BodyKind::Termination), 2);
@@ -331,8 +334,48 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         bounds(end, [end.min[0], -0.635, 0.0], [end.max[0], 0.635, 0.51]);
         assert!(end.min[0] <= -1.01 + 1e-9 || end.max[0] >= 1.01 - 1e-9);
     }
+    // A chip-capacitor body: MLCC ceramic, terminations, no overcoat.
+    package.body = PackageBody::ChipCapacitor;
+    let ceramic = preview(&package)?;
+    assert_eq!(ceramic.geometry[0].kind, BodyKind::ChipCapacitor);
+    assert_eq!(count(&ceramic, BodyKind::Termination), 2);
+    assert_eq!(count(&ceramic, BodyKind::Overcoat), 0);
+    looks_match_the_native_file(&ceramic)?;
     package.body_size[0] = 0.0;
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
+    Ok(())
+}
+
+/// The body look comes from the package's declared body, never from the
+/// designator: renaming R1 to C1 keeps its chip-resistor body, and giving
+/// the shared package a chip-capacitor body turns both into capacitors
+/// while they keep their R designators.
+#[test]
+fn placed_body_follows_the_package_body_not_the_designator() -> Result<()> {
+    let mut project = fixture()?;
+    let (r1, _) = instances(&project)?;
+    for instance in &mut project.instances {
+        if instance.id == r1 {
+            instance.designator = "C1".into();
+        }
+    }
+    let model = build(&project)?;
+    assert_eq!(count(&model, BodyKind::ChipResistor), 2);
+    assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);
+    assert_eq!(count(&model, BodyKind::Overcoat), 2);
+    let mut project = fixture()?;
+    project.library.packages[0].definition.body = PackageBody::ChipCapacitor;
+    let model = build(&project)?;
+    assert!(project.instance_by_designator("R1").is_some());
+    assert_eq!(count(&model, BodyKind::ChipCapacitor), 2);
+    assert_eq!(count(&model, BodyKind::ChipResistor), 0);
+    assert_eq!(count(&model, BodyKind::Overcoat), 0);
+    assert_eq!(count(&model, BodyKind::Termination), 4);
+    project.library.packages[0].definition.body = PackageBody::Moulded;
+    let model = build(&project)?;
+    assert_eq!(count(&model, BodyKind::PackageBody), 2);
+    assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);
+    assert_eq!(count(&model, BodyKind::Overcoat), 0);
     Ok(())
 }
 

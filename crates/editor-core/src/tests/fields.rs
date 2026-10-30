@@ -382,7 +382,7 @@ fn bounds_choices_types_and_text_length_are_rejected_atomically() -> Result<()> 
     let placed = crate::Operation::Instance(crate::InstanceCommand::Place(
         crate::instances::NewInstance {
             component: part.r1(),
-            designator: "R9".into(),
+            designator: Some("R9".into()),
             properties: vec![text(f.count, "12")],
             representation: part.symbol,
             unit: crate::UnitId(1),

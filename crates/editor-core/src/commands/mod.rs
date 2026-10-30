@@ -28,9 +28,12 @@ pub enum Outcome {
     Published {
         revisions: Vec<DefinitionRef>,
     },
+    /// The new instance, its first occurrence and the designator it took
+    /// (the explicit one, or the one the core numbered).
     InstancePlaced {
         instance: Id,
         occurrence: Id,
+        designator: String,
     },
     UnitPlaced {
         occurrence: Id,

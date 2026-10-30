@@ -53,15 +53,17 @@ The saved native model holds only physical bodies: the laminate, exact copper (p
 
 Everything else is a display-only layer built on the model worker as meshes in Solidcraft's mesh type (`crates/solidcraft-integration/src/appearance.rs`). They are drawn and picked like native bodies (mask caps and finish strips pick as their track, terminations, overcoat and solder as their part) but are never saved, and they are not native features, so they add nothing to native construction time.
 
+**Body style.** Which body material a package gets comes only from its authored `PackageDefinition.body` (`moulded`, `chip_resistor`, `chip_capacitor`; set in the Component panel's 3D tab, Body row). The 3D view never infers it from a designator, name, value or package size.
+
 | Layer | Size | Why |
 |---|---|---|
 | Soldermask slabs | 0.020 mm over each board face | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. |
 | Mask cap over a track | 0.015 mm above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
 | Mask opening | Land + 0.05 mm | A common fabrication default. |
 | Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
-| Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are two-terminal packages under 3.2 mm (1206 class). The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
+| Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages whose `body` is `chip_resistor` or `chip_capacitor` (publication requires exactly two package terminals for these). The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
-| Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Chip parts with a C designator get an MLCC body and no overcoat; other chips are drawn as resistors (IEEE 315 designator classes). |
+| Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only `chip_resistor` bodies get it; `chip_capacitor` bodies are MLCC ceramic without an overcoat. |
 | Solder fillet | Concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe; h = 0.4 × body height (at most 0.4 mm); 92 % of the termination width | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. |
 
 There is no silkscreen: the core has no outline or reference-designator graphics yet.

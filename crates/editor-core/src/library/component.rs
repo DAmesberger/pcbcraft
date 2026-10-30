@@ -12,11 +12,19 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// Longest designator prefix, in letters.
+pub const MAX_DESIGNATOR_PREFIX: usize = 8;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentDefinition {
     /// Next unused local ID. Retired IDs are never reused.
     pub next_local: u32,
+    /// The letters `component.place` numbers new instances under when no
+    /// designator is given (`R` → R1, R2, …): 1–8 uppercase ASCII letters,
+    /// for example `R`, `C`, `L`, `D`, `Q`, `U` or `J`. Authored data; the
+    /// editor never derives it from names or values.
+    pub designator_prefix: String,
     pub terminals: Vec<Terminal>,
     /// Shared resources whose roles terminal functions take.
     pub resources: Vec<Resource>,
@@ -102,7 +110,8 @@ impl ComponentDefinition {
     }
 
     pub(super) fn within_bounds(&self) -> bool {
-        self.terminals.len() <= MAX_TERMINALS
+        self.designator_prefix.len() <= MAX_LABEL
+            && self.terminals.len() <= MAX_TERMINALS
             && self.representations.len() <= MAX_COMPONENT_LISTS
             && self.implementations.len() <= MAX_COMPONENT_LISTS
             && self.fields.len() <= MAX_FIELDS
@@ -134,6 +143,14 @@ impl ComponentDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
+        if !designator_prefix_valid(&self.designator_prefix) {
+            out.push(issue(
+                "component.designator_prefix",
+                "A component needs a designator prefix of 1–8 uppercase letters A–Z, such as R, C or U."
+                    .into(),
+                vec![this],
+            ));
+        }
         if !(1..=MAX_TERMINALS).contains(&self.terminals.len()) {
             out.push(issue(
                 "component.terminal_count",
@@ -327,6 +344,12 @@ impl ComponentDefinition {
             }
         }
     }
+}
+
+/// 1–[`MAX_DESIGNATOR_PREFIX`] uppercase ASCII letters.
+pub fn designator_prefix_valid(prefix: &str) -> bool {
+    (1..=MAX_DESIGNATOR_PREFIX).contains(&prefix.len())
+        && prefix.bytes().all(|b| b.is_ascii_uppercase())
 }
 
 pub(super) fn unique_lineages(ids: impl Iterator<Item = DefinitionId>) -> bool {

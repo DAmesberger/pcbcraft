@@ -76,8 +76,10 @@ impl Template {
     }
     fn edits(self, refs: SampleRefs) -> Vec<DraftEdit> {
         match self {
-            Self::TwoTerminal => samples::two_terminal(self.name(), refs),
-            Self::Header => samples::two_terminal_header(self.name(), refs),
+            Self::TwoTerminal => samples::two_terminal(self.name(), samples::Kind::RESISTOR, refs),
+            Self::Header => {
+                samples::two_terminal_header(self.name(), samples::Kind::CONNECTOR, refs)
+            }
         }
     }
 }

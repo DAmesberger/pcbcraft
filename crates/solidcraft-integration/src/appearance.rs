@@ -9,7 +9,7 @@
 use crate::material::{self, BodyKind, DEFAULT_FINISH};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::library::{FootprintDefinition, PackageDefinition};
+use pcbcraft_core::library::{FootprintDefinition, PackageBody, PackageDefinition};
 use pcbcraft_core::{Layer, Placement, Point, layout};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
@@ -31,8 +31,6 @@ const CAP_MIN_MM: f64 = 0.01;
 const STRIP_SHARE: f64 = 0.8;
 /// Termination plating beyond the body faces (real terminations are 10–30 µm).
 const TERMINATION_GROWTH_MM: f64 = 0.01;
-/// Two-terminal packages shorter than this read as chip parts (1206 class).
-pub const CHIP_MAX_LENGTH_MM: f64 = 3.2;
 /// A chip termination's band on the top face: a fifth of the length, at
 /// most 0.5 mm (EIA chip-resistor bands are 0.3–0.5 mm from 0603 to 1206).
 const BAND_SHARE: f64 = 0.2;
@@ -157,15 +155,13 @@ pub enum Body {
 }
 
 impl Body {
-    /// The body of a package, from its shape and the reference designator
-    /// class (IEEE 315: R resistor, C capacitor).
-    pub fn of(package: &PackageDefinition, designator: Option<&str>) -> Self {
-        if !is_chip(package) {
-            return Self::Moulded;
-        }
-        match designator.and_then(|d| d.chars().next()) {
-            Some('C') => Self::Ceramic,
-            _ => Self::Resistor,
+    /// The body a package declares. Explicit data only: never guessed from
+    /// a designator, name or value.
+    pub fn of(package: &PackageDefinition) -> Self {
+        match package.body {
+            PackageBody::Moulded => Self::Moulded,
+            PackageBody::ChipResistor => Self::Resistor,
+            PackageBody::ChipCapacitor => Self::Ceramic,
         }
     }
 
@@ -176,12 +172,6 @@ impl Body {
             Self::Moulded => BodyKind::PackageBody,
         }
     }
-}
-
-/// Two terminals and a body shorter than a 1206 chip.
-pub fn is_chip(package: &PackageDefinition) -> bool {
-    let [length, width, _] = package.body_size;
-    package.terminals.len() == 2 && length.max(width) < CHIP_MAX_LENGTH_MM
 }
 
 /// A placed package (or the authoring preview's unplaced one).

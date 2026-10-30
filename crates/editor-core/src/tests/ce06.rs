@@ -10,8 +10,8 @@ use crate::instances::NewInstance;
 use crate::layout::LayoutCommand;
 use crate::library::{
     Anchor, BindingDefinition, ComponentDefinition, Definition, DraftEdit, FootprintDefinition,
-    PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal, TerminalClass,
-    TerminalMap, Unit,
+    PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit,
 };
 use crate::updates::{Change, FunctionResolution, InstanceChange, Resolutions};
 use crate::{
@@ -231,6 +231,7 @@ fn mcu_component(lineages: &Mcu) -> ComponentDefinition {
     terminals.sort_by_key(|(t, _)| *t);
     ComponentDefinition {
         next_local: 74,
+        designator_prefix: "U".into(),
         terminals: terminals
             .into_iter()
             .map(|(id, class)| Terminal {
@@ -332,6 +333,7 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
             .collect(),
         body_size: [5.0, 5.0, 0.9],
         model_offset: [0.0; 3],
+        body: PackageBody::Moulded,
     };
     // Perimeter lands 1–20; package terminal 21 (the exposed pad) has three
     // lands, pads 21–23.
@@ -413,7 +415,7 @@ fn place_mcu(engine: &mut Engine, m: &Mcu, designator: &str, y: f64) -> Result<I
         engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
             component: ComponentRef::new(m.component, Revision::FIRST),
-            designator: designator.into(),
+            designator: Some(designator.into()),
             properties: vec![],
             representation: m.symbol,
             unit: UnitId(1),
