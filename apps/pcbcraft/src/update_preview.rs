@@ -87,15 +87,7 @@ impl UpdatePreview {
         let mut cancel = false;
         kit::rule(ui);
         kit::actions(ui, |ui| {
-            let apply = ui_kit::button(
-                ui,
-                "Apply update",
-                if ready {
-                    Button::Primary
-                } else {
-                    Button::Enabled(false)
-                },
-            );
+            let apply = kit::primary(ui, "Apply update", ready);
             if apply.clicked() && ready {
                 action = Some(Operation::Update(Box::new(ApplyUpdate {
                     expected_revision: plan.revision,

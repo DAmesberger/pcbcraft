@@ -116,8 +116,12 @@ pub fn text_field(
     invalid: bool,
 ) -> Response {
     let id = ui.id().with(("text", id));
-    let response = ui_kit::cell_editor(ui, id, value, hint, invalid);
-    response
+    ui_kit::cell_editor(ui, id, value, hint, invalid)
+}
+
+/// Units written directly after the number ("45°"); others take a space ("6 mm").
+fn unit_gap(unit: &str) -> &'static str {
+    if matches!(unit, "°" | "%") { "" } else { " " }
 }
 
 /// Format a number without trailing zeros, at most four decimals.
@@ -161,7 +165,7 @@ pub fn number_field(
         if unit.is_empty() {
             number_text(*value)
         } else {
-            format!("{} {unit}", number_text(*value))
+            format!("{}{}{unit}", number_text(*value), unit_gap(unit))
         }
     };
     let mut text = ui.data(|d| d.get_temp::<String>(key)).unwrap_or_else(shown);
@@ -415,6 +419,20 @@ pub fn actions(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
         Layout::right_to_left(Align::Center),
         add,
     );
+}
+
+/// The dialog's primary action. Without an action to take it is a plain
+/// disabled button: a disabled accent fill reads as available.
+pub fn primary(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    ui_kit::button(
+        ui,
+        label,
+        if enabled {
+            ui_kit::Button::Primary
+        } else {
+            ui_kit::Button::Enabled(false)
+        },
+    )
 }
 
 /// A rule between groups of rows.

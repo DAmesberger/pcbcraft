@@ -3,7 +3,6 @@
 //! there. The tree reads state only; the app applies the returned
 //! [`Pick`] through the editors.
 use crate::kit::{self, Row};
-use crate::shell::Workspace;
 use pcbcraft_core::library::Definition;
 use pcbcraft_core::{DefinitionId, Engine, Id};
 use std::collections::BTreeSet;
@@ -86,13 +85,10 @@ fn folder(
     ui: &mut egui::Ui,
     key: &str,
     depth: usize,
-    icon: &str,
     label: &str,
     count: Option<usize>,
     branch: bool,
     default_open: bool,
-    pick: &mut Option<Pick>,
-    on_click: Option<Pick>,
 ) -> bool {
     let open = folded(ui, key, default_open);
     let count = count.map(|c| c.to_string()).unwrap_or_default();
@@ -102,17 +98,15 @@ fn folder(
         &Row {
             depth,
             fold: Some(open),
-            icon,
+            icon: "folder",
             label,
             secondary: &count,
             branch,
             ..Default::default()
         },
     );
-    if response.fold || (response.clicked && on_click.is_none()) {
+    if response.fold || response.clicked {
         set_open(ui, key, !open);
-    } else if response.clicked {
-        *pick = on_click;
     }
     folded(ui, key, default_open)
 }
@@ -128,18 +122,7 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
     ui.spacing_mut().item_spacing.y = 0.0;
-    if !folder(
-        ui,
-        "project",
-        0,
-        "folder",
-        &project.name,
-        None,
-        false,
-        true,
-        &mut pick,
-        None,
-    ) {
+    if !folder(ui, "project", 0, &project.name, None, false, true) {
         return pick;
     }
 
@@ -148,13 +131,10 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
         ui,
         "components",
         1,
-        "folder",
         "Components",
         Some(components.len()),
         lit.component.is_some(),
         true,
-        &mut pick,
-        None,
     ) {
         for component in &components {
             let secondary = match component.revision {
@@ -186,29 +166,15 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
     }
 
     let schematic_lit = lit.instance.is_some() || lit.net.is_some();
-    if folder(
-        ui,
-        "schematic",
-        1,
-        "folder",
-        "Schematic",
-        None,
-        schematic_lit,
-        true,
-        &mut pick,
-        None,
-    ) {
+    if folder(ui, "schematic", 1, "Schematic", None, schematic_lit, true) {
         if folder(
             ui,
             "instances",
             2,
-            "folder",
             "Instances",
             Some(project.instances.len()),
             lit.instance.is_some(),
             true,
-            &mut pick,
-            None,
         ) {
             for instance in &project.instances {
                 let name = project
@@ -236,13 +202,10 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
             ui,
             "nets",
             2,
-            "folder",
             "Nets",
             Some(project.nets.len()),
             lit.net.is_some(),
             false,
-            &mut pick,
-            None,
         ) {
             for net in &project.nets {
                 let members = format!("{} pins", net.terminals.len());
@@ -266,9 +229,7 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
     }
 
     let pcb_lit = lit.board || lit.track.is_some() || lit.placement.is_some();
-    if folder(
-        ui, "pcb", 1, "folder", "PCB", None, pcb_lit, true, &mut pick, None,
-    ) {
+    if folder(ui, "pcb", 1, "PCB", None, pcb_lit, true) {
         let size = format!(
             "{} × {} mm",
             kit::number_text(project.board_size[0]),
@@ -294,13 +255,10 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
             ui,
             "placements",
             2,
-            "folder",
             "Placements",
             Some(project.placements.len()),
             lit.placement.is_some(),
             lit.placement.is_some(),
-            &mut pick,
-            None,
         ) {
             for placement in &project.placements {
                 let label = project
@@ -334,13 +292,10 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
             ui,
             "tracks",
             2,
-            "folder",
             "Tracks",
             Some(project.tracks.len()),
             lit.track.is_some(),
             lit.track.is_some(),
-            &mut pick,
-            None,
         ) {
             for track in &project.tracks {
                 let label = format!("Track {}", track.id);

@@ -374,17 +374,7 @@ impl PcbEditor {
                 self.placement_layer,
             );
             kit::actions(ui, |ui| {
-                // Primary only once there is an edit; a disabled accent
-                // button reads as active.
-                let apply = ui_kit::button(
-                    ui,
-                    "Apply",
-                    if edit.is_some() {
-                        Button::Primary
-                    } else {
-                        Button::Enabled(false)
-                    },
-                );
+                let apply = kit::primary(ui, "Apply", edit.is_some());
                 if apply.clicked() && edit.is_some() {
                     action = edit;
                 }
