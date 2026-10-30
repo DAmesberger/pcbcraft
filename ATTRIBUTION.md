@@ -16,6 +16,10 @@ Pcbcraft directly depends on `solidcraft-engine` and its geometry patches at tha
 
 This notice does not choose a project-wide license for original Pcbcraft application code.
 
+## Embedded scripting dependency
+
+The scripting feasibility slice embeds [Rhai](https://github.com/rhaiscript/rhai) 1.27.0 (MIT OR Apache-2.0) as a Cargo dependency. Cargo retains upstream notices; the dependency is pinned in the manifest and lockfile. Pcbcraft's quantity operations, pad-generation interface and test fixtures are original. The integration uses the documented [custom type](https://rhai.rs/book/rust/custom-types.html), [expression-only](https://rhai.rs/book/engine/expressions.html), [execution limit](https://rhai.rs/book/safety/max-operations.html) and [wasm](https://rhai.rs/book/start/builds/wasm.html) APIs. `wasm-bindgen-test` and its separately installed matching runner provide the optional Node-hosted wasm test execution.
+
 ## Desktop UI reference and reuse
 
 The desktop links `solidcraft-ui-egui` at the same pinned revision. Fonts, icons, theme tokens, controls, `Container`, camera math and GPU renderer are upstream implementations, not lookalike assets.

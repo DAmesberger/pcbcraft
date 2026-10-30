@@ -64,10 +64,43 @@ fn run() -> Result<()> {
             Ok(())
         }
         "wasm" => wasm(),
+        "wasm-scripting" => wasm_scripting(),
         "layers" => layers::check(),
         "ui-containers" => ui_containers::check(),
-        _ => Err("usage: cargo xtask ci | ci-native | wasm | layers | ui-containers".into()),
+        _ => Err(
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | ui-containers"
+                .into(),
+        ),
     }
+}
+
+/// Execute the scripting proof in Node, separately from the compile-only gate.
+/// Requires the wasm-bindgen test runner matching Cargo.lock and Node on PATH.
+fn wasm_scripting() -> Result<()> {
+    let runner = std::env::var_os("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER")
+        .unwrap_or_else(|| "wasm-bindgen-test-runner".into());
+    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args([
+            "test",
+            "--locked",
+            "-p",
+            "pcbcraft-core",
+            "--lib",
+            "--profile",
+            "ci",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--target-dir",
+            "target/wasm-test",
+            "scripting::tests",
+        ])
+        .env("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER", runner)
+        .current_dir(root()?)
+        .status()?;
+    if !status.success() {
+        return Err(format!("wasm scripting tests failed: {status}").into());
+    }
+    Ok(())
 }
 
 /// The pure core and the native adapter must build for the browser.

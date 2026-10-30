@@ -1,6 +1,6 @@
 # Pcbcraft first edition plan
 
-Draft for review, 29 October 2026. This is a proposed product and implementation plan; implementation has not started.
+Product plan, updated 30 October 2026. This combines established user requirements with proposed scope boundaries. Implementation is partial; see [editor evidence](editor-evidence.md). The [component-editor acceptance scenarios](part-library-design.md#component-editor-acceptance-scenarios) define the accepted component workflow.
 
 Pcbcraft should deliver one complete electronics workflow: **create a component → draw a schematic → place and route a PCB → inspect the same PCB in 3D → export manufacturing files and a native parametric `.solidcraft` assembly**. Each editor starts with a small, usable toolset. The first release is complete across this workflow, rather than deep in only one editor.
 
@@ -16,6 +16,7 @@ The UI and interaction style should match Solidcraft. Altium informs the integra
 - Solidcraft owns 3D model construction, evaluation and persistence; Pcbcraft supplies electronics-specific data and integration.
 - Push-and-shove is a priority: include it in the first release if feasible, otherwise deliver it in the second release with its architecture prepared from the start.
 - A deliberately designed part-library model.
+- New Component authoring, data-defined typed fields and units, independently revisioned footprint choices, basic multi-unit symbols, structured per-pin function alternatives and instance selections, and datasheet/distributor references.
 - A general plan for review before implementation.
 
 ## What to carry over from Solidcraft
@@ -42,8 +43,8 @@ Target simple rigid two-layer boards with ordinary SMD and through-hole componen
 
 | Area | Include in the first edition | Postpone |
 | --- | --- | --- |
-| Component authoring | One workspace with Symbol, Footprint, Mapping and 3D tabs; duplicate/reuse existing definitions; pin table; lines, rectangles, circles and text; pad arrays; ordinary SMD pads, circular plated holes and mounting holes; courtyard and reference/value text | Elaborate package wizards, arbitrary custom pad primitives, slotted drills, multi-unit symbol editing, simulation models |
-| Libraries | Project-local components, optional installed local libraries, search, exact revisions, complete project snapshots, explicit update previews, provenance, optional manufacturer part metadata | Hosted registry, supplier APIs, organizational approval systems, automatic alternates, multi-level inheritance |
+| Component authoring | New Component workspace with Symbol, Footprint, Mapping, 3D and Details; reusable typed fields/units; single- and multi-unit symbols, alternate representations, structured pin functions/directions and resource constraints; pin table; lines/polylines, rectangles, circles/arcs and text; pad arrays; rectangular/round/oval/rounded-rectangle SMD pads, circular plated holes and mounting holes; mask/paste, courtyard and reference/value text | Elaborate package wizards, arbitrary custom pad primitives, slotted drills, simulation models, automatic gate/pin swapping |
+| Libraries | Project-local definitions, optional installed local libraries, category browsing/search, reusable field definitions, independent revisions and footprint variants, complete snapshots including generator recipes/assets, explicit updates, provenance, typed manufacturer specifications and datasheet/distributor links | Hosted registry, live supplier APIs, organizational approval systems, automatic alternates, multi-level inheritance |
 | Schematic | Single sheet; component placement; orthogonal wires; junctions; net labels; visible power connections; rotate/mirror; move and connection-preserving drag; annotation; typed properties; no-connect markers; basic ERC | Hierarchical sheets, buses, repeated channels, gate/pin swapping, simulation |
 | Schematic to PCB | Shared component identity; initial board population; reviewed updates for added/removed components, mappings and nets; cross-selection; stale-board indication | Bidirectional circuit editing, automatic electrical conflict resolution |
 | PCB layout | Two copper layers; simple closed polygon outlines/cutouts; placement, rotate and flip; snapping; ratsnest; net highlighting; manual 45° routing with clearance preview; through vias; track edit/delete; simple ground pours with clearance and thermal reliefs | Push-and-shove reserved for release 2 if absent from release 1; autorouting, differential pairs, length tuning, blind/buried vias, rigid-flex, HDI, RF tools, panelization |
@@ -58,7 +59,7 @@ Push-and-shove is a committed second-release feature if it cannot ship in the fi
 
 ## The library foundation
 
-The detailed proposal is in [Part library design](part-library-design.md); terms are in the [glossary](../GLOSSARY.md).
+The detailed contract and seven end-to-end scenarios are in [Part library design](part-library-design.md); terms are in the [glossary](../GLOSSARY.md). Basic multi-unit authoring and instance-level pin-function selection are first-edition requirements, distinct from later multi-sheet hierarchy.
 
 The central choice is to separate **electrical meaning, schematic drawing, physical terminals, PCB land patterns and purchasing information**, while presenting them through one component-authoring workspace. A footprint name alone is not proof of compatible pin mapping. An MPN is optional during design, and choosing one must not silently alter the circuit.
 
@@ -166,7 +167,7 @@ The PCB reference suite should include analytically known gaps and drill dimensi
 
 Milestone 0 should challenge four risks immediately: library identity/mapping changes on a routed sample; robust copper clearance/zone geometry; scalable volumetric copper display/picking/incremental updates; and native parametric Solidcraft composition, including top/bottom placement relationships. Estimate implementation effort after those probes. Solidcraft's historical agent-hour estimates are not a transferable schedule for a new EDA core.
 
-The second release prioritizes push-and-shove if it did not ship in the first edition; it is not an unscheduled backlog item. Additional improvements follow actual boards: broader component/footprint primitives, multi-sheet/multi-unit schematics, more copper layers, better import, and linked Solidcraft enclosure updates. Hosted libraries, high-speed design, simulation and collaboration are separate later expansions.
+The second release prioritizes push-and-shove if it did not ship in the first edition; it is not an unscheduled backlog item. Additional improvements follow actual boards: broader component/footprint primitives, multi-sheet hierarchy, more copper layers, better import, and linked Solidcraft enclosure updates. Basic multi-unit symbols belong to the first edition. Hosted libraries, high-speed design, simulation and collaboration are separate later expansions.
 
 ## Review decisions
 

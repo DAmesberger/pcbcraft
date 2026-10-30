@@ -9,6 +9,10 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum PartCommand {
+    /// Regenerate the current draft's existing pads with a bounded script.
+    /// Explicit pad IDs preserve terminal associations; no published part changes.
+    #[serde(rename = "part.generate_pads")]
+    GeneratePads { script: crate::scripting::Script },
     /// Replace the component draft being authored. Drafts may be unfinished;
     /// only resource bounds and finite geometry are enforced.
     #[serde(rename = "part.draft_set")]
@@ -28,6 +32,14 @@ pub enum PartCommand {
 
 pub(crate) fn apply(document: &mut Document, command: PartCommand) -> Result<()> {
     match command {
+        PartCommand::GeneratePads { script } => {
+            let draft = document.draft.as_deref().ok_or_else(|| {
+                Error::NotFound("pad generation requires a component draft".into())
+            })?;
+            let generated = crate::scripting::generate_pads(&script, draft)?;
+            document.draft = Some(Arc::new(generated));
+            Ok(())
+        }
         PartCommand::SetDraft { draft } => {
             validate_draft(&draft)?;
             document.draft = Some(Arc::new(draft));

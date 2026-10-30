@@ -20,13 +20,27 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 ## Working editor foundation
 
 - [x] Shared Solidcraft UI dependency, source-referenced shell, fonts, controls and renderer.
-- [x] Component symbol/footprint/mapping authoring and immutable local snapshots.
+- [x] Initial component forms for symbol anchors/body, rectangular footprint pads and mappings, with immutable local snapshots; complete authoring scenarios remain pending below.
 - [x] Single-sheet terminal wiring, schematic properties and basic electrical checks.
 - [x] Explicit schematic-to-board sync, placement, manual routing and physical-island checks.
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.
 - [x] Atomic `.pcbcraft` save, offline reopen, shared command engine and undo/redo.
 - [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned component drafts; file dialogs, background saves and crash recovery.
 - [ ] Complete first-release editors, library updates and manufacturing workflow.
+
+## Component-editor acceptance
+
+The [accepted authoring contract and scenarios](docs/part-library-design.md#accepted-authoring-contract) define target behavior, not current capability. New Component is the entry point; component categories and templates are optional. Basic multi-unit symbols and structured multi-function IOs with instance-level selection belong to the first complete editor. Establish unit/function identities against CE-04–CE-06 before implementing the CE-01 UI, then deliver the scenarios in order within the component-editor phase.
+
+- [ ] CE-01: generic resistor, reusable typed fields, alternate symbols and independently revisioned physical choices.
+- [ ] CE-02: non-polarized/polarized capacitors, tolerance semantics, polarity and manufacturer requirements.
+- [ ] CE-03: inductor, derived fields, generator recipes, manual overrides and offline regeneration.
+- [ ] CE-04: dual transistor, independently placed units and one physical component.
+- [ ] CE-05: dual amplifier, explicit power unit and unused-unit handling.
+- [ ] CE-06: MCU-style IC, structured pin-function arrays/directions, resource constraints, repeated supply connections and exposed-pad obligations.
+- [ ] CE-07: connector, electrical shield, mechanical holes, package variants and model datums.
+
+All scenarios require the common UI/automation, transactional, offline and native-model evidence in the spec. The [Rhai integration proof](docs/part-library-design.md#rhai-integration-proof) passes its bounded arithmetic/generation tests, but does not complete any full scenario. Cross-sheet hierarchy, automatic gate/pin swapping and firmware generation remain separate work.
 
 ## Subsequent milestones
 

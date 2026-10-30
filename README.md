@@ -44,12 +44,26 @@ cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
 
 `stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.
 
+## Scripting integration proof
+
+The core contains a bounded Rhai integration for unit-aware expressions and draft pad-array generation. Units are request data; the interpreter has no component-specific property schema. `part.generate_pads` is available inside `project.apply` through CLI/MCP, with ordinary revision checks and undo. This is a headless feasibility slice, not a new component editor or a complete library scripting format. See the [contract and limits](docs/part-library-design.md#rhai-integration-proof).
+
+Native scripting tests run in `cargo xtask ci`. To also execute the seven scripting tests as WebAssembly under Node (rather than only compile wasm), install Node and the test runner matching the locked `wasm-bindgen` version:
+
+```sh
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+cargo xtask wasm-scripting
+```
+
+Run these inside `nix develop` when using the Nix toolchain. The runner must be on `PATH`, or set `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` to its executable path. This optional runtime check is separate from `cargo xtask ci`; it does not exercise browser UI.
+
 Solidcraft and its required patches are pinned to `4f3ac07aec69489183185071f07d7fbcf4f51e64`. Builds use git dependencies and the lockfile; a neighboring Solidcraft checkout is not required. The native probe and copper sample (vias, zone with hole, same-net island) are acceptance tests in `pcbcraft-solidcraft`, not product features. UI source references and font licenses are recorded in [attribution](ATTRIBUTION.md).
 
 ## Scope and design
 
 - [Product plan](docs/pcbcraft-plan.md)
 - [Part library design](docs/part-library-design.md)
+- [Component-editor acceptance scenarios](docs/part-library-design.md#component-editor-acceptance-scenarios), including multi-unit symbols and structured multi-function IOs
 - [Native integration research](docs/solidcraft-interop-research.md)
 - [Copper performance research](docs/copper-performance-research.md)
 - [Roadmap](ROADMAP.md) and [agent instructions](AGENTS.md)

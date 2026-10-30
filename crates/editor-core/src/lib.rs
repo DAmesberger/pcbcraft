@@ -10,6 +10,7 @@ pub mod model;
 pub mod nets;
 pub mod parts;
 pub mod schematic;
+pub mod scripting;
 #[cfg(test)]
 mod tests;
 pub mod updates;

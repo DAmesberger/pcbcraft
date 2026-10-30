@@ -46,6 +46,40 @@ fn json_requests_reach_the_engine_and_report_typed_errors() -> TestResult {
 }
 
 #[test]
+fn pad_generator_is_available_through_the_shared_transport_contract() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let original = session.engine().document().clone();
+    let revision = session.engine().revision();
+    let operation = json!({
+        "editor": "Part", "operation": {
+            "command": "part.generate_pads", "params": {"script": {
+                "api_version": 1,
+                "source": "for i in 0..2 { footprint.pad(i + 1, i * pitch, q(0.0, \"mm\"), pitch, pitch); }",
+                "units": [{"symbol": "mm", "dimension": [1,0,0,0,0,0,0], "scale": 0.001}],
+                "inputs": {"pitch": {"type": "quantity", "value": 2.0, "unit": "mm"}}
+            }}
+        }
+    });
+    let reply = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision, "operation": operation,
+    }}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(
+        reply["result"]["draft"]["footprint"]["pads"][1]["position"],
+        json!([2.0, 0.0])
+    );
+    assert_eq!(session.engine().project(), original.project.as_ref());
+    assert_eq!(
+        session.dispatch(json!({"command": "project.undo", "params": {}}))["ok"],
+        true
+    );
+    assert_eq!(session.engine().document(), &original);
+    let catalog = serde_json::to_string(&Request::catalog())?;
+    assert!(catalog.contains("part.generate_pads"));
+    Ok(())
+}
+
+#[test]
 fn save_and_open_are_file_effects_outside_undo_history() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("session.pcbcraft");
