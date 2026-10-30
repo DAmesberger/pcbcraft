@@ -4,7 +4,9 @@
 use super::support::*;
 use crate::completeness::CheckTarget;
 use crate::geometry::{Bounds, Shape};
-use crate::library::graphics::{self, MAX_GRAPHICS_PER_UNIT, MAX_SHAPE_POINTS, MAX_VERTICES};
+use crate::library::graphics::{
+    self, MAX_GRAPHICS_PER_UNIT, MAX_SHAPE_POINTS, MAX_TEXT_LINES, MAX_VERTICES,
+};
 use crate::library::samples::{self, SampleRefs};
 use crate::library::{
     Decorations, Fill, Graphic, Grid, HAlign, Item, Justify, Pin, PinDirection, Rotation,
@@ -139,6 +141,7 @@ fn each_blocking_graphic_finding_names_its_graphic_and_blocks_publish() -> Resul
             ),
         ),
         ("text.empty", literal(10, "   ")),
+        ("text.too_long", literal(10, &"x\n".repeat(MAX_TEXT_LINES))),
     ];
     for (code, graphic) in cases {
         let mut engine = Engine::default();

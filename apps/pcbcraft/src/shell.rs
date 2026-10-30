@@ -27,6 +27,10 @@ const TAB_INSET: f32 = 4.0;
 const GROUP_PADDING: f32 = 6.0;
 /// Width of the ribbon's » overflow button.
 const OVERFLOW_WIDTH: f32 = 30.0;
+/// Width of the » overflow menu's rows.
+const OVERFLOW_MENU_WIDTH: f32 = 200.0;
+/// Height of one tool row in the » overflow menu.
+const OVERFLOW_ROW_HEIGHT: f32 = 30.0;
 const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -514,31 +518,89 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
         });
         Container::new(ui.ctx(), Surface::Popup)
             .menu(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
-                for group in &ribbon.groups[shown..] {
-                    ui.label(
-                        egui::RichText::new(group.label)
-                            .size(t.font_caption)
-                            .color(t.text_dim),
-                    );
-                    for tool in &group.tools {
-                        let label = if tool.selected {
-                            format!("✓ {}", tool.label)
-                        } else {
-                            tool.label.to_owned()
-                        };
-                        if ui
-                            .add_enabled(tool.enabled, egui::Button::new(label))
-                            .on_hover_text(tool.tip)
-                            .clicked()
-                        {
-                            clicked = Some(tool.id);
+                crate::kit::form(ui, |ui| {
+                    ui.set_width(OVERFLOW_MENU_WIDTH);
+                    for group in &ribbon.groups[shown..] {
+                        overflow_caption(ui, group.label);
+                        for tool in &group.tools {
+                            if overflow_item(ui, tool).clicked() && tool.enabled {
+                                clicked = Some(tool.id);
+                            }
                         }
                     }
-                }
+                });
             });
     }
     clicked
+}
+
+/// A group caption in the » overflow menu, like the ribbon's captions.
+fn overflow_caption(ui: &mut Ui, label: &str) {
+    let t = Tokens::get();
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(OVERFLOW_MENU_WIDTH, SECTION_HEIGHT), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + t.space_4, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(t.font_caption),
+        t.text_dim,
+    );
+}
+
+/// One tool in the » overflow menu: its ribbon icon and label, with the
+/// ribbon's hover, selected and disabled looks.
+fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(OVERFLOW_MENU_WIDTH, OVERFLOW_ROW_HEIGHT),
+        if tool.enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    if tool.selected {
+        ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
+    } else if response.hovered() && tool.enabled {
+        ui.painter().rect_filled(rect, t.radius_sm, t.hover);
+    }
+    icons::paint_icon(
+        ui.painter(),
+        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(20.0, 20.0)),
+        tool.icon,
+        if tool.enabled { 1.0 } else { 0.35 },
+    );
+    let ink = if tool.selected {
+        t.selected_ink
+    } else if tool.enabled {
+        t.text
+    } else {
+        t.text_dim
+    };
+    let font = if tool.selected {
+        fonts::semibold(t.font_body)
+    } else {
+        FontId::proportional(t.font_body)
+    };
+    ui.painter().text(
+        pos2(rect.left() + 36.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        tool.label,
+        font,
+        ink,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            tool.enabled,
+            tool.selected,
+            tool.label,
+        )
+    });
+    response.on_hover_text(tool.tip)
 }
 
 pub fn icon_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {

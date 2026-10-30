@@ -575,3 +575,49 @@ fn rounded_polygons_bound_and_contain_their_rounded_outline() {
         assert!(b.inflated(1e-9).contains(*p));
     }
 }
+
+/// Filled containment in rounded closed shapes is exact without flattening:
+/// it agrees with the finely flattened outline everywhere off the curve,
+/// for convex and concave fillets alike.
+#[test]
+fn rounded_containment_matches_the_flattened_outline() {
+    let mut rng = Rng(0x5eed_f111e7);
+    let concave = Shape::Polygon {
+        points: vec![
+            [0.0, 0.0],
+            [10.0, 0.0],
+            [10.0, 4.0],
+            [4.0, 4.0],
+            [4.0, 10.0],
+            [0.0, 10.0],
+        ],
+        radii: vec![1.0, 1.0, 1.0, 2.0, 1.0, 1.0],
+    };
+    let mut checked = 0;
+    for case in 0..CASES {
+        let shape = if case == 0 {
+            concave.clone()
+        } else {
+            rng.shape()
+        };
+        if !shape.is_closed() || !shape.is_rounded() || !shape.corners_fit() {
+            continue;
+        }
+        let ring = shape.flatten(1e-5);
+        let b = shape.bounds(0.0).inflated(1.0);
+        for _ in 0..20 {
+            let p = [rng.range(b.min[0], b.max[0]), rng.range(b.min[1], b.max[1])];
+            let edge = shape.distance(p, false);
+            if edge < 1e-2 {
+                continue;
+            }
+            let inside = shape.distance(p, true) == 0.0;
+            assert_eq!(inside, polygon_contains(&ring, p), "{shape:?} at {p:?}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 1000, "{checked}");
+    // The concave corner's fillet adds area inside the notch.
+    assert_eq!(concave.distance([4.3, 4.3], true), 0.0);
+    assert!(concave.distance([6.0, 6.0], true) > 0.0);
+}

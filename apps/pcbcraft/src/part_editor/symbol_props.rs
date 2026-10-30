@@ -93,17 +93,8 @@ impl PartEditor {
                         0.0..=MAX_STROKE_MM,
                     );
                 }
-                if matches!(
-                    tool,
-                    Tool::RoundedRect | Tool::Polyline | Tool::Polygon | Tool::Rect
-                ) {
-                    kit::number_row(
-                        ui,
-                        "Corner radius",
-                        &mut self.drawing.corner_radius,
-                        "mm",
-                        0.0..=50.0,
-                    );
+                if let Some(radius) = self.drawing.corner_radius_mut() {
+                    kit::number_row(ui, "Corner radius", radius, "mm", 0.0..=50.0);
                 }
                 if matches!(
                     tool,

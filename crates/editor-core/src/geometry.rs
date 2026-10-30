@@ -313,8 +313,40 @@ fn arc_segments(radius: f64, sweep_deg: f64, tol: f64) -> usize {
 /// path folding back on itself has no fillet.
 pub const MAX_FILLET_TURN_DEG: f64 = 179.0;
 
-/// Chord tolerance used to decide containment in rounded closed shapes.
-const ROUNDED_CONTAINMENT_TOL_MM: f64 = 1e-3;
+/// Whether `p` is inside the closed outline that `parts` (lines and fillet
+/// arcs, end to end) trace, by the even-odd rule. Exact and linear in the
+/// parts: the polygon through the parts' start points, toggled inside each
+/// arc's circular segment (between its chord and the arc), with no
+/// flattening.
+fn rounded_contains(parts: &[Shape], p: Point) -> bool {
+    let chords: Vec<Point> = parts
+        .iter()
+        .filter_map(|part| match part {
+            Shape::Line { a, .. } => Some(*a),
+            Shape::Arc { .. } => part.arc_ends().map(|[s, _]| s),
+            _ => None,
+        })
+        .collect();
+    let mut inside = polygon_contains(&chords, p);
+    for part in parts {
+        if let Shape::Arc {
+            center,
+            radius,
+            start_deg,
+            sweep_deg,
+        } = part
+            && let Some([s, e]) = part.arc_ends()
+            && distance(p, *center) <= *radius
+        {
+            let mid = polar(*center, *radius, start_deg + sweep_deg / 2.0);
+            let side = |q: Point| cross(sub(e, s), sub(q, s));
+            if side(p) * side(mid) > 0.0 {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
 
 fn radius_at(radii: &[f64], i: usize) -> f64 {
     radii
@@ -669,10 +701,7 @@ impl Shape {
     /// `filled`. Rounded corners measure to their fillet arcs.
     pub fn distance(&self, p: Point, filled: bool) -> f64 {
         if let Some(parts) = self.primitives() {
-            if filled
-                && self.is_closed()
-                && polygon_contains(&self.flatten(ROUNDED_CONTAINMENT_TOL_MM), p)
-            {
+            if filled && self.is_closed() && rounded_contains(&parts, p) {
                 return 0.0;
             }
             return parts

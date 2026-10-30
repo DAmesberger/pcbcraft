@@ -192,8 +192,12 @@ pub struct Drawing {
     /// Signed degrees the pointer went round an arc's centre since its
     /// start was placed.
     arc_turn: f64,
-    /// Corner radius for rounded rectangles, polylines and polygons.
-    pub corner_radius: f64,
+    /// Corner radius of the Rounded rectangle tool, mm.
+    rounded_radius: f64,
+    /// Corner radius of the Polyline tool, mm; sharp by default.
+    polyline_radius: f64,
+    /// Corner radius of the Polygon tool, mm; sharp by default.
+    polygon_radius: f64,
 }
 
 impl Default for Drawing {
@@ -203,7 +207,9 @@ impl Default for Drawing {
             last: None,
             points: Vec::new(),
             arc_turn: 0.0,
-            corner_radius: 0.0,
+            rounded_radius: ROUNDED_RADIUS_MM,
+            polyline_radius: 0.0,
+            polygon_radius: 0.0,
         }
     }
 }
@@ -226,6 +232,25 @@ impl Drawing {
     pub fn pending(&self) -> &[Point] {
         &self.points
     }
+    /// The armed tool's own corner radius, mm, when it rounds corners.
+    /// Each tool keeps its own, so rounding one never carries to another.
+    pub fn corner_radius(&self) -> Option<f64> {
+        match self.tool {
+            Tool::RoundedRect => Some(self.rounded_radius),
+            Tool::Polyline => Some(self.polyline_radius),
+            Tool::Polygon => Some(self.polygon_radius),
+            _ => None,
+        }
+    }
+    /// The armed tool's corner radius for editing, when it has one.
+    pub fn corner_radius_mut(&mut self) -> Option<&mut f64> {
+        match self.tool {
+            Tool::RoundedRect => Some(&mut self.rounded_radius),
+            Tool::Polyline => Some(&mut self.polyline_radius),
+            Tool::Polygon => Some(&mut self.polygon_radius),
+            _ => None,
+        }
+    }
     /// Whether an unfinished shape is in progress.
     pub fn busy(&self) -> bool {
         !self.points.is_empty()
@@ -235,9 +260,6 @@ impl Drawing {
     pub fn arm(&mut self, tool: Tool) {
         if tool != Tool::Select {
             self.last = Some(tool);
-        }
-        if tool == Tool::RoundedRect && self.corner_radius <= 0.0 {
-            self.corner_radius = ROUNDED_RADIUS_MM;
         }
         self.tool = tool;
         self.points.clear();
@@ -314,16 +336,22 @@ impl Drawing {
     /// Corner radii for a path drawn with the tool's corner radius,
     /// reduced to what fits.
     fn radii(&self, points: &[Point], closed: bool) -> Vec<f64> {
-        if self.corner_radius <= 0.0 {
+        let radius = self.corner_radius().unwrap_or(0.0);
+        if radius <= 0.0 || !radius.is_finite() {
             return vec![];
         }
-        fit_corner_radii(points, &vec![self.corner_radius; points.len()], closed)
+        fit_corner_radii(points, &vec![radius; points.len()], closed)
     }
 
     fn rect(&self, a: Point, b: Point) -> Shape {
         let radius = if self.tool == Tool::RoundedRect {
             let half = (a[0] - b[0]).abs().min((a[1] - b[1]).abs()) / 2.0;
-            self.corner_radius.min(half * (1.0 - 1e-9)).max(0.0)
+            let radius = self.rounded_radius;
+            if radius.is_finite() {
+                radius.min(half * (1.0 - 1e-9)).max(0.0)
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -530,7 +558,9 @@ mod tests {
     fn a_polyline_is_finished_only_explicitly_and_cmd_z_pops_points() -> Result<(), String> {
         let mut d = Drawing::default();
         d.arm(Tool::Polyline);
-        d.corner_radius = 1.0;
+        if let Some(r) = d.corner_radius_mut() {
+            *r = 1.0;
+        }
         for p in [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0], [5.0, 5.0]] {
             assert_eq!(click(&mut d, p), None, "no commit mid-chain");
         }
@@ -568,10 +598,46 @@ mod tests {
     }
 
     #[test]
+    fn each_tool_keeps_its_own_corner_radius() -> Result<(), String> {
+        let mut d = Drawing::default();
+        d.arm(Tool::Rect);
+        assert_eq!(d.corner_radius(), None, "Rect offers no radius");
+        d.arm(Tool::RoundedRect);
+        // The radius row edits the value the committed shape uses.
+        if let Some(r) = d.corner_radius_mut() {
+            *r = 0.75;
+        }
+        click(&mut d, [0.0, 0.0]);
+        assert_eq!(
+            click(&mut d, [4.0, 3.0]),
+            Some(Placed::Shape(Shape::Rect {
+                a: [0.0, 0.0],
+                b: [4.0, 3.0],
+                radius: 0.75
+            }))
+        );
+        // Rounding a rectangle does not round a polyline drawn after it.
+        d.arm(Tool::Polyline);
+        assert_eq!(d.corner_radius(), Some(0.0));
+        for p in [[0.0, 0.0], [5.0, 0.0], [5.0, 5.0]] {
+            click(&mut d, p);
+        }
+        let Some(Placed::Shape(Shape::Polyline { radii, .. })) = d.finish() else {
+            return Err("finished polyline".into());
+        };
+        assert!(radii.is_empty(), "sharp polyline, got {radii:?}");
+        d.arm(Tool::Polygon);
+        assert_eq!(d.corner_radius(), Some(0.0));
+        d.arm(Tool::RoundedRect);
+        assert_eq!(d.corner_radius(), Some(0.75), "the radius is kept");
+        Ok(())
+    }
+
+    #[test]
     fn rectangles_circles_and_rounded_rectangles_take_two_clicks() {
         let mut d = Drawing::default();
         d.arm(Tool::RoundedRect);
-        assert_eq!(d.corner_radius, ROUNDED_RADIUS_MM);
+        assert_eq!(d.corner_radius(), Some(ROUNDED_RADIUS_MM));
         click(&mut d, [0.0, 0.0]);
         assert_eq!(
             click(&mut d, [0.0, 4.0]),

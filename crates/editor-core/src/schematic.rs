@@ -357,12 +357,7 @@ pub struct PlacedText {
     /// Drawn reflected (an occurrence or board side mirror).
     pub mirrored: bool,
     /// Distance between lines in cap heights; `text` breaks at `\n`.
-    #[serde(default = "default_line_spacing")]
     pub line_spacing: f64,
-}
-
-fn default_line_spacing() -> f64 {
-    TEXT_LINE_SPACING
 }
 
 impl PlacedText {

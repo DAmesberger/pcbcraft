@@ -4,7 +4,7 @@
 //! the rules for it. Text is a structured reference (designator, field,
 //! name), never a placeholder string, so it is never the authority for a
 //! value.
-use super::drafts::Draft;
+use super::drafts::{Draft, Drafts};
 use super::publish::{issue, object};
 use super::{Definition, Library, MAX_LABEL};
 use crate::diagnostics::{Finding, ObjectRef};
@@ -101,12 +101,28 @@ pub struct Text {
     pub visible: bool,
     /// Distance from one line to the next, in cap heights (1–4). Literal
     /// text breaks lines at `\n`.
-    #[serde(default = "default_line_spacing")]
     pub line_spacing: f64,
 }
 
-fn default_line_spacing() -> f64 {
-    TEXT_LINE_SPACING
+/// The terminals of a symbol's owning component: its draft when there is
+/// one, else its latest published revision.
+pub fn owner_terminals(
+    drafts: &Drafts,
+    library: &Library,
+    component: DefinitionId,
+) -> std::collections::BTreeSet<TerminalId> {
+    if let Some(draft) = drafts.get(component) {
+        return match &draft.definition {
+            Definition::Component(c) => c.terminals.iter().map(|t| t.id).collect(),
+            _ => Default::default(),
+        };
+    }
+    library
+        .latest_components()
+        .into_iter()
+        .find(|c| c.id == component)
+        .map(|c| c.definition.terminals.iter().map(|t| t.id).collect())
+        .unwrap_or_default()
 }
 
 /// Whether literal text is acceptable: not blank, at most 256 bytes and 16
@@ -603,11 +619,23 @@ pub(super) fn graphic_findings(
             if let TextContent::Literal(s) = &text.content
                 && !printable_text(s)
             {
-                out.push(issue(
-                    "text.empty",
-                    format!("Text {} needs printable content.", graphic.id),
-                    this,
-                ));
+                let too_long = s.len() > MAX_LABEL || s.split('\n').count() > MAX_TEXT_LINES;
+                out.push(if too_long {
+                    issue(
+                        "text.too_long",
+                        format!(
+                            "Text {} is longer than {MAX_LABEL} bytes or {MAX_TEXT_LINES} lines.",
+                            graphic.id
+                        ),
+                        this,
+                    )
+                } else {
+                    issue(
+                        "text.empty",
+                        format!("Text {} needs printable content.", graphic.id),
+                        this,
+                    )
+                });
             }
         }
     }

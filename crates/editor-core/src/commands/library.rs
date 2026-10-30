@@ -148,7 +148,11 @@ pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) ->
                 .get(draft)
                 .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
             let terminals = match &current.definition {
-                Definition::Symbol(symbol) => owner_terminals(document, symbol.component),
+                Definition::Symbol(symbol) => library::graphics::owner_terminals(
+                    &document.drafts,
+                    &document.project.library,
+                    symbol.component,
+                ),
                 _ => Default::default(),
             };
             let (definition, added) =
@@ -162,26 +166,4 @@ pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) ->
             Ok(Outcome::GraphicsEdited { added })
         }
     }
-}
-
-/// The terminals of a symbol's owning component: its draft when there is
-/// one, else its latest published revision.
-fn owner_terminals(
-    document: &Document,
-    component: DefinitionId,
-) -> std::collections::BTreeSet<crate::ids::TerminalId> {
-    if let Some(draft) = document.drafts.get(component) {
-        return match &draft.definition {
-            Definition::Component(c) => c.terminals.iter().map(|t| t.id).collect(),
-            _ => Default::default(),
-        };
-    }
-    document
-        .project
-        .library
-        .latest_components()
-        .into_iter()
-        .find(|c| c.id == component)
-        .map(|c| c.definition.terminals.iter().map(|t| t.id).collect())
-        .unwrap_or_default()
 }
