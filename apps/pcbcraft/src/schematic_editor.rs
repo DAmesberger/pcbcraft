@@ -2,6 +2,7 @@
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use crate::kit::{self, Tone};
+use crate::place_palette::{PaletteAction, PlacePalette};
 use egui::{Align2, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use pcbcraft_core::completeness::InstanceReport;
 use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
@@ -32,7 +33,7 @@ struct FieldBuffer {
     text: String,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Tool {
     #[default]
     Select,
@@ -73,6 +74,8 @@ pub struct SchematicEditor {
     /// revision.
     symbol_texts: BTreeMap<Id, String>,
     update: crate::update_preview::UpdatePreview,
+    /// Finds the component the Place tool puts down.
+    palette: PlacePalette,
 }
 
 impl Default for SchematicEditor {
@@ -103,6 +106,7 @@ impl Default for SchematicEditor {
             issues: Vec::new(),
             symbol_texts: BTreeMap::new(),
             update: Default::default(),
+            palette: PlacePalette::default(),
         }
     }
 }
@@ -205,7 +209,7 @@ impl SchematicEditor {
                         Button::new("place", "component", "Place")
                             .enabled(has_parts && !reviewing)
                             .selected(self.tool == Tool::Place)
-                            .tip("Place the chosen component revision"),
+                            .tip("Find a component and place it (P)"),
                         Button::new("wire", "line", "Wire")
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Wire)
@@ -240,6 +244,11 @@ impl SchematicEditor {
         if next != Tool::Select {
             self.select(None, None, engine.project());
         }
+        if next == Tool::Place {
+            self.palette.open();
+        } else {
+            self.palette.close();
+        }
         self.tool = next;
         self.wire_from = None;
         None
@@ -250,6 +259,9 @@ impl SchematicEditor {
         let project = engine.project();
         if self.update.is_open() {
             return Header::new("component", "Review change", "Review");
+        }
+        if self.palette.is_open() {
+            return Header::new("component", "Place part", "Library");
         }
         if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
             return Header::new("component", instance.designator.clone(), "Instance");
@@ -372,7 +384,11 @@ impl SchematicEditor {
         }
         let mut output = None;
         if self.tool == Tool::Place {
-            self.place_section(ui, project);
+            if self.palette.is_open() {
+                self.palette.preview(ui, engine);
+            } else {
+                self.place_section(ui, project);
+            }
         }
         if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
             output = output.or(self.instance_sections(ui, engine, instance));
@@ -409,25 +425,19 @@ impl SchematicEditor {
         output
     }
 
-    /// The component the Place tool puts down, newest revisions first.
+    /// The component the Place tool puts down, picked in the palette.
     fn place_section(&mut self, ui: &mut egui::Ui, project: &Project) {
         kit::section(ui, "place", "Place", true, None, |ui| {
-            let mut options: Vec<(Option<ComponentRef>, String)> = project
-                .library
-                .components
-                .iter()
-                .rev()
-                .map(|c| {
-                    (
-                        Some(ComponentRef::new(c.id, c.revision)),
-                        format!("{} · r{}", c.meta.name, c.revision.0),
-                    )
-                })
-                .collect();
-            if options.is_empty() {
-                options.push((None, "No published components".into()));
+            let armed = self
+                .component
+                .and_then(|c| project.library.component(c).map(|p| (c, p)));
+            match armed {
+                Some((component, published)) => {
+                    kit::value_row(ui, "Component", &published.meta.name);
+                    kit::value_row(ui, "Revision", &component.revision.to_string());
+                }
+                None => kit::value_row(ui, "Component", "None"),
             }
-            kit::choice_row(ui, "Component", &mut self.component, &options);
             kit::note(
                 ui,
                 if project.library.components.is_empty() {
@@ -436,6 +446,18 @@ impl SchematicEditor {
                     "Click the sheet to place the component. Esc returns to Select."
                 },
             );
+            kit::actions(ui, |ui| {
+                if ui_kit::button(
+                    ui,
+                    "Find part…",
+                    Button::Enabled(!project.library.components.is_empty()),
+                )
+                .on_hover_text("Search the project's components (P)")
+                .clicked()
+                {
+                    self.palette.open();
+                }
+            });
         });
     }
 
@@ -822,6 +844,42 @@ impl SchematicEditor {
         if response.dragged_by(egui::PointerButton::Middle) {
             self.pan += ui.input(|i| i.pointer.delta());
         }
+        if !self.palette.is_open()
+            && !self.update.is_open()
+            && !project.library.components.is_empty()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P))
+        {
+            self.select(None, None, project);
+            self.tool = Tool::Place;
+            self.wire_from = None;
+            self.palette.open();
+        }
+        // The palette owns Esc, arrows and Enter while it is open.
+        match self.palette.show(ui, rect, engine) {
+            Some(PaletteAction::Place {
+                component,
+                keep_open,
+            }) => {
+                if let Some((request, _)) = first_choices(project, component) {
+                    output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
+                        designator: next_reference(project),
+                        position: self.drop_point(project),
+                        ..request
+                    })));
+                }
+                self.component = Some(component);
+                if !keep_open {
+                    self.tool = Tool::Select;
+                }
+            }
+            Some(PaletteAction::Pick(component)) => {
+                self.component = Some(component);
+                self.tool = Tool::Place;
+            }
+            Some(PaletteAction::Close) => self.tool = Tool::Select,
+            None => {}
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.wire_from = None;
             self.tool = Tool::Select;
@@ -985,6 +1043,7 @@ impl SchematicEditor {
                 painter.circle_stroke(*p, 7.0, Stroke::new(1.0, t.accent));
             }
             if self.tool == Tool::Place
+                && !self.palette.is_open()
                 && let Some((_, unit)) = self.component.and_then(|c| first_choices(project, c))
             {
                 let p = screen(world(pointer));
@@ -1020,6 +1079,11 @@ impl SchematicEditor {
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
                 .map(|(e, _)| *e);
             match self.tool {
+                // A click beside the open palette dismisses it.
+                Tool::Place if self.palette.is_open() => {
+                    self.palette.close();
+                    self.tool = Tool::Select;
+                }
                 Tool::Place => {
                     if let Some((request, _)) =
                         self.component.and_then(|c| first_choices(project, c))
@@ -1095,6 +1159,29 @@ impl SchematicEditor {
             });
         }
         output
+    }
+
+    /// Where the palette's Enter places: the view centre on the 5 mm grid,
+    /// moved along the grid until it clears every drawn symbol.
+    fn drop_point(&self, project: &Project) -> Point {
+        let snap = |v: f32| (f64::from(v) / 5.0).round() * 5.0;
+        let centre = [
+            snap(-self.pan.x / self.scale),
+            snap(self.pan.y / self.scale),
+        ];
+        (0..64i32)
+            .map(|k| {
+                [
+                    centre[0] + f64::from(k % 8) * 10.0,
+                    centre[1] - f64::from(k / 8) * 10.0,
+                ]
+            })
+            .find(|p| {
+                project.occurrences.iter().all(|o| {
+                    (o.position[0] - p[0]).abs() >= 8.0 || (o.position[1] - p[1]).abs() >= 6.0
+                })
+            })
+            .unwrap_or(centre)
     }
 
     /// Where a wire end is drawn while its unit's occurrence is dragged.
@@ -1524,6 +1611,214 @@ mod tests {
         engine.undo()?;
         assert_eq!(selected(&engine), None);
         assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    /// One frame of the whole Schematic workspace: canvas (with the palette
+    /// over it) and the properties panel, as the app lays them out.
+    fn workspace_frame(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<Operation>) {
+        let mut operations = Vec::new();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let canvas = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 800.0));
+                let panel = Rect::from_min_size(pos2(820.0, 0.0), vec2(360.0, 800.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(canvas), |ui| {
+                    operations.extend(editor.canvas(ui, engine));
+                });
+                ui.scope_builder(egui::UiBuilder::new().max_rect(panel), |ui| {
+                    operations.extend(kit::form(ui, |ui| editor.inspector(ui, engine)));
+                });
+            },
+        );
+        output.textures_delta.clear();
+        (output, operations)
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn parts_engine() -> Result<Engine, Box<dyn std::error::Error>> {
+        Ok(Engine::from_file(pcbcraft_core::format::EditorFile {
+            version: pcbcraft_core::format::FILE_VERSION,
+            project: pcbcraft_core::catalog::synthetic::project(24)?,
+            drafts: Default::default(),
+        })?)
+    }
+
+    /// Type a query, move with the arrows, Enter places the highlighted
+    /// revision through `component.place`; undo removes it again. The
+    /// properties panel previews the highlighted row.
+    #[test]
+    fn the_place_palette_finds_moves_and_places_through_component_place()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = parts_engine()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        assert!(editor.on_tool("place", &engine).is_none());
+        assert!(editor.palette.is_open());
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let (output, _) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::Text("R>=10k pkg:0603".into())],
+        );
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        // Ranked by name: 10 kΩ, 1 MΩ, 22 kΩ, each with its key values,
+        // revision and four separate badges.
+        for name in ["EX-R0603-10K0-F", "EX-R0603-1M00-J", "EX-R0603-22K0-D"] {
+            assert!(labels.iter().any(|t| t == name), "{name} in {labels:?}");
+        }
+        assert!(
+            labels
+                .iter()
+                .any(|t| t == "10 kΩ · ±1% · 0603 · project r1")
+        );
+        assert!(labels.iter().any(|t| t == "—MPN"), "{labels:?}");
+        assert!(
+            labels.iter().any(|t| t == "Resistance ≥ 10 kΩ"),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().any(|t| t == "IN THIS PROJECT  3"),
+            "{labels:?}"
+        );
+        // The preview follows the highlighted (first) row.
+        assert_eq!(editor.header(&engine).title, "Place part");
+        assert!(labels.iter().any(|t| t == "r1 (latest)"), "{labels:?}");
+
+        let (output, _) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        let second = editor.palette.highlighted().ok_or("no highlight")?;
+        let name = engine
+            .project()
+            .library
+            .component(second)
+            .map(|c| c.meta.name.clone());
+        assert_eq!(name.as_deref(), Some("EX-R0603-1M00-J"));
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        assert!(labels.iter().any(|t| t == "1 MΩ"), "preview {labels:?}");
+
+        let (_, operations) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let [operation] = &operations[..] else {
+            return Err(format!("expected one operation, got {operations:?}").into());
+        };
+        let Operation::Instance(InstanceCommand::Place(request)) = operation else {
+            return Err(format!("expected component.place, got {operation:?}").into());
+        };
+        assert_eq!(request.component, second);
+        assert!(request.physical.is_some());
+        assert!(!editor.palette.is_open());
+        assert_eq!(editor.tool, Tool::Select);
+
+        let before = engine.project().clone();
+        engine.apply(engine.revision(), operation.clone())?;
+        let placed = engine.project().instances.last().ok_or("not placed")?;
+        assert_eq!(placed.component, second);
+        engine.undo()?;
+        assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    #[test]
+    fn shift_enter_keeps_the_palette_and_esc_closes_it_without_placing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = parts_engine()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        editor.on_tool("place", &engine);
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::Text("hdr".into())],
+        );
+        for _ in 0..2 {
+            let (_, operations) = workspace_frame(
+                &mut editor,
+                &engine,
+                &ctx,
+                vec![key(egui::Key::Enter, egui::Modifiers::SHIFT)],
+            );
+            assert_eq!(operations.len(), 1, "{operations:?}");
+            assert!(editor.palette.is_open());
+            for operation in operations {
+                engine.apply(engine.revision(), operation)?;
+            }
+        }
+        // Both placed the best "hdr" match, each at its own free spot.
+        for instance in &engine.project().instances {
+            let name = engine
+                .project()
+                .library
+                .component(instance.component)
+                .map(|c| c.meta.name.as_str());
+            assert_eq!(name, Some("EX-HDR-1X2-001"));
+        }
+        let [a, b] = &engine.project().occurrences[..] else {
+            return Err("expected two occurrences".into());
+        };
+        assert_ne!(a.position, b.position);
+        // A typing error shows inline and Enter does nothing.
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::Text(" V>=10k".into())],
+        );
+        let (output, operations) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(operations.is_empty());
+        assert!(
+            shown(&output)
+                .iter()
+                .any(|(t, _)| t == "V>=10k: 10 k has no unit of voltage"),
+            "no inline parse error"
+        );
+        let revision = engine.revision();
+        let (_, operations) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(operations.is_empty());
+        assert!(!editor.palette.is_open());
+        assert_eq!(editor.tool, Tool::Select);
+        assert_eq!(engine.revision(), revision);
         Ok(())
     }
 }

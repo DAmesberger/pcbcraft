@@ -3,6 +3,7 @@
 //! This crate is pure and wasm-compatible: no files, threads, windows or
 //! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
+pub mod catalog;
 pub mod commands;
 pub mod completeness;
 pub mod diagnostics;
@@ -63,6 +64,38 @@ pub enum Query {
     /// `component.check` of every draft, in draft order, staged once.
     #[serde(rename = "component.check_drafts")]
     CheckDrafts {},
+    /// Ranked component lineages at their latest published revision for a
+    /// one-line query: free text, `pkg:`/`has:`/`missing:` filters and
+    /// unit-aware field predicates such as `R>=10k`, `tol<=1%` or
+    /// `C:1n..100n`. Field keys resolve against the project's field
+    /// definitions.
+    #[serde(rename = "library.search")]
+    Search {
+        query: String,
+        /// At most 500; 50 when omitted.
+        #[serde(default)]
+        limit: Option<usize>,
+        /// List lineages that exist only as drafts instead of counting them
+        /// as hidden.
+        #[serde(default)]
+        include_drafts: bool,
+    },
+    /// The fields, package labels and completeness badges that the entries
+    /// matching a query carry, with value counts.
+    #[serde(rename = "library.facets")]
+    Facets {
+        query: String,
+        #[serde(default)]
+        include_drafts: bool,
+    },
+    /// One published component revision (the latest when `revision` is
+    /// omitted) with its revisions, symbols, implementations and badges.
+    #[serde(rename = "library.inspect")]
+    InspectLineage {
+        lineage: DefinitionId,
+        #[serde(default)]
+        revision: Option<Revision>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -71,6 +104,9 @@ pub enum QueryResult {
     Instance(Box<InstanceReport>),
     Definition(DefinitionReport),
     Drafts(Vec<DefinitionReport>),
+    Search(catalog::SearchReport),
+    Facets(catalog::FacetReport),
+    Lineage(Box<catalog::ItemReport>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -326,7 +362,50 @@ impl Engine {
 
     /// Answer a read-only query.
     pub fn query(&self, query: Query) -> Result<QueryResult> {
+        self.query_with(query, &catalog::CatalogContext::default())
+    }
+
+    /// Answer a read-only query with the host's catalog context (favourite
+    /// and recently used lineages), which ranks `library.search` results.
+    pub fn query_with(
+        &self,
+        query: Query,
+        context: &catalog::CatalogContext,
+    ) -> Result<QueryResult> {
+        let index = || catalog::Index::of_project(&self.document.project, &self.document.drafts);
         match query {
+            Query::Search {
+                query,
+                limit,
+                include_drafts,
+            } => {
+                let index = index()?;
+                let parsed = index.parse(&query)?;
+                Ok(QueryResult::Search(index.search(
+                    &parsed,
+                    context,
+                    catalog::SearchOptions {
+                        limit: limit.unwrap_or(catalog::DEFAULT_LIMIT),
+                        include_drafts,
+                    },
+                )))
+            }
+            Query::Facets {
+                query,
+                include_drafts,
+            } => {
+                let index = index()?;
+                let parsed = index.parse(&query)?;
+                Ok(QueryResult::Facets(index.facets(&parsed, include_drafts)))
+            }
+            Query::InspectLineage { lineage, revision } => {
+                Ok(QueryResult::Lineage(Box::new(catalog::inspect(
+                    &self.document.project,
+                    &self.document.drafts,
+                    lineage,
+                    revision,
+                )?)))
+            }
             Query::InspectInstance { instance } => Ok(QueryResult::Instance(Box::new(
                 completeness::instance(&self.document.project, instance)?,
             ))),

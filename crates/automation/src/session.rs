@@ -54,7 +54,8 @@ pub enum Request {
     #[serde(rename = "project.inspect")]
     Inspect(NoParams),
     /// Answer one read-only core query (`component.inspect`,
-    /// `component.check`, `component.check_drafts`), passed unchanged to
+    /// `component.check`, `component.check_drafts`, `library.search`,
+    /// `library.facets`, `library.inspect`), passed unchanged to
     /// `Engine::query`.
     #[serde(rename = "project.query")]
     Query(Query),
@@ -105,7 +106,7 @@ impl Request {
             ),
             info::<Query>(
                 "project.query",
-                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once. Nothing is stored.",
+                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as R>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges. Nothing is stored.",
             ),
             info::<NoParams>("project.undo", "Undo the last document change."),
             info::<NoParams>("project.redo", "Redo the last undone document change."),

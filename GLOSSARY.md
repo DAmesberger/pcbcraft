@@ -159,3 +159,29 @@ A Solidcraft design containing the board and component models, with editable par
 
 **Push-and-shove routing**:
 Interactive routing that moves existing tracks to make room while preserving their connections and obeying the board rules and locked-object constraints.
+
+**Library source**:
+Where catalog entries come from. The project library snapshot is the only source today; local library folders are planned. A source is authoritative only for new imports, never for a project that already holds a revision.
+
+**Catalog entry**:
+One searchable lineage at its latest published revision in one library source, derived from library data and never stored: its name, description, effective field defaults, package names, completeness badges and how many instances use it. A lineage that exists only as a draft has an entry that cannot be placed.
+_Avoid_: Part (a part is an exact manufacturer part)
+
+**Catalog query**:
+One line of free text, reserved filters (`pkg:`, `has:`, `missing:`, `src:`) and field predicates, parsed in core against the library's field definitions and ANDed.
+
+**Field predicate**:
+A query term that compares a typed field value by meaning, such as `R>=10k`, `tol<=1%` or `C:1n..100n`. Its key resolves through the data's field names and units; its value is parsed in the field's own units, and a comparison means "meets", not "equals".
+
+**RKM shorthand**:
+Writing the decimal point as a multiplier or unit letter, as in `4k7` for 4.7 k or `R47` for 0.47 Ω. Unit letters come from the field's unit set, so `R` reads as a decimal point only where the data declares `R`.
+
+**Facet**:
+A filter offered because the current results carry it: a field with its values and range, a package name or a completeness badge. Facets are derived from the results, never from a fixed category list.
+_Avoid_: Category
+
+**Completeness badge**:
+One separately shown property of a catalog entry: a symbol, a footprint, a 3D envelope or a manufacturer part number. Badges are never combined into a single "complete" flag.
+
+**Place palette**:
+The Schematic editor's searchable sheet for finding a component revision in the catalog and placing it, previewed in the properties card. It runs the same `library.search` query as the CLI and MCP and places through `component.place`.

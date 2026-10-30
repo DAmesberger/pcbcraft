@@ -105,6 +105,19 @@ const MAP: &[(&str, &[&str])] = &[
             "nets",
         ],
     ),
+    (
+        "catalog",
+        &[
+            "ids",
+            "diagnostics",
+            "quantity",
+            "fields",
+            "library",
+            "model",
+            "instances",
+            "completeness",
+        ],
+    ),
     ("scripting", &["ids", "diagnostics", "quantity", "library"]),
     (
         "validate",
@@ -139,6 +152,7 @@ const BELOW_UPDATES: &[&str] = &[
     "layout",
     "erc",
     "completeness",
+    "catalog",
     "scripting",
     "validate",
 ];
@@ -158,6 +172,7 @@ const BELOW_COMMANDS: &[&str] = &[
     "layout",
     "erc",
     "completeness",
+    "catalog",
     "scripting",
     "validate",
     "updates",

@@ -1,17 +1,20 @@
 //! Pcbcraft's dense card kit: form rows, unit fields, dropdowns, sections,
-//! status lines and Browser tree rows.
+//! status lines, Browser tree rows and the search sheet.
 //!
 //! Adapted from Solidcraft 4f3ac07a `crates/ui-egui/src/ui_kit/layout.rs`
 //! (rows, sections, status lines), `fields.rs` (dropdowns, cell editors),
-//! `disclosure.rs`, `panel.rs` (headers) and `tree.rs` (Browser rows), MIT
-//! option; see ATTRIBUTION.md. Upstream keeps these crate-private, so the
-//! geometry is reproduced here on top of the public tokens, fonts and icons.
-//! Feature panels supply content and commands only; chrome and control
-//! looks come from this module.
+//! `disclosure.rs`, `panel.rs` (headers), `tree.rs` (Browser rows) and
+//! `search.rs` (command-search sheet, field and rows), MIT option; see
+//! ATTRIBUTION.md. Upstream keeps these crate-private, so the geometry is
+//! reproduced here on top of the public tokens, fonts and icons. Feature
+//! panels supply content and commands only; chrome and control looks come
+//! from this module.
 mod form;
+mod search;
 mod tree;
 
 pub use form::*;
+pub use search::*;
 pub use tree::*;
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};

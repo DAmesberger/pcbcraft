@@ -348,3 +348,110 @@ fn select_functions_through_json_returns_the_engine_resolution() -> TestResult {
     assert_eq!(session.engine().project(), engine.project());
     Ok(())
 }
+
+/// A synthetic parts project as a session, built through the public format.
+fn parts_session() -> std::result::Result<Session, Box<dyn std::error::Error>> {
+    let file = EditorFile {
+        version: pcbcraft_core::format::FILE_VERSION,
+        project: pcbcraft_core::catalog::synthetic::project(24)?,
+        drafts: Drafts::default(),
+    };
+    Ok(Session::new(Engine::from_file(file)?))
+}
+
+fn query(name: &str, params: Value) -> Value {
+    json!({"command": "project.query", "params": {"query": name, "params": params}})
+}
+
+/// `library.search`, `library.facets` and `library.inspect` reach the engine
+/// through JSON and agree with a direct query; the found revision places
+/// through `project.apply`; a malformed query reports the term.
+#[test]
+fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
+    let mut session = parts_session()?;
+    let reply = session.dispatch(query(
+        "library.search",
+        json!({"query": "R:4k7..22k pkg:0603"}),
+    ));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let direct = session.engine().query(Query::Search {
+        query: "R:4k7..22k pkg:0603".into(),
+        limit: None,
+        include_drafts: false,
+    })?;
+    assert_eq!(reply["result"], serde_json::to_value(&direct)?);
+    let results = reply["result"]["result"]["results"]
+        .as_array()
+        .ok_or("no results")?
+        .clone();
+    let found: Vec<&str> = results
+        .iter()
+        .filter_map(|h| h["entry"]["name"].as_str())
+        .collect();
+    assert_eq!(found, ["EX-R0603-10K0-F", "EX-R0603-22K0-D"]);
+    assert_eq!(
+        reply["result"]["result"]["chips"][0],
+        "Resistance 4.7 kΩ .. 22 kΩ"
+    );
+
+    let facets = session.dispatch(query("library.facets", json!({"query": "ex-c"})));
+    assert_eq!(facets["ok"], true, "{facets}");
+    let labels: Vec<&str> = facets["result"]["result"]["fields"]
+        .as_array()
+        .ok_or("no facets")?
+        .iter()
+        .filter_map(|f| f["label"].as_str())
+        .collect();
+    assert_eq!(labels, ["Capacitance", "Max voltage"]);
+
+    let lineage = results[0]["entry"]["lineage"].as_u64().ok_or("lineage")?;
+    let inspected = session.dispatch(query("library.inspect", json!({"lineage": lineage})));
+    assert_eq!(inspected["ok"], true, "{inspected}");
+    let report = inspected["result"]["result"].clone();
+    assert_eq!(report["latest"], true);
+
+    // Place the found revision through the one engine.
+    let id = |value: &Value| value.as_u64().map(pcbcraft_core::DefinitionId);
+    let revision = results[0]["entry"]["revision"].as_u64().ok_or("revision")?;
+    let place = Operation::Instance(InstanceCommand::Place(NewInstance {
+        component: pcbcraft_core::ComponentRef::new(
+            pcbcraft_core::DefinitionId(lineage),
+            pcbcraft_core::Revision(u32::try_from(revision)?),
+        ),
+        designator: "R1".into(),
+        properties: vec![],
+        representation: id(&report["symbols"][0]["symbol"]["id"]).ok_or("symbol")?,
+        unit: UnitId(1),
+        position: [0.0, 0.0],
+        physical: Some(pcbcraft_core::PhysicalChoice {
+            binding: id(&report["implementations"][0]["binding"]["id"]).ok_or("binding")?,
+            footprint: id(&report["implementations"][0]["footprints"][0]["footprint"]["id"])
+                .ok_or("footprint")?,
+        }),
+    }));
+    let placed = session.dispatch(apply(&place, session.engine().revision()));
+    assert_eq!(placed["ok"], true, "{placed}");
+    // Now used in the project, the part ranks first for a shared prefix.
+    let again = session.dispatch(query(
+        "library.search",
+        json!({"query": "ex-r0603", "limit": 3}),
+    ));
+    let first = &again["result"]["result"]["results"][0]["entry"];
+    assert_eq!(first["name"], "EX-R0603-10K0-F");
+    assert_eq!(first["used"], 1);
+
+    let revision = session.engine().revision();
+    let bad = session.dispatch(query("library.search", json!({"query": "V>=10k"})));
+    assert_eq!(bad["ok"], false);
+    assert_eq!(bad["error"]["code"], "invalid_input");
+    assert_eq!(
+        bad["error"]["message"],
+        "V>=10k: 10 k has no unit of voltage"
+    );
+    assert_eq!(
+        session.engine().revision(),
+        revision,
+        "queries change nothing"
+    );
+    Ok(())
+}

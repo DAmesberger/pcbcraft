@@ -14,7 +14,7 @@ cargo run --locked --profile ci -p pcbcraft [FILE.pcbcraft]
 cargo xtask ci
 ```
 
-The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, choose a component revision and Place part, connect terminals with Wire, and rename a selected wire's net. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
+The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, Place (or P) opens the Place palette: type a query such as `10k 0603`, `R>=10k` or `tol<=1%`, move with ↑/↓, press Enter to place (Shift+Enter keeps the palette open) or click a row to place it with the mouse; the properties card previews the highlighted part. Connect terminals with Wire and rename a selected wire's net. The Browser's Components section has a filter field that uses the same search. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
 
 File offers New, Open, Save, Save as and Export to Solidcraft through native dialogs; reads, writes and exports run in the background. Unsaved work is snapshotted for crash recovery and offered at the next launch. Project files contain the revisioned library snapshot and the definition drafts, so they reopen offline. Native export writes a new parametric `.solidcraft` file; package models are clearly identified envelopes.
 
@@ -36,6 +36,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 
 ```sh
 cargo run --locked --profile ci -p pcbcraft-cli -- demo example.pcbcraft
+cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
 cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
@@ -43,6 +44,14 @@ cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
 ```
 
 `stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.
+
+`project.query` also answers the parts catalog ([design and query language](docs/parts-library.md)): `library.search` ranks the project's component lineages for a one-line query, `library.facets` lists the fields, packages and badges the matches carry, and `library.inspect` reports one revision. For example:
+
+```json
+{"command":"project.query","params":{"query":"library.search","params":{"query":"R>=10k pkg:0603","limit":10}}}
+```
+
+Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
 
 ## Scripting integration proof
 
@@ -63,6 +72,7 @@ Solidcraft and its required patches are pinned to `4f3ac07aec69489183185071f07d7
 
 - [Product plan](docs/pcbcraft-plan.md)
 - [Part library design](docs/part-library-design.md)
+- [Parts library: catalog, search and slice plan](docs/parts-library.md)
 - [Component-editor acceptance scenarios](docs/part-library-design.md#component-editor-acceptance-scenarios), including multi-unit symbols and structured multi-function IOs
 - [Native integration research](docs/solidcraft-interop-research.md)
 - [Copper performance research](docs/copper-performance-research.md)

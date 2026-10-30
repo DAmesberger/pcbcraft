@@ -7,6 +7,7 @@ mod model_scene;
 mod palette;
 mod part_editor;
 mod pcb_editor;
+mod place_palette;
 mod scene;
 mod schematic_editor;
 mod shell;

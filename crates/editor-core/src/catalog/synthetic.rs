@@ -1,0 +1,391 @@
+//! Original synthetic catalog data for tests, benchmarks and trying the
+//! Place palette. Every name is an invented `EX-` identifier; values follow
+//! the generic preferred-number habit of passive parts and come from no
+//! vendor, EDA library or taxonomy. Nothing here is verified against a real
+//! component.
+use super::{CatalogEntry, Index, Vocabulary, entries};
+use crate::diagnostics::{Error, Result};
+use crate::fields::{
+    FieldDefinition, FieldSelection, FieldValue, QuantityKind, ToleranceBasis, ValueType,
+};
+use crate::ids::{
+    BindingRef, DefinitionId, FieldRef, FootprintRef, PackageRef, QuantityKindRef, Revision,
+    SymbolRef,
+};
+use crate::library::samples::{self, SampleRefs};
+use crate::library::{Definition, DefinitionMeta, DraftEdit, Library, Published};
+use crate::model::Project;
+use crate::quantity::{UnitOfMeasure, UnitSet};
+
+/// Parts one synthetic project holds; each takes three lineages.
+pub const MAX_PARTS: usize = 1000;
+
+const PROVENANCE: &str = "Synthetic catalog fixture; invented values, not a real component.";
+
+/// Resistances (Ω) with their invented code.
+const RESISTORS: &[(f64, &str)] = &[
+    (10e3, "10K0"),
+    (4.7e3, "4K70"),
+    (22e3, "22K0"),
+    (470.0, "470R"),
+    (1e6, "1M00"),
+    (100e3, "100K"),
+    (0.47, "R470"),
+    (2.2e3, "2K20"),
+];
+/// Relative tolerances with their invented code letter.
+const TOLERANCES: &[(f64, &str)] = &[(0.01, "F"), (0.05, "J"), (0.005, "D")];
+/// Capacitances (F) with their invented code.
+const CAPACITORS: &[(f64, &str)] = &[
+    (100e-9, "100N"),
+    (10e-6, "10U0"),
+    (4.7e-9, "4N70"),
+    (1e-6, "1U00"),
+    (22e-12, "22P0"),
+];
+const VOLTAGES: &[f64] = &[16.0, 50.0, 25.0, 6.3];
+/// Size labels: plain text, as package names are.
+const SIZES: &[&str] = &["0603", "0402"];
+const HEADER: &str = "TH 2.54";
+
+struct Allocator(u64);
+
+impl Allocator {
+    fn next(&mut self) -> Result<DefinitionId> {
+        let id = self.0;
+        self.0 = id
+            .checked_add(1)
+            .ok_or_else(|| Error::Limit("synthetic identity space exhausted".into()))?;
+        Ok(DefinitionId(id))
+    }
+}
+
+fn meta(name: &str, description: &str) -> DefinitionMeta {
+    DefinitionMeta {
+        name: name.into(),
+        description: description.into(),
+        provenance: PROVENANCE.into(),
+    }
+}
+
+fn first<T>(id: DefinitionId, meta: DefinitionMeta, definition: T) -> Published<T> {
+    Published {
+        id,
+        revision: Revision::FIRST,
+        meta,
+        definition,
+    }
+}
+
+fn push(library: &mut Library, edit: DraftEdit) {
+    let DraftEdit {
+        id,
+        meta,
+        definition,
+    } = edit;
+    match definition {
+        Definition::Component(d) => library.components.push(first(id, meta, d)),
+        Definition::Symbol(d) => library.symbols.push(first(id, meta, d)),
+        Definition::Package(d) => library.packages.push(first(id, meta, d)),
+        Definition::Footprint(d) => library.footprints.push(first(id, meta, d)),
+        Definition::Binding(d) => library.bindings.push(first(id, meta, d)),
+        Definition::QuantityKind(d) => library.quantity_kinds.push(first(id, meta, d)),
+        Definition::Field(d) => library.fields.push(first(id, meta, d)),
+    }
+}
+
+fn kind(dimension: [i8; 7], symbol: &str, aliases: &[&str]) -> QuantityKind {
+    QuantityKind {
+        units: UnitSet {
+            dimension,
+            units: vec![UnitOfMeasure {
+                symbol: symbol.into(),
+                aliases: aliases.iter().map(|a| (*a).into()).collect(),
+                scale: 1.0,
+                si_prefixes: true,
+            }],
+        },
+        default_unit: symbol.into(),
+    }
+}
+
+/// The fields every synthetic part may select.
+struct Fields {
+    resistance: DefinitionId,
+    capacitance: DefinitionId,
+    tolerance: DefinitionId,
+    voltage: DefinitionId,
+}
+
+fn fields(library: &mut Library, ids: &mut Allocator) -> Result<Fields> {
+    let mut quantity_field = |library: &mut Library,
+                              name: &str,
+                              dimension: [i8; 7],
+                              symbol: &str,
+                              aliases: &[&str],
+                              field: &str|
+     -> Result<DefinitionId> {
+        let kind_id = ids.next()?;
+        let field_id = ids.next()?;
+        library.quantity_kinds.push(first(
+            kind_id,
+            meta(name, ""),
+            kind(dimension, symbol, aliases),
+        ));
+        library.fields.push(first(
+            field_id,
+            meta(field, ""),
+            FieldDefinition {
+                next_local: 1,
+                value_type: ValueType::Quantity {
+                    kind: QuantityKindRef::new(kind_id, Revision::FIRST),
+                    min: Some(0.0),
+                    max: None,
+                },
+                default: None,
+                required_at: None,
+            },
+        ));
+        Ok(field_id)
+    };
+    let resistance = quantity_field(
+        library,
+        "Resistance",
+        [2, 1, -3, -2, 0, 0, 0],
+        "Ω",
+        &["ohm", "R"],
+        "Resistance",
+    )?;
+    let capacitance = quantity_field(
+        library,
+        "Capacitance",
+        [-2, -1, 4, 2, 0, 0, 0],
+        "F",
+        &[],
+        "Capacitance",
+    )?;
+    let voltage = quantity_field(
+        library,
+        "Voltage",
+        [2, 1, -3, -1, 0, 0, 0],
+        "V",
+        &[],
+        "Max voltage",
+    )?;
+    let tolerance = ids.next()?;
+    library.fields.push(first(
+        tolerance,
+        meta("Tolerance", ""),
+        FieldDefinition {
+            next_local: 1,
+            value_type: ValueType::Tolerance {
+                basis: ToleranceBasis::Relative,
+            },
+            default: None,
+            required_at: None,
+        },
+    ));
+    Ok(Fields {
+        resistance,
+        capacitance,
+        tolerance,
+        voltage,
+    })
+}
+
+/// A package and its footprint, shared by every part of one size.
+fn shared_package(
+    library: &mut Library,
+    ids: &mut Allocator,
+    label: &str,
+    header: bool,
+) -> Result<(PackageRef, FootprintRef)> {
+    let package = PackageRef::new(ids.next()?, Revision::FIRST);
+    let footprint = FootprintRef::new(ids.next()?, Revision::FIRST);
+    let refs = SampleRefs {
+        component: DefinitionId(0),
+        symbol: SymbolRef::default(),
+        package,
+        footprint,
+        binding: BindingRef::default(),
+    };
+    let edits = if header {
+        samples::two_terminal_header(label, refs)
+    } else {
+        samples::two_terminal(label, refs)
+    };
+    for mut edit in edits {
+        match edit.definition {
+            Definition::Package(_) => {
+                edit.meta = meta(label, "Synthetic two-terminal package");
+                push(library, edit);
+            }
+            Definition::Footprint(_) => {
+                edit.meta = meta(&format!("{label} lands"), "Synthetic two-land footprint");
+                push(library, edit);
+            }
+            _ => {}
+        }
+    }
+    Ok((package, footprint))
+}
+
+/// A synthetic part: its name, description, package and field defaults.
+struct Part {
+    name: String,
+    description: String,
+    package: usize,
+    values: Vec<(DefinitionId, FieldValue, bool)>,
+}
+
+fn part(index: usize, fields: &Fields) -> Part {
+    let round = index / 3;
+    let generation = |len: usize| {
+        let lap = round / len.max(1);
+        if lap == 0 {
+            String::new()
+        } else {
+            format!("-{}", lap + 1)
+        }
+    };
+    let quantity = |si: f64| FieldValue::Quantity {
+        si,
+        display_unit: None,
+    };
+    let cycle = |len: usize| round % len.max(1);
+    match index % 3 {
+        0 => {
+            let (ohms, code) = RESISTORS[cycle(RESISTORS.len())];
+            let (tolerance, letter) = TOLERANCES[round % TOLERANCES.len()];
+            let size = round % SIZES.len();
+            Part {
+                name: format!(
+                    "EX-R{}-{code}-{letter}{}",
+                    SIZES[size],
+                    generation(RESISTORS.len())
+                ),
+                description: format!("Synthetic thick-film resistor, {} package", SIZES[size]),
+                package: size,
+                values: vec![
+                    (fields.resistance, quantity(ohms), true),
+                    (
+                        fields.tolerance,
+                        FieldValue::Tolerance {
+                            minus: tolerance,
+                            plus: tolerance,
+                        },
+                        false,
+                    ),
+                ],
+            }
+        }
+        1 => {
+            let (farads, code) = CAPACITORS[cycle(CAPACITORS.len())];
+            let volts = VOLTAGES[round % VOLTAGES.len()];
+            let size = (round + 1) % SIZES.len();
+            Part {
+                name: format!(
+                    "EX-C{}-{code}-{}V{}",
+                    SIZES[size],
+                    crate::quantity::format_number(volts),
+                    generation(CAPACITORS.len())
+                ),
+                description: format!("Synthetic ceramic capacitor, {} package", SIZES[size]),
+                package: size,
+                values: vec![
+                    (fields.capacitance, quantity(farads), true),
+                    (fields.voltage, quantity(volts), false),
+                ],
+            }
+        }
+        _ => Part {
+            name: format!("EX-HDR-1X2-{:03}", round + 1),
+            description: "Synthetic two-pin header, 2.54 mm pitch".into(),
+            package: SIZES.len(),
+            values: vec![],
+        },
+    }
+}
+
+/// A project whose library holds `parts` published synthetic components
+/// (resistors, capacitors and headers in turn) with typed field defaults.
+pub fn project(parts: usize) -> Result<Project> {
+    if parts > MAX_PARTS {
+        return Err(Error::Limit(format!(
+            "a synthetic project holds at most {MAX_PARTS} parts"
+        )));
+    }
+    let mut ids = Allocator(1);
+    let mut library = Library::default();
+    let fields = fields(&mut library, &mut ids)?;
+    let mut packages = Vec::new();
+    for size in SIZES {
+        packages.push(shared_package(&mut library, &mut ids, size, false)?);
+    }
+    packages.push(shared_package(&mut library, &mut ids, HEADER, true)?);
+    for index in 0..parts {
+        let part = part(index, &fields);
+        let (package, footprint) = packages[part.package.min(packages.len() - 1)];
+        let refs = SampleRefs {
+            component: ids.next()?,
+            symbol: SymbolRef::new(ids.next()?, Revision::FIRST),
+            package,
+            footprint,
+            binding: BindingRef::new(ids.next()?, Revision::FIRST),
+        };
+        let edits = if part.package == SIZES.len() {
+            samples::two_terminal_header(&part.name, refs)
+        } else {
+            samples::two_terminal(&part.name, refs)
+        };
+        for mut edit in edits {
+            match &mut edit.definition {
+                Definition::Component(component) => {
+                    component.fields = part
+                        .values
+                        .iter()
+                        .map(|(field, value, shown)| FieldSelection {
+                            field: FieldRef::new(*field, Revision::FIRST),
+                            default: Some(value.clone()),
+                            show_on_symbol: *shown,
+                        })
+                        .collect();
+                    edit.meta = meta(&part.name, &part.description);
+                }
+                Definition::Symbol(_) | Definition::Binding(_) => {
+                    edit.meta.provenance = PROVENANCE.into();
+                }
+                _ => continue,
+            }
+            push(&mut library, edit);
+        }
+    }
+    Ok(Project {
+        name: "Synthetic parts".into(),
+        next_id: ids.0,
+        library,
+        ..Project::default()
+    })
+}
+
+/// An index of `count` synthetic entries for benchmarks: the entries of a
+/// small synthetic project repeated with distinct lineages and names.
+pub fn index(count: usize) -> Result<Index> {
+    let project = project(48)?;
+    let base = entries(&project, &Default::default());
+    if base.is_empty() {
+        return Err(Error::Invalid("synthetic project has no entries".into()));
+    }
+    let mut out: Vec<CatalogEntry> = Vec::with_capacity(count);
+    for k in 0..count {
+        let mut entry = base[k % base.len()].clone();
+        let lap = k / base.len();
+        if lap > 0 {
+            entry.lineage = DefinitionId(1_000_000 + k as u64);
+            entry.name = format!("{}-{lap:04}", entry.name);
+        }
+        entry.used = usize::from(k % 97 == 0);
+        out.push(entry);
+    }
+    Index::new(out, Vocabulary::of(&project.library))
+}

@@ -4,7 +4,7 @@
 //! [`Pick`] through the editors.
 use crate::kit::{self, Row};
 use pcbcraft_core::library::Definition;
-use pcbcraft_core::{DefinitionId, Engine, Id};
+use pcbcraft_core::{DefinitionId, Engine, Id, Query, QueryResult};
 use std::collections::BTreeSet;
 
 /// What the Browser highlights: the active workspace's selection.
@@ -68,6 +68,58 @@ fn components(engine: &Engine) -> Vec<ComponentRow> {
     rows
 }
 
+/// The Components filter text, kept in egui memory.
+const FILTER: &str = "browser-component-filter";
+
+/// One filter result per document revision and text.
+#[derive(Clone)]
+struct Filtered {
+    revision: u64,
+    text: String,
+    result: Result<Option<Vec<DefinitionId>>, String>,
+}
+
+/// The lineages a filter text keeps, ranked by the engine's
+/// `library.search` (drafts included); `None` for an empty filter.
+fn filtered(
+    ctx: &egui::Context,
+    engine: &Engine,
+    text: &str,
+) -> Result<Option<Vec<DefinitionId>>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let key = egui::Id::new((FILTER, "result"));
+    if let Some(cached) = ctx.data(|d| d.get_temp::<Filtered>(key))
+        && cached.revision == engine.revision()
+        && cached.text == text
+    {
+        return cached.result;
+    }
+    let result = match engine.query(Query::Search {
+        query: text.into(),
+        limit: Some(pcbcraft_core::catalog::MAX_RESULTS),
+        include_drafts: true,
+    }) {
+        Ok(QueryResult::Search(report)) => Ok(Some(
+            report.results.iter().map(|h| h.entry.lineage).collect(),
+        )),
+        Ok(_) => Err("unexpected report".into()),
+        Err(error) => Err(error.to_string()),
+    };
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            key,
+            Filtered {
+                revision: engine.revision(),
+                text: text.into(),
+                result: result.clone(),
+            },
+        )
+    });
+    result
+}
+
 /// Fold state, persisted in egui memory per row key.
 fn folded(ui: &egui::Ui, key: &str, default_open: bool) -> bool {
     ui.ctx()
@@ -126,7 +178,19 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
         return pick;
     }
 
-    let components = components(engine);
+    let all = components(engine);
+    let mut filter = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(egui::Id::new(FILTER)))
+        .unwrap_or_default();
+    let matched = filtered(ui.ctx(), engine, &filter);
+    let components: Vec<&ComponentRow> = match &matched {
+        Ok(Some(order)) => order
+            .iter()
+            .filter_map(|id| all.iter().find(|c| c.id == *id))
+            .collect(),
+        _ => all.iter().collect(),
+    };
     if folder(
         ui,
         "components",
@@ -136,7 +200,29 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
         lit.component.is_some(),
         true,
     ) {
-        for component in &components {
+        ui.add_space(2.0);
+        let response = kit::text_field(
+            ui,
+            FILTER,
+            &mut filter,
+            "Filter: name, 10k, R>=1k, pkg:0603",
+            matched.is_err(),
+        );
+        if response.changed() {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new(FILTER), filter.clone()));
+        }
+        ui.add_space(2.0);
+        match &matched {
+            Err(error) => {
+                kit::status(ui, error, kit::Tone::Error);
+            }
+            Ok(Some(order)) if order.is_empty() => {
+                kit::note(ui, "No components match.");
+            }
+            _ => {}
+        }
+        for component in components {
             let secondary = match component.revision {
                 Some(r) => format!("r{r}"),
                 None => "draft".into(),
@@ -319,4 +405,80 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
         }
     }
     pick
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(output: &egui::FullOutput) -> Vec<String> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in &output.shapes {
+            walk(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    fn frame(ctx: &egui::Context, engine: &Engine, events: Vec<egui::Event>) -> Vec<String> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 1600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                kit::form(ui, |ui| show(ui, engine, Lit::default()));
+            },
+        );
+        output.textures_delta.clear();
+        labels(&output)
+    }
+
+    #[test]
+    fn the_components_filter_keeps_the_engines_matches_in_rank_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::from_file(pcbcraft_core::format::EditorFile {
+            version: pcbcraft_core::format::FILE_VERSION,
+            project: pcbcraft_core::catalog::synthetic::project(24)?,
+            drafts: Default::default(),
+        })?;
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let all = frame(&ctx, &engine, vec![]);
+        assert_eq!(all.iter().filter(|t| t.starts_with("EX-")).count(), 24);
+
+        let set = |text: &str| {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(FILTER), text.to_owned()));
+        };
+        set("R>=10k pkg:0603");
+        let shown = frame(&ctx, &engine, vec![]);
+        let rows: Vec<&String> = shown.iter().filter(|t| t.starts_with("EX-")).collect();
+        assert_eq!(
+            rows,
+            ["EX-R0603-10K0-F", "EX-R0603-1M00-J", "EX-R0603-22K0-D"]
+        );
+        set("V>=10k");
+        let shown = frame(&ctx, &engine, vec![]);
+        assert!(
+            shown
+                .iter()
+                .any(|t| t == "V>=10k: 10 k has no unit of voltage")
+        );
+        assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 24);
+        set("nothing-like-this");
+        let shown = frame(&ctx, &engine, vec![]);
+        assert!(shown.iter().any(|t| t == "No components match."));
+        assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 0);
+        Ok(())
+    }
 }
