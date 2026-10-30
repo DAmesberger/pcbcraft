@@ -6,7 +6,7 @@
 //! value.
 use super::drafts::Draft;
 use super::publish::{issue, object};
-use super::{Definition, Library, MAX_LABEL, printable};
+use super::{Definition, Library, MAX_LABEL};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{
     Bounds, Point, Shape, cos_sin, finite_within, point_valid, polygon_self_intersects,
@@ -14,6 +14,9 @@ use crate::geometry::{
 use crate::ids::{DefinitionId, GraphicId, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+mod edit;
+pub use edit::{GraphicEdit, GraphicTarget, MAX_GRAPHIC_EDITS, apply};
 
 /// Graphics in one symbol unit.
 pub const MAX_GRAPHICS_PER_UNIT: usize = 256;
@@ -46,6 +49,12 @@ pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.5;
 pub const GRID_TOLERANCE_MM: f64 = 1e-6;
 /// The schematic sheet grid symbols are placed on.
 pub const SHEET_GRID_MM: f64 = 5.0;
+/// Lines one text may have.
+pub const MAX_TEXT_LINES: usize = 16;
+/// Default distance between text baselines, in cap heights.
+pub const TEXT_LINE_SPACING: f64 = 1.6;
+/// Line spacings a text may use, in cap heights.
+pub const LINE_SPACING: std::ops::RangeInclusive<f64> = 1.0..=4.0;
 
 /// A drawn primitive or text with its stable local identity.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -90,6 +99,23 @@ pub struct Text {
     pub rotation: Rotation,
     pub justify: Justify,
     pub visible: bool,
+    /// Distance from one line to the next, in cap heights (1–4). Literal
+    /// text breaks lines at `\n`.
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: f64,
+}
+
+fn default_line_spacing() -> f64 {
+    TEXT_LINE_SPACING
+}
+
+/// Whether literal text is acceptable: not blank, at most 256 bytes and 16
+/// lines, and no control characters except line breaks.
+pub fn printable_text(text: &str) -> bool {
+    !text.trim().is_empty()
+        && text.len() <= MAX_LABEL
+        && text.split('\n').count() <= MAX_TEXT_LINES
+        && !text.chars().any(|c| c.is_control() && c != '\n')
 }
 
 /// What a text shows. Everything except `Literal` resolves on the placed
@@ -98,7 +124,7 @@ pub struct Text {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TextContent {
-    /// Printable text of at most 256 bytes.
+    /// Printable text of at most 256 bytes; `\n` breaks lines (at most 16).
     Literal(String),
     /// The instance designator (plus unit label on multi-unit symbols). In
     /// the editor, the component's designator prefix and `?`.
@@ -299,8 +325,9 @@ pub fn on_grid(p: Point, step: f64) -> bool {
         .all(|v| (v - (v / step).round() * step).abs() <= GRID_TOLERANCE_MM)
 }
 
-/// The core's text extent rule: an **approximate** box of `chars × advance ×
-/// height` by `height`. Core has no fonts; exact glyphs exist only in views.
+/// The core's text extent rule: an **approximate** box per line of `chars ×
+/// advance × height` by `height`, lines `line_spacing × height` apart. Core
+/// has no fonts; exact glyphs exist only in views.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextMetric {
     pub advance: f64,
@@ -315,17 +342,108 @@ impl Default for TextMetric {
 /// Characters assumed for text whose content resolves on an instance.
 pub const PLACEHOLDER_CHARS: usize = 4;
 
+/// The extent of a text block in characters and lines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextSize {
+    /// Characters on the longest line.
+    pub columns: usize,
+    pub lines: usize,
+    /// Distance between lines, in cap heights.
+    pub line_spacing: f64,
+}
+
+impl TextSize {
+    /// One line of `chars` characters.
+    pub fn line(chars: usize) -> Self {
+        Self {
+            columns: chars,
+            lines: 1,
+            line_spacing: TEXT_LINE_SPACING,
+        }
+    }
+    /// The block `text` lays out, broken at `\n`.
+    pub fn of(text: &str, line_spacing: f64) -> Self {
+        Self {
+            columns: text
+                .split('\n')
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0),
+            lines: text.split('\n').count().clamp(1, MAX_TEXT_LINES),
+            line_spacing,
+        }
+    }
+    /// Block height for a cap height of `height`.
+    fn block_height(&self, height: f64) -> f64 {
+        let spacing = if self.line_spacing.is_finite() {
+            self.line_spacing
+                .clamp(*LINE_SPACING.start(), *LINE_SPACING.end())
+        } else {
+            TEXT_LINE_SPACING
+        };
+        height * (1.0 + (self.lines.clamp(1, MAX_TEXT_LINES) - 1) as f64 * spacing)
+    }
+}
+
+/// One line of a text block: what it shows and where its centre-left,
+/// centre or centre-right anchor (by the block's horizontal justification)
+/// sits, already rotated into place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextLine<'a> {
+    pub text: &'a str,
+    pub at: Point,
+}
+
+/// Lay a block of `text` out line by line. The block's justification places
+/// the whole block against `at`; every line keeps the block's horizontal
+/// justification and is centred vertically on its own cap box, so a
+/// one-line block puts its single line exactly where a one-line text goes.
+pub fn text_lines(
+    text: &str,
+    at: Point,
+    height: f64,
+    rotation_deg: f64,
+    justify: Justify,
+    line_spacing: f64,
+) -> Vec<TextLine<'_>> {
+    let size = TextSize::of(text, line_spacing);
+    let block = size.block_height(height);
+    let pitch = if size.lines > 1 {
+        (block - height) / (size.lines - 1) as f64
+    } else {
+        0.0
+    };
+    let top = match justify.v {
+        VAlign::Top => 0.0,
+        VAlign::Middle => block / 2.0,
+        VAlign::Bottom => block,
+    };
+    let (c, s) = cos_sin(rotation_deg);
+    text.split('\n')
+        .take(MAX_TEXT_LINES)
+        .enumerate()
+        .map(|(i, line)| {
+            let y = top - height / 2.0 - i as f64 * pitch;
+            TextLine {
+                text: line,
+                at: [at[0] - s * y, at[1] + c * y],
+            }
+        })
+        .collect()
+}
+
 impl TextMetric {
-    /// The approximate box of `chars` characters anchored at `at`.
+    /// The approximate box of a text block anchored at `at`.
     pub fn bounds(
         &self,
         at: Point,
         height: f64,
         rotation_deg: f64,
         justify: Justify,
-        chars: usize,
+        size: TextSize,
     ) -> Bounds {
-        let width = height * self.advance * chars.min(4096) as f64;
+        let width = height * self.advance * size.columns.min(4096) as f64;
+        let block = size.block_height(height);
         let x0 = match justify.h {
             HAlign::Left => 0.0,
             HAlign::Center => -width / 2.0,
@@ -333,15 +451,15 @@ impl TextMetric {
         };
         let y0 = match justify.v {
             VAlign::Bottom => 0.0,
-            VAlign::Middle => -height / 2.0,
-            VAlign::Top => -height,
+            VAlign::Middle => -block / 2.0,
+            VAlign::Top => -block,
         };
         let (c, s) = cos_sin(rotation_deg);
         let corners = [
             [x0, y0],
             [x0 + width, y0],
-            [x0 + width, y0 + height],
-            [x0, y0 + height],
+            [x0 + width, y0 + block],
+            [x0, y0 + block],
         ];
         Bounds::of(
             corners
@@ -353,11 +471,12 @@ impl TextMetric {
 }
 
 impl Text {
-    /// Characters the text shows in a definition, before resolution.
-    pub fn chars(&self) -> usize {
+    /// The block the text shows in a definition, before resolution;
+    /// placeholders are one line of [`PLACEHOLDER_CHARS`].
+    pub fn size(&self) -> TextSize {
         match &self.content {
-            TextContent::Literal(text) => text.chars().count(),
-            _ => PLACEHOLDER_CHARS,
+            TextContent::Literal(text) => TextSize::of(text, self.line_spacing),
+            _ => TextSize::line(PLACEHOLDER_CHARS),
         }
     }
     pub fn bounds(&self, m: TextMetric) -> Bounds {
@@ -366,12 +485,27 @@ impl Text {
             self.height,
             self.rotation.degrees(),
             self.justify,
-            self.chars(),
+            self.size(),
         )
     }
 }
 
 impl Item {
+    /// The item moved by `delta` millimetres.
+    pub fn translated(&self, delta: Point) -> Item {
+        match self {
+            Self::Shape { shape, width, fill } => Self::Shape {
+                shape: shape.translated(delta),
+                width: *width,
+                fill: *fill,
+            },
+            Self::Text(text) => Self::Text(Text {
+                at: [text.at[0] + delta[0], text.at[1] + delta[1]],
+                ..text.clone()
+            }),
+        }
+    }
+
     /// Points the item stores.
     pub fn vertices(&self) -> usize {
         match self {
@@ -398,6 +532,8 @@ impl Item {
                 point_valid(text.at)
                     && text.height.is_finite()
                     && TEXT_HEIGHT_MM.contains(&text.height)
+                    && text.line_spacing.is_finite()
+                    && LINE_SPACING.contains(&text.line_spacing)
             }
         }
     }
@@ -429,7 +565,17 @@ pub(super) fn graphic_findings(
                     this.clone(),
                 ));
             }
-            if let Shape::Polygon { points } = shape
+            if !shape.corners_fit() {
+                out.push(issue(
+                    "graphic.radius_too_large",
+                    format!(
+                        "Graphic {} rounds a corner more than its edges allow, or rounds an open end.",
+                        graphic.id
+                    ),
+                    this.clone(),
+                ));
+            }
+            if let Shape::Polygon { points, .. } = shape
                 && polygon_self_intersects(points)
             {
                 out.push(issue(
@@ -455,7 +601,7 @@ pub(super) fn graphic_findings(
         }
         Item::Text(text) => {
             if let TextContent::Literal(s) = &text.content
-                && !printable(s)
+                && !printable_text(s)
             {
                 out.push(issue(
                     "text.empty",
@@ -471,18 +617,18 @@ fn degenerate(shape: &Shape) -> bool {
     const EPS: f64 = 1e-9;
     match shape {
         Shape::Line { a, b } => crate::geometry::distance(*a, *b) <= EPS,
-        Shape::Polyline { points } => {
+        Shape::Polyline { points, .. } => {
             points.len() < 2
                 || points
                     .windows(2)
                     .all(|w| crate::geometry::distance(w[0], w[1]) <= EPS)
         }
-        Shape::Rect { a, b } => (a[0] - b[0]).abs() <= EPS || (a[1] - b[1]).abs() <= EPS,
+        Shape::Rect { a, b, .. } => (a[0] - b[0]).abs() <= EPS || (a[1] - b[1]).abs() <= EPS,
         Shape::Circle { radius, .. } => *radius < MIN_RADIUS_MM,
         Shape::Arc {
             radius, sweep_deg, ..
         } => *radius < MIN_RADIUS_MM || sweep_deg.abs() <= EPS,
-        Shape::Polygon { points } => {
+        Shape::Polygon { points, .. } => {
             points.len() < 3 || crate::geometry::signed_area2(points).abs() <= EPS
         }
     }
@@ -553,13 +699,11 @@ impl Pin {
         }
         if self.decorations.clock {
             let h = size / 2.0;
-            out.push(Shape::Polyline {
-                points: vec![
-                    [body[0] + n[0] * h, body[1] + n[1] * h],
-                    [body[0] + d[0] * size, body[1] + d[1] * size],
-                    [body[0] - n[0] * h, body[1] - n[1] * h],
-                ],
-            });
+            out.push(Shape::polyline(vec![
+                [body[0] + n[0] * h, body[1] + n[1] * h],
+                [body[0] + d[0] * size, body[1] + d[1] * size],
+                [body[0] - n[0] * h, body[1] - n[1] * h],
+            ]));
         }
         out
     }
@@ -652,10 +796,7 @@ pub fn body_rect(id: GraphicId, body: Bounds) -> Graphic {
     Graphic {
         id,
         item: Item::Shape {
-            shape: Shape::Rect {
-                a: body.min,
-                b: body.max,
-            },
+            shape: Shape::rect(body.min, body.max),
             width: SYMBOL_STROKE_MM,
             fill: Fill::Body,
         },
@@ -673,6 +814,7 @@ pub fn text(id: GraphicId, content: TextContent, at: Point, justify: Justify) ->
             rotation: Rotation::R0,
             justify,
             visible: true,
+            line_spacing: TEXT_LINE_SPACING,
         }),
     }
 }

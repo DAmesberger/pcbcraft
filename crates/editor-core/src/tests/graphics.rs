@@ -8,7 +8,7 @@ use crate::library::graphics::{self, MAX_GRAPHICS_PER_UNIT, MAX_SHAPE_POINTS, MA
 use crate::library::samples::{self, SampleRefs};
 use crate::library::{
     Decorations, Fill, Graphic, Grid, HAlign, Item, Justify, Pin, PinDirection, Rotation,
-    SymbolDefinition, SymbolHit, Text, TextContent, TextMetric, Unit, VAlign,
+    SymbolDefinition, SymbolHit, Text, TextContent, TextMetric, TextSize, Unit, VAlign,
 };
 use crate::schematic;
 use crate::{
@@ -120,19 +120,11 @@ fn each_blocking_graphic_finding_names_its_graphic_and_blocks_publish() -> Resul
         ),
         (
             "graphic.polygon_self_intersecting",
-            shape(10, Shape::Polygon { points: bow_tie }, 0.25, Fill::None),
+            shape(10, Shape::polygon(bow_tie), 0.25, Fill::None),
         ),
         (
             "graphic.invisible",
-            shape(
-                10,
-                Shape::Rect {
-                    a: [0.0, 0.0],
-                    b: [1.0, 1.0],
-                },
-                0.0,
-                Fill::None,
-            ),
+            shape(10, Shape::rect([0.0, 0.0], [1.0, 1.0]), 0.0, Fill::None),
         ),
         (
             "graphic.fill_open",
@@ -232,15 +224,7 @@ fn pins_units_and_field_text_have_structural_rules() -> Result<()> {
 fn a_retired_graphic_id_is_never_reused() -> Result<()> {
     let mut engine = Engine::default();
     let f = draft(&mut engine, &two("Pair"))?;
-    let outline = shape(
-        5,
-        Shape::Rect {
-            a: [-2.5, -2.5],
-            b: [2.5, 2.5],
-        },
-        0.25,
-        Fill::Body,
-    );
+    let outline = shape(5, Shape::rect([-2.5, -2.5], [2.5, 2.5]), 0.25, Fill::Body);
     add_graphic(&mut engine, f.symbol, outline.clone())?;
     publish(&mut engine, f.all())?;
     // r2 retires graphic 5.
@@ -290,9 +274,7 @@ fn drafts_beyond_the_persistence_bounds_are_refused_unchanged() -> Result<()> {
     let polyline = |id: u32, n: usize| {
         shape(
             id,
-            Shape::Polyline {
-                points: (0..n).map(|i| [i as f64 * 0.01, 0.0]).collect(),
-            },
+            Shape::polyline((0..n).map(|i| [i as f64 * 0.01, 0.0]).collect()),
             0.25,
             Fill::None,
         )
@@ -644,9 +626,7 @@ fn pin_decorations_shorten_the_stub_and_sit_on_the_body() {
                 center: [-3.0, 0.0],
                 radius: 0.5
             },
-            Shape::Polyline {
-                points: vec![[-2.5, 0.5], [-1.5, 0.0], [-2.5, -0.5]]
-            },
+            Shape::polyline(vec![[-2.5, 0.5], [-1.5, 0.0], [-2.5, -0.5]]),
         ]
     );
 }
@@ -669,10 +649,7 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
     assert_eq!(placed.shapes.len(), 1);
     assert_eq!(
         placed.shapes[0].shape,
-        Shape::Rect {
-            a: [-14.5, -1.0],
-            b: [-9.5, 1.0]
-        }
+        Shape::rect([-14.5, -1.0], [-9.5, 1.0])
     );
     assert_eq!(placed.shapes[0].fill, Fill::Body);
     let texts: Vec<(&str, [f64; 2])> = placed
@@ -719,6 +696,7 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
                         v: VAlign::Top,
                     },
                     visible: true,
+                    line_spacing: graphics::TEXT_LINE_SPACING,
                 }),
             });
             if let Item::Text(t) = &mut s.units[0].graphics[2].item {
@@ -827,7 +805,10 @@ fn placed_units_pick_what_they_draw() -> Result<()> {
     let b = name.bounds(m);
     let end = [b.max[0] - 0.05, (b.min[1] + b.max[1]) / 2.0];
     assert!(
-        b.max[0] - b.min[0] > m.bounds([0.0; 2], name.height, 0.0, name.justify, 4).max[0] * 2.0
+        b.max[0] - b.min[0]
+            > m.bounds([0.0; 2], name.height, 0.0, name.justify, TextSize::line(4))
+                .max[0]
+                * 2.0
     );
     assert!(name.graphic.is_some());
     assert_eq!(
@@ -889,13 +870,7 @@ fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()
     let drawn = schematic::definition_unit(library, view)?;
     assert_eq!(drawn.occurrence, None);
     // Drawn in the definition frame, untransformed.
-    assert_eq!(
-        drawn.shapes[0].shape,
-        Shape::Rect {
-            a: [-2.5, -1.0],
-            b: [2.5, 1.0]
-        }
-    );
+    assert_eq!(drawn.shapes[0].shape, Shape::rect([-2.5, -1.0], [2.5, 1.0]));
     let texts: Vec<&str> = drawn.texts.iter().map(|t| t.text.as_str()).collect();
     assert_eq!(texts, vec!["R?", "Resistor"]);
     let numbers: Vec<Option<&str>> = drawn
@@ -951,8 +926,8 @@ fn upright_text_never_reads_downward_or_leftward() {
     let m = TextMetric::default();
     for rotation in [180.0, 270.0] {
         let (turned, justify) = graphics::upright(rotation, left_bottom);
-        let a = m.bounds([3.0, 4.0], 1.5, rotation, left_bottom, 5);
-        let b = m.bounds([3.0, 4.0], 1.5, turned, justify, 5);
+        let a = m.bounds([3.0, 4.0], 1.5, rotation, left_bottom, TextSize::line(5));
+        let b = m.bounds([3.0, 4.0], 1.5, turned, justify, TextSize::line(5));
         for (p, q) in [(a.min, b.min), (a.max, b.max)] {
             assert!(crate::geometry::distance(p, q) < 1e-9, "{a:?} vs {b:?}");
         }
@@ -971,9 +946,7 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
             graphics: vec![
                 shape(
                     2,
-                    Shape::Polyline {
-                        points: vec![[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]],
-                    },
+                    Shape::polyline(vec![[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]]),
                     0.25,
                     Fill::None,
                 ),
@@ -990,9 +963,7 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
                 ),
                 shape(
                     4,
-                    Shape::Polygon {
-                        points: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
-                    },
+                    Shape::polygon(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
                     0.0,
                     Fill::Solid,
                 ),
@@ -1037,11 +1008,11 @@ fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
         while graphics.len() < MAX_GRAPHICS_PER_UNIT && graphics_left > 0 {
             id += 1;
             let shape = if graphics_left <= polylines {
-                Shape::Polyline {
-                    points: (0..per_polyline)
+                Shape::polyline(
+                    (0..per_polyline)
                         .map(|i| [coordinate(i), coordinate(i + 1)])
                         .collect(),
-                }
+                )
             } else {
                 Shape::Line {
                     a: [coordinate(id as usize), coordinate(1)],

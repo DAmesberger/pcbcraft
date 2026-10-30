@@ -41,14 +41,21 @@ pub enum Shape {
         a: Point,
         b: Point,
     },
-    /// An open path of at least two points.
+    /// An open path of at least two points. `radii` rounds interior
+    /// corners: empty, or one fillet radius per point (0 keeps the corner
+    /// sharp; the open ends cannot be rounded).
     Polyline {
         points: Vec<Point>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        radii: Vec<f64>,
     },
-    /// Axis-aligned in its local frame, between two opposite corners.
+    /// Axis-aligned in its local frame, between two opposite corners, with
+    /// every corner rounded by `radius` (0 for square corners).
     Rect {
         a: Point,
         b: Point,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        radius: f64,
     },
     Circle {
         center: Point,
@@ -62,9 +69,16 @@ pub enum Shape {
         sweep_deg: f64,
     },
     /// A closed outline of at least three points; the last joins the first.
+    /// `radii` rounds corners as for a polyline, every vertex included.
     Polygon {
         points: Vec<Point>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        radii: Vec<f64>,
     },
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Reflect across the local x-axis (y → −y) if `mirror`, then rotate
@@ -295,7 +309,212 @@ fn arc_segments(radius: f64, sweep_deg: f64, tol: f64) -> usize {
     wanted.clamp(1.0, (MAX_FLATTEN_VERTICES - 1) as f64) as usize
 }
 
+/// The largest turn at a vertex that can still be rounded, in degrees; a
+/// path folding back on itself has no fillet.
+pub const MAX_FILLET_TURN_DEG: f64 = 179.0;
+
+/// Chord tolerance used to decide containment in rounded closed shapes.
+const ROUNDED_CONTAINMENT_TOL_MM: f64 = 1e-3;
+
+fn radius_at(radii: &[f64], i: usize) -> f64 {
+    radii
+        .get(i)
+        .copied()
+        .filter(|r| r.is_finite())
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+fn unit(v: Point) -> Option<Point> {
+    let len = length(v);
+    (len > 1e-12).then(|| [v[0] / len, v[1] / len])
+}
+
+/// The signed turn at `v` from the edge arriving from `prev` to the edge
+/// leaving towards `next`, in degrees (counter-clockwise positive); `None`
+/// when either edge has no length.
+fn turn_deg(prev: Point, v: Point, next: Point) -> Option<f64> {
+    let a = unit(sub(v, prev))?;
+    let b = unit(sub(next, v))?;
+    Some(cross(a, b).atan2(dot(a, b)).to_degrees())
+}
+
+/// `tan(|turn| / 2)`, exact for right-angle turns so rounded grid corners
+/// keep their tangent points on the grid.
+fn half_turn_tan(turn_deg: f64) -> f64 {
+    if (turn_deg.abs() - 90.0).abs() < 1e-12 {
+        1.0
+    } else {
+        (turn_deg.abs() / 2.0).to_radians().tan()
+    }
+}
+
+/// Neighbours of vertex `i`, or `None` at the ends of an open path.
+fn neighbours(points: &[Point], i: usize, closed: bool) -> Option<(Point, Point)> {
+    let n = points.len();
+    if n < 3 || (!closed && (i == 0 || i + 1 == n)) {
+        return None;
+    }
+    Some((points[(i + n - 1) % n], points[(i + 1) % n]))
+}
+
+/// How far each corner's fillet reaches along its two edges, as requested.
+fn wanted_trims(points: &[Point], radii: &[f64], closed: bool) -> Vec<f64> {
+    (0..points.len())
+        .map(|i| {
+            let r = radius_at(radii, i);
+            match (r > 0.0).then(|| neighbours(points, i, closed)).flatten() {
+                Some((prev, next)) => match turn_deg(prev, points[i], next) {
+                    Some(t) if t.abs() > 1e-9 && t.abs() <= MAX_FILLET_TURN_DEG => {
+                        r * half_turn_tan(t)
+                    }
+                    _ => 0.0,
+                },
+                None => 0.0,
+            }
+        })
+        .collect()
+}
+
+/// Edges of a path as vertex index pairs.
+fn edge_indices(n: usize, closed: bool) -> impl Iterator<Item = (usize, usize)> {
+    let count = if closed { n } else { n.saturating_sub(1) };
+    (0..count).map(move |i| (i, (i + 1) % n.max(1)))
+}
+
+/// The trims actually drawn: where two fillets would overlap on an edge,
+/// both shrink in proportion until they meet, so the outline never folds.
+fn fitted_trims(points: &[Point], radii: &[f64], closed: bool) -> Vec<f64> {
+    let wanted = wanted_trims(points, radii, closed);
+    let mut factor = vec![1.0_f64; points.len()];
+    for (i, j) in edge_indices(points.len(), closed) {
+        let len = distance(points[i], points[j]);
+        let sum = wanted[i] + wanted[j];
+        if sum > len && sum > 0.0 {
+            let f = len / sum;
+            factor[i] = factor[i].min(f);
+            factor[j] = factor[j].min(f);
+        }
+    }
+    wanted.iter().zip(&factor).map(|(w, f)| w * f).collect()
+}
+
+/// Whether every requested corner radius fits: no rounded open end or
+/// fold-back, and no edge shorter than the fillets reaching along it.
+pub fn corner_radii_fit(points: &[Point], radii: &[f64], closed: bool) -> bool {
+    let n = points.len();
+    for i in 0..n {
+        if radius_at(radii, i) <= 0.0 {
+            continue;
+        }
+        let Some((prev, next)) = neighbours(points, i, closed) else {
+            return false;
+        };
+        match turn_deg(prev, points[i], next) {
+            Some(t) if t.abs() <= MAX_FILLET_TURN_DEG => {}
+            _ => return false,
+        }
+    }
+    let wanted = wanted_trims(points, radii, closed);
+    edge_indices(n, closed)
+        .all(|(i, j)| wanted[i] + wanted[j] <= distance(points[i], points[j]) + 1e-9)
+}
+
+/// Radii reduced, corner by corner, to what [`corner_radii_fit`] accepts:
+/// open ends and fold-backs become sharp, and fillets that would overlap
+/// shrink in proportion. A drawing tool uses this so what it commits is
+/// always valid.
+pub fn fit_corner_radii(points: &[Point], radii: &[f64], closed: bool) -> Vec<f64> {
+    if radii.iter().all(|r| *r <= 0.0) {
+        return vec![];
+    }
+    let wanted = wanted_trims(points, radii, closed);
+    let fitted = fitted_trims(points, radii, closed);
+    (0..points.len())
+        .map(|i| {
+            if wanted[i] <= 0.0 {
+                0.0
+            } else {
+                // Shrink slightly below the limit so rounding stays inside it.
+                radius_at(radii, i) * (fitted[i] / wanted[i]) * (1.0 - 1e-9)
+            }
+        })
+        .collect()
+}
+
+/// The straight edges and fillet arcs of a path whose corners are rounded
+/// by `radii`, in path order.
+pub fn rounded_path(points: &[Point], radii: &[f64], closed: bool) -> Vec<Shape> {
+    let n = points.len();
+    let trims = fitted_trims(points, radii, closed);
+    // For each rounded corner: where it starts, where it ends, its arc.
+    let corners: Vec<Option<(Point, Point, Shape)>> = (0..n)
+        .map(|i| {
+            let trim = trims[i];
+            if trim <= 0.0 {
+                return None;
+            }
+            let (prev, next) = neighbours(points, i, closed)?;
+            let v = points[i];
+            let a = unit(sub(v, prev))?;
+            let b = unit(sub(next, v))?;
+            let turn = turn_deg(prev, v, next)?;
+            let r = trim / half_turn_tan(turn);
+            let start = [v[0] - a[0] * trim, v[1] - a[1] * trim];
+            let end = [v[0] + b[0] * trim, v[1] + b[1] * trim];
+            let normal = if turn > 0.0 {
+                [-a[1], a[0]]
+            } else {
+                [a[1], -a[0]]
+            };
+            let center = [start[0] + normal[0] * r, start[1] + normal[1] * r];
+            let from = sub(start, center);
+            Some((
+                start,
+                end,
+                Shape::Arc {
+                    center,
+                    radius: r,
+                    start_deg: from[1].atan2(from[0]).to_degrees(),
+                    sweep_deg: turn,
+                },
+            ))
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (i, j) in edge_indices(n, closed) {
+        let a = corners[i].as_ref().map_or(points[i], |c| c.1);
+        let b = corners[j].as_ref().map_or(points[j], |c| c.0);
+        if distance(a, b) > 1e-12 {
+            out.push(Shape::Line { a, b });
+        }
+        if let Some((_, _, arc)) = &corners[j] {
+            out.push(arc.clone());
+        }
+    }
+    out
+}
+
 impl Shape {
+    /// A square-cornered rectangle.
+    pub fn rect(a: Point, b: Point) -> Self {
+        Self::Rect { a, b, radius: 0.0 }
+    }
+    /// An open path with sharp corners.
+    pub fn polyline(points: Vec<Point>) -> Self {
+        Self::Polyline {
+            points,
+            radii: vec![],
+        }
+    }
+    /// A closed outline with sharp corners.
+    pub fn polygon(points: Vec<Point>) -> Self {
+        Self::Polygon {
+            points,
+            radii: vec![],
+        }
+    }
+
     /// Polygons, rectangles and circles enclose an area.
     pub fn is_closed(&self) -> bool {
         matches!(
@@ -304,26 +523,77 @@ impl Shape {
         )
     }
 
-    /// The points the shape stores; a bound on encoded size.
+    /// The path vertices and corner radii of a shape that can round its
+    /// corners: a rectangle's four corners counter-clockwise from `min`,
+    /// or a polyline's or polygon's points.
+    fn corner_path(&self) -> Option<(Vec<Point>, Vec<f64>, bool)> {
+        match self {
+            Self::Rect { a, b, radius } => Some((
+                Bounds::point(*a).including(*b).corners().to_vec(),
+                vec![*radius; 4],
+                true,
+            )),
+            Self::Polyline { points, radii } => Some((points.clone(), radii.clone(), false)),
+            Self::Polygon { points, radii } => Some((points.clone(), radii.clone(), true)),
+            _ => None,
+        }
+    }
+
+    /// Whether any corner is rounded.
+    pub fn is_rounded(&self) -> bool {
+        match self {
+            Self::Rect { radius, .. } => *radius > 0.0,
+            Self::Polyline { radii, .. } | Self::Polygon { radii, .. } => {
+                radii.iter().any(|r| *r > 0.0)
+            }
+            _ => false,
+        }
+    }
+
+    /// A rounded shape as its straight edges and fillet arcs; `None` when
+    /// no corner is rounded.
+    pub fn primitives(&self) -> Option<Vec<Shape>> {
+        if !self.is_rounded() {
+            return None;
+        }
+        let (points, radii, closed) = self.corner_path()?;
+        Some(rounded_path(&points, &radii, closed))
+    }
+
+    /// Whether every corner radius fits the shape (see [`corner_radii_fit`]).
+    pub fn corners_fit(&self) -> bool {
+        match self.corner_path() {
+            Some((points, radii, closed)) if self.is_rounded() => {
+                corner_radii_fit(&points, &radii, closed)
+            }
+            _ => true,
+        }
+    }
+
+    /// The points the shape stores; a bound on encoded size. Corner radii
+    /// are bounded by the same count.
     pub fn stored_points(&self) -> usize {
         match self {
             Self::Line { .. } | Self::Rect { .. } => 2,
             Self::Circle { .. } | Self::Arc { .. } => 1,
-            Self::Polyline { points } | Self::Polygon { points } => points.len(),
+            Self::Polyline { points, .. } | Self::Polygon { points, .. } => points.len(),
         }
     }
 
     /// Every point and scalar is finite and within ±10000 mm; radii are not
-    /// negative; arc sweeps are at most one turn and angles finite.
+    /// negative; corner radii are absent or one per point; arc sweeps are
+    /// at most one turn and angles finite.
     pub fn finite(&self) -> bool {
+        let radius_ok = |r: &f64| finite_within(&[*r]) && *r >= 0.0;
         match self {
-            Self::Line { a, b } | Self::Rect { a, b } => point_valid(*a) && point_valid(*b),
-            Self::Polyline { points } | Self::Polygon { points } => {
+            Self::Line { a, b } => point_valid(*a) && point_valid(*b),
+            Self::Rect { a, b, radius } => point_valid(*a) && point_valid(*b) && radius_ok(radius),
+            Self::Polyline { points, radii } | Self::Polygon { points, radii } => {
                 points.iter().all(|p| point_valid(*p))
+                    && (radii.is_empty() || radii.len() == points.len())
+                    && radii.iter().all(radius_ok)
             }
-            Self::Circle { center, radius } => {
-                point_valid(*center) && finite_within(&[*radius]) && *radius >= 0.0
-            }
+            Self::Circle { center, radius } => point_valid(*center) && radius_ok(radius),
             Self::Arc {
                 center,
                 radius,
@@ -331,8 +601,7 @@ impl Shape {
                 sweep_deg,
             } => {
                 point_valid(*center)
-                    && finite_within(&[*radius])
-                    && *radius >= 0.0
+                    && radius_ok(radius)
                     && start_deg.is_finite()
                     && start_deg.abs() <= 3600.0
                     && sweep_deg.is_finite()
@@ -359,12 +628,21 @@ impl Shape {
 
     /// Bounds of the shape drawn with a stroke of `width`. Arc extremes are
     /// exact: the end points plus every axis crossing the sweep passes.
+    /// Rounded corners use their fillet arcs, so the box is tight.
     pub fn bounds(&self, width: f64) -> Bounds {
         let half = (width.max(0.0)) / 2.0;
+        if let Some(parts) = self.primitives() {
+            let raw = parts
+                .iter()
+                .map(|p| p.bounds(0.0))
+                .reduce(Bounds::union)
+                .unwrap_or(Bounds::point([0.0, 0.0]));
+            return raw.inflated(half);
+        }
         let raw =
             match self {
-                Self::Line { a, b } | Self::Rect { a, b } => Bounds::point(*a).including(*b),
-                Self::Polyline { points } | Self::Polygon { points } => {
+                Self::Line { a, b } | Self::Rect { a, b, .. } => Bounds::point(*a).including(*b),
+                Self::Polyline { points, .. } | Self::Polygon { points, .. } => {
                     Bounds::of(points.iter().copied()).unwrap_or(Bounds::point([0.0, 0.0]))
                 }
                 Self::Circle { center, radius } => Bounds::point(*center).inflated(*radius),
@@ -388,12 +666,24 @@ impl Shape {
     }
 
     /// Distance from `p` to the drawn curve, or 0 inside a closed shape when
-    /// `filled`.
+    /// `filled`. Rounded corners measure to their fillet arcs.
     pub fn distance(&self, p: Point, filled: bool) -> f64 {
+        if let Some(parts) = self.primitives() {
+            if filled
+                && self.is_closed()
+                && polygon_contains(&self.flatten(ROUNDED_CONTAINMENT_TOL_MM), p)
+            {
+                return 0.0;
+            }
+            return parts
+                .iter()
+                .map(|s| s.distance(p, false))
+                .fold(f64::INFINITY, f64::min);
+        }
         match self {
             Self::Line { a, b } => segment_distance(p, *a, *b),
-            Self::Polyline { points } => path_distance(p, points, false),
-            Self::Rect { a, b } => {
+            Self::Polyline { points, .. } => path_distance(p, points, false),
+            Self::Rect { a, b, .. } => {
                 let box_ = Bounds::point(*a).including(*b);
                 let corners = box_.corners();
                 if filled && box_.contains(p) {
@@ -402,7 +692,7 @@ impl Shape {
                     path_distance(p, &corners, true)
                 }
             }
-            Self::Polygon { points } => {
+            Self::Polygon { points, .. } => {
                 if filled && polygon_contains(points, p) {
                     0.0
                 } else {
@@ -437,12 +727,33 @@ impl Shape {
 
     /// The shape as straight segments within `chord_tol_mm`. Closed shapes
     /// return their ring without repeating the first point; curves have at
-    /// most [`MAX_FLATTEN_VERTICES`] vertices.
+    /// most [`MAX_FLATTEN_VERTICES`] vertices each, and a rounded path at
+    /// most that many per corner.
     pub fn flatten(&self, chord_tol_mm: f64) -> Vec<Point> {
+        if let Some(parts) = self.primitives() {
+            let mut out: Vec<Point> = Vec::new();
+            for part in &parts {
+                for p in part.flatten(chord_tol_mm) {
+                    if out.last().is_none_or(|q| distance(*q, p) > 1e-12) {
+                        out.push(p);
+                    }
+                }
+            }
+            if self.is_closed()
+                && out.len() > 1
+                && out
+                    .first()
+                    .zip(out.last())
+                    .is_some_and(|(a, b)| distance(*a, *b) <= 1e-12)
+            {
+                out.pop();
+            }
+            return out;
+        }
         match self {
             Self::Line { a, b } => vec![*a, *b],
-            Self::Polyline { points } | Self::Polygon { points } => points.clone(),
-            Self::Rect { a, b } => Bounds::point(*a).including(*b).corners().to_vec(),
+            Self::Polyline { points, .. } | Self::Polygon { points, .. } => points.clone(),
+            Self::Rect { a, b, .. } => Bounds::point(*a).including(*b).corners().to_vec(),
             Self::Circle { center, radius } => {
                 let n = arc_segments(*radius, 360.0, chord_tol_mm).max(3);
                 (0..n)
@@ -469,9 +780,26 @@ impl Shape {
         }
     }
 
+    /// The vertices a user can grab or snap to: line and path points,
+    /// rectangle corners and arc ends (not fillet tangent points).
+    pub fn vertices(&self) -> Vec<Point> {
+        match self {
+            Self::Line { a, b } => vec![*a, *b],
+            Self::Polyline { points, .. } | Self::Polygon { points, .. } => points.clone(),
+            Self::Rect { a, b, .. } => Bounds::point(*a).including(*b).corners().to_vec(),
+            Self::Circle { center, radius } => vec![
+                [center[0] + radius, center[1]],
+                [center[0], center[1] + radius],
+                [center[0] - radius, center[1]],
+                [center[0], center[1] - radius],
+            ],
+            Self::Arc { .. } => self.arc_ends().map(|e| e.to_vec()).unwrap_or_default(),
+        }
+    }
+
     /// The shape in another frame. A rectangle stays a rectangle under
     /// quarter turns and becomes a polygon otherwise; a reflection negates
-    /// arc start and sweep before the rotation.
+    /// arc start and sweep before the rotation. Corner radii are kept.
     pub fn transformed(&self, t: &Transform2) -> Shape {
         let map = |points: &[Point]| points.iter().map(|p| t.apply(*p)).collect();
         match self {
@@ -479,18 +807,26 @@ impl Shape {
                 a: t.apply(*a),
                 b: t.apply(*b),
             },
-            Self::Polyline { points } => Self::Polyline {
+            Self::Polyline { points, radii } => Self::Polyline {
                 points: map(points),
+                radii: radii.clone(),
             },
-            Self::Polygon { points } => Self::Polygon {
+            Self::Polygon { points, radii } => Self::Polygon {
                 points: map(points),
+                radii: radii.clone(),
             },
-            Self::Rect { a, b } if is_quarter_turn(t.rotation_deg) => Self::Rect {
+            Self::Rect { a, b, radius } if is_quarter_turn(t.rotation_deg) => Self::Rect {
                 a: t.apply(*a),
                 b: t.apply(*b),
+                radius: *radius,
             },
-            Self::Rect { a, b } => Self::Polygon {
+            Self::Rect { a, b, radius } => Self::Polygon {
                 points: map(&Bounds::point(*a).including(*b).corners()),
+                radii: if *radius > 0.0 {
+                    vec![*radius; 4]
+                } else {
+                    vec![]
+                },
             },
             Self::Circle { center, radius } => Self::Circle {
                 center: t.apply(*center),

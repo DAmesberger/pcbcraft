@@ -21,7 +21,7 @@ pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{FootprintDefinition, Pad};
 pub use graphics::{
     Decorations, Fill, Graphic, Grid, HAlign, Item, Justify, Pin, PinDirection, PinText, Rotation,
-    SymbolHit, Text, TextContent, TextMetric, VAlign, lint,
+    SymbolHit, Text, TextContent, TextLine, TextMetric, TextSize, VAlign, lint,
 };
 pub use package::{PackageBody, PackageDefinition, PackageTerminal};
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};

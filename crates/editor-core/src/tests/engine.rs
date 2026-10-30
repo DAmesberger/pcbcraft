@@ -444,10 +444,7 @@ fn routed_project_and_incomplete_drafts_roundtrip_through_the_document() -> Resu
         s.units[0].graphics.push(crate::library::Graphic {
             id: crate::GraphicId(999),
             item: crate::library::Item::Shape {
-                shape: crate::geometry::Shape::Rect {
-                    a: [0.0, 0.0],
-                    b: [0.0, -1.0],
-                },
+                shape: crate::geometry::Shape::rect([0.0, 0.0], [0.0, -1.0]),
                 width: 0.0,
                 fill: crate::library::Fill::Solid,
             },

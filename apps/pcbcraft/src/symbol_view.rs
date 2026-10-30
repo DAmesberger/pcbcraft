@@ -7,7 +7,7 @@ use egui::epaint::{Mesh, TextShape};
 use egui::{Color32, Painter, Pos2, Stroke, pos2};
 use pcbcraft_core::Point;
 use pcbcraft_core::geometry::{Shape, signed_area2};
-use pcbcraft_core::library::graphics::{SYMBOL_STROKE_MM, upright};
+use pcbcraft_core::library::graphics::SYMBOL_STROKE_MM;
 use pcbcraft_core::library::{Fill, HAlign, VAlign};
 use pcbcraft_core::schematic::{PlacedText, PlacedUnit};
 use solidcraft_ui_egui::fonts;
@@ -207,34 +207,42 @@ fn ear_clip(points: &[Point]) -> Vec<[u32; 3]> {
 }
 
 /// Paint text at its justification anchor, turned upright by the core rule.
-/// Reflected text (a future occurrence mirror) is drawn unreflected, which
-/// keeps it legible.
+/// Each line of a multi-line text goes where the core layout puts it
+/// ([`PlacedText::lines`]), so line spacing and justification match the
+/// core metric. Reflected text (a future occurrence mirror) is drawn
+/// unreflected, which keeps it legible.
 pub fn paint_text(painter: &Painter, view: View, text: &PlacedText, color: Color32) {
     let size = text.height as f32 * view.scale / CAP_HEIGHT;
-    if text.text.is_empty() || !size.is_finite() || size < MIN_TEXT_PX {
+    if text.text.trim().is_empty() || !size.is_finite() || size < MIN_TEXT_PX {
         return;
     }
-    let (rotation_deg, justify) = upright(text.rotation_deg, text.justify);
-    let galley = painter.layout_no_wrap(text.text.clone(), fonts::medium(size), color);
-    let box_size = galley.size();
-    // Offset from the anchor to the galley's top-left corner, unrotated,
-    // screen axes (y down).
-    let dx = match justify.h {
-        HAlign::Left => 0.0,
-        HAlign::Center => -box_size.x / 2.0,
-        HAlign::Right => -box_size.x,
-    };
-    let dy = match justify.v {
-        VAlign::Top => 0.0,
-        VAlign::Middle => -box_size.y / 2.0,
-        VAlign::Bottom => -box_size.y,
-    };
-    // World counter-clockwise is screen clockwise-negative.
-    let angle = -(rotation_deg as f32).to_radians();
-    let (s, c) = angle.sin_cos();
-    let anchor = view.screen(text.at);
-    let pos = anchor + egui::vec2(dx * c - dy * s, dx * s + dy * c);
-    painter.add(TextShape::new(pos, galley, color).with_angle(angle));
+    let (rotation_deg, lines) = text.lines();
+    let justify = text.line_justify();
+    for line in lines {
+        if line.text.is_empty() {
+            continue;
+        }
+        let galley = painter.layout_no_wrap(line.text.to_owned(), fonts::medium(size), color);
+        let box_size = galley.size();
+        // Offset from the line's anchor to the galley's top-left corner,
+        // unrotated, screen axes (y down); every line centres vertically.
+        let dx = match justify.h {
+            HAlign::Left => 0.0,
+            HAlign::Center => -box_size.x / 2.0,
+            HAlign::Right => -box_size.x,
+        };
+        let dy = match justify.v {
+            VAlign::Top => 0.0,
+            VAlign::Middle => -box_size.y / 2.0,
+            VAlign::Bottom => -box_size.y,
+        };
+        // World counter-clockwise is screen clockwise-negative.
+        let angle = -(rotation_deg as f32).to_radians();
+        let (s, c) = angle.sin_cos();
+        let anchor = view.screen(line.at);
+        let pos = anchor + egui::vec2(dx * c - dy * s, dx * s + dy * c);
+        painter.add(TextShape::new(pos, galley, color).with_angle(angle));
+    }
 }
 
 #[cfg(test)]

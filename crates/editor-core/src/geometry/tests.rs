@@ -42,12 +42,19 @@ impl Rng {
                 a: self.point(),
                 b: self.point(),
             },
-            1 => Shape::Polyline {
-                points: (0..2 + self.next() % 6).map(|_| self.point()).collect(),
-            },
+            1 => {
+                let points: Vec<Point> = (0..2 + self.next() % 6).map(|_| self.point()).collect();
+                let radii = self.radii(points.len());
+                Shape::Polyline { points, radii }
+            }
             2 => Shape::Rect {
                 a: self.point(),
                 b: self.point(),
+                radius: if self.coin() {
+                    self.range(0.0, 20.0)
+                } else {
+                    0.0
+                },
             },
             3 => Shape::Circle {
                 center: self.point(),
@@ -62,10 +69,27 @@ impl Rng {
                     sweep_deg: if self.coin() { magnitude } else { -magnitude },
                 }
             }
-            _ => Shape::Polygon {
-                points: (0..3 + self.next() % 6).map(|_| self.point()).collect(),
-            },
+            _ => {
+                let points: Vec<Point> = (0..3 + self.next() % 6).map(|_| self.point()).collect();
+                let radii = self.radii(points.len());
+                Shape::Polygon { points, radii }
+            }
         }
+    }
+    /// No radii, or one per point, some of them zero.
+    fn radii(&mut self, n: usize) -> Vec<f64> {
+        if self.coin() {
+            return vec![];
+        }
+        (0..n)
+            .map(|_| {
+                if self.coin() {
+                    self.range(0.0, 15.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect()
     }
 }
 
@@ -190,10 +214,7 @@ fn distance_vanishes_on_the_curve_and_matches_hand_values() {
     };
     assert_eq!(line.distance([5.0, 3.0], false), 3.0);
     assert_eq!(line.distance([13.0, 4.0], false), 5.0);
-    let rect = Shape::Rect {
-        a: [-2.0, -1.0],
-        b: [2.0, 1.0],
-    };
+    let rect = Shape::rect([-2.0, -1.0], [2.0, 1.0]);
     assert_eq!(rect.distance([0.0, 0.0], false), 1.0);
     assert_eq!(rect.distance([0.0, 0.0], true), 0.0);
     let circle = Shape::Circle {
@@ -247,10 +268,7 @@ fn transformed_shapes_carry_their_points() {
 
 #[test]
 fn rectangles_stay_rectangles_only_under_quarter_turns() {
-    let rect = Shape::Rect {
-        a: [0.0, 0.0],
-        b: [2.0, 1.0],
-    };
+    let rect = Shape::rect([0.0, 0.0], [2.0, 1.0]);
     let quarter = Transform2 {
         translate: [5.0, 0.0],
         rotation_deg: 90.0,
@@ -258,10 +276,7 @@ fn rectangles_stay_rectangles_only_under_quarter_turns() {
     };
     assert_eq!(
         rect.transformed(&quarter),
-        Shape::Rect {
-            a: [5.0, 0.0],
-            b: [6.0, 2.0]
-        }
+        Shape::rect([5.0, 0.0], [6.0, 2.0])
     );
     let tilted = Transform2 {
         rotation_deg: 30.0,
@@ -269,7 +284,7 @@ fn rectangles_stay_rectangles_only_under_quarter_turns() {
     };
     let tilted = rect.transformed(&tilted);
     assert!(
-        matches!(&tilted, Shape::Polygon { points } if points.len() == 4),
+        matches!(&tilted, Shape::Polygon { points, .. } if points.len() == 4),
         "a tilted rectangle becomes a polygon: {tilted:?}"
     );
 }
@@ -394,4 +409,169 @@ fn stroke_outline_covers_the_stroke() {
     assert!(covered([-0.3, 0.0]), "round cap");
     assert!(!covered([2.0, 0.6]));
     assert!(stroke_outline(&line, 0.0, 0.01).is_empty());
+}
+
+/// A rounded rectangle keeps its box, cuts each corner by an exact quarter
+/// circle and no longer contains its corners when filled.
+#[test]
+fn rounded_rectangles_follow_their_quarter_circle_corners() {
+    let r = 1.0;
+    let rect = Shape::Rect {
+        a: [0.0, 0.0],
+        b: [4.0, 3.0],
+        radius: r,
+    };
+    assert!(rect.is_rounded() && rect.corners_fit());
+    assert_eq!(
+        rect.bounds(0.0),
+        Bounds::point([0.0, 0.0]).including([4.0, 3.0])
+    );
+    assert_eq!(rect.bounds(0.5).min, [-0.25, -0.25]);
+    // The corner vertex is √2·r − r from the fillet, which meets the edges
+    // at their tangent points.
+    let corner = rect.distance([0.0, 0.0], false);
+    assert!(
+        (corner - (2.0_f64.sqrt() - 1.0) * r).abs() < 1e-12,
+        "{corner}"
+    );
+    assert!(rect.distance([2.0, 0.0], false) < 1e-12);
+    assert!(rect.distance([0.0, 1.5], false) < 1e-12);
+    assert!(
+        rect.distance([0.05, 0.05], true) > 0.0,
+        "the cut corner is outside"
+    );
+    assert_eq!(rect.distance([2.0, 1.5], true), 0.0);
+    let parts = rect.primitives().unwrap_or_default();
+    assert_eq!(parts.len(), 8, "four edges and four arcs: {parts:?}");
+    for p in rect.flatten(1e-3) {
+        assert!(
+            Bounds::point([0.0, 0.0])
+                .including([4.0, 3.0])
+                .inflated(1e-9)
+                .contains(p)
+        );
+        // Every flattened point is on the outline.
+        assert!(rect.distance(p, false) <= 1e-3);
+    }
+    // A radius over half the short side does not fit; exactly half makes
+    // the short sides vanish into two touching arcs.
+    let too_round = Shape::Rect {
+        a: [0.0, 0.0],
+        b: [4.0, 3.0],
+        radius: 1.51,
+    };
+    assert!(!too_round.corners_fit());
+    let stadium = Shape::Rect {
+        a: [0.0, 0.0],
+        b: [4.0, 3.0],
+        radius: 1.5,
+    };
+    assert!(stadium.corners_fit());
+    assert_eq!(stadium.primitives().map(|p| p.len()), Some(6));
+    // A quarter turn keeps it a rounded rectangle; a tilt turns it into a
+    // polygon rounded the same at every corner.
+    let tilted = rect.transformed(&Transform2 {
+        rotation_deg: 30.0,
+        ..Transform2::IDENTITY
+    });
+    assert!(
+        matches!(&tilted, Shape::Polygon { radii, .. } if radii == &vec![r; 4]),
+        "{tilted:?}"
+    );
+    let size = |s: &Shape| s.flatten(1e-4).len();
+    assert!(size(&tilted).abs_diff(size(&rect)) <= 4);
+}
+
+/// A polyline fillet replaces the corner by a tangent arc of the radius:
+/// the straight edges stop `r · tan(turn / 2)` short of the vertex.
+#[test]
+fn polyline_fillets_are_tangent_arcs_of_their_radius() {
+    let points = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]];
+    let rounded = Shape::Polyline {
+        points: points.clone(),
+        radii: vec![0.0, 2.0, 0.0],
+    };
+    let parts = rounded.primitives().unwrap_or_default();
+    assert_eq!(
+        parts,
+        vec![
+            Shape::Line {
+                a: [0.0, 0.0],
+                b: [8.0, 0.0]
+            },
+            Shape::Arc {
+                center: [8.0, 2.0],
+                radius: 2.0,
+                start_deg: -90.0,
+                sweep_deg: 90.0
+            },
+            Shape::Line {
+                a: [10.0, 2.0],
+                b: [10.0, 10.0]
+            },
+        ]
+    );
+    // Bounds and distance follow the arc, not the cut vertex.
+    assert_eq!(rounded.bounds(0.0).max, [10.0, 10.0]);
+    let corner = rounded.distance([10.0, 0.0], false);
+    assert!((corner - (8.0_f64.sqrt() - 2.0)).abs() < 1e-12, "{corner}");
+    // A right turn rounds the other way.
+    let right = Shape::Polyline {
+        points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, -10.0]],
+        radii: vec![0.0, 2.0, 0.0],
+    };
+    let arc = right.primitives().unwrap_or_default()[1].clone();
+    assert_eq!(
+        arc,
+        Shape::Arc {
+            center: [8.0, -2.0],
+            radius: 2.0,
+            start_deg: 90.0,
+            sweep_deg: -90.0
+        }
+    );
+    // Open ends cannot be rounded, and a 120° turn over a 4 mm edge fits a
+    // radius up to 4 / tan(60°) only.
+    let end = Shape::Polyline {
+        points: points.clone(),
+        radii: vec![1.0, 0.0, 0.0],
+    };
+    assert!(!end.corners_fit());
+    let sharp = vec![[0.0, 0.0], [4.0, 0.0], [2.0, 3.4641016151377544]];
+    let limit = 4.0 / 60.0_f64.to_radians().tan();
+    let fits = |r: f64| corner_radii_fit(&sharp, &[0.0, r, 0.0], false);
+    assert!(fits(limit * 0.999) && !fits(limit * 1.001));
+    // Fitting shrinks overlapping fillets so the result always fits.
+    let wanted = vec![5.0, 5.0, 5.0];
+    assert!(!corner_radii_fit(&sharp, &wanted, true));
+    let fitted = fit_corner_radii(&sharp, &wanted, true);
+    assert!(corner_radii_fit(&sharp, &fitted, true), "{fitted:?}");
+    assert!(fitted.iter().all(|r| *r > 0.0 && *r < 5.0));
+    assert!(fit_corner_radii(&sharp, &[0.0; 3], true).is_empty());
+}
+
+/// Rounded polygons are closed, contain their interior and pick by their
+/// fillets; their bounds shrink inside the sharp outline's.
+#[test]
+fn rounded_polygons_bound_and_contain_their_rounded_outline() {
+    let triangle = vec![[0.0, 0.0], [10.0, 0.0], [5.0, 8.0]];
+    let sharp = Shape::polygon(triangle.clone());
+    let round = Shape::Polygon {
+        points: triangle,
+        radii: vec![1.0; 3],
+    };
+    let (a, b) = (sharp.bounds(0.0), round.bounds(0.0));
+    assert!(b.max[1] < a.max[1] && b.min[0] > a.min[0] && b.max[0] < a.max[0]);
+    assert!(b.min[1].abs() < 1e-12, "the base edge stays: {b:?}");
+    assert_eq!(round.distance([5.0, 3.0], true), 0.0);
+    assert!(
+        round.distance([5.0, 7.9], true) > 0.0,
+        "the apex is cut off"
+    );
+    let ring = round.flatten(1e-3);
+    assert!(ring.len() > 6);
+    assert!(signed_area2(&ring) > 0.0);
+    for p in &ring {
+        assert!(b.inflated(1e-9).contains(*p));
+    }
 }

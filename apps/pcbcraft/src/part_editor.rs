@@ -5,10 +5,16 @@
 //! package, footprint, binding). Widgets edit a working copy; a finished
 //! gesture commits it as one `library.edit`, so every finished edit is one
 //! shared undo step. Publishing sends one `library.publish` of the five.
+mod arrange;
+mod drawing;
+#[cfg(test)]
+mod drawing_tests;
+mod snap;
+mod symbol_canvas;
+mod symbol_props;
 mod working_set;
 
 use crate::kit::{self, Tone};
-use crate::symbol_view;
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
@@ -22,10 +28,8 @@ use pcbcraft_core::library::graphics::{
 };
 use pcbcraft_core::library::{
     ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
-    PinDirection, Published, SymbolHit, Terminal, TerminalClass, TerminalMap, TextMetric, Unit,
-    designator_prefix_valid,
+    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
-use pcbcraft_core::schematic;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
     Operation, PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
@@ -56,8 +60,13 @@ impl ClassChoice {
     }
 }
 
-/// Pick tolerance around drawn symbol content on the canvas, in pixels.
-const PICK_PX: f32 = 6.0;
+/// One selected object of the Symbol view: a pin by its terminal or a
+/// graphic by its stable ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Selected {
+    Pin(TerminalId),
+    Graphic(GraphicId),
+}
 
 const CLASS_CHOICES: [(ClassChoice, &str); 3] = [
     (ClassChoice::Electrical, "Electrical"),
@@ -305,13 +314,33 @@ pub struct PartEditor {
     selected: Option<TerminalId>,
     notice: String,
     drag_scale: Option<f32>,
-    /// The pin whose connection end the canvas drag moves.
-    dragged_pin: Option<TerminalId>,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
     /// Typed component defaults by field lineage.
     field_buffers: std::collections::BTreeMap<DefinitionId, FieldText>,
+    /// The armed Symbol tool and its pending points.
+    drawing: drawing::Drawing,
+    /// Selected pins and graphics of the unit being drawn.
+    selection: arrange::Selection,
+    /// The unit being drawn; the first when unset.
+    unit: Option<UnitId>,
+    /// Symbol view pan and zoom; fitted when unset.
+    symbol_view: Option<symbol_canvas::ViewState>,
+    gesture: Option<symbol_canvas::Gesture>,
+    /// A gesture finished by a key or button, placed on the next canvas frame.
+    pending_place: Option<drawing::Placed>,
+    snap: bool,
+    show_grid: bool,
+    /// Stroke width and fill for new shapes.
+    stroke_width: f64,
+    fill: Fill,
+    /// What the Field tool places, when chosen.
+    field_choice: Option<TextContent>,
+    /// Focus the text content field once (after placing text).
+    focus_text: bool,
+    /// Space was pressed on the canvas (momentary pan) and is still down.
+    space_held: bool,
 }
 
 impl Default for PartEditor {
@@ -329,11 +358,23 @@ impl Default for PartEditor {
             selected: Some(TerminalId(1)),
             notice: String::new(),
             drag_scale: None,
-            dragged_pin: None,
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
             field_buffers: Default::default(),
+            drawing: Default::default(),
+            selection: Default::default(),
+            unit: None,
+            symbol_view: None,
+            gesture: None,
+            pending_place: None,
+            snap: true,
+            show_grid: true,
+            stroke_width: SYMBOL_STROKE_MM,
+            fill: Fill::None,
+            field_choice: None,
+            focus_text: false,
+            space_held: false,
         }
     }
 }
@@ -369,7 +410,15 @@ impl PartEditor {
         }
         self.awaiting = false;
         let set = WorkingSet::find(&current, self.lineage);
-        self.lineage = set.as_ref().map(|s| s.ids.component);
+        let lineage = set.as_ref().map(|s| s.ids.component);
+        if lineage != self.lineage {
+            self.symbol_view = None;
+            self.selection.clear();
+            self.unit = None;
+            self.drawing.arm(drawing::Tool::Select);
+        }
+        self.lineage = lineage;
+        self.gesture = None;
         if let Some(set) = &set
             && self
                 .selected
@@ -466,6 +515,23 @@ impl PartEditor {
                 .iter()
                 .any(|m| Some(m.terminal) == self.selected)
         });
+        let library = Group {
+            label: "Component",
+            tools: vec![
+                Tool::new("passive", "component", "Passive").tip("Two-terminal passive template"),
+                Tool::new("connector", "component", "Connector").tip("Two-pin header template"),
+                Tool::new("publish", "save", "Publish")
+                    .enabled(self.unpublished(engine))
+                    .tip("Publish the five drafts as new immutable revisions"),
+            ],
+        };
+        if self.view == View::Symbol {
+            return Ribbon {
+                tabs,
+                groups: self.symbol_groups(has_draft, library),
+                notice: None,
+            };
+        }
         let mut edit = vec![
             Tool::new("terminal", "point", "Terminal")
                 .enabled(has_draft)
@@ -487,29 +553,69 @@ impl PartEditor {
             tabs,
             groups: vec![
                 Group {
-                    label: "Create",
-                    tools: vec![
-                        Tool::new("passive", "component", "Passive")
-                            .tip("Two-terminal passive template"),
-                        Tool::new("connector", "component", "Connector")
-                            .tip("Two-pin header template"),
-                    ],
-                },
-                Group {
                     label: "Terminals",
                     tools: edit,
                 },
-                Group {
-                    label: "Library",
-                    tools: vec![
-                        Tool::new("publish", "save", "Publish")
-                            .enabled(self.unpublished(engine))
-                            .tip("Publish the five drafts as new immutable revisions"),
-                    ],
-                },
+                library,
             ],
             notice: None,
         }
+    }
+
+    /// The Symbol tab's drawing ribbon: Select; Draw; Pins; Arrange; Grid
+    /// and Snap; then the component's templates and Publish.
+    fn symbol_groups(
+        &self,
+        has_draft: bool,
+        library: crate::shell::Group,
+    ) -> Vec<crate::shell::Group> {
+        use crate::shell::{Group, Tool};
+        use drawing::Tool as Draw;
+        let armed = self.drawing.tool();
+        let tool = |t: Draw| {
+            Tool::new(t.id(), t.icon(), t.label())
+                .enabled(has_draft)
+                .selected(armed == t)
+                .tip(t.tip())
+        };
+        let any = !self.selection.is_empty();
+        vec![
+            Group {
+                label: "Select",
+                tools: vec![tool(Draw::Select)],
+            },
+            Group {
+                label: "Draw",
+                tools: Draw::DRAW.into_iter().map(tool).collect(),
+            },
+            Group {
+                label: "Pins",
+                tools: Draw::PINS.into_iter().map(tool).collect(),
+            },
+            Group {
+                label: "Arrange",
+                tools: symbol_canvas::Arrange::ALL
+                    .into_iter()
+                    .map(|a| {
+                        Tool::new(a.id(), a.icon(), a.label())
+                            .enabled(any)
+                            .tip(a.tip())
+                    })
+                    .collect(),
+            },
+            Group {
+                label: "Grid",
+                tools: vec![
+                    Tool::new("grid", "grid", "Grid")
+                        .selected(self.show_grid)
+                        .tip("Show the symbol grid; set its step in Properties"),
+                    Tool::new("snap", "snap", "Snap").selected(self.snap).tip(
+                        "Snap to ends, pins, midpoints, centres, curves, alignment and the grid",
+                    ),
+                ],
+            },
+            library,
+        ]
     }
 
     pub fn on_tab(&mut self, tab: &str) {
@@ -523,7 +629,17 @@ impl PartEditor {
 
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        if let Some(t) = drawing::Tool::from_id(tool) {
+            self.drawing.arm(t);
+            return None;
+        }
+        if let Some(action) = symbol_canvas::Arrange::from_id(tool) {
+            self.arrange(action, engine.drafts().grid.symbol_mm);
+            return None;
+        }
         match tool {
+            "grid" => self.show_grid = !self.show_grid,
+            "snap" => self.snap = !self.snap,
             "passive" => self.load_template(Template::TwoTerminal),
             "connector" => self.load_template(Template::Header),
             "terminal" => self.add_terminal(),
@@ -573,6 +689,7 @@ impl PartEditor {
     /// Return the 2D views to their fitted scale.
     pub fn fit(&mut self) {
         self.drag_scale = None;
+        self.symbol_view = None;
     }
 
     fn publish(&mut self, engine: &Engine) -> Option<Operation> {
@@ -600,18 +717,42 @@ impl PartEditor {
         }
         self.notice.clear();
         self.drag_scale = None;
+        self.symbol_view = None;
+        self.selection.clear();
+        self.unit = None;
     }
 
+    /// Add a terminal with its pin on the first unit's left edge, growing
+    /// the body to meet it.
     fn add_terminal(&mut self) {
+        let Some(electrical) = self.new_terminal() else {
+            return;
+        };
         let Some(set) = &mut self.draft else {
             return;
         };
+        let row = set.component.terminals.len().saturating_sub(1) as f64;
+        if let Some(unit) = set.symbol.units.first_mut() {
+            let position = [-2.0 * SYMBOL_MODULE_MM, -row * SYMBOL_MODULE_MM];
+            let pin = match grow_body_to(unit, position[1]) {
+                Some(body) => graphics::pin_toward(electrical, position, body),
+                None => Pin::new(electrical, position, PinDirection::Right, SYMBOL_MODULE_MM),
+            };
+            unit.pins.push(pin);
+        }
+    }
+
+    /// Add a passive terminal with its package terminal, pad and mapping,
+    /// but no pin; the first terminal of an empty symbol also gets a first
+    /// unit. Returns the terminal, or `None` with a notice at a limit.
+    fn new_terminal(&mut self) -> Option<TerminalId> {
+        let set = self.draft.as_mut()?;
         if set.component.terminals.len() >= pcbcraft_core::library::MAX_TERMINALS {
             self.notice = format!(
                 "Maximum {} terminals in this edition",
                 pcbcraft_core::library::MAX_TERMINALS
             );
-            return;
+            return None;
         }
         let allocate = |next: &mut u32| {
             let id = *next;
@@ -628,7 +769,7 @@ impl PartEditor {
             (electrical, function, physical, pad)
         else {
             self.notice = "Terminal identity exhausted".into();
-            return;
+            return None;
         };
         if set.symbol.units.is_empty() {
             let (Some(unit), Some(body), Some(designator), Some(name)) = (
@@ -638,7 +779,7 @@ impl PartEditor {
                 allocate(&mut set.symbol.next_local),
             ) else {
                 self.notice = "Unit identity exhausted".into();
-                return;
+                return None;
             };
             set.symbol.pin_text_height = PIN_TEXT_HEIGHT_MM;
             set.symbol.units.push(first_unit(
@@ -657,14 +798,6 @@ impl PartEditor {
                 Direction::Passive,
             )),
         });
-        if let Some(unit) = set.symbol.units.first_mut() {
-            let position = [-2.0 * SYMBOL_MODULE_MM, -row * SYMBOL_MODULE_MM];
-            let pin = match grow_body_to(unit, position[1]) {
-                Some(body) => graphics::pin_toward(electrical, position, body),
-                None => Pin::new(electrical, position, PinDirection::Right, SYMBOL_MODULE_MM),
-            };
-            unit.pins.push(pin);
-        }
         set.package.terminals.push(PackageTerminal {
             id: physical,
             designation: physical.to_string(),
@@ -680,6 +813,7 @@ impl PartEditor {
             terminal: electrical,
         });
         self.selected = Some(electrical);
+        Some(electrical)
     }
 
     fn remove_selected(&mut self) {
@@ -793,6 +927,7 @@ impl PartEditor {
             return None;
         };
         let published = set.published(engine).map(|r| r.revision.0);
+        let mut operation = None;
         kit::section(ui, "definition", "Definition", true, None, |ui| {
             kit::text_row(ui, "Name", &mut set.metas.component.name);
             let prefix = &mut set.component.designator_prefix;
@@ -812,7 +947,7 @@ impl PartEditor {
             kit::value_row(ui, "Revision", &revision);
         });
         match self.view {
-            View::Symbol => self.symbol_inspector(ui),
+            View::Symbol => operation = self.symbol_inspector(ui, engine),
             View::Footprint => self.footprint_inspector(ui),
             View::Mapping => self.mapping_inspector(ui),
             View::Model => self.model_inspector(ui),
@@ -830,7 +965,7 @@ impl PartEditor {
         if !unpublished {
             self.update_section(ui, engine);
         }
-        None
+        operation
     }
 
     /// Offer to move placed instances to the published revision.
@@ -1049,35 +1184,19 @@ impl PartEditor {
         );
     }
 
-    fn symbol_inspector(&mut self, ui: &mut Ui) {
-        // The first rectangle is edited as the body until drawing tools
-        // arrive.
-        if let Some((a, b)) = self
-            .draft
-            .as_mut()
-            .and_then(|s| s.symbol.units.first_mut())
-            .and_then(|u| {
-                u.graphics.iter_mut().find_map(|g| match &mut g.item {
-                    Item::Shape {
-                        shape: Shape::Rect { a, b },
-                        ..
-                    } => Some((a, b)),
-                    _ => None,
-                })
-            })
-        {
-            kit::section(ui, "symbol-body", "Body", true, None, |ui| {
-                kit::pair_row(ui, "Corner", a, "mm", -10000.0..=10000.0);
-                kit::pair_row(ui, "Opposite corner", b, "mm", -10000.0..=10000.0);
-            });
-        }
+    fn symbol_inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        self.tool_section(ui, engine);
+        self.selection_section(ui, engine);
+        self.unit_section(ui);
+        let operation = self.grid_section(ui, engine);
         self.terminal_list(ui);
         let (Some(id), Some(set)) = (self.selected, &mut self.draft) else {
-            return;
+            return operation;
         };
         let component = &mut set.component;
-        let symbol = &mut set.symbol;
+        let placed = set.symbol.pin(id).is_some();
         let notice = &mut self.notice;
+        let mut remove = false;
         kit::section(
             ui,
             "selected-terminal",
@@ -1087,14 +1206,6 @@ impl PartEditor {
             |ui| {
                 if let Some(terminal) = component.terminals.iter_mut().find(|t| t.id == id) {
                     kit::text_row(ui, "Name", &mut terminal.name);
-                }
-                if let Some(pin) = symbol
-                    .units
-                    .iter_mut()
-                    .flat_map(|u| u.pins.iter_mut())
-                    .find(|p| p.terminal == id)
-                {
-                    kit::pair_row(ui, "Pin end", &mut pin.position, "mm", -10000.0..=10000.0);
                 }
                 if let Some(mut class) = component.terminal(id).map(ClassChoice::of) {
                     let options: Vec<_> = CLASS_CHOICES
@@ -1107,10 +1218,26 @@ impl PartEditor {
                         *notice = message.into();
                     }
                 }
-                kit::note(ui, "Drag a pin end on the canvas to move it.");
+                if placed {
+                    kit::note(
+                        ui,
+                        "Select the pin on the canvas to edit it; drag to move it.",
+                    );
+                } else {
+                    kit::note(ui, "No pin yet: place it with the Pin tool (N).");
+                }
+                kit::actions(ui, |ui| {
+                    if ui_kit::button(ui, "Remove terminal", Button::Normal).clicked() {
+                        remove = true;
+                    }
+                });
             },
         );
         functions_section(ui, component, id, notice);
+        if remove {
+            self.remove_selected();
+        }
+        operation
     }
 
     fn footprint_inspector(&mut self, ui: &mut Ui) {
@@ -1296,60 +1423,33 @@ impl PartEditor {
             self.mapping_canvas(ui, rect);
             return None;
         }
-        let Some(set) = &mut self.draft else {
+        if self.draft.is_none() {
             ui.put(rect, egui::Label::new("No component draft"));
+            return None;
+        }
+        if self.view == View::Symbol {
+            self.symbol_canvas(ui, rect, &response, engine);
+            return None;
+        }
+        let Some(set) = &mut self.draft else {
             return None;
         };
         let t = Tokens::get();
         let painter = ui.painter().with_clip_rect(rect);
-        let m = TextMetric::default();
-        // The Symbol view draws only what core resolves for the working
-        // set: graphics, pins with names and the working binding's numbers,
-        // and placeholder text.
-        let drawn = if self.view == View::Symbol {
-            set.symbol.units.first().and_then(|unit| {
-                schematic::definition_unit(
-                    &engine.project().library,
-                    schematic::DefinitionUnit {
-                        symbol: &set.symbol,
-                        unit: unit.id,
-                        component: &set.component,
-                        component_name: &set.metas.component.name,
-                        physical: Some((&set.binding, &set.package)),
-                    },
-                )
-                .ok()
-            })
-        } else {
-            None
-        };
-        let (extent_x, extent_y) = if self.view == View::Symbol {
-            drawn
-                .as_ref()
-                .and_then(|d| d.bounds(m))
-                .map_or((2.5, 2.5), |b| {
-                    (
-                        b.min[0].abs().max(b.max[0].abs()),
-                        b.min[1].abs().max(b.max[1].abs()),
-                    )
-                })
-        } else {
-            set.footprint.pads.iter().fold(
+        let (extent_x, extent_y) = set.footprint.pads.iter().fold(
+            (
+                set.package.body_size[0] / 2.0,
+                set.package.body_size[1] / 2.0,
+            ),
+            |(x, y), p| {
                 (
-                    set.package.body_size[0] / 2.0,
-                    set.package.body_size[1] / 2.0,
-                ),
-                |(x, y), p| {
-                    (
-                        x.max(p.position[0].abs() + p.size[0] / 2.0),
-                        y.max(p.position[1].abs() + p.size[1] / 2.0),
-                    )
-                },
-            )
-        };
+                    x.max(p.position[0].abs() + p.size[0] / 2.0),
+                    y.max(p.position[1].abs() + p.size[1] / 2.0),
+                )
+            },
+        );
         if !ui.input(|input| input.pointer.any_down()) {
             self.drag_scale = None;
-            self.dragged_pin = None;
         }
         let fitted_scale = (rect.width() as f64 / (2.0 * extent_x + 6.0))
             .min(rect.height() as f64 / (2.0 * extent_y + 6.0))
@@ -1372,142 +1472,70 @@ impl PartEditor {
             ],
             Stroke::new(1.0, t.text_dim),
         );
-        let title = if self.view == View::Symbol {
-            "Symbol · electrical terminals"
-        } else {
-            "Footprint · copper lands"
-        };
         painter.text(
             rect.left_top() + egui::vec2(t.space_16, t.space_16),
             Align2::LEFT_TOP,
-            title,
+            "Footprint · copper lands",
             fonts::semibold(t.font_panel),
             t.text,
         );
         let mut selected = self.selected;
         let mut drag_scale = self.drag_scale;
-        if self.view == View::Symbol {
-            let Some(drawn) = &drawn else {
-                self.selected = selected;
-                return None;
-            };
-            let view = symbol_view::View { origin, scale };
-            symbol_view::paint(
-                &painter,
-                view,
-                drawn,
-                symbol_view::Ink {
-                    stroke: t.text,
-                    body: t.panel,
-                    text: t.text,
-                    pin: t.accent,
-                    pin_text: t.text_dim,
-                },
-            );
-            // The selected pin is drawn wider than any stub, in the
-            // selection colour; every connection end gets a dot.
-            let stub = (SYMBOL_STROKE_MM as f32 * scale).max(1.0);
-            for pin in &drawn.pins {
-                let ink = if selected == Some(pin.terminal) {
-                    painter.line_segment(
-                        [view.screen(pin.end), view.screen(pin.body_end)],
-                        Stroke::new(stub + 4.0, t.body_selected),
-                    );
-                    t.body_selected
-                } else {
-                    t.accent
-                };
-                painter.circle_filled(view.screen(pin.end), stub / 2.0 + 4.0, ink);
-            }
-            // Picking goes through the core hit test of the resolved
-            // drawing, so what is drawn is what is picked: pins first.
-            let tolerance = f64::from(PICK_PX / scale);
-            let hit = |p: Pos2| drawn.hit(view.world(p), tolerance, m);
-            let pressed = if response.drag_started() {
-                ui.input(|i| i.pointer.press_origin())
-            } else if response.clicked() {
-                response.interact_pointer_pos()
+        let body_origin = transform(set.footprint.datum_offset);
+        let body = Rect::from_center_size(
+            body_origin,
+            egui::vec2(
+                set.package.body_size[0] as f32,
+                set.package.body_size[1] as f32,
+            ) * scale,
+        );
+        painter.rect_stroke(
+            body,
+            t.radius_sm,
+            Stroke::new(1.0, t.text_dim),
+            StrokeKind::Inside,
+        );
+        for pad in &mut set.footprint.pads {
+            let electrical = set.binding.terminal_of(pad.terminal);
+            let at = transform(pad.position);
+            let size = egui::vec2(pad.size[0] as f32, pad.size[1] as f32) * scale;
+            let land = Rect::from_center_size(at, size);
+            let ink = if electrical.is_some() && electrical == selected {
+                t.body_selected
             } else {
-                None
+                t.accent
             };
-            if let Some(SymbolHit::Pin(terminal)) = pressed.and_then(hit) {
-                selected = Some(terminal);
-                if response.drag_started() {
-                    drag_scale = Some(scale);
-                    self.dragged_pin = Some(terminal);
-                }
+            painter.rect_filled(land, 0, ink);
+            let number = set
+                .package
+                .terminal(pad.terminal)
+                .map(|p| p.designation.as_str())
+                .unwrap_or("?");
+            painter.text(
+                land.center(),
+                Align2::CENTER_CENTER,
+                number,
+                fonts::semibold(t.font_label),
+                t.on_accent,
+            );
+            let response = ui.interact(
+                land.expand(3.0),
+                ui.id().with(("footprint-pad", pad.id.0)),
+                Sense::click_and_drag(),
+            );
+            if response.clicked() || response.drag_started() {
+                selected = electrical;
+            }
+            if response.drag_started() {
+                drag_scale = Some(scale);
             }
             if response.dragged()
-                && let Some(terminal) = self.dragged_pin
                 && let Some(p) = response.interact_pointer_pos()
-                && let Some(pin) = set
-                    .symbol
-                    .units
-                    .iter_mut()
-                    .flat_map(|u| u.pins.iter_mut())
-                    .find(|pin| pin.terminal == terminal)
             {
-                // The connection end snaps to the symbol grid.
-                let step = engine.drafts().grid.symbol_mm;
-                pin.position = view.world(p).map(|v| (v / step).round() * step);
-            }
-        } else {
-            let body_origin = transform(set.footprint.datum_offset);
-            let body = Rect::from_center_size(
-                body_origin,
-                egui::vec2(
-                    set.package.body_size[0] as f32,
-                    set.package.body_size[1] as f32,
-                ) * scale,
-            );
-            painter.rect_stroke(
-                body,
-                t.radius_sm,
-                Stroke::new(1.0, t.text_dim),
-                StrokeKind::Inside,
-            );
-            for pad in &mut set.footprint.pads {
-                let electrical = set.binding.terminal_of(pad.terminal);
-                let at = transform(pad.position);
-                let size = egui::vec2(pad.size[0] as f32, pad.size[1] as f32) * scale;
-                let land = Rect::from_center_size(at, size);
-                let ink = if electrical.is_some() && electrical == selected {
-                    t.body_selected
-                } else {
-                    t.accent
-                };
-                painter.rect_filled(land, 0, ink);
-                let number = set
-                    .package
-                    .terminal(pad.terminal)
-                    .map(|p| p.designation.as_str())
-                    .unwrap_or("?");
-                painter.text(
-                    land.center(),
-                    Align2::CENTER_CENTER,
-                    number,
-                    fonts::semibold(t.font_label),
-                    t.on_accent,
-                );
-                let response = ui.interact(
-                    land.expand(3.0),
-                    ui.id().with(("footprint-pad", pad.id.0)),
-                    Sense::click_and_drag(),
-                );
-                if response.clicked() || response.drag_started() {
-                    selected = electrical;
-                }
-                if response.drag_started() {
-                    drag_scale = Some(scale);
-                }
-                if response.dragged()
-                    && let Some(p) = response.interact_pointer_pos()
-                {
-                    pad.position = [
-                        f64::from((p.x - origin.x) / scale),
-                        f64::from((origin.y - p.y) / scale),
-                    ];
-                }
+                pad.position = [
+                    f64::from((p.x - origin.x) / scale),
+                    f64::from((origin.y - p.y) / scale),
+                ];
             }
         }
         self.selected = selected;
@@ -1741,7 +1769,7 @@ fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
 fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
     let (a, b) = unit.graphics.iter_mut().find_map(|g| match &mut g.item {
         Item::Shape {
-            shape: Shape::Rect { a, b },
+            shape: Shape::Rect { a, b, .. },
             fill: Fill::Body,
             ..
         } => Some((a, b)),
@@ -1766,7 +1794,7 @@ fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
     }
     unit.graphics.iter().find_map(|g| match &g.item {
         Item::Shape {
-            shape: Shape::Rect { a, b },
+            shape: Shape::Rect { a, b, .. },
             fill: Fill::Body,
             ..
         } => Bounds::of([*a, *b]),
@@ -1777,6 +1805,8 @@ fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
 #[cfg(test)]
 mod draft_tests {
     use super::*;
+    use pcbcraft_core::library::TextMetric;
+    use pcbcraft_core::schematic;
 
     fn component_name(engine: &Engine, editor: &PartEditor) -> Option<String> {
         let id = editor.draft.as_ref()?.ids.component;
@@ -1855,7 +1885,7 @@ mod draft_tests {
             .iter()
             .find_map(|g| match &g.item {
                 Item::Shape {
-                    shape: Shape::Rect { a, b },
+                    shape: Shape::Rect { a, b, .. },
                     ..
                 } => Bounds::of([*a, *b]),
                 _ => None,

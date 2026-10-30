@@ -1,6 +1,7 @@
 use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{DefinitionId, DefinitionRef};
+use crate::library::graphics::GraphicEdit;
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
@@ -41,6 +42,14 @@ pub enum LibraryCommand {
     /// now off the symbol grid.
     #[serde(rename = "library.set_grid")]
     SetGrid { grid: Grid },
+    /// Apply 1–256 graphic and pin edits to one symbol draft, in order, as
+    /// one undo step; any failure leaves the draft unchanged. The outcome
+    /// lists the IDs `add` allocated.
+    #[serde(rename = "library.edit_graphics")]
+    EditGraphics {
+        draft: DefinitionId,
+        edits: Vec<GraphicEdit>,
+    },
 }
 
 pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) -> Result<Outcome> {
@@ -133,5 +142,46 @@ pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) ->
                 .collect();
             Ok(Outcome::GridSet { off_grid })
         }
+        LibraryCommand::EditGraphics { draft, edits } => {
+            let current = document
+                .drafts
+                .get(draft)
+                .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+            let terminals = match &current.definition {
+                Definition::Symbol(symbol) => owner_terminals(document, symbol.component),
+                _ => Default::default(),
+            };
+            let (definition, added) =
+                library::graphics::apply(&current.definition, &terminals, &edits)?;
+            let edit = DraftEdit {
+                id: draft,
+                meta: current.meta.clone(),
+                definition,
+            };
+            drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            Ok(Outcome::GraphicsEdited { added })
+        }
     }
+}
+
+/// The terminals of a symbol's owning component: its draft when there is
+/// one, else its latest published revision.
+fn owner_terminals(
+    document: &Document,
+    component: DefinitionId,
+) -> std::collections::BTreeSet<crate::ids::TerminalId> {
+    if let Some(draft) = document.drafts.get(component) {
+        return match &draft.definition {
+            Definition::Component(c) => c.terminals.iter().map(|t| t.id).collect(),
+            _ => Default::default(),
+        };
+    }
+    document
+        .project
+        .library
+        .latest_components()
+        .into_iter()
+        .find(|c| c.id == component)
+        .map(|c| c.definition.terminals.iter().map(|t| t.id).collect())
+        .unwrap_or_default()
 }

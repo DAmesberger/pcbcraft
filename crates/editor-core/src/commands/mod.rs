@@ -11,7 +11,7 @@ pub(crate) use library::apply_library;
 
 use crate::fields::EffectiveField;
 use crate::functions::Resolution;
-use crate::ids::{DefinitionId, DefinitionRef, Id, TerminalId};
+use crate::ids::{DefinitionId, DefinitionRef, GraphicId, Id, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,10 @@ pub enum Outcome {
     /// Draft pins off the symbol grid after `library.set_grid`.
     GridSet {
         off_grid: Vec<OffGridPin>,
+    },
+    /// Graphic IDs `library.edit_graphics` allocated, in edit order.
+    GraphicsEdited {
+        added: Vec<GraphicId>,
     },
 }
 

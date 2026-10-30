@@ -25,6 +25,8 @@ const BUTTON_LABEL_PADDING: f32 = 10.0;
 const SECTION_HEIGHT: f32 = 20.0;
 const TAB_INSET: f32 = 4.0;
 const GROUP_PADDING: f32 = 6.0;
+/// Width of the ribbon's » overflow button.
+const OVERFLOW_WIDTH: f32 = 30.0;
 const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -432,11 +434,26 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
     let mut x = area.left() + TAB_INSET;
     let top = area.top() + 2.0;
     let separator = t.toolbar.lerp_to_gamma(t.border, 0.6);
-    for (index, group) in ribbon.groups.iter().enumerate() {
-        let width = group_width(ui, group);
-        if x + width > area.right() {
-            break;
-        }
+    // Groups that fit in full; the rest go to the » menu, as Solidcraft's
+    // toolbar trims panels into its overflow menu, so every tool stays
+    // reachable by a click however narrow the window.
+    let widths: Vec<f32> = ribbon.groups.iter().map(|g| group_width(ui, g)).collect();
+    let total: f32 = widths.iter().sum::<f32>() + widths.len().saturating_sub(1) as f32;
+    let room = area.right() - x;
+    let shown = if total <= room {
+        ribbon.groups.len()
+    } else {
+        let mut used = 0.0;
+        widths
+            .iter()
+            .take_while(|w| {
+                used += *w + 1.0;
+                used <= room - OVERFLOW_WIDTH
+            })
+            .count()
+    };
+    for (index, group) in ribbon.groups.iter().enumerate().take(shown) {
+        let width = widths[index];
         let buttons: f32 = group
             .tools
             .iter()
@@ -473,6 +490,53 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             );
             x += 1.0;
         }
+    }
+    if shown < ribbon.groups.len() {
+        let rect = Rect::from_min_size(
+            pos2(area.right() - OVERFLOW_WIDTH, top),
+            vec2(OVERFLOW_WIDTH - TAB_INSET, BUTTON_HEIGHT),
+        );
+        let response = ui
+            .interact(rect, ui.id().with("ribbon-overflow"), Sense::click())
+            .on_hover_text("More tools");
+        if response.hovered() {
+            ui.painter().rect_filled(rect, t.radius_sm, t.hover);
+        }
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "»",
+            FontId::proportional(t.font_panel),
+            t.text,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "More tools")
+        });
+        Container::new(ui.ctx(), Surface::Popup)
+            .menu(&response)
+            .show(|ui| {
+                for group in &ribbon.groups[shown..] {
+                    ui.label(
+                        egui::RichText::new(group.label)
+                            .size(t.font_caption)
+                            .color(t.text_dim),
+                    );
+                    for tool in &group.tools {
+                        let label = if tool.selected {
+                            format!("✓ {}", tool.label)
+                        } else {
+                            tool.label.to_owned()
+                        };
+                        if ui
+                            .add_enabled(tool.enabled, egui::Button::new(label))
+                            .on_hover_text(tool.tip)
+                            .clicked()
+                        {
+                            clicked = Some(tool.id);
+                        }
+                    }
+                }
+            });
     }
     clicked
 }

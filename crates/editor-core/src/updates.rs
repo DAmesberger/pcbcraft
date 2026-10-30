@@ -485,7 +485,7 @@ fn pin_presentation(pin: &Pin) -> (PinDirection, f64, Decorations, PinText, PinT
 }
 
 /// Graphics added, removed and changed between two revisions, by ID.
-fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usize, usize) {
+pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usize, usize) {
     let old: BTreeMap<GraphicId, &Graphic> = before.iter().map(|g| (g.id, g)).collect();
     let new: BTreeMap<GraphicId, &Graphic> = after.iter().map(|g| (g.id, g)).collect();
     let added = new.keys().filter(|id| !old.contains_key(id)).count();

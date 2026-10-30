@@ -6,7 +6,9 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
-use crate::library::graphics::SYMBOL_TEXT_HEIGHT_MM;
+use crate::library::graphics::{
+    SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING, TextLine, TextSize, text_lines, upright,
+};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit, VAlign,
@@ -354,6 +356,13 @@ pub struct PlacedText {
     pub justify: Justify,
     /// Drawn reflected (an occurrence or board side mirror).
     pub mirrored: bool,
+    /// Distance between lines in cap heights; `text` breaks at `\n`.
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: f64,
+}
+
+fn default_line_spacing() -> f64 {
+    TEXT_LINE_SPACING
 }
 
 impl PlacedText {
@@ -364,8 +373,34 @@ impl PlacedText {
             self.height,
             self.rotation_deg,
             self.justify,
-            self.text.chars().count(),
+            TextSize::of(&self.text, self.line_spacing),
         )
+    }
+
+    /// The lines to draw, laid out after the upright rule: each reads left
+    /// to right or bottom to top and sits where the core metric puts it.
+    pub fn lines(&self) -> (f64, Vec<TextLine<'_>>) {
+        let (rotation_deg, justify) = upright(self.rotation_deg, self.justify);
+        (
+            rotation_deg,
+            text_lines(
+                &self.text,
+                self.at,
+                self.height,
+                rotation_deg,
+                justify,
+                self.line_spacing,
+            ),
+        )
+    }
+
+    /// The upright horizontal justification every line uses.
+    pub fn line_justify(&self) -> Justify {
+        let (_, justify) = upright(self.rotation_deg, self.justify);
+        Justify {
+            h: justify.h,
+            v: VAlign::Middle,
+        }
     }
 }
 
@@ -536,6 +571,7 @@ fn draw(
         rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
         justify,
         mirrored: t.mirror,
+        line_spacing: TEXT_LINE_SPACING,
     };
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
@@ -567,14 +603,17 @@ fn draw(
                         .map(|f| f.text.clone())
                         .unwrap_or_default(),
                 };
-                texts.push(place(
-                    Some(graphic.id),
-                    content,
-                    text.at,
-                    text.height,
-                    text.rotation.degrees(),
-                    text.justify,
-                ));
+                texts.push(PlacedText {
+                    line_spacing: text.line_spacing,
+                    ..place(
+                        Some(graphic.id),
+                        content,
+                        text.at,
+                        text.height,
+                        text.rotation.degrees(),
+                        text.justify,
+                    )
+                });
             }
         }
     }
@@ -641,6 +680,7 @@ fn draw(
                 v: VAlign::Top,
             },
             mirrored: false,
+            line_spacing: TEXT_LINE_SPACING,
         });
         y -= SYMBOL_TEXT_HEIGHT_MM + FIELD_GAP_MM;
     }
