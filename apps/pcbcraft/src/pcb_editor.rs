@@ -1,9 +1,10 @@
 //! PCB content for Solidcraft's shared shell. Controls follow upstream
 //! ui_kit/layout.rs and fields.rs; gesture previews commit on release, following
 //! drag_snap.rs. The root owns the native Solidcraft viewport and its camera.
+use crate::kit::{self, Tone};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Id, Layer, Operation, Placement, Point, Project, instances,
+    Engine, Id, Layer, Operation, Placement, Point, Project, Track, instances,
     layout::{self, LayoutCommand, RouteRequest, WorldPad},
     schematic,
     updates::Change,
@@ -13,6 +14,11 @@ use solidcraft_ui_egui::{
     theme::Tokens,
     ui_kit::{self, Button},
 };
+
+/// Bound on typed placement coordinates (mm); the board is far smaller.
+const COORDINATE_LIMIT: f64 = 10_000.0;
+/// Board-check findings listed in the card; the rest are counted.
+const MAX_LISTED_ISSUES: usize = 40;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Tool {
@@ -300,58 +306,89 @@ impl PcbEditor {
         self.pan = Vec2::ZERO;
     }
 
+    /// Properties card body. The card header already names the selection, so
+    /// the body starts with its first section.
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
-        if let Some(operation) = self.update.show(ui, engine) {
-            return Some(operation);
-        }
         if self.update.is_open() {
-            return None;
+            return self.update.show(ui, engine);
         }
-        let t = Tokens::get();
         let project = engine.project();
-        ui.label(egui::RichText::new("Board").font(fonts::semibold(t.font_panel)));
-        ui.weak(format!(
-            "{} × {} mm · 2 copper layers",
-            project.board_size[0], project.board_size[1]
-        ));
+        let mut operation = None;
         if let Some(placement) = project
             .placements
             .iter()
             .find(|p| Some(p.instance) == self.instance)
         {
-            let reference = project
-                .instance(placement.instance)
-                .map(|i| i.designator.as_str())
-                .unwrap_or("Component");
-            ui.separator();
-            ui.label(egui::RichText::new(reference).font(fonts::semibold(t.font_panel)));
-            ui.add_enabled_ui(!placement.locked, |ui| {
-                number_row(ui, "X", &mut self.position[0], " mm");
-                number_row(ui, "Y", &mut self.position[1], " mm");
-                number_row(ui, "Rotation", &mut self.rotation, "°");
-                layer_row(ui, &mut self.placement_layer);
+            operation = self.placement_section(ui, placement);
+        } else if let Some(track) = project.tracks.iter().find(|t| Some(t.id) == self.track) {
+            operation = track_section(ui, project, track);
+        } else {
+            kit::section(ui, "pcb-board", "Board", true, None, |ui| {
+                kit::value_row(
+                    ui,
+                    "Size",
+                    &format!(
+                        "{} × {} mm",
+                        kit::number_text(project.board_size[0]),
+                        kit::number_text(project.board_size[1])
+                    ),
+                );
+                kit::value_row(ui, "Copper", "2 layers");
             });
-            if ui_kit::button(ui, "Apply placement", Button::Normal).clicked() && !placement.locked
-            {
-                return Some(Operation::Layout(LayoutCommand::Move {
+        }
+        self.routing_section(ui, project);
+        self.checks_section(ui);
+        operation
+    }
+
+    fn placement_section(&mut self, ui: &mut Ui, placement: &Placement) -> Option<Operation> {
+        let locked = placement.locked;
+        let mut action = None;
+        kit::section(ui, "pcb-placement", "Placement", true, None, |ui| {
+            ui.add_enabled_ui(!locked, |ui| {
+                kit::pair_row(
+                    ui,
+                    "Position",
+                    &mut self.position,
+                    "mm",
+                    -COORDINATE_LIMIT..=COORDINATE_LIMIT,
+                );
+                kit::number_row(ui, "Rotation", &mut self.rotation, "°", 0.0..=360.0);
+                kit::choice_row(ui, "Side", &mut self.placement_layer, &layer_options());
+            });
+            let mut lock = locked;
+            if kit::check_row(ui, "Locked", &mut lock) {
+                action = Some(LayoutCommand::SetPlacementLock {
                     instance: placement.instance,
-                    position: self.position,
-                    rotation_deg: self.rotation,
-                    layer: self.placement_layer,
-                }));
+                    locked: lock,
+                });
             }
-            let mut action = None;
-            ui.horizontal(|ui| {
-                if ui_kit::button(ui, "Rotate 90°", Button::Small).clicked() && !placement.locked {
-                    action = Some(LayoutCommand::Move {
-                        instance: placement.instance,
-                        position: placement.position,
-                        rotation_deg: (placement.rotation_deg + 90.0).rem_euclid(360.0),
-                        layer: placement.layer,
-                    });
+            if locked {
+                kit::note(ui, "Unlock the placement to move, rotate or flip it.");
+            }
+            let edit = placement_edit(
+                placement,
+                self.position,
+                self.rotation,
+                self.placement_layer,
+            );
+            kit::actions(ui, |ui| {
+                // Primary only once there is an edit; a disabled accent
+                // button reads as active.
+                let apply = ui_kit::button(
+                    ui,
+                    "Apply",
+                    if edit.is_some() {
+                        Button::Primary
+                    } else {
+                        Button::Enabled(false)
+                    },
+                );
+                if apply.clicked() && edit.is_some() {
+                    action = edit;
                 }
-                if ui_kit::button(ui, "Flip", Button::Small).clicked() && !placement.locked {
+                if ui_kit::button(ui, "Flip", Button::Enabled(!locked)).clicked() && !locked {
                     action = Some(LayoutCommand::Move {
                         instance: placement.instance,
                         position: placement.position,
@@ -359,105 +396,76 @@ impl PcbEditor {
                         layer: opposite(placement.layer),
                     });
                 }
-            });
-            if let Some(action) = action {
-                return Some(Operation::Layout(action));
-            }
-            let mut locked = placement.locked;
-            if ui.checkbox(&mut locked, "Lock placement").changed() {
-                return Some(Operation::Layout(LayoutCommand::SetPlacementLock {
-                    instance: placement.instance,
-                    locked,
-                }));
-            }
-        }
-        if let Some(track) = project.tracks.iter().find(|p| Some(p.id) == self.track) {
-            ui.separator();
-            ui.label(format!("Track {}", track.id));
-            ui.weak(format!(
-                "{} · {:.2} mm · {:?}",
-                project.net_name(track.net),
-                track.width,
-                track.layer
-            ));
-            let mut locked = track.locked;
-            if ui.checkbox(&mut locked, "Lock track").changed() {
-                return Some(Operation::Layout(LayoutCommand::SetTrackLock {
-                    id: track.id,
-                    locked,
-                }));
-            }
-            if ui_kit::button(ui, "Delete track", Button::Normal).clicked() && !locked {
-                return Some(Operation::Layout(LayoutCommand::DeleteTrack {
-                    id: track.id,
-                }));
-            }
-        }
-        ui.separator();
-        ui.label(egui::RichText::new("Routing").font(fonts::semibold(t.font_panel)));
-        number_row(ui, "Width", &mut self.width, " mm");
-        let previous_layer = self.layer;
-        layer_row(ui, &mut self.layer);
-        if previous_layer != self.layer {
-            self.route_start = None;
-        }
-        egui::ComboBox::from_id_salt("routing-net")
-            .selected_text(
-                self.net
-                    .map_or("Select a net or pad", |id| project.net_name(id)),
-            )
-            .show_ui(ui, |ui| {
-                for net in schematic::nets(project) {
-                    if ui
-                        .selectable_value(&mut self.net, Some(net.id), &net.name)
-                        .changed()
-                    {
-                        self.route_start = None;
-                        self.highlighted = Some(net.id);
-                    }
-                }
-            });
-        let mut highlight = self.highlighted.is_some();
-        if ui
-            .checkbox(&mut highlight, "Highlight complete net")
-            .changed()
-        {
-            self.highlight_net(if highlight { self.net } else { None });
-        }
-        ui.checkbox(&mut self.show_airwires, "Show airwires");
-        ui.weak(if self.route_start.is_some() {
-            "Click the next point or destination pad. Escape ends routing."
-        } else {
-            "Route: click a pad, then a point or another pad. 0.5 mm grid."
-        });
-        ui.collapsing(format!("Board checks · {}", self.issues.len()), |ui| {
-            ui.weak("Basic physical connectivity, outline and 0.2 mm copper clearance. This is not a complete manufacturing DRC.");
-            if self.issues.is_empty() { ui.label("No issues found by these checks."); }
-            for issue in self.issues.iter().take(40) { ui.label(&issue.message); }
-            if self.issues.len() > 40 { ui.weak(format!("{} more issues", self.issues.len() - 40)); }
-        });
-        ui.collapsing("Placements", |ui| {
-            for placement in &project.placements {
-                let label = project
-                    .instance(placement.instance)
-                    .map(|i| i.designator.as_str())
-                    .unwrap_or("Component");
-                if ui_kit::button(
-                    ui,
-                    label,
-                    if self.instance == Some(placement.instance) {
-                        Button::SmallSelected
-                    } else {
-                        Button::Ghost
-                    },
-                )
-                .clicked()
+                if ui_kit::button(ui, "Rotate 90°", Button::Enabled(!locked)).clicked() && !locked
                 {
-                    self.set_selection(Some(placement.instance), None, None);
+                    action = Some(LayoutCommand::Move {
+                        instance: placement.instance,
+                        position: placement.position,
+                        rotation_deg: (placement.rotation_deg + 90.0).rem_euclid(360.0),
+                        layer: placement.layer,
+                    });
                 }
-            }
+            });
         });
-        None
+        action.map(Operation::Layout)
+    }
+
+    fn routing_section(&mut self, ui: &mut Ui, project: &Project) {
+        kit::section(ui, "pcb-routing", "Routing", true, None, |ui| {
+            kit::number_row(ui, "Width", &mut self.width, "mm", 0.05..=10.0);
+            if kit::choice_row(ui, "Layer", &mut self.layer, &layer_options()) {
+                self.route_start = None;
+            }
+            let mut nets = vec![(None, "Select a net or pad".to_owned())];
+            nets.extend(
+                schematic::nets(project)
+                    .iter()
+                    .map(|net| (Some(net.id), net.name.clone())),
+            );
+            if kit::choice_row(ui, "Net", &mut self.net, &nets) {
+                self.route_start = None;
+                self.highlighted = self.net;
+            }
+            let mut highlight = self.highlighted.is_some();
+            if kit::check_row(ui, "Highlight complete net", &mut highlight) {
+                self.highlight_net(if highlight { self.net } else { None });
+            }
+            kit::check_row(ui, "Show airwires", &mut self.show_airwires);
+            kit::note(
+                ui,
+                if self.route_start.is_some() {
+                    "Click a point or pad. Escape ends the route."
+                } else {
+                    "Route: click a pad, then a point or pad."
+                },
+            );
+        });
+    }
+
+    fn checks_section(&self, ui: &mut Ui) {
+        let count = self.issues.len();
+        kit::section(
+            ui,
+            "pcb-checks",
+            "Board checks",
+            count > 0,
+            Some(count),
+            |ui| {
+                if self.issues.is_empty() {
+                    kit::status(ui, "No issues found by these checks.", Tone::Dim);
+                }
+                for issue in self.issues.iter().take(MAX_LISTED_ISSUES) {
+                    kit::status(ui, &issue.message, Tone::Error);
+                }
+                if count > MAX_LISTED_ISSUES {
+                    kit::note(ui, &format!("{} more issues", count - MAX_LISTED_ISSUES));
+                }
+                kit::note(
+                    ui,
+                    "Connectivity, outline and 0.2 mm copper clearance only; not a full manufacturing DRC.",
+                );
+            },
+        );
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -753,37 +761,63 @@ fn opposite(layer: Layer) -> Layer {
         Layer::Top
     }
 }
+fn layer_name(layer: Layer) -> &'static str {
+    match layer {
+        Layer::Top => "Top",
+        Layer::Bottom => "Bottom",
+    }
+}
+fn layer_options() -> [(Layer, String); 2] {
+    [Layer::Top, Layer::Bottom].map(|layer| (layer, layer_name(layer).to_owned()))
+}
+/// The Move that the placement form's Apply button issues: `None` while the
+/// placement is locked or the form still matches it.
+fn placement_edit(
+    placement: &Placement,
+    position: Point,
+    rotation_deg: f64,
+    layer: Layer,
+) -> Option<LayoutCommand> {
+    let unchanged = placement.position == position
+        && placement.rotation_deg == rotation_deg
+        && placement.layer == layer;
+    (!placement.locked && !unchanged).then_some(LayoutCommand::Move {
+        instance: placement.instance,
+        position,
+        rotation_deg,
+        layer,
+    })
+}
+/// Read-only track properties with lock and delete.
+fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operation> {
+    let mut action = None;
+    kit::section(ui, "pcb-track", "Track", true, None, |ui| {
+        kit::value_row(ui, "Net", project.net_name(track.net));
+        kit::value_row(
+            ui,
+            "Width",
+            &format!("{} mm", kit::number_text(track.width)),
+        );
+        kit::value_row(ui, "Layer", layer_name(track.layer));
+        let mut locked = track.locked;
+        if kit::check_row(ui, "Locked", &mut locked) {
+            action = Some(LayoutCommand::SetTrackLock {
+                id: track.id,
+                locked,
+            });
+        }
+        kit::actions(ui, |ui| {
+            if ui_kit::button(ui, "Delete track", Button::Enabled(!track.locked)).clicked()
+                && !track.locked
+            {
+                action = Some(LayoutCommand::DeleteTrack { id: track.id });
+            }
+        });
+    });
+    action.map(Operation::Layout)
+}
 fn snap(p: Point) -> Point {
     p.map(|v| (v * 2.0).round() / 2.0)
-}
-fn number_row(ui: &mut Ui, label: &str, value: &mut f64, suffix: &str) {
-    let t = Tokens::get();
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [t.form_label_width, t.control_height],
-            egui::Label::new(label),
-        );
-        ui.add(egui::DragValue::new(value).speed(0.1).suffix(suffix));
-    });
-}
-fn layer_row(ui: &mut Ui, layer: &mut Layer) {
-    ui.horizontal(|ui| {
-        for (value, label) in [(Layer::Top, "Top"), (Layer::Bottom, "Bottom")] {
-            if ui_kit::button(
-                ui,
-                label,
-                if *layer == value {
-                    Button::SmallSelected
-                } else {
-                    Button::Small
-                },
-            )
-            .clicked()
-            {
-                *layer = value;
-            }
-        }
-    });
 }
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
     let instance = project.instance(placement.instance)?;
@@ -926,7 +960,7 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> (egui::FullOutput, Option<Operation>) {
         let mut command = None;
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     Pos2::ZERO,
@@ -939,6 +973,8 @@ mod tests {
                 command = editor.inspector(ui, engine);
             },
         );
+        // No renderer in tests: drop font-atlas uploads instead of applying them.
+        output.textures_delta.clear();
         (output, command)
     }
 
@@ -990,6 +1026,81 @@ mod tests {
             }],
         )
         .1)
+    }
+
+    #[test]
+    fn apply_issues_the_move_the_engine_accepts_and_lock_disables_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let placement = |engine: &Engine| {
+            engine
+                .project()
+                .placements
+                .iter()
+                .find(|p| p.instance == r1)
+                .cloned()
+                .ok_or("fixture placement missing")
+        };
+        let before = placement(&engine)?;
+        assert!(
+            placement_edit(&before, before.position, before.rotation_deg, before.layer).is_none()
+        );
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r1), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(editor.position, before.position);
+        // The form edits that the Position, Rotation and Side rows produce.
+        editor.position = [12.0, 9.5];
+        editor.rotation = 90.0;
+        editor.placement_layer = Layer::Bottom;
+        let expected = placement_edit(&before, [12.0, 9.5], 90.0, Layer::Bottom)
+            .ok_or("moved placement has no edit")?;
+        let LayoutCommand::Move {
+            instance,
+            position,
+            rotation_deg,
+            layer,
+        } = expected
+        else {
+            return Err("Apply is not a move".into());
+        };
+        assert_eq!(
+            (instance, position, rotation_deg, layer),
+            (r1, [12.0, 9.5], 90.0, Layer::Bottom)
+        );
+        let operation = click(&mut editor, &engine, &ctx, "Apply")?.ok_or("Apply did nothing")?;
+        let Operation::Layout(LayoutCommand::Move {
+            instance: i,
+            position: p,
+            rotation_deg: r,
+            layer: l,
+        }) = &operation
+        else {
+            return Err("Apply issued another command".into());
+        };
+        assert_eq!((*i, *p, *r, *l), (instance, position, rotation_deg, layer));
+        engine.apply(engine.revision(), operation)?;
+        let after = placement(&engine)?;
+        assert_eq!(
+            (after.position, after.rotation_deg, after.layer),
+            (position, rotation_deg, layer)
+        );
+        // The engine rejects moving a locked placement, so the form offers none.
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::SetPlacementLock {
+                instance: r1,
+                locked: true,
+            }),
+        )?;
+        let locked = placement(&engine)?;
+        assert!(placement_edit(&locked, [1.0, 1.0], 0.0, Layer::Top).is_none());
+        editor.position = [1.0, 1.0];
+        assert!(click(&mut editor, &engine, &ctx, "Apply")?.is_none());
+        Ok(())
     }
 
     #[test]
