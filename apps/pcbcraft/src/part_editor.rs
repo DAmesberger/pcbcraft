@@ -17,7 +17,8 @@ use pcbcraft_core::functions::{
 };
 use pcbcraft_core::geometry::{Bounds, Shape};
 use pcbcraft_core::library::graphics::{
-    self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, TextContent, VAlign,
+    self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM,
+    TextContent, VAlign,
 };
 use pcbcraft_core::library::{
     ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
@@ -1403,17 +1404,20 @@ impl PartEditor {
                     pin_text: t.text_dim,
                 },
             );
+            // The selected pin is drawn wider than any stub, in the
+            // selection colour; every connection end gets a dot.
+            let stub = (SYMBOL_STROKE_MM as f32 * scale).max(1.0);
             for pin in &drawn.pins {
                 let ink = if selected == Some(pin.terminal) {
                     painter.line_segment(
                         [view.screen(pin.end), view.screen(pin.body_end)],
-                        Stroke::new(3.0, t.body_selected),
+                        Stroke::new(stub + 4.0, t.body_selected),
                     );
                     t.body_selected
                 } else {
                     t.accent
                 };
-                painter.circle_filled(view.screen(pin.end), 4.0, ink);
+                painter.circle_filled(view.screen(pin.end), stub / 2.0 + 4.0, ink);
             }
             // Picking goes through the core hit test in the unit frame:
             // pins before graphics.
