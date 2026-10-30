@@ -130,7 +130,7 @@ Code licensing and library-data licensing are distinct. KiCad publishes its libr
 
 ## Accepted authoring contract
 
-This section specifies target behavior. The existing monolithic `Part`, text-valued instances, single-unit UI and numeric Rhai pad proof do not yet implement this contract. Fixture values below are original synthetic test data, not recommended land patterns or verified manufacturer specifications.
+This section specifies target behavior; [component model](component-model.md) defines how its definitions, revisions, instances, fields and terminal functions are represented in the first three implementation slices. The existing monolithic `Part`, text-valued instances, single-unit UI and numeric Rhai pad proof do not yet implement this contract. Fixture values below are original synthetic test data, not recommended land patterns or verified manufacturer specifications.
 
 ### Definition relationships and completeness
 

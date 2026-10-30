@@ -30,7 +30,7 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 
 ## Component-editor acceptance
 
-The [accepted authoring contract and scenarios](docs/part-library-design.md#accepted-authoring-contract) define target behavior, not current capability. New Component is the entry point; component categories and templates are optional. Basic multi-unit symbols and structured multi-function IOs with instance-level selection belong to the first complete editor. Establish unit/function identities against CE-04–CE-06 before implementing the CE-01 UI, then deliver the scenarios in order within the component-editor phase.
+The [accepted authoring contract and scenarios](docs/part-library-design.md#accepted-authoring-contract) define target behavior, not current capability. New Component is the entry point; component categories and templates are optional. Basic multi-unit symbols and structured multi-function IOs with instance-level selection belong to the first complete editor. Establish unit/function identities against CE-04–CE-06 before implementing the CE-01 UI, then deliver the scenarios in order within the component-editor phase. The [component model](docs/component-model.md) is the implementation contract for the definition, typed-field and terminal-function slices that precede CE-01.
 
 - [ ] CE-01: generic resistor, reusable typed fields, alternate symbols and independently revisioned physical choices.
 - [ ] CE-02: non-polarized/polarized capacitors, tolerance semantics, polarity and manufacturer requirements.
