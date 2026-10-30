@@ -40,6 +40,8 @@ The [accepted authoring contract and scenarios](docs/part-library-design.md#acce
 - [ ] CE-06: MCU-style IC, structured pin-function arrays/directions, resource constraints, repeated supply connections and exposed-pad obligations.
 - [ ] CE-07: connector, electrical shield, mechanical holes, package variants and model datums.
 
+Open decision before the first release: a symbol at every graphics limit encodes to about 1.2–1.4 MB of pretty JSON, so only eleven to thirteen such revisions fit the 16 MiB project file. Choose a compact encoding, pruning of unreferenced revisions or lower vertex limits; see [encoded size](docs/component-model.md) in the component model.
+
 All scenarios require the common UI/automation, transactional, offline and native-model evidence in the spec. The [Rhai integration proof](docs/part-library-design.md#rhai-integration-proof) passes its bounded arithmetic/generation tests, but does not complete any full scenario. Cross-sheet hierarchy, automatic gate/pin swapping and firmware generation remain separate work.
 
 ## Subsequent milestones

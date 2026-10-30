@@ -556,13 +556,19 @@ fn definition_details(
             )),
             _ => {}
         }
-        if let (Some((_, pa)), Some((ub, pb))) = (before, after)
+        if let (Some((ua, pa)), Some((ub, pb))) = (before, after)
             && pin_presentation(pa) != pin_presentation(pb)
         {
+            let anchored = ua.id == ub.id && pa.position == pb.position;
             plan.detail(format!(
-                "{designator} terminal {} pin in unit {}: direction, length, decorations or text change (presentation only; the connection point and nets are unchanged).",
+                "{designator} terminal {} pin in unit {}: direction, length, decorations or text change{}.",
                 terminal.id,
                 unit_label(b.symbol, ub.id),
+                if anchored {
+                    " (presentation only; the connection point and nets are unchanged)"
+                } else {
+                    ""
+                },
             ));
         }
     }

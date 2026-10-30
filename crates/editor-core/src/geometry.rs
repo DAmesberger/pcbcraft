@@ -569,8 +569,25 @@ fn edges(polygon: &[Point]) -> impl Iterator<Item = (Point, Point)> + '_ {
     (0..n).map(move |i| (polygon[i], polygon[(i + 1) % n]))
 }
 
-/// Whether a closed outline's non-adjacent edges cross or touch.
+/// Whether a closed outline's non-adjacent edges cross or touch. Repeated
+/// consecutive points (zero-length edges) are ignored rather than read as
+/// the outline touching itself.
 pub fn polygon_self_intersects(polygon: &[Point]) -> bool {
+    let mut distinct: Vec<Point> = Vec::with_capacity(polygon.len());
+    for &p in polygon {
+        if distinct.last().is_none_or(|&q| length(sub(p, q)) >= 1e-9) {
+            distinct.push(p);
+        }
+    }
+    while distinct.len() > 1
+        && distinct
+            .first()
+            .zip(distinct.last())
+            .is_some_and(|(&a, &b)| length(sub(a, b)) < 1e-9)
+    {
+        distinct.pop();
+    }
+    let polygon = distinct.as_slice();
     let n = polygon.len();
     if n < 4 {
         return false;

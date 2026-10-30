@@ -327,6 +327,14 @@ fn self_intersection_and_containment() {
         [0.0, 3.0],
     ];
     assert!(!polygon_self_intersects(&l_shape));
+    // A repeated vertex is a zero-length edge, not a crossing.
+    let repeated = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    assert!(!polygon_self_intersects(&repeated));
+    let closed = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]];
+    assert!(!polygon_self_intersects(&closed));
+    let mut bow_tie_repeated = bow_tie.clone();
+    bow_tie_repeated.insert(1, [2.0, 2.0]);
+    assert!(polygon_self_intersects(&bow_tie_repeated));
     assert!(polygon_contains(&l_shape, [0.5, 2.5]));
     assert!(!polygon_contains(&l_shape, [2.0, 2.0]));
     assert_eq!(

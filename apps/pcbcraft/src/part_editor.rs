@@ -16,7 +16,9 @@ use pcbcraft_core::functions::{
     Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
 };
 use pcbcraft_core::geometry::{Bounds, Shape};
-use pcbcraft_core::library::graphics::{self, PIN_TEXT_HEIGHT_MM};
+use pcbcraft_core::library::graphics::{
+    self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, TextContent, VAlign,
+};
 use pcbcraft_core::library::{
     ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
     PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
@@ -620,7 +622,9 @@ impl PartEditor {
             return;
         };
         if set.symbol.units.is_empty() {
-            let (Some(unit), Some(body)) = (
+            let (Some(unit), Some(body), Some(designator), Some(name)) = (
+                allocate(&mut set.symbol.next_local),
+                allocate(&mut set.symbol.next_local),
                 allocate(&mut set.symbol.next_local),
                 allocate(&mut set.symbol.next_local),
             ) else {
@@ -628,18 +632,10 @@ impl PartEditor {
                 return;
             };
             set.symbol.pin_text_height = PIN_TEXT_HEIGHT_MM;
-            set.symbol.units.push(Unit {
-                id: UnitId(unit),
-                label: "A".into(),
-                graphics: vec![graphics::body_rect(
-                    GraphicId(body),
-                    Bounds {
-                        min: [-2.5, -2.5],
-                        max: [2.5, 2.5],
-                    },
-                )],
-                pins: vec![],
-            });
+            set.symbol.units.push(first_unit(
+                UnitId(unit),
+                [GraphicId(body), GraphicId(designator), GraphicId(name)],
+            ));
         }
         let row = set.component.terminals.len() as f64;
         let electrical = TerminalId(electrical);
@@ -653,12 +649,12 @@ impl PartEditor {
             )),
         });
         if let Some(unit) = set.symbol.units.first_mut() {
-            unit.pins.push(Pin::new(
-                electrical,
-                [-5.0, -row * 2.5],
-                PinDirection::Right,
-                2.5,
-            ));
+            let position = [-2.0 * SYMBOL_MODULE_MM, -row * SYMBOL_MODULE_MM];
+            let pin = match grow_body_to(unit, position[1]) {
+                Some(body) => graphics::pin_toward(electrical, position, body),
+                None => Pin::new(electrical, position, PinDirection::Right, SYMBOL_MODULE_MM),
+            };
+            unit.pins.push(pin);
         }
         set.package.terminals.push(PackageTerminal {
             id: physical,
@@ -1683,6 +1679,82 @@ fn functions_section(
     });
 }
 
+/// The first unit of a part built by hand: a one-module body with the
+/// designator above it and the component name below it, as the templates
+/// draw them. `ids` are the body, designator and name graphics.
+fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
+    let body = Bounds {
+        min: [-SYMBOL_MODULE_MM, -SYMBOL_MODULE_MM],
+        max: [SYMBOL_MODULE_MM, SYMBOL_MODULE_MM],
+    };
+    let gap = 0.5;
+    Unit {
+        id,
+        label: "A".into(),
+        graphics: vec![
+            graphics::body_rect(ids[0], body),
+            graphics::text(
+                ids[1],
+                TextContent::Designator,
+                [body.center()[0], body.max[1] + gap],
+                Justify {
+                    h: HAlign::Center,
+                    v: VAlign::Bottom,
+                },
+            ),
+            graphics::text(
+                ids[2],
+                TextContent::ComponentName,
+                [body.center()[0], body.min[1] - gap],
+                Justify {
+                    h: HAlign::Center,
+                    v: VAlign::Top,
+                },
+            ),
+        ],
+        pins: vec![],
+    }
+}
+
+/// Grow the unit's body rectangle downward so a pin row at `y` meets it one
+/// module above its lower edge, moving text below the body along with it.
+/// Returns the body, or `None` when the unit has no body rectangle.
+fn grow_body_to(unit: &mut Unit, y: f64) -> Option<Bounds> {
+    let (a, b) = unit.graphics.iter_mut().find_map(|g| match &mut g.item {
+        Item::Shape {
+            shape: Shape::Rect { a, b },
+            fill: Fill::Body,
+            ..
+        } => Some((a, b)),
+        _ => None,
+    })?;
+    let bottom = a[1].min(b[1]);
+    let wanted = y - SYMBOL_MODULE_MM;
+    let shift = wanted - bottom;
+    if shift < 0.0 {
+        if a[1] <= b[1] {
+            a[1] = wanted;
+        } else {
+            b[1] = wanted;
+        }
+        for graphic in &mut unit.graphics {
+            if let Item::Text(text) = &mut graphic.item
+                && text.at[1] < bottom
+            {
+                text.at[1] += shift;
+            }
+        }
+    }
+    unit.graphics.iter().find_map(|g| match &g.item {
+        Item::Shape {
+            shape: Shape::Rect { a, b },
+            fill: Fill::Body,
+            ..
+        } => Bounds::of([*a, *b]),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod draft_tests {
     use super::*;
@@ -1716,6 +1788,72 @@ mod draft_tests {
         engine.undo()?;
         assert!(editor.commit(&ctx, &engine).is_none());
         assert_eq!(editor.draft, original);
+        Ok(())
+    }
+
+    #[test]
+    fn a_part_built_terminal_by_terminal_lints_clean_with_pins_on_the_body()
+    -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        if let Some(set) = &mut editor.draft {
+            set.component.terminals.clear();
+            set.symbol.units.clear();
+            set.package.terminals.clear();
+            set.footprint.pads.clear();
+            set.binding.mappings.clear();
+        }
+        for _ in 0..4 {
+            editor.add_terminal();
+        }
+        let symbol = editor
+            .draft
+            .as_ref()
+            .map(|set| set.ids.symbol)
+            .ok_or(pcbcraft_core::Error::Limit("no working set".into()))?;
+        if let Some(operation) = editor.commit(&ctx, &engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        let draft = engine
+            .drafts()
+            .get(symbol)
+            .ok_or(pcbcraft_core::Error::Limit("no symbol draft".into()))?;
+        let findings = pcbcraft_core::library::lint(
+            draft,
+            &engine.project().library,
+            &pcbcraft_core::library::Grid::default(),
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+        let pcbcraft_core::library::Definition::Symbol(definition) = &draft.definition else {
+            return Err(pcbcraft_core::Error::Limit("not a symbol".into()));
+        };
+        let unit = &definition.units[0];
+        assert_eq!(unit.pins.len(), 4);
+        let body = unit
+            .graphics
+            .iter()
+            .find_map(|g| match &g.item {
+                Item::Shape {
+                    shape: Shape::Rect { a, b },
+                    ..
+                } => Bounds::of([*a, *b]),
+                _ => None,
+            })
+            .ok_or(pcbcraft_core::Error::Limit("no body".into()))?;
+        for pin in &unit.pins {
+            let end = pin.body_end();
+            assert!(
+                (end[0] - body.min[0]).abs() < 1e-9 && end[1] > body.min[1] && end[1] < body.max[1],
+                "pin {pin:?} ends off the body {body:?}"
+            );
+        }
+        // The component name stays below the grown body.
+        assert!(unit.graphics.iter().any(|g| matches!(
+            &g.item,
+            Item::Text(t) if t.content == TextContent::ComponentName && t.at[1] < body.min[1]
+        )));
         Ok(())
     }
 

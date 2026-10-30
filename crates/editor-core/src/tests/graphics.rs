@@ -829,10 +829,8 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
 
 /// G1 exit measurement: the encoded size of one symbol at the full graphics
 /// limits and of 100 typical revisions, against the 16 MiB file budget.
-#[test]
-fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
-    // Worst case: every graphic and vertex limit reached with long numbers.
-    let coordinate = |i: usize| -1_234.567_891_234_5 + i as f64 * 0.000_123_456_789;
+/// A symbol at every graphics limit, its numbers drawn from `coordinate`.
+fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
     let mut graphics_left = graphics::MAX_GRAPHICS;
     let mut units = Vec::new();
     let mut id = 100u32;
@@ -880,12 +878,18 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
                 .collect(),
         });
     }
-    let full = SymbolDefinition {
+    SymbolDefinition {
         component: DefinitionId(1),
         next_local: id + 1,
         pin_text_height: 1.25,
         units,
-    };
+    }
+}
+
+#[test]
+fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
+    // Worst case: every graphic and vertex limit reached with long numbers.
+    let full = full_limit_symbol(|i| -1_234.567_891_234_5 + i as f64 * 0.000_123_456_789);
     assert!(
         crate::library::check_bounds(
             &meta("Full"),
@@ -894,6 +898,9 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
         .is_ok()
     );
     let full_bytes = format::encode_bounded(&full)?.len();
+    // The same limits with on-grid coordinates, as an author would draw them.
+    let gridded = full_limit_symbol(|i| (i % 160) as f64 * 1.25 - 100.0);
+    let gridded_bytes = format::encode_bounded(&gridded)?.len();
 
     let refs = SampleRefs {
         component: DefinitionId(1),
@@ -912,12 +919,13 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
     let hundred = vec![typical; 100];
     let typical_bytes = format::encode_bounded(&hundred)?.len();
     eprintln!(
-        "encoded size (pretty JSON): full-limit symbol {full_bytes} B; 100 typical symbols {typical_bytes} B; budget {} B",
+        "encoded size (pretty JSON): full-limit symbol {full_bytes} B (on-grid coordinates {gridded_bytes} B); 100 typical symbols {typical_bytes} B; budget {} B",
         format::MAX_FILE_BYTES
     );
-    // Measured on this checkout: 1 428 985 B and 260 402 B (2.6 kB each), so
-    // eleven full-limit revisions fit one file. Require at least eight;
-    // typical revisions are negligible.
+    // Measured on this checkout: 1 428 985 B (1 207 043 B on the grid) and
+    // 260 402 B (2.6 kB each), so eleven full-limit revisions fit one file.
+    // Require at least eight; typical revisions are negligible. The thin
+    // headroom is an open risk recorded in docs/component-model.md.
     assert!(full_bytes * 8 < format::MAX_FILE_BYTES, "{full_bytes}");
     assert!(
         typical_bytes * 50 < format::MAX_FILE_BYTES,

@@ -831,3 +831,42 @@ fn symbol_drawing_changes_are_reported_as_presentation_only() -> Result<()> {
     assert!(engine.project().tracks.iter().any(|t| t.id == shared));
     Ok(())
 }
+
+#[test]
+fn a_pin_that_moves_and_changes_drawing_is_not_called_presentation_only() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.symbol, symbol_body, |s| {
+            let pin = &mut s.units[0].pins[0];
+            pin.position[1] += 2.5;
+            pin.decorations.inverted = true;
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    let presentation: Vec<_> = plan
+        .changes
+        .iter()
+        .filter(|c| c.starts_with("R1 terminal 1 pin in unit A: direction"))
+        .collect();
+    assert_eq!(presentation.len(), 1, "{:?}", plan.changes);
+    assert!(
+        presentation
+            .iter()
+            .all(|c| !c.contains("connection point") && !c.contains("presentation only")),
+        "{:?}",
+        plan.changes
+    );
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.starts_with("R1 terminal 1 pin in unit A [") && c.contains(" → ")),
+        "{:?}",
+        plan.changes
+    );
+    Ok(())
+}
