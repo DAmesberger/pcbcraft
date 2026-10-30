@@ -7,15 +7,19 @@
 //! shared undo step. Publishing sends one `library.publish` of the five.
 mod working_set;
 
+use crate::kit::{self, Tone};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use pcbcraft_core::completeness::CheckTarget;
-use pcbcraft_core::functions::{Direction, TerminalFunctions};
+use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
+use pcbcraft_core::functions::{
+    Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
+};
 use pcbcraft_core::library::{
-    Anchor, ComponentDefinition, Drafts, PackageTerminal, Pad, Terminal, TerminalClass,
-    TerminalMap, Unit,
+    Anchor, ComponentDefinition, Drafts, FieldView, Library, PackageTerminal, Pad, Published,
+    Terminal, TerminalClass, TerminalMap, Unit,
 };
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, Engine, FunctionId, Id, LibraryCommand, Operation,
+    ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, Id, LibraryCommand, Operation,
     PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{
@@ -26,31 +30,60 @@ use solidcraft_ui_egui::{
 use std::sync::Arc;
 pub use working_set::{Template, WorkingSet};
 
-/// The terminal choices this editor offers: one fixed function of a
-/// direction, or device NC. Multi-function terminals are authored through
-/// `library.edit`; the pin-configuration table is later work.
+/// A terminal's class as the inspector offers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PinChoice {
-    Fixed(Direction),
+enum ClassChoice {
+    Electrical,
     DeviceNc,
+    Reserved,
 }
 
-const PIN_CHOICES: [PinChoice; 6] = [
-    PinChoice::Fixed(Direction::Passive),
-    PinChoice::Fixed(Direction::Input),
-    PinChoice::Fixed(Direction::Output),
-    PinChoice::Fixed(Direction::PowerInput),
-    PinChoice::Fixed(Direction::PowerOutput),
-    PinChoice::DeviceNc,
-];
-
-impl PinChoice {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Fixed(direction) => direction.label(),
-            Self::DeviceNc => "device NC",
+impl ClassChoice {
+    fn of(terminal: &Terminal) -> Self {
+        match terminal.class {
+            TerminalClass::Electrical(_) => Self::Electrical,
+            TerminalClass::DeviceNc => Self::DeviceNc,
+            TerminalClass::Reserved => Self::Reserved,
         }
     }
+}
+
+const CLASS_CHOICES: [(ClassChoice, &str); 3] = [
+    (ClassChoice::Electrical, "Electrical"),
+    (ClassChoice::DeviceNc, "Device NC"),
+    (ClassChoice::Reserved, "Reserved"),
+];
+
+const DIRECTIONS: [Direction; 6] = [
+    Direction::Passive,
+    Direction::Input,
+    Direction::Output,
+    Direction::Bidirectional,
+    Direction::PowerInput,
+    Direction::PowerOutput,
+];
+
+const SIGNALS: [(SignalKind, &str); 4] = [
+    (SignalKind::Unspecified, "Unspecified"),
+    (SignalKind::Digital, "Digital"),
+    (SignalKind::Analog, "Analog"),
+    (SignalKind::Power, "Power"),
+];
+
+const DRIVES: [(Drive, &str); 4] = [
+    (Drive::None, "None"),
+    (Drive::PushPull, "Push-pull"),
+    (Drive::OpenDrain, "Open drain"),
+    (Drive::OpenSource, "Open source"),
+];
+
+/// Capitalise the first letter of a core label for a dropdown.
+fn sentence(label: &str) -> String {
+    let mut chars = label.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Short text for a terminal's class.
@@ -65,49 +98,160 @@ fn pin_summary(terminal: &Terminal) -> String {
     }
 }
 
-/// Give a terminal one fixed function of `choice`, keeping the ID of its
-/// existing fixed function or allocating one from the component.
-fn set_pin_choice(component: &mut ComponentDefinition, id: TerminalId, choice: PinChoice) -> bool {
-    let keep = component.terminal(id).and_then(|t| match t.functions() {
-        Some(f) if f.functions.len() == 1 => f.functions.first().map(|f| f.id),
-        _ => None,
-    });
-    let class = match choice {
-        PinChoice::DeviceNc => TerminalClass::DeviceNc,
-        PinChoice::Fixed(direction) => {
-            let function = match keep {
-                Some(function) => function,
-                None => {
-                    let next = component.next_local;
-                    let Some(after) = next.checked_add(1) else {
-                        return false;
-                    };
-                    component.next_local = after;
-                    FunctionId(next)
-                }
-            };
-            TerminalClass::Electrical(TerminalFunctions::fixed(function, direction))
-        }
-    };
-    match component.terminals.iter_mut().find(|t| t.id == id) {
-        Some(terminal) => {
-            terminal.class = class;
-            true
-        }
-        None => false,
-    }
+/// Take the next local ID of a component, with checked arithmetic.
+fn allocate_local(component: &mut ComponentDefinition) -> Option<u32> {
+    let id = component.next_local;
+    component.next_local = id.checked_add(1)?;
+    Some(id)
 }
 
-fn current_choice(terminal: &Terminal) -> Option<PinChoice> {
-    match &terminal.class {
-        TerminalClass::Electrical(functions) => match functions.functions.as_slice() {
-            [only] => PIN_CHOICES
-                .into_iter()
-                .find(|c| *c == PinChoice::Fixed(only.direction)),
-            _ => None,
-        },
-        TerminalClass::DeviceNc => Some(PinChoice::DeviceNc),
-        TerminalClass::Reserved => None,
+/// Change a terminal's class. Becoming electrical gives it one passive
+/// function with a freshly allocated ID; staying electrical keeps its
+/// functions.
+fn set_class(
+    component: &mut ComponentDefinition,
+    id: TerminalId,
+    choice: ClassChoice,
+) -> Result<(), &'static str> {
+    let current = component
+        .terminal(id)
+        .map(ClassChoice::of)
+        .ok_or("No such terminal")?;
+    if current == choice {
+        return Ok(());
+    }
+    let class = match choice {
+        ClassChoice::DeviceNc => TerminalClass::DeviceNc,
+        ClassChoice::Reserved => TerminalClass::Reserved,
+        ClassChoice::Electrical => {
+            let function = allocate_local(component).ok_or("Function identity exhausted")?;
+            TerminalClass::Electrical(TerminalFunctions::fixed(
+                FunctionId(function),
+                Direction::Passive,
+            ))
+        }
+    };
+    let terminal = component
+        .terminals
+        .iter_mut()
+        .find(|t| t.id == id)
+        .ok_or("No such terminal")?;
+    terminal.class = class;
+    Ok(())
+}
+
+/// Add a passive function with a fresh ID and a label unique on the
+/// terminal. Validation of the result stays in the core.
+fn add_function(
+    component: &mut ComponentDefinition,
+    id: TerminalId,
+) -> Result<FunctionId, &'static str> {
+    let count = component
+        .terminal(id)
+        .and_then(Terminal::functions)
+        .map(|f| f.functions.len())
+        .ok_or("Only electrical terminals have functions")?;
+    if count >= MAX_FUNCTIONS {
+        return Err("Maximum 32 functions per terminal");
+    }
+    let function = FunctionId(allocate_local(component).ok_or("Function identity exhausted")?);
+    let Some(TerminalClass::Electrical(functions)) = component
+        .terminals
+        .iter_mut()
+        .find(|t| t.id == id)
+        .map(|t| &mut t.class)
+    else {
+        return Err("Only electrical terminals have functions");
+    };
+    let label = (functions.functions.len() + 1..)
+        .map(|n| format!("function {n}"))
+        .find(|label| functions.functions.iter().all(|f| &f.label != label))
+        .unwrap_or_default();
+    functions.functions.push(Function {
+        id: function,
+        label,
+        direction: Direction::Passive,
+        signal: SignalKind::Unspecified,
+        drive: Drive::None,
+        resource_role: None,
+    });
+    Ok(function)
+}
+
+/// Parse a component default for a field: empty text is no default.
+fn parse_default(text: &str, view: &FieldView<'_>) -> Result<Option<FieldValue>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    fields::parse_value(text, &view.field.definition.value_type, view.kind_body())
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// A default as the field displays it; empty for none.
+fn default_text(value: Option<&FieldValue>, view: &FieldView<'_>) -> String {
+    value
+        .map(|v| fields::display(v, &view.field.definition.value_type, view.kind_body()))
+        .unwrap_or_default()
+}
+
+/// Set the component default of a selected field from text. Invalid text
+/// leaves the component unchanged. Returns the stored default as text.
+fn set_field_default(
+    component: &mut ComponentDefinition,
+    library: &Library,
+    lineage: DefinitionId,
+    text: &str,
+) -> Result<String, String> {
+    let selection = component
+        .fields
+        .iter_mut()
+        .find(|f| f.field.id == lineage)
+        .ok_or("The component does not select this field")?;
+    let view = library
+        .field_view(selection.field)
+        .ok_or("The field is not in the project library")?;
+    let value = parse_default(text, &view)?;
+    let shown = default_text(value.as_ref(), &view);
+    selection.default = value;
+    Ok(shown)
+}
+
+/// Published field lineages the component does not select yet, at their
+/// latest revision.
+fn addable_fields<'a>(
+    component: &ComponentDefinition,
+    library: &'a Library,
+) -> Vec<&'a Published<FieldDefinition>> {
+    let mut latest: Vec<&Published<FieldDefinition>> = Vec::new();
+    for field in &library.fields {
+        if component.field(field.id).is_some() {
+            continue;
+        }
+        match latest.iter_mut().find(|f| f.id == field.id) {
+            Some(slot) if slot.revision < field.revision => *slot = field,
+            Some(_) => {}
+            None => latest.push(field),
+        }
+    }
+    latest.sort_by(|a, b| a.meta.name.cmp(&b.meta.name));
+    latest
+}
+
+/// Text typed into a field default, kept across frames by field lineage.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FieldText {
+    /// The default's text when the buffer last matched the working copy.
+    loaded: String,
+    text: String,
+}
+
+impl FieldText {
+    fn new(text: String) -> Self {
+        Self {
+            loaded: text.clone(),
+            text,
+        }
     }
 }
 
@@ -153,6 +297,8 @@ pub struct PartEditor {
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
+    /// Typed component defaults by field lineage.
+    field_buffers: std::collections::BTreeMap<DefinitionId, FieldText>,
 }
 
 impl Default for PartEditor {
@@ -173,6 +319,7 @@ impl Default for PartEditor {
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
+            field_buffers: Default::default(),
         }
     }
 }
@@ -606,316 +753,487 @@ impl PartEditor {
         if self.update.is_open() {
             return self.update.show(ui, engine);
         }
-        let t = Tokens::get();
-        ui.spacing_mut().item_spacing = egui::vec2(t.space_4, t.form_gap_y);
-        ui.spacing_mut().interact_size.y = t.control_height;
-        ui.label(egui::RichText::new("Component definition").font(fonts::semibold(t.font_panel)));
         let unpublished = self.unpublished(engine);
         let findings = self.findings(engine);
+        for message in findings.iter().take(6) {
+            kit::status(ui, message, Tone::Error);
+        }
+        if findings.len() > 6 {
+            kit::note(ui, &format!("{} more findings", findings.len() - 6));
+        }
+        if !self.notice.is_empty() {
+            kit::status(ui, &self.notice, Tone::Note);
+        }
         let Some(set) = &mut self.draft else {
-            ui.label("Start a component from the Passive or Connector template.");
-            self.snapshots(ui, engine);
+            kit::status(
+                ui,
+                "Start a component from the Passive or Connector template, or open one in the Browser.",
+                Tone::Dim,
+            );
             return None;
         };
-        text_row(ui, "Name", &mut set.metas.component.name);
-        let published = set.published(engine);
-        ui.weak(match published {
-            None => "New project-local draft".into(),
-            Some(r) => format!(
-                "Definition {} · revision {}{}",
-                r.id.0,
-                r.revision.0,
-                if unpublished {
-                    " · unpublished edits"
-                } else {
-                    ""
-                }
-            ),
+        let published = set.published(engine).map(|r| r.revision.0);
+        kit::section(ui, "definition", "Definition", true, None, |ui| {
+            kit::text_row(ui, "Name", &mut set.metas.component.name);
+            let revision = match published {
+                None => "Draft · new".to_owned(),
+                Some(r) if unpublished => format!("r{r} · unpublished edits"),
+                Some(r) => format!("r{r} · published"),
+            };
+            kit::value_row(ui, "Revision", &revision);
         });
-        ui.label(
-            "Publishing creates immutable revisions. Placed components keep their existing revision.",
-        );
-        if !self.notice.is_empty() {
-            ui.colored_label(t.form_primary, &self.notice);
-        }
-        for message in findings.iter().take(6) {
-            ui.colored_label(t.form_error, message);
-        }
-        ui.separator();
         match self.view {
             View::Symbol => self.symbol_inspector(ui),
             View::Footprint => self.footprint_inspector(ui),
             View::Mapping => self.mapping_inspector(ui),
-            View::Model => {
-                if let Some(set) = &mut self.draft {
-                    ui.label("Parametric package envelope");
-                    ui.weak("Approximate body; not a verified supplier model.");
-                    for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                        number_row(ui, label, &mut set.package.body_size[index], 0.01..=10000.0);
-                    }
-                    for (index, label) in
-                        ["Offset X", "Offset Y", "Offset Z"].into_iter().enumerate()
-                    {
-                        number_row(
-                            ui,
-                            label,
-                            &mut set.package.model_offset[index],
-                            -10000.0..=10000.0,
-                        );
-                    }
-                    ui.weak("The live model and native export use Solidcraft.");
-                }
-            }
+            View::Model => self.model_inspector(ui),
         }
-        ui.separator();
-        self.snapshots(ui, engine);
-        if !unpublished && let Some(target) = self.draft.as_ref().and_then(|s| s.published(engine))
-        {
-            let candidates: Vec<_> = engine
-                .project()
-                .instances
-                .iter()
-                .filter(|i| i.component.id == target.id && i.component.revision != target.revision)
-                .collect();
-            self.update_instances
-                .retain(|id| candidates.iter().any(|i| i.id == *id));
-            if !candidates.is_empty() {
-                ui.separator();
-                ui.strong("Update placed instances");
-                ui.weak(format!(
-                    "Use published revision {} for the selected instances.",
-                    target.revision.0
-                ));
-                for instance in candidates {
-                    let mut checked = self.update_instances.contains(&instance.id);
-                    if ui
-                        .checkbox(
-                            &mut checked,
-                            format!(
-                                "{} · revision {}",
-                                instance.designator, instance.component.revision.0
-                            ),
-                        )
-                        .changed()
-                    {
-                        if checked {
-                            self.update_instances.insert(instance.id);
-                        } else {
-                            self.update_instances.remove(&instance.id);
-                        }
-                    }
-                }
-                if ui_kit::button(
-                    ui,
-                    "Preview instance update",
-                    Button::Enabled(!self.update_instances.is_empty()),
-                )
-                .clicked()
-                {
-                    self.update.begin(
-                        engine,
-                        pcbcraft_core::updates::Change::ComponentRevision {
-                            instances: self.update_instances.iter().copied().collect(),
-                            target,
-                            resolutions: Default::default(),
-                        },
-                    );
-                }
-            }
-        }
+        self.fields_section(ui, engine);
         if let Some(set) = &mut self.draft {
-            ui.collapsing("Provenance", |ui| {
-                text_row(ui, "Source", &mut set.metas.component.provenance);
-                ui.weak("Structural validation does not replace a datasheet review.");
+            kit::section(ui, "provenance", "Provenance", false, None, |ui| {
+                kit::text_row(ui, "Source", &mut set.metas.component.provenance);
+                kit::note(
+                    ui,
+                    "Structural validation does not replace a datasheet review.",
+                );
             });
+        }
+        if !unpublished {
+            self.update_section(ui, engine);
         }
         None
     }
 
-    /// The project's published components; choosing one authors its lineage.
-    fn snapshots(&mut self, ui: &mut Ui, engine: &Engine) {
-        ui.collapsing("Project components", |ui| {
-            let library = &engine.project().library;
-            for component in library.latest_components() {
-                let label = format!("{} · r{}", component.meta.name, component.revision.0);
-                let current = self.lineage == Some(component.id);
-                if ui_kit::button(
+    /// Offer to move placed instances to the published revision.
+    fn update_section(&mut self, ui: &mut Ui, engine: &Engine) {
+        let Some(target) = self.draft.as_ref().and_then(|s| s.published(engine)) else {
+            return;
+        };
+        let candidates: Vec<_> = engine
+            .project()
+            .instances
+            .iter()
+            .filter(|i| i.component.id == target.id && i.component.revision != target.revision)
+            .collect();
+        self.update_instances
+            .retain(|id| candidates.iter().any(|i| i.id == *id));
+        if candidates.is_empty() {
+            return;
+        }
+        let selected = &mut self.update_instances;
+        let begin = kit::section(
+            ui,
+            "update-instances",
+            "Update placed instances",
+            true,
+            Some(candidates.len()),
+            |ui| {
+                kit::note(
                     ui,
-                    label,
-                    if current {
-                        Button::SmallSelected
-                    } else {
-                        Button::Ghost
-                    },
-                )
-                .on_hover_text("Author this component's drafts")
-                .clicked()
-                {
-                    let reference = ComponentRef::new(component.id, component.revision);
-                    if engine.drafts().get(component.id).is_none() {
-                        self.request = Some(Request::Draft(reference));
+                    &format!(
+                        "Use published revision {} for the selected instances.",
+                        target.revision.0
+                    ),
+                );
+                for instance in &candidates {
+                    let mut checked = selected.contains(&instance.id);
+                    let label = format!(
+                        "{} · revision {}",
+                        instance.designator, instance.component.revision.0
+                    );
+                    if kit::check_row(ui, &label, &mut checked) {
+                        if checked {
+                            selected.insert(instance.id);
+                        } else {
+                            selected.remove(&instance.id);
+                        }
                     }
-                    self.lineage = Some(component.id);
-                    self.source = None;
                 }
+                let mut begin = false;
+                kit::actions(ui, |ui| {
+                    let style = if selected.is_empty() {
+                        Button::Enabled(false)
+                    } else {
+                        Button::Primary
+                    };
+                    begin = ui_kit::button(ui, "Preview update", style).clicked()
+                        && !selected.is_empty();
+                });
+                begin
+            },
+        );
+        if begin == Some(true) {
+            self.update.begin(
+                engine,
+                pcbcraft_core::updates::Change::ComponentRevision {
+                    instances: self.update_instances.iter().copied().collect(),
+                    target,
+                    resolutions: Default::default(),
+                },
+            );
+        }
+    }
+
+    /// The component's selected fields with their component defaults.
+    fn fields_section(&mut self, ui: &mut Ui, engine: &Engine) {
+        let library = &engine.project().library;
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        let component = &mut set.component;
+        let buffers = &mut self.field_buffers;
+        buffers.retain(|lineage, _| component.field(*lineage).is_some());
+        let count = component.fields.len();
+        kit::section(ui, "fields", "Fields", true, Some(count), |ui| {
+            let mut remove = None;
+            for index in 0..component.fields.len() {
+                let Some(selection) = component.fields.get(index).cloned() else {
+                    continue;
+                };
+                let lineage = selection.field.id;
+                if index > 0 {
+                    kit::rule(ui);
+                }
+                ui.push_id(("field", lineage), |ui| {
+                    let Some(view) = library.field_view(selection.field) else {
+                        kit::value_row(ui, "Field", &selection.field.to_string());
+                        kit::status(
+                            ui,
+                            "This field revision is not in the project library.",
+                            Tone::Error,
+                        );
+                        return;
+                    };
+                    let shown = default_text(selection.default.as_ref(), &view);
+                    let buffer = buffers
+                        .entry(lineage)
+                        .or_insert_with(|| FieldText::new(shown.clone()));
+                    if buffer.loaded != shown {
+                        *buffer = FieldText::new(shown);
+                    }
+                    let error = parse_default(&buffer.text, &view).err();
+                    let hint = view
+                        .field
+                        .definition
+                        .default
+                        .as_ref()
+                        .map(|d| default_text(Some(d), &view))
+                        .unwrap_or_else(|| "No default".into());
+                    let invalid = error.is_some();
+                    let response = kit::row(ui, &view.field.meta.name, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui_kit::button(ui, "Remove", Button::Small)
+                                .on_hover_text("Stop selecting this field")
+                                .clicked()
+                            {
+                                remove = Some(index);
+                            }
+                            ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
+                            kit::text_field(ui, "default", &mut buffer.text, &hint, invalid)
+                                .on_hover_text("Component default; empty uses the field default")
+                        })
+                        .inner
+                    });
+                    if response.changed()
+                        && let Ok(stored) =
+                            set_field_default(component, library, lineage, &buffer.text)
+                    {
+                        buffer.loaded = stored;
+                    }
+                    let error = parse_default(&buffer.text, &view).err();
+                    if !response.has_focus() && error.is_none() && buffer.text != buffer.loaded {
+                        buffer.text = buffer.loaded.clone();
+                    }
+                    if let Some(error) = &error {
+                        kit::status(ui, error, Tone::Error);
+                    }
+                    if let Some(selection) = component.fields.get_mut(index) {
+                        kit::check_row(ui, "Show on symbol", &mut selection.show_on_symbol);
+                    }
+                });
             }
-            if library.components.is_empty() {
-                ui.weak("Publish a draft to make it available in the schematic.");
+            if let Some(index) = remove
+                && index < component.fields.len()
+            {
+                component.fields.remove(index);
+            }
+            if count > 0 {
+                kit::rule(ui);
+            }
+            let addable = addable_fields(component, library);
+            if addable.is_empty() {
+                kit::note(ui, "Every published field is selected.");
+            } else if component.fields.len() >= MAX_FIELDS {
+                kit::note(ui, "Maximum 64 fields per component.");
+            } else {
+                let mut chosen = None;
+                kit::row(ui, "Add field", |ui| {
+                    kit::dropdown_menu(ui, "add-field", "Choose a field", |ui| {
+                        for field in &addable {
+                            let label = format!("{} · r{}", field.meta.name, field.revision.0);
+                            if ui.selectable_label(false, label).clicked() {
+                                chosen = Some(FieldRef::new(field.id, field.revision));
+                            }
+                        }
+                    });
+                });
+                if let Some(field) = chosen {
+                    component.fields.push(FieldSelection {
+                        field,
+                        default: None,
+                        show_on_symbol: true,
+                    });
+                }
             }
         });
     }
 
-    fn terminal_choices(&mut self, ui: &mut Ui) {
+    /// One compact selectable row per terminal.
+    fn terminal_list(&mut self, ui: &mut Ui) {
         let Some(set) = &self.draft else {
             return;
         };
-        for terminal in &set.component.terminals {
-            if ui_kit::button(
-                ui,
-                format!("{} · {}", terminal.name, pin_summary(terminal)),
-                if self.selected == Some(terminal.id) {
-                    Button::SmallSelected
-                } else {
-                    Button::Ghost
-                },
-            )
-            .clicked()
-            {
-                self.selected = Some(terminal.id);
-            }
-        }
+        let terminals = &set.component.terminals;
+        let selected = &mut self.selected;
+        kit::section(
+            ui,
+            "terminals",
+            "Terminals",
+            true,
+            Some(terminals.len()),
+            |ui| {
+                for terminal in terminals {
+                    let summary = pin_summary(terminal);
+                    let row = kit::Row {
+                        icon: "point",
+                        label: &terminal.name,
+                        secondary: &summary,
+                        selected: *selected == Some(terminal.id),
+                        tip: "Select this terminal",
+                        ..Default::default()
+                    };
+                    if kit::tree_row(ui, ui.id().with(("terminal", terminal.id.0)), &row).clicked {
+                        *selected = Some(terminal.id);
+                    }
+                }
+            },
+        );
     }
 
     fn symbol_inspector(&mut self, ui: &mut Ui) {
         if let Some(unit) = self.draft.as_mut().and_then(|s| s.symbol.units.first_mut()) {
-            pair_row(ui, "Body size", &mut unit.body_size, 0.01..=10000.0);
+            kit::section(ui, "symbol-body", "Body", true, None, |ui| {
+                kit::pair_row(ui, "Size", &mut unit.body_size, "mm", 0.01..=10000.0);
+            });
         }
-        self.terminal_choices(ui);
-        let mut remove = false;
-        if let (Some(id), Some(set)) = (self.selected, &mut self.draft) {
-            if let Some(terminal) = set.component.terminals.iter_mut().find(|t| t.id == id) {
-                ui.separator();
-                text_row(ui, "Pin name", &mut terminal.name);
-                let current = current_choice(terminal);
-                let mut chosen = current;
-                egui::ComboBox::from_id_salt(("pin-kind", id.0))
-                    .selected_text(pin_summary(terminal))
-                    .show_ui(ui, |ui| {
-                        for choice in PIN_CHOICES {
-                            ui.selectable_value(&mut chosen, Some(choice), choice.label());
-                        }
-                    });
-                if chosen != current
-                    && let Some(choice) = chosen
-                    && !set_pin_choice(&mut set.component, id, choice)
-                {
-                    self.notice = "Function identity exhausted".into();
+        self.terminal_list(ui);
+        let (Some(id), Some(set)) = (self.selected, &mut self.draft) else {
+            return;
+        };
+        let component = &mut set.component;
+        let symbol = &mut set.symbol;
+        let notice = &mut self.notice;
+        kit::section(
+            ui,
+            "selected-terminal",
+            "Selected terminal",
+            true,
+            None,
+            |ui| {
+                if let Some(terminal) = component.terminals.iter_mut().find(|t| t.id == id) {
+                    kit::text_row(ui, "Name", &mut terminal.name);
                 }
-            }
-            if let Some(anchor) = set
-                .symbol
-                .units
-                .iter_mut()
-                .flat_map(|u| u.anchors.iter_mut())
-                .find(|a| a.terminal == id)
-            {
-                pair_row(ui, "Pin anchor", &mut anchor.position, -10000.0..=10000.0);
-            }
-            remove = ui_kit::button(ui, "Remove terminal", Button::Small).clicked();
-        }
-        if remove {
-            self.remove_selected();
-        }
-        ui.weak("Drag a pin anchor on the canvas; publish when the draft is ready.");
+                if let Some(anchor) = symbol
+                    .units
+                    .iter_mut()
+                    .flat_map(|u| u.anchors.iter_mut())
+                    .find(|a| a.terminal == id)
+                {
+                    kit::pair_row(
+                        ui,
+                        "Pin anchor",
+                        &mut anchor.position,
+                        "mm",
+                        -10000.0..=10000.0,
+                    );
+                }
+                if let Some(mut class) = component.terminal(id).map(ClassChoice::of) {
+                    let options: Vec<_> = CLASS_CHOICES
+                        .iter()
+                        .map(|(c, label)| (*c, (*label).to_owned()))
+                        .collect();
+                    if kit::choice_row(ui, "Class", &mut class, &options)
+                        && let Err(message) = set_class(component, id, class)
+                    {
+                        *notice = message.into();
+                    }
+                }
+                kit::note(ui, "Drag a pin anchor on the canvas to move it.");
+            },
+        );
+        functions_section(ui, component, id, notice);
     }
 
     fn footprint_inspector(&mut self, ui: &mut Ui) {
         if let Some(set) = &mut self.draft {
-            pair_row(
-                ui,
-                "Package datum",
-                &mut set.footprint.datum_offset,
-                -10000.0..=10000.0,
-            );
+            kit::section(ui, "package-datum", "Package datum", true, None, |ui| {
+                kit::pair_row(
+                    ui,
+                    "Offset",
+                    &mut set.footprint.datum_offset,
+                    "mm",
+                    -10000.0..=10000.0,
+                );
+            });
         }
-        self.terminal_choices(ui);
-        let mut add = false;
-        if let Some(set) = &mut self.draft {
-            let physical: Vec<_> = set
-                .binding
-                .mappings
-                .iter()
-                .filter(|m| Some(m.terminal) == self.selected)
-                .map(|m| m.package_terminal)
-                .collect();
-            for pad in set
-                .footprint
-                .pads
-                .iter_mut()
-                .filter(|p| physical.contains(&p.terminal))
-            {
-                ui.separator();
-                ui.label(format!(
-                    "Pad {} · package terminal {}",
-                    pad.id, pad.terminal
-                ));
-                egui::ComboBox::from_id_salt(("pad-terminal", pad.id.0))
-                    .selected_text(format!("Package terminal {}", pad.terminal))
-                    .show_ui(ui, |ui| {
-                        for terminal in &set.package.terminals {
-                            ui.selectable_value(
-                                &mut pad.terminal,
-                                terminal.id,
-                                &terminal.designation,
-                            )
-                            .changed();
-                        }
-                    });
-                pair_row(ui, "Position", &mut pad.position, -10000.0..=10000.0);
-                pair_row(ui, "Land size", &mut pad.size, 0.01..=10000.0);
+        self.terminal_list(ui);
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        let physical: Vec<_> = set
+            .binding
+            .mappings
+            .iter()
+            .filter(|m| Some(m.terminal) == self.selected)
+            .map(|m| m.package_terminal)
+            .collect();
+        let options: Vec<_> = set
+            .package
+            .terminals
+            .iter()
+            .map(|t| (t.id, t.designation.clone()))
+            .collect();
+        let mut pads: Vec<_> = set
+            .footprint
+            .pads
+            .iter_mut()
+            .filter(|p| physical.contains(&p.terminal))
+            .collect();
+        let count = pads.len();
+        kit::section(ui, "pads", "Pads", true, Some(count), |ui| {
+            if pads.is_empty() {
+                kit::note(ui, "The selected terminal has no pads.");
             }
-            add = ui_kit::button(ui, "Add pad to selected terminal", Button::Small).clicked();
-        }
-        if add {
-            self.add_pad();
-        }
-        ui.weak("Pad size is independent of the package body. Pads remain individual routing obligations.");
+            for (index, pad) in pads.iter_mut().enumerate() {
+                if index > 0 {
+                    kit::rule(ui);
+                }
+                ui.push_id(("pad", pad.id.0), |ui| {
+                    kit::choice_row(ui, "Terminal", &mut pad.terminal, &options);
+                    kit::pair_row(ui, "Position", &mut pad.position, "mm", -10000.0..=10000.0);
+                    kit::pair_row(ui, "Land size", &mut pad.size, "mm", 0.01..=10000.0);
+                });
+            }
+            kit::note(
+                ui,
+                "Pad size is independent of the package body. Each pad remains a routing obligation.",
+            );
+        });
     }
 
     fn mapping_inspector(&mut self, ui: &mut Ui) {
         let Some(set) = &mut self.draft else {
             return;
         };
-        ui.label("Electrical → package terminal");
-        ui.weak("Mappings are explicit; matching names do not establish compatibility.");
-        for physical in &mut set.package.terminals {
-            ui.separator();
-            text_row(
-                ui,
-                &format!("Terminal {}", physical.id),
-                &mut physical.designation,
-            );
-            if let Some(mapping) = set
-                .binding
-                .mappings
-                .iter_mut()
-                .find(|m| m.package_terminal == physical.id)
-            {
-                let selected = set
-                    .component
-                    .terminal(mapping.terminal)
-                    .map(|t| t.name.as_str())
-                    .unwrap_or("Unmapped");
-                egui::ComboBox::from_id_salt(("mapping", physical.id.0))
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        for terminal in &set.component.terminals {
-                            ui.selectable_value(&mut mapping.terminal, terminal.id, &terminal.name)
-                                .changed();
-                        }
+        let options: Vec<_> = std::iter::once((None, "Unmapped".to_owned()))
+            .chain(
+                set.component
+                    .terminals
+                    .iter()
+                    .map(|t| (Some(t.id), t.name.clone())),
+            )
+            .collect();
+        let count = set.package.terminals.len();
+        let binding = &mut set.binding;
+        let terminals = &mut set.package.terminals;
+        kit::section(
+            ui,
+            "mapping",
+            "Package terminals",
+            true,
+            Some(count),
+            |ui| {
+                kit::note(
+                    ui,
+                    "Designation, then the electrical terminal it carries. Matching names do not establish compatibility.",
+                );
+                for physical in terminals.iter_mut() {
+                    let mut mapped = binding.terminal_of(physical.id);
+                    let before = mapped;
+                    ui.push_id(("package-terminal", physical.id.0), |ui| {
+                        kit::row(ui, &format!("Package {}", physical.id), |ui| {
+                            let t = Tokens::get();
+                            let half = ((ui.available_width() - t.space_4) / 2.0).max(0.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(half, t.control_height),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.spacing_mut().text_edit_width = half;
+                                    kit::text_field(
+                                        ui,
+                                        "designation",
+                                        &mut physical.designation,
+                                        "",
+                                        false,
+                                    )
+                                    .on_hover_text("Package terminal designation");
+                                },
+                            );
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(half, t.control_height),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| kit::dropdown(ui, "electrical", &mut mapped, &options),
+                            );
+                        });
                     });
+                    if mapped != before {
+                        binding
+                            .mappings
+                            .retain(|m| m.package_terminal != physical.id);
+                        if let Some(terminal) = mapped {
+                            binding.mappings.push(TerminalMap {
+                                package_terminal: physical.id,
+                                terminal,
+                            });
+                        }
+                    }
+                }
+            },
+        );
+    }
+
+    fn model_inspector(&mut self, ui: &mut Ui) {
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        let package = &mut set.package;
+        kit::section(ui, "model-body", "Body", true, None, |ui| {
+            for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
+                kit::number_row(
+                    ui,
+                    label,
+                    &mut package.body_size[index],
+                    "mm",
+                    0.01..=10000.0,
+                );
             }
-        }
+            kit::note(
+                ui,
+                "Approximate parametric envelope, not a verified supplier model.",
+            );
+        });
+        kit::section(ui, "model-offset", "Model offset", true, None, |ui| {
+            for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
+                kit::number_row(
+                    ui,
+                    label,
+                    &mut package.model_offset[index],
+                    "mm",
+                    -10000.0..=10000.0,
+                );
+            }
+            kit::note(ui, "The live model and native export use Solidcraft.");
+        });
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, _engine: &Engine) -> Option<Operation> {
@@ -1232,66 +1550,97 @@ pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<()> {
     }
 }
 
-fn text_row(ui: &mut Ui, label: &str, value: &mut String) -> bool {
-    let t = Tokens::get();
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [t.form_label_width, t.control_height],
-            egui::Label::new(label),
-        );
-        changed = ui_kit::cell_editor(ui, ui.id().with(label), value, "", false).changed();
-    });
-    changed
-}
-fn number_row(
+/// The function table of an electrical terminal: label, direction, signal
+/// and drive per function, and the design default. The core checks the
+/// declaration; its findings appear at the top of the panel.
+fn functions_section(
     ui: &mut Ui,
-    label: &str,
-    value: &mut f64,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let t = Tokens::get();
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [t.form_label_width, t.control_height],
-            egui::Label::new(label),
-        );
-        changed = ui
-            .add(
-                egui::DragValue::new(value)
-                    .range(range)
-                    .speed(0.05)
-                    .suffix(" mm"),
-            )
-            .changed();
-    });
-    changed
-}
-fn pair_row(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Point,
-    range: std::ops::RangeInclusive<f64>,
-) -> bool {
-    let t = Tokens::get();
-    let mut changed = false;
-    ui.label(label);
-    ui.horizontal(|ui| {
-        for (index, axis) in ["X", "Y"].iter().enumerate() {
-            ui.label(*axis);
-            changed |= ui
-                .add_sized(
-                    [t.form_label_width, t.control_height],
-                    egui::DragValue::new(&mut value[index])
-                        .range(range.clone())
-                        .speed(0.05),
+    component: &mut ComponentDefinition,
+    id: TerminalId,
+    notice: &mut String,
+) {
+    let Some(count) = component
+        .terminal(id)
+        .and_then(Terminal::functions)
+        .map(|f| f.functions.len())
+    else {
+        return;
+    };
+    let directions: Vec<_> = DIRECTIONS
+        .iter()
+        .map(|d| (*d, sentence(d.label())))
+        .collect();
+    let signals: Vec<_> = SIGNALS.iter().map(|(s, l)| (*s, (*l).to_owned())).collect();
+    let drives: Vec<_> = DRIVES.iter().map(|(d, l)| (*d, (*l).to_owned())).collect();
+    kit::section(ui, "functions", "Functions", true, Some(count), |ui| {
+        let mut add = false;
+        if let Some(TerminalClass::Electrical(table)) = component
+            .terminals
+            .iter_mut()
+            .find(|t| t.id == id)
+            .map(|t| &mut t.class)
+        {
+            let only = table.functions.len() <= 1;
+            let mut remove = None;
+            for (index, function) in table.functions.iter_mut().enumerate() {
+                if index > 0 {
+                    kit::rule(ui);
+                }
+                ui.push_id(("function", function.id.0), |ui| {
+                    kit::row(ui, &format!("Function {}", index + 1), |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let response = ui
+                                .add_enabled_ui(!only, |ui| {
+                                    ui_kit::button(ui, "Remove", Button::Small)
+                                })
+                                .inner;
+                            if response.clicked() {
+                                remove = Some(index);
+                            }
+                            ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
+                            kit::text_field(ui, "label", &mut function.label, "Label", false)
+                                .on_hover_text("Function label, unique on this terminal");
+                        });
+                    });
+                    kit::choice_row(ui, "Direction", &mut function.direction, &directions);
+                    kit::choice_row(ui, "Signal", &mut function.signal, &signals);
+                    kit::choice_row(ui, "Drive", &mut function.drive, &drives);
+                });
+            }
+            if let Some(index) = remove
+                && table.functions.len() > 1
+                && index < table.functions.len()
+            {
+                let removed = table.functions.remove(index);
+                if table.design_default == Some(removed.id) {
+                    table.design_default = None;
+                }
+            }
+            if table.functions.len() > 1 {
+                kit::rule(ui);
+                let options: Vec<_> = std::iter::once((None, "None".to_owned()))
+                    .chain(
+                        table
+                            .functions
+                            .iter()
+                            .map(|f| (Some(f.id), f.label.clone())),
+                    )
+                    .collect();
+                kit::choice_row(ui, "Default", &mut table.design_default, &options);
+            }
+            kit::actions(ui, |ui| {
+                add = ui_kit::button(
+                    ui,
+                    "Add function",
+                    Button::Enabled(table.functions.len() < MAX_FUNCTIONS),
                 )
-                .changed();
+                .clicked();
+            });
         }
-        ui.weak("mm");
+        if add && let Err(message) = add_function(component, id) {
+            *notice = message.into();
+        }
     });
-    changed
 }
 
 #[cfg(test)]
@@ -1411,6 +1760,258 @@ mod draft_tests {
             engine.apply(engine.revision(), operation)?;
         }
         assert_eq!(engine.project().library.components.len(), 1);
+        Ok(())
+    }
+
+    fn resistance(editor: &PartEditor) -> Option<DefinitionId> {
+        editor
+            .draft
+            .as_ref()?
+            .component
+            .fields
+            .first()
+            .map(|f| f.field.id)
+    }
+
+    #[test]
+    fn a_field_default_commits_once_as_one_undoable_edit() -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let lineage = resistance(&editor).ok_or(pcbcraft_core::Error::Limit("no field".into()))?;
+        let original = editor.draft.clone();
+        if let Some(set) = &mut editor.draft {
+            let stored = set_field_default(
+                &mut set.component,
+                &engine.project().library,
+                lineage,
+                "10k",
+            );
+            assert!(stored.is_ok_and(|text| !text.is_empty()));
+        }
+        let operation = editor.commit(&ctx, &engine);
+        assert!(matches!(
+            operation,
+            Some(Operation::Library(LibraryCommand::Edit { .. }))
+        ));
+        assert!(editor.commit(&ctx, &engine).is_none(), "sent once");
+        if let Some(operation) = operation {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.commit(&ctx, &engine);
+        let committed = engine
+            .drafts()
+            .get(
+                editor
+                    .lineage
+                    .ok_or(pcbcraft_core::Error::Limit("no lineage".into()))?,
+            )
+            .and_then(|d| match &d.definition {
+                pcbcraft_core::library::Definition::Component(c) => c.field(lineage).cloned(),
+                _ => None,
+            });
+        assert!(matches!(
+            committed.and_then(|f| f.default),
+            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+        ));
+        engine.undo()?;
+        editor.commit(&ctx, &engine);
+        assert_eq!(editor.draft, original);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_default_text_leaves_the_draft_unchanged() -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let lineage = resistance(&editor).ok_or(pcbcraft_core::Error::Limit("no field".into()))?;
+        let original = editor.draft.clone();
+        if let Some(set) = &mut editor.draft {
+            let result = set_field_default(
+                &mut set.component,
+                &engine.project().library,
+                lineage,
+                "ten volts",
+            );
+            assert!(result.is_err());
+        }
+        assert_eq!(editor.draft, original);
+        assert!(editor.commit(&ctx, &engine).is_none(), "nothing to commit");
+        Ok(())
+    }
+
+    #[test]
+    fn adding_a_function_allocates_a_fresh_id_and_commits() -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let terminal = editor
+            .selected
+            .ok_or(pcbcraft_core::Error::Limit("no terminal".into()))?;
+        let Some(set) = &mut editor.draft else {
+            return Err(pcbcraft_core::Error::Limit("no draft".into()));
+        };
+        let next = set.component.next_local;
+        let added = add_function(&mut set.component, terminal);
+        assert_eq!(added, Ok(FunctionId(next)));
+        assert_eq!(set.component.next_local, next + 1);
+        let table = set
+            .component
+            .terminal(terminal)
+            .and_then(Terminal::functions);
+        assert_eq!(table.map(|t| t.functions.len()), Some(2));
+        let labels: Vec<_> = table
+            .map(|t| t.functions.iter().map(|f| f.label.clone()).collect())
+            .unwrap_or_default();
+        assert_ne!(labels[0], labels[1], "labels stay unique");
+        if let Some(operation) = editor.commit(&ctx, &engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.commit(&ctx, &engine);
+        let committed = engine
+            .drafts()
+            .get(
+                editor
+                    .lineage
+                    .ok_or(pcbcraft_core::Error::Limit("no lineage".into()))?,
+            )
+            .and_then(|d| match &d.definition {
+                pcbcraft_core::library::Definition::Component(c) => c
+                    .terminal(terminal)
+                    .and_then(Terminal::functions)
+                    .map(|f| f.functions.len()),
+                _ => None,
+            });
+        assert_eq!(committed, Some(2));
+        let findings = editor.findings(&engine);
+        assert!(
+            findings.is_empty(),
+            "a second passive function is valid: {findings:?}"
+        );
+        Ok(())
+    }
+
+    /// Run one inspector frame. Tests have no renderer, so the texture
+    /// deltas are cleared rather than applied.
+    fn frame(
+        editor: &mut PartEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> Vec<(String, Pos2)> {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(360.0, 2400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                editor.inspector(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        let mut out = Vec::new();
+        fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((
+                    text.galley.job.text.clone(),
+                    text.pos + text.galley.size() * 0.5,
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        for shape in &output.shapes {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    /// Click the text `label`, type `typed`, then leave the field.
+    fn type_into(
+        editor: &mut PartEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        label: &str,
+        typed: &str,
+    ) -> Result<Vec<(String, Pos2)>, String> {
+        let shown = frame(editor, engine, ctx, vec![]);
+        let point = shown
+            .iter()
+            .find(|(text, _)| text == label)
+            .map(|(_, p)| *p)
+            .ok_or_else(|| format!("missing {label}"))?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            editor,
+            engine,
+            ctx,
+            vec![egui::Event::PointerMoved(point), press(true)],
+        );
+        frame(editor, engine, ctx, vec![press(false)]);
+        let typed = frame(editor, engine, ctx, vec![egui::Event::Text(typed.into())]);
+        let key = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(editor, engine, ctx, vec![key]);
+        Ok(typed)
+    }
+
+    #[test]
+    fn typing_a_default_in_the_fields_section_commits_it() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let lineage = resistance(&editor).ok_or("no field")?;
+        type_into(&mut editor, &engine, &ctx, "No default", "10k")?;
+        let operation = editor.commit(&ctx, &engine).ok_or("no edit")?;
+        engine.apply(engine.revision(), operation)?;
+        editor.commit(&ctx, &engine);
+        let default = editor
+            .draft
+            .as_ref()
+            .and_then(|s| s.component.field(lineage))
+            .and_then(|f| f.default.clone());
+        assert!(matches!(
+            default,
+            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_typed_default_shows_an_error_and_sends_nothing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let original = editor.draft.clone();
+        type_into(&mut editor, &engine, &ctx, "No default", "ten volts")?;
+        let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            shown.iter().any(|(text, _)| text == "ten volts"),
+            "text kept"
+        );
+        assert_eq!(editor.draft, original);
+        assert!(editor.commit(&ctx, &engine).is_none());
         Ok(())
     }
 }
