@@ -295,3 +295,56 @@ fn set_properties_through_json_returns_the_engine_effective_values() -> TestResu
     assert_eq!(session.engine().project(), engine.project());
     Ok(())
 }
+
+/// `instance.select_functions` sent as JSON returns the engine's resolution;
+/// a function of another terminal is a typed error that changes nothing.
+#[test]
+fn select_functions_through_json_returns_the_engine_resolution() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let mut engine = Engine::demo()?;
+    let instance = r1(&engine);
+    let functions: Vec<u32> = engine
+        .project()
+        .library
+        .components
+        .first()
+        .ok_or("demo component")?
+        .definition
+        .terminals
+        .iter()
+        .filter_map(|t| t.functions())
+        .filter_map(|f| f.functions.first().map(|f| f.id.0))
+        .collect();
+    let [first, second] = functions[..] else {
+        return Err("two fixed functions".into());
+    };
+    let request = |function: u32, revision: u64| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Instance", "operation": {
+                "command": "instance.select_functions",
+                "params": {"instance": instance, "edits": [
+                    {"terminal": 1, "function": function}
+                ]}
+            }}
+        }})
+    };
+    let reply = session.dispatch(request(first, session.engine().revision()));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let operation: Operation =
+        serde_json::from_value(request(first, engine.revision())["params"]["operation"].clone())?;
+    let outcome = engine.apply(engine.revision(), operation)?;
+    assert_eq!(reply["result"]["outcome"], serde_json::to_value(&outcome)?);
+    let active = &reply["result"]["outcome"]["resolution"]["active"][0];
+    assert_eq!(active["function"], first);
+    assert_eq!(active["origin"], "selected");
+    assert_eq!(active["direction"], "passive");
+    assert_eq!(session.engine().project(), engine.project());
+
+    let revision = session.engine().revision();
+    let rejected = session.dispatch(request(second, revision));
+    assert_eq!(rejected["error"]["code"], "invalid_input", "{rejected}");
+    assert_eq!(session.engine().revision(), revision);
+    assert_eq!(session.engine().project(), engine.project());
+    Ok(())
+}

@@ -198,6 +198,42 @@ local_id!(
     /// An enumeration choice of a field, stable across its revisions.
     ChoiceId
 );
+local_id!(
+    /// One alternative function of a component terminal. Unique per component
+    /// lineage, not per terminal.
+    FunctionId
+);
+local_id!(
+    /// A shared hardware resource of a component (a peripheral, a channel
+    /// group) whose roles terminal functions take.
+    ResourceId
+);
+local_id!(
+    /// A role within one resource, with a capacity.
+    RoleId
+);
+
+/// One function of one terminal. A `FunctionId` is unique per component, so
+/// the pair is redundant by design: every rule that takes a key checks that
+/// the function belongs to the named terminal.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
+pub struct FunctionKey {
+    pub terminal: TerminalId,
+    pub function: FunctionId,
+}
+
+/// Longest name, label or designation.
+pub const MAX_LABEL: usize = 256;
+
+/// Whether `text` is acceptable display text for a published name or label:
+/// not blank, at most [`MAX_LABEL`] bytes and free of control characters.
+/// Labels are presentation and never identity.
+pub fn printable(text: &str) -> bool {
+    !text.trim().is_empty() && text.len() <= MAX_LABEL && !text.chars().any(char::is_control)
+}
 
 /// One terminal of one component instance: the electrical identity wires,
 /// nets and pads refer to.

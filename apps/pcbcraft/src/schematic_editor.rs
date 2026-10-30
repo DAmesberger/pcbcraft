@@ -234,7 +234,7 @@ impl SchematicEditor {
             .is_some_and(|(revision, id, _)| *revision == engine.revision() && *id == instance);
         if !fresh {
             self.report = match engine.query(Query::InspectInstance { instance }) {
-                Ok(QueryResult::Instance(report)) => Some((engine.revision(), instance, report)),
+                Ok(QueryResult::Instance(report)) => Some((engine.revision(), instance, *report)),
                 _ => None,
             };
         }

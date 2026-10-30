@@ -105,7 +105,7 @@ impl Request {
             ),
             info::<Query>(
                 "project.query",
-                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once. Nothing is stored.",
+                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once. Nothing is stored.",
             ),
             info::<NoParams>("project.undo", "Undo the last document change."),
             info::<NoParams>("project.redo", "Redo the last undone document change."),

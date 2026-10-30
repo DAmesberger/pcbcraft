@@ -4,6 +4,9 @@ use super::publish::{issue, object};
 use super::{Library, MAX_COMPONENT_LISTS, MAX_LABEL, MAX_TERMINALS, printable};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::fields::{self, FieldSelection, MAX_FIELDS};
+use crate::functions::{
+    self, FunctionConstraint, Resource, TerminalDeclaration, TerminalFunctions,
+};
 use crate::ids::{BindingRef, DefinitionId, SymbolRef, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -15,6 +18,10 @@ pub struct ComponentDefinition {
     /// Next unused local ID. Retired IDs are never reused.
     pub next_local: u32,
     pub terminals: Vec<Terminal>,
+    /// Shared resources whose roles terminal functions take.
+    pub resources: Vec<Resource>,
+    /// Rules between functions, scoped to one instance.
+    pub constraints: Vec<FunctionConstraint>,
     /// Allowed representations, at most one revision per symbol lineage.
     pub representations: Vec<SymbolRef>,
     /// Allowed physical implementations, at most one revision per binding
@@ -30,23 +37,49 @@ pub struct ComponentDefinition {
 pub struct Terminal {
     pub id: TerminalId,
     pub name: String,
-    pub kind: PinKind,
+    pub class: TerminalClass,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub enum PinKind {
-    Passive,
-    Input,
-    Output,
-    PowerInput,
-    PowerOutput,
-    /// Device-declared not connected: never wired, needs no decision.
-    NotConnected,
+/// What a terminal is, as the definition classifies it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalClass {
+    /// An electrical terminal with one or more alternative functions.
+    Electrical(TerminalFunctions),
+    /// Device-declared not connected: no functions, never wired, needs no
+    /// project decision.
+    DeviceNc,
+    /// Reserved by the device: no functions, never wired, needs no project
+    /// decision.
+    Reserved,
+}
+
+impl Terminal {
+    /// The terminal's functions; `None` for device-NC and reserved terminals.
+    pub fn functions(&self) -> Option<&TerminalFunctions> {
+        match &self.class {
+            TerminalClass::Electrical(functions) => Some(functions),
+            TerminalClass::DeviceNc | TerminalClass::Reserved => None,
+        }
+    }
+    pub fn is_electrical(&self) -> bool {
+        self.functions().is_some()
+    }
 }
 
 impl ComponentDefinition {
     pub fn terminal(&self, id: TerminalId) -> Option<&Terminal> {
         self.terminals.iter().find(|t| t.id == id)
+    }
+    /// Every terminal as the function resolver sees it.
+    pub fn declarations(&self) -> Vec<TerminalDeclaration<'_>> {
+        self.terminals
+            .iter()
+            .map(|t| TerminalDeclaration {
+                terminal: t.id,
+                functions: t.functions(),
+            })
+            .collect()
     }
     /// The listed revision of a symbol lineage.
     pub fn representation(&self, lineage: DefinitionId) -> Option<SymbolRef> {
@@ -73,7 +106,10 @@ impl ComponentDefinition {
             && self.representations.len() <= MAX_COMPONENT_LISTS
             && self.implementations.len() <= MAX_COMPONENT_LISTS
             && self.fields.len() <= MAX_FIELDS
-            && self.terminals.iter().all(|t| t.name.len() <= MAX_LABEL)
+            && self.terminals.iter().all(|t| {
+                t.name.len() <= MAX_LABEL && t.functions().is_none_or(|f| f.within_bounds())
+            })
+            && functions::declarations_within_bounds(&self.resources, &self.constraints)
             && self
                 .fields
                 .iter()
@@ -86,8 +122,14 @@ impl ComponentDefinition {
             .all(|f| f.default.as_ref().is_none_or(|d| d.values_finite()))
     }
 
+    /// Terminal, function, resource and role IDs: one namespace.
     pub(super) fn local_ids(&self) -> Vec<u32> {
-        self.terminals.iter().map(|t| t.id.0).collect()
+        let mut ids: Vec<u32> = self.terminals.iter().map(|t| t.id.0).collect();
+        for terminal in &self.terminals {
+            ids.extend(terminal.functions().into_iter().flat_map(|f| f.ids()));
+        }
+        ids.extend(self.resources.iter().flat_map(|r| r.ids()));
+        ids
     }
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
@@ -109,6 +151,13 @@ impl ComponentDefinition {
             }
         }
         let terminals: BTreeSet<TerminalId> = self.terminals.iter().map(|t| t.id).collect();
+        let declarations = self.declarations();
+        out.extend(functions::declaration_findings(
+            id,
+            &declarations,
+            &self.resources,
+            &self.constraints,
+        ));
         if self.representations.is_empty() {
             out.push(issue(
                 "component.no_representation",
@@ -219,6 +268,12 @@ impl ComponentDefinition {
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
+            out.extend(functions::binding_findings(
+                id,
+                r.id,
+                &declarations,
+                &binding.definition.unavailable,
+            ));
         }
         self.field_findings(id, library, out);
         if self.implementations.is_empty() {

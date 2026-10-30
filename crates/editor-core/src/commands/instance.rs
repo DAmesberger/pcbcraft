@@ -1,6 +1,7 @@
 use super::Outcome;
 use crate::diagnostics::Result;
 use crate::fields::PropertyEdit;
+use crate::functions::FunctionEdit;
 use crate::ids::{Id, TerminalId, UnitId};
 use crate::instances::{self, NewInstance};
 use crate::model::{EditPolicy, PhysicalChoice, Project};
@@ -26,6 +27,13 @@ pub enum InstanceCommand {
     SetProperties {
         instance: Id,
         edits: Vec<PropertyEdit>,
+    },
+    /// Apply 1–256 function selection edits atomically. `None` clears an
+    /// explicit selection. The final state is validated once.
+    #[serde(rename = "instance.select_functions")]
+    SelectFunctions {
+        instance: Id,
+        edits: Vec<FunctionEdit>,
     },
     #[serde(rename = "instance.set_unit_unused")]
     SetUnitUnused {
@@ -69,6 +77,10 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
         InstanceCommand::SetProperties { instance, edits } => {
             let effective = instances::set_properties(project, instance, &edits)?;
             return Ok(Outcome::PropertiesSet { effective });
+        }
+        InstanceCommand::SelectFunctions { instance, edits } => {
+            let resolution = instances::select_functions(project, instance, &edits)?;
+            return Ok(Outcome::FunctionsSelected { resolution });
         }
         InstanceCommand::SetUnitUnused {
             instance,

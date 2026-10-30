@@ -8,7 +8,6 @@
 //! routed nets is acceptable.
 use crate::diagnostics::{Error, Result};
 use crate::ids::{Endpoint, Id};
-use crate::library::PinKind;
 use crate::model::{Net, Project};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,18 +43,18 @@ pub fn terminals(project: &Project) -> BTreeSet<Endpoint> {
 }
 
 /// A terminal is accounted for when it is connected (its net has at least two
-/// terminals), marked project no-connect, or device-declared NC, which needs
-/// no decision.
+/// terminals), marked project no-connect, or not electrical (device NC or
+/// reserved), which needs no decision.
 pub fn accounted_for(project: &Project, terminal: Endpoint) -> bool {
     let Some(instance) = project.instance(terminal.instance) else {
         return false;
     };
-    let device_nc = project
+    let no_decision = project
         .library
         .component(instance.component)
         .and_then(|c| c.definition.terminal(terminal.terminal))
-        .is_some_and(|t| t.kind == PinKind::NotConnected);
-    device_nc
+        .is_some_and(|t| !t.is_electrical());
+    no_decision
         || instance.no_connect.contains(&terminal.terminal)
         || project
             .net_of(terminal)

@@ -1,7 +1,6 @@
 //! Ported engine, schematic and net-identity behaviour on the instance model.
 use super::support::*;
 use crate::layout::{LayoutCommand, RouteRequest};
-use crate::library::PinKind;
 use crate::schematic::{self, SchematicCommand};
 use crate::{Engine, Error, InstanceCommand, Layer, Operation, Result, Track, erc, format};
 use serde_json::json;
@@ -12,7 +11,7 @@ fn two_terminal(engine: &mut Engine) -> Result<Fixture> {
         engine,
         &Spec {
             name: "Two terminal",
-            terminals: vec![(1, "A", PinKind::Input), (2, "B", PinKind::Output)],
+            terminals: vec![(1, "A", input()), (2, "B", output())],
             units: vec![(1, "A", vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0])])],
             package: vec![(1, "1"), (2, "2")],
             mapping: vec![(1, 1), (2, 2)],
@@ -371,7 +370,7 @@ fn a_lone_input_is_a_completeness_finding_not_an_erc_finding() -> Result<()> {
         .into_iter()
         .map(|f| f.code)
         .collect();
-    assert_eq!(codes, ["erc.multiple_outputs"]);
+    assert_eq!(codes, ["erc.driver_conflict"]);
     Ok(())
 }
 

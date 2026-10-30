@@ -9,12 +9,14 @@ mod working_set;
 
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use pcbcraft_core::completeness::CheckTarget;
+use pcbcraft_core::functions::{Direction, TerminalFunctions};
 use pcbcraft_core::library::{
-    Anchor, Drafts, PackageTerminal, Pad, PinKind, Terminal, TerminalMap, Unit,
+    Anchor, ComponentDefinition, Drafts, PackageTerminal, Pad, Terminal, TerminalClass,
+    TerminalMap, Unit,
 };
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, Engine, Id, LibraryCommand, Operation, PackageTerminalId, PadId,
-    Point, Query, QueryResult, Stage, TerminalId, UnitId,
+    ComponentRef, DefinitionId, Engine, FunctionId, Id, LibraryCommand, Operation,
+    PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{
     fonts,
@@ -23,6 +25,91 @@ use solidcraft_ui_egui::{
 };
 use std::sync::Arc;
 pub use working_set::{Template, WorkingSet};
+
+/// The terminal choices this editor offers: one fixed function of a
+/// direction, or device NC. Multi-function terminals are authored through
+/// `library.edit`; the pin-configuration table is later work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PinChoice {
+    Fixed(Direction),
+    DeviceNc,
+}
+
+const PIN_CHOICES: [PinChoice; 6] = [
+    PinChoice::Fixed(Direction::Passive),
+    PinChoice::Fixed(Direction::Input),
+    PinChoice::Fixed(Direction::Output),
+    PinChoice::Fixed(Direction::PowerInput),
+    PinChoice::Fixed(Direction::PowerOutput),
+    PinChoice::DeviceNc,
+];
+
+impl PinChoice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fixed(direction) => direction.label(),
+            Self::DeviceNc => "device NC",
+        }
+    }
+}
+
+/// Short text for a terminal's class.
+fn pin_summary(terminal: &Terminal) -> String {
+    match &terminal.class {
+        TerminalClass::Electrical(functions) => match functions.functions.as_slice() {
+            [only] => only.label.clone(),
+            many => format!("{} functions", many.len()),
+        },
+        TerminalClass::DeviceNc => "device NC".into(),
+        TerminalClass::Reserved => "reserved".into(),
+    }
+}
+
+/// Give a terminal one fixed function of `choice`, keeping the ID of its
+/// existing fixed function or allocating one from the component.
+fn set_pin_choice(component: &mut ComponentDefinition, id: TerminalId, choice: PinChoice) -> bool {
+    let keep = component.terminal(id).and_then(|t| match t.functions() {
+        Some(f) if f.functions.len() == 1 => f.functions.first().map(|f| f.id),
+        _ => None,
+    });
+    let class = match choice {
+        PinChoice::DeviceNc => TerminalClass::DeviceNc,
+        PinChoice::Fixed(direction) => {
+            let function = match keep {
+                Some(function) => function,
+                None => {
+                    let next = component.next_local;
+                    let Some(after) = next.checked_add(1) else {
+                        return false;
+                    };
+                    component.next_local = after;
+                    FunctionId(next)
+                }
+            };
+            TerminalClass::Electrical(TerminalFunctions::fixed(function, direction))
+        }
+    };
+    match component.terminals.iter_mut().find(|t| t.id == id) {
+        Some(terminal) => {
+            terminal.class = class;
+            true
+        }
+        None => false,
+    }
+}
+
+fn current_choice(terminal: &Terminal) -> Option<PinChoice> {
+    match &terminal.class {
+        TerminalClass::Electrical(functions) => match functions.functions.as_slice() {
+            [only] => PIN_CHOICES
+                .into_iter()
+                .find(|c| *c == PinChoice::Fixed(only.direction)),
+            _ => None,
+        },
+        TerminalClass::DeviceNc => Some(PinChoice::DeviceNc),
+        TerminalClass::Reserved => None,
+    }
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum View {
@@ -263,9 +350,12 @@ impl PartEditor {
             })
         };
         let electrical = allocate(&mut set.component.next_local);
+        let function = allocate(&mut set.component.next_local);
         let physical = allocate(&mut set.package.next_local);
         let pad = allocate(&mut set.footprint.next_local);
-        let (Some(electrical), Some(physical), Some(pad)) = (electrical, physical, pad) else {
+        let (Some(electrical), Some(function), Some(physical), Some(pad)) =
+            (electrical, function, physical, pad)
+        else {
             self.notice = "Terminal identity exhausted".into();
             return;
         };
@@ -287,7 +377,10 @@ impl PartEditor {
         set.component.terminals.push(Terminal {
             id: electrical,
             name: electrical.to_string(),
-            kind: PinKind::Passive,
+            class: TerminalClass::Electrical(TerminalFunctions::fixed(
+                FunctionId(function),
+                Direction::Passive,
+            )),
         });
         if let Some(unit) = set.symbol.units.first_mut() {
             unit.anchors.push(Anchor {
@@ -569,7 +662,7 @@ impl PartEditor {
         for terminal in &set.component.terminals {
             if ui_kit::button(
                 ui,
-                format!("{} · {:?}", terminal.name, terminal.kind),
+                format!("{} · {}", terminal.name, pin_summary(terminal)),
                 if self.selected == Some(terminal.id) {
                     Button::SmallSelected
                 } else {
@@ -593,21 +686,21 @@ impl PartEditor {
             if let Some(terminal) = set.component.terminals.iter_mut().find(|t| t.id == id) {
                 ui.separator();
                 text_row(ui, "Pin name", &mut terminal.name);
+                let current = current_choice(terminal);
+                let mut chosen = current;
                 egui::ComboBox::from_id_salt(("pin-kind", id.0))
-                    .selected_text(format!("{:?}", terminal.kind))
+                    .selected_text(pin_summary(terminal))
                     .show_ui(ui, |ui| {
-                        for kind in [
-                            PinKind::Passive,
-                            PinKind::Input,
-                            PinKind::Output,
-                            PinKind::PowerInput,
-                            PinKind::PowerOutput,
-                            PinKind::NotConnected,
-                        ] {
-                            ui.selectable_value(&mut terminal.kind, kind, format!("{kind:?}"))
-                                .changed();
+                        for choice in PIN_CHOICES {
+                            ui.selectable_value(&mut chosen, Some(choice), choice.label());
                         }
                     });
+                if chosen != current
+                    && let Some(choice) = chosen
+                    && !set_pin_choice(&mut set.component, id, choice)
+                {
+                    self.notice = "Function identity exhausted".into();
+                }
             }
             if let Some(anchor) = set
                 .symbol

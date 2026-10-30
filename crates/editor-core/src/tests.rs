@@ -1,6 +1,7 @@
 //! Engine-level behaviour through public commands and queries.
 mod ce04;
 mod ce05;
+mod ce06;
 mod engine;
 mod fields;
 mod library;

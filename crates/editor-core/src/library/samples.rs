@@ -3,14 +3,15 @@
 //! ordinary definition data a user then edits.
 use super::{
     Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, PinKind, SymbolDefinition,
-    Terminal, TerminalMap, Unit,
+    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit,
 };
 use crate::fields::{FieldDefinition, QuantityKind, ValueType};
+use crate::functions::{Direction, TerminalFunctions};
 use crate::geometry::Point;
 use crate::ids::{
-    BindingRef, DefinitionId, FootprintRef, PackageRef, PackageTerminalId, PadId, QuantityKindRef,
-    SymbolRef, TerminalId, UnitId,
+    BindingRef, DefinitionId, FootprintRef, FunctionId, PackageRef, PackageTerminalId, PadId,
+    QuantityKindRef, SymbolRef, TerminalId, UnitId,
 };
 use crate::quantity::{UnitOfMeasure, UnitSet};
 
@@ -53,15 +54,22 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
             id: refs.component,
             meta: meta(name),
             definition: Definition::Component(ComponentDefinition {
-                next_local: 3,
+                // Terminals 1–2, then their fixed passive functions 3–4.
+                next_local: 5,
                 terminals: terminals
                     .iter()
-                    .map(|id| Terminal {
+                    .zip([FunctionId(3), FunctionId(4)])
+                    .map(|(id, function)| Terminal {
                         id: *id,
                         name: id.to_string(),
-                        kind: PinKind::Passive,
+                        class: TerminalClass::Electrical(TerminalFunctions::fixed(
+                            function,
+                            Direction::Passive,
+                        )),
                     })
                     .collect(),
+                resources: vec![],
+                constraints: vec![],
                 representations: vec![refs.symbol],
                 implementations: vec![refs.binding],
                 fields: vec![],
@@ -139,6 +147,7 @@ fn sample(name: &str, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
                     })
                     .collect(),
                 footprints: vec![refs.footprint],
+                unavailable: vec![],
             }),
         },
     ]

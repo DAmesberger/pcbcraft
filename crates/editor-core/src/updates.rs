@@ -6,12 +6,13 @@
 //! order or pad count.
 use crate::diagnostics::{Error, Result};
 use crate::fields::{EffectiveField, PropertyEdit, PropertyInput};
+use crate::functions::{Function, FunctionEdit, TerminalFunctions};
 use crate::geometry::Point;
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, FunctionId, Id, TerminalId, UnitId};
 use crate::instances::{self, Resolved};
 use crate::library::{
-    BindingDefinition, ComponentDefinition, FootprintDefinition, PackageDefinition, Pad, PinKind,
-    SymbolDefinition,
+    BindingDefinition, ComponentDefinition, FootprintDefinition, PackageDefinition, Pad,
+    SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
 use crate::{erc, layout, nets, schematic, validate};
@@ -68,6 +69,19 @@ pub struct Resolutions {
     pub regroups: Vec<RegroupResolution>,
     #[serde(default)]
     pub fields: Vec<FieldResolution>,
+    #[serde(default)]
+    pub functions: Vec<FunctionResolution>,
+}
+
+/// An explicit decision for a terminal whose selected function the target
+/// revision no longer offers: another function, or `None` to clear the
+/// explicit selection. Applied as a selection edit.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FunctionResolution {
+    pub instance: Id,
+    pub terminal: TerminalId,
+    pub function: Option<FunctionId>,
 }
 
 /// An explicit decision for an instance field whose assigned value the
@@ -291,7 +305,8 @@ fn revise(
         .map(|r| r.instance)
         .chain(resolutions.units.iter().map(|r| r.instance))
         .chain(resolutions.regroups.iter().map(|r| r.instance))
-        .chain(resolutions.fields.iter().map(|r| r.instance));
+        .chain(resolutions.fields.iter().map(|r| r.instance))
+        .chain(resolutions.functions.iter().map(|r| r.instance));
     for instance in named {
         if !selected.contains(&instance) {
             return Err(invalid(
@@ -339,6 +354,16 @@ fn revise_instance(
         .collect();
     let properties =
         instances::carry_properties(&next.library, &old, target_component, &field_resolutions)?;
+    let function_resolutions: Vec<FunctionEdit> = resolutions
+        .functions
+        .iter()
+        .filter(|r| r.instance == id)
+        .map(|r| FunctionEdit {
+            terminal: r.terminal,
+            function: r.function,
+        })
+        .collect();
+    let functions = instances::carry_functions(&old, target_component, &function_resolutions)?;
     let choice = resolutions.choices.iter().find(|c| c.instance == id);
     let representation = choice
         .and_then(|c| c.representation)
@@ -483,6 +508,7 @@ fn revise_instance(
             unused_units: unused,
             units: moved,
             properties,
+            functions,
         },
     )?;
     if physical.is_none() {
@@ -691,42 +717,51 @@ fn definition_details(
             }
         }
     }
-    // Terminals.
+    // Terminals and their functions.
     for terminal in &a.component.terminals {
-        let replacement = b.component.terminal(terminal.id);
-        if replacement.is_some_and(|t| {
-            (t.kind == PinKind::NotConnected) != (terminal.kind == PinKind::NotConnected)
-        }) {
+        let Some(replacement) = b.component.terminal(terminal.id) else {
+            plan.detail(format!(
+                "{designator}: terminal {} ‘{}’ ({}) is removed.",
+                terminal.id,
+                terminal.name,
+                class_summary(terminal)
+            ));
+            continue;
+        };
+        if replacement.is_electrical() != terminal.is_electrical() {
             mapping_endpoints.insert(Endpoint {
                 instance,
                 terminal: terminal.id,
             });
         }
-        if replacement != Some(terminal) {
+        if replacement.name != terminal.name {
             plan.detail(format!(
-                "{designator}: terminal {} ‘{}’ ({:?}) → {}.",
-                terminal.id,
-                terminal.name,
-                terminal.kind,
-                replacement
-                    .map(|t| format!("‘{}’ ({:?})", t.name, t.kind))
-                    .unwrap_or_else(|| "removed".into())
+                "{designator}: terminal {} ‘{}’ is renamed ‘{}’.",
+                terminal.id, terminal.name, replacement.name
             ));
-            if replacement.is_some_and(|t| t.name != terminal.name) {
-                plan.warnings.push(format!(
-                    "{designator}.{} is renamed; its stable electrical identity is retained. Confirm the new label does not represent a different signal.",
-                    terminal.id
-                ));
-            }
+            plan.warnings.push(format!(
+                "{designator}.{} is renamed; its stable electrical identity is retained. Confirm the new label does not represent a different signal.",
+                terminal.id
+            ));
         }
+        function_details(plan, designator, terminal, replacement);
     }
     for terminal in &b.component.terminals {
         if a.component.terminal(terminal.id).is_none() {
             plan.detail(format!(
-                "{designator}: add electrical terminal {} ({:?}).",
-                terminal.id, terminal.kind
+                "{designator}: add terminal {} ‘{}’ ({}).",
+                terminal.id,
+                terminal.name,
+                class_summary(terminal)
             ));
         }
+    }
+    if a.component.resources != b.component.resources
+        || a.component.constraints != b.component.constraints
+    {
+        plan.detail(format!(
+            "{designator}: function resources or constraints change; selections are checked against the target revision."
+        ));
     }
     // Pads. A removed pad or changed pad terminal creates an explicit routing
     // obligation even when its net stays the same.
@@ -779,6 +814,110 @@ fn definition_details(
     }
 }
 
+fn class_summary(terminal: &Terminal) -> String {
+    match &terminal.class {
+        TerminalClass::Electrical(functions) => {
+            let labels: Vec<&str> = functions
+                .functions
+                .iter()
+                .map(|f| f.label.as_str())
+                .collect();
+            format!("functions {}", labels.join(", "))
+        }
+        TerminalClass::DeviceNc => "device NC".into(),
+        TerminalClass::Reserved => "reserved".into(),
+    }
+}
+
+fn behavior(function: &Function) -> String {
+    format!(
+        "{:?}, {:?} signal, {:?} drive, resource role {:?}",
+        function.direction, function.signal, function.drive, function.resource_role
+    )
+}
+
+/// Function differences of one terminal, keyed by function ID. Order is
+/// presentation, so a reorder alone reports nothing; a relabel reports the
+/// label change only.
+fn function_details(plan: &mut UpdatePlan, designator: &str, a: &Terminal, b: &Terminal) {
+    let id = a.id;
+    let (fa, fb) = match (a.functions(), b.functions()) {
+        (Some(fa), Some(fb)) => (fa, fb),
+        (None, None) if a.class == b.class => return,
+        _ => {
+            plan.detail(format!(
+                "{designator} terminal {id}: {} → {}.",
+                class_summary(a),
+                class_summary(b)
+            ));
+            return;
+        }
+    };
+    let functions = |f: &TerminalFunctions| -> BTreeMap<FunctionId, Function> {
+        f.functions.iter().map(|f| (f.id, f.clone())).collect()
+    };
+    let (before, after) = (functions(fa), functions(fb));
+    for (function, old) in &before {
+        match after.get(function) {
+            None => plan.detail(format!(
+                "{designator} terminal {id}: function ‘{}’ ({function}) is removed.",
+                old.label
+            )),
+            Some(new) => {
+                if new.label != old.label {
+                    plan.detail(format!(
+                        "{designator} terminal {id}: function {function} ‘{}’ is relabeled ‘{}’; selections are kept by ID.",
+                        old.label, new.label
+                    ));
+                }
+                if behavior(new) != behavior(old) {
+                    plan.detail(format!(
+                        "{designator} terminal {id}: function ‘{}’ ({function}) {} → {}.",
+                        new.label,
+                        behavior(old),
+                        behavior(new)
+                    ));
+                }
+            }
+        }
+    }
+    for (function, new) in &after {
+        if !before.contains_key(function) {
+            plan.detail(format!(
+                "{designator} terminal {id}: add function ‘{}’ ({function}), {}.",
+                new.label,
+                behavior(new)
+            ));
+        }
+    }
+    if fa.design_default != fb.design_default {
+        plan.detail(format!(
+            "{designator} terminal {id}: design default {:?} → {:?}.",
+            fa.design_default, fb.design_default
+        ));
+    }
+}
+
+/// Explicit selection changes, by terminal.
+fn selection_details(plan: &mut UpdatePlan, old: &ComponentInstance, new: &ComponentInstance) {
+    let designator = old.designator.as_str();
+    let terminals: BTreeSet<&TerminalId> =
+        old.functions.keys().chain(new.functions.keys()).collect();
+    let show = |f: Option<&FunctionId>| {
+        f.map_or_else(|| "no selection".to_string(), |f| format!("function {f}"))
+    };
+    for terminal in terminals {
+        let (a, b) = (old.functions.get(terminal), new.functions.get(terminal));
+        if a != b {
+            plan.detail(format!(
+                "{designator} terminal {terminal}: selection {} → {}.",
+                show(a),
+                show(b)
+            ));
+        }
+    }
+}
+
 fn instance_details(
     plan: &mut UpdatePlan,
     project: &Project,
@@ -825,6 +964,9 @@ fn instance_details(
         && let (Some(a), Some(b)) = (view(project, old), view(next, new))
     {
         definition_details(plan, designator, old.id, &a, &b, mapping_endpoints);
+    }
+    if old.functions != new.functions {
+        selection_details(plan, old, new);
     }
     for unit in old.unused_units.difference(&new.unused_units) {
         plan.detail(format!(

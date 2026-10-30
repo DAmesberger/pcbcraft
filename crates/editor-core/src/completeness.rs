@@ -2,12 +2,13 @@
 //! state holds when no current finding blocks it.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::fields::{self, EffectiveField};
+use crate::functions::{Direction, Resolution};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, FootprintRef,
     Id, PackageRef, Revision, SymbolRef, UnitId,
 };
 use crate::instances::{self, UnitState};
-use crate::library::{self, Draft, Drafts, Library, PinKind};
+use crate::library::{self, Draft, Drafts, Library};
 use crate::model::Project;
 use crate::nets;
 use schemars::JsonSchema;
@@ -42,6 +43,9 @@ pub struct InstanceReport {
     pub units: Vec<UnitReport>,
     /// Effective value and origin of every selected field.
     pub properties: Vec<EffectiveField>,
+    /// Active, unresolved and incomplete terminal functions. Conflicts are
+    /// rejected invariants, so this bucket is always empty here.
+    pub functions: Resolution,
     pub occurrences: usize,
     /// 0 or 1.
     pub board_placements: usize,
@@ -103,6 +107,7 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             state,
         });
     }
+    let functions = instances::function_resolution(&project.library, item)?;
     for terminal in &resolved.component.definition.terminals {
         let endpoint = Endpoint {
             instance: id,
@@ -119,7 +124,11 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
                 object,
                 Stage::ElectricallyResolved,
             ));
-        } else if terminal.kind == PinKind::PowerInput && item.no_connect.contains(&terminal.id) {
+        } else if item.no_connect.contains(&terminal.id)
+            && functions
+                .active(terminal.id)
+                .is_some_and(|f| f.direction == Direction::PowerInput)
+        {
             findings.push(Finding::blocking(
                 "instance.required_terminal_no_connect",
                 format!(
@@ -130,6 +139,48 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
                 Stage::ElectricallyResolved,
             ));
         }
+    }
+    for terminal in &functions.unresolved {
+        let name = resolved
+            .component
+            .definition
+            .terminal(*terminal)
+            .map(|t| t.name.as_str())
+            .unwrap_or("?");
+        findings.push(Finding::blocking(
+            "config.function_unresolved",
+            format!(
+                "{} terminal {terminal} ‘{name}’ has no selected function and no default.",
+                item.designator
+            ),
+            vec![ObjectRef::Terminal {
+                endpoint: Endpoint {
+                    instance: id,
+                    terminal: *terminal,
+                },
+            }],
+            Stage::ElectricallyResolved,
+        ));
+    }
+    for requirement in &functions.incomplete {
+        let mut objects = vec![ObjectRef::Instance { id }];
+        objects.extend(
+            requirement
+                .terminals()
+                .into_iter()
+                .map(|terminal| ObjectRef::Terminal {
+                    endpoint: Endpoint {
+                        instance: id,
+                        terminal,
+                    },
+                }),
+        );
+        findings.push(Finding::blocking(
+            "config.requirement_unmet",
+            format!("{}: {}", item.designator, requirement.message()),
+            objects,
+            Stage::ElectricallyResolved,
+        ));
     }
     let properties = instances::effective_fields(&project.library, item)?;
     for field in &properties {
@@ -175,6 +226,7 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
         purchasing: "not computed: there is no manufacturer-part model yet".into(),
         units,
         properties,
+        functions,
         findings,
     })
 }

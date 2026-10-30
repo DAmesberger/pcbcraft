@@ -4,17 +4,19 @@
 //! one source of truth for each. [`check_instance`] is the one owner of the
 //! per-instance invariants that commands, update plans and document
 //! validation all apply. Field values are checked, applied and resolved
-//! through `fields`; this module only looks up the definitions they need.
+//! through `fields`, and function selections through `functions`; this
+//! module only looks up the definitions they need.
 use crate::diagnostics::{Error, Result};
 use crate::fields::{
     self, EffectiveField, FieldOverride, InstanceFields, MAX_FIELDS, MAX_PROPERTY_EDITS,
     PropertyEdit, PropertyInput,
 };
+use crate::functions::{self, FunctionEdit, FunctionSelections, Resolution};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, TerminalId, UnitId};
 use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
-    PackageDefinition, PinKind, Published, SymbolDefinition,
+    PackageDefinition, Published, SymbolDefinition,
 };
 use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
 use schemars::JsonSchema;
@@ -143,11 +145,37 @@ pub fn resolve_physical<'a>(
 }
 
 /// Whether a terminal of `component` may carry wires or a project no-connect:
-/// it exists and is not device-declared NC.
+/// it exists and is electrical (not device NC or reserved).
 pub fn wirable(component: &ComponentDefinition, terminal: TerminalId) -> bool {
     component
         .terminal(terminal)
-        .is_some_and(|t| t.kind != PinKind::NotConnected)
+        .is_some_and(|t| t.is_electrical())
+}
+
+/// Resolve an instance's function selections against its pinned component
+/// and, when it has one, its chosen binding's unavailable functions. This is
+/// the one place that builds the resolver's input from library data.
+pub fn function_resolution(library: &Library, instance: &ComponentInstance) -> Result<Resolution> {
+    let resolved = resolve(library, instance)?;
+    resolve_functions(
+        &resolved.component.definition,
+        resolved.physical.as_ref(),
+        &instance.functions,
+    )
+}
+
+fn resolve_functions(
+    component: &ComponentDefinition,
+    physical: Option<&PhysicalView<'_>>,
+    selections: &FunctionSelections,
+) -> Result<Resolution> {
+    functions::resolve(
+        &component.declarations(),
+        &component.resources,
+        &component.constraints,
+        physical.map(|p| p.binding.definition.unavailable.as_slice()),
+        selections,
+    )
 }
 
 /// The unit that draws `terminal`.
@@ -256,9 +284,9 @@ fn check_with<'a>(
                     "{name}: no-connect names unknown terminal {terminal}."
                 )));
             }
-            Some(t) if t.kind == PinKind::NotConnected => {
+            Some(t) if !t.is_electrical() => {
                 return Err(invalid(format!(
-                    "{name}: terminal {terminal} is device-declared NC and needs no project no-connect."
+                    "{name}: terminal {terminal} is device NC or reserved and needs no project no-connect."
                 )));
             }
             Some(_) => {}
@@ -268,9 +296,9 @@ fn check_with<'a>(
         let terminal = component
             .terminal(endpoint.terminal)
             .ok_or_else(|| invalid("A wire references a missing terminal.".into()))?;
-        if terminal.kind == PinKind::NotConnected {
+        if !terminal.is_electrical() {
             return Err(Error::Conflict(
-                "A device-declared NC terminal cannot be wired.".into(),
+                "A device-NC or reserved terminal cannot be wired.".into(),
             ));
         }
         if instance.no_connect.contains(&terminal.id) {
@@ -294,7 +322,35 @@ fn check_with<'a>(
             )));
         }
     }
-    Ok(())
+    check_functions(
+        name,
+        component,
+        resolved.physical.as_ref(),
+        &instance.functions,
+    )
+}
+
+/// Selections are structurally valid and the resolution has no conflicts:
+/// capacity, exclusion and availability in the chosen binding are
+/// invariants, never findings.
+fn check_functions(
+    name: &str,
+    component: &ComponentDefinition,
+    physical: Option<&PhysicalView<'_>>,
+    selections: &FunctionSelections,
+) -> Result<()> {
+    if selections.len() > component.terminals.len() {
+        return Err(invalid(format!(
+            "{name}: more function selections than terminals."
+        )));
+    }
+    let resolution = resolve_functions(component, physical, selections)
+        .map_err(|e| invalid(format!("{name}: {e}")))?;
+    if resolution.conflicts.is_empty() {
+        return Ok(());
+    }
+    let messages: Vec<&str> = resolution.conflicts.iter().map(|c| c.message()).collect();
+    Err(Error::Conflict(format!("{name}: {}", messages.join(" "))))
 }
 
 fn field_view(library: &Library, r: FieldRef) -> Result<FieldView<'_>> {
@@ -375,9 +431,11 @@ pub fn effective_fields(
 }
 
 /// Choices offered by the pinned component; unit IDs exist in the resolved
-/// representation; placed and unused exclusive; no-connect only on terminals
-/// that are not device NC; every wire endpoint's unit placed, not device NC
-/// and not project no-connect, so no-connect and wiring exclude each other.
+/// representation; placed and unused exclusive; no-connect only on
+/// electrical terminals; every wire endpoint's unit placed, electrical and
+/// not project no-connect, so no-connect and wiring exclude each other;
+/// field values valid; function selections structurally valid and
+/// conflict-free, including availability in the chosen binding.
 pub fn check_instance(project: &Project, id: Id) -> Result<()> {
     let instance = project
         .instance(id)
@@ -509,6 +567,7 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         physical: request.physical,
         unused_units: BTreeSet::new(),
         no_connect: BTreeSet::new(),
+        functions: FunctionSelections::new(),
     });
     let occurrence = add_occurrence(project, id, request.unit, request.position)?;
     apply_properties(project, id, &request.properties)?;
@@ -549,6 +608,8 @@ pub(crate) struct Retarget {
     pub units: Vec<(Id, UnitId)>,
     /// Field overrides carried by [`carry_properties`].
     pub properties: InstanceFields,
+    /// Function selections carried by [`carry_functions`].
+    pub functions: FunctionSelections,
 }
 
 /// Pin an instance to another revision of its lineage. Project no-connect
@@ -587,6 +648,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.physical = target.physical;
     instance.unused_units = target.unused_units;
     instance.properties = target.properties;
+    instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
     Ok(())
 }
@@ -748,6 +810,61 @@ pub(crate) fn carry_properties(
         }
     }
     Ok(next)
+}
+
+/// `instance.select_functions`: apply 1–256 selection edits atomically. The
+/// final state is checked once, so a batch may move a resource role between
+/// terminals without an intermediate state. Returns the new resolution.
+pub fn select_functions(
+    project: &mut Project,
+    id: Id,
+    edits: &[FunctionEdit],
+) -> Result<Resolution> {
+    let instance = project
+        .instance(id)
+        .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
+    let selections = functions::apply_edits(&instance.functions, edits)?;
+    instance_mut(project, id)?.functions = selections;
+    check_instance(project, id)?;
+    let instance = project
+        .instance(id)
+        .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
+    function_resolution(&project.library, instance)
+}
+
+/// The selections an instance keeps when it moves to `target`, another
+/// revision of its component lineage. Selections are keyed by ID, so a
+/// reordered or relabeled function keeps its selection. A selection whose
+/// function the target no longer offers on that terminal blocks until
+/// `resolutions` names the terminal; resolutions are applied as selection
+/// edits. Conflicts in the result are rejected by [`check_instance`].
+pub(crate) fn carry_functions(
+    old: &ComponentInstance,
+    target: &ComponentDefinition,
+    resolutions: &[FunctionEdit],
+) -> Result<FunctionSelections> {
+    let name = &old.designator;
+    let mut next = FunctionSelections::new();
+    for (terminal, function) in &old.functions {
+        if resolutions.iter().any(|r| r.terminal == *terminal) {
+            next.insert(*terminal, *function);
+            continue;
+        }
+        let offered = target
+            .terminal(*terminal)
+            .and_then(|t| t.functions())
+            .is_some_and(|f| f.function(*function).is_some());
+        if !offered {
+            return Err(Error::Conflict(format!(
+                "{name} terminal {terminal}: selected function {function} is not offered by the target revision; supply a FunctionResolution."
+            )));
+        }
+        next.insert(*terminal, *function);
+    }
+    if resolutions.is_empty() {
+        return Ok(next);
+    }
+    functions::apply_edits(&next, resolutions).map_err(|e| invalid(format!("{name}: {e}")))
 }
 
 /// Mark a unit unused or clear the mark. Rejected while the unit is placed;

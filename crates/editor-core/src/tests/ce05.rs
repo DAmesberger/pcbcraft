@@ -2,7 +2,6 @@
 //! terminal into another unit through a reviewed revision update.
 use super::support::*;
 use crate::instances::{NewInstance, UnitState};
-use crate::library::PinKind;
 use crate::schematic::SchematicCommand;
 use crate::updates::{
     Change, RegroupAction, RegroupResolution, Resolutions, UnitResolution, UnitTarget,
@@ -27,14 +26,14 @@ fn spec() -> Spec<'static> {
     Spec {
         name: "Dual amplifier",
         terminals: vec![
-            (1, "A+", PinKind::Input),
-            (2, "A-", PinKind::Input),
-            (3, "Aout", PinKind::Output),
-            (4, "B+", PinKind::Input),
-            (5, "B-", PinKind::Input),
-            (6, "Bout", PinKind::Output),
-            (7, "V+", PinKind::PowerInput),
-            (8, "V-", PinKind::PowerInput),
+            (1, "A+", input()),
+            (2, "A-", input()),
+            (3, "Aout", output()),
+            (4, "B+", input()),
+            (5, "B-", input()),
+            (6, "Bout", output()),
+            (7, "V+", power_in()),
+            (8, "V-", power_in()),
         ],
         units: vec![
             (1, "A", amp(1)),
@@ -125,8 +124,8 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         },
     )?;
     let amp = component_with_fields(&mut engine, &spec(), vec![select(gain)])?;
-    let supply = component(&mut engine, &probe("Supply", PinKind::PowerOutput))?;
-    let probe = component(&mut engine, &probe("Probe", PinKind::Passive))?;
+    let supply = component(&mut engine, &probe("Supply", power_out()))?;
+    let probe = component(&mut engine, &probe("Probe", passive()))?;
 
     // Two independent instances.
     let (u1, _) = place(&mut engine, &amp, "U1", 1, [0.0, 0.0])?;

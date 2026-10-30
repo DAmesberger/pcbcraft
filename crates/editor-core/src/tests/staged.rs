@@ -1,7 +1,6 @@
 //! Staged completion and atomic failure of the instance commands.
 use super::support::*;
 use crate::layout::LayoutCommand;
-use crate::library::PinKind;
 use crate::schematic::SchematicCommand;
 use crate::{
     Engine, InstanceCommand, ObjectRef, Operation, PhysicalChoice, Result, Stage, TerminalId,
@@ -16,7 +15,7 @@ fn a_component_without_implementations_is_placeable_but_not_board_placeable() ->
         &mut engine,
         &Spec {
             name: "Schematic only",
-            terminals: vec![(1, "A", PinKind::Passive)],
+            terminals: vec![(1, "A", passive())],
             units: vec![(1, "A", vec![(1, [0.0, 0.0])])],
             package: vec![(1, "1")],
             mapping: vec![(1, 1)],

@@ -1,7 +1,7 @@
 //! Publication, drafts and definition checks through public commands.
 use super::support::*;
 use crate::completeness::CheckTarget;
-use crate::library::{Definition, DefinitionMeta, DraftEdit, PinKind};
+use crate::library::{Definition, DefinitionMeta, DraftEdit};
 use crate::{
     BindingRef, DefinitionId, DefinitionKind, DefinitionRef, Engine, Error, FootprintRef,
     LibraryCommand, ObjectRef, Operation, PackageRef, Result, Revision, Stage, SymbolRef,
@@ -12,7 +12,7 @@ use serde_json::json;
 fn two(name: &str) -> Spec<'_> {
     Spec {
         name,
-        terminals: vec![(1, "A", PinKind::Passive), (2, "B", PinKind::Passive)],
+        terminals: vec![(1, "A", passive()), (2, "B", passive())],
         units: vec![(1, "A", vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0])])],
         package: vec![(1, "1"), (2, "2")],
         mapping: vec![(1, 1), (2, 2)],
@@ -292,9 +292,9 @@ fn a_retired_local_id_is_never_reused() -> Result<()> {
         &mut engine,
         &Spec {
             terminals: vec![
-                (1, "A", PinKind::Passive),
-                (2, "B", PinKind::Passive),
-                (3, "C", PinKind::Passive),
+                (1, "A", passive()),
+                (2, "B", passive()),
+                (3, "C", passive()),
             ],
             units: vec![(
                 1,
@@ -318,12 +318,18 @@ fn a_retired_local_id_is_never_reused() -> Result<()> {
             s.units[0].anchors.retain(|a| a.terminal != TerminalId(3))
         })
     })?;
-    // r3 re-adds 3 with another meaning.
+    // r3 re-adds 3 with another meaning, with a freshly allocated function.
     with(&mut engine, f.component, component_body, |c| {
+        c.next_local = 8;
         c.terminals.push(crate::library::Terminal {
             id: TerminalId(3),
             name: "Different".into(),
-            kind: PinKind::Input,
+            class: crate::library::TerminalClass::Electrical(
+                crate::functions::TerminalFunctions::fixed(
+                    crate::FunctionId(7),
+                    crate::functions::Direction::Input,
+                ),
+            ),
         })
     })?;
     with(&mut engine, f.symbol, symbol_body, |s| {
@@ -436,7 +442,7 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
             .map(|i| crate::library::Terminal {
                 id: TerminalId(i),
                 name: i.to_string(),
-                kind: PinKind::Passive,
+                class: passive(),
             })
             .collect()
     });

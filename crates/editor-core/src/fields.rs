@@ -7,7 +7,7 @@
 //! overrides and formatting are written here once. Inputs are plain data:
 //! this module never sees `library` or `model` types.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
-use crate::ids::{ChoiceId, DefinitionId, FieldRef, QuantityKindRef};
+use crate::ids::{ChoiceId, DefinitionId, FieldRef, MAX_LABEL, QuantityKindRef, printable};
 use crate::quantity::{self, MAX_MAGNITUDE, MAX_SYMBOL, UnitSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,6 @@ pub const MAX_CHOICES: usize = 128;
 pub const MAX_TEXT_BYTES: u16 = 256;
 /// Bytes of one property text input, checked before parsing.
 pub const MAX_INPUT: usize = 256;
-const MAX_LABEL: usize = 256;
 
 /// A kind of quantity: a unit set with its own identity. Two kinds with the
 /// same dimension are different kinds; a unit symbol never establishes kind
@@ -695,10 +694,6 @@ pub fn display(value: &FieldValue, value_type: &ValueType, kind: Option<&Quantit
 
 fn issue(code: &str, message: String, objects: Vec<ObjectRef>) -> Finding {
     Finding::blocking(code, message, objects, Stage::Publish)
-}
-
-fn printable(text: &str) -> bool {
-    !text.trim().is_empty() && text.len() <= MAX_LABEL && !text.chars().any(char::is_control)
 }
 
 /// Publication findings of a quantity kind.

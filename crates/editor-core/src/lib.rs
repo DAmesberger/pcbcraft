@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod erc;
 pub mod fields;
 pub mod format;
+pub mod functions;
 pub mod geometry;
 pub mod ids;
 pub mod instances;
@@ -67,7 +68,7 @@ pub enum Query {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "report", content = "result", rename_all = "snake_case")]
 pub enum QueryResult {
-    Instance(InstanceReport),
+    Instance(Box<InstanceReport>),
     Definition(DefinitionReport),
     Drafts(Vec<DefinitionReport>),
 }
@@ -326,9 +327,9 @@ impl Engine {
     /// Answer a read-only query.
     pub fn query(&self, query: Query) -> Result<QueryResult> {
         match query {
-            Query::InspectInstance { instance } => Ok(QueryResult::Instance(
+            Query::InspectInstance { instance } => Ok(QueryResult::Instance(Box::new(
                 completeness::instance(&self.document.project, instance)?,
-            )),
+            ))),
             Query::CheckDefinition { target } => Ok(QueryResult::Definition(
                 completeness::definition(&self.document.project, &self.document.drafts, target)?,
             )),

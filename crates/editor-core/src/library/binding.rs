@@ -4,12 +4,14 @@ use super::component::unique_lineages;
 use super::publish::{issue, object};
 use super::{Library, MAX_FOOTPRINTS_PER_BINDING, MAX_PACKAGE_TERMINALS};
 use crate::diagnostics::{Finding, ObjectRef};
+use crate::functions::MAX_UNAVAILABLE;
 use crate::ids::{
-    DefinitionId, DefinitionKind, FootprintRef, PackageRef, PackageTerminalId, TerminalId,
+    DefinitionId, DefinitionKind, FootprintRef, FunctionKey, PackageRef, PackageTerminalId,
+    TerminalId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +22,9 @@ pub struct BindingDefinition {
     pub mappings: Vec<TerminalMap>,
     /// Allowed footprint variants, each pinning `package`.
     pub footprints: Vec<FootprintRef>,
+    /// Functions this implementation cannot provide. Whether each names a
+    /// real function is checked by the owning component's publication.
+    pub unavailable: Vec<FunctionKey>,
 }
 
 /// One package terminal carries one electrical terminal. Several package
@@ -47,6 +52,7 @@ impl BindingDefinition {
     pub(super) fn within_bounds(&self) -> bool {
         self.mappings.len() <= MAX_PACKAGE_TERMINALS
             && self.footprints.len() <= MAX_FOOTPRINTS_PER_BINDING
+            && self.unavailable.len() <= MAX_UNAVAILABLE
     }
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
@@ -64,6 +70,14 @@ impl BindingDefinition {
                     "Owner {} is not a published or co-published component lineage.",
                     self.component
                 ),
+                vec![this],
+            ));
+        }
+        let mut keys = BTreeSet::new();
+        if !self.unavailable.iter().all(|k| keys.insert(*k)) {
+            out.push(issue(
+                "binding.unavailable_duplicate",
+                "A binding lists each unavailable function once.".into(),
                 vec![this],
             ));
         }

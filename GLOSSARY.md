@@ -29,6 +29,24 @@ The intended active function chosen for a terminal of a particular component ins
 **Peripheral resource**:
 A named functional resource within a component, such as a UART instance or ADC channel. Pin functions may refer to that resource and its signal roles, with explicit rules governing compatible selections.
 
+**Terminal class**:
+How a component definition classifies a terminal: electrical, with one or more pin functions; device NC, declared by the device as not connected; or reserved. Device-NC and reserved terminals have no functions, cannot be wired and need no project decision.
+
+**Drive**:
+How an output or bidirectional function drives its net: push-pull, open drain or open source. Inputs, passive and power functions have no drive. Electrical checks use the active function's drive, so several open-drain drivers with a pull-up are not a conflict.
+
+**Resource role**:
+A part of a peripheral resource, such as a UART's transmit line, with a capacity (how many active functions may take it at once) and whether it is required once the resource is used.
+
+**Design default**:
+The function a multi-function terminal uses when an instance makes no explicit selection. A terminal with one function is fixed and needs no default; a reset state is never a design default.
+
+**Function resolution**:
+The active function of each electrical terminal of one instance, derived from its explicit selection, its fixed function or its design default. Terminals with none are unresolved. Exceeded role capacity, an excluded pair or a function unavailable in the chosen implementation is a conflict, which commands reject; a missing required role or an unmet requirement is incomplete, which completeness reports.
+
+**Unavailable function**:
+A pin function that a particular device binding cannot provide. An instance whose active function is unavailable in a binding cannot use that binding.
+
 **Package**:
 A physical component body and its terminal arrangement, independent of the particular PCB land pattern used to mount it.
 _Avoid_: Footprint
@@ -101,7 +119,7 @@ The stable identity of one library definition across all its revisions, such as 
 An editable, possibly incomplete body of one definition lineage, saved and recovered with the project. Publishing turns it into a new immutable revision; nothing marks a draft as verified.
 
 **Local ID**:
-An ID that is unique only inside one definition lineage, such as a terminal, unit, package-terminal, pad or enumeration-choice ID. Each revision allocates new local IDs from its `next_local` counter; an ID retired by an earlier revision is never reused, so it cannot come back with a different meaning.
+An ID that is unique only inside one definition lineage, such as a terminal, pin-function, resource, role, unit, package-terminal, pad or enumeration-choice ID. Each revision allocates new local IDs from its `next_local` counter; an ID retired by an earlier revision is never reused, so it cannot come back with a different meaning.
 
 **Publish set**:
 Several drafts published together as one transaction, in dependency order (quantity kind, field, package, footprint, binding, symbol, component). References inside the set may name each other's pending revisions; any blocking finding publishes nothing. Publishing a changed definition together with the revisions that must reference it is a _revision cascade_.

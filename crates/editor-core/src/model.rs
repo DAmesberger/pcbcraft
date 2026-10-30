@@ -1,6 +1,7 @@
 //! The document aggregate: data and lookups only. Rules over this data live
 //! in `instances`, `nets`, `schematic` and `layout`.
 use crate::fields::InstanceFields;
+use crate::functions::FunctionSelections;
 pub use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
 use crate::library::{Drafts, Library};
@@ -35,6 +36,9 @@ pub struct ComponentInstance {
     pub unused_units: BTreeSet<UnitId>,
     /// Project decisions that these terminals stay unconnected.
     pub no_connect: BTreeSet<TerminalId>,
+    /// Explicit function selections by terminal. A missing terminal uses its
+    /// fixed function or design default.
+    pub functions: FunctionSelections,
 }
 
 /// One unit of one instance drawn on the sheet. Each (instance, unit) has at

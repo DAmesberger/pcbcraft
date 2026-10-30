@@ -6,7 +6,6 @@ use crate::fields::{
     Choice, EffectiveField, FieldDefinition, FieldSelection, FieldValue, Origin, PropertyEdit,
     PropertyInput, QuantityKind, ToleranceBasis, ValueType, tolerance_interval,
 };
-use crate::library::PinKind;
 use crate::quantity::{UnitOfMeasure, UnitSet};
 use crate::updates::{Change, FieldResolution, Resolutions};
 use crate::{
@@ -168,11 +167,7 @@ struct Setup {
 fn setup() -> Result<Setup> {
     let mut engine = Engine::default();
     let fields = publish_fields(&mut engine)?;
-    let part = component_with_fields(
-        &mut engine,
-        &probe("Part", PinKind::Passive),
-        selections(&fields),
-    )?;
+    let part = component_with_fields(&mut engine, &probe("Part", passive()), selections(&fields))?;
     let (r1, _) = place(&mut engine, &part, "R1", 1, [0.0, 0.0])?;
     let (r2, _) = place(&mut engine, &part, "R2", 1, [20.0, 0.0])?;
     Ok(Setup {
@@ -932,7 +927,7 @@ fn publication_checks_field_kind_and_selection_rules() -> Result<()> {
         (duplicate, "component.duplicate_field_lineage"),
         (bad_default, "component.field_default_invalid"),
     ] {
-        let part = draft(&mut engine, &probe("Bad", PinKind::Passive))?;
+        let part = draft(&mut engine, &probe("Bad", passive()))?;
         with(&mut engine, part.component, component_body, |c| {
             c.fields = fields
         })?;

@@ -3,7 +3,6 @@
 use super::support::*;
 use crate::instances::{NewInstance, UnitState};
 use crate::layout::{self, LayoutCommand, RouteRequest};
-use crate::library::PinKind;
 use crate::schematic::{SchematicCommand, pin_position};
 use crate::updates::{Change, InstanceChange};
 use crate::{
@@ -25,12 +24,12 @@ fn spec() -> Spec<'static> {
     Spec {
         name: "Dual transistor",
         terminals: vec![
-            (1, "B_A", PinKind::Passive),
-            (2, "C_A", PinKind::Passive),
-            (3, "E_A", PinKind::Passive),
-            (4, "B_B", PinKind::Passive),
-            (5, "C_B", PinKind::Passive),
-            (6, "E_B", PinKind::Passive),
+            (1, "B_A", passive()),
+            (2, "C_A", passive()),
+            (3, "E_A", passive()),
+            (4, "B_B", passive()),
+            (5, "C_B", passive()),
+            (6, "E_B", passive()),
         ],
         units: vec![(1, "A", anchors(1)), (2, "B", anchors(4))],
         package: vec![(1, "1"), (2, "2"), (3, "3"), (4, "4"), (5, "5"), (6, "6")],
@@ -43,7 +42,7 @@ fn spec() -> Spec<'static> {
 fn load() -> Spec<'static> {
     Spec {
         name: "Load",
-        terminals: vec![(1, "1", PinKind::Passive), (2, "2", PinKind::Passive)],
+        terminals: vec![(1, "1", passive()), (2, "2", passive())],
         units: vec![(1, "A", vec![(1, [-2.0, 0.0]), (2, [2.0, 0.0])])],
         package: vec![(1, "1"), (2, "2")],
         mapping: vec![(1, 1), (2, 2)],

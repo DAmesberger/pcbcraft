@@ -1,14 +1,15 @@
 //! Synthetic fixtures built through public commands only.
 use crate::completeness::{CheckTarget, DefinitionReport, InstanceReport};
+use crate::functions::{Direction, TerminalFunctions};
 use crate::instances::NewInstance;
 use crate::library::{
     Anchor, BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, PinKind, SymbolDefinition,
-    Terminal, TerminalMap, Unit,
+    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit,
 };
 use crate::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, Engine, Error,
-    FootprintRef, Id, InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef,
+    FootprintRef, FunctionId, Id, InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef,
     PackageTerminalId, PadId, PhysicalChoice, Point, Query, QueryResult, Result, Revision,
     SymbolRef, TerminalId, UnitId,
 };
@@ -150,7 +151,7 @@ pub fn rewrite(
 
 pub fn inspect(engine: &Engine, instance: Id) -> Result<InstanceReport> {
     match engine.query(Query::InspectInstance { instance })? {
-        QueryResult::Instance(report) => Ok(report),
+        QueryResult::Instance(report) => Ok(*report),
         other => Err(Error::Invalid(format!("unexpected report {other:?}"))),
     }
 }
@@ -179,7 +180,9 @@ pub type UnitSpec<'a> = (u32, &'a str, Vec<(u32, Point)>);
 /// designations and an explicit mapping (package terminal → terminal).
 pub struct Spec<'a> {
     pub name: &'a str,
-    pub terminals: Vec<(u32, &'a str, PinKind)>,
+    /// (terminal id, name, class). Function IDs 0 are placeholders that
+    /// [`bodies`] allocates after every other local ID.
+    pub terminals: Vec<(u32, &'a str, TerminalClass)>,
     /// (unit id, label, anchors)
     pub units: Vec<UnitSpec<'a>>,
     /// (package terminal id, designation)
@@ -225,20 +228,69 @@ fn next_local(ids: impl Iterator<Item = u32>) -> u32 {
     ids.max().unwrap_or(0).saturating_add(1)
 }
 
+/// One fixed function of `direction`, with a placeholder ID.
+pub fn fixed(direction: Direction) -> TerminalClass {
+    TerminalClass::Electrical(TerminalFunctions::fixed(FunctionId(0), direction))
+}
+pub fn passive() -> TerminalClass {
+    fixed(Direction::Passive)
+}
+pub fn input() -> TerminalClass {
+    fixed(Direction::Input)
+}
+/// A fixed push-pull output.
+pub fn output() -> TerminalClass {
+    fixed(Direction::Output)
+}
+pub fn power_in() -> TerminalClass {
+    fixed(Direction::PowerInput)
+}
+pub fn power_out() -> TerminalClass {
+    fixed(Direction::PowerOutput)
+}
+
+/// Terminals of a spec with placeholder function IDs replaced by fresh IDs
+/// above every declared local ID, and the resulting `next_local`.
+pub fn terminals(spec: &[(u32, &str, TerminalClass)]) -> (Vec<Terminal>, u32) {
+    let declared = spec.iter().flat_map(|(id, _, class)| {
+        let functions = match class {
+            TerminalClass::Electrical(f) => f.functions.iter().map(|f| f.id.0).collect(),
+            _ => Vec::new(),
+        };
+        std::iter::once(*id).chain(functions)
+    });
+    let mut next = next_local(declared);
+    let terminals = spec
+        .iter()
+        .map(|(id, name, class)| {
+            let mut class = class.clone();
+            if let TerminalClass::Electrical(f) = &mut class {
+                for function in &mut f.functions {
+                    if function.id.0 == 0 {
+                        function.id = FunctionId(next);
+                        next += 1;
+                    }
+                }
+            }
+            Terminal {
+                id: TerminalId(*id),
+                name: (*name).into(),
+                class,
+            }
+        })
+        .collect();
+    (terminals, next)
+}
+
 /// Bodies for a spec, pinning each sibling's first revision.
 pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
     let first = Revision::FIRST;
+    let (terminals, next) = terminals(&spec.terminals);
     let component = ComponentDefinition {
-        next_local: next_local(spec.terminals.iter().map(|t| t.0)),
-        terminals: spec
-            .terminals
-            .iter()
-            .map(|(id, name, kind)| Terminal {
-                id: TerminalId(*id),
-                name: (*name).into(),
-                kind: *kind,
-            })
-            .collect(),
+        next_local: next,
+        terminals,
+        resources: vec![],
+        constraints: vec![],
         representations: vec![SymbolRef::new(f.symbol, first)],
         implementations: if spec.physical {
             vec![BindingRef::new(f.binding, first)]
@@ -308,6 +360,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
             })
             .collect(),
         footprints: vec![FootprintRef::new(f.footprint, first)],
+        unavailable: vec![],
     };
     vec![
         DraftEdit {
@@ -365,10 +418,10 @@ pub fn component(engine: &mut Engine, spec: &Spec<'_>) -> Result<Fixture> {
 }
 
 /// One terminal, one unit anchored at the origin, one pad.
-pub fn probe<'a>(name: &'a str, kind: PinKind) -> Spec<'a> {
+pub fn probe(name: &str, class: TerminalClass) -> Spec<'_> {
     Spec {
         name,
-        terminals: vec![(1, "P", kind)],
+        terminals: vec![(1, "P", class)],
         units: vec![(1, "A", vec![(1, [0.0, 0.0])])],
         package: vec![(1, "1")],
         mapping: vec![(1, 1)],

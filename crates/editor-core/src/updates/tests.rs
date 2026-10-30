@@ -1,5 +1,5 @@
 use super::*;
-use crate::library::{Definition, PinKind};
+use crate::library::Definition;
 use crate::tests::support::*;
 use crate::{
     DefinitionKind, Engine, InstanceCommand, Layer, Operation, Revision, SymbolRef,
@@ -439,7 +439,7 @@ fn unrelated_definition_with_matching_terminal_names_is_blocked() -> Result<()> 
         &mut engine,
         &Spec {
             name: "Resistor",
-            terminals: vec![(1, "1", PinKind::Passive), (2, "2", PinKind::Passive)],
+            terminals: vec![(1, "1", passive()), (2, "2", passive())],
             units: vec![(1, "A", vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0])])],
             package: vec![(1, "1"), (2, "2")],
             mapping: vec![(1, 1), (2, 2)],
@@ -493,7 +493,7 @@ fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Re
     let nc_track = route(&mut engine, ep(r1, 1), [6.8, 8.0], [6.8, 5.0])?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.component, component_body, |c| {
-            c.terminals[0].kind = PinKind::NotConnected
+            c.terminals[0].class = crate::library::TerminalClass::DeviceNc
         })
     })?;
     let plan = engine.preview_update(revision_change(r1, target));
@@ -670,6 +670,7 @@ fn a_representation_lineage_change_needs_explicit_unit_resolutions() -> Result<(
                 units,
                 regroups: vec![],
                 fields: vec![],
+                functions: vec![],
             },
         };
         let blocked = engine.preview_update(change(vec![]));
@@ -719,7 +720,7 @@ fn removing_an_unused_unit_in_the_same_lineage_lists_the_flag_without_blocking()
         &mut engine,
         &Spec {
             name: "Split pair",
-            terminals: vec![(1, "1", PinKind::Passive), (2, "2", PinKind::Passive)],
+            terminals: vec![(1, "1", passive()), (2, "2", passive())],
             units: vec![
                 (1, "A", vec![(1, [-5.0, 0.0])]),
                 (2, "B", vec![(2, [5.0, 0.0])]),

@@ -13,7 +13,7 @@ pub mod samples;
 mod symbol;
 
 pub use binding::{BindingDefinition, TerminalMap};
-pub use component::{ComponentDefinition, PinKind, Terminal};
+pub use component::{ComponentDefinition, Terminal, TerminalClass};
 pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{FootprintDefinition, Pad};
 pub use package::{PackageDefinition, PackageTerminal};
@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Published revisions per kind.
 pub const MAX_REVISIONS_PER_KIND: usize = 4096;
 /// Names, labels and designations.
-pub const MAX_LABEL: usize = 256;
+pub use crate::ids::MAX_LABEL;
 /// Descriptions and provenance notes.
 pub const MAX_NOTE: usize = 4096;
 pub const MAX_TERMINALS: usize = 256;
@@ -479,6 +479,4 @@ pub fn validate(library: &Library) -> Result<()> {
 }
 
 /// Text that publication accepts as a name or label.
-pub(crate) fn printable(text: &str) -> bool {
-    !text.trim().is_empty() && text.len() <= MAX_LABEL && !text.chars().any(char::is_control)
-}
+pub(crate) use crate::ids::printable;
