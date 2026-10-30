@@ -31,7 +31,7 @@ Adapted source references, under the MIT option above:
 - `apps/pcbcraft/src/file_ui.rs`: upstream `apps/solidcraft/src/main.rs` picker services and `documents.rs` unsaved-work choices; prompts use the public `ui_kit::Window`.
 - `crates/automation/src/mcp.rs` and `lines.rs`: upstream `crates/mcp/src/server.rs` conventions (newline-delimited JSON-RPC, bounded lines, protocol-version negotiation, tool errors as results). Tools and their schemas are generated from Pcbcraft's own request types.
 - `xtask/src/ui_containers.rs` and `layers.rs`: upstream `xtask/src/ui_containers.rs` and `layers.rs` boundary checks, reduced to Pcbcraft's crates.
-- `xtask/src/licenses.rs`: follows the upstream `xtask/src/licenses.rs` convention of reading `cargo metadata --locked` from an xtask subcommand. The SPDX expression evaluation, GPL-family policy and reviewed-exception list are original.
+- `xtask/src/licences.rs`: follows the upstream `xtask/src/licences.rs` convention of reading `cargo metadata --locked` from an xtask subcommand. The SPDX expression evaluation, GPL-family policy and reviewed-exception list are original.
 - `flake.nix`: upstream `flake.nix` Linux runtime-library list; the pinned toolchain comes from `rust-overlay` (MIT).
 - Editor content: upstream `ui_kit/layout.rs`, `ui_kit/fields.rs`, `dialogs_library.rs`, `tools.rs` and `drag_snap.rs` for forms and interaction conventions. Electronics commands, mapping and geometry checks are original.
 - `viewport.rs`: upstream `gpu` renderer API and `solidcraft-render` camera API via the engine. Navigation is adapted locally because the complete upstream event handler is private to `SolveApp`.

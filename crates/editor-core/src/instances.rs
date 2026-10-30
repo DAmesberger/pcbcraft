@@ -867,6 +867,196 @@ pub(crate) fn carry_functions(
     functions::apply_edits(&next, resolutions).map_err(|e| invalid(format!("{name}: {e}")))
 }
 
+/// Carry a current unit's occurrence or unused flag to a unit of the target
+/// representation, or drop it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnitTarget {
+    Unit(UnitId),
+    Drop,
+}
+
+/// Where an instance's occurrences and unused flags go in a target
+/// representation.
+pub(crate) struct UnitCarry {
+    /// Occurrences that stay, with their target unit.
+    pub moved: Vec<(Id, UnitId)>,
+    /// Occurrences that leave the sheet.
+    pub dropped: Vec<Id>,
+    /// Unused flags in the target representation.
+    pub unused: BTreeSet<UnitId>,
+}
+
+/// The unit-carry rule for moving `old` to `symbol`, another revision of its
+/// representation or (when `lineage_changed`) another representation lineage.
+/// Unit IDs are lineage-local: within a lineage a unit keeps its meaning and a
+/// removed unused unit only loses its flag; across lineages every occurrence
+/// and unused flag needs an explicit resolution. Each target unit is claimed
+/// once. Pure: the caller applies the result.
+pub(crate) fn carry_units(
+    project: &Project,
+    old: &ComponentInstance,
+    symbol: &SymbolDefinition,
+    lineage_changed: bool,
+    resolutions: &[(UnitId, UnitTarget)],
+) -> Result<UnitCarry> {
+    let name = &old.designator;
+    let mut keys = BTreeSet::new();
+    for (unit, _) in resolutions {
+        if !keys.insert(*unit) {
+            return Err(invalid("A unit is resolved twice.".into()));
+        }
+        let used = project.occurrences_of(old.id).any(|o| o.unit == *unit)
+            || old.unused_units.contains(unit);
+        if !used {
+            return Err(invalid(format!(
+                "{name}: unit {unit} has no occurrence or unused flag to resolve."
+            )));
+        }
+    }
+    let resolution_for = |unit: UnitId| {
+        resolutions
+            .iter()
+            .find(|(u, _)| *u == unit)
+            .map(|(_, t)| *t)
+    };
+    let mut claimed = BTreeSet::new();
+    let mut claim = |unit: UnitId| -> Result<()> {
+        if symbol.unit(unit).is_none() {
+            return Err(invalid(format!(
+                "{name}: unit {unit} is not a unit of the target representation."
+            )));
+        }
+        if !claimed.insert(unit) {
+            return Err(Error::Conflict(format!(
+                "{name}: unit {unit} of the target representation is claimed twice."
+            )));
+        }
+        Ok(())
+    };
+    let mut carry = UnitCarry {
+        moved: Vec::new(),
+        dropped: Vec::new(),
+        unused: BTreeSet::new(),
+    };
+    for occurrence in project.occurrences_of(old.id) {
+        let target = match resolution_for(occurrence.unit) {
+            Some(UnitTarget::Unit(unit)) => Some(unit),
+            Some(UnitTarget::Drop) => None,
+            None if !lineage_changed && symbol.unit(occurrence.unit).is_some() => {
+                Some(occurrence.unit)
+            }
+            None => {
+                return Err(Error::Conflict(format!(
+                    "{}: placed unit {} has no counterpart in the target representation; supply a UnitResolution.",
+                    display_label(project, old, occurrence.unit),
+                    occurrence.unit
+                )));
+            }
+        };
+        match target {
+            Some(unit) => {
+                claim(unit)?;
+                carry.moved.push((occurrence.id, unit));
+            }
+            None => carry.dropped.push(occurrence.id),
+        }
+    }
+    for unit in &old.unused_units {
+        match resolution_for(*unit) {
+            Some(UnitTarget::Unit(target)) => {
+                claim(target)?;
+                carry.unused.insert(target);
+            }
+            Some(UnitTarget::Drop) => {}
+            None if !lineage_changed => {
+                if symbol.unit(*unit).is_some() {
+                    claim(*unit)?;
+                    carry.unused.insert(*unit);
+                }
+            }
+            None => {
+                return Err(Error::Conflict(format!(
+                    "{name}: unused unit {unit} has no counterpart in the target representation; supply a UnitResolution."
+                )));
+            }
+        }
+    }
+    Ok(carry)
+}
+
+/// Terminals of instance `id` that carry at least one wire.
+pub(crate) fn wired_terminals(project: &Project, id: Id) -> BTreeSet<TerminalId> {
+    project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter(|e| e.instance == id)
+        .map(|e| e.terminal)
+        .collect()
+}
+
+/// The decision for a wired terminal whose anchor moves into a unit that is
+/// not placed.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum RegroupAction {
+    /// Place the target unit here (clearing its unused flag).
+    PlaceUnit { position: Point },
+    /// Remove the terminal's wires; the plan lists them.
+    AcceptDisconnect,
+}
+
+/// The decisions [`regroup`] collects for one instance.
+pub(crate) struct Regroup {
+    /// Units to place; the first placement named for a unit wins.
+    pub places: Vec<(UnitId, Point)>,
+    /// Terminals whose wires are removed.
+    pub disconnects: BTreeSet<TerminalId>,
+}
+
+/// The regroup rule: every wired terminal of instance `id` whose anchor in
+/// `symbol` lies in a unit outside `placed` needs an explicit decision from
+/// `decide`, either placing that unit or accepting the disconnect. Pure: the
+/// caller applies the result through `schematic`.
+pub(crate) fn regroup<'a>(
+    project: &Project,
+    id: Id,
+    symbol: &SymbolDefinition,
+    placed: &BTreeSet<UnitId>,
+    decide: impl Fn(TerminalId) -> Option<&'a RegroupAction>,
+) -> Result<Regroup> {
+    let name = project
+        .instance(id)
+        .map(|i| i.designator.as_str())
+        .unwrap_or("?");
+    let mut result = Regroup {
+        places: Vec::new(),
+        disconnects: BTreeSet::new(),
+    };
+    for terminal in wired_terminals(project, id) {
+        let Some(unit) = owning_unit(symbol, terminal) else {
+            continue;
+        };
+        if placed.contains(&unit) || result.places.iter().any(|(u, _)| *u == unit) {
+            continue;
+        }
+        match decide(terminal) {
+            Some(RegroupAction::PlaceUnit { position }) => result.places.push((unit, *position)),
+            Some(RegroupAction::AcceptDisconnect) => {
+                result.disconnects.insert(terminal);
+            }
+            None => {
+                return Err(Error::Conflict(format!(
+                    "{name} terminal {terminal} is wired and moves to unit {}, which is not placed; supply a RegroupResolution to place the unit or accept disconnecting its wires.",
+                    symbol.unit(unit).map(|u| u.label.as_str()).unwrap_or("?")
+                )));
+            }
+        }
+    }
+    Ok(result)
+}
+
 /// Mark a unit unused or clear the mark. Rejected while the unit is placed;
 /// never changes no-connect markers.
 pub fn set_unit_unused(project: &mut Project, id: Id, unit: UnitId, unused: bool) -> Result<()> {

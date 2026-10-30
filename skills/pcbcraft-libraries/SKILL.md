@@ -41,3 +41,5 @@ Pcbcraft is MIT OR Apache-2.0. Code under a GPL-family license cannot be adapted
 - Fixtures, example parts and test libraries are original synthetic data. Imported third-party library data records its provenance and license separately from code.
 
 `cargo xtask licences --check` (part of `cargo xtask ci`) reads the locked dependency graph. It fails when a workspace crate does not declare `MIT OR Apache-2.0`, when a dependency cannot be used without a GPL, LGPL or AGPL license (`X OR GPL-…` passes only through a reviewed permissive `X`), and when a license id is unreviewed or missing. Add a license id to its reviewed list only after reading the terms. Unlabelled packages need a version-specific exception with a reason; exceptions never waive GPL-family terms and stale entries fail.
+
+`cargo xtask clean-room` (also in `cargo xtask ci`) fails on tracked or unignored files with EDA library or design extensions (`.kicad_sym`, `.kicad_mod`, `.SchLib`, `.lbr`, …) or whose contents start like such a file. It cannot detect data retyped by hand, so review still applies.

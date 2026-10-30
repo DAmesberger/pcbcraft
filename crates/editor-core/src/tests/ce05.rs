@@ -57,8 +57,21 @@ fn spec() -> Spec<'static> {
     }
 }
 
+/// Apply one operation and check that it is one undo step: undo restores the
+/// exact prior document and redo the exact result.
+fn one_step(engine: &mut Engine, operation: Operation) -> Result<()> {
+    let before = engine.document().clone();
+    apply(engine, operation)?;
+    let after = engine.document().clone();
+    engine.undo()?;
+    assert_eq!(engine.document(), &before, "undo restores the prior state");
+    engine.redo()?;
+    assert_eq!(engine.document(), &after, "redo restores the result");
+    Ok(())
+}
+
 fn unused(engine: &mut Engine, instance: Id, unit: UnitId) -> Result<()> {
-    apply(
+    one_step(
         engine,
         Operation::Instance(InstanceCommand::SetUnitUnused {
             instance,
@@ -66,11 +79,10 @@ fn unused(engine: &mut Engine, instance: Id, unit: UnitId) -> Result<()> {
             unused: true,
         }),
     )
-    .map(|_| ())
 }
 
 fn no_connect(engine: &mut Engine, instance: Id, terminals: &[u32]) -> Result<()> {
-    apply(
+    one_step(
         engine,
         Operation::Instance(InstanceCommand::SetNoConnect {
             instance,
@@ -78,7 +90,6 @@ fn no_connect(engine: &mut Engine, instance: Id, terminals: &[u32]) -> Result<()
             no_connect: true,
         }),
     )
-    .map(|_| ())
 }
 
 fn electrical(engine: &Engine, instance: Id) -> Result<Vec<(String, Vec<ObjectRef>)>> {
@@ -367,7 +378,17 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         plan.changes
     );
     let nets = engine.project().nets.clone();
+    let before = engine.document().clone();
     engine.apply_update(plan.revision, plan.change, false)?;
+    let after = engine.document().clone();
+    engine.undo()?;
+    assert_eq!(
+        engine.document(),
+        &before,
+        "one undo step reverts the regroup"
+    );
+    engine.redo()?;
+    assert_eq!(engine.document(), &after, "redo restores the regroup");
     let after = engine
         .project()
         .instance(u1)

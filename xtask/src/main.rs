@@ -1,3 +1,5 @@
+mod clean_room;
+mod core_modules;
 mod layers;
 mod licences;
 mod ui_containers;
@@ -47,7 +49,9 @@ fn run() -> Result<()> {
         "ci" | "ci-native" => {
             cargo(&["fmt", "--all", "--", "--check"])?;
             layers::check()?;
+            core_modules::check()?;
             licences::check()?;
+            clean_room::check()?;
             ui_containers::check()?;
             cargo(&[
                 "clippy",
@@ -69,11 +73,13 @@ fn run() -> Result<()> {
         "wasm" => wasm(),
         "wasm-scripting" => wasm_scripting(),
         "layers" => layers::check(),
+        "core-modules" => core_modules::check(),
+        "clean-room" => clean_room::check(),
         "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | licences --check \
-             | ui-containers"
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | core-modules \
+             | licences --check | clean-room | ui-containers"
                 .into(),
         ),
     }

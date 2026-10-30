@@ -17,7 +17,7 @@ pub fn check_project_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Read, migrate and validate a project file.
+/// Read and validate a project file. The pre-release format has one version and no migrations.
 pub fn read_project(path: &Path) -> Result<EditorFile> {
     check_project_path(path)?;
     Ok(format::decode(&read_bytes(path)?)?)

@@ -1230,3 +1230,181 @@ fn a_selection_batch_rejects_structural_errors_atomically() -> Result<()> {
     kept.assert_kept(&engine, "stale and malformed");
     Ok(())
 }
+
+#[test]
+fn a_requires_constraint_is_reported_until_its_prerequisite_is_active() -> Result<()> {
+    let mut engine = Engine::default();
+    let f = small(&mut engine)?;
+    // Terminal 2 gains a second function 13 and no default; selecting 11 on
+    // terminal 1 requires 13 on terminal 2.
+    with(&mut engine, f.component, component_body, |c| {
+        if let Some(t2) = functions_mut(c, 2) {
+            t2.functions.push(function(
+                13,
+                "enable",
+                Direction::Output,
+                SignalKind::Digital,
+                Drive::PushPull,
+                None,
+            ));
+        }
+        c.constraints = vec![FunctionConstraint::Requires {
+            selected: key(1, 11),
+            requires: key(2, 13),
+        }];
+    })?;
+    publish(&mut engine, f.all())?;
+    let (x, _) = place(&mut engine, &f, "X1", 1, [0.0, 0.0])?;
+    let unmet = |engine: &Engine| {
+        has_finding(
+            engine,
+            x,
+            "config.requirement_unmet",
+            &[
+                ObjectRef::Instance { id: x },
+                terminal(x, 1),
+                terminal(x, 2),
+            ],
+        )
+    };
+
+    // Selecting 11 alone is a valid stepwise state with an unmet requirement.
+    let resolution = choose(&mut engine, x, &[(1, Some(11))])?;
+    assert!(resolution.conflicts.is_empty());
+    assert_eq!(resolution.incomplete.len(), 1);
+    assert_eq!(
+        resolution.incomplete[0].message(),
+        "‘out’ on terminal 1 requires function 13 on terminal 2."
+    );
+    assert!(unmet(&engine)?);
+    assert!(!inspect(&engine, x)?.electrically_resolved);
+
+    // The passive alternative on 2 does not satisfy it.
+    choose(&mut engine, x, &[(2, Some(12))])?;
+    assert!(unmet(&engine)?);
+
+    // Activating 13 does.
+    let resolution = choose(&mut engine, x, &[(2, Some(13))])?;
+    assert!(resolution.incomplete.is_empty());
+    assert!(!unmet(&engine)?);
+
+    // Undo restores the unmet state; redo clears it again.
+    engine.undo()?;
+    assert!(unmet(&engine)?);
+    engine.redo()?;
+    assert!(!unmet(&engine)?);
+
+    // Without 11 the constraint does not apply.
+    choose(&mut engine, x, &[(1, Some(10)), (2, Some(12))])?;
+    assert!(!unmet(&engine)?);
+    Ok(())
+}
+
+#[test]
+fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -> Result<()> {
+    let mut engine = Engine::default();
+    let m = draft_mcu(&mut engine)?;
+    publish(&mut engine, m.all())?;
+    let u1 = place_mcu(&mut engine, &m, "U1", 0.0)?;
+    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    // Terminal 21 is one electrical terminal on one net with three lands,
+    // pads 21–23 at y = −1, 0, +1 mm.
+    let lands: Vec<_> = crate::layout::pads(engine.project())
+        .into_iter()
+        .filter(|p| p.instance == u1 && p.terminal.terminal == TerminalId(21))
+        .collect();
+    assert_eq!(
+        lands.iter().map(|p| p.pad.0).collect::<Vec<_>>(),
+        [21, 22, 23]
+    );
+    let net = net_of(&engine, ep(u1, 21))?;
+    assert!(lands.iter().all(|p| p.net == net));
+    let at = |pad: u32| {
+        lands
+            .iter()
+            .find(|p| p.pad == PadId(pad))
+            .map(|p| p.position)
+            .ok_or_else(|| Error::NotFound(format!("pad {pad}")))
+    };
+    let unrouted = |engine: &Engine| -> Vec<u32> {
+        let mut pads: Vec<u32> = crate::layout::checks(engine.project())
+            .into_iter()
+            .filter(|f| {
+                f.code == "board.unrouted" && f.objects.contains(&ObjectRef::Net { id: net })
+            })
+            .filter_map(|f| match f.objects.first() {
+                Some(ObjectRef::Pad { instance, pad }) if *instance == u1 => Some(pad.0),
+                _ => None,
+            })
+            .collect();
+        pads.sort();
+        pads
+    };
+    let route = |engine: &mut Engine, from: u32, to: u32| -> Result<()> {
+        let request = crate::layout::RouteRequest {
+            net,
+            start: at(from)?,
+            end: at(to)?,
+            width: 0.2,
+            layer: crate::Layer::Top,
+        };
+        apply(engine, Operation::Layout(LayoutCommand::Route { request }))?;
+        Ok(())
+    };
+
+    // Three separate copper islands on one net.
+    assert_eq!(unrouted(&engine), [21, 22, 23]);
+    // Two lands joined: land 23 is still its own island, so the net is not
+    // physically connected even though its schematic connection is complete.
+    route(&mut engine, 21, 22)?;
+    assert_eq!(unrouted(&engine), [21, 22, 23]);
+    assert!(
+        crate::layout::checks(engine.project())
+            .iter()
+            .any(|f| f.code == "board.unrouted"
+                && f.objects
+                    == [
+                        ObjectRef::Pad {
+                            instance: u1,
+                            pad: PadId(23)
+                        },
+                        ObjectRef::Net { id: net }
+                    ])
+    );
+    route(&mut engine, 22, 23)?;
+    assert_eq!(unrouted(&engine), Vec::<u32>::new());
+    engine.undo()?;
+    assert_eq!(unrouted(&engine), [21, 22, 23]);
+    Ok(())
+}
+
+#[test]
+fn a_power_input_without_a_power_output_on_its_net_is_reported() -> Result<()> {
+    let mut engine = Engine::default();
+    let sink = component(&mut engine, &probe("Power sink", power_in()))?;
+    let source = component(&mut engine, &probe("Power source", power_out()))?;
+    let undriven = |engine: &Engine| -> Vec<crate::Endpoint> {
+        erc::checks(engine.project())
+            .into_iter()
+            .filter(|f| f.code == "erc.undriven_power_input")
+            .filter_map(|f| match f.objects.as_slice() {
+                [ObjectRef::Terminal { endpoint }] => Some(*endpoint),
+                _ => None,
+            })
+            .collect()
+    };
+    let (a, _) = place(&mut engine, &sink, "A1", 1, [0.0, 0.0])?;
+    // A lone power input is already undriven.
+    assert_eq!(undriven(&engine), [ep(a, 1)]);
+    // Two power inputs do not drive each other.
+    let (b, _) = place(&mut engine, &sink, "A2", 1, [20.0, 0.0])?;
+    connect(&mut engine, ep(a, 1), ep(b, 1))?;
+    assert_eq!(undriven(&engine), [ep(a, 1), ep(b, 1)]);
+    // A power output on the net drives both.
+    let (s, _) = place(&mut engine, &source, "S1", 1, [40.0, 0.0])?;
+    connect(&mut engine, ep(b, 1), ep(s, 1))?;
+    assert_eq!(undriven(&engine), Vec::<crate::Endpoint>::new());
+    engine.undo()?;
+    assert_eq!(undriven(&engine), [ep(a, 1), ep(b, 1)]);
+    Ok(())
+}

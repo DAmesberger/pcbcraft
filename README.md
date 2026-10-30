@@ -30,7 +30,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
-`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses.
+`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
 
 ## CLI, JSON lines and MCP
 
