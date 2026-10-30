@@ -49,7 +49,10 @@ impl App {
             files.request(file_ui::Action::OpenPath(path));
         }
         Ok(Self {
-            scene: SceneController::new(cc.egui_ctx.clone(), viewport::Viewport::new(render_state)),
+            scene: SceneController::new(
+                cc.egui_ctx.clone(),
+                viewport::Viewport::new(render_state, &cc.egui_ctx),
+            ),
             files,
             engine,
             workspace: Workspace::Pcb,

@@ -10,6 +10,7 @@ use crate::{Error, Result};
 use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish};
 use serde::{Deserialize, Serialize};
 use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::OpaqueSurface;
 
 /// What a native body represents, stored per body in the model metadata so a
@@ -105,11 +106,57 @@ impl BodyKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Material {
     pub name: &'static str,
-    /// Linear-sRGB reflectance (F0 for metals, albedo for dielectrics).
+    /// Linear-sRGB reflectance (F0 for metals, albedo for dielectrics; for a
+    /// coated layer, the body under the coat).
     pub base_linear: [f64; 3],
     pub metallic: f64,
     pub roughness: f64,
     pub ior: f64,
+    /// A clear lacquer over the base (soldermask), carrying the gloss.
+    pub coat: Option<Coat>,
+    /// Procedural detail the 3D view draws over the look (display only).
+    pub detail: Detail,
+}
+
+/// A clear coat: weight, perceptual roughness and IOR, in Solidcraft's
+/// `ClearCoat` convention.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Coat {
+    pub weight: f64,
+    pub roughness: f64,
+    pub ior: f64,
+}
+
+/// Procedural surface detail, drawn by the 3D view's product look from the
+/// world position in millimetres. Display only: never saved.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Pattern {
+    #[default]
+    None,
+    /// The laminate's glass weave (bare laminate and routed edges).
+    Weave,
+    /// A soldermask's orange peel (relief only).
+    MaskPeel,
+    /// Orange peel over a weave showing through the mask (colour only).
+    MaskPeelOverWeave,
+    /// Silkscreen ink grain.
+    Silkscreen,
+}
+
+/// A pattern and how strongly it shows (0..=1). For
+/// [`Pattern::MaskPeelOverWeave`] the strength is the weave's show-through;
+/// the peel stays at full strength.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Detail {
+    pub pattern: Pattern,
+    pub strength: f64,
+}
+
+impl Detail {
+    pub const NONE: Detail = Detail {
+        pattern: Pattern::None,
+        strength: 0.0,
+    };
 }
 
 /// Bare copper F0, Johnson & Christy 1972 via Hoffman's table.
@@ -144,18 +191,59 @@ pub fn pigment(colour: MaskColour) -> Pigment {
     Pigment { t20, scatter }
 }
 
-/// Perceptual roughness of a mask surface (est. from glossmeter readings:
-/// gloss masks 80–94 GU, matte 3–43). Clear resin has no pigment to break
-/// the surface; the yellow fabricators sell is semi-gloss at best; black
-/// matte is the flattest.
-pub fn mask_roughness(colour: MaskColour, finish: MaskFinish) -> f64 {
+/// Perceptual roughness of a mask's lacquer surface, the clear coat that
+/// carries its gloss (est. from glossmeter readings: gloss masks 80–94 GU,
+/// matte 3–43). Clear resin has no pigment to break the surface; the yellow
+/// fabricators sell is semi-gloss at best; black matte is the flattest.
+pub fn mask_coat_roughness(colour: MaskColour, finish: MaskFinish) -> f64 {
     match (finish, colour) {
-        (MaskFinish::Gloss, MaskColour::Clear) => 0.15,
-        (MaskFinish::Gloss, MaskColour::Yellow) => 0.30,
-        (MaskFinish::Gloss, _) => 0.20,
-        (MaskFinish::Satin, _) => 0.35,
-        (MaskFinish::Matte, MaskColour::Black) => 0.60,
-        (MaskFinish::Matte, _) => 0.55,
+        (MaskFinish::Gloss, MaskColour::Clear) => 0.05,
+        (MaskFinish::Gloss, MaskColour::Yellow) => 0.12,
+        (MaskFinish::Gloss, _) => 0.06,
+        (MaskFinish::Satin, _) => 0.20,
+        (MaskFinish::Matte, MaskColour::Black) => 0.45,
+        (MaskFinish::Matte, _) => 0.40,
+    }
+}
+
+/// How much of the laminate's glass weave shows through a mask colour
+/// (est.): fully under clear resin, faintly under the translucent
+/// pigments, not at all under the opaque ones (black, white, yellow: the
+/// pigments needing the most exposure energy, see `docs/materials.md`).
+pub fn weave_show_through(colour: MaskColour) -> f64 {
+    match colour {
+        MaskColour::Clear => 0.6,
+        MaskColour::Green => 0.12,
+        MaskColour::Purple => 0.10,
+        MaskColour::Blue | MaskColour::Red => 0.08,
+        MaskColour::Yellow | MaskColour::Black | MaskColour::White => 0.0,
+    }
+}
+
+/// The procedural detail of `kind` on a board built to `fabrication`.
+pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
+    match kind {
+        BodyKind::Substrate => Detail {
+            pattern: Pattern::Weave,
+            strength: 1.0,
+        },
+        BodyKind::MaskTop | BodyKind::MaskBottom => {
+            match weave_show_through(fabrication.mask_colour) {
+                0.0 => Detail {
+                    pattern: Pattern::MaskPeel,
+                    strength: 1.0,
+                },
+                strength => Detail {
+                    pattern: Pattern::MaskPeelOverWeave,
+                    strength,
+                },
+            }
+        }
+        BodyKind::MaskCap => Detail {
+            pattern: Pattern::MaskPeel,
+            strength: 1.0,
+        },
+        _ => Detail::NONE,
     }
 }
 
@@ -165,6 +253,11 @@ const MASK_INTERNAL: f64 = 0.60;
 /// Normal-incidence reflectance of the mask surface, ((1.52−1)/(1.52+1))².
 const MASK_F0: f64 = 0.043;
 const MASK_IOR: f64 = 1.52;
+/// The pigmented body under a mask's lacquer has no interface of its own:
+/// the coat reflects at the air boundary, so the body takes IOR 1 and a
+/// fully rough, diffuse surface.
+const MASK_BODY_IOR: f64 = 1.0;
+const MASK_BODY_ROUGHNESS: f64 = 1.0;
 /// Soldermask over bare laminate (20 µm) and over a track's crown (12 µm;
 /// LPI thins over copper edges and crowns to 10–15 µm), in µm.
 pub const MASK_OVER_LAMINATE_UM: f64 = 20.0;
@@ -206,18 +299,36 @@ pub fn mask_over(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 
     })
 }
 
+/// A mask layer's body under its coat: [`mask_over`] with the air-to-resin
+/// Fresnel transmission taken out, since the coat applies it (counted once).
+pub fn mask_body(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
+    mask_over(pigment, under, thickness_um).map(|c| (c / (1.0 - MASK_F0)).clamp(0.0, 1.0))
+}
+
 /// The physical look of `kind` on a board built to `fabrication`. Only the
 /// display-only layers (mask and plated finish) depend on it; the bodies the
 /// native model saves look the same for every fabrication.
 pub fn material(kind: BodyKind, fabrication: &Fabrication) -> Material {
+    let mut look = base_material(kind, fabrication);
+    look.detail = detail(kind, fabrication);
+    look
+}
+
+fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
     let pigment = pigment(fabrication.mask_colour);
-    let mask_roughness = mask_roughness(fabrication.mask_colour, fabrication.mask_finish);
+    let lacquer = Coat {
+        weight: 1.0,
+        roughness: mask_coat_roughness(fabrication.mask_colour, fabrication.mask_finish),
+        ior: MASK_IOR,
+    };
     let metal = |name, base_linear, roughness| Material {
         name,
         base_linear,
         metallic: 1.0,
         roughness,
         ior: METAL_IOR,
+        coat: None,
+        detail: Detail::NONE,
     };
     let dielectric = |name, base_linear, roughness, ior| Material {
         name,
@@ -225,20 +336,22 @@ pub fn material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         metallic: 0.0,
         roughness,
         ior,
+        coat: None,
+        detail: Detail::NONE,
+    };
+    let mask = |name, base_linear| Material {
+        coat: Some(lacquer),
+        ..dielectric(name, base_linear, MASK_BODY_ROUGHNESS, MASK_BODY_IOR)
     };
     match kind {
         BodyKind::Substrate => dielectric("FR-4 laminate", FR4, 0.60, EPOXY_IOR),
-        BodyKind::MaskTop | BodyKind::MaskBottom => dielectric(
+        BodyKind::MaskTop | BodyKind::MaskBottom => mask(
             "Soldermask over laminate",
-            mask_over(pigment, FR4, MASK_OVER_LAMINATE_UM),
-            mask_roughness,
-            MASK_IOR,
+            mask_body(pigment, FR4, MASK_OVER_LAMINATE_UM),
         ),
-        BodyKind::MaskCap => dielectric(
+        BodyKind::MaskCap => mask(
             "Soldermask over copper",
-            mask_over(pigment, COPPER, MASK_OVER_COPPER_UM),
-            mask_roughness,
-            MASK_IOR,
+            mask_body(pigment, COPPER, MASK_OVER_COPPER_UM),
         ),
         BodyKind::CopperTrack | BodyKind::PadCopper => metal("Copper", COPPER, 0.30),
         BodyKind::PadFinish => match fabrication.pad_finish {
@@ -275,9 +388,18 @@ pub fn material(kind: BodyKind, fabrication: &Fabrication) -> Material {
 impl Material {
     /// Solidcraft's validated surface for this look.
     pub fn surface(&self) -> Result<OpaqueSurface> {
+        let invalid = |error: solidcraft_engine::render::surface::SurfaceError| {
+            Error::Invalid(format!("{}: {error}", self.name))
+        };
         let [r, g, b] = self.base_linear;
-        OpaqueSurface::new(Vec3::new(r, g, b), self.metallic, self.roughness, self.ior)
-            .map_err(|error| Error::Invalid(format!("{}: {error}", self.name)))
+        let surface =
+            OpaqueSurface::new(Vec3::new(r, g, b), self.metallic, self.roughness, self.ior)
+                .map_err(invalid)?;
+        match self.coat {
+            Some(c) => Ok(surface
+                .with_clear_coat(ClearCoat::new(c.weight, c.roughness, c.ior).map_err(invalid)?)),
+            None => Ok(surface),
+        }
     }
 
     /// The base colour as stored in a native look (sRGB, 8 bits).
@@ -490,9 +612,13 @@ mod tests {
         assert_eq!(mask_over(green, [0.0; 3], 20.0), [0.010, 0.085, 0.030]);
         // A perfect reflector under a vanishing layer stays bounded.
         assert!(mask_over(green, [1.0; 3], 0.0).iter().all(|c| *c <= 1.0));
-        assert_eq!(default_look(BodyKind::MaskTop).base_linear, laminate);
-        assert_eq!(default_look(BodyKind::MaskCap).base_linear, copper);
-        assert_eq!(default_look(BodyKind::MaskTop).roughness, 0.20);
+        // The coat applies the air-to-resin Fresnel, so the body under it
+        // is the layer's reflectance with that taken out once.
+        let body = |albedo: [f64; 3]| albedo.map(|c| c / (1.0 - MASK_F0));
+        assert_eq!(default_look(BodyKind::MaskTop).base_linear, body(laminate));
+        assert_eq!(default_look(BodyKind::MaskCap).base_linear, body(copper));
+        let coat = default_look(BodyKind::MaskTop).coat;
+        assert_eq!(coat.map(|c| c.roughness), Some(0.06));
     }
 
     /// The documented colour table (`docs/materials.md`), to three decimals.
@@ -545,12 +671,28 @@ mod tests {
                 mask_colour: colour,
                 ..Fabrication::default()
             };
-            for (kind, expected) in [(BodyKind::MaskTop, laminate), (BodyKind::MaskCap, copper)] {
-                let got = material(kind, &fabrication).base_linear;
+            let p = pigment(colour);
+            for (kind, expected, got) in [
+                (
+                    BodyKind::MaskTop,
+                    laminate,
+                    mask_over(p, FR4, MASK_OVER_LAMINATE_UM),
+                ),
+                (
+                    BodyKind::MaskCap,
+                    copper,
+                    mask_over(p, COPPER, MASK_OVER_COPPER_UM),
+                ),
+            ] {
+                let body = material(kind, &fabrication).base_linear;
                 for c in 0..3 {
                     assert!(
                         (got[c] - expected[c]).abs() <= 0.0006,
                         "{colour:?} {kind:?}: {got:?} vs {expected:?}"
+                    );
+                    assert!(
+                        (body[c] * (1.0 - MASK_F0) - got[c]).abs() < 1e-12,
+                        "{colour:?} {kind:?}: the body under the coat"
                     );
                 }
             }
@@ -589,6 +731,8 @@ mod tests {
         }
         let green = show_through(MaskColour::Green);
         assert!(show_through(MaskColour::Clear) > 3.0);
+        // Red is cited as showing traces less than green; purple and blue
+        // are estimates (docs/materials.md, Trace contrast).
         for colour in [MaskColour::Red, MaskColour::Purple, MaskColour::Blue] {
             let ratio = show_through(colour);
             assert!(ratio < green - 0.2 && ratio > 1.5, "{colour:?}: {ratio}");
@@ -599,10 +743,12 @@ mod tests {
         assert!(show_through(MaskColour::White) < 1.1);
     }
 
+    /// The mask's gloss is its lacquer coat's roughness; the body under it
+    /// is diffuse whatever the finish.
     #[test]
-    fn mask_finish_sets_roughness() {
+    fn mask_finish_sets_the_coat_roughness() -> Result<()> {
         for colour in COLOURS {
-            let rough = |mask_finish| {
+            let look = |mask_finish| {
                 material(
                     BodyKind::MaskTop,
                     &Fabrication {
@@ -611,8 +757,8 @@ mod tests {
                         ..Fabrication::default()
                     },
                 )
-                .roughness
             };
+            let rough = |finish| look(finish).coat.map_or(f64::NAN, |c| c.roughness);
             let (gloss, satin, matte) = (
                 rough(MaskFinish::Gloss),
                 rough(MaskFinish::Satin),
@@ -620,9 +766,116 @@ mod tests {
             );
             assert!(gloss < satin && satin < matte, "{colour:?}");
             assert!(
-                (0.15..=0.30).contains(&gloss) && matte >= 0.55,
+                (0.045..=0.12).contains(&gloss) && matte >= 0.40,
                 "{colour:?}"
             );
+            for finish in FINISHES {
+                let m = look(finish);
+                assert_eq!((m.roughness, m.ior), (1.0, 1.0), "{colour:?} {finish:?}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Every mask layer is a pigmented body under a full lacquer coat of
+    /// the resin's index, which Solidcraft's surface carries; nothing else
+    /// is coated, so the saved bodies stay uncoated.
+    #[test]
+    fn mask_layers_are_coated_and_nothing_else_is() -> Result<()> {
+        for fabrication in fabrications() {
+            for kind in BodyKind::ALL {
+                let m = material(kind, &fabrication);
+                let coat = m.surface()?.clear_coat();
+                let is_mask = matches!(
+                    kind,
+                    BodyKind::MaskTop | BodyKind::MaskBottom | BodyKind::MaskCap
+                );
+                assert_eq!(coat.is_some(), is_mask, "{kind:?}");
+                if let Some(coat) = coat {
+                    assert_eq!((coat.weight(), coat.ior()), (1.0, MASK_IOR));
+                    assert_eq!(m.metallic, 0.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The weave shows on bare laminate and edges, fully under clear mask,
+    /// faintly under the translucent colours and not at all under black,
+    /// white or yellow; every mask shows orange peel; nothing else has a
+    /// pattern.
+    #[test]
+    fn patterns_follow_the_mask_colour() {
+        let detail_of = |kind, colour| {
+            material(
+                kind,
+                &Fabrication {
+                    mask_colour: colour,
+                    ..Fabrication::default()
+                },
+            )
+            .detail
+        };
+        for colour in COLOURS {
+            assert_eq!(
+                detail_of(BodyKind::Substrate, colour),
+                Detail {
+                    pattern: Pattern::Weave,
+                    strength: 1.0
+                }
+            );
+            assert_eq!(
+                detail_of(BodyKind::MaskCap, colour),
+                Detail {
+                    pattern: Pattern::MaskPeel,
+                    strength: 1.0
+                }
+            );
+            let mask = detail_of(BodyKind::MaskTop, colour);
+            assert_eq!(mask, detail_of(BodyKind::MaskBottom, colour));
+            match colour {
+                MaskColour::Clear => assert_eq!(
+                    mask,
+                    Detail {
+                        pattern: Pattern::MaskPeelOverWeave,
+                        strength: 0.6
+                    }
+                ),
+                MaskColour::Black | MaskColour::White | MaskColour::Yellow => assert_eq!(
+                    mask,
+                    Detail {
+                        pattern: Pattern::MaskPeel,
+                        strength: 1.0
+                    }
+                ),
+                _ => {
+                    assert_eq!(mask.pattern, Pattern::MaskPeelOverWeave, "{colour:?}");
+                    assert!(
+                        (0.05..=0.2).contains(&mask.strength),
+                        "{colour:?}: faint, {}",
+                        mask.strength
+                    );
+                }
+            }
+            for kind in BodyKind::ALL {
+                if !matches!(
+                    kind,
+                    BodyKind::Substrate
+                        | BodyKind::MaskTop
+                        | BodyKind::MaskBottom
+                        | BodyKind::MaskCap
+                ) {
+                    assert_eq!(detail_of(kind, colour), Detail::NONE, "{kind:?}");
+                }
+            }
+        }
+        // Clear shows the weave most; green, the most transparent pigment,
+        // next.
+        for colour in COLOURS {
+            assert!(weave_show_through(MaskColour::Clear) >= weave_show_through(colour));
+            if colour != MaskColour::Clear {
+                assert!(weave_show_through(MaskColour::Green) >= weave_show_through(colour));
+            }
         }
     }
 }

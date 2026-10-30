@@ -197,6 +197,8 @@ fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
                 .map(|s| s.pick_id),
             kind,
             surface,
+            // Saved bodies' detail does not depend on the fabrication.
+            detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             mesh: body.mesh(),
             volume: m.volume,
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],

@@ -69,7 +69,7 @@ There is no silkscreen: the core has no outline or reference-designator graphics
 
 ## Fabrication presets
 
-The board's fabrication attributes are typed data in the Pcbcraft design (`Project::fabrication`), set with `board.set_fabrication` from the PCB properties card (Board: Soldermask, Mask finish, Pad finish, Silkscreen), the CLI or MCP. Defaults: green, gloss, ENIG, white legend. Every combination is valid data; whether a fabricator offers it is theirs to say. The looks are single-surface values: Solidcraft's real-time shader has no clear coat yet, so the gloss is a roughness, not a lacquer layer.
+The board's fabrication attributes are typed data in the Pcbcraft design (`Project::fabrication`), set with `layout.set_fabrication` from the PCB properties card (Board: Soldermask, Mask finish, Pad finish, Silkscreen), the CLI or MCP. Defaults: green, gloss, ENIG, white legend. Every combination is valid data; whether a fabricator offers it is theirs to say. The 3D view draws the mask as a lacquer: a clear coat (weight 1, IOR 1.52, the [finish](#mask-finish)'s roughness) carries the gloss over a diffuse pigmented body, drawn with Solidcraft's opt-in product look ([PCB 3D look](#pcb-3d-look)). The "over laminate/over copper" values below are the layer's whole diffuse reflectance (`mask_over`); the body under the coat is that divided by (1 − F0) = 0.957 (`mask_body`), because the coat applies the air-to-resin Fresnel transmission. The body has IOR 1 (no interface of its own) and roughness 1. Solidcraft's split-sum studio light takes the coat's reflectance out of the body once, so the mask's total diffuse reflectance under the studio matches the table; its direct lights attenuate at entry and exit, about 4 % darker (**est.** from F0).
 
 ### Mask colours
 
@@ -89,20 +89,32 @@ Every value in this table is **est.**: no soldermask colour standard exists, and
 Calibration notes:
 
 - **Opacity order.** Taiyo's minimum exposure energy is a rough proxy for how much a pigment blocks light: black, white and yellow ≥ 800 mJ/cm²; blue and red ≥ 300; clear ≥ 200 ([Taiyo PSR-4000 BN DI colours](https://sc-c.digikeyassets.com/-/media/Images/Marketing/Resources/DKRed/TDS_PSR-4000_BN_DI_Colors_October-6-2020.pdf)). Peters calls its green "green transparent" ([Elpemer 2467](https://www.wedirekt.com/web/cms/content/_files//pdf1/technical_report_elpemer_2467.pdf)).
-- **Trace contrast.** Observers report traces nearly invisible under black, least visible under white, murky under yellow, and noticeably less visible under red than under green ([Andy Brown](https://andybrown.me.uk/?p=4010), [JLCPCB](https://jlcpcb.com/blog/pcb-solder-mask-colors-performance)). A first estimate gave red 2.1× and purple 2.3×, at or above green, which contradicts that; both were recalibrated with more pigment scatter and less transmission (now 1.7× and 1.8×). The first yellow estimate put the mask over copper at 0.77 red, too bright for a murky mask; it is now 0.62 (1.3×). Tests hold this order: clear above 3×, red, purple and blue at least 0.2 below green, yellow and black below 1.4×, white below 1.1×.
+- **Trace contrast.** Observers report traces nearly invisible under black, least visible under white, murky under yellow, and noticeably less visible under red than under green ([Andy Brown](https://andybrown.me.uk/?p=4010), [JLCPCB](https://jlcpcb.com/blog/pcb-solder-mask-colors-performance)). A first estimate gave red 2.1× and purple 2.3×, at or above green, which contradicts that; both were recalibrated with more pigment scatter and less transmission (now 1.7× and 1.8×). The first yellow estimate put the mask over copper at 0.77 red, too bright for a murky mask; it is now 0.62 (1.3×). Tests hold this order: clear above 3×, red, purple and blue at least 0.2 below green (blue's place is **est.**: no cited observation compares blue with green; it follows from blue's opacity class, which Taiyo groups with red), yellow and black below 1.4×, white below 1.1×.
 - **Clear** assumes natural FR-4 under it. Black FR-4 (as in clear-over-black boards) would need its own laminate reflectance.
 - **White** is scatter-dominated, where the two-flux layer model is crude.
 - Colours offered: JLCPCB lists green, blue, red, black, white, purple and yellow; PCBWay adds matte red and blue, orange, grey, pink and transparent ([circuitstate](https://circuitstate.com/?p=6823)). Orange, grey and pink are not offered here yet.
 
 ### Mask finish
 
-Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmeter, probably 60° gloss units ([NPL MAT 5](https://eprintspublications.npl.co.uk/4043/1/MAT5.pdf)). The mapping to perceptual roughness is **est.**:
+Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmeter, probably 60° gloss units ([NPL MAT 5](https://eprintspublications.npl.co.uk/4043/1/MAT5.pdf)). The finish sets the lacquer coat's perceptual roughness; the mapping is **est.** A single-surface look needed a compromise (0.12 too pin-point, 0.28 washed out); with the coat carrying the gloss and the body diffuse, a gloss coat can be sharp without bleaching the colour.
 
-| Finish | Roughness | Exceptions |
+| Finish | Coat roughness | Exceptions |
 |---|---|---|
-| Gloss | 0.20 | Clear 0.15 (no pigment breaks the surface); yellow 0.30 (fabricators sell it semi-gloss) |
-| Satin | 0.35 | – |
-| Matte | 0.55 | Black 0.60 |
+| Gloss | 0.06 | Clear 0.05 (no pigment breaks the surface); yellow 0.12 (fabricators sell it semi-gloss) |
+| Satin | 0.20 | – |
+| Matte | 0.40 | Black 0.45 |
+
+### Surface patterns
+
+Drawn by the product look from the world position in millimetres (display only). Glass style 7628 (44 × 31 ends per inch, 0.173 mm thick; [Isola glass fabric](https://www.isola-group.com/wp-content/uploads/Isola-Glass-Fabric-04_2022.pdf)) gives a yarn pitch of 0.577 × 0.819 mm and the ply period up a routed edge. Pattern amplitudes are Solidcraft's (visual estimates). Pcbcraft chooses where they show and how strongly:
+
+| Body | Pattern | Strength |
+|---|---|---|
+| FR-4 laminate (routed edge, bare laminate) | Weave (colour and relief) | 1 |
+| Mask over laminate | Orange peel, plus the weave in colour only | Weave show-through: clear 0.6, green 0.12, purple 0.10, blue and red 0.08; black, white and yellow none (peel only) |
+| Mask over copper | Orange peel | 1 |
+
+Show-through is **est.** No measured print-through was found ([research](#sources): the mask levels the surface; the weave changes the colour beneath). It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Silkscreen grain is available but unused until legend graphics exist.
 
 ### Pad finishes
 
@@ -118,6 +130,10 @@ Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmete
 
 White (default), black or yellow. Saved and exposed to CLI and MCP; not drawn until the board has legend graphics.
 
+## PCB 3D look
+
+The PCB 3D view and Component 3D preview draw with Solidcraft's opt-in product look (`Frame::product_look`): a procedural studio environment (the Product preset: softboxes over a grey cyclorama, a dark floor), turned 90° about +Z and fixed in the world; Khronos PBR Neutral tone mapping at exposure 1; a dithered sRGB encode; clear coats; surface patterns; and ambient occlusion on the studio's light, radius 2 % of the model's diagonal within 0.15–1.2 mm (about a chip's height on a board). Over it, a key (point), fill and rim light turn with the camera, and four floor-bounce lights 25° below the horizon stay in the world, so vertical metal (termination ends, fillets) does not mirror the studio's dark lower walls. Seen from below, the board faces the dark floor, so the direct lights are 2.5× stronger and an ambient light (0.6) is added. All of these are tuned by screenshot (**est.**); pictures are written by `cargo test -p pcbcraft --release write_pictures -- --include-ignored` with `PCBCRAFT_PICTURES` set.
+
 ## Sources
 
 - P. B. Johnson and R. W. Christy, "Optical Constants of the Noble Metals", *Phys. Rev. B* 6, 4370 (1972). Au and Cu; tabulated at refractiveindex.info.
@@ -127,6 +143,8 @@ White (default), black or yellow. Saved and exposed to CLI and MCP; not drawn un
 - B. Burley, "Physically-Based Shading at Disney" (2012). Perceptual roughness.
 - IPC-4552, ENIG: Ni 3–6 µm, Au 0.04–0.10 µm. IPC-4553, immersion silver.
 - Soldermask colour and gloss: NPL MAT 5 (glossmeter readings and thickness), Taiyo PSR-4000 BN DI colour datasheet (exposure energy), Peters Elpemer 2467 report, NCAB, Andy Brown, JLCPCB and circuitstate articles; links in [mask colours](#mask-colours). Public articles and datasheets only.
+- Isola, *Glass Fabric* data sheet (04/2022): style 7628 counts and thickness.
+- Clear-coat layering after the OpenPBR coat model (Academy Software Foundation specification); the shader is Solidcraft's.
 - Manufacturer LPI soldermask datasheets, thickness and gloss/matte texture codes only: Florida CirTech LPI-950 LC-1, LPI-950 C-8GD and LPI-950 S-22.
 
 No EDA tool, EDA library, 3D model or material file was consulted.

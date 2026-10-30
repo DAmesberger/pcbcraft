@@ -1,6 +1,6 @@
 //! Evaluated geometry handed to renderers. Meshes are shared, so selection,
 //! highlighting and camera changes reuse them without rebuilding.
-use crate::material::BodyKind;
+use crate::material::{BodyKind, Detail};
 use solidcraft_engine::geom::Mesh;
 use solidcraft_engine::render::surface::OpaqueSurface;
 use std::sync::Arc;
@@ -14,6 +14,8 @@ pub struct Geometry {
     pub kind: BodyKind,
     /// The physical look stored in the native file for this body.
     pub surface: OpaqueSurface,
+    /// Procedural detail the 3D view draws over the surface (display only).
+    pub detail: Detail,
     pub mesh: Arc<Mesh>,
     pub volume: f64,
     pub min: [f64; 3],

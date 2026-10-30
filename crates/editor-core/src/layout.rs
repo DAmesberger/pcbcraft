@@ -49,7 +49,7 @@ pub enum LayoutCommand {
     SetTrackLock { id: Id, locked: bool },
     /// Replace the board's fabrication attributes (mask colour and finish,
     /// pad finish, silkscreen colour) as one undo step.
-    #[serde(rename = "board.set_fabrication")]
+    #[serde(rename = "layout.set_fabrication")]
     SetFabrication(Fabrication),
 }
 

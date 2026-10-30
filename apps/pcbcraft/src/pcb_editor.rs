@@ -768,7 +768,7 @@ fn placement_edit(
     })
 }
 /// Board size and layers, and the fabrication choices. Choosing another
-/// option issues `board.set_fabrication` with the other attributes kept.
+/// option issues `layout.set_fabrication` with the other attributes kept.
 fn board_section(ui: &mut Ui, project: &Project) -> Option<Operation> {
     let mut fabrication = project.fabrication;
     kit::section(ui, "pcb-board", "Board", true, None, |ui| {
@@ -1172,7 +1172,7 @@ mod tests {
     }
 
     /// Choosing a mask colour in the Board section issues
-    /// `board.set_fabrication` with the other attributes kept; the engine
+    /// `layout.set_fabrication` with the other attributes kept; the engine
     /// applies it as one undo step and the rebuilt 3D layers take the look.
     #[test]
     fn board_soldermask_row_issues_set_fabrication() -> Result<(), Box<dyn std::error::Error>> {

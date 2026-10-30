@@ -327,6 +327,13 @@ impl Engine {
                     None => Outcome::None,
                 }
             }
+            // Restating the current fabrication changes nothing, so it
+            // takes no revision or undo step.
+            Operation::Layout(layout::LayoutCommand::SetFabrication(fabrication))
+                if fabrication == candidate.project.fabrication =>
+            {
+                Outcome::None
+            }
             Operation::Layout(command) => {
                 layout::apply_staged(Arc::make_mut(&mut candidate.project), command)?;
                 Outcome::None

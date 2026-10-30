@@ -469,7 +469,7 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
     Ok(())
 }
 
-/// `board.set_fabrication` sent as JSON changes the saved attributes, is
+/// `layout.set_fabrication` sent as JSON changes the saved attributes, is
 /// undoable, appears in the discovery schemas, and an unknown colour is a
 /// malformed request that changes nothing.
 #[test]
@@ -479,7 +479,7 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
         json!({"command": "project.apply", "params": {
             "expected_revision": revision,
             "operation": {"editor": "Layout", "operation": {
-                "command": "board.set_fabrication",
+                "command": "layout.set_fabrication",
                 "params": {"mask_colour": colour, "mask_finish": "matte",
                     "pad_finish": "immersion_silver", "silkscreen_colour": "black"}
             }}
@@ -503,7 +503,7 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
         pcbcraft_core::Fabrication::default()
     );
     let schemas = schemas().to_string();
-    assert!(schemas.contains("board.set_fabrication"));
+    assert!(schemas.contains("layout.set_fabrication"));
     assert!(schemas.contains("immersion_silver"));
     Ok(())
 }

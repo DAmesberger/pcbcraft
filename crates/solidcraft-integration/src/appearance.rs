@@ -777,6 +777,7 @@ fn push(
         item,
         kind,
         surface: material::material(kind, looks).surface()?,
+        detail: material::detail(kind, looks),
         mesh: Arc::new(mesh),
         volume,
         min: [bounds.min.x, bounds.min.y, bounds.min.z],

@@ -333,7 +333,7 @@ fn fabrication_defaults_to_green_gloss_enig_with_white_legend() {
     );
 }
 
-/// `board.set_fabrication` is one undo step through the engine, survives a
+/// `layout.set_fabrication` is one undo step through the engine, survives a
 /// save and reopen, and a stale request changes nothing.
 #[test]
 fn set_fabrication_is_one_undo_step_and_round_trips_through_the_file() -> Result<()> {
@@ -376,6 +376,24 @@ fn set_fabrication_is_one_undo_step_and_round_trips_through_the_file() -> Result
     Ok(())
 }
 
+/// Restating the current fabrication from the CLI or MCP is a no-op: no
+/// revision, no undo step, the same project.
+#[test]
+fn unchanged_fabrication_takes_no_revision_or_undo_step() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let revision = engine.revision();
+    let current = engine.project().fabrication;
+    assert!(!engine.can_undo());
+    engine.apply(
+        revision,
+        Operation::Layout(LayoutCommand::SetFabrication(current)),
+    )?;
+    assert_eq!(engine.revision(), revision);
+    assert!(!engine.can_undo());
+    assert_eq!(engine.project().fabrication, current);
+    Ok(())
+}
+
 /// The wire form is typed: unknown colours, finishes or extra fields are
 /// refused before anything is applied, and a file without the attributes is
 /// not this format version's file.
@@ -383,7 +401,7 @@ fn set_fabrication_is_one_undo_step_and_round_trips_through_the_file() -> Result
 fn fabrication_rejects_unknown_values_and_files_without_it() -> Result<()> {
     let wire = serde_json::json!({
         "editor": "Layout",
-        "operation": {"command": "board.set_fabrication", "params": {
+        "operation": {"command": "layout.set_fabrication", "params": {
             "mask_colour": "purple", "mask_finish": "satin",
             "pad_finish": "lead_free_hasl", "silkscreen_colour": "black"
         }}
@@ -425,7 +443,7 @@ fn fabrication_rejects_unknown_values_and_files_without_it() -> Result<()> {
 fn schemas_list_the_fabrication_operation_and_every_choice() -> Result<()> {
     let schemas = serde_json::to_string(&crate::schemas())?;
     for name in [
-        "board.set_fabrication",
+        "layout.set_fabrication",
         "mask_colour",
         "silkscreen_colour",
         "\"clear\"",
