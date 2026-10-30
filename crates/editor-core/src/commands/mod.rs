@@ -11,7 +11,7 @@ pub(crate) use library::apply_library;
 
 use crate::fields::EffectiveField;
 use crate::functions::Resolution;
-use crate::ids::{DefinitionId, DefinitionRef, Id};
+use crate::ids::{DefinitionId, DefinitionRef, GraphicId, Id, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -46,4 +46,19 @@ pub enum Outcome {
     FunctionsSelected {
         resolution: Resolution,
     },
+    /// Draft pins off the symbol grid after `library.set_grid`.
+    GridSet {
+        off_grid: Vec<OffGridPin>,
+    },
+    /// Graphic IDs `library.edit_graphics` allocated, in edit order.
+    GraphicsEdited {
+        added: Vec<GraphicId>,
+    },
+}
+
+/// A symbol draft's pin, by its terminal, that lies off the authoring grid.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct OffGridPin {
+    pub draft: DefinitionId,
+    pub terminal: TerminalId,
 }

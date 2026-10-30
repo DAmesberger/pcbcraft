@@ -9,9 +9,9 @@ use crate::functions::{
 use crate::instances::NewInstance;
 use crate::layout::LayoutCommand;
 use crate::library::{
-    Anchor, BindingDefinition, ComponentDefinition, Definition, DraftEdit, FootprintDefinition,
-    PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
-    TerminalClass, TerminalMap, Unit,
+    BindingDefinition, ComponentDefinition, Definition, DraftEdit, FootprintDefinition,
+    PackageBody, PackageDefinition, PackageTerminal, Pad, Pin, PinDirection, SymbolDefinition,
+    Terminal, TerminalClass, TerminalMap, Unit,
 };
 use crate::updates::{Change, FunctionResolution, InstanceChange, Resolutions};
 use crate::{
@@ -304,19 +304,24 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
     let unit = |id: u32, label: &str, terminals: &[u32]| Unit {
         id: UnitId(id),
         label: label.into(),
-        body_size: [10.0, 22.0],
-        anchors: terminals
+        graphics: vec![],
+        pins: terminals
             .iter()
             .enumerate()
-            .map(|(row, t)| Anchor {
-                terminal: TerminalId(*t),
-                position: [-7.5, 10.0 - 2.5 * row as f64],
+            .map(|(row, t)| {
+                Pin::new(
+                    TerminalId(*t),
+                    [-7.5, 10.0 - 2.5 * row as f64],
+                    PinDirection::Right,
+                    2.5,
+                )
             })
             .collect(),
     };
     let symbol = SymbolDefinition {
         component: m.component,
         next_local: 4,
+        pin_text_height: 1.25,
         units: vec![
             unit(1, "D", &DIGITAL),
             unit(2, "A", &ANALOG),

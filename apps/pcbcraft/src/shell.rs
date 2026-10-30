@@ -25,6 +25,12 @@ const BUTTON_LABEL_PADDING: f32 = 10.0;
 const SECTION_HEIGHT: f32 = 20.0;
 const TAB_INSET: f32 = 4.0;
 const GROUP_PADDING: f32 = 6.0;
+/// Width of the ribbon's » overflow button.
+const OVERFLOW_WIDTH: f32 = 30.0;
+/// Width of the » overflow menu's rows.
+const OVERFLOW_MENU_WIDTH: f32 = 200.0;
+/// Height of one tool row in the » overflow menu.
+const OVERFLOW_ROW_HEIGHT: f32 = 30.0;
 const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +65,9 @@ impl Workspace {
     }
 }
 
-/// One ribbon button.
+/// One ribbon button. With `menu` it is a split button, as Solidcraft's
+/// sketch ribbon draws a tool family (Line ▾, Rectangle ▾): the icon runs
+/// the shown variant (`id`), the label with ▾ opens the family's variants.
 pub struct Tool {
     pub id: &'static str,
     pub icon: &'static str,
@@ -68,6 +76,9 @@ pub struct Tool {
     pub selected: bool,
     /// Tooltip; why a disabled tool is unavailable.
     pub tip: &'static str,
+    /// The family's variants, shown variant included; empty for a plain
+    /// button.
+    pub menu: Vec<Tool>,
 }
 
 impl Tool {
@@ -79,6 +90,16 @@ impl Tool {
             enabled: true,
             selected: false,
             tip: "",
+            menu: Vec::new(),
+        }
+    }
+    /// A split button showing `shown` with the variants `menu`; selected
+    /// while any variant is.
+    pub fn family(shown: Tool, menu: Vec<Tool>) -> Self {
+        Self {
+            selected: menu.iter().any(|t| t.selected),
+            menu,
+            ..shown
         }
     }
     pub fn enabled(mut self, enabled: bool) -> Self {
@@ -134,12 +155,41 @@ fn button_width(ui: &Ui, label: &str) -> f32 {
     (width + BUTTON_LABEL_PADDING).clamp(BUTTON_MIN_WIDTH, BUTTON_MAX_WIDTH)
 }
 
+/// Width of the ▾ beside a split button's label.
+const SPLIT_ARROW: f32 = 12.0;
+/// Height of a split button's upper (run) part, as Solidcraft's.
+const SPLIT_TOP: f32 = 32.0;
+
+/// A ribbon button's width; a split button fits its widest variant and ▾.
+fn tool_width(ui: &Ui, tool: &Tool) -> f32 {
+    if tool.menu.is_empty() {
+        return button_width(ui, tool.label);
+    }
+    // The ▾ sits in the label's padding where it fits.
+    let t = Tokens::get();
+    tool.menu
+        .iter()
+        .map(|v| {
+            let text = ui
+                .painter()
+                .layout_no_wrap(
+                    v.label.to_owned(),
+                    FontId::proportional(t.font_body),
+                    t.text,
+                )
+                .size()
+                .x;
+            (text + SPLIT_ARROW + BUTTON_LABEL_PADDING).max(BUTTON_MIN_WIDTH)
+        })
+        .fold(0.0, f32::max)
+}
+
 fn group_width(ui: &Ui, group: &Group) -> f32 {
     let t = Tokens::get();
     let buttons: f32 = group
         .tools
         .iter()
-        .map(|tool| button_width(ui, tool.label))
+        .map(|tool| tool_width(ui, tool))
         .sum::<f32>()
         + group.tools.len().saturating_sub(1) as f32 * BUTTON_GAP;
     let caption = ui
@@ -210,6 +260,112 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
         (false, true) => response.on_hover_text(format!("{} is unavailable now", tool.label)),
         (false, false) => response.on_hover_text(format!("{}\n{}", tool.label, tool.tip)),
     }
+}
+
+/// A split ribbon button, adapted from Solidcraft's sketch families
+/// (toolbar.rs): the upper part shows the variant's icon and runs it; the
+/// label with ▾ below opens the variants. Returns the tool clicked.
+fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
+    let t = Tokens::get();
+    let sense = if tool.enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let upper = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + SPLIT_TOP));
+    let lower = Rect::from_min_max(pos2(rect.left(), rect.top() + SPLIT_TOP - 2.0), rect.max);
+    let run = ui.interact(upper, ui.id().with(("tool", tool.id)), sense);
+    let arrow = ui.interact(
+        lower,
+        ui.id().with(("family", tool.menu.first().map(|v| v.id))),
+        sense,
+    );
+    if tool.selected {
+        ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
+    } else if tool.enabled && (run.hovered() || arrow.hovered()) {
+        ui.painter()
+            .rect_filled(rect, t.radius_sm, t.hover.gamma_multiply(0.5));
+    }
+    if tool.enabled && !tool.selected {
+        if run.hovered() {
+            ui.painter().rect_filled(upper, t.radius_sm, t.hover);
+        } else if arrow.hovered() {
+            ui.painter().rect_filled(lower, t.radius_sm, t.hover);
+        }
+    }
+    icons::paint_icon(
+        ui.painter(),
+        Rect::from_center_size(pos2(rect.center().x, rect.top() + 16.0), vec2(26.0, 26.0)),
+        tool.icon,
+        if tool.enabled { 1.0 } else { 0.35 },
+    );
+    let ink = if tool.selected {
+        t.selected_ink
+    } else if tool.enabled {
+        t.text
+    } else {
+        t.text_dim
+    };
+    let font = if tool.selected {
+        fonts::semibold(t.font_body)
+    } else {
+        FontId::proportional(t.font_body)
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(tool.label.to_owned(), font, ink);
+    let width = galley.size().x + SPLIT_ARROW;
+    let left = rect.center().x - width / 2.0;
+    let y = rect.top() + 32.0;
+    let label_size = galley.size();
+    ui.painter().galley(pos2(left, y), galley, ink);
+    crate::kit::chevron(
+        ui.painter(),
+        Rect::from_center_size(
+            pos2(
+                left + label_size.x + SPLIT_ARROW / 2.0 + 1.0,
+                y + label_size.y / 2.0,
+            ),
+            vec2(10.0, 10.0),
+        ),
+        true,
+        t.text_dim,
+    );
+    let label = tool.label;
+    run.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, tool.enabled, tool.selected, label)
+    });
+    arrow.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            tool.enabled,
+            format!("{label} options"),
+        )
+    });
+    let mut clicked = None;
+    let run = if tool.tip.is_empty() {
+        run.on_hover_text(label)
+    } else {
+        run.on_hover_text(format!("{label}\n{}", tool.tip))
+    };
+    if run.clicked() && tool.enabled {
+        clicked = Some(tool.id);
+    }
+    let arrow = arrow.on_hover_text(format!("More {} tools", label.to_lowercase()));
+    Container::new(ui.ctx(), Surface::Popup)
+        .menu(&arrow)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+        .show(|ui| {
+            crate::kit::form(ui, |ui| {
+                ui.set_width(OVERFLOW_MENU_WIDTH);
+                for variant in &tool.menu {
+                    if overflow_item(ui, variant).clicked() && variant.enabled {
+                        clicked = Some(variant.id);
+                    }
+                }
+            });
+        });
+    clicked
 }
 
 /// The workspace switcher card and the ribbon card.
@@ -432,23 +588,42 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
     let mut x = area.left() + TAB_INSET;
     let top = area.top() + 2.0;
     let separator = t.toolbar.lerp_to_gamma(t.border, 0.6);
-    for (index, group) in ribbon.groups.iter().enumerate() {
-        let width = group_width(ui, group);
-        if x + width > area.right() {
-            break;
-        }
+    // Groups that fit in full; the rest go to the » menu, as Solidcraft's
+    // toolbar trims panels into its overflow menu, so every tool stays
+    // reachable by a click however narrow the window.
+    let widths: Vec<f32> = ribbon.groups.iter().map(|g| group_width(ui, g)).collect();
+    let total: f32 = widths.iter().sum::<f32>() + widths.len().saturating_sub(1) as f32;
+    let room = area.right() - x;
+    let shown = if total <= room {
+        ribbon.groups.len()
+    } else {
+        let mut used = 0.0;
+        widths
+            .iter()
+            .take_while(|w| {
+                used += *w + 1.0;
+                used <= room - OVERFLOW_WIDTH
+            })
+            .count()
+    };
+    for (index, group) in ribbon.groups.iter().enumerate().take(shown) {
+        let width = widths[index];
         let buttons: f32 = group
             .tools
             .iter()
-            .map(|tool| button_width(ui, tool.label))
+            .map(|tool| tool_width(ui, tool))
             .sum::<f32>()
             + group.tools.len().saturating_sub(1) as f32 * BUTTON_GAP;
         let mut bx = x + (width - buttons) / 2.0;
         for tool in &group.tools {
-            let w = button_width(ui, tool.label);
+            let w = tool_width(ui, tool);
             let rect = Rect::from_min_size(pos2(bx, top), vec2(w, BUTTON_HEIGHT));
-            if tool_button(ui, rect, tool).clicked() && tool.enabled {
-                clicked = Some(tool.id);
+            if tool.menu.is_empty() {
+                if tool_button(ui, rect, tool).clicked() && tool.enabled {
+                    clicked = Some(tool.id);
+                }
+            } else if let Some(id) = split_button(ui, rect, tool) {
+                clicked = Some(id);
             }
             bx += w + BUTTON_GAP;
         }
@@ -474,7 +649,119 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             x += 1.0;
         }
     }
+    if shown < ribbon.groups.len() {
+        let rect = Rect::from_min_size(
+            pos2(area.right() - OVERFLOW_WIDTH, top),
+            vec2(OVERFLOW_WIDTH - TAB_INSET, BUTTON_HEIGHT),
+        );
+        let response = ui
+            .interact(rect, ui.id().with("ribbon-overflow"), Sense::click())
+            .on_hover_text("More tools");
+        if response.hovered() {
+            ui.painter().rect_filled(rect, t.radius_sm, t.hover);
+        }
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "»",
+            FontId::proportional(t.font_panel),
+            t.text,
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "More tools")
+        });
+        Container::new(ui.ctx(), Surface::Popup)
+            .menu(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .show(|ui| {
+                crate::kit::form(ui, |ui| {
+                    ui.set_width(OVERFLOW_MENU_WIDTH);
+                    for group in &ribbon.groups[shown..] {
+                        overflow_caption(ui, group.label);
+                        // A family lists its variants in the menu.
+                        for tool in group.tools.iter().flat_map(|t| {
+                            if t.menu.is_empty() {
+                                std::slice::from_ref(t)
+                            } else {
+                                &t.menu[..]
+                            }
+                        }) {
+                            if overflow_item(ui, tool).clicked() && tool.enabled {
+                                clicked = Some(tool.id);
+                            }
+                        }
+                    }
+                });
+            });
+    }
     clicked
+}
+
+/// A group caption in the » overflow menu, like the ribbon's captions.
+fn overflow_caption(ui: &mut Ui, label: &str) {
+    let t = Tokens::get();
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(OVERFLOW_MENU_WIDTH, SECTION_HEIGHT), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + t.space_4, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(t.font_caption),
+        t.text_dim,
+    );
+}
+
+/// One tool in the » overflow menu: its ribbon icon and label, with the
+/// ribbon's hover, selected and disabled looks.
+fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(OVERFLOW_MENU_WIDTH, OVERFLOW_ROW_HEIGHT),
+        if tool.enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    if tool.selected {
+        ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
+    } else if response.hovered() && tool.enabled {
+        ui.painter().rect_filled(rect, t.radius_sm, t.hover);
+    }
+    icons::paint_icon(
+        ui.painter(),
+        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(20.0, 20.0)),
+        tool.icon,
+        if tool.enabled { 1.0 } else { 0.35 },
+    );
+    let ink = if tool.selected {
+        t.selected_ink
+    } else if tool.enabled {
+        t.text
+    } else {
+        t.text_dim
+    };
+    let font = if tool.selected {
+        fonts::semibold(t.font_body)
+    } else {
+        FontId::proportional(t.font_body)
+    };
+    ui.painter().text(
+        pos2(rect.left() + 36.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        tool.label,
+        font,
+        ink,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            tool.enabled,
+            tool.selected,
+            tool.label,
+        )
+    });
+    response.on_hover_text(tool.tip)
 }
 
 pub fn icon_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {

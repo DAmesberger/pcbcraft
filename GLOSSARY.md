@@ -9,7 +9,17 @@ A reusable electrical interface, including its terminals and their electrical ro
 _Avoid_: Symbol, manufacturer part
 
 **Symbol**:
-A schematic representation of a component definition, with graphical pin anchors associated with its electrical terminals.
+A schematic representation of a component definition: per unit, drawn graphics and one pin for each of its electrical terminals.
+
+**Pin** (symbol pin):
+Where a terminal connects on a symbol unit: a connection end, a direction into the body, a stub length and reading decorations. A pin is identified by its terminal and stores no electrical type and no number; its number comes from the instance's binding.
+_Avoid_: Anchor
+
+**Graphic**:
+A drawn primitive (line, polyline, rectangle, circle, arc, polygon) or text of a symbol, with a stable local ID across revisions. Text refers to a designator, name, unit label or field; it is never the authority for a value.
+
+**Authoring grid**:
+The snapping grid of the library editor (2.5 mm for symbols, 0.05 mm for footprints by default). An editor setting saved with the drafts; never revision data and never a blocking rule.
 
 **Symbol unit**:
 An independently placeable portion of a component's schematic representation, such as transistor A or an amplifier's power unit. All units of one component instance share its physical implementation and purchasing identity.

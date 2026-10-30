@@ -8,7 +8,7 @@ use crate::ids::{
     Id, PackageRef, Revision, SymbolRef, UnitId,
 };
 use crate::instances::{self, UnitState};
-use crate::library::{self, Draft, Drafts, Library};
+use crate::library::{self, Draft, Drafts, Grid, Library};
 use crate::model::Project;
 use crate::nets;
 use schemars::JsonSchema;
@@ -255,7 +255,7 @@ pub fn definition(
                 .get(id)
                 .ok_or_else(|| Error::NotFound(format!("there is no draft of {id}")))?;
             let staged = Staged::new(&project.library, drafts)?;
-            Ok(staged.report(draft))
+            Ok(staged.report(draft, &drafts.grid))
         }
     }
 }
@@ -263,7 +263,11 @@ pub fn definition(
 /// [`definition`] for every draft, staging the drafts once.
 pub fn drafts(project: &Project, drafts: &Drafts) -> Result<Vec<DefinitionReport>> {
     let staged = Staged::new(&project.library, drafts)?;
-    Ok(drafts.items.iter().map(|d| staged.report(d)).collect())
+    Ok(drafts
+        .items
+        .iter()
+        .map(|d| staged.report(d, &drafts.grid))
+        .collect())
 }
 
 fn report(
@@ -304,8 +308,9 @@ impl Staged {
     }
 
     /// A draft that cannot be staged reports only why; it never borrows the
-    /// findings of a stored revision with the same number.
-    fn report(&self, draft: &Draft) -> DefinitionReport {
+    /// findings of a stored revision with the same number. A staged draft
+    /// also carries the advisory drawing lint against the authoring grid.
+    fn report(&self, draft: &Draft, grid: &Grid) -> DefinitionReport {
         let target = CheckTarget::Draft(draft.id);
         let fallback = DefinitionRef {
             kind: draft.definition.kind(),
@@ -313,7 +318,11 @@ impl Staged {
             revision: draft.pending().or(draft.base).unwrap_or(Revision::FIRST),
         };
         match self.pending.iter().find(|(id, _)| *id == draft.id) {
-            Some((_, Ok(r))) => report(target, *r, library::publish_findings(&self.library, *r)),
+            Some((_, Ok(r))) => {
+                let mut findings = library::publish_findings(&self.library, *r);
+                findings.extend(library::lint(draft, &self.library, grid));
+                report(target, *r, findings)
+            }
             Some((_, Err(finding))) => report(target, fallback, vec![finding.clone()]),
             None => report(target, fallback, vec![]),
         }

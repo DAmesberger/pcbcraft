@@ -7,12 +7,14 @@
 use crate::diagnostics::{Error, Result};
 use crate::fields::{EffectiveField, PropertyEdit, PropertyInput};
 use crate::functions::{Function, FunctionEdit, TerminalFunctions};
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, FunctionId, Id, TerminalId, UnitId};
+use crate::ids::{
+    ComponentRef, DefinitionId, Endpoint, FunctionId, GraphicId, Id, TerminalId, UnitId,
+};
 use crate::instances::{self, Regroup, Resolved, UnitCarry};
 pub use crate::instances::{RegroupAction, UnitTarget};
 use crate::library::{
-    BindingDefinition, ComponentDefinition, FootprintDefinition, PackageDefinition, Pad,
-    SymbolDefinition, Terminal, TerminalClass,
+    BindingDefinition, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
+    PackageDefinition, Pad, Pin, PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
 use crate::{erc, layout, nets, schematic, validate};
@@ -130,7 +132,7 @@ pub struct UnitResolution {
     pub target: UnitTarget,
 }
 
-/// A wired terminal whose anchor moves into a unit that is not placed.
+/// A wired terminal whose pin moves into a unit that is not placed.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegroupResolution {
@@ -471,6 +473,30 @@ fn unit_label(symbol: &SymbolDefinition, unit: UnitId) -> String {
         .unwrap_or_else(|| unit.to_string())
 }
 
+/// What a pin shows besides its connection point.
+fn pin_presentation(pin: &Pin) -> (PinDirection, f64, Decorations, PinText, PinText) {
+    (
+        pin.direction,
+        pin.length,
+        pin.decorations,
+        pin.name,
+        pin.number,
+    )
+}
+
+/// Graphics added, removed and changed between two revisions, by ID.
+pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usize, usize) {
+    let old: BTreeMap<GraphicId, &Graphic> = before.iter().map(|g| (g.id, g)).collect();
+    let new: BTreeMap<GraphicId, &Graphic> = after.iter().map(|g| (g.id, g)).collect();
+    let added = new.keys().filter(|id| !old.contains_key(id)).count();
+    let removed = old.keys().filter(|id| !new.contains_key(id)).count();
+    let changed = new
+        .iter()
+        .filter(|(id, g)| old.get(id).is_some_and(|o| o != *g))
+        .count();
+    (added, removed, changed)
+}
+
 /// Definition differences reachable from two resolved states of one instance.
 fn definition_details(
     plan: &mut UpdatePlan,
@@ -492,7 +518,7 @@ fn definition_details(
             pa.body_size, pb.body_size, pa.model_offset, pb.model_offset
         ));
     }
-    // Units and anchors.
+    // Units, pins and graphics.
     for unit in &a.symbol.units {
         if b.symbol.unit(unit.id).is_none() {
             plan.detail(format!(
@@ -510,35 +536,58 @@ fn definition_details(
         }
     }
     for terminal in &b.component.terminals {
-        let before = a.symbol.anchor(terminal.id);
-        let after = b.symbol.anchor(terminal.id);
+        let before = a.symbol.pin(terminal.id);
+        let after = b.symbol.pin(terminal.id);
         match (before, after) {
-            (Some((ua, aa)), Some((ub, ab))) if ua.id != ub.id => plan.detail(format!(
-                "{designator} terminal {} moves from unit {} to unit {}; anchor {:?} → {:?} mm.",
+            (Some((ua, pa)), Some((ub, pb))) if ua.id != ub.id => plan.detail(format!(
+                "{designator} terminal {} moves from unit {} to unit {}; pin {:?} → {:?} mm.",
                 terminal.id,
                 unit_label(a.symbol, ua.id),
                 unit_label(b.symbol, ub.id),
-                aa.position,
-                ab.position
+                pa.position,
+                pb.position
             )),
-            (Some((_, aa)), Some((ub, ab))) if aa.position != ab.position => plan.detail(format!(
-                "{designator} terminal {} anchor in unit {} {:?} → {:?} mm.",
+            (Some((_, pa)), Some((ub, pb))) if pa.position != pb.position => plan.detail(format!(
+                "{designator} terminal {} pin in unit {} {:?} → {:?} mm.",
                 terminal.id,
                 unit_label(b.symbol, ub.id),
-                aa.position,
-                ab.position
+                pa.position,
+                pb.position
             )),
             _ => {}
         }
+        if let (Some((ua, pa)), Some((ub, pb))) = (before, after)
+            && pin_presentation(pa) != pin_presentation(pb)
+        {
+            let anchored = ua.id == ub.id && pa.position == pb.position;
+            plan.detail(format!(
+                "{designator} terminal {} pin in unit {}: direction, length, decorations or text change{}.",
+                terminal.id,
+                unit_label(b.symbol, ub.id),
+                if anchored {
+                    " (presentation only; the connection point and nets are unchanged)"
+                } else {
+                    ""
+                },
+            ));
+        }
     }
-    if a.symbol.units.iter().map(|u| (u.id, u.body_size)).ne(b
-        .symbol
-        .units
-        .iter()
-        .map(|u| (u.id, u.body_size)))
-    {
+    for unit in &b.symbol.units {
+        let Some(old) = a.symbol.unit(unit.id) else {
+            continue;
+        };
+        let diff = graphic_diff(&old.graphics, &unit.graphics);
+        if diff != (0, 0, 0) {
+            plan.detail(format!(
+                "{designator}: unit {} graphics: {} added, {} removed, {} changed (presentation only; terminals and nets unchanged).",
+                unit.label, diff.0, diff.1, diff.2
+            ));
+        }
+    }
+    if a.symbol.pin_text_height != b.symbol.pin_text_height {
         plan.detail(format!(
-            "{designator}: symbol geometry changes; anchors remain bound by terminal ID."
+            "{designator}: pin text height {} → {} mm (presentation only).",
+            a.symbol.pin_text_height, b.symbol.pin_text_height
         ));
     }
     // Explicit binding mapping, keyed by package terminal.

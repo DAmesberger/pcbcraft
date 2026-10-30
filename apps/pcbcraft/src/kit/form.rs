@@ -96,6 +96,21 @@ pub fn text_row(ui: &mut Ui, label: &str, value: &mut String) -> Response {
     row(ui, label, |ui| text_field(ui, label, value, "", false))
 }
 
+/// Several lines of text in the control column: Enter breaks the line,
+/// leaving the field ends the edit. Returns the field's response.
+pub fn multiline_row(ui: &mut Ui, label: &str, value: &mut String, invalid: bool) -> Response {
+    row(ui, label, |ui| {
+        let t = Tokens::get();
+        let edit = egui::TextEdit::multiline(value)
+            .id(ui.id().with(("multiline", label)))
+            .font(egui::TextStyle::Monospace)
+            .desired_rows(3)
+            .desired_width(ui.available_width())
+            .text_color(if invalid { t.error } else { t.text });
+        ui.add(edit)
+    })
+}
+
 /// Text row whose content the caller validates; `invalid` shows the error look.
 pub fn checked_text_row(
     ui: &mut Ui,

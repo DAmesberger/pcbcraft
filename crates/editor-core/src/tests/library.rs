@@ -92,9 +92,9 @@ fn any_single_blocking_finding_publishes_nothing() -> Result<()> {
                 b.mappings.pop();
             })
         }),
-        ("anchor for an unknown terminal", |e, f, _| {
+        ("pin for an unknown terminal", |e, f, _| {
             with(e, f.symbol, symbol_body, |s| {
-                s.units[0].anchors[1].terminal = TerminalId(99)
+                s.units[0].pins[1].terminal = TerminalId(99)
             })
         }),
         ("binding of another lineage", |e, f, other| {
@@ -325,7 +325,7 @@ fn a_retired_local_id_is_never_reused() -> Result<()> {
             b.mappings[2].terminal = TerminalId(2)
         })?;
         with(e, f.symbol, symbol_body, |s| {
-            s.units[0].anchors.retain(|a| a.terminal != TerminalId(3))
+            s.units[0].pins.retain(|a| a.terminal != TerminalId(3))
         })
     })?;
     // r3 re-adds 3 with another meaning, with a freshly allocated function.
@@ -343,10 +343,12 @@ fn a_retired_local_id_is_never_reused() -> Result<()> {
         })
     })?;
     with(&mut engine, f.symbol, symbol_body, |s| {
-        s.units[0].anchors.push(crate::library::Anchor {
-            terminal: TerminalId(3),
-            position: [0.0, -5.0],
-        })
+        s.units[0].pins.push(crate::library::Pin::new(
+            TerminalId(3),
+            [0.0, -5.0],
+            crate::library::PinDirection::Up,
+            2.5,
+        ))
     })?;
     with(&mut engine, f.binding, binding_body, |b| {
         b.mappings[2].terminal = TerminalId(3)

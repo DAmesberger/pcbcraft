@@ -114,3 +114,56 @@ fn query_tools_return_the_engine_report() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(reply["result"]["structuredContent"], direct);
     Ok(())
 }
+
+/// `library.edit_graphics` over MCP is one atomic tool call: a batch whose
+/// last edit fails is reported as a tool error and changes nothing; the
+/// same batch without it applies once and lists the new graphic IDs.
+#[test]
+fn graphic_edits_over_mcp_are_atomic() -> Result<(), Box<dyn std::error::Error>> {
+    use pcbcraft_core::library::Definition;
+    let engine = Engine::demo()?;
+    let symbol = engine
+        .drafts()
+        .items
+        .iter()
+        .find(|d| matches!(d.definition, Definition::Symbol(_)))
+        .map(|d| d.id)
+        .ok_or("the demo has a symbol draft")?;
+    let unit = match &engine.drafts().get(symbol).ok_or("draft")?.definition {
+        Definition::Symbol(s) => s.units[0].id,
+        _ => return Err("not a symbol".into()),
+    };
+    let mut server = Server::new(Session::new(engine));
+    let before = server.session().engine().document().clone();
+    let revision = server.session().engine().revision();
+    let add = json!({"add": {"target": {"unit": unit}, "item": {"shape": {
+        "shape": {"polyline": {"points": [[0, 0], [5, 0], [5, 5]], "radii": [0, 1, 0]}},
+        "width": 0.25, "fill": "none"}}}});
+    let apply = |edits: Value, revision: u64| {
+        json!({"name": "project_apply", "arguments": {
+            "expected_revision": revision,
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.edit_graphics",
+                "params": {"draft": symbol, "edits": edits}}}}})
+    };
+    let failed = call(
+        &mut server,
+        1,
+        "tools/call",
+        apply(json!([add.clone(), {"remove": {"id": 9999}}]), revision),
+    );
+    assert_eq!(failed["result"]["isError"], true, "{failed}");
+    assert_eq!(
+        failed["result"]["structuredContent"]["code"], "not_found",
+        "{failed}"
+    );
+    assert_eq!(server.session().engine().document(), &before);
+    assert_eq!(server.session().engine().revision(), revision);
+    let applied = call(&mut server, 2, "tools/call", apply(json!([add]), revision));
+    assert_eq!(applied["result"]["isError"], false, "{applied}");
+    let outcome = &applied["result"]["structuredContent"]["outcome"];
+    assert_eq!(outcome["outcome"], "graphics_edited", "{outcome}");
+    assert_eq!(outcome["added"].as_array().map(Vec::len), Some(1));
+    assert_eq!(server.session().engine().revision(), revision + 1);
+    Ok(())
+}

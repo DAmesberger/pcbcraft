@@ -25,7 +25,7 @@ pub mod scripting;
 mod tests;
 pub mod updates;
 pub mod validate;
-pub use commands::{InstanceCommand, LibraryCommand, Outcome};
+pub use commands::{InstanceCommand, LibraryCommand, OffGridPin, Outcome};
 use completeness::{CheckTarget, DefinitionReport, InstanceReport};
 pub use diagnostics::{Diagnostic, Error, Finding, ObjectRef, Result, Stage};
 pub use geometry::point_valid;

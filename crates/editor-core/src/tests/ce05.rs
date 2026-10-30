@@ -345,17 +345,19 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     )?;
     draft_from(&mut engine, amp.r1().erased())?;
     with(&mut engine, amp.symbol, symbol_body, |s| {
-        if let Some(anchor) = s.units[1]
-            .anchors
+        if let Some(pin) = s.units[1]
+            .pins
             .iter()
             .position(|a| a.terminal == TerminalId(6))
         {
-            s.units[1].anchors.remove(anchor);
+            s.units[1].pins.remove(pin);
         }
-        s.units[0].anchors.push(crate::library::Anchor {
-            terminal: TerminalId(6),
-            position: [5.0, -4.0],
-        });
+        s.units[0].pins.push(crate::library::Pin::new(
+            TerminalId(6),
+            [5.0, -4.0],
+            crate::library::PinDirection::Left,
+            2.5,
+        ));
     })?;
     with(&mut engine, amp.component, component_body, |c| {
         c.representations = vec![SymbolRef::new(amp.symbol, crate::Revision(2))]
@@ -372,8 +374,10 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     let plan = engine.preview_update(revise(vec![u1], Resolutions::default()));
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     assert!(
-        plan.changes.iter().any(|c| c
-            == "U1 terminal 6 moves from unit B to unit A; anchor [5.0, 0.0] → [5.0, -4.0] mm."),
+        plan.changes
+            .iter()
+            .any(|c| c
+                == "U1 terminal 6 moves from unit B to unit A; pin [5.0, 0.0] → [5.0, -4.0] mm."),
         "{:#?}",
         plan.changes
     );
@@ -453,8 +457,8 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
 
     // A unit with an occurrence disappears: blocked until a UnitResolution.
     with(&mut engine, amp.symbol, symbol_body, |s| {
-        let moved: Vec<_> = s.units[1].anchors.drain(..).collect();
-        s.units[0].anchors.extend(moved);
+        let moved: Vec<_> = s.units[1].pins.drain(..).collect();
+        s.units[0].pins.extend(moved);
         s.units.remove(1);
     })?;
     with(&mut engine, amp.component, component_body, |c| {

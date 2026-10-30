@@ -1,10 +1,18 @@
 //! Single-sheet capture: symbol occurrences and wires. Wire endpoints
-//! reference electrical identities; drawn crossings and coincident anchors
-//! never imply a connection.
+//! reference electrical identities; drawn crossings and coincident pins
+//! never imply a connection. [`placed_unit`] resolves what an occurrence
+//! draws and [`definition_unit`] what a unit being authored draws.
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Point, point_valid};
-use crate::ids::{Endpoint, Id, TerminalId, UnitId};
+use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
+use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
+use crate::library::graphics::{
+    SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING, TextLine, TextSize, text_lines, upright,
+};
+use crate::library::{
+    BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
+    PackageDefinition, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit, VAlign,
+};
 use crate::model::{EditPolicy, Net, Project, SymbolOccurrence, Wire};
 use crate::nets;
 use schemars::JsonSchema;
@@ -312,22 +320,463 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-/// Global schematic anchor in millimetres: the occurrence of the terminal's
-/// owning unit plus its anchor. `None` while that unit is not placed.
+/// The frame an occurrence draws its unit in. Translation only today; the
+/// single seam for rotating and mirroring occurrences later.
+pub fn occurrence_transform(occurrence: &SymbolOccurrence) -> Transform2 {
+    Transform2::translation(occurrence.position)
+}
+
+/// Global schematic pin position in millimetres: the pin's connection end in
+/// the frame of the occurrence of its owning unit. `None` while that unit is
+/// not placed.
 pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
     let instance = project.instance(endpoint.instance)?;
     let symbol = &instances::resolve(&project.library, instance)
         .ok()?
         .symbol
         .definition;
-    let (unit, anchor) = symbol.anchor(endpoint.terminal)?;
+    let (unit, pin) = symbol.pin(endpoint.terminal)?;
     let occurrence = project
         .occurrences_of(instance.id)
         .find(|o| o.unit == unit.id)?;
-    Some([
-        occurrence.position[0] + anchor.position[0],
-        occurrence.position[1] + anchor.position[1],
-    ])
+    Some(occurrence_transform(occurrence).apply(pin.position))
+}
+
+/// Resolved text placed on the sheet.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedText {
+    /// The text graphic drawn; `None` for pin names and numbers and for
+    /// stacked field values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphic: Option<GraphicId>,
+    pub text: String,
+    pub at: Point,
+    pub height: f64,
+    pub rotation_deg: f64,
+    pub justify: Justify,
+    /// Drawn reflected (an occurrence or board side mirror).
+    pub mirrored: bool,
+    /// Distance between lines in cap heights; `text` breaks at `\n`.
+    pub line_spacing: f64,
+}
+
+impl PlacedText {
+    /// The approximate box of the resolved text under the core metric.
+    pub fn bounds(&self, m: TextMetric) -> Bounds {
+        m.bounds(
+            self.at,
+            self.height,
+            self.rotation_deg,
+            self.justify,
+            TextSize::of(&self.text, self.line_spacing),
+        )
+    }
+
+    /// The lines to draw, laid out after the upright rule: each reads left
+    /// to right or bottom to top and sits where the core metric puts it.
+    pub fn lines(&self) -> (f64, Vec<TextLine<'_>>) {
+        let (rotation_deg, justify) = upright(self.rotation_deg, self.justify);
+        (
+            rotation_deg,
+            text_lines(
+                &self.text,
+                self.at,
+                self.height,
+                rotation_deg,
+                justify,
+                self.line_spacing,
+            ),
+        )
+    }
+
+    /// The upright horizontal justification every line uses.
+    pub fn line_justify(&self) -> Justify {
+        let (_, justify) = upright(self.rotation_deg, self.justify);
+        Justify {
+            h: justify.h,
+            v: VAlign::Middle,
+        }
+    }
+}
+
+/// One drawn shape of a placed unit.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedShape {
+    pub graphic: GraphicId,
+    pub shape: Shape,
+    pub width: f64,
+    pub fill: Fill,
+}
+
+/// One pin of a placed unit, in sheet coordinates.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedPin {
+    pub terminal: TerminalId,
+    /// The connection end wires attach to.
+    pub end: Point,
+    /// Where the pin meets the body.
+    pub body_end: Point,
+    /// Where the drawn stub stops (short of an inversion bubble).
+    pub line_end: Point,
+    pub decorations: Vec<Shape>,
+    pub name: Option<PlacedText>,
+    /// The designations the instance's binding maps to the terminal; `None`
+    /// without a physical choice, never guessed.
+    pub number: Option<PlacedText>,
+}
+
+/// Everything one unit draws, resolved against exact revisions. Views draw
+/// only from this.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedUnit {
+    /// The occurrence drawn; `None` for a definition drawn in its own frame
+    /// by the Component editor ([`definition_unit`]).
+    pub occurrence: Option<Id>,
+    pub shapes: Vec<PlacedShape>,
+    pub texts: Vec<PlacedText>,
+    pub pins: Vec<PlacedPin>,
+    /// Values of fields the component shows on the symbol that no `Field`
+    /// text of this unit draws, centred and stacked below the unit so a
+    /// shown value is never lost. Upright and not separately selectable.
+    pub fields: Vec<PlacedText>,
+}
+
+impl PlacedUnit {
+    /// The extent of everything drawn: stroke-inflated shapes, pin stubs and
+    /// decorations, and text under the approximate core metric. `None` when
+    /// nothing is drawn.
+    pub fn bounds(&self, m: TextMetric) -> Option<Bounds> {
+        let shapes = self.shapes.iter().map(|s| s.shape.bounds(s.width));
+        let pins = self.pins.iter().flat_map(|p| {
+            let stub = Bounds::point(p.end).including(p.body_end);
+            let decorations = p.decorations.iter().map(|d| d.bounds(0.0));
+            let texts = p.name.iter().chain(&p.number).map(|t| t.bounds(m));
+            std::iter::once(stub).chain(decorations).chain(texts)
+        });
+        let texts = self.texts.iter().chain(&self.fields).map(|t| t.bounds(m));
+        shapes.chain(pins).chain(texts).reduce(Bounds::union)
+    }
+
+    /// The topmost drawn object within `tol_mm` of `p`, in the same
+    /// coordinates and with the same resolved text as [`Self::bounds`], so
+    /// what is drawn is what is picked: pins (stub, decorations, name and
+    /// number) first, then text graphics and stacked field values (drawn
+    /// over shapes), then shapes, later ones before earlier ones.
+    pub fn hit(&self, p: Point, tol_mm: f64, m: TextMetric) -> Option<SymbolHit> {
+        let near_text =
+            |t: &PlacedText| !t.text.is_empty() && t.bounds(m).inflated(tol_mm).contains(p);
+        let pin = self
+            .pins
+            .iter()
+            .filter_map(|pin| {
+                let stub = segment_distance(p, pin.end, pin.body_end);
+                let decoration = pin
+                    .decorations
+                    .iter()
+                    .filter(|d| d.coarse_bounds(0.0).inflated(tol_mm).contains(p))
+                    .map(|d| d.distance(p, false))
+                    .fold(f64::INFINITY, f64::min);
+                let text = pin.name.iter().chain(&pin.number).any(near_text);
+                let d = if text { 0.0 } else { stub.min(decoration) };
+                (d <= tol_mm).then_some((d, pin.terminal))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, terminal)) = pin {
+            return Some(SymbolHit::Pin(terminal));
+        }
+        if self.fields.iter().any(near_text) {
+            return Some(SymbolHit::Field);
+        }
+        if let Some(graphic) = self
+            .texts
+            .iter()
+            .rev()
+            .find(|t| near_text(t))
+            .and_then(|t| t.graphic)
+        {
+            return Some(SymbolHit::Graphic(graphic));
+        }
+        self.shapes
+            .iter()
+            .rev()
+            .find(|s| {
+                // A cheap box first: most shapes are far from the pointer,
+                // and measuring rounded ones builds their fillets.
+                s.shape.coarse_bounds(s.width).inflated(tol_mm).contains(p)
+                    && s.shape.distance(p, s.fill != Fill::None) <= tol_mm + s.width / 2.0
+            })
+            .map(|s| SymbolHit::Graphic(s.graphic))
+    }
+}
+
+/// Gap between a unit and the shown field values stacked below it, mm.
+const FIELD_GAP_MM: f64 = 0.5;
+
+/// A field the drawn unit may show: its lineage, resolved text and whether
+/// the component shows it on the symbol.
+struct ShownField {
+    lineage: DefinitionId,
+    text: String,
+    shown: bool,
+}
+
+/// How a unit's text placeholders resolve.
+struct Resolution<'a> {
+    designator: String,
+    component_name: &'a str,
+    fields: Vec<ShownField>,
+    /// Binding and package supplying pin numbers; none hides them.
+    physical: Option<(&'a BindingDefinition, &'a PackageDefinition)>,
+}
+
+/// Designations of the package terminals `binding` maps `terminal` to,
+/// joined (stacked terminals read "2,7"); `None` when it maps none.
+fn pin_numbers(
+    binding: &BindingDefinition,
+    package: &PackageDefinition,
+    terminal: TerminalId,
+) -> Option<String> {
+    let designations: Vec<&str> = package
+        .terminals
+        .iter()
+        .filter(|pt| {
+            binding
+                .mappings
+                .iter()
+                .any(|m| m.terminal == terminal && m.package_terminal == pt.id)
+        })
+        .map(|pt| pt.designation.as_str())
+        .collect();
+    (!designations.is_empty()).then(|| designations.join(","))
+}
+
+/// Draw `unit` through `t` with its placeholders resolved by `r`.
+fn draw(
+    symbol: &SymbolDefinition,
+    unit: &Unit,
+    component: &ComponentDefinition,
+    t: Transform2,
+    r: &Resolution<'_>,
+    occurrence: Option<Id>,
+) -> PlacedUnit {
+    let place = |graphic: Option<GraphicId>,
+                 text: String,
+                 at: Point,
+                 height: f64,
+                 rotation_deg: f64,
+                 justify: Justify| PlacedText {
+        graphic,
+        text,
+        at: t.apply(at),
+        height,
+        rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
+        justify,
+        mirrored: t.mirror,
+        line_spacing: TEXT_LINE_SPACING,
+    };
+    let mut shapes = Vec::new();
+    let mut texts = Vec::new();
+    let mut drawn_fields = BTreeSet::new();
+    for graphic in &unit.graphics {
+        match &graphic.item {
+            Item::Shape { shape, width, fill } => shapes.push(PlacedShape {
+                graphic: graphic.id,
+                shape: shape.transformed(&t),
+                width: *width,
+                fill: *fill,
+            }),
+            Item::Text(text) => {
+                if let TextContent::Field(lineage) = text.content {
+                    drawn_fields.insert(lineage);
+                }
+                if !text.visible {
+                    continue;
+                }
+                let content = match &text.content {
+                    TextContent::Literal(s) => s.clone(),
+                    TextContent::Designator => r.designator.clone(),
+                    TextContent::ComponentName => r.component_name.to_owned(),
+                    TextContent::UnitLabel => unit.label.clone(),
+                    TextContent::Field(lineage) => r
+                        .fields
+                        .iter()
+                        .find(|f| f.lineage == *lineage)
+                        .map(|f| f.text.clone())
+                        .unwrap_or_default(),
+                };
+                texts.push(PlacedText {
+                    line_spacing: text.line_spacing,
+                    ..place(
+                        Some(graphic.id),
+                        content,
+                        text.at,
+                        text.height,
+                        text.rotation.degrees(),
+                        text.justify,
+                    )
+                });
+            }
+        }
+    }
+    let height = symbol.pin_text_height;
+    let pins = unit
+        .pins
+        .iter()
+        .map(|pin| {
+            let [_, line_end] = pin.line();
+            let name = component
+                .terminal(pin.terminal)
+                .filter(|_| pin.name.visible)
+                .map(|terminal| {
+                    let (at, rotation, justify) = pin.name_anchor();
+                    place(None, terminal.name.clone(), at, height, rotation, justify)
+                });
+            let number = r
+                .physical
+                .and_then(|(binding, package)| pin_numbers(binding, package, pin.terminal))
+                .filter(|_| pin.number.visible)
+                .map(|text| {
+                    let (at, rotation, justify) = pin.number_anchor();
+                    place(None, text, at, height, rotation, justify)
+                });
+            PlacedPin {
+                terminal: pin.terminal,
+                end: t.apply(pin.position),
+                body_end: t.apply(pin.body_end()),
+                line_end: t.apply(line_end),
+                decorations: pin
+                    .decoration_shapes()
+                    .iter()
+                    .map(|s| s.transformed(&t))
+                    .collect(),
+                name,
+                number,
+            }
+        })
+        .collect();
+    let mut placed = PlacedUnit {
+        occurrence,
+        shapes,
+        texts,
+        pins,
+        fields: Vec::new(),
+    };
+    let m = TextMetric::default();
+    let below = placed
+        .bounds(m)
+        .unwrap_or_else(|| Bounds::point(t.translate));
+    let mut y = below.min[1] - FIELD_GAP_MM;
+    for field in &r.fields {
+        if !field.shown || field.text.is_empty() || drawn_fields.contains(&field.lineage) {
+            continue;
+        }
+        placed.fields.push(PlacedText {
+            graphic: None,
+            text: field.text.clone(),
+            at: [below.center()[0], y],
+            height: SYMBOL_TEXT_HEIGHT_MM,
+            rotation_deg: 0.0,
+            justify: Justify {
+                h: HAlign::Center,
+                v: VAlign::Top,
+            },
+            mirrored: false,
+            line_spacing: TEXT_LINE_SPACING,
+        });
+        y -= SYMBOL_TEXT_HEIGHT_MM + FIELD_GAP_MM;
+    }
+    placed
+}
+
+/// Resolve one occurrence's drawing: graphics in order, visible text with
+/// designator, name, unit label and field values substituted, pins with
+/// their names and binding numbers, and shown field values no text draws.
+pub fn placed_unit(project: &Project, occurrence: Id) -> Result<PlacedUnit> {
+    let item = project
+        .occurrence(occurrence)
+        .ok_or_else(|| not_found("Unknown symbol occurrence."))?;
+    let instance = project
+        .instance(item.instance)
+        .ok_or_else(|| not_found("Unknown component instance."))?;
+    let resolved = instances::resolve(&project.library, instance)?;
+    let symbol = &resolved.symbol.definition;
+    let unit = symbol
+        .unit(item.unit)
+        .ok_or_else(|| invalid("The occurrence's unit is not in its symbol."))?;
+    let fields = instances::effective_fields(&project.library, instance)?
+        .into_iter()
+        .map(|f| ShownField {
+            lineage: f.field.id,
+            text: f.text.unwrap_or_default(),
+            shown: f.show_on_symbol,
+        })
+        .collect();
+    let resolution = Resolution {
+        designator: instances::display_label(project, instance, unit.id),
+        component_name: &resolved.component.meta.name,
+        fields,
+        physical: resolved
+            .physical
+            .map(|p| (&p.binding.definition, &p.package.definition)),
+    };
+    Ok(draw(
+        symbol,
+        unit,
+        &resolved.component.definition,
+        occurrence_transform(item),
+        &resolution,
+        Some(occurrence),
+    ))
+}
+
+/// A unit of a definition being authored, as the Component editor shows it.
+#[derive(Clone, Copy)]
+pub struct DefinitionUnit<'a> {
+    pub symbol: &'a SymbolDefinition,
+    pub unit: UnitId,
+    pub component: &'a ComponentDefinition,
+    pub component_name: &'a str,
+    /// The working binding and its package, for pin numbers; none hides
+    /// them.
+    pub physical: Option<(&'a BindingDefinition, &'a PackageDefinition)>,
+}
+
+/// Draw a definition's unit in its own frame, as [`placed_unit`] draws an
+/// occurrence. The designator reads `prefix + "?"` (plus the unit label for
+/// several units); a field shows the component or field default, or its
+/// name when it has none, so its place is visible while authoring.
+pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<PlacedUnit> {
+    let unit = d
+        .symbol
+        .unit(d.unit)
+        .ok_or_else(|| not_found("Unknown symbol unit."))?;
+    let mut designator = format!("{}?", d.component.designator_prefix);
+    if d.symbol.units.len() > 1 {
+        designator.push_str(&unit.label);
+    }
+    // A field shows its default, or its name when it has none.
+    let fields = instances::default_fields(library, d.component)?
+        .into_iter()
+        .map(|f| ShownField {
+            lineage: f.field.id,
+            text: f.text.unwrap_or(f.label),
+            shown: f.show_on_symbol,
+        })
+        .collect();
+    let resolution = Resolution {
+        designator,
+        component_name: d.component_name,
+        fields,
+        physical: d.physical,
+    };
+    Ok(draw(
+        d.symbol,
+        unit,
+        d.component,
+        Transform2::IDENTITY,
+        &resolution,
+        None,
+    ))
 }
 
 /// The project's nets, sorted by ID.
