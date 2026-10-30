@@ -2,6 +2,8 @@
 mod app;
 mod file_ui;
 mod kit;
+mod lighting;
+mod model_scene;
 mod palette;
 mod part_editor;
 mod pcb_editor;

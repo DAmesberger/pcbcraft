@@ -6,11 +6,15 @@
 //! function here instead of string literals across the adapter. Tests run the
 //! session with strict parameter checking for the commands that have
 //! contracts.
+use crate::material::Material;
 use crate::{Error, Result};
 use pcbcraft_core::Layer;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use std::path::Path;
+
+/// Body names per `appearance.assign` call.
+const APPEARANCE_CHUNK: usize = 1024;
 
 /// A Solidcraft expression: a number (millimetres where a length is expected)
 /// or an expression string such as `"board_thickness"` or `"2 mm + x"`.
@@ -156,11 +160,21 @@ impl Native {
         Ok(())
     }
 
-    pub fn color(&mut self, bodies: &[&str], color: &str) -> Result<()> {
-        self.call(
-            "appearance.assign",
-            json!({"bodies": bodies, "color": color}),
-        )?;
+    /// Assign a physical look to bodies, in chunks the command accepts. The
+    /// look is stored in the native file, so Solidcraft shows the same
+    /// material Pcbcraft does.
+    pub fn appearance(&mut self, bodies: &[&str], material: &Material) -> Result<()> {
+        let [r, g, b] = material.srgb8();
+        let color = format!("#{r:02x}{g:02x}{b:02x}");
+        for chunk in bodies.chunks(APPEARANCE_CHUNK) {
+            self.call(
+                "appearance.assign",
+                json!({"bodies": chunk, "name": format!("Pcbcraft {}", material.name),
+                    "color": color, "opacity": 1.0,
+                    "pbr": {"metallic": material.metallic, "roughness": material.roughness,
+                        "dielectric_ior": material.ior}}),
+            )?;
+        }
         Ok(())
     }
 

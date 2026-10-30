@@ -2,6 +2,7 @@
 //! of a Pcbcraft project; all geometry, evaluation and persistence belong to
 //! Solidcraft's engine, reached only through [`native`].
 
+pub mod material;
 pub mod native;
 pub mod project;
 pub mod scene;

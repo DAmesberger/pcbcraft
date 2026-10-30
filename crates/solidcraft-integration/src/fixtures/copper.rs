@@ -320,12 +320,20 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
         if !m.volume.is_finite() || m.volume <= 0.0 {
             return Err(Error::Verification("copper must be a closed volume".into()));
         }
+        let item = manifest
+            .items
+            .iter()
+            .find(|i| i.component == body.component)
+            .map(|i| i.id);
+        let kind = if item.is_some() {
+            crate::material::BodyKind::CopperTrack
+        } else {
+            crate::material::BodyKind::Substrate
+        };
         geometry.push(Geometry {
-            item: manifest
-                .items
-                .iter()
-                .find(|i| i.component == body.component)
-                .map(|i| i.id),
+            item,
+            kind,
+            surface: crate::material::material(kind, crate::material::DEFAULT_FINISH).surface()?,
             mesh: body.mesh(),
             volume: m.volume,
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],

@@ -8,7 +8,7 @@ mod browser;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};
-use crate::scene::{ModelKey, SceneController};
+use crate::scene::{Display, ModelKey, SceneController};
 use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
 use pcbcraft_core::{Engine, Operation, format::EditorFile};
@@ -197,26 +197,42 @@ impl App {
             self.apply(operation);
             return;
         };
-        if !self.scene.showing(&key) {
-            let message = match self.scene.status() {
-                crate::scene::Status::Failed(error) => error.clone(),
-                _ => "Updating 3D model…".into(),
-            };
-            ui.centered_and_justified(|ui| ui.label(message));
+        let display = self.scene.display(&key);
+        let note = match self.scene.status() {
+            crate::scene::Status::Failed(error) => error.clone(),
+            _ => "Updating 3D model…".into(),
+        };
+        if display == Display::Blank {
+            ui.centered_and_justified(|ui| ui.label(note));
             return;
         }
+        let area = ui.available_rect_before_wrap();
         // Component previews never change PCB selection.
-        if self.workspace == Workspace::Part {
+        let pick = if self.workspace == Workspace::Part {
             self.scene.highlight(None, None, None);
             self.scene.viewport.show(ui);
+            None
+        } else {
+            self.scene.highlight(
+                self.pcb.selected_instance(),
+                self.pcb.selected_track(),
+                self.pcb.highlighted_net(),
+            );
+            self.scene.viewport.show(ui)
+        };
+        if display == Display::Stale {
+            // The last model stays up while a newer one builds; picks on it
+            // could name objects that no longer exist, so they are ignored.
+            ui.put(
+                egui::Rect::from_center_size(
+                    area.center_top() + egui::vec2(0.0, 24.0),
+                    egui::vec2(area.width(), 20.0),
+                ),
+                egui::Label::new(note),
+            );
             return;
         }
-        self.scene.highlight(
-            self.pcb.selected_instance(),
-            self.pcb.selected_track(),
-            self.pcb.highlighted_net(),
-        );
-        if let Some(pick) = self.scene.viewport.show(ui) {
+        if let Some(pick) = pick {
             match pick.and_then(|id| self.scene.source(id)) {
                 Some(source) => {
                     let (instance, track, net) = (source.instance, source.track, source.net);

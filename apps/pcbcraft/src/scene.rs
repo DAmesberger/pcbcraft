@@ -1,12 +1,14 @@
 //! The 3D model pipeline: builds native Solidcraft models off the UI thread,
 //! keeps only results for the current input, and maps picks back to
 //! electronics objects. Selection and highlight recolour cached meshes; only a
-//! changed project or package preview rebuilds geometry.
-use crate::palette;
+//! changed project or package preview rebuilds geometry. The worker also
+//! packs the GPU vertices ([`crate::model_scene`]), so the UI thread never
+//! walks a mesh.
+use crate::model_scene::{self, ModelScene};
 use crate::viewport::Viewport;
 use pcbcraft_core::library::PackageDefinition;
 use pcbcraft_core::{Id, Project};
-use pcbcraft_solidcraft::{project::Source, scene::Geometry};
+use pcbcraft_solidcraft::project::Source;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -45,7 +47,7 @@ enum Job {
 
 struct Built {
     ticket: u64,
-    result: Result<(Vec<Geometry>, Vec<Source>), String>,
+    result: Result<(ModelScene, Vec<Source>), String>,
 }
 
 /// One background thread building native models. Only the newest queued
@@ -72,9 +74,9 @@ impl Worker {
                         (ticket, pcbcraft_solidcraft::project::preview(&package))
                     }
                 };
-                let result = result
-                    .map(|model| (model.geometry, model.sources))
-                    .map_err(|e| e.to_string());
+                let result = result.map_err(|e| e.to_string()).and_then(|model| {
+                    model_scene::build(model.geometry).map(|scene| (scene, model.sources))
+                });
                 if results.send(Built { ticket, result }).is_err() {
                     break;
                 }
@@ -90,6 +92,28 @@ pub enum Status {
     Building,
     Ready,
     Failed(String),
+}
+
+/// How the canvas shows a requested model.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Display {
+    /// Nothing of the requested kind was shown yet: a status message only.
+    Blank,
+    /// The last model of the same kind, under an "Updating" or error note;
+    /// picks on it are ignored.
+    Stale,
+    /// Exactly the requested model.
+    Current,
+}
+
+/// A project model is never shown for a package request or the other way
+/// round; a shown model of the right kind stays up while a newer one builds.
+pub fn display(shown: Option<&ModelKey>, requested: &ModelKey, ready: bool) -> Display {
+    match shown {
+        Some(shown) if shown == requested && ready => Display::Current,
+        Some(shown) if shown.is_package() == requested.is_package() => Display::Stale,
+        _ => Display::Blank,
+    }
 }
 
 pub struct SceneController {
@@ -119,9 +143,13 @@ impl SceneController {
         &self.status
     }
 
-    /// Whether the viewport shows exactly `key`.
-    pub fn showing(&self, key: &ModelKey) -> bool {
-        self.shown.as_ref() == Some(key) && matches!(self.status, Status::Ready)
+    /// How the viewport can show `key` now.
+    pub fn display(&self, key: &ModelKey) -> Display {
+        display(
+            self.shown.as_ref(),
+            key,
+            matches!(self.status, Status::Ready),
+        )
     }
 
     /// Ask for a model of `key` unless it is already requested.
@@ -157,12 +185,10 @@ impl SceneController {
                 continue;
             }
             match built.result {
-                Ok((geometry, sources)) => {
-                    let part = self.key.as_ref().is_some_and(ModelKey::is_package);
-                    let colors = model_colors(&geometry, &sources, part);
+                Ok((scene, sources)) => {
                     let kind_changed = self.shown.as_ref().map(ModelKey::is_package)
                         != self.key.as_ref().map(ModelKey::is_package);
-                    self.viewport.set_geometry(geometry, colors);
+                    self.viewport.set_model(scene);
                     if kind_changed {
                         self.viewport.fit();
                     }
@@ -194,27 +220,6 @@ impl SceneController {
     pub fn source(&self, pick: u64) -> Option<&Source> {
         self.sources.iter().find(|s| s.pick_id == pick)
     }
-}
-
-fn model_colors(geometry: &[Geometry], sources: &[Source], part: bool) -> Vec<[u8; 4]> {
-    let colors = palette::board();
-    geometry
-        .iter()
-        .map(|g| {
-            let source = g
-                .item
-                .and_then(|id| sources.iter().find(|s| s.pick_id == id));
-            let color = match source {
-                Some(s) if s.net.is_some() => {
-                    colors.copper(s.layer.unwrap_or(pcbcraft_core::Layer::Top))
-                }
-                Some(_) => colors.package,
-                None if part => colors.part_body,
-                None => colors.substrate,
-            };
-            color.to_array()
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -268,6 +273,21 @@ mod tests {
         assert_ne!(key, ModelKey::Project(Arc::clone(engine.project_arc())));
         engine.undo()?;
         assert_eq!(key, ModelKey::Project(Arc::clone(engine.project_arc())));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_models_stay_up_only_for_their_own_kind() -> Result<(), Box<dyn std::error::Error>> {
+        let project = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let newer = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let package = ModelKey::package(&demo_package()?).ok_or("package key")?;
+        assert_eq!(display(None, &project, false), Display::Blank);
+        assert_eq!(display(Some(&project), &project, true), Display::Current);
+        assert_eq!(display(Some(&project), &project, false), Display::Stale);
+        assert_eq!(display(Some(&project), &newer, true), Display::Stale);
+        // A Part preview never shows the board, nor the board a preview.
+        assert_eq!(display(Some(&project), &package, true), Display::Blank);
+        assert_eq!(display(Some(&package), &project, true), Display::Blank);
         Ok(())
     }
 
