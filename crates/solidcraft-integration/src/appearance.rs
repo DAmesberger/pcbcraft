@@ -6,11 +6,11 @@
 //! so the saved model's bodies stay disjoint (except copper joining copper)
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
-use crate::material::{self, BodyKind, DEFAULT_FINISH};
+use crate::material::{self, BodyKind};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::library::{FootprintDefinition, PackageBody, PackageDefinition};
-use pcbcraft_core::{Layer, Placement, Point, layout};
+use pcbcraft_core::{Fabrication, Layer, Placement, Point, layout};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
 
@@ -55,13 +55,15 @@ const FILLET_STEPS: usize = 10;
 /// Adjacent prism walls turning less than this share a smoothed normal.
 const SMOOTH_TURN: f64 = 0.55;
 
-/// The board the layers sit on, in mm.
+/// The board the layers sit on, in mm, and the fabrication that sets the
+/// mask and finish looks.
 #[derive(Clone, Copy, Debug)]
 pub struct Board {
     pub width: f64,
     pub depth: f64,
     pub thickness: f64,
     pub copper: f64,
+    pub fabrication: Fabrication,
 }
 
 impl Board {
@@ -203,12 +205,24 @@ pub fn board(
         (BodyKind::MaskBottom, Layer::Bottom),
     ] {
         let (z0, z1) = board.span(layer, 0.0, MASK_THICKNESS_MM);
-        push(&mut out, kind, None, prism(&outline, z0, z1))?;
+        push(
+            &mut out,
+            &board.fabrication,
+            kind,
+            None,
+            prism(&outline, z0, z1),
+        )?;
     }
     for land in lands {
         let (z0, z1) = board.span(land.layer, 0.0, board.copper + FINISH_THICKNESS_MM);
         let mesh = prism(&land.corners(FINISH_THICKNESS_MM), z0, z1);
-        push(&mut out, BodyKind::PadFinish, Some(land.pick), mesh)?;
+        push(
+            &mut out,
+            &board.fabrication,
+            BodyKind::PadFinish,
+            Some(land.pick),
+            mesh,
+        )?;
     }
     for path in paths {
         track(&mut out, board, lands, path)?;
@@ -291,6 +305,7 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], band, free_a);
         push(
             out,
+            &board.fabrication,
             BodyKind::MaskCap,
             Some(path.pick),
             prism(&outline, c0, c1),
@@ -312,6 +327,7 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], half, false);
         push(
             out,
+            &board.fabrication,
             BodyKind::PadFinish,
             Some(path.pick),
             prism(&outline, f0, f1),
@@ -402,6 +418,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         board,
         placement: part.placement,
     };
+    let looks = board.map_or_else(Fabrication::default, |b| b.fabrication);
     let package = part.package;
     let [length, width, height] = package.body_size;
     let offset = package.model_offset;
@@ -425,7 +442,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             let top = offset[2] + LEAD_HEIGHT_SHARE * height;
             if top > 0.001 {
                 let mesh = frame.cuboid([min[0], min[1], 0.0], [max[0], max[1], top]);
-                push(out, BodyKind::Termination, part.pick, mesh)?;
+                push(out, &looks, BodyKind::Termination, part.pick, mesh)?;
             }
         }
         return Ok(());
@@ -447,6 +464,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         max[2] = hi[2] + g;
         push(
             out,
+            &looks,
             BodyKind::Termination,
             part.pick,
             frame.cuboid(min, max),
@@ -461,7 +479,13 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         min[2] = hi[2] - OVERCOAT_MM;
         max[2] = hi[2] + OVERCOAT_MM;
         if min[axis] < max[axis] && min[across] < max[across] {
-            push(out, BodyKind::Overcoat, part.pick, frame.cuboid(min, max))?;
+            push(
+                out,
+                &looks,
+                BodyKind::Overcoat,
+                part.pick,
+                frame.cuboid(min, max),
+            )?;
         }
     }
     let (Some(footprint), Some(_)) = (part.footprint, board) else {
@@ -499,7 +523,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             rise,
             [mid - half, mid + half],
         );
-        push(out, BodyKind::Solder, part.pick, mesh)?;
+        push(out, &looks, BodyKind::Solder, part.pick, mesh)?;
     }
     Ok(())
 }
@@ -732,7 +756,13 @@ fn positive(value: f64) -> bool {
     value > 0.0 && value.is_finite()
 }
 
-fn push(out: &mut Vec<Geometry>, kind: BodyKind, item: Option<u64>, mesh: Mesh) -> Result<()> {
+fn push(
+    out: &mut Vec<Geometry>,
+    looks: &Fabrication,
+    kind: BodyKind,
+    item: Option<u64>,
+    mesh: Mesh,
+) -> Result<()> {
     if mesh.triangles.is_empty() {
         return Ok(());
     }
@@ -746,7 +776,7 @@ fn push(out: &mut Vec<Geometry>, kind: BodyKind, item: Option<u64>, mesh: Mesh) 
     out.push(Geometry {
         item,
         kind,
-        surface: material::material(kind, DEFAULT_FINISH).surface()?,
+        surface: material::material(kind, looks).surface()?,
         mesh: Arc::new(mesh),
         volume,
         min: [bounds.min.x, bounds.min.y, bounds.min.z],

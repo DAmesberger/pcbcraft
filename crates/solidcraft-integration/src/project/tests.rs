@@ -440,7 +440,7 @@ fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {
     assert_eq!(scene.meshes.len(), native(model).count());
     for (mesh, geometry) in scene.meshes.iter().zip(native(model)) {
         assert_eq!(mesh.surface, Some(geometry.surface), "{}", mesh.name);
-        let expected = material::material(geometry.kind, DEFAULT_FINISH);
+        let expected = material::material(geometry.kind, &Fabrication::default());
         assert_eq!(mesh.color, expected.srgb8(), "{}", mesh.name);
     }
     Ok(())
@@ -486,7 +486,7 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         let board = geometry.kind.is_board() && geometry.kind != BodyKind::MaskCap;
         assert_eq!(geometry.item.is_none(), board, "{:?}", geometry.kind);
     }
-    let copper = material::material(BodyKind::PadCopper, DEFAULT_FINISH).surface()?;
+    let copper = material::material(BodyKind::PadCopper, &Fabrication::default()).surface()?;
     for source in model.sources.iter().filter(|s| s.pad.is_some()) {
         let pad = source_geometry(&model, BodyKind::PadCopper, |s| s.pick_id == source.pick_id)?;
         let finish = source_geometry(&model, BodyKind::PadFinish, |s| s.pick_id == source.pick_id)?;
@@ -879,5 +879,46 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
             assert!(solder.volume > 0.0);
         }
     }
+    Ok(())
+}
+
+/// The project's fabrication attributes set the drawn mask and finish looks,
+/// while the saved native bodies, their stored looks and every shape stay as
+/// they are for the default fabrication.
+#[test]
+fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Result<()> {
+    use pcbcraft_core::{MaskColour, MaskFinish, PadFinish};
+    let plain = build(&fixture()?)?;
+    let mut project = fixture()?;
+    project.fabrication = Fabrication {
+        mask_colour: MaskColour::Red,
+        mask_finish: MaskFinish::Matte,
+        pad_finish: PadFinish::ImmersionSilver,
+        ..Fabrication::default()
+    };
+    let styled = build(&project)?;
+    looks_match_the_native_file(&styled)?;
+    assert_eq!(plain.geometry.len(), styled.geometry.len());
+    let mut restyled = 0;
+    for (a, b) in plain.geometry.iter().zip(&styled.geometry) {
+        assert_eq!((a.kind, a.item), (b.kind, b.item));
+        assert_eq!((a.min, a.max), (b.min, b.max), "{:?}", a.kind);
+        if b.kind.is_appearance() {
+            // Drawn directly from the table; native bodies go through the
+            // file's 8-bit colour, which looks_match_the_native_file checks.
+            let expected = material::material(b.kind, &project.fabrication).surface()?;
+            assert_eq!(b.surface, expected, "{:?}", b.kind);
+        }
+        if matches!(
+            b.kind,
+            BodyKind::MaskTop | BodyKind::MaskBottom | BodyKind::MaskCap | BodyKind::PadFinish
+        ) {
+            assert_ne!(a.surface, b.surface, "{:?}", b.kind);
+            restyled += 1;
+        } else {
+            assert_eq!(a.surface, b.surface, "{:?}", b.kind);
+        }
+    }
+    assert!(restyled >= 4, "{restyled}");
     Ok(())
 }

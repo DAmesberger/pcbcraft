@@ -468,3 +468,42 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
     );
     Ok(())
 }
+
+/// `board.set_fabrication` sent as JSON changes the saved attributes, is
+/// undoable, appears in the discovery schemas, and an unknown colour is a
+/// malformed request that changes nothing.
+#[test]
+fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let request = |colour: &str, revision: u64| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Layout", "operation": {
+                "command": "board.set_fabrication",
+                "params": {"mask_colour": colour, "mask_finish": "matte",
+                    "pad_finish": "immersion_silver", "silkscreen_colour": "black"}
+            }}
+        }})
+    };
+    let revision = session.engine().revision();
+    let reply = session.dispatch(request("black", revision));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(
+        reply["result"]["project"]["fabrication"],
+        json!({"mask_colour": "black", "mask_finish": "matte",
+            "pad_finish": "immersion_silver", "silkscreen_colour": "black"})
+    );
+    let rejected = session.dispatch(request("orange", revision + 1));
+    assert_eq!(rejected["error"]["code"], "malformed_request", "{rejected}");
+    assert_eq!(session.engine().revision(), revision + 1);
+    let undo = session.dispatch(json!({"command": "project.undo", "params": {}}));
+    assert_eq!(undo["ok"], true);
+    assert_eq!(
+        session.engine().project().fabrication,
+        pcbcraft_core::Fabrication::default()
+    );
+    let schemas = schemas().to_string();
+    assert!(schemas.contains("board.set_fabrication"));
+    assert!(schemas.contains("immersion_silver"));
+    Ok(())
+}

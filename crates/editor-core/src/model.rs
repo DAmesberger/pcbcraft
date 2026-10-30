@@ -99,6 +99,71 @@ pub struct Track {
     pub locked: bool,
 }
 
+/// Soldermask colour as fabricators offer it.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskColour {
+    #[default]
+    Green,
+    Blue,
+    Red,
+    Purple,
+    Yellow,
+    Black,
+    White,
+    /// Unpigmented mask over the natural laminate.
+    Clear,
+}
+
+/// Soldermask surface texture.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskFinish {
+    #[default]
+    Gloss,
+    Satin,
+    Matte,
+}
+
+/// Surface finish plated over copper that the mask leaves exposed.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PadFinish {
+    /// Electroless nickel, immersion gold (IPC-4552).
+    #[default]
+    Enig,
+    /// Hot-air solder levelling with tin-lead solder.
+    Hasl,
+    /// Hot-air solder levelling with a lead-free tin alloy.
+    LeadFreeHasl,
+    /// Organic solderability preservative over bare copper.
+    Osp,
+    /// Immersion silver (IPC-4553).
+    ImmersionSilver,
+}
+
+/// Legend (silkscreen) ink colour.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SilkscreenColour {
+    #[default]
+    White,
+    Black,
+    Yellow,
+}
+
+/// Board fabrication attributes: the finish choices a fabricator builds.
+/// Every combination is valid data; whether a fabricator offers it is their
+/// concern.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct Fabrication {
+    pub mask_colour: MaskColour,
+    pub mask_finish: MaskFinish,
+    pub pad_finish: PadFinish,
+    pub silkscreen_colour: SilkscreenColour,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -116,6 +181,9 @@ pub struct Project {
     pub placements: Vec<Placement>,
     pub tracks: Vec<Track>,
     pub board_size: Point,
+    /// What the fabricator is asked to build. Saved with the design; the 3D
+    /// view draws it, but it never changes the saved native model.
+    pub fabrication: Fabrication,
 }
 
 impl Default for Project {
@@ -132,6 +200,7 @@ impl Default for Project {
             placements: vec![],
             tracks: vec![],
             board_size: [60.0, 40.0],
+            fabrication: Fabrication::default(),
         }
     }
 }

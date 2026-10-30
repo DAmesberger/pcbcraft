@@ -4,7 +4,8 @@
 use crate::kit::{self, Tone};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Id, Layer, Operation, Placement, Point, Project, Track, instances,
+    Engine, Fabrication, Id, Layer, MaskColour, MaskFinish, Operation, PadFinish, Placement, Point,
+    Project, SilkscreenColour, Track, instances,
     layout::{self, LayoutCommand, RouteRequest, WorldPad},
     schematic,
     updates::Change,
@@ -314,29 +315,17 @@ impl PcbEditor {
             return self.update.show(ui, engine);
         }
         let project = engine.project();
-        let mut operation = None;
-        if let Some(placement) = project
+        let operation = if let Some(placement) = project
             .placements
             .iter()
             .find(|p| Some(p.instance) == self.instance)
         {
-            operation = self.placement_section(ui, placement);
+            self.placement_section(ui, placement)
         } else if let Some(track) = project.tracks.iter().find(|t| Some(t.id) == self.track) {
-            operation = track_section(ui, project, track);
+            track_section(ui, project, track)
         } else {
-            kit::section(ui, "pcb-board", "Board", true, None, |ui| {
-                kit::value_row(
-                    ui,
-                    "Size",
-                    &format!(
-                        "{} × {} mm",
-                        kit::number_text(project.board_size[0]),
-                        kit::number_text(project.board_size[1])
-                    ),
-                );
-                kit::value_row(ui, "Copper", "2 layers");
-            });
-        }
+            board_section(ui, project)
+        };
         self.routing_section(ui, project);
         self.checks_section(ui);
         operation
@@ -778,6 +767,95 @@ fn placement_edit(
         layer,
     })
 }
+/// Board size and layers, and the fabrication choices. Choosing another
+/// option issues `board.set_fabrication` with the other attributes kept.
+fn board_section(ui: &mut Ui, project: &Project) -> Option<Operation> {
+    let mut fabrication = project.fabrication;
+    kit::section(ui, "pcb-board", "Board", true, None, |ui| {
+        kit::value_row(
+            ui,
+            "Size",
+            &format!(
+                "{} × {} mm",
+                kit::number_text(project.board_size[0]),
+                kit::number_text(project.board_size[1])
+            ),
+        );
+        kit::value_row(ui, "Copper", "2 layers");
+        kit::choice_row(
+            ui,
+            "Soldermask",
+            &mut fabrication.mask_colour,
+            &mask_colour_options(),
+        );
+        kit::choice_row(
+            ui,
+            "Mask finish",
+            &mut fabrication.mask_finish,
+            &mask_finish_options(),
+        );
+        kit::choice_row(
+            ui,
+            "Pad finish",
+            &mut fabrication.pad_finish,
+            &pad_finish_options(),
+        );
+        kit::choice_row(
+            ui,
+            "Silkscreen",
+            &mut fabrication.silkscreen_colour,
+            &silkscreen_options(),
+        );
+        kit::note(
+            ui,
+            "Saved with the design for fabrication. The 3D view shows mask and pad finish; silkscreen appears once the board has legend graphics.",
+        );
+    });
+    fabrication_edit(project.fabrication, fabrication)
+}
+/// The operation a changed fabrication form issues; `None` when unchanged.
+fn fabrication_edit(current: Fabrication, edited: Fabrication) -> Option<Operation> {
+    (current != edited).then_some(Operation::Layout(LayoutCommand::SetFabrication(edited)))
+}
+fn mask_colour_options() -> [(MaskColour, String); 8] {
+    [
+        (MaskColour::Green, "Green"),
+        (MaskColour::Blue, "Blue"),
+        (MaskColour::Red, "Red"),
+        (MaskColour::Purple, "Purple"),
+        (MaskColour::Yellow, "Yellow"),
+        (MaskColour::Black, "Black"),
+        (MaskColour::White, "White"),
+        (MaskColour::Clear, "Clear"),
+    ]
+    .map(|(value, label)| (value, label.to_owned()))
+}
+fn mask_finish_options() -> [(MaskFinish, String); 3] {
+    [
+        (MaskFinish::Gloss, "Gloss"),
+        (MaskFinish::Satin, "Satin"),
+        (MaskFinish::Matte, "Matte"),
+    ]
+    .map(|(value, label)| (value, label.to_owned()))
+}
+fn pad_finish_options() -> [(PadFinish, String); 5] {
+    [
+        (PadFinish::Enig, "ENIG"),
+        (PadFinish::Hasl, "HASL (tin-lead)"),
+        (PadFinish::LeadFreeHasl, "Lead-free HASL"),
+        (PadFinish::Osp, "OSP"),
+        (PadFinish::ImmersionSilver, "Immersion silver"),
+    ]
+    .map(|(value, label)| (value, label.to_owned()))
+}
+fn silkscreen_options() -> [(SilkscreenColour, String); 3] {
+    [
+        (SilkscreenColour::White, "White"),
+        (SilkscreenColour::Black, "Black"),
+        (SilkscreenColour::Yellow, "Yellow"),
+    ]
+    .map(|(value, label)| (value, label.to_owned()))
+}
 /// Read-only track properties with lock and delete.
 fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operation> {
     let mut action = None;
@@ -1093,6 +1171,52 @@ mod tests {
         Ok(())
     }
 
+    /// Choosing a mask colour in the Board section issues
+    /// `board.set_fabrication` with the other attributes kept; the engine
+    /// applies it as one undo step and the rebuilt 3D layers take the look.
+    #[test]
+    fn board_soldermask_row_issues_set_fabrication() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        assert!(fabrication_edit(Fabrication::default(), Fabrication::default()).is_none());
+        // Open the Soldermask dropdown, then choose Blue.
+        assert!(click(&mut editor, &engine, &ctx, "Green")?.is_none());
+        let operation = click(&mut editor, &engine, &ctx, "Blue")?.ok_or("Blue did nothing")?;
+        let expected = Fabrication {
+            mask_colour: MaskColour::Blue,
+            ..Fabrication::default()
+        };
+        let Operation::Layout(LayoutCommand::SetFabrication(issued)) = &operation else {
+            return Err("the row issued another command".into());
+        };
+        assert_eq!(*issued, expected);
+        engine.apply(engine.revision(), operation)?;
+        assert_eq!(engine.project().fabrication, expected);
+        let model = pcbcraft_solidcraft::project::build(engine.project())?;
+        let blue = pcbcraft_solidcraft::material::material(
+            pcbcraft_solidcraft::material::BodyKind::MaskTop,
+            &expected,
+        )
+        .surface()?;
+        assert!(model.geometry.iter().any(|g| g.kind
+            == pcbcraft_solidcraft::material::BodyKind::MaskTop
+            && g.surface == blue));
+        // The form follows the document: the row now shows Blue, and undo
+        // restores Green.
+        let (output, none) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(none.is_none());
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|s| text_position(&s.shape, "Blue").is_some())
+        );
+        engine.undo()?;
+        assert_eq!(engine.project().fabrication, Fabrication::default());
+        Ok(())
+    }
     #[test]
     fn sync_preview_cancels_cleanly_and_requires_recompute_after_document_edit()
     -> Result<(), Box<dyn std::error::Error>> {

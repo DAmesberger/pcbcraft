@@ -129,7 +129,8 @@ pub fn studio(camera: &Camera, bounds: &Aabb3, exposure: f64) -> Vec<[f32; 16]> 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use pcbcraft_solidcraft::material::{BodyKind, DEFAULT_FINISH, material};
+    use pcbcraft_core::Fabrication;
+    use pcbcraft_solidcraft::material::{BodyKind, material};
     use pcbcraft_solidcraft::render::surface::OpaqueSurface;
 
     /// What the viewport's `fs_pbr` computes for one pixel: the rig's
@@ -207,7 +208,7 @@ pub(crate) mod tests {
     #[test]
     fn exposed_gold_reads_as_metal_from_most_views_and_is_never_black()
     -> Result<(), Box<dyn std::error::Error>> {
-        let enig = material(BodyKind::PadFinish, DEFAULT_FINISH).surface()?;
+        let enig = material(BodyKind::PadFinish, &Fabrication::default()).surface()?;
         let mut values = vec![];
         for camera in views() {
             let rig = studio(&camera, &board(), EXPOSURE);
@@ -236,7 +237,7 @@ pub(crate) mod tests {
 
     #[test]
     fn soldermask_shading_varies_across_the_board() -> Result<(), Box<dyn std::error::Error>> {
-        let mask = material(BodyKind::MaskTop, DEFAULT_FINISH).surface()?;
+        let mask = material(BodyKind::MaskTop, &Fabrication::default()).surface()?;
         let b = board();
         for camera in views() {
             let rig = studio(&camera, &b, EXPOSURE);
@@ -287,7 +288,7 @@ pub(crate) mod tests {
             };
             (e * 255.0).round() as u8
         };
-        let body = material(BodyKind::PackageBody, DEFAULT_FINISH).surface()?;
+        let body = material(BodyKind::PackageBody, &Fabrication::default()).surface()?;
         for (k, light) in rig.iter().enumerate() {
             let c = shade(&[*light], body, Vec3::Z, camera.eye(), camera.target)?;
             println!(
@@ -302,7 +303,7 @@ pub(crate) mod tests {
             BodyKind::PadFinish,
             BodyKind::PackageBody,
         ] {
-            let s = material(kind, DEFAULT_FINISH).surface()?;
+            let s = material(kind, &Fabrication::default()).surface()?;
             println!("{kind:?}");
             for j in (0..5).rev() {
                 let mut row = String::new();

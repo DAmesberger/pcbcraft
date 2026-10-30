@@ -158,6 +158,9 @@ The exact library definitions and assets needed to reproduce a project's symbols
 **Board update**:
 A reviewed transfer of schematic or component changes into the PCB, preserving the identity of existing component instances.
 
+**Fabrication attributes**:
+The board finish choices a fabricator builds: soldermask colour and finish, pad surface finish and silkscreen colour. They are saved in the design; the 3D view draws them, but they do not change the native Solidcraft model.
+
 **Mechanical export**:
 A geometric representation of the board and its components for enclosure and assembly work. It does not contain the complete electrical design.
 

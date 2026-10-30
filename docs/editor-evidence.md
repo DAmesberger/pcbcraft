@@ -56,6 +56,7 @@ After slice 1 (30 October 2026) the app was launched and inspected: the PCB view
   - ENIG finish over every land and over any track copper inside its mask opening, so no bare copper shows at a track/pad junction;
   - the FR-4 board edge;
   - chip resistors with white alumina sides, a black overcoat, tinned terminations wrapped over both ends, and bright concave solder fillets to the lands; MLCC in tan ceramic; moulded packages with low lead bands. The body style is the package's authored `body`, never the designator.
+- **Fabrication presets:** the PCB properties card's Board section has Soldermask (green, blue, red, purple, yellow, black, white, clear), Mask finish (gloss, satin, matte), Pad finish (ENIG, HASL tin-lead, lead-free HASL, OSP, immersion silver) and Silkscreen (white, black, yellow) rows. A change applies `board.set_fabrication` as one undo step; the attributes are saved in the `.pcbcraft` design and reach the CLI and MCP through `project.apply`. The 3D model rebuilds with the mask and finish looks in [materials](materials.md#fabrication-presets); the saved `.solidcraft` model is unchanged. Silkscreen colour is stored but not drawn (no legend graphics yet).
 - **Saved model:** only physical bodies (laminate, copper, envelopes) are native. They are disjoint except copper joining copper, so interference checks and mass properties of the saved file are physical. Display layers are meshes built on the worker and never saved.
 - **Identity:** every native body kind is recorded in the native metadata (`org.pcbcraft.electronics.bodies.N`, measured as serialized so escaped names stay below Solidcraft's 64 KiB value limit). Mask caps and finish strips pick as their track; terminations, overcoat and solder as their part.
 - **Lighting:** a perspective camera (0.5 rad field of view). Key, fill and rim turn with the camera so the model always reads; fifteen reflection lights are fixed in the world (a high softbox, wall panels at two heights, and light bounced off the studio floor that only vertical faces see), so highlights slide across the board when it is orbited. The 13-light ring around the view's mirror direction is gone, and with it the light streaks at grazing angles and the headlight blob at the view centre.
@@ -77,12 +78,15 @@ Moving the appearance layers out of native construction restores the pre-appeara
 
 Checked by screenshot on macOS (dark theme, narrow 860 pt window): Fit shows the whole 60 × 40 mm board in the portrait view; the soldermask shows a bounded sheen that no longer clips to white; zooming toward R1 keeps it under the pointer; close-ups show the wrapped terminations, alumina sides, overcoat, solder fillets and a routed track whose round-ended cap stops at the mask opening, with the net highlighted.
 
+Fabrication presets were checked in the running app on 30 October 2026 (macOS, narrow 860 pt window): the Board section shows the four rows; choosing Red, Black and Clear in the 3D view rebuilt the model with each mask look, marked the document modified and enabled Undo. `cargo xtask ci` passed afterwards (90 core, 7 io, 13 automation, 31 native adapter, 40 desktop tests among them).
+
 The CPU tests cover:
 
 - appearance meshes: closed outward prisms, stadium ends, cap interruption at openings (end and pass-through), finish over exposed track copper, terminations, overcoat and fillets on both sides;
 - native bodies pairwise disjoint (copper joins excepted) and the saved volume;
 - metadata chunks measured with escaping;
 - the light rig: reflection lights stay fixed in the world, gold never goes black over 48 views, catches the softbox in some and reads as metal at the median, and mask shading varies across the board;
+- fabrication presets: every look of every fabrication combination is a valid Solidcraft surface; saved bodies look the same for every fabrication; the mask table, hue and show-through order; finish roughness; a non-default fabrication restyles only the mask and finish layers; `board.set_fabrication` through the engine (undo, redo, stale revision, save/reopen, unknown values and a file without the attributes refused), through JSON and in the schemas; and the Soldermask row issuing the operation;
 - byte layout, the size cap, the parts prefix and shadow counts; recolour-only highlighting; the background repack;
 - fit in wide, narrow and very wide views from four directions; zoom keeps the anchor under the pointer; perspective picking.
 
