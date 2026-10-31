@@ -167,7 +167,9 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
 
 /// One unit: a body rectangle, a pin per terminal pointing into it, the
 /// designator above the body and the component name below it. Unit 1 and
-/// graphics 2–4 use the symbol's local IDs.
+/// graphics 2–4 use the symbol's local IDs. The samples are passives and
+/// connectors whose terminal names are their pin numbers, so pins show
+/// numbers only.
 fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) -> SymbolDefinition {
     let body = layout.body;
     let gap = 0.5;
@@ -202,7 +204,11 @@ fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) ->
             pins: terminals
                 .iter()
                 .zip(layout.pins)
-                .map(|(terminal, position)| graphics::pin_toward(*terminal, position, body))
+                .map(|(terminal, position)| {
+                    let mut pin = graphics::pin_toward(*terminal, position, body);
+                    pin.name.visible = false;
+                    pin
+                })
                 .collect(),
         }],
     }

@@ -41,10 +41,12 @@ pub const MIN_RADIUS_MM: f64 = 0.01;
 pub const SYMBOL_MODULE_MM: f64 = 2.5;
 /// Default symbol stroke width.
 pub const SYMBOL_STROKE_MM: f64 = 0.25;
-/// Default pin name and number height.
-pub const PIN_TEXT_HEIGHT_MM: f64 = 1.25;
-/// Default designator and name text height on symbols.
-pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.5;
+/// Default pin name and number height: smaller than the symbol text, so
+/// pin numbers do not compete with the designator, name and value.
+pub const PIN_TEXT_HEIGHT_MM: f64 = 1.0;
+/// Default designator, name and value text height on symbols: half the
+/// 2.5 mm module, below the height of a two-terminal body.
+pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.25;
 /// How far a point may sit from a grid line and still be on it.
 pub const GRID_TOLERANCE_MM: f64 = 1e-6;
 /// The schematic sheet grid symbols are placed on.

@@ -477,6 +477,8 @@ pub struct PlacedPin {
     /// Where the drawn stub stops (short of an inversion bubble).
     pub line_end: Point,
     pub decorations: Vec<Shape>,
+    /// The terminal's name; `None` when hidden, or when it reads exactly
+    /// as the shown number, which is then drawn alone.
     pub name: Option<PlacedText>,
     /// The designations the instance's binding maps to the terminal; `None`
     /// without a physical choice, never guessed.
@@ -714,6 +716,9 @@ fn draw(
                     let (at, rotation, justify) = pin.number_anchor();
                     place(None, text, at, height, rotation, justify)
                 });
+            // A name that only repeats the number ("1" on pin 1) says
+            // nothing twice: the number alone is drawn.
+            let name = name.filter(|n| number.as_ref().is_none_or(|m| m.text != n.text));
             PlacedPin {
                 terminal: pin.terminal,
                 end: t.apply(pin.position),

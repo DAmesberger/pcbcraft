@@ -241,11 +241,13 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
         .instance(r1)
         .cloned()
         .ok_or_else(|| Error::NotFound("R1".into()))?;
-    let unit = instances::resolve(&engine.project().library, &instance)?
+    let symbol = instances::resolve(&engine.project().library, &instance)?
         .symbol
         .definition
-        .units[0]
         .clone();
+    let unit = symbol.units[0].clone();
+    // Pin names and numbers are drawn at the symbol's pin text height.
+    let height = symbol.pin_text_height;
     for rotation in ROTATIONS {
         for mirror in [false, true] {
             apply(&mut engine, orient(o.id, (rotation, mirror)))?;
@@ -273,13 +275,7 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
                 );
                 assert_upright(text, expected, &format!("{what}: {}", text.text));
             }
-            let height = unit.pins.first().map_or(0.0, |_| {
-                placed
-                    .pins
-                    .iter()
-                    .find_map(|p| p.name.as_ref())
-                    .map_or(0.0, |n| n.height)
-            });
+            assert!(placed.pins.iter().all(|p| p.number.is_some()), "{what}");
             for (pin, local) in placed.pins.iter().zip(&unit.pins) {
                 if let Some(name) = &pin.name {
                     let (at, r, justify) = local.name_anchor();

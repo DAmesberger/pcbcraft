@@ -544,6 +544,24 @@ fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
             return Err(Error::NotFound("sample symbol".into()));
         };
         let unit = &symbol.units[0];
+        // Text reads smaller than the body: designator and name at
+        // 1.25 mm, pin numbers smaller still; terminal names repeat the
+        // pin numbers, so they are hidden.
+        let body = unit.graphics[0].item.bounds(TextMetric::default());
+        let body_height = body.max[1] - body.min[1];
+        for graphic in &unit.graphics[1..] {
+            let Item::Text(text) = &graphic.item else {
+                return Err(Error::Invalid(format!("{graphic:?}")));
+            };
+            assert_eq!(text.height, 1.25, "{graphic:?}");
+            assert!(text.height < body_height);
+        }
+        assert_eq!(symbol.pin_text_height, 1.0);
+        assert!(
+            unit.pins
+                .iter()
+                .all(|p| !p.name.visible && p.number.visible)
+        );
         assert!(matches!(
             unit.graphics[0].item,
             Item::Shape {
@@ -582,13 +600,14 @@ fn unit_bounds_and_hits_use_hand_derived_extents() -> Result<()> {
     };
     let unit = &symbol.units[0];
     let m = TextMetric::default();
-    // Pins reach ±5 mm; the designator (1.5 mm high, bottom at 1.5 mm) and
-    // name (top at −1.5 mm) are 4 placeholder characters × 0.6 × 1.5 mm.
+    // Pins reach ±5 mm; the designator (1.25 mm high, bottom at 1.5 mm)
+    // and name (top at −1.5 mm) are 4 placeholder characters × 0.6 ×
+    // 1.25 mm.
     assert_eq!(
         unit.bounds(m),
         Some(Bounds {
-            min: [-5.0, -3.0],
-            max: [5.0, 3.0]
+            min: [-5.0, -2.75],
+            max: [5.0, 2.75]
         })
     );
     // Picking is one rule, on the drawing core resolves: the designator
@@ -603,7 +622,7 @@ fn unit_bounds_and_hits_use_hand_derived_extents() -> Result<()> {
         Some(SymbolHit::Graphic(GraphicId(2)))
     );
     assert_eq!(
-        drawn.hit([1.0, 2.5], 0.2, m),
+        drawn.hit([0.5, 2.5], 0.2, m),
         Some(SymbolHit::Graphic(GraphicId(3)))
     );
     assert_eq!(
@@ -675,7 +694,8 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
         schematic::pin_position(engine.project(), ep(r1, 1)),
         Some(pin.end)
     );
-    assert_eq!(pin.name.as_ref().map(|t| t.text.as_str()), Some("1"));
+    // The sample hides terminal names, which only repeat the numbers.
+    assert!(pin.name.is_none());
     let number = pin
         .number
         .as_ref()
@@ -748,6 +768,58 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
 }
 
 #[test]
+fn a_pin_name_equal_to_its_number_is_drawn_once() -> Result<()> {
+    let spec = |physical| Spec {
+        terminals: vec![(1, "1", passive()), (2, "B", passive())],
+        physical,
+        ..two("Pair")
+    };
+    let mut engine = Engine::default();
+    let fixture = component(&mut engine, &spec(true))?;
+    let (_, occurrence) = place(&mut engine, &fixture, "U1", 1, [0.0, 0.0])?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    let text = |t: &Option<crate::schematic::PlacedText>| t.as_ref().map(|t| t.text.clone());
+    let pins: Vec<_> = placed
+        .pins
+        .iter()
+        .map(|p| (text(&p.name), text(&p.number)))
+        .collect();
+    // Pin 1's name "1" repeats its number and is dropped; pin 2's name
+    // "B" differs from its number "2" and both are drawn.
+    assert_eq!(
+        pins,
+        vec![
+            (None, Some("1".into())),
+            (Some("B".into()), Some("2".into()))
+        ]
+    );
+    // Picking and bounds follow the drawing: the dropped name's place
+    // inside the body hits the body, not the pin.
+    let m = TextMetric::default();
+    let bounds = placed
+        .bounds(m)
+        .ok_or_else(|| Error::NotFound("bounds".into()))?;
+    for pin in &placed.pins {
+        for t in pin.name.iter().chain(&pin.number) {
+            let b = t.bounds(m);
+            assert!(bounds.contains(b.min) && bounds.contains(b.max), "{t:?}");
+        }
+    }
+
+    // Without a shown number there is nothing to repeat: the name stays.
+    let mut engine = Engine::default();
+    let fixture = component(&mut engine, &spec(false))?;
+    let (_, occurrence) = place(&mut engine, &fixture, "U1", 1, [0.0, 0.0])?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    assert_eq!(
+        placed.pins[0].name.as_ref().map(|t| t.text.as_str()),
+        Some("1")
+    );
+    assert!(placed.pins[0].number.is_none());
+    Ok(())
+}
+
+#[test]
 fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
     let engine = Engine::demo()?;
     let r1 = by_designator(&engine, "R1")?;
@@ -760,13 +832,14 @@ fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
     let placed = schematic::placed_unit(engine.project(), occurrence)?;
     assert_eq!(placed.occurrence, Some(occurrence));
     // The demo shows resistance on the symbol and draws no Field text: the
-    // value sits centred 0.5 mm below the name's bottom edge at −3 mm.
+    // value sits centred 0.5 mm below the name's bottom edge at −2.75 mm.
     let [value] = placed.fields.as_slice() else {
         return Err(Error::Invalid(format!("{:?}", placed.fields)));
     };
     assert_eq!(value.text, "10 kΩ");
     assert!((value.at[0] + 12.0).abs() < 1e-9, "{:?}", value.at);
-    assert!((value.at[1] + 3.5).abs() < 1e-9, "{:?}", value.at);
+    assert!((value.at[1] + 3.25).abs() < 1e-9, "{:?}", value.at);
+    assert_eq!(value.height, 1.25);
     assert_eq!(
         value.justify,
         Justify {
@@ -783,7 +856,7 @@ fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
         let b = text.bounds(m);
         assert!(bounds.contains(b.min) && bounds.contains(b.max), "{text:?}");
     }
-    assert_eq!(bounds.min[1], -3.5 - 1.5);
+    assert_eq!(bounds.min[1], -3.25 - 1.25);
     assert_eq!([bounds.min[0], bounds.max[0]], [-17.0, -7.0]);
     Ok(())
 }
