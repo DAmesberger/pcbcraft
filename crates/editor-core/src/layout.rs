@@ -1,10 +1,10 @@
 //! Placement and manual routing over the electrical document. Geometry here is
 //! electronics checking geometry; native 3D remains in the Solidcraft adapter.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
-use crate::geometry::{Point, point_valid};
+use crate::geometry::{Point, Shape, Transform2, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
-use crate::library::{PadKind, PadShape, PadSide};
+use crate::library::{PAD_ARC_TOLERANCE_MM, PadKind, PadShape, PadSide};
 use crate::model::{EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Track};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,9 @@ const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
 
+pub mod courtyard;
 mod placed;
+pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
     pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
@@ -119,6 +121,24 @@ impl WorldPad {
     /// Whether the pad has copper on `layer`.
     pub fn on(&self, layer: Layer) -> bool {
         self.through || self.layer == layer
+    }
+
+    /// Pad frame to board coordinates.
+    pub fn frame(&self) -> Transform2 {
+        Transform2 {
+            translate: self.position,
+            rotation_deg: self.rotation_deg,
+            mirror: false,
+        }
+    }
+
+    /// The exact copper outline on the board, flattened arcs within
+    /// [`PAD_ARC_TOLERANCE_MM`]. Board checks, airwires and routing snap
+    /// move to this from [`pad_polygon`] (docs/f45-contract.md, boardgeo).
+    pub fn outline(&self) -> Shape {
+        self.shape
+            .outline(PAD_ARC_TOLERANCE_MM)
+            .transformed(&self.frame())
     }
 }
 
@@ -895,6 +915,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
             ));
         }
     }
+    issues.extend(courtyard::findings(project));
     issues
 }
 

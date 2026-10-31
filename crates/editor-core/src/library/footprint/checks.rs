@@ -11,6 +11,12 @@ use std::collections::BTreeSet;
 /// Smallest solder-mask web between two openings the lint accepts, in mm
 /// (an estimated prototype default, not a fabricator qualification).
 pub const MIN_MASK_WEB_MM: f64 = 0.1;
+/// Thinnest silkscreen stroke the lint accepts (`footprint.silk_width`),
+/// in mm (an estimated prototype default; fabricators state their own).
+pub const MIN_SILK_WIDTH_MM: f64 = 0.1;
+/// Smallest silkscreen text height the lint accepts
+/// (`footprint.text_height`), in mm (an estimated prototype default).
+pub const MIN_SILK_TEXT_HEIGHT_MM: f64 = 0.6;
 /// Pads on which the lint expects an authored pin-1 polarity.
 pub(super) const POLARITY_LINT_PADS: usize = 2;
 

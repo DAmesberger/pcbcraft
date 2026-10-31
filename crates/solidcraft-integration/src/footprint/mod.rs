@@ -9,6 +9,7 @@
 //! - [`edit`]: sketch edits and pad templates.
 //! - [`evaluate`]: solve, copper-only profile pass, classification, arrays,
 //!   derived graphics, datum, quantization and the result hash.
+//! - [`view`]: a read-only, id-keyed sketch view for the Footprint tab.
 
 mod arrays;
 mod check;
@@ -18,6 +19,7 @@ mod evaluate;
 mod params;
 #[cfg(test)]
 mod tests;
+pub mod view;
 
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Point;

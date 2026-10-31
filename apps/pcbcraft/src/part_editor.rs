@@ -10,10 +10,14 @@ mod drawing;
 #[cfg(test)]
 mod drawing_tests;
 mod footprint_canvas;
+mod footprint_dims;
 mod footprint_geometry;
+mod footprint_params;
 mod footprint_props;
+mod footprint_template_picker;
 #[cfg(test)]
 mod footprint_tests;
+mod footprint_tools;
 mod part_props;
 mod snap;
 mod symbol_canvas;
@@ -326,6 +330,8 @@ pub struct PartEditor {
     footprint_view: Option<symbol_canvas::ViewState>,
     pad_drag: Option<footprint_canvas::PadDrag>,
     footprint_layers: footprint_canvas::Layers,
+    /// The armed Footprint sketch tool and its pending points.
+    footprint_tool: footprint_tools::ToolState,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
@@ -382,6 +388,7 @@ impl Default for PartEditor {
             footprint_view: None,
             pad_drag: None,
             footprint_layers: Default::default(),
+            footprint_tool: Default::default(),
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
@@ -764,6 +771,10 @@ impl PartEditor {
         self.sync(engine);
         if let Some(t) = drawing::Tool::from_id(tool) {
             self.arm_tool(t);
+            return None;
+        }
+        if let Some(t) = footprint_tools::FootprintTool::from_id(tool) {
+            self.footprint_tool.arm(t);
             return None;
         }
         if let Some(action) = symbol_canvas::Arrange::from_id(tool) {

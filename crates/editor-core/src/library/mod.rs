@@ -25,8 +25,9 @@ pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{
     ApertureId, CHECK_CHORD_MM, CornerMask, Datum, FootprintDefinition, Hole, HoleShape,
     MASK_EXPANSION_MM, MAX_OUTLINE_SEGMENTS, MAX_PAD_VIAS, MAX_PASTE_WINDOWS, MIN_MASK_WEB_MM,
-    MaskRule, Outline, PAD_ARC_TOLERANCE_MM, Pad, PadDefaults, PadKind, PadShape, PadSide, PadVia,
-    PasteRule, PasteWindow, Segment, TerminalRule, bulge_arc, offset_polygon,
+    MIN_SILK_TEXT_HEIGHT_MM, MIN_SILK_WIDTH_MM, MaskRule, Outline, PAD_ARC_TOLERANCE_MM, Pad,
+    PadDefaults, PadKind, PadShape, PadSide, PadVia, PasteRule, PasteWindow, Segment, TerminalRule,
+    bulge_arc, offset_polygon,
 };
 pub use footprint_source::{FootprintEvaluator, FootprintSource};
 pub use graphics::{

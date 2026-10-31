@@ -4,6 +4,7 @@ use crate::ids::{DefinitionId, DefinitionRef};
 use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
+use crate::library::templates::footprint_family::{self, FootprintTemplate};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
@@ -61,6 +62,16 @@ pub enum LibraryCommand {
     EditFootprint {
         draft: DefinitionId,
         edits: Vec<FootprintEdit>,
+    },
+    /// Build a family template (chip, gull-wing, QFN/DFN, pin header) into
+    /// a footprint draft: the template's edits (named parameters, template
+    /// pads, arrays and explicit derived courtyard and assembly roles) go
+    /// through the same path as `library.edit_footprint`, as one undo
+    /// step. Needs the host's footprint evaluator.
+    #[serde(rename = "library.footprint_from_template")]
+    FootprintFromTemplate {
+        draft: DefinitionId,
+        template: Box<FootprintTemplate>,
     },
     /// Land package terminals on footprint pads by an explicit rule. With
     /// `confirm: false` it only reports the changes; nothing is ever
@@ -263,6 +274,16 @@ pub(crate) fn apply_library(
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
             Ok(Outcome::GraphicsEdited { added })
+        }
+        LibraryCommand::FootprintFromTemplate { draft, template } => {
+            let (_, footprint) = footprint_draft(document, draft)?;
+            let package = package_of(document, footprint)?;
+            let edits = footprint_family::edits(&template, package)?;
+            apply_library(
+                document,
+                LibraryCommand::EditFootprint { draft, edits },
+                evaluator,
+            )
         }
         LibraryCommand::EditFootprint { draft, edits } => {
             let (current, footprint) = footprint_draft(document, draft)?;
