@@ -9,13 +9,18 @@ mod arrange;
 mod drawing;
 #[cfg(test)]
 mod drawing_tests;
+mod footprint_canvas;
+mod footprint_geometry;
+mod footprint_props;
+#[cfg(test)]
+mod footprint_tests;
 mod snap;
 mod symbol_canvas;
 mod symbol_props;
 mod working_set;
 
 use crate::kit::{self, Tone};
-use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
+use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::functions::{
@@ -27,9 +32,8 @@ use pcbcraft_core::library::graphics::{
     TextContent, VAlign,
 };
 use pcbcraft_core::library::{
-    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad,
-    PadShape, Pin, PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit,
-    designator_prefix_valid,
+    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
+    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
@@ -314,7 +318,12 @@ pub struct PartEditor {
     view: View,
     selected: Option<TerminalId>,
     notice: String,
-    drag_scale: Option<f32>,
+    /// The pad the Footprint view and its properties edit.
+    selected_pad: Option<PadId>,
+    /// Footprint view pan and zoom; fitted when unset.
+    footprint_view: Option<symbol_canvas::ViewState>,
+    pad_drag: Option<footprint_canvas::PadDrag>,
+    footprint_layers: footprint_canvas::Layers,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
@@ -365,7 +374,10 @@ impl Default for PartEditor {
             view: View::Symbol,
             selected: Some(TerminalId(1)),
             notice: String::new(),
-            drag_scale: None,
+            selected_pad: None,
+            footprint_view: None,
+            pad_drag: None,
+            footprint_layers: Default::default(),
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
@@ -423,6 +435,8 @@ impl PartEditor {
         let lineage = set.as_ref().map(|s| s.ids.component);
         if lineage != self.lineage {
             self.symbol_view = None;
+            self.footprint_view = None;
+            self.selected_pad = None;
             self.selection.clear();
             self.unit = None;
             self.drawing.arm(drawing::Tool::Select);
@@ -451,7 +465,7 @@ impl PartEditor {
         self.baseline = set.clone();
         self.draft = set;
         self.source = Some(current);
-        self.drag_scale = None;
+        self.pad_drag = None;
     }
 
     /// The operation committing a finished edit, if any. Call once per frame
@@ -548,29 +562,77 @@ impl PartEditor {
                 .enabled(has_draft)
                 .tip("Add a terminal with its symbol pin, package terminal and pad"),
         ];
-        if self.view == View::Footprint {
-            edit.push(
-                Tool::new("pad", "rect", "Pad")
-                    .enabled(selected_mapped)
-                    .tip("Add another pad to the selected terminal"),
-            );
-        }
         edit.push(
             Tool::new("remove-terminal", "delete", "Remove")
                 .enabled(has_draft && self.selected.is_some())
                 .tip("Remove the selected terminal everywhere in this component"),
         );
+        let mut groups = vec![Group {
+            label: "Terminals",
+            tools: edit,
+        }];
+        if self.view == View::Footprint {
+            groups.extend(self.footprint_groups(has_draft, selected_mapped));
+        }
+        groups.push(library);
         Ribbon {
             tabs,
-            groups: vec![
-                Group {
-                    label: "Terminals",
-                    tools: edit,
-                },
-                library,
-            ],
+            groups,
             notice: None,
         }
+    }
+
+    /// The Footprint tab's pad tools and layer toggles.
+    fn footprint_groups(&self, has_draft: bool, selected_mapped: bool) -> Vec<crate::shell::Group> {
+        use crate::shell::{Group, Tool};
+        let explicit = self
+            .draft
+            .as_ref()
+            .is_some_and(|set| set.footprint.source.is_none());
+        let has_pad = self.draft.as_ref().is_some_and(|set| {
+            footprint_props::current_pad(
+                &set.footprint,
+                &set.binding,
+                self.selected_pad,
+                self.selected,
+            )
+            .is_some()
+        });
+        let pads = vec![
+            Tool::new("pad", "rect", "SMD pad")
+                .enabled(selected_mapped && explicit)
+                .tip("Add a surface pad to the selected terminal"),
+            Tool::new("pad-pth", "circle", "Through-hole")
+                .enabled(selected_mapped && explicit)
+                .tip("Add a plated through-hole pad to the selected terminal"),
+            Tool::new("pad-npth", "hole", "Hole")
+                .enabled(has_draft && explicit)
+                .tip("Add a non-plated mounting hole (lands no terminal)"),
+            Tool::new("pad-fiducial", "point_center", "Fiducial")
+                .enabled(has_draft && explicit)
+                .tip("Add an optical fiducial (lands no terminal, no paste)"),
+            Tool::new("remove-pad", "delete", "Remove pad")
+                .enabled(has_pad && explicit)
+                .tip("Remove the selected pad; its terminal stays"),
+        ];
+        let layers = footprint_canvas::LAYER_TOOLS
+            .into_iter()
+            .map(|(id, icon, label, tip)| {
+                Tool::new(id, icon, label)
+                    .selected(self.footprint_layers.get(id).unwrap_or(false))
+                    .tip(tip)
+            })
+            .collect();
+        vec![
+            Group {
+                label: "Pads",
+                tools: pads,
+            },
+            Group {
+                label: "Show",
+                tools: layers,
+            },
+        ]
     }
 
     /// The Symbol tab's drawing ribbon: Select; Draw; Pins; Arrange; Grid
@@ -682,13 +744,20 @@ impl PartEditor {
             self.arrange(action, engine.drafts().grid.symbol_mm);
             return None;
         }
+        if self.footprint_layers.toggle(tool) {
+            return None;
+        }
         match tool {
             "grid" => self.show_grid = !self.show_grid,
             "snap" => self.snap = !self.snap,
             "passive" => self.load_template(Template::TwoTerminal),
             "connector" => self.load_template(Template::Header),
             "terminal" => self.add_terminal(),
-            "pad" => self.add_pad(),
+            "pad" => self.add_pad(footprint_geometry::NewPad::Smd),
+            "pad-pth" => self.add_pad(footprint_geometry::NewPad::PlatedThrough),
+            "pad-npth" => self.add_pad(footprint_geometry::NewPad::Hole),
+            "pad-fiducial" => self.add_pad(footprint_geometry::NewPad::Fiducial),
+            "remove-pad" => self.remove_pad(),
             "remove-terminal" => self.remove_selected(),
             "publish" => return self.publish(engine),
             _ => {}
@@ -733,7 +802,7 @@ impl PartEditor {
 
     /// Return the 2D views to their fitted scale.
     pub fn fit(&mut self) {
-        self.drag_scale = None;
+        self.footprint_view = None;
         self.symbol_view = None;
     }
 
@@ -762,7 +831,8 @@ impl PartEditor {
             None => self.request = Some(Request::Create(template)),
         }
         self.notice.clear();
-        self.drag_scale = None;
+        self.footprint_view = None;
+        self.selected_pad = None;
         self.symbol_view = None;
         self.selection.clear();
         self.unit = None;
@@ -924,19 +994,26 @@ impl PartEditor {
         self.selected = set.component.terminals.first().map(|t| t.id);
     }
 
-    fn add_pad(&mut self) {
+    /// Add a pad of `which`: copper pads land the selected terminal's
+    /// package terminal; holes and fiducials land none. The pad goes to the
+    /// right of the existing lands and becomes the selected pad.
+    fn add_pad(&mut self, which: footprint_geometry::NewPad) {
         let Some(set) = &mut self.draft else {
             return;
         };
-        let Some(terminal) = set
+        if set.footprint.source.is_some() {
+            self.notice = "Pads are derived from the footprint sketch".into();
+            return;
+        }
+        let terminal = set
             .binding
             .mappings
             .iter()
             .find(|m| Some(m.terminal) == self.selected)
-            .map(|m| m.package_terminal)
-        else {
+            .map(|m| m.package_terminal);
+        if which.lands_terminal() && terminal.is_none() {
             return;
-        };
+        }
         if set.footprint.pads.len() >= pcbcraft_core::library::MAX_PADS {
             self.notice = format!(
                 "Maximum {} pads in this edition",
@@ -950,20 +1027,57 @@ impl PartEditor {
             return;
         };
         set.footprint.next_local = next;
-        let number = set
-            .package
-            .terminals
-            .iter()
-            .find(|t| t.id == terminal)
-            .map(|t| t.designation.clone())
-            .unwrap_or_default();
-        set.footprint.pads.push(Pad::smd_rect(
+        let number = match terminal.filter(|_| which.lands_terminal()) {
+            Some(terminal) => set
+                .package
+                .terminals
+                .iter()
+                .find(|t| t.id == terminal)
+                .map(|t| t.designation.clone())
+                .unwrap_or_default(),
+            None => {
+                let same = set
+                    .footprint
+                    .pads
+                    .iter()
+                    .filter(|p| p.kind == which.kind())
+                    .count();
+                format!("{}{}", which.prefix(), same + 1)
+            }
+        };
+        let pad = footprint_geometry::new_pad(
+            which,
             PadId(id),
             terminal,
             number,
-            [0.0, 0.0],
-            [1.0, 1.4],
-        ));
+            footprint_geometry::free_spot(&set.footprint.pads),
+        );
+        set.footprint.pads.push(pad);
+        self.selected_pad = Some(PadId(id));
+    }
+
+    /// Remove the selected pad. Its package terminal stays; a terminal left
+    /// without pads is reported when publishing.
+    fn remove_pad(&mut self) {
+        let Some(set) = &mut self.draft else {
+            return;
+        };
+        if set.footprint.source.is_some() {
+            return;
+        }
+        let Some(id) = footprint_props::current_pad(
+            &set.footprint,
+            &set.binding,
+            self.selected_pad,
+            self.selected,
+        ) else {
+            return;
+        };
+        set.footprint.pads.retain(|p| p.id != id);
+        if set.footprint.polarity.as_ref().is_some_and(|p| p.pad == id) {
+            set.footprint.polarity = None;
+        }
+        self.selected_pad = None;
     }
 
     /// Blocking publish findings of the committed drafts, from the engine.
@@ -1332,68 +1446,6 @@ impl PartEditor {
         operation
     }
 
-    fn footprint_inspector(&mut self, ui: &mut Ui) {
-        if let Some(set) = &mut self.draft {
-            kit::section(ui, "package-datum", "Package datum", true, None, |ui| {
-                kit::pair_row(
-                    ui,
-                    "Offset",
-                    &mut set.footprint.datum.offset,
-                    "mm",
-                    -10000.0..=10000.0,
-                );
-            });
-        }
-        self.terminal_list(ui);
-        let Some(set) = &mut self.draft else {
-            return;
-        };
-        let physical: Vec<_> = set
-            .binding
-            .mappings
-            .iter()
-            .filter(|m| Some(m.terminal) == self.selected)
-            .map(|m| m.package_terminal)
-            .collect();
-        let options: Vec<_> = set
-            .package
-            .terminals
-            .iter()
-            .map(|t| (Some(t.id), t.designation.clone()))
-            .collect();
-        let mut pads: Vec<_> = set
-            .footprint
-            .pads
-            .iter_mut()
-            .filter(|p| p.terminal.is_some_and(|t| physical.contains(&t)))
-            .collect();
-        let count = pads.len();
-        kit::section(ui, "pads", "Pads", true, Some(count), |ui| {
-            if pads.is_empty() {
-                kit::note(ui, "The selected terminal has no pads.");
-            }
-            for (index, pad) in pads.iter_mut().enumerate() {
-                if index > 0 {
-                    kit::rule(ui);
-                }
-                ui.push_id(("pad", pad.id.0), |ui| {
-                    kit::choice_row(ui, "Terminal", &mut pad.terminal, &options);
-                    kit::pair_row(ui, "Position", &mut pad.position, "mm", -10000.0..=10000.0);
-                    if let PadShape::Rect { size }
-                    | PadShape::RoundRect { size, .. }
-                    | PadShape::Oblong { size } = &mut pad.shape
-                    {
-                        kit::pair_row(ui, "Land size", size, "mm", 0.01..=10000.0);
-                    }
-                });
-            }
-            kit::note(
-                ui,
-                "Pad size is independent of the package body. Each pad remains a routing obligation.",
-            );
-        });
-    }
-
     fn mapping_inspector(&mut self, ui: &mut Ui) {
         let Some(set) = &mut self.draft else {
             return;
@@ -1528,116 +1580,7 @@ impl PartEditor {
             self.symbol_canvas(ui, rect, &response, engine);
             return None;
         }
-        let Some(set) = &mut self.draft else {
-            return None;
-        };
-        let t = Tokens::get();
-        let painter = ui.painter().with_clip_rect(rect);
-        let (extent_x, extent_y) = set.footprint.pads.iter().fold(
-            (
-                set.package.body_size[0] / 2.0,
-                set.package.body_size[1] / 2.0,
-            ),
-            |(x, y), p| {
-                (
-                    x.max(p.position[0].abs() + p.shape.extent()[0] / 2.0),
-                    y.max(p.position[1].abs() + p.shape.extent()[1] / 2.0),
-                )
-            },
-        );
-        if !ui.input(|input| input.pointer.any_down()) {
-            self.drag_scale = None;
-        }
-        let fitted_scale = (rect.width() as f64 / (2.0 * extent_x + 6.0))
-            .min(rect.height() as f64 / (2.0 * extent_y + 6.0))
-            .clamp(0.001, 80.0) as f32;
-        let scale = self.drag_scale.unwrap_or(fitted_scale);
-        let transform =
-            |p: Point| rect.center() + egui::vec2(p[0] as f32 * scale, -p[1] as f32 * scale);
-        let origin = rect.center();
-        painter.line_segment(
-            [
-                origin - egui::vec2(10.0, 0.0),
-                origin + egui::vec2(10.0, 0.0),
-            ],
-            Stroke::new(1.0, t.text_dim),
-        );
-        painter.line_segment(
-            [
-                origin - egui::vec2(0.0, 10.0),
-                origin + egui::vec2(0.0, 10.0),
-            ],
-            Stroke::new(1.0, t.text_dim),
-        );
-        painter.text(
-            rect.left_top() + egui::vec2(t.space_16, t.space_16),
-            Align2::LEFT_TOP,
-            "Footprint · copper lands",
-            fonts::semibold(t.font_panel),
-            t.text,
-        );
-        let mut selected = self.selected;
-        let mut drag_scale = self.drag_scale;
-        let body_origin = transform(set.footprint.datum.offset);
-        let body = Rect::from_center_size(
-            body_origin,
-            egui::vec2(
-                set.package.body_size[0] as f32,
-                set.package.body_size[1] as f32,
-            ) * scale,
-        );
-        painter.rect_stroke(
-            body,
-            t.radius_sm,
-            Stroke::new(1.0, t.text_dim),
-            StrokeKind::Inside,
-        );
-        for pad in &mut set.footprint.pads {
-            let electrical = pad.terminal.and_then(|t| set.binding.terminal_of(t));
-            let at = transform(pad.position);
-            let size =
-                egui::vec2(pad.shape.extent()[0] as f32, pad.shape.extent()[1] as f32) * scale;
-            let land = Rect::from_center_size(at, size);
-            let ink = if electrical.is_some() && electrical == selected {
-                t.body_selected
-            } else {
-                t.accent
-            };
-            painter.rect_filled(land, 0, ink);
-            let number = pad
-                .terminal
-                .and_then(|t| set.package.terminal(t))
-                .map(|p| p.designation.as_str())
-                .unwrap_or("?");
-            painter.text(
-                land.center(),
-                Align2::CENTER_CENTER,
-                number,
-                fonts::semibold(t.font_label),
-                t.on_accent,
-            );
-            let response = ui.interact(
-                land.expand(3.0),
-                ui.id().with(("footprint-pad", pad.id.0)),
-                Sense::click_and_drag(),
-            );
-            if response.clicked() || response.drag_started() {
-                selected = electrical;
-            }
-            if response.drag_started() {
-                drag_scale = Some(scale);
-            }
-            if response.dragged()
-                && let Some(p) = response.interact_pointer_pos()
-            {
-                pad.position = [
-                    f64::from((p.x - origin.x) / scale),
-                    f64::from((origin.y - p.y) / scale),
-                ];
-            }
-        }
-        self.selected = selected;
-        self.drag_scale = drag_scale;
+        self.footprint_canvas(ui, rect, &response, engine.drafts().grid.footprint_mm);
         None
     }
 
