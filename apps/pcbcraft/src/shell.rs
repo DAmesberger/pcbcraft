@@ -33,7 +33,7 @@ const OVERFLOW_MENU_WIDTH: f32 = 200.0;
 const OVERFLOW_ROW_HEIGHT: f32 = 30.0;
 const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Workspace {
     Part,
     Schematic,
@@ -827,6 +827,47 @@ pub fn card(
                         });
                 });
         });
+}
+
+/// The inset of a column card's frame, in points.
+pub const COLUMN_CARD_INSET: i8 = 4;
+
+/// A card of the right column (`kit::card::column`): it fills `rect`
+/// exactly, whatever its content, so the cards stacked in the column keep
+/// their places. `add` gets the whole inner rectangle, with no scroll of
+/// its own (`kit::card::card` owns the one scroll). `inset` is the frame's
+/// vertical inset; the horizontal one is [`COLUMN_CARD_INSET`].
+pub fn column_card<R>(
+    ctx: &egui::Context,
+    id: &str,
+    rect: Rect,
+    inset: i8,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let t = Tokens::get();
+    if !rect.is_finite() || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return None;
+    }
+    let host = Container::new(ctx, Surface::Panel);
+    let frame = host
+        .frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
+        .inner_margin(egui::Margin::symmetric(COLUMN_CARD_INSET, inset));
+    let inner = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
+    let shown = host
+        .area(egui::Id::new(id))
+        .fixed_pos(rect.min)
+        .movable(false)
+        .order(egui::Order::Middle)
+        .show(ctx, |ui| {
+            frame
+                .show(ui, |ui| {
+                    ui.set_min_size(inner);
+                    ui.set_max_size(inner);
+                    add(ui)
+                })
+                .inner
+        });
+    Some(shown.inner)
 }
 
 /// The properties card's title band: what is inspected and its kind.
