@@ -1243,6 +1243,18 @@ impl PartEditor {
         if !unpublished {
             self.update_section(ui, engine);
         }
+        // Library folders (S3): Promote to library… and Duplicate of the
+        // published revision; the app runs them.
+        if let Some(set) = &self.draft
+            && let Some(component) = set.published(engine)
+        {
+            crate::library_sources::component_section(
+                ui,
+                engine,
+                component,
+                &set.metas.component.name,
+            );
+        }
         operation
     }
 

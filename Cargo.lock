@@ -2736,6 +2736,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "solidcraft-ui-egui",
+ "tempfile",
 ]
 
 [[package]]
