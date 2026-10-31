@@ -32,6 +32,17 @@ pub enum PackageModel {
     Imported(ImportedModel),
 }
 
+impl PackageModel {
+    /// A short description for update diffs and the inspector.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Envelope { material } => format!("approximate envelope ({material:?})"),
+            Self::Generated { family_rev, .. } => format!("generated (builder rev {family_rev})"),
+            Self::Imported(_) => "imported".into(),
+        }
+    }
+}
+
 impl Default for PackageModel {
     fn default() -> Self {
         Self::Envelope {
@@ -54,6 +65,19 @@ pub enum BodyRole {
     Sleeve,
     Marking,
     Other,
+}
+
+impl BodyRole {
+    pub const ALL: [Self; 8] = [
+        Self::Body,
+        Self::Lead,
+        Self::Termination,
+        Self::ExposedPad,
+        Self::Lens,
+        Self::Sleeve,
+        Self::Marking,
+        Self::Other,
+    ];
 }
 
 /// One body role's material override.
@@ -84,8 +108,9 @@ impl GeneratedMaterials {
     }
 }
 
-/// The family default material of each body role. Contract body; the M1
-/// core task may refine it (never by names).
+/// The family default material of each body role, from the form's typed
+/// family and chip kind (never from names). Gull-wing leads are matte tin
+/// over a copper-alloy frame, header pins gold-plated, header housings PBT.
 pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
     use super::package_form::ChipKind;
     match (form, role) {
@@ -195,7 +220,14 @@ pub fn edit_package(
     let mut out = package.clone();
     for edit in edits {
         match edit {
-            PackageEdit::SetForm(form) => out.form = form.clone(),
+            PackageEdit::SetForm(form) => {
+                out.form = form.clone();
+                // A typed form derives the envelope; `Generic` keeps the
+                // authored one.
+                if let Some(envelope) = form.envelope() {
+                    out.envelope = envelope;
+                }
+            }
             PackageEdit::SetModel(model) => out.model = model.clone(),
             PackageEdit::SetPlacement(placement) => {
                 if !placement.finite() {
@@ -258,5 +290,89 @@ mod tests {
         };
         assert!(edit_package(&package, &[PackageEdit::SetPlacement(bad)]).is_err());
         assert!(edit_package(&package, &[]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use crate::library::package_form::{ChipForm, ChipKind};
+    use crate::library::{FootprintDefinition, PackageDefinition};
+
+    #[test]
+    fn a_typed_form_sets_the_envelope_in_the_same_edit() -> Result<()> {
+        let package = PackageDefinition {
+            envelope: [9.0, 9.0, 9.0],
+            ..PackageDefinition::default()
+        };
+        let form = PackageForm::Chip(Box::new(ChipForm::new(
+            ChipKind::Capacitor,
+            [1.0, 0.5, 0.5],
+        )));
+        let edited = edit_package(&package, &[PackageEdit::SetForm(form)])?;
+        assert_eq!(edited.envelope, [1.0, 0.5, 0.5]);
+        let generic = edit_package(&edited, &[PackageEdit::SetForm(PackageForm::Generic)])?;
+        assert_eq!(
+            generic.envelope,
+            [1.0, 0.5, 0.5],
+            "generic keeps the authored envelope"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quarter_turn_frames_are_exact_and_compose() {
+        let datum = Datum {
+            offset: [0.5, -0.25],
+            rotation_deg: -90.0,
+        };
+        let placement = ModelPlacement {
+            translation: [0.0, 0.0, 0.1],
+            rotation_deg: [90.0, 180.0, 270.0],
+        };
+        assert!(placement.quarter_turns());
+        let m = model_frame(&datum, &placement);
+        for row in m.rotation {
+            for v in row {
+                assert!(v == 0.0 || v == 1.0 || v == -1.0, "{v}");
+            }
+        }
+        // Intrinsic X→Y→Z: Rz first on the point, then Ry, then Rx, then D.
+        let p = [1.0, 2.0, 3.0];
+        let by_hand = {
+            let z = Transform3::rot_z(270.0).apply(p);
+            let y = Transform3::rot_y(180.0).apply(z);
+            let x = Transform3::rot_x(90.0).apply(y);
+            let t = [x[0], x[1], x[2] + 0.1];
+            let d = Transform3::rot_z(-90.0).apply(t);
+            [d[0] + 0.5, d[1] - 0.25, d[2]]
+        };
+        assert_eq!(m.apply(p), by_hand);
+    }
+
+    #[test]
+    fn the_envelope_outline_follows_the_model_frame() {
+        let mut package = PackageDefinition {
+            envelope: [4.0, 2.0, 1.0],
+            ..PackageDefinition::default()
+        };
+        let mut footprint = FootprintDefinition::default();
+        footprint.datum.offset = [1.0, 0.0];
+        let o = footprint.envelope_outline(&package);
+        assert_eq!((o.min, o.max), ([-1.0, -1.0], [3.0, 1.0]));
+        // A quarter turn about z and a placement shift both apply.
+        package.placement = ModelPlacement {
+            translation: [0.0, 0.5, 0.0],
+            rotation_deg: [0.0, 0.0, 90.0],
+        };
+        let o = footprint.envelope_outline(&package);
+        assert_eq!((o.min, o.max), ([0.0, -1.5], [2.0, 2.5]));
+        // Standing the model up (90° about x) shows its height as width.
+        package.placement = ModelPlacement {
+            translation: [0.0; 3],
+            rotation_deg: [90.0, 0.0, 0.0],
+        };
+        let o = footprint.envelope_outline(&package);
+        assert_eq!((o.min, o.max), ([-1.0, -1.0], [3.0, 0.0]));
     }
 }

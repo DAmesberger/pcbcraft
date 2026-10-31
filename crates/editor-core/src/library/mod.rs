@@ -37,7 +37,7 @@ pub use graphics::{
     PinDirection, PinText, PlacedText, Polarity, Rotation, Side, SymbolHit, Text, TextContent,
     TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint,
 };
-pub use package::{PackageBody, PackageDefinition, PackageTerminal};
+pub use package::{PackageDefinition, PackageTerminal};
 pub use package_form::{
     ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm,
 };

@@ -70,7 +70,10 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
         with(e, f.footprint, footprint_body, |fp| {
             fp.pads[1].position = [1.2, 2.0]
         })?;
-        with(e, f.package, package_body, |p| p.body_size[2] = 2.0)
+        with(e, f.package, package_body, |p| {
+            // A refusal would leave the envelope stale, which publishing rejects.
+            let _ = p.resize_envelope([p.envelope[0], p.envelope[1], 2.0]);
+        })
     })?;
     let before = engine.project().clone();
     let revision = engine.revision();
@@ -1067,4 +1070,80 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
             "U1: footprint array 9 3 → 1 instances; new pads none (0 without a package terminal), retired pads 2, 3.".to_string(),
         ]
     );
+}
+
+#[test]
+fn package_details_name_each_physical_change() {
+    use crate::library::{
+        ChipForm, ChipKind, GeneratedMaterials, ModelPlacement, PackageForm, PackageModel,
+        RoleMaterial,
+    };
+    use crate::materials::MaterialId;
+    let chip = |kind| PackageDefinition {
+        form: PackageForm::Chip(Box::new(ChipForm::new(kind, [1.6, 0.8, 0.45]))),
+        envelope: [1.6, 0.8, 0.45],
+        model: PackageModel::Generated {
+            family_rev: 1,
+            materials: GeneratedMaterials::default(),
+        },
+        ..PackageDefinition::default()
+    };
+    let a = chip(ChipKind::Resistor);
+    assert!(package_details(&a, &a).is_empty());
+    // A thicker termination: one changed pkg value, nothing else.
+    let mut b = a.clone();
+    if let PackageForm::Chip(c) = &mut b.form {
+        c.termination = 0.4;
+    }
+    let lines = package_details(&a, &b);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("package parameter pkg_a ") && lines[0].ends_with("→ 0.4 mm."));
+    // Another chip kind changes the body's default material too.
+    let lines = package_details(&a, &chip(ChipKind::Capacitor));
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("chip kind Resistor → Capacitor")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("Body material Alumina96 → BariumTitanate")),
+        "{lines:?}"
+    );
+    // A family change, a model source change, a role override, a placement.
+    let generic = PackageDefinition {
+        envelope: [1.6, 0.8, 0.45],
+        ..PackageDefinition::default()
+    };
+    let lines = package_details(&a, &generic);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("package form Chip → Generic")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("3D model generated")),
+        "{lines:?}"
+    );
+    let mut c = a.clone();
+    c.model = PackageModel::Generated {
+        family_rev: 1,
+        materials: GeneratedMaterials {
+            roles: vec![RoleMaterial {
+                role: BodyRole::Termination,
+                material: MaterialId::Gold,
+            }],
+        },
+    };
+    c.placement = ModelPlacement {
+        translation: [0.0, 0.0, 0.05],
+        rotation_deg: [0.0, 0.0, 90.0],
+    };
+    let lines = package_details(&a, &c);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains("Termination material TinMatte → Gold"));
+    assert!(lines[1].starts_with("model placement"));
 }

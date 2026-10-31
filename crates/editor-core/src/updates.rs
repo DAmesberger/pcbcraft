@@ -12,10 +12,11 @@ use crate::ids::{
 };
 use crate::instances::{self, Regroup, Resolved, UnitCarry};
 pub use crate::instances::{RegroupAction, UnitTarget};
+use crate::library::footprint_source::ParamValue;
 use crate::library::{
-    BindingDefinition, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
-    PackageDefinition, Pad, PadKind, PadShape, PasteRule, Pin, PinDirection, PinText,
-    SymbolDefinition, Terminal, TerminalClass,
+    BindingDefinition, BodyRole, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
+    PackageDefinition, PackageForm, PackageModel, Pad, PadKind, PadShape, PasteRule, Pin,
+    PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
 use crate::{erc, layout, nets, schematic, validate};
@@ -823,6 +824,98 @@ pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usi
     (added, removed, changed)
 }
 
+/// Physical differences between two package revisions: the form family and
+/// each changed `pkg_*` value, the envelope, the model source and body
+/// materials, and the model placement. Empty when they agree.
+pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<String> {
+    let mut out = Vec::new();
+    if a.form.label() != b.form.label() {
+        out.push(format!(
+            "package form {} → {}.",
+            a.form.label(),
+            b.form.label()
+        ));
+    } else if a.form != b.form {
+        let before = a.form.values();
+        let after = b.form.values();
+        for value in &after {
+            match before.iter().find(|v| v.name == value.name) {
+                Some(old) if old.value != value.value => out.push(format!(
+                    "package parameter {} {} → {}.",
+                    value.name.0,
+                    show_value(&old.value),
+                    show_value(&value.value)
+                )),
+                Some(_) => {}
+                None => out.push(format!(
+                    "package parameter {} added ({}).",
+                    value.name.0,
+                    show_value(&value.value)
+                )),
+            }
+        }
+        for old in before
+            .iter()
+            .filter(|v| after.iter().all(|n| n.name != v.name))
+        {
+            out.push(format!("package parameter {} removed.", old.name.0));
+        }
+        if let (PackageForm::Chip(x), PackageForm::Chip(y)) = (&a.form, &b.form)
+            && x.kind != y.kind
+        {
+            out.push(format!("chip kind {:?} → {:?}.", x.kind, y.kind));
+        }
+    }
+    if a.envelope != b.envelope {
+        out.push(format!(
+            "model dimensions {:?} → {:?} mm.",
+            a.envelope, b.envelope
+        ));
+    }
+    match (&a.model, &b.model) {
+        (
+            PackageModel::Generated {
+                family_rev: ra,
+                materials: ma,
+            },
+            PackageModel::Generated {
+                family_rev: rb,
+                materials: mb,
+            },
+        ) => {
+            if ra != rb {
+                out.push(format!("generated model builder rev {ra} → {rb}."));
+            }
+            for role in BodyRole::ALL {
+                let (x, y) = (ma.material(&a.form, role), mb.material(&b.form, role));
+                if x != y {
+                    out.push(format!("{role:?} material {x:?} → {y:?}."));
+                }
+            }
+        }
+        (x, y) if x != y => out.push(format!("3D model {} → {}.", x.describe(), y.describe())),
+        _ => {}
+    }
+    if a.placement != b.placement {
+        out.push(format!(
+            "model placement {:?} mm, {:?}° → {:?} mm, {:?}°.",
+            a.placement.translation,
+            a.placement.rotation_deg,
+            b.placement.translation,
+            b.placement.rotation_deg
+        ));
+    }
+    out
+}
+
+fn show_value(value: &ParamValue) -> String {
+    match value {
+        ParamValue::Length(v) => format!("{v} mm"),
+        ParamValue::Angle(v) => format!("{v}°"),
+        ParamValue::Count(n) => n.to_string(),
+    }
+}
+
 /// Definition differences reachable from two resolved states of one instance.
 fn definition_details(
     plan: &mut UpdatePlan,
@@ -838,13 +931,10 @@ fn definition_details(
             a.name, b.name
         ));
     }
-    if let (Some(pa), Some(pb)) = (a.package, b.package)
-        && (pa.body_size != pb.body_size || pa.model_offset != pb.model_offset)
-    {
-        plan.detail(format!(
-            "{designator}: model dimensions {:?} → {:?} mm; model offset {:?} → {:?} mm.",
-            pa.body_size, pb.body_size, pa.model_offset, pb.model_offset
-        ));
+    if let (Some(pa), Some(pb)) = (a.package, b.package) {
+        for line in package_details(pa, pb) {
+            plan.detail(format!("{designator}: {line}"));
+        }
     }
     // Units, pins and graphics.
     for unit in &a.symbol.units {

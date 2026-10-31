@@ -34,8 +34,9 @@ use pcbcraft_core::library::graphics::{
     TextContent, VAlign,
 };
 use pcbcraft_core::library::{
-    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
-    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
+    ChipForm, ChipKind, ComponentDefinition, Drafts, FieldView, Item, Library, PackageForm,
+    PackageModel, PackageTerminal, Pad, Pin, PinDirection, Published, Terminal, TerminalClass,
+    TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
@@ -991,12 +992,10 @@ impl PartEditor {
             .map(|n| n.to_string())
             .find(|n| !taken(n))
             .unwrap_or_else(|| physical.to_string());
-        if set.package.body.is_chip() && set.package.terminals.len() >= 2 {
-            self.notice = format!(
-                "A {} body has exactly two terminals; change Body on the 3D tab to Moulded, \
-                 or remove this terminal",
-                set.package.body.label().to_lowercase()
-            );
+        if set.package.chip_kind().is_some() && set.package.terminals.len() >= 2 {
+            self.notice = "A chip body has exactly two terminals; change Body on the 3D tab \
+                 to Moulded, or remove this terminal"
+                .to_owned();
         }
         set.component.terminals.push(Terminal {
             id: electrical,
@@ -1595,19 +1594,38 @@ impl PartEditor {
         };
         let package = &mut set.package;
         kit::section(ui, "model-body", "Body", true, None, |ui| {
-            let options: Vec<(PackageBody, String)> = PackageBody::ALL
-                .into_iter()
-                .map(|b| (b, b.label().to_owned()))
-                .collect();
-            kit::choice_row(ui, "Body", &mut package.body, &options);
-            for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                kit::number_row(
-                    ui,
-                    label,
-                    &mut package.body_size[index],
-                    "mm",
-                    0.01..=10000.0,
-                );
+            // Generic (moulded) or a typed chip; other typed forms derive
+            // their envelope and are edited by their parameters.
+            let editable = matches!(package.form, PackageForm::Generic | PackageForm::Chip(_));
+            if editable {
+                let mut chip = package.chip_kind();
+                let options = [
+                    (None, "Moulded".to_owned()),
+                    (Some(ChipKind::Resistor), "Chip resistor".to_owned()),
+                    (Some(ChipKind::Capacitor), "Chip capacitor".to_owned()),
+                    (Some(ChipKind::Inductor), "Chip inductor".to_owned()),
+                ];
+                if kit::choice_row(ui, "Body", &mut chip, &options) {
+                    package.form = chip.map_or(PackageForm::Generic, |kind| {
+                        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
+                    });
+                    // A generic package has only its envelope model.
+                    if chip.is_none() && matches!(package.model, PackageModel::Generated { .. }) {
+                        package.model = PackageModel::default();
+                    }
+                }
+            } else {
+                kit::note(ui, &format!("{} form", package.form.label()));
+            }
+            let mut size = package.envelope;
+            let mut changed = false;
+            ui.add_enabled_ui(editable, |ui| {
+                for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
+                    changed |= kit::number_row(ui, label, &mut size[index], "mm", 0.01..=10000.0);
+                }
+            });
+            if changed && package.resize_envelope(size).is_err() {
+                self.notice = "This form's envelope follows its parameters".to_owned();
             }
             kit::note(
                 ui,
@@ -1619,7 +1637,7 @@ impl PartEditor {
                 kit::number_row(
                     ui,
                     label,
-                    &mut package.model_offset[index],
+                    &mut package.placement.translation[index],
                     "mm",
                     -10000.0..=10000.0,
                 );
@@ -1843,7 +1861,10 @@ fn functions_section(
 /// by finding code.
 fn fix_hint(code: &str) -> Option<&'static str> {
     match code {
-        "package.body" => Some("Change Body on the 3D tab, or remove terminals."),
+        "package.form_terminals" => Some("Change Body on the 3D tab, or remove terminals."),
+        "package.envelope_derived" | "package.form_range" => {
+            Some("Check the package dimensions on the 3D tab.")
+        }
         _ => None,
     }
 }

@@ -11,9 +11,7 @@ use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
 use pcbcraft_core::library::offset_polygon;
-use pcbcraft_core::library::{
-    FootprintDefinition, PackageBody, PackageDefinition, PadKind, PadSide,
-};
+use pcbcraft_core::library::{ChipKind, FootprintDefinition, PackageDefinition, PadKind, PadSide};
 use pcbcraft_core::{Fabrication, Layer, Placement, Point, layout};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
@@ -168,10 +166,12 @@ impl Body {
     /// The body a package declares. Explicit data only: never guessed from
     /// a designator, name or value.
     pub fn of(package: &PackageDefinition) -> Self {
-        match package.body {
-            PackageBody::Moulded => Self::Moulded,
-            PackageBody::ChipResistor => Self::Resistor,
-            PackageBody::ChipCapacitor => Self::Ceramic,
+        match package.chip_kind() {
+            None => Self::Moulded,
+            Some(ChipKind::Resistor) => Self::Resistor,
+            // Until the generated chip model (M2) draws ferrite, an inductor
+            // shows the ceramic chip's wrapped terminations.
+            Some(ChipKind::Capacitor | ChipKind::Inductor) => Self::Ceramic,
         }
     }
 
@@ -447,8 +447,8 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     };
     let looks = board.map_or_else(Fabrication::default, |b| b.fabrication);
     let package = part.package;
-    let [length, width, height] = package.body_size;
-    let offset = package.model_offset;
+    let [length, width, height] = package.envelope;
+    let offset = package.placement.translation;
     let lo = [offset[0] - length / 2.0, offset[1] - width / 2.0, offset[2]];
     let hi = [
         offset[0] + length / 2.0,
@@ -477,7 +477,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     // Chip parts: tinned caps wrapped over both ends of the long axis.
     let axis = usize::from(width > length);
     let across = 1 - axis;
-    let long = package.body_size[axis];
+    let long = package.envelope[axis];
     let band = (BAND_SHARE * long).min(BAND_MAX_MM);
     let g = TERMINATION_GROWTH_MM;
     for sign in [-1.0, 1.0] {
@@ -562,8 +562,8 @@ fn lead_band(
     footprint: &FootprintDefinition,
     pad: &pcbcraft_core::library::Pad,
 ) -> Option<([f64; 2], [f64; 2])> {
-    let [length, width, _] = package.body_size;
-    let offset = package.model_offset;
+    let [length, width, _] = package.envelope;
+    let offset = package.placement.translation;
     let body_min = [offset[0] - length / 2.0, offset[1] - width / 2.0];
     let body_max = [offset[0] + length / 2.0, offset[1] + width / 2.0];
     let (center, extent) = pad_box(footprint, pad)?;

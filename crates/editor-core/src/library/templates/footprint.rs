@@ -238,7 +238,7 @@ mod tests {
             ..FootprintDefinition::default()
         };
         let package = PackageDefinition {
-            body_size: [2.0, 1.2, 0.6],
+            envelope: [2.0, 1.2, 0.6],
             ..PackageDefinition::default()
         };
         (footprint, package)

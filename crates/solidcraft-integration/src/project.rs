@@ -498,11 +498,11 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let created = b.native.component(&label, false)?;
         for (axis, value) in ["length", "width", "height"]
             .into_iter()
-            .zip(package.body_size)
+            .zip(package.envelope)
         {
             b.param(&format!("{prefix}_{axis}"), value, "mm")?;
         }
-        let offset = package.model_offset;
+        let offset = package.placement.translation;
         let body = Body::of(package);
         b.body(
             body.kind(),
@@ -768,11 +768,11 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
     let mut b = Builder::new("Package envelope")?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
-        .zip(package.body_size)
+        .zip(package.envelope)
     {
         b.param(name, value, "mm")?;
     }
-    let offset = package.model_offset;
+    let offset = package.placement.translation;
     let body = Body::of(package);
     let kind = match body {
         Body::Moulded => BodyKind::PartBody,

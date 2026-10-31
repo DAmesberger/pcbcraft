@@ -10,8 +10,8 @@ use crate::instances::NewInstance;
 use crate::layout::LayoutCommand;
 use crate::library::{
     BindingDefinition, ComponentDefinition, Definition, DraftEdit, FootprintDefinition,
-    PackageBody, PackageDefinition, PackageTerminal, Pad, Pin, PinDirection, SymbolDefinition,
-    Terminal, TerminalClass, TerminalMap, Unit,
+    PackageDefinition, PackageTerminal, Pad, Pin, PinDirection, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit,
 };
 use crate::updates::{Change, FunctionResolution, InstanceChange, Resolutions};
 use crate::{
@@ -336,9 +336,7 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
                 designation: i.to_string(),
             })
             .collect(),
-        body_size: [5.0, 5.0, 0.9],
-        model_offset: [0.0; 3],
-        body: PackageBody::Moulded,
+        envelope: [5.0, 5.0, 0.9],
         ..PackageDefinition::default()
     };
     // Perimeter lands 1–20; package terminal 21 (the exposed pad) has three

@@ -512,19 +512,23 @@ impl FootprintDefinition {
         self.polarity.as_ref().and_then(|p| self.pad(p.pad))
     }
 
-    /// The package envelope (body length × width, centred on the package
-    /// datum) in the footprint-local frame. The one frame both the part
-    /// editor and PCB 2D use. Datum rotation is applied to the box corners.
+    /// The package envelope's footprint (its box seen from above) in the
+    /// footprint-local frame: the envelope corners through
+    /// [`model_frame`](super::model_frame), so the datum and the model
+    /// placement both apply. The one frame the part editor, PCB 2D and the
+    /// courtyard use. Exact at quarter turns.
     pub fn envelope_outline(&self, package: &PackageDefinition) -> Bounds {
-        let [l, w, _] = package.body_size;
-        let (c, s) = crate::geometry::cos_sin(self.datum.rotation_deg);
-        let hw = 0.5 * (l * c.abs() + w * s.abs());
-        let hh = 0.5 * (l * s.abs() + w * c.abs());
-        let o = self.datum.offset;
-        Bounds {
-            min: [o[0] - hw, o[1] - hh],
-            max: [o[0] + hw, o[1] + hh],
+        let frame = super::model_frame(&self.datum, &package.placement);
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        for corner in package.envelope_corners() {
+            let p = frame.apply(corner);
+            for axis in 0..2 {
+                min[axis] = min[axis].min(p[axis]);
+                max[axis] = max[axis].max(p[axis]);
+            }
         }
+        Bounds { min, max }
     }
 
     pub(super) fn within_bounds(&self) -> bool {

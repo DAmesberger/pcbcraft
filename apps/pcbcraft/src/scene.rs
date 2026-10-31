@@ -247,7 +247,7 @@ mod tests {
             .cloned()
             .ok_or("demo package draft")?;
         if let Definition::Package(package) = &mut draft.definition {
-            package.body_size[0] += 1.0;
+            package.envelope[0] += 1.0;
         }
         engine.apply(
             engine.revision(),
@@ -295,7 +295,7 @@ mod tests {
     fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut package = demo_package()?;
         let key = ModelKey::package(&package);
-        package.body_size[0] += 1.0;
+        package.envelope[0] += 1.0;
         assert_ne!(key, ModelKey::package(&package));
         Ok(())
     }

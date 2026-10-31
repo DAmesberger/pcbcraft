@@ -61,8 +61,11 @@ A pin function that a particular device binding cannot provide. An instance whos
 A physical component body and its terminal arrangement, independent of the particular PCB land pattern used to mount it.
 _Avoid_: Footprint
 
-**Package body style**:
-The authored construction of a package body (moulded, chip resistor or chip capacitor) that sets its 3D look; never inferred from a designator or name.
+**Package form**:
+The authored, typed physical construction of a package (generic, chip, gull-wing, no-lead or pin header) with its dimensions; the only source of `pkg_*` values and of generated 3D models, never inferred from a designator or name.
+
+**Physical material**:
+A built-in material a 3D body is made of (epoxy mould compound, alumina, tin, gold, PBT, …), with cited or estimated optical values; never a colour or a vendor look.
 
 **Package terminal**:
 A physical electrical connection on a package, such as a lead, ball or exposed pad, with an explicit designation.

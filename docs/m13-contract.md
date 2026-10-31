@@ -8,14 +8,14 @@ Each stub either has the simplest correct body or refuses explicitly, with an `*
 
 | Item | Location | State |
 | --- | --- | --- |
-| `materials` module: `MaterialId` (24 physical materials), `MaterialCategory`, `MaterialDef`, `Coat`, `Transmission`, `SurfacePattern`, `PatternKind`, `SourceNote`, `builtin(id)` | `crates/editor-core/src/materials.rs` (new core row; may use `diagnostics`; `library`, `updates`, `commands` may use it) | `builtin` refuses `material.unsupported` |
+| `materials` module: `MaterialId` (24 physical materials), `MaterialCategory`, `MaterialDef`, `Coat`, `Transmission`, `SurfacePattern`, `PatternKind`, `SourceNote`, `builtin(id)` | `crates/editor-core/src/materials.rs` (new core row; may use `diagnostics`; `library`, `updates`, `commands` may use it) | done (task 1): cited table; added `all`, `MaterialDef::{validate, dielectric_f0}`, `BUILTIN_REVISION`, `EST` |
 | `Point3`, `Transform3` (`rot_x/y/z`, `intrinsic_xyz`, `then`, `apply`), exact at quarter turns | `crates/editor-core/src/geometry/frame3.rs` | done, tested |
-| `PackageForm` (`Generic`, `Chip`, `GullWing`, `NoLead`, `Header`; boxed parameters), `ChipForm`, `ChipKind`, `GullWingForm`, `NoLeadForm`, `HeaderForm`, `LeadSides`, `PackageForm::{label, lengths, envelope, values}` | `crates/editor-core/src/library/package_form.rs` | `values` emits only `pkg_e`; `envelope` is a first derivation; no range findings yet |
+| `PackageForm` (`Generic`, `Chip`, `GullWing`, `NoLead`, `Header`; boxed parameters), `ChipForm`, `ChipKind`, `GullWingForm`, `NoLeadForm`, `HeaderForm`, `LeadSides`, `PackageForm::{label, lengths, envelope, values}` | `crates/editor-core/src/library/package_form.rs` | done (task 1): full `pkg_*`, range findings; added `ChipForm::new`, `lead_count`, `terminal_counts`, `lead_points` (lead order in the module docs), `range_problems`, `within_bounds` |
 | `PackageModel` (`Envelope { material }`, `Generated { family_rev, materials }`, `Imported(ImportedModel)`), `BodyRole`, `RoleMaterial`, `GeneratedMaterials::material`, `default_material`, `ImportedModel` (empty M4 placeholder) | `crates/editor-core/src/library/package_model.rs` | `Imported` gives the blocking finding `package.model_unsupported` |
 | `ModelPlacement { translation, rotation_deg }` (intrinsic X→Y→Z, degrees), `transform`, `finite`, `quarter_turns` | same | done |
 | `model_frame(&Datum, &ModelPlacement) -> Transform3` (M = D ∘ placement) | same | done, tested |
 | `PackageEdit` (`SetForm`, `SetModel`, `SetPlacement`, `ApplyQuick(QuickAction)`), `QuickAction`, `Axis`, `edit_package` | same | `ApplyQuick` refuses with `package.quick_unsupported` |
-| `PackageDefinition.{form, model, placement}` | `crates/editor-core/src/library/package.rs` | new required fields; `body_size`, `model_offset` and `body` remain until task 1 replaces them |
+| `PackageDefinition.{form, model, placement}` | `crates/editor-core/src/library/package.rs` | done (task 1): `body_size` → `envelope`, `model_offset` → `placement.translation`, `body`/`PackageBody` removed (`chip_kind()` reads the chip form); added `resize_envelope`, `envelope_corners` |
 | `LibraryCommand::EditPackage { draft, edits }` (`library.edit_package`) | `crates/editor-core/src/commands/library.rs` | done: atomic, one undo step |
 | `LibraryCommand::FitLeads { draft, pairs, rotation, confirm }` (`library.fit_leads`), `Outcome::LeadsFitted { fit, applied }` | same, `commands/mod.rs` | dispatches to `fit_leads` |
 | `FitRotation`, `LeadPair`, `LeadResidual`, `LeadFit`, `fit_leads`, `LEAD_OFF_LAND_FRACTION` | `crates/editor-core/src/library/package_fit.rs` | `fit_leads` refuses with `package.fit_unsupported` |
@@ -65,4 +65,4 @@ Shared files take additive edits only: `library/mod.rs` re-exports, `lib.rs`, `c
 ## Open points for the tasks
 
 - `FitLeads.pairs` comes from the host, which extracts lead points through the integration crate. Task 3 may replace the pairs with a host trait in the style of `FootprintEvaluator` if that keeps CLI and MCP self-sufficient.
-- `MaterialDef` has no saved form in a project snapshot yet. Task 1 decides whether the snapshot copies definitions (as the design says) or pins the app's material revision.
+- `MaterialDef` has no saved form in a project snapshot yet. Decided (task 1): neither copy nor pin for now. A project stores only `MaterialId`s, and the saved `.solidcraft` model carries each body's opaque projection, so reopen is exact; built-in values are app data revisioned by `materials::BUILTIN_REVISION`. User materials, when they exist, become a revisioned library definition kind, snapshotted like other definitions.

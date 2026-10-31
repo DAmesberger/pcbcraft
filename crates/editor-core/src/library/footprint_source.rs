@@ -214,12 +214,12 @@ pub struct PackageValue {
 /// envelope as `pkg_L`, `pkg_W`, `pkg_H` (lengths) and the terminal count
 /// as `pkg_n`. Package parameters extend this list.
 pub fn package_values(package: &PackageDefinition) -> Vec<PackageValue> {
-    let [l, w, h] = package.body_size;
+    let [l, w, h] = package.envelope;
     let length = |name: &str, v: f64| PackageValue {
         name: ParamName(format!("{PACKAGE_PREFIX}{name}")),
         value: ParamValue::Length(v),
     };
-    vec![
+    let mut values = vec![
         length("L", l),
         length("W", w),
         length("H", h),
@@ -227,7 +227,9 @@ pub fn package_values(package: &PackageDefinition) -> Vec<PackageValue> {
             name: ParamName(format!("{PACKAGE_PREFIX}n")),
             value: ParamValue::Count(u32::try_from(package.terminals.len()).unwrap_or(u32::MAX)),
         },
-    ]
+    ];
+    values.extend(package.form.values());
+    values
 }
 
 /// The sketch role of one anchored pad.

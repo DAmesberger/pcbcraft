@@ -5,9 +5,10 @@
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
 use super::templates;
 use super::{
-    BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
-    Terminal, TerminalClass, TerminalMap, Unit,
+    BindingDefinition, ChipForm, ChipKind, ComponentDefinition, Definition, DefinitionMeta,
+    DraftEdit, FootprintDefinition, GeneratedMaterials, ModelPlacement, PackageDefinition,
+    PackageForm, PackageModel, PackageTerminal, Pad, SymbolDefinition, Terminal, TerminalClass,
+    TerminalMap, Unit,
 };
 use crate::fields::{FieldDefinition, QuantityKind, ValueType};
 use crate::functions::{Direction, TerminalFunctions};
@@ -40,27 +41,32 @@ fn meta(name: &str) -> DefinitionMeta {
     }
 }
 
-/// What a sample is: its designator prefix and package body.
+/// What a sample is: its designator prefix and, for a chip, its chip
+/// construction (`None` is a generic moulded envelope).
 #[derive(Clone, Copy, Debug)]
 pub struct Kind<'a> {
     pub prefix: &'a str,
-    pub body: PackageBody,
+    pub chip: Option<ChipKind>,
 }
 
 impl Kind<'static> {
     pub const RESISTOR: Self = Self {
         prefix: "R",
-        body: PackageBody::ChipResistor,
+        chip: Some(ChipKind::Resistor),
     };
     pub const CAPACITOR: Self = Self {
         prefix: "C",
-        body: PackageBody::ChipCapacitor,
+        chip: Some(ChipKind::Capacitor),
     };
     pub const CONNECTOR: Self = Self {
         prefix: "J",
-        body: PackageBody::Moulded,
+        chip: None,
     };
 }
+
+/// The builder revision a sample's generated model is authored against
+/// (`models::family_rev` in the integration crate).
+const SAMPLE_FAMILY_REV: u16 = 1;
 
 struct Layout {
     /// The body rectangle, in the unit frame.
@@ -85,10 +91,21 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
                 designation: id.to_string(),
             })
             .collect(),
-        body_size: layout.envelope,
-        model_offset: layout.offset,
-        body: kind.body,
-        ..PackageDefinition::default()
+        form: kind.chip.map_or(PackageForm::Generic, |chip| {
+            PackageForm::Chip(Box::new(ChipForm::new(chip, layout.envelope)))
+        }),
+        envelope: layout.envelope,
+        model: match kind.chip {
+            Some(_) => PackageModel::Generated {
+                family_rev: SAMPLE_FAMILY_REV,
+                materials: GeneratedMaterials::default(),
+            },
+            None => PackageModel::default(),
+        },
+        placement: ModelPlacement {
+            translation: layout.offset,
+            rotation_deg: [0.0; 3],
+        },
     };
     vec![
         DraftEdit {

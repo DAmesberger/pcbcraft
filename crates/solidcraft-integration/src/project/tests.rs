@@ -1,6 +1,17 @@
 use super::*;
 use pcbcraft_core::geometry::cos_sin;
-use pcbcraft_core::library::PackageBody;
+use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
+
+/// Give `package` a chip form of `kind` over its envelope, or a generic
+/// (moulded) one with an envelope model.
+fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
+    package.form = kind.map_or(PackageForm::Generic, |kind| {
+        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
+    });
+    if kind.is_none() {
+        package.model = PackageModel::default();
+    }
+}
 use pcbcraft_core::library::PadShape;
 use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
 use solidcraft_engine::geom::Vec3;
@@ -28,7 +39,7 @@ fn fixture() -> Result<Project> {
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
-    project.library.packages[0].definition.model_offset = [0.25, -0.4, 0.2];
+    project.library.packages[0].definition.placement.translation = [0.25, -0.4, 0.2];
     project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
@@ -307,9 +318,9 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .packages[0]
         .definition
         .clone();
-    package.body_size = [4.0, 3.0, 2.0];
-    package.model_offset = [1.5, -2.0, 0.4];
-    package.body = PackageBody::Moulded;
+    package.envelope = [4.0, 3.0, 2.0];
+    package.placement.translation = [1.5, -2.0, 0.4];
+    set_body(&mut package, None);
     let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
     assert_eq!(model.geometry[0].kind, BodyKind::PartBody);
@@ -318,9 +329,9 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     near(model.geometry[0].volume, 24.0);
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
-    package.body_size = [2.0, 1.25, 0.5];
-    package.model_offset = [0.0; 3];
-    package.body = PackageBody::ChipResistor;
+    package.envelope = [2.0, 1.25, 0.5];
+    package.placement.translation = [0.0; 3];
+    set_body(&mut package, Some(ChipKind::Resistor));
     let chip = preview(&package)?;
     assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
     assert_eq!(count(&chip, BodyKind::Termination), 2);
@@ -337,13 +348,13 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         assert!(end.min[0] <= -1.01 + 1e-9 || end.max[0] >= 1.01 - 1e-9);
     }
     // A chip-capacitor body: MLCC ceramic, terminations, no overcoat.
-    package.body = PackageBody::ChipCapacitor;
+    set_body(&mut package, Some(ChipKind::Capacitor));
     let ceramic = preview(&package)?;
     assert_eq!(ceramic.geometry[0].kind, BodyKind::ChipCapacitor);
     assert_eq!(count(&ceramic, BodyKind::Termination), 2);
     assert_eq!(count(&ceramic, BodyKind::Overcoat), 0);
     looks_match_the_native_file(&ceramic)?;
-    package.body_size[0] = 0.0;
+    package.envelope[0] = 0.0;
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
 }
@@ -366,14 +377,17 @@ fn placed_body_follows_the_package_body_not_the_designator() -> Result<()> {
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);
     assert_eq!(count(&model, BodyKind::Overcoat), 2);
     let mut project = fixture()?;
-    project.library.packages[0].definition.body = PackageBody::ChipCapacitor;
+    set_body(
+        &mut project.library.packages[0].definition,
+        Some(ChipKind::Capacitor),
+    );
     let model = build(&project)?;
     assert!(project.instance_by_designator("R1").is_some());
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 2);
     assert_eq!(count(&model, BodyKind::ChipResistor), 0);
     assert_eq!(count(&model, BodyKind::Overcoat), 0);
     assert_eq!(count(&model, BodyKind::Termination), 4);
-    project.library.packages[0].definition.body = PackageBody::Moulded;
+    set_body(&mut project.library.packages[0].definition, None);
     let model = build(&project)?;
     assert_eq!(count(&model, BodyKind::PackageBody), 2);
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);

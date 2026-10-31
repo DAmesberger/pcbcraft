@@ -700,7 +700,7 @@ impl PartEditor {
                 .terminals
                 .iter()
                 .all(|t| set.symbol.pin(t.id).is_some())
-            && set.package.body.is_chip()
+            && set.package.chip_kind().is_some()
             && set.package.terminals.len() >= 2
         {
             return "a new pin adds a terminal, which a chip body does not allow \

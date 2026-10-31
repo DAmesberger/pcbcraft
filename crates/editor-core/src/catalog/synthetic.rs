@@ -251,8 +251,8 @@ fn shared_package(
     for mut edit in edits {
         match &mut edit.definition {
             Definition::Package(package) => {
-                if small {
-                    package.body_size = SMALL.0;
+                if small && package.resize_envelope(SMALL.0).is_err() {
+                    package.envelope = SMALL.0;
                 }
                 body = Some(package.clone());
                 edit.meta = meta(label, "Synthetic two-terminal package");
