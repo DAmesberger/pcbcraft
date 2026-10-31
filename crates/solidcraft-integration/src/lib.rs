@@ -5,6 +5,7 @@
 //! meshes in Solidcraft's mesh type ([`appearance`]), never saved.
 
 pub mod appearance;
+pub mod footprint;
 pub mod material;
 pub mod native;
 pub mod project;

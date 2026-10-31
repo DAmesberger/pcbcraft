@@ -7,7 +7,7 @@ mod library;
 pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
 pub use library::LibraryCommand;
-pub(crate) use library::apply_library;
+pub(crate) use library::{apply_library, preview_footprint};
 
 use crate::fields::EffectiveField;
 use crate::functions::Resolution;
@@ -53,6 +53,16 @@ pub enum Outcome {
     /// Graphic IDs `library.edit_graphics` allocated, in edit order.
     GraphicsEdited {
         added: Vec<GraphicId>,
+    },
+    /// What `library.edit_footprint` created and its evaluation findings.
+    FootprintEdited {
+        report: crate::library::footprint_edit::FootprintEditReport,
+    },
+    /// The terminal changes of `library.assign_terminals`; `applied` is
+    /// false for a preview.
+    TerminalsAssigned {
+        changes: Vec<crate::library::footprint_edit::TerminalChange>,
+        applied: bool,
     },
 }
 

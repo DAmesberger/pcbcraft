@@ -7,6 +7,7 @@ mod binding;
 mod component;
 pub mod drafts;
 mod footprint;
+pub mod footprint_edit;
 pub mod footprint_source;
 pub mod graphics;
 mod package;

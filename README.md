@@ -57,11 +57,12 @@ Field keys come from the project's field names and units, so a query reports `V>
 
 The core contains a bounded Rhai integration for unit-aware expressions and draft pad-array generation. Units are request data; the interpreter has no component-specific property schema. `library.generate_pads` (on a footprint draft) is available inside `project.apply` through CLI/MCP, with ordinary revision checks and undo. This is a headless feasibility slice, not a new component editor or a complete library scripting format. See the [contract and limits](docs/part-library-design.md#rhai-integration-proof).
 
-Native scripting tests run in `cargo xtask ci`. To also execute the seven scripting tests as WebAssembly under Node (rather than only compile wasm), install Node and the test runner matching the locked `wasm-bindgen` version:
+Native scripting tests run in `cargo xtask ci`. To also execute the seven scripting tests, and the footprint evaluator's golden-hash tests (native/wasm agreement), as WebAssembly under Node (rather than only compile wasm), install Node and the test runner matching the locked `wasm-bindgen` version:
 
 ```sh
 cargo install wasm-bindgen-cli --version 0.2.129 --locked
 cargo xtask wasm-scripting
+cargo xtask wasm-footprint
 ```
 
 Run these inside `nix develop` when using the Nix toolchain. The runner must be on `PATH`, or set `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` to its executable path. This optional runtime check is separate from `cargo xtask ci`; it does not exercise browser UI.
