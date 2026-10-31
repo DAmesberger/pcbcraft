@@ -683,12 +683,16 @@ impl SchematicEditor {
         }
         if self.show_checks {
             // Purchasing findings (advisory) join the electrical checks.
-            let purchasing: Vec<String> = project
+            let purchasing: Vec<(Id, String)> = project
                 .instances
                 .iter()
-                .flat_map(|i| instances::part_findings(&project.library, i))
-                .map(|f| f.message)
+                .flat_map(|i| {
+                    instances::part_findings(&project.library, i)
+                        .into_iter()
+                        .map(|f| (i.id, f.message))
+                })
                 .collect();
+            let mut target = None;
             kit::section(
                 ui,
                 "checks",
@@ -700,10 +704,20 @@ impl SchematicEditor {
                         kit::note(ui, "No issues in the supported check subset.");
                     }
                     for issue in &self.issues {
-                        kit::status(ui, &issue.message, Tone::Error);
+                        let locates = locate(&issue.objects);
+                        let hint = locates.map(|l| match l {
+                            Locate::Instance(_) => "Select the instance on the sheet",
+                            Locate::Net(_) => "Select the net on the sheet",
+                        });
+                        if kit::finding_row(ui, &issue.message, Tone::Error, hint).clicked() {
+                            target = target.or(locates);
+                        }
                     }
-                    for message in &purchasing {
-                        kit::status(ui, message, Tone::Warning);
+                    for (instance, message) in &purchasing {
+                        let hint = Some("Select the instance on the sheet");
+                        if kit::finding_row(ui, message, Tone::Warning, hint).clicked() {
+                            target = target.or(Some(Locate::Instance(*instance)));
+                        }
                     }
                     kit::note(
                         ui,
@@ -712,6 +726,14 @@ impl SchematicEditor {
                     );
                 },
             );
+            match target {
+                Some(Locate::Instance(id)) => {
+                    self.select(Some(id), None, project);
+                    self.tool = Tool::Select;
+                }
+                Some(Locate::Net(net)) => self.select_net(net, project),
+                None => {}
+            }
         }
         output
     }
@@ -756,7 +778,10 @@ impl SchematicEditor {
         kit::section(ui, "sheet", "Sheet", true, None, |ui| {
             kit::value_row(ui, "Instances", &project.instances.len().to_string());
             kit::value_row(ui, "Wires", &project.wires.len().to_string());
-            kit::value_row(ui, "Nets", &self.nets.len().to_string());
+            let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
+            ui.scope(|ui| kit::value_row(ui, "Nets", &connected.to_string()))
+                .response
+                .on_hover_text("Nets that join two or more terminals");
             kit::note(ui, self.tool_hint());
             kit::note(
                 ui,
@@ -1831,6 +1856,35 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + delta * t)
 }
 
+/// The object a check row selects on the sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Locate {
+    Instance(Id),
+    Net(Id),
+}
+
+/// The first instance (directly, or through a terminal, unit, pad or
+/// property) a finding names, else its first net.
+fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Locate> {
+    use pcbcraft_core::diagnostics::ObjectRef;
+    objects
+        .iter()
+        .find_map(|o| match o {
+            ObjectRef::Instance { id }
+            | ObjectRef::Pad { instance: id, .. }
+            | ObjectRef::Unit { instance: id, .. }
+            | ObjectRef::Property { instance: id, .. } => Some(Locate::Instance(*id)),
+            ObjectRef::Terminal { endpoint } => Some(Locate::Instance(endpoint.instance)),
+            _ => None,
+        })
+        .or_else(|| {
+            objects.iter().find_map(|o| match o {
+                ObjectRef::Net { id } => Some(Locate::Net(*id)),
+                _ => None,
+            })
+        })
+}
+
 #[cfg(test)]
 mod part_tests;
 #[cfg(test)]
@@ -1949,6 +2003,60 @@ mod tests {
             vec![egui::Event::PointerMoved(point), press(true)],
         );
         Ok(frame(editor, engine, ctx, vec![press(false)]).1)
+    }
+
+    /// The demo plus an unwired R3, whose two terminals are single-terminal
+    /// nets.
+    fn with_unwired() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let first = engine.project().instances[0].clone();
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(
+                pcbcraft_core::instances::NewInstance {
+                    component: first.component,
+                    designator: Some("R3".into()),
+                    properties: vec![],
+                    representation: first.representation,
+                    unit: pcbcraft_core::UnitId(1),
+                    position: [30.0, 0.0],
+                    physical: first.physical,
+                },
+            )),
+        )?;
+        let r3 = engine
+            .project()
+            .instance_by_designator("R3")
+            .map(|i| i.id)
+            .ok_or("R3 missing")?;
+        Ok((engine, r3))
+    }
+
+    /// B-e: the Sheet's Nets count leaves out single-terminal nets.
+    #[test]
+    fn the_sheet_counts_only_nets_joining_two_or_more_terminals()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (engine, _) = with_unwired()?;
+        let nets = &engine.project().nets;
+        let connected = nets.iter().filter(|n| n.terminals.len() >= 2).count();
+        assert!(nets.len() > connected, "fixture has no single-terminal net");
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let shown = shown(&output);
+        let label = shown
+            .iter()
+            .find(|(t, _)| t == "Nets")
+            .ok_or("no Nets row")?
+            .1;
+        // The value is the text on the Nets row's line.
+        let value = shown
+            .iter()
+            .find(|(t, p)| t != "Nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
+            .ok_or("no Nets value")?;
+        assert_eq!(value.0, connected.to_string());
+        Ok(())
     }
 
     #[test]
