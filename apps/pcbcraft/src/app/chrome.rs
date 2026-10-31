@@ -429,6 +429,18 @@ impl App {
             .data(|d| d.get_temp::<bool>(expanded_id))
             .unwrap_or(false);
         let column = kit::card::column(rect, expanded);
+        // A docked dialog takes the subject slot; the Issues bar stays.
+        if self.dialog_open() {
+            shell::column_card(
+                ctx,
+                "properties",
+                column.subject,
+                shell::COLUMN_CARD_INSET,
+                |ui| self.dialog(ui),
+            );
+            self.issues_column(ctx, column, expanded, false);
+            return;
+        }
         let header = match self.workspace {
             Workspace::Part => self.part.header(&self.engine),
             Workspace::Schematic => self.schematic.header(&self.engine),
@@ -461,6 +473,18 @@ impl App {
             open_issues = card.show_issues;
             self.apply(ctx, crate::refusal::Origin::Command, card.output);
         }
+        self.issues_column(ctx, column, expanded, open_issues);
+    }
+
+    /// The Issues card under the subject slot, always shown.
+    fn issues_column(
+        &mut self,
+        ctx: &egui::Context,
+        column: kit::card::Column,
+        expanded: bool,
+        open_issues: bool,
+    ) {
+        let expanded_id = egui::Id::new("issues-expanded");
         let summary = self.issue_summary(ctx);
         let toggle = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
             issues_card(ui, &summary, expanded)

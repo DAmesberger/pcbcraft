@@ -164,11 +164,76 @@ fn a_group_assignment_is_one_atomic_command() -> TestResult {
     Ok(())
 }
 
-/// The ribbon's Resolve opens the card in Properties; it shows the
-/// groups, Choose… opens the palette in assign mode for the first group,
-/// and Close returns to the sheet.
+/// One frame of the Resolve parts window at the audit's narrow size.
+fn window_frame(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> Vec<(String, Pos2)> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(860.0, 1081.0))),
+            events,
+            ..Default::default()
+        },
+        |ui| editor.resolve_window(ui.ctx(), engine),
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                text.pos + text.galley.size() * 0.5,
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    out
+}
+
+/// Click the text `label` in the Resolve parts window.
+fn window_click(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    label: &str,
+) -> TestResult {
+    let mut shown = Vec::new();
+    for _ in 0..3 {
+        shown = window_frame(editor, engine, ctx, vec![]);
+    }
+    let point = shown
+        .iter()
+        .find(|(text, _)| text == label)
+        .map(|(_, p)| *p)
+        .ok_or_else(|| format!("missing {label}: {shown:?}"))?;
+    let press = |pressed| egui::Event::PointerButton {
+        pos: point,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    window_frame(
+        editor,
+        engine,
+        ctx,
+        vec![egui::Event::PointerMoved(point), press(true)],
+    );
+    window_frame(editor, engine, ctx, vec![press(false)]);
+    Ok(())
+}
+
+/// The ribbon's Resolve opens the Resolve parts window and leaves the
+/// Properties card on the sheet; Choose… opens the docked Choose part
+/// dialog for the first group beside the window, and Close closes it.
 #[test]
-fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
+fn resolve_opens_the_window_and_choose_docks_the_dialog() -> TestResult {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let engine = Engine::demo()?;
@@ -182,14 +247,14 @@ fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
             .any(|t| t.id == "resolve")
     );
     editor.on_tool("resolve", &engine);
-    assert_eq!(editor.header(&engine).title, "Resolve parts");
-    let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(editor.resolve.is_open());
+    assert_eq!(editor.header(&engine).title, "Sheet");
+    assert!(!editor.dialog_open());
     let Ok(QueryResult::ResolveGroups(report)) = engine.query(Query::ResolveGroups {}) else {
         return Err("library.resolve_groups".into());
     };
     let first = report.groups.first().ok_or("the demo has a group")?;
-    assert!(shown.iter().any(|(t, _)| t == "Choose…"), "{shown:?}");
-    click(&mut editor, &engine, &ctx, "Choose…")?;
+    window_click(&mut editor, &engine, &ctx, "Choose…")?;
     assert_eq!(
         editor.palette.mode(),
         &PaletteMode::Assign {
@@ -197,8 +262,19 @@ fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
         }
     );
     assert_eq!(editor.palette.query(), first.query);
+    assert!(editor.dialog_open());
+    assert!(
+        editor.resolve.is_open(),
+        "the table returns after the dialog"
+    );
+    // The window steps aside while the dialog is open.
+    let hidden = window_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(
+        !hidden.iter().any(|(t, _)| t == "Resolve parts"),
+        "{hidden:?}"
+    );
     editor.palette.close();
-    click(&mut editor, &engine, &ctx, "Close")?;
+    window_click(&mut editor, &engine, &ctx, "Close")?;
     assert!(!editor.resolve.is_open());
     assert_eq!(editor.header(&engine).title, "Sheet");
     Ok(())
@@ -228,10 +304,11 @@ fn place_closes_resolve_parts() -> TestResult {
     Ok(())
 }
 
-/// A group whose Part disagrees says so: the card names the current Part
-/// and its finding, and the BOM line leads with its state.
+/// A group whose Part disagrees says so: its row names the current Part
+/// and, open, core's own title for why it is unresolved. New Part… asks
+/// the app for a draft rated at the group's values.
 #[test]
-fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestResult {
+fn the_resolve_window_names_the_current_part_and_why_it_is_unresolved() -> TestResult {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let (mut engine, _, r1, _) = engine_with_part()?;
@@ -251,27 +328,42 @@ fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestRes
             }],
         }),
     )?;
+    let Ok(QueryResult::Issues(issues)) = engine.query(Query::Issues {
+        scope: pcbcraft_core::issues::IssueScope::Selection {
+            objects: vec![pcbcraft_core::diagnostics::ObjectRef::Instance { id: r1 }],
+        },
+    }) else {
+        return Err("project.issues".into());
+    };
+    let title = issues
+        .rows
+        .iter()
+        .find(|r| r.group.code.starts_with("part."))
+        .map(|r| r.title.clone())
+        .ok_or("R1 has a purchasing issue")?;
     let mut editor = SchematicEditor::default();
     editor.on_tool("resolve", &engine);
-    let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let mut shown = Vec::new();
+    for _ in 0..3 {
+        shown = window_frame(&mut editor, &engine, &ctx, vec![]);
+    }
     let texts: Vec<&str> = shown.iter().map(|(t, _)| t.as_str()).collect();
-    assert!(texts.contains(&"Current part"), "{texts:?}");
     assert!(
-        texts.iter().any(|t| t.contains("is not met by")),
+        texts.contains(&"ExampleCo EX-R0603-10K0-F · r1"),
         "{texts:?}"
     );
-    assert!(
-        texts.iter().any(|t| t.starts_with("R1: unresolved")),
-        "{texts:?}"
-    );
+    // The first row is open: R1 sorts first.
+    assert!(texts.contains(&title.as_str()), "{title} in {texts:?}");
     assert!(texts.contains(&"New Part…"), "{texts:?}");
-    // New Part… asks the app to open the component's Parts editor with
-    // the group's values.
-    click(&mut editor, &engine, &ctx, "New Part…")?;
+    window_click(&mut editor, &engine, &ctx, "New Part…")?;
     let (component, values) = editor.take_new_part().ok_or("no request")?;
     let instance = engine.project().instance(r1).ok_or("R1")?;
     assert_eq!(component, instance.component.id);
     assert!(values.iter().any(|(f, _)| f.id == field.id));
+    assert!(
+        !editor.resolve.is_open(),
+        "New Part… leaves for the Component"
+    );
     Ok(())
 }
 

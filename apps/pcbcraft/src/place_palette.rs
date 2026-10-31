@@ -11,18 +11,26 @@
 //! inline. Cmd+D marks the highlighted row a favourite; favourites and
 //! recents rank after the match tier and are kept per user by the app.
 //!
-//! In *assign mode* the same sheet chooses a manufacturer part for one or
-//! more instances: it opens pre-filled with `kind:part` and the instances'
-//! requirements, and Enter returns the Part, which the editor turns into
-//! one `instance.assign_part`.
+//! In *assign mode* the same search chooses a manufacturer part for one or
+//! more instances, as the docked Choose part dialog
+//! ([`PlacePalette::choose_dialog`], docs/sidebar-ia.md "Dialogs and
+//! reviews"): it opens pre-filled with `kind:part` and the instances'
+//! requirements, lists the fitting Parts, and Choose returns the Part,
+//! which the editor turns into one `instance.assign_part`. A refusal comes
+//! back to the dialog's refusal row; success closes it with a toast.
+use crate::kit::dialog::{DialogAction, DialogPanel};
+use crate::kit::severity::Level;
+use crate::kit::toast::ToastAction;
 use crate::kit::{self, Tone};
 use crate::library_sources::FolderPick;
+use crate::refusal::{self, Origin};
 use egui::{Rect, Ui, pos2};
 use pcbcraft_core::catalog::{
     self, CatalogContext, CatalogEntry, EntryKey, Hit, ItemReport, MAX_CONTEXT, MAX_QUERY,
     SearchReport, Source, UpdateAvailable,
 };
 use pcbcraft_core::ids::{LibraryId, SourceLineageId};
+use pcbcraft_core::issues::MAX_TITLE;
 use pcbcraft_core::library::import::OtherRevision;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
@@ -43,10 +51,11 @@ const KEYS_FOLDER: &str =
 const KEYS_CHOICE: &str = "Enter update project copy   Esc cancel";
 /// The footer while nothing can be placed.
 const KEYS_IDLE: &str = "↑↓ move   Esc close";
-/// The footer of assign mode.
-const KEYS_ASSIGN: &str = "↑↓ move   Enter assign   click assign   Esc close";
-/// The footer of assign mode on a Part for a newer component revision.
-const KEYS_UPDATE: &str = "↑↓ move   Enter review update & assign   Esc close";
+/// The Choose part dialog's panel id: its refusals come back here.
+pub const CHOOSE_DIALOG: &str = "choose-part";
+/// The Choose part dialog's filter hint and its tooltip.
+const CHOOSE_HINT: &str = "Filter by value: res=10k, tol<=1%, mpn:EX-";
+const CHOOSE_TIP: &str = "Results are manufacturer parts of these instances' component. Field values filter by meaning: res=10k, V>=16, tol<=1%. mpn: matches part numbers only.";
 /// The footer of Place mode on a Part row.
 const KEYS_PART: &str =
     "↑↓ move   Parts are assigned, not placed: use Choose… on an instance   Esc close";
@@ -200,6 +209,36 @@ pub struct PlacePalette {
     targets: Vec<ComponentRef>,
     /// What the rows say about the project, rebuilt with the results.
     rows: RowContext,
+    /// Choose part: the dialog was just opened; its body starts at the top.
+    reset: bool,
+    /// Choose part: the highlighted Part's details are folded away.
+    folded: bool,
+    /// Choose part: every fitting Part is listed, not the first eight.
+    show_all: bool,
+    /// Choose part: an assignment was returned at this document revision;
+    /// the next frame closes on success or shows the refusal. The text is
+    /// the success toast.
+    submitted: Option<(u64, String)>,
+    /// Choose part: the engine's refusal of the last Choose.
+    refusal: Option<String>,
+}
+
+/// What the Choose part dialog returned.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChooseAction {
+    /// Pin this Part on these instances: one `instance.assign_part`.
+    Assign { instances: Vec<Id>, part: PartRef },
+    /// The Part is for a newer revision of the instances' component:
+    /// review updating them to `target` with the Part assigned.
+    UpdateAndAssign {
+        instances: Vec<Id>,
+        part: PartRef,
+        target: ComponentRef,
+    },
+    /// New Part for these values…: the component lineage and its values.
+    NewPart(crate::schematic_editor::NewPartRequest),
+    /// Cancel, the header's close or Esc.
+    Cancel,
 }
 
 impl PlacePalette {
@@ -218,6 +257,16 @@ impl PlacePalette {
     pub fn open_assign(&mut self, query: String, instances: Vec<Id>) {
         self.mode = Mode::Assign { instances };
         self.reopen(query);
+        self.reset = true;
+        self.folded = false;
+        self.show_all = false;
+        self.submitted = None;
+        self.refusal = None;
+    }
+
+    /// Whether the Choose part dialog is open (assign mode).
+    pub fn choosing(&self) -> bool {
+        self.open && matches!(self.mode, Mode::Assign { .. })
     }
 
     pub fn mode(&self) -> &Mode {
@@ -484,7 +533,8 @@ impl PlacePalette {
         engine: &Engine,
         placeable: &dyn Fn(ComponentRef) -> bool,
     ) -> Option<PaletteAction> {
-        if !self.open {
+        // Assign mode is the docked Choose part dialog, not this sheet.
+        if !self.open || matches!(self.mode, Mode::Assign { .. }) {
             return None;
         }
         let ctx = ui.ctx().clone();
@@ -533,10 +583,7 @@ impl PlacePalette {
         }
         self.highlighted = self.highlighted.min(count.saturating_sub(1));
         let mut action = None;
-        let assigning = matches!(self.mode, Mode::Assign { .. });
-        if keys.enter && assigning {
-            action = self.choose_part();
-        } else if keys.enter && self.highlighted_folder().is_some() {
+        if keys.enter && self.highlighted_folder().is_some() {
             action = self.place_folder(keys.keep);
         } else if keys.enter
             && let Some(component) = self.choose(placeable)
@@ -558,13 +605,7 @@ impl PlacePalette {
         let mut focused = false;
         let generation = self.generation;
         let highlighted_entry = self.hits().get(self.highlighted).map(|h| &h.entry);
-        let footer = if assigning {
-            match highlighted_entry {
-                Some(e) if part_of(e).is_some() && self.newer_target(e).is_some() => KEYS_UPDATE,
-                Some(e) if part_of(e).is_some() => KEYS_ASSIGN,
-                _ => KEYS_IDLE,
-            }
-        } else if self.choice.is_some() {
+        let footer = if self.choice.is_some() {
             KEYS_CHOICE
         } else if self.highlighted_folder().is_some() {
             KEYS_FOLDER
@@ -575,19 +616,11 @@ impl PlacePalette {
         } else {
             KEYS_IDLE
         };
-        let (hint, empty, heading) = if assigning {
-            (
-                "Find a manufacturer part: kind:part mpn:EX- res=10k",
-                "No manufacturer part matches.",
-                "Parts in this project",
-            )
-        } else {
-            (
-                "Find a part: 10k 0603, res>=10k, tol<=1%",
-                "No component matches.",
-                "In this project",
-            )
-        };
+        let (hint, empty, heading) = (
+            "Find a part: 10k 0603, res>=10k, tol<=1%",
+            "No component matches.",
+            "In this project",
+        );
         let groups = self.group_names();
         let mut manage = false;
         kit::search_sheet(&ctx, "place-palette", top, width, footer, |ui| {
@@ -678,16 +711,14 @@ impl PlacePalette {
                 }
                 None => {}
             }
-            if !assigning {
-                kit::actions(ui, |ui| {
-                    if ui_kit::button(ui, "Library sources…", Button::Ghost)
-                        .on_hover_text("Add, rescan, turn on or off and remove library folders")
-                        .clicked()
-                    {
-                        manage = true;
-                    }
-                });
-            }
+            kit::actions(ui, |ui| {
+                if ui_kit::button(ui, "Library sources…", Button::Ghost)
+                    .on_hover_text("Add, rescan, turn on or off and remove library folders")
+                    .clicked()
+                {
+                    manage = true;
+                }
+            });
         });
         if manage {
             self.events.push(PaletteEvent::ManageSources);
@@ -699,9 +730,7 @@ impl PlacePalette {
             && self.choice.is_none()
         {
             self.highlighted = i;
-            if assigning {
-                action = self.choose_part();
-            } else if self.highlighted_folder().is_some() {
+            if self.highlighted_folder().is_some() {
                 action = self.place_folder(false);
             } else if let Some(component) = self.choose(placeable) {
                 action = Some(PaletteAction::Pick(component));
@@ -749,6 +778,258 @@ impl PlacePalette {
         action
     }
 
+    /// The docked Choose part dialog (assign mode), drawn in the subject
+    /// slot `ui` offers: who gets the Part, the filter and its one hint
+    /// line, the fitting Parts (the highlighted one expanded with its
+    /// rated values and sources), then New Part for these values…. Choose
+    /// returns the Part; the assignment's refusal comes back to the
+    /// dialog's refusal row and success closes it with an Undo toast.
+    pub fn choose_dialog(&mut self, ui: &mut Ui, engine: &Engine) -> Option<ChooseAction> {
+        let Mode::Assign { instances } = &self.mode else {
+            return None;
+        };
+        if !self.open {
+            return None;
+        }
+        let instances = instances.clone();
+        let ctx = ui.ctx().clone();
+        let id = egui::Id::new(CHOOSE_DIALOG);
+        if let Some(refused) = refusal::claim(&ctx, Origin::Dialog(id)) {
+            self.refusal = Some(refused);
+            self.submitted = None;
+        }
+        if let Some((revision, done)) = self.submitted.take()
+            && engine.revision() != revision
+        {
+            kit::toast::post(&ctx, Level::Ok, done, vec![ToastAction::Undo]);
+            self.close();
+            return None;
+        }
+        self.refresh(engine);
+        let (up, down) = ctx.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+            )
+        });
+        let count = self.hits().len();
+        if down && count > 0 {
+            self.highlighted = (self.highlighted + 1).min(count - 1);
+            self.folded = false;
+        }
+        if up {
+            self.highlighted = self.highlighted.saturating_sub(1);
+            self.folded = false;
+        }
+        self.highlighted = self.highlighted.min(count.saturating_sub(1));
+        let project = engine.project();
+        let designators: Vec<String> = instances
+            .iter()
+            .filter_map(|id| project.instance(*id))
+            .map(|i| i.designator.clone())
+            .collect();
+        let who = crate::resolve_parts::designator_summary(&designators);
+        let hits: Vec<Hit> = self.hits().to_vec();
+        let total = match self.results.as_ref().map(|r| &r.report) {
+            Some(Ok(report)) => report.total.max(hits.len()),
+            _ => hits.len(),
+        };
+        let invalid = match self.results.as_ref().map(|r| &r.report) {
+            Some(Err(error)) => Some(error.clone()),
+            _ => None,
+        };
+        let highlighted = self.highlighted;
+        let hit = hits.get(highlighted);
+        let part = self.highlighted_part();
+        let newer = hit.and_then(|h| self.newer_target(&h.entry));
+        let primary = if newer.is_some() {
+            "Review update…"
+        } else {
+            "Choose"
+        };
+        let disabled = match (part, count) {
+            (Some(_), _) => None,
+            (None, 0) => Some("No fitting part to choose"),
+            (None, _) => Some("Select a manufacturer part first"),
+        };
+        let status = newer.map(|t| format!("Updates {who} to {} first", t.revision));
+        let shown_refusal = self.refusal.clone();
+        let panel = DialogPanel {
+            id,
+            icon: "library",
+            title: "Choose part",
+            kind: "Part",
+            body_rows: 18.0,
+            primary,
+            primary_kind: kit::dialog::PrimaryKind::Normal,
+            primary_disabled: disabled,
+            refusal: shown_refusal.as_deref(),
+            reset_scroll: std::mem::take(&mut self.reset),
+            status: status.as_deref(),
+        };
+        let focus = std::mem::take(&mut self.focus);
+        let folded = self.folded;
+        let max_rows = if self.show_all {
+            hits.len()
+        } else {
+            kit::LIST_MAX_ROWS
+        };
+        let targets = self.targets.clone();
+        let mut changed = false;
+        let mut picked = None;
+        let mut toggled = None;
+        let mut show_all = false;
+        let mut new_part = false;
+        let query = &mut self.query;
+        let action = panel.show(ui, |ui| {
+            let t = Tokens::get();
+            kit::value_row(ui, "Assign to", &who);
+            let field = id.with("query");
+            if focus {
+                ui.memory_mut(|m| m.request_focus(field));
+            }
+            let top = ui.cursor().min;
+            let width = ui.available_width();
+            changed = kit::filter_field(
+                ui,
+                field,
+                query,
+                "kind:part res=10k",
+                invalid.is_some(),
+                MAX_QUERY,
+            )
+            .changed;
+            if let Some(message) = &invalid {
+                let ring = ui.interact(
+                    Rect::from_min_size(top, egui::vec2(width, t.control_height)),
+                    id.with("ring"),
+                    egui::Sense::hover(),
+                );
+                kit::field_error(ui, &ring, message, false);
+            }
+            kit::hint(ui, CHOOSE_HINT, CHOOSE_TIP);
+            kit::section(
+                ui,
+                "choose-fitting",
+                "Fitting parts",
+                true,
+                Some(total),
+                |ui| {
+                    if hits.is_empty() {
+                        kit::status(
+                            ui,
+                            "No part of this component meets these values yet",
+                            Tone::Dim,
+                        );
+                    }
+                    let frame = kit::list_frame(ui, hits.len(), max_rows, |ui, index| {
+                        let Some(hit) = hits.get(index) else {
+                            return;
+                        };
+                        let selected = index == highlighted;
+                        let open = selected && !folded;
+                        let secondary = choose_secondary(&hit.entry, &targets);
+                        let response = kit::tree_row(
+                            ui,
+                            egui::Id::new(("choose-part-row", hit.entry.key())),
+                            &kit::Row {
+                                fold: Some(open),
+                                icon: "library",
+                                label: &hit.entry.name,
+                                secondary: &secondary,
+                                selected,
+                                ..Default::default()
+                            },
+                        );
+                        if response.fold || (response.clicked && selected) {
+                            toggled = Some(index);
+                        } else if response.clicked {
+                            picked = Some(index);
+                        }
+                        if open && let Some(part) = part_of(&hit.entry) {
+                            part_details(ui, engine, part);
+                        }
+                    });
+                    show_all = frame.show_all;
+                    if total > hits.len() {
+                        kit::hint(
+                            ui,
+                            &format!("Showing {} of {total}; narrow the filter", hits.len()),
+                            "",
+                        );
+                    }
+                },
+            );
+            kit::actions(ui, |ui| {
+                new_part = ui_kit::button(ui, "New Part for these values…", Button::Normal)
+                    .on_hover_text(
+                        "Open the component's Parts editor with a draft rated at these values",
+                    )
+                    .clicked();
+            });
+        });
+        if changed {
+            self.refresh(engine);
+        }
+        if let Some(index) = picked {
+            self.highlighted = index;
+            self.folded = false;
+        }
+        if let Some(index) = toggled {
+            self.folded = !self.folded;
+            self.highlighted = index;
+        }
+        if show_all {
+            self.show_all = true;
+        }
+        if new_part && let Some(instance) = instances.first().and_then(|id| project.instance(*id)) {
+            let values = pcbcraft_core::instances::requirements(&project.library, instance)
+                .map(|r| crate::resolve_parts::requirement_values(&r))
+                .unwrap_or_default();
+            self.close();
+            return Some(ChooseAction::NewPart((instance.component.id, values)));
+        }
+        match action {
+            Some(DialogAction::Cancel) => {
+                self.close();
+                Some(ChooseAction::Cancel)
+            }
+            Some(DialogAction::Primary) => {
+                let entry = self.hits().get(self.highlighted).map(|h| h.entry.clone());
+                let chosen = self.choose_part();
+                if let (Some(entry), Some(_)) = (&entry, &chosen) {
+                    self.used_entry(entry);
+                }
+                match chosen {
+                    Some(PaletteAction::Assign { instances, part }) => {
+                        refusal::mark(&ctx, Origin::Dialog(id));
+                        self.refusal = None;
+                        let name = entry.map_or_else(|| "the part".to_owned(), |e| e.name);
+                        self.submitted = Some((
+                            engine.revision(),
+                            refusal::clip(&format!("Assigned {name} to {who}"), MAX_TITLE),
+                        ));
+                        Some(ChooseAction::Assign { instances, part })
+                    }
+                    Some(PaletteAction::UpdateAndAssign {
+                        instances,
+                        part,
+                        target,
+                    }) => {
+                        self.close();
+                        Some(ChooseAction::UpdateAndAssign {
+                            instances,
+                            part,
+                            target,
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            None => None,
+        }
+    }
+
     /// Enter or a click on a folder component: ask the app for
     /// `library.place_from`. Without Shift the sheet closes; a refusal
     /// reopens it (see [`Self::offer_choice`]).
@@ -780,23 +1061,14 @@ impl PlacePalette {
     }
 
     /// The highlighted result in the properties card, from `library.inspect`.
-    /// In assign mode with no matching Part it offers New Part…, returned
-    /// as the component lineage and the values to rate.
+    /// Assign mode has no preview: the Choose part dialog shows its Parts.
     pub fn preview(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
     ) -> Option<crate::schematic_editor::NewPartRequest> {
-        if let Mode::Assign { instances } = &self.mode {
-            let empty = self.hits().is_empty();
-            return assign_preview(
-                ui,
-                engine,
-                instances,
-                self.highlighted_part(),
-                &self.targets,
-                empty,
-            );
+        if matches!(self.mode, Mode::Assign { .. }) {
+            return None;
         }
         if let Some(hit) = self
             .hits()
@@ -1052,153 +1324,64 @@ fn part_of(entry: &CatalogEntry) -> Option<PartRef> {
         .map(|r| PartRef::new(entry.lineage, r))
 }
 
-/// Assign mode's properties: who gets the Part, then the highlighted Part
-/// as the project library holds it.
-fn assign_preview(
-    ui: &mut Ui,
-    engine: &Engine,
-    instances: &[Id],
-    part: Option<PartRef>,
-    targets: &[ComponentRef],
-    empty: bool,
-) -> Option<crate::schematic_editor::NewPartRequest> {
-    let project = engine.project();
-    let library = &project.library;
-    kit::section(
-        ui,
-        "assign-target",
-        "Assign to",
-        true,
-        Some(instances.len()),
-        |ui| {
-            let designators: Vec<&str> = instances
-                .iter()
-                .filter_map(|id| project.instance(*id))
-                .map(|i| i.designator.as_str())
-                .collect();
-            kit::value_row(ui, "Instances", &designators.join(", "));
-            kit::note(
-                ui,
-                "The Part must implement the instances' component revision and footprint and meet their values; otherwise nothing changes.",
-            );
-        },
-    );
-    let Some(r) = part else {
-        let mut request = None;
-        kit::section(ui, "assign-part", "Part", true, None, |ui| {
-            kit::note(
-                ui,
-                "Results are manufacturer parts of the instances' component. Field values filter by meaning: res=10k, V>=16, tol<=1%. mpn: matches part numbers only.",
-            );
-            let first = instances.first().and_then(|id| project.instance(*id));
-            if empty && let Some(instance) = first {
-                kit::status(
-                    ui,
-                    "No Part of this component meets these values yet.",
-                    Tone::Note,
-                );
-                kit::actions(ui, |ui| {
-                    if kit::primary(ui, "New Part for these values…", true)
-                        .on_hover_text(
-                            "Open the component's Parts editor with a draft rated at these values",
-                        )
-                        .clicked()
-                    {
-                        let values = pcbcraft_core::instances::requirements(library, instance)
-                            .map(|r| crate::resolve_parts::requirement_values(&r))
-                            .unwrap_or_default();
-                        request = Some((instance.component.id, values));
-                    }
-                });
-            }
-        });
-        return request;
-    };
+/// A fitting Part's dim trailing text: the revision it needs first, or
+/// its maker and revision.
+fn choose_secondary(entry: &CatalogEntry, targets: &[ComponentRef]) -> String {
+    if let Some(newer) = newer_than(entry, targets) {
+        return format!("needs {}", newer.revision);
+    }
+    let mut parts: Vec<String> = entry.manufacturer.iter().cloned().collect();
+    parts.extend(entry.revision.map(|r| r.to_string()));
+    parts.join(" · ")
+}
+
+/// The highlighted Part's details in its expanded row, as the project
+/// library holds it: identity, what it implements, its rated values and
+/// its sources.
+fn part_details(ui: &mut Ui, engine: &Engine, r: PartRef) {
+    let library = &engine.project().library;
     let Some(published) = library.part(r) else {
-        kit::status(
-            ui,
-            "This Part revision is not in the project library.",
-            Tone::Error,
-        );
-        return None;
+        kit::status(ui, "This revision is not in the project library", Tone::Dim);
+        return;
     };
     let part = &published.definition;
-    kit::section(ui, "assign-part", "Part", true, None, |ui| {
-        kit::value_row(ui, "Maker", &part.manufacturer);
-        kit::value_row(ui, "MPN", &part.mpn);
-        kit::value_row(ui, "Revision", &r.revision.to_string());
-        let component = library.component(part.component).map_or_else(
-            || part.component.to_string(),
-            |c| format!("{} · {}", c.meta.name, part.component.revision),
-        );
-        kit::value_row(ui, "Implements", &component);
+    kit::value_row(ui, "Maker", &part.manufacturer);
+    kit::value_row(ui, "MPN", &part.mpn);
+    let component = library.component(part.component).map_or_else(
+        || part.component.to_string(),
+        |c| format!("{} · {}", c.meta.name, part.component.revision),
+    );
+    kit::value_row(ui, "Implements", &component);
+    kit::value_row(
+        ui,
+        "Footprint",
+        &pcbcraft_core::instances::binding_name(library, part.binding),
+    );
+    for spec in &part.specs {
+        let label = library
+            .field_view(spec.field)
+            .map_or_else(|| spec.field.to_string(), |v| v.field.meta.name.clone());
         kit::value_row(
             ui,
-            "Footprint",
-            &pcbcraft_core::instances::binding_name(library, part.binding),
-        );
-        if targets
-            .iter()
-            .all(|t| t.id == part.component.id && t.revision < part.component.revision)
-            && !targets.is_empty()
-        {
-            let designators: Vec<&str> = instances
-                .iter()
-                .filter_map(|id| project.instance(*id))
-                .map(|i| i.designator.as_str())
-                .collect();
-            kit::status(
-                ui,
-                &format!(
-                    "This Part is for {component}. Enter reviews updating {} to {} and assigning it, as one step.",
-                    designators.join(", "),
-                    part.component.revision
-                ),
-                Tone::Warning,
-            );
-        }
-    });
-    if !part.specs.is_empty() {
-        kit::section(
-            ui,
-            "assign-specs",
-            "Rated values",
-            true,
-            Some(part.specs.len()),
-            |ui| {
-                for spec in &part.specs {
-                    let label = library
-                        .field_view(spec.field)
-                        .map_or_else(|| spec.field.to_string(), |v| v.field.meta.name.clone());
-                    kit::value_row(
-                        ui,
-                        &label,
-                        &format!(
-                            "{} · {}",
-                            crate::part_editor::spec_text(library, spec),
-                            crate::part_editor::meaning_label(spec.meaning)
-                        ),
-                    );
-                }
-            },
+            &label,
+            &format!(
+                "{} · {}",
+                crate::part_editor::spec_text(library, spec),
+                crate::part_editor::meaning_label(spec.meaning)
+            ),
         );
     }
-    if !part.offers.is_empty() || !part.references.is_empty() {
-        kit::section(ui, "assign-sources", "Sources", false, None, |ui| {
-            for reference in &part.references {
-                let shown = reference
-                    .url
-                    .clone()
-                    .or_else(|| reference.asset.as_ref().map(|_| "attached copy".into()))
-                    .unwrap_or_default();
-                kit::value_row(ui, &reference.title, &shown);
-            }
-            for offer in &part.offers {
-                kit::value_row(ui, &offer.distributor, &offer.sku);
-            }
-        });
+    for reference in &part.references {
+        let shown = reference
+            .url
+            .clone()
+            .or_else(|| reference.asset.as_ref().map(|_| "attached copy".into()))
+            .unwrap_or_default();
+        kit::value_row(ui, &reference.title, &shown);
     }
-    None
+    for offer in &part.offers {
+        kit::value_row(ui, &offer.distributor, &offer.sku);
+    }
 }
 
 fn row(
@@ -1413,13 +1596,92 @@ mod tests {
     use super::*;
     use pcbcraft_core::format::{EditorFile, FILE_VERSION};
 
-    /// Assign mode: the palette opens with the given query, Enter on a Part
-    /// row returns the Part for the instances and closes, and a component
-    /// row keeps the palette open with a notice. The result list is set
-    /// directly: which entries `library.search` returns is the catalog's
-    /// concern, not the palette's.
+    /// One frame of the Choose part dialog in a column-sized slot: its
+    /// texts with their centres, and what it returned.
+    fn run_dialog(
+        ctx: &egui::Context,
+        palette: &mut PlacePalette,
+        engine: &Engine,
+        events: Vec<egui::Event>,
+    ) -> (Vec<(String, egui::Pos2)>, Option<ChooseAction>) {
+        let mut action = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(340.0, 1000.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| action = palette.choose_dialog(ui, engine),
+        );
+        output.textures_delta.clear();
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    out.push((t.galley.job.text.clone(), t.pos + t.galley.size() * 0.5))
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in &output.shapes {
+            walk(&shape.shape, &mut out);
+        }
+        (out, action)
+    }
+
+    /// Press and release on the text `label`; returns the release frame's
+    /// action.
+    fn click_dialog(
+        ctx: &egui::Context,
+        palette: &mut PlacePalette,
+        engine: &Engine,
+        label: &str,
+    ) -> Result<Option<ChooseAction>, Box<dyn std::error::Error>> {
+        let (shown, _) = run_dialog(ctx, palette, engine, vec![]);
+        let point = shown
+            .iter()
+            .find(|(t, _)| t == label)
+            .map(|(_, p)| *p)
+            .ok_or_else(|| format!("missing {label}: {shown:?}"))?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run_dialog(
+            ctx,
+            palette,
+            engine,
+            vec![egui::Event::PointerMoved(point), press(true)],
+        );
+        Ok(run_dialog(ctx, palette, engine, vec![press(false)]).1)
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Choose part is a docked dialog: it names who gets the Part, keeps
+    /// the query in its filter with one hint line and lists the fitting
+    /// Parts, the highlighted one expanded. A component row cannot be
+    /// chosen and the disabled primary says why; Choose on a Part returns
+    /// it for the instances and the dialog waits for the engine. A refusal
+    /// shows once on its refusal row and keeps the dialog open. The canvas
+    /// sheet draws nothing in assign mode. The result list is set directly:
+    /// which entries `library.search` returns is the catalog's concern.
     #[test]
-    fn assign_mode_returns_the_highlighted_part_for_the_instances()
+    fn choose_part_is_a_docked_dialog_that_returns_the_highlighted_part()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
@@ -1440,67 +1702,171 @@ mod tests {
         part_hit.entry.revision = Some(part.revision);
         part_hit.entry.name = "EX-R0603-10K0-F".into();
         report.results = vec![part_hit, component];
-        let instances = vec![41, 42];
+        report.total = 2;
+        let r1 = engine
+            .project()
+            .instance_by_designator("R1")
+            .ok_or("R1")?
+            .id;
+        let r2 = engine
+            .project()
+            .instance_by_designator("R2")
+            .ok_or("R2")?
+            .id;
+        let instances = vec![r1, r2];
         let mut palette = PlacePalette::default();
         palette.open_assign("kind:part res=10k".into(), instances.clone());
+        assert!(palette.choosing());
         assert_eq!(palette.query(), "kind:part res=10k");
-        assert_eq!(
-            palette.mode(),
-            &Mode::Assign {
-                instances: instances.clone()
-            }
-        );
         palette.results = Some(Results {
             revision: engine.revision(),
             context: (0, 0),
             query: palette.query.clone(),
             report: Ok(report),
         });
-        let run = |palette: &mut PlacePalette, events: Vec<egui::Event>| {
-            let mut action = None;
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    let area = ui.max_rect();
-                    action = palette.show(ui, area, &engine, &|_| true);
-                },
-            );
-            output.textures_delta.clear();
-            action
-        };
-        let key = |key| egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        };
-        assert_eq!(run(&mut palette, vec![]), None);
+        // The canvas sheet is not drawn in assign mode.
+        let mut sheet = None;
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let area = ui.max_rect();
+            sheet = palette.show(ui, area, &engine, &|_| true);
+        });
+        output.textures_delta.clear();
+        assert_eq!(sheet, None);
+        assert!(texts(&output).is_empty(), "{:?}", texts(&output));
+        let (shown, action) = run_dialog(&ctx, &mut palette, &engine, vec![]);
+        assert_eq!(action, None);
+        let texts: Vec<&str> = shown.iter().map(|(t, _)| t.as_str()).collect();
+        for expected in [
+            "Choose part",
+            "Assign to",
+            "R1, R2",
+            CHOOSE_HINT,
+            "FITTING PARTS",
+            "EX-R0603-10K0-F",
+            "Maker",
+            "ExampleCo",
+            "New Part for these values…",
+            "Cancel",
+            "Choose",
+        ] {
+            assert!(texts.contains(&expected), "{expected} in {texts:?}");
+        }
         assert_eq!(palette.highlighted_part(), Some(part));
-        assert_eq!(palette.highlighted(), None, "a Part is not placeable");
-        // The component row is not a Part: a notice, nothing assigned.
-        run(&mut palette, vec![key(egui::Key::ArrowDown)]);
-        assert_eq!(run(&mut palette, vec![key(egui::Key::Enter)]), None);
+        // The component row is not a Part: Choose does nothing.
+        run_dialog(&ctx, &mut palette, &engine, vec![key(egui::Key::ArrowDown)]);
+        assert_eq!(palette.highlighted_part(), None);
+        assert_eq!(click_dialog(&ctx, &mut palette, &engine, "Choose")?, None);
         assert!(palette.is_open());
-        assert!(palette.notice.is_some());
-        run(&mut palette, vec![key(egui::Key::ArrowUp)]);
-        let action = run(&mut palette, vec![key(egui::Key::Enter)]);
-        assert_eq!(action, Some(PaletteAction::Assign { instances, part }));
+        run_dialog(&ctx, &mut palette, &engine, vec![key(egui::Key::ArrowUp)]);
+        let action = click_dialog(&ctx, &mut palette, &engine, "Choose")?;
+        assert_eq!(
+            action,
+            Some(ChooseAction::Assign {
+                instances: instances.clone(),
+                part
+            })
+        );
+        assert!(palette.is_open(), "open until the engine answers");
+        // The app refuses it: the refusal returns to the dialog's row.
+        let id = egui::Id::new(CHOOSE_DIALOG);
+        crate::refusal::hand_back(
+            &ctx,
+            crate::refusal::Refused {
+                origin: Origin::Dialog(id),
+                error: pcbcraft_core::Error::Invalid("The Part does not fit R2".into()),
+            },
+            false,
+        );
+        run_dialog(&ctx, &mut palette, &engine, vec![]);
+        let (shown, _) = run_dialog(&ctx, &mut palette, &engine, vec![]);
+        assert!(palette.is_open());
+        assert!(
+            shown.iter().any(|(t, _)| t == "The Part does not fit R2"),
+            "{shown:?}"
+        );
+        // Cancel closes without a choice.
+        assert_eq!(
+            click_dialog(&ctx, &mut palette, &engine, "Cancel")?,
+            Some(ChooseAction::Cancel)
+        );
         assert!(!palette.is_open());
         // Opening for placement returns to Place mode with an empty query.
         palette.open();
         assert_eq!(palette.mode(), &Mode::Place);
+        assert!(!palette.choosing());
         assert_eq!(palette.query(), "");
         Ok(())
     }
 
+    /// Through the real engine: the fitting Part found by R1's own query
+    /// is assigned in one undo step, the dialog closes and an Undo toast
+    /// says what changed. New Part for these values… asks for a draft of
+    /// the instance's component at its values.
+    #[test]
+    fn choose_assigns_through_the_engine_and_closes_with_a_toast()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let mut engine = Engine::demo()?;
+        let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
+        let r1 = engine
+            .project()
+            .instances
+            .first()
+            .ok_or("an instance")?
+            .clone();
+        let mut palette = PlacePalette::default();
+        palette.open_assign(crate::resolve_parts::query_for(&engine, r1.id), vec![r1.id]);
+        run_dialog(&ctx, &mut palette, &engine, vec![]);
+        assert_eq!(palette.highlighted_part(), Some(part));
+        let Some(ChooseAction::Assign {
+            instances,
+            part: chosen,
+        }) = click_dialog(&ctx, &mut palette, &engine, "Choose")?
+        else {
+            return Err("Choose returned no assignment".into());
+        };
+        assert_eq!(chosen, part);
+        engine.apply(
+            engine.revision(),
+            crate::resolve_parts::assign(instances, Some(chosen)),
+        )?;
+        assert_eq!(
+            engine.project().instance(r1.id).and_then(|i| i.part),
+            Some(part)
+        );
+        let _ = crate::kit::toast::take_posted(&ctx);
+        run_dialog(&ctx, &mut palette, &engine, vec![]);
+        assert!(!palette.is_open());
+        let posted = crate::kit::toast::take_posted(&ctx);
+        let toast = posted.first().ok_or("no toast")?;
+        assert_eq!(toast.level, Level::Ok);
+        assert_eq!(toast.actions, vec![ToastAction::Undo]);
+        assert!(
+            toast.text.starts_with("Assigned EX-R0603-10K0-F to "),
+            "{toast:?}"
+        );
+        assert!(toast.text.chars().count() <= MAX_TITLE);
+        engine.undo()?;
+        assert_eq!(engine.project().instance(r1.id).and_then(|i| i.part), None);
+        // New Part for these values…
+        palette.open_assign(crate::resolve_parts::query_for(&engine, r1.id), vec![r1.id]);
+        let Some(ChooseAction::NewPart((component, values))) =
+            click_dialog(&ctx, &mut palette, &engine, "New Part for these values…")?
+        else {
+            return Err("no New Part request".into());
+        };
+        assert_eq!(component, r1.component.id);
+        assert!(!values.is_empty());
+        assert!(!palette.is_open());
+        Ok(())
+    }
+
     /// A Part for a newer revision of the instances' component is flagged
-    /// on its row and Enter asks for the reviewed update-and-assign, never
-    /// a refused plain assignment. In Place mode, Enter on a Part row
-    /// explains that Parts are assigned, not placed.
+    /// on its row; the primary becomes Review update… and asks for the
+    /// reviewed update-and-assign, never a refused plain assignment. In
+    /// Place mode, Enter on a Part row explains that Parts are assigned,
+    /// not placed.
     #[test]
     fn a_part_for_a_newer_revision_reviews_an_update_and_parts_are_not_placed()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1525,22 +1891,39 @@ mod tests {
             detail(&hit.entry, &RowContext::default()).starts_with("ExampleCo"),
             "the maker leads"
         );
-        let mut palette = PlacePalette::default();
-        palette.open_assign("kind:part".into(), vec![41]);
-        palette.results = Some(Results {
-            revision: engine.revision(),
-            context: (0, 0),
-            query: palette.query.clone(),
-            report: Ok(report.clone()),
-        });
-        palette.targets = vec![current];
-        let key = |key| egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
+        assert_eq!(
+            choose_secondary(&hit.entry, &[current]),
+            format!("needs {}", newer.revision)
+        );
+        let set = |palette: &mut PlacePalette, report: &SearchReport| {
+            palette.results = Some(Results {
+                revision: engine.revision(),
+                context: (0, 0),
+                query: palette.query.clone(),
+                report: Ok(report.clone()),
+            });
         };
+        let instance = engine.project().instances.first().ok_or("an instance")?.id;
+        let mut palette = PlacePalette::default();
+        palette.open_assign("kind:part".into(), vec![instance]);
+        set(&mut palette, &report);
+        // The dialog's refresh rebuilds the targets from the project.
+        run_dialog(&ctx, &mut palette, &engine, vec![]);
+        palette.targets = vec![current];
+        set(&mut palette, &report);
+        let action = click_dialog(&ctx, &mut palette, &engine, "Review update…")?;
+        assert_eq!(
+            action,
+            Some(ChooseAction::UpdateAndAssign {
+                instances: vec![instance],
+                part,
+                target: newer
+            })
+        );
+        assert!(!palette.is_open(), "the review takes over");
+        // Place mode: a Part row is not placed.
+        palette.open();
+        set(&mut palette, &report);
         let run = |palette: &mut PlacePalette, events: Vec<egui::Event>| {
             let mut action = None;
             let mut output = ctx.run_ui(
@@ -1556,22 +1939,6 @@ mod tests {
             output.textures_delta.clear();
             action
         };
-        assert_eq!(
-            run(&mut palette, vec![key(egui::Key::Enter)]),
-            Some(PaletteAction::UpdateAndAssign {
-                instances: vec![41],
-                part,
-                target: newer
-            })
-        );
-        // Place mode: a Part row is not placed.
-        palette.open();
-        palette.results = Some(Results {
-            revision: engine.revision(),
-            context: (0, 0),
-            query: palette.query.clone(),
-            report: Ok(report),
-        });
         assert_eq!(run(&mut palette, vec![key(egui::Key::Enter)]), None);
         assert!(palette.is_open());
         assert_eq!(palette.notice.as_deref(), Some(PART_NOT_PLACED));
