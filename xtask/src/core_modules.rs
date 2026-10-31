@@ -19,9 +19,11 @@ const MAP: &[(&str, &[&str])] = &[
     ("quantity", &["diagnostics"]),
     ("fields", &["ids", "diagnostics", "quantity"]),
     ("functions", &["ids", "diagnostics"]),
+    ("materials", &["diagnostics"]),
     (
         "library",
         &[
+            "materials",
             "geometry",
             "ids",
             "diagnostics",
@@ -33,6 +35,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "model",
         &[
+            "materials",
             "geometry",
             "ids",
             "diagnostics",
@@ -120,6 +123,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "validate",
         &[
+            "materials",
             "ids",
             "diagnostics",
             "library",
@@ -136,6 +140,7 @@ const MAP: &[(&str, &[&str])] = &[
 ];
 
 const BELOW_UPDATES: &[&str] = &[
+    "materials",
     "geometry",
     "ids",
     "diagnostics",
@@ -156,6 +161,7 @@ const BELOW_UPDATES: &[&str] = &[
 ];
 
 const BELOW_COMMANDS: &[&str] = &[
+    "materials",
     "geometry",
     "ids",
     "diagnostics",

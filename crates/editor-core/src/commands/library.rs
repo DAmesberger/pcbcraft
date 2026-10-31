@@ -10,6 +10,8 @@ use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
 use crate::library::import::{self, OtherRevision, PlaceSource};
+use crate::library::package_fit::{self, FitRotation, LeadPair};
+use crate::library::package_model::PackageEdit;
 use crate::library::templates::footprint_family::{self, FootprintTemplate};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
@@ -131,6 +133,78 @@ pub enum LibraryCommand {
         component: ComponentRef,
         name: String,
     },
+    /// Apply 1–256 package edits (form, model, placement, quick action) to
+    /// one package draft, in order, as one undo step; any failure leaves the
+    /// draft unchanged.
+    #[serde(rename = "library.edit_package")]
+    EditPackage {
+        draft: DefinitionId,
+        edits: Vec<PackageEdit>,
+    },
+    /// Fit the package draft's model leads onto footprint pads. The host
+    /// (app or automation, through the integration crate) may supply the
+    /// lead/pad pairs; empty `pairs` derives them from the typed package
+    /// form and the one footprint draft landing the package. With
+    /// `confirm: false` it only reports the fit.
+    #[serde(rename = "library.fit_leads")]
+    FitLeads {
+        draft: DefinitionId,
+        pairs: Vec<LeadPair>,
+        rotation: FitRotation,
+        confirm: bool,
+    },
+}
+
+fn package_draft(
+    document: &Document,
+    draft: DefinitionId,
+) -> Result<(&library::Draft, &library::PackageDefinition)> {
+    let current = document
+        .drafts
+        .get(draft)
+        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+    match &current.definition {
+        Definition::Package(package) => Ok((current, package)),
+        _ => Err(Error::Invalid(format!("draft {draft} is not a package"))),
+    }
+}
+
+/// The one footprint draft whose pads land the package draft `draft`.
+fn landing_footprint(
+    document: &Document,
+    draft: DefinitionId,
+) -> Result<&library::FootprintDefinition> {
+    let mut found = document
+        .drafts
+        .items
+        .iter()
+        .filter_map(|d| match &d.definition {
+            Definition::Footprint(f) if f.package.id == draft => Some(f),
+            _ => None,
+        });
+    match (found.next(), found.next()) {
+        (Some(footprint), None) => Ok(footprint),
+        (None, _) => Err(Error::NotFound(format!(
+            "package.no_footprint: no footprint draft lands package {draft}"
+        ))),
+        (Some(_), Some(_)) => Err(Error::Invalid(format!(
+            "package.footprint_ambiguous: several footprint drafts land package {draft}; pass lead pairs"
+        ))),
+    }
+}
+
+fn store_package(
+    document: &mut Document,
+    draft: DefinitionId,
+    meta: DefinitionMeta,
+    package: library::PackageDefinition,
+) -> Result<()> {
+    let edit = DraftEdit {
+        id: draft,
+        meta,
+        definition: Definition::Package(package),
+    };
+    drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])
 }
 
 fn footprint_draft(
@@ -529,6 +603,50 @@ pub(crate) fn apply_library(
             project.library = library;
             Ok(Outcome::Duplicated {
                 lineages: lineages?,
+            })
+        }
+        LibraryCommand::EditPackage { draft, edits } => {
+            let (current, package) = package_draft(document, draft)?;
+            // The pad-relative quick actions report why the footprint is
+            // missing or ambiguous; other edits need none.
+            let footprint = match landing_footprint(document, draft) {
+                Ok(footprint) => Some(footprint),
+                Err(error) if edits.iter().any(PackageEdit::needs_footprint) => {
+                    return Err(error);
+                }
+                Err(_) => None,
+            };
+            let edited = package_fit::edit_package_in(package, footprint, &edits)?;
+            let meta = current.meta.clone();
+            store_package(document, draft, meta, edited)?;
+            Ok(Outcome::None)
+        }
+        LibraryCommand::FitLeads {
+            draft,
+            pairs,
+            rotation,
+            confirm,
+        } => {
+            let (current, package) = package_draft(document, draft)?;
+            let pairs = if pairs.is_empty() {
+                package_fit::form_pairs(package, landing_footprint(document, draft)?)?
+            } else {
+                // Pads are checked against the one landing footprint when
+                // there is one; host pairs may target several.
+                let landing = landing_footprint(document, draft).ok();
+                package_fit::check_pair_ids(package, landing, &pairs)?;
+                pairs
+            };
+            let fit = package_fit::fit_leads(&package.placement, &pairs, rotation)?;
+            if confirm {
+                let mut edited = package.clone();
+                edited.placement = fit.placement;
+                let meta = current.meta.clone();
+                store_package(document, draft, meta, edited)?;
+            }
+            Ok(Outcome::LeadsFitted {
+                fit,
+                applied: confirm,
             })
         }
     }

@@ -7,6 +7,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod frame3;
+pub use frame3::{Point3, Transform3};
+
 pub type Point = [f64; 2];
 
 /// Largest coordinate magnitude the document stores, in millimetres.

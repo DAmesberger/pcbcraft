@@ -6,7 +6,7 @@ use crate::library::footprint_source::FakeEvaluator;
 
 fn package(n: u32, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
-        body_size: body,
+        envelope: body,
         terminals: (1..=n)
             .map(|k| PackageTerminal {
                 id: crate::ids::PackageTerminalId(k),

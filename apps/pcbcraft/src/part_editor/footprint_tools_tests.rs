@@ -20,7 +20,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn package(terminals: u32) -> PackageDefinition {
     PackageDefinition {
-        body_size: [4.9, 3.9, 1.5],
+        envelope: [4.9, 3.9, 1.5],
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(n + 100),

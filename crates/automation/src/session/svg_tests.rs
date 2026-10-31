@@ -129,7 +129,7 @@ fn an_svg_lands_on_footprint_silkscreen_not_the_courtyard() -> TestResult {
     let package = new_draft(
         &mut session,
         Definition::Package(PackageDefinition {
-            body_size: [2.0, 1.2, 0.5],
+            envelope: [2.0, 1.2, 0.5],
             ..PackageDefinition::default()
         }),
     )?;

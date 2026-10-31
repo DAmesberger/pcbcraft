@@ -492,6 +492,15 @@ fn corrupt_newer_and_invalid_documents_leave_engine_and_history_unchanged() -> R
         format::decode(&serde_json::to_vec(&newer)?),
         Err(Error::Unsupported(_))
     ));
+    // Package looks are read from the built-in material table: a project of
+    // another table revision is refused, never reopened with other looks.
+    let mut materials = serde_json::to_value(&before)?;
+    materials["project"]["material_table"] =
+        json!(crate::materials::BUILTIN_REVISION.wrapping_add(1));
+    assert!(matches!(
+        format::decode(&serde_json::to_vec(&materials)?),
+        Err(Error::Unsupported(_))
+    ));
     for bytes in [
         b"broken".to_vec(),
         serde_json::to_vec(&newer)?,

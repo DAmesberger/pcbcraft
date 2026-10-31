@@ -83,6 +83,20 @@ pub struct Viewport {
     /// The point a right-drag orbits about.
     pivot: Option<Vec3>,
     hide_substrate: bool,
+    /// Rigid display transform of the shown model (the Component 3D
+    /// placement and its drag preview), applied to cached meshes
+    /// ([`display`]); never a rebuild.
+    display: pcbcraft_core::geometry::Transform3,
+    /// The shown model's own bounds, before the display transform.
+    model_bounds: Aabb3,
+    /// The display-only overlay (lands, seating plane) in the preview slot.
+    overlay_bounds: Aabb3,
+    /// The display transform was not applied: too many triangles to repack.
+    display_limited: bool,
+    pv_key: u64,
+    pv_slot: SceneSlot,
+    /// Where the view was last drawn.
+    rect: Option<egui::Rect>,
 }
 
 impl Viewport {
@@ -152,6 +166,13 @@ impl Viewport {
             fit_pending: false,
             pivot: None,
             hide_substrate: false,
+            display: pcbcraft_core::geometry::Transform3::IDENTITY,
+            model_bounds: Self::initial_bounds(),
+            overlay_bounds: Aabb3::EMPTY,
+            display_limited: false,
+            pv_key: 0,
+            pv_slot: Arc::new(Mutex::new(None)),
+            rect: None,
         };
         result.fit();
         result
@@ -163,6 +184,17 @@ impl Viewport {
             min: Vec3::new(0.0, 0.0, -0.1),
             max: Vec3::new(40.0, 30.0, 1.7),
         }
+    }
+
+    /// The camera the view is drawn with.
+    pub fn camera(&self) -> Camera {
+        self.camera
+    }
+
+    /// Show the view from `camera` (a framing kept from earlier).
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
+        self.fit_pending = false;
     }
 
     /// Fit the model to the view now, and again on the next draw, when the
@@ -217,7 +249,7 @@ impl Viewport {
     /// Show a model built on the worker. Its PBR bytes move into the slot.
     pub fn set_model(&mut self, mut model: ModelScene) {
         if !model.bounds.is_empty() {
-            self.bounds = model.bounds;
+            self.model_bounds = model.bounds;
         }
         let mut pbr = std::mem::take(&mut model.pbr);
         if self.hide_substrate {
@@ -228,6 +260,10 @@ impl Viewport {
         self.repack = None;
         self.publish_pbr(pbr);
         self.shadow_view = None;
+        // A new model is shown as built; the Part view sets its placement
+        // transform again before drawing.
+        self.display = pcbcraft_core::geometry::Transform3::IDENTITY;
+        self.refresh_bounds();
         self.publish_shadows();
         self.publish_highlight();
     }
@@ -321,13 +357,14 @@ impl Viewport {
         self.shadow_view = Some(view);
         let (dark, below, hidden) = view;
         let peak = SHADOW_ALPHA[usize::from(dark)];
+        let display = self.display;
         let mut scene = GpuScene::default();
         if let Some(model) = self.model.as_ref().filter(|_| !hidden) {
             let mut add = |vertices: &[ShadowVertex]| {
                 for (p, weight) in vertices {
                     let alpha = (peak * weight.clamp(0.0, 1.0)).round() as u8;
                     let color = scene.color([0, 0, 0, alpha]);
-                    scene.trans_tri(*p, [0.0; 3], color);
+                    scene.trans_tri(display::point(&display, *p), [0.0; 3], color);
                 }
             };
             if below {
@@ -372,6 +409,7 @@ impl Viewport {
     fn hit(&self, x: f64, y: f64, width: f64, height: f64) -> Option<(f64, &Geometry)> {
         let model = self.model.as_ref()?;
         let (origin, direction) = self.camera.ray(x, y, width, height);
+        let (origin, direction) = self.model_ray(origin, direction);
         model
             .geometry
             .iter()
@@ -391,6 +429,7 @@ impl Viewport {
     fn surface_point(&self, x: f64, y: f64, width: f64, height: f64) -> Option<Vec3> {
         let (origin, direction) = self.camera.ray(x, y, width, height);
         if let Some((d, _)) = self.hit(x, y, width, height) {
+            // A rigid display transform keeps distances along the ray.
             return Some(origin + direction * d);
         }
         let plane = self.bounds.center().z;
@@ -466,9 +505,13 @@ impl Viewport {
             sketch_slot: self.sketch_slot.clone(),
             hl_key: self.hl_key,
             hl_slot: self.hl_slot.clone(),
-            pv_key: 0,
-            pv_slot: self.empty.clone(),
-            pv_hide: true,
+            pv_key: self.pv_key,
+            pv_slot: if self.pv_key == 0 {
+                self.empty.clone()
+            } else {
+                self.pv_slot.clone()
+            },
+            pv_hide: self.pv_key == 0,
             view_proj,
             back: self.camera.back().to_f32(),
             size_px,
@@ -503,6 +546,7 @@ impl Viewport {
         }
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         self.aspect = w / h;
+        self.rect = Some(rect);
         if self.fit_pending {
             self.fit_pending = false;
             self.fit_to(self.aspect);
@@ -590,6 +634,7 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
     enter <= leave + 1e-9
 }
 
+mod display;
 #[cfg(test)]
 mod pictures;
 

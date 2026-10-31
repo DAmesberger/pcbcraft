@@ -4,8 +4,8 @@ use crate::functions::{Direction, TerminalFunctions};
 use crate::instances::NewInstance;
 use crate::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
-    FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
-    Terminal, TerminalClass, TerminalMap, Unit,
+    FootprintDefinition, PackageDefinition, PackageTerminal, Pad, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit,
 };
 use crate::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, Engine, Error,
@@ -378,9 +378,8 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
                 designation: (*designation).into(),
             })
             .collect(),
-        body_size: [4.0, 3.0, 1.0],
-        model_offset: [0.0; 3],
-        body: PackageBody::Moulded,
+        envelope: [4.0, 3.0, 1.0],
+        ..PackageDefinition::default()
     };
     let footprint = FootprintDefinition {
         package: PackageRef::new(f.package, first),

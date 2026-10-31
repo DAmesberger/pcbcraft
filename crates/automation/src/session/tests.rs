@@ -587,7 +587,7 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
                 designation: n.to_string(),
             })
             .collect(),
-        body_size: [2.0, 1.2, 0.5],
+        envelope: [2.0, 1.2, 0.5],
         ..PackageDefinition::default()
     });
     let created = |reply: &Value| -> std::result::Result<u64, Box<dyn std::error::Error>> {

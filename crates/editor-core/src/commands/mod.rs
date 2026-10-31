@@ -84,6 +84,11 @@ pub enum Outcome {
     Duplicated {
         lineages: Vec<DefinitionId>,
     },
+    /// `library.fit_leads`: the solved placement, stored only if `applied`.
+    LeadsFitted {
+        fit: crate::library::package_fit::LeadFit,
+        applied: bool,
+    },
 }
 
 /// A symbol draft's pin, by its terminal, that lies off the authoring grid.

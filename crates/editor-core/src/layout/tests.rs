@@ -285,7 +285,9 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
             &mut project,
             LayoutCommand::Route {
                 request: RouteRequest {
-                    start: [9.49, 10.0],
+                    // R1.1's land ends at 9.7 (pad at 9.2, 1 mm wide): a
+                    // 0.3 mm track starting here is 0.04 mm from it.
+                    start: [9.89, 10.0],
                     ..request()
                 }
             }
@@ -297,7 +299,7 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
         &mut project,
         LayoutCommand::Route {
             request: RouteRequest {
-                start: [9.5, 10.0],
+                start: [9.9, 10.0],
                 ..request()
             },
         },
@@ -586,10 +588,10 @@ fn shared_track(start: Point, end: Point) -> LayoutCommand {
 
 #[test]
 fn clearance_measures_a_round_pad_not_its_extent() -> Result<()> {
-    // R1 pad 1 (another net) sits at (8.8, 10). A shared-net track passes
+    // R1 pad 1 (another net) sits at (9.2, 10). A shared-net track passes
     // its upper-right corner diagonally 0.1 mm out in x and y: 0.141 mm
     // from a square land, 0.349 mm from a round one of the same extent.
-    let pass = shared_track([9.4, 10.75], [11.2, 10.75]);
+    let pass = shared_track([9.8, 10.75], [10.8, 10.75]);
     let mut square_board = with_pad_shape(fixture()?, square());
     let before = square_board.clone();
     assert!(apply(&mut square_board, pass.clone()).is_err());
@@ -608,7 +610,7 @@ fn clearance_measures_a_round_pad_not_its_extent() -> Result<()> {
 
 #[test]
 fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
-    // A horizontal 0.3 mm track above R1 pad 1 (r 0.5 at (8.8, 10)):
+    // A horizontal 0.3 mm track above R1 pad 1 (r 0.5 at (9.2, 10)):
     // its lower edge is 0.21 mm, then 0.19 mm, from the circle.
     let at = |gap: f64| 10.0 + 0.5 + gap + 0.15;
     let mut project = with_pad_shape(fixture()?, circle());
@@ -616,14 +618,14 @@ fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
     assert!(
         apply(
             &mut project,
-            shared_track([7.0, at(0.19)], [11.2, at(0.19)])
+            shared_track([7.4, at(0.19)], [10.8, at(0.19)])
         )
         .is_err()
     );
     assert_eq!(project, before);
     apply(
         &mut project,
-        shared_track([7.0, at(0.21)], [11.2, at(0.21)]),
+        shared_track([7.4, at(0.21)], [10.8, at(0.21)]),
     )?;
     let track = project.tracks[0].clone();
     let pad = pads(&project)
@@ -637,9 +639,9 @@ fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
 
 #[test]
 fn connectivity_follows_the_pad_outline_into_corners() -> Result<()> {
-    // The track ends at R1 pad 2's corner region (11.65, 10.3–10.6): inside
+    // The track ends at R1 pad 2's corner region (11.25, 10.3–10.6): inside
     // a square land, 0.041 mm outside a round one.
-    let route = shared_track([23.8, 10.45], [11.65, 10.45]);
+    let route = shared_track([24.2, 10.45], [11.25, 10.45]);
     let mut square_board = with_pad_shape(fixture()?, square());
     apply(&mut square_board, route.clone())?;
     assert!(airwires(&square_board).is_empty());
@@ -662,10 +664,10 @@ fn a_track_tangent_to_round_pads_connects_them_and_a_small_gap_does_not() -> Res
     // The track's lower edge at y = 10.5 is tangent to both shared-net
     // circles; flattening must not open that contact.
     let mut tangent = with_pad_shape(fixture()?, circle());
-    apply(&mut tangent, shared_track([11.2, 10.65], [23.8, 10.65]))?;
+    apply(&mut tangent, shared_track([10.8, 10.65], [24.2, 10.65]))?;
     assert!(airwires(&tangent).is_empty(), "{:?}", checks(&tangent));
     let mut apart = with_pad_shape(fixture()?, circle());
-    apply(&mut apart, shared_track([11.2, 10.66], [23.8, 10.66]))?;
+    apply(&mut apart, shared_track([10.8, 10.66], [24.2, 10.66]))?;
     assert_eq!(airwires(&apart).len(), 1);
     Ok(())
 }

@@ -26,6 +26,13 @@ pub fn edited(before: &Project, after: &Project) -> Result<()> {
 }
 
 fn project_except_library(p: &Project) -> Result<()> {
+    if p.material_table != crate::materials::BUILTIN_REVISION {
+        return Err(Error::Unsupported(format!(
+            "material table revision {} is not this build's ({}); package looks would change",
+            p.material_table,
+            crate::materials::BUILTIN_REVISION
+        )));
+    }
     if p.name.trim().is_empty() || p.name.len() > 256 {
         return Err(Error::Invalid("project name is empty or too long".into()));
     }

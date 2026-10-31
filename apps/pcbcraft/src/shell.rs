@@ -469,6 +469,9 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
                 for item in Workspace::ALL {
                     if workspace_item(ui, item, item == workspace).clicked() {
                         chosen = Some(item);
+                        // Also when the item is pressed without a pointer
+                        // click (keyboard, accessibility).
+                        ui.close();
                     }
                 }
             });

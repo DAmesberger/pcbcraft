@@ -10,6 +10,8 @@
 //! `(source lineage, source revision)` to fresh project lineages and
 //! revisions and records an [`OriginRecord`] for every copy.
 use super::graphics::{FootprintGraphic, Item, TextContent};
+use super::package_form::PackageForm;
+use super::package_model::{GeneratedMaterials, ImportedModel, ModelPlacement, PackageModel};
 use super::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, FootprintDefinition,
     Library, PackageDefinition, PartDefinition, SymbolDefinition, Unit,
@@ -273,10 +275,35 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
             let PackageDefinition {
                 next_local: _,
                 terminals: _,
-                body_size: _,
-                model_offset: _,
-                body: _,
+                form,
+                envelope: _,
+                model,
+                placement,
             } = package;
+            // The form, model and placement name no other lineage and no
+            // asset: materials are built-in `MaterialId`s of the project's
+            // `material_table`, not library references. Matched without
+            // wildcards so a reference added to any of them (an imported
+            // model's asset, M4) fails to compile here until it is rewritten.
+            match form {
+                PackageForm::Generic
+                | PackageForm::Chip(_)
+                | PackageForm::GullWing(_)
+                | PackageForm::NoLead(_)
+                | PackageForm::Header(_) => {}
+            }
+            match model {
+                PackageModel::Envelope { material: _ } => {}
+                PackageModel::Generated {
+                    family_rev: _,
+                    materials: GeneratedMaterials { roles: _ },
+                } => {}
+                PackageModel::Imported(ImportedModel {}) => {}
+            }
+            let ModelPlacement {
+                translation: _,
+                rotation_deg: _,
+            } = placement;
         }
         Definition::Footprint(footprint) => {
             let FootprintDefinition {

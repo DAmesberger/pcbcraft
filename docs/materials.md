@@ -16,8 +16,8 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 |---|---|---|---|---|---|---|
 | `copper_track`, `pad_copper` | Bare copper | (0.955, 0.638, 0.538) | 1 | 0.30 | – | Cu F0 from Johnson & Christy 1972 (Hoffman's table). Exposed only with Hide substrate; under the mask it is covered by the mask cap. |
 | `pad_finish` | Per pad finish | see [pad finishes](#pad-finishes) | 1 | 0.16–0.35 | – | The board's pad finish; ENIG by default. |
-| `termination` | Matte tin | (0.64, 0.64, 0.66) | 1 | 0.28 | – | **est.** Same Sn F0 as lead-free HASL. Electroplated matte tin is rougher than reflowed solder. |
-| `solder` | Reflowed solder fillet | (0.64, 0.64, 0.66) | 1 | 0.14 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. A reflowed meniscus freezes smooth and bright. |
+| `termination` | Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | **est.** Plated tin near polished Sn (≈ 0.75–0.8 across the visible); a satin finish. Raised from 0.64 / 0.28 after the M1–M3 visual review found terminations reading as grey plastic. |
+| `solder` | Reflowed solder fillet | (0.78, 0.78, 0.80) | 1 | 0.38 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. Lead-free joints freeze satin; at 0.14 the fillet mirrored the studio's dark walls and read as black chrome. |
 | `chip_resistor` | Alumina ceramic | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | **est.** 96 % alumina thick-film substrates reflect 0.75–0.85 across 400–700 nm (published substrate data); n from sapphire (n_o = 1.77, handbook). |
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
 | `overcoat` | Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | **est.** Glass or epoxy overcoat with a black marking layer over the resistive film. |
@@ -48,11 +48,11 @@ The laminate result lands close to the check target estimated independently from
 
 ## Geometry that carries the looks
 
-The saved native model holds only physical bodies: the laminate, exact copper (pads and tracks) and package envelopes. They are disjoint except where copper joins copper (a track ending in its pad), so Solidcraft's interference checks and mass properties of the saved file are physical; a test checks the bodies' boxes pairwise and the total volume.
+The saved native model holds only physical bodies: the laminate, exact copper (pads and tracks), package envelopes and generated package models (one shared definition per package revision, every body with its material). They are disjoint except where copper joins copper (a track ending in its pad), so Solidcraft's interference checks and mass properties of the saved file are physical; a test checks the bodies' boxes pairwise and the total volume.
 
 Everything else is a display-only layer built on the model worker as meshes in Solidcraft's mesh type (`crates/solidcraft-integration/src/appearance.rs`). They are drawn and picked like native bodies (mask caps and finish strips pick as their track, terminations, overcoat and solder as their part) but are never saved, and they are not native features, so they add nothing to native construction time.
 
-**Body style.** Which body material a package gets comes only from its authored `PackageDefinition.body` (`moulded`, `chip_resistor`, `chip_capacitor`; set in the Component panel's 3D tab, Body row). The 3D view never infers it from a designator, name, value or package size.
+**Body style.** Which body material a package gets comes only from its authored `PackageDefinition.form` (a generic form is moulded; a chip form's `kind` is resistor, capacitor or inductor; set in the Component panel's 3D tab, Body row) and, for generated models, its `model` materials ([package materials](#package-materials)). The 3D view never infers it from a designator, name, value or package size.
 
 | Layer | Size | Why |
 |---|---|---|
@@ -60,12 +60,47 @@ Everything else is a display-only layer built on the model worker as meshes in S
 | Mask cap over a track | 0.015 mm above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
 | Mask opening | Land + 0.05 mm | A common fabrication default. |
 | Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
-| Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages whose `body` is `chip_resistor` or `chip_capacitor` (publication requires exactly two package terminals for these). The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
+| Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages with a chip form (publication requires exactly two package terminals for these). On an envelope chip these are display-only, and an inductor shows the ceramic chip's terminations; a generated chip has real tin termination bodies and a ferrite inductor body. The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
-| Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only `chip_resistor` bodies get it; `chip_capacitor` bodies are MLCC ceramic without an overcoat. |
-| Solder fillet | A closed solid: concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe, rounding down to the land at both sides as 1 − u⁴ across 92 % of the termination width; h = 0.4 × body height (at most 0.4 mm) | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. No vertical side walls: a flat metal wall mirrored the studio's dark lower walls and read as a black hollow. |
+| Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only chip resistors get it; chip capacitors are MLCC ceramic without an overcoat. |
+| Solder fillet | A closed solid: concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe, rounding down to the land at both sides as 1 − u⁴ across 92 % of the termination width; h = 0.4 × body height (at most 0.4 mm) | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. Also drawn against a generated chip's real terminations while its model frame is the package frame (no datum shift or turn). No vertical side walls: a flat metal wall mirrored the studio's dark lower walls and read as a black hollow. |
 
 There is no silkscreen: the core has no outline or reference-designator graphics yet. The silkscreen colour is saved with the design and will be drawn once legend graphics exist.
+
+## Package materials
+
+Generated and envelope package models name a physical material per body (`MaterialId`), never a colour. The table is core data (`crates/editor-core/src/materials.rs`, `materials::builtin`), revisioned with the app (`BUILTIN_REVISION`); a project stores only the ids, and the saved `.solidcraft` model carries each body's opaque projection, so a project reopens with the same native looks even after a later table revision. User materials, once they exist, will be a revisioned library definition kind snapshotted like other definitions. The integration crate keeps its `BodyKind` looks (above) and maps body kinds to these ids; the values shared with the table above are the same numbers, and a core test (`materials::tests::cited_values_match_docs`) checks them.
+
+Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman`, `palik-crc` (see [sources](#sources)) or `est`. A material with any `est` source is flagged `estimated`. Metals are metallic 1 with IOR 1.5 (ignored). Densities are handbook values for the elements, alumina, barium titanate and borosilicate glass, and typical grade values (**est.**) for compounds and plastics.
+
+| Material | Base colour (linear) | Metallic | Rough | IOR | Extra | Density kg/m³ | Source |
+|---|---|---|---|---|---|---|---|
+| Epoxy mould compound | (0.022, 0.022, 0.024) | 0 | 0.45 | 1.55 | EDM texture 1.0 | 1950 | **est.** As `package_body` above. |
+| Laser-marked epoxy | (0.10, 0.10, 0.105) | 0 | 0.75 | 1.55 | – | 1950 | **est.** Ablation exposes lighter silica filler and roughens the surface. |
+| White marking ink | (0.80, 0.80, 0.78) | 0 | 0.60 | 1.50 | – | – | **est.** TiO₂-pigmented ink, as legend ink. |
+| Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | – | – | **est.** As `overcoat` above. |
+| 96 % alumina | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | – | 3720 | **est.** colour as `chip_resistor` above; n from sapphire. |
+| Barium titanate | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | – | 6020 | **est.** colour as `chip_capacitor`; n and density handbook. |
+| Ferrite | (0.045, 0.045, 0.047) | 0 | 0.60 | 2.0 | – | 4800 | **est.** Dark grey sintered Mn-Zn/Ni-Zn ferrite. |
+| Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | – | 7265 | **est.** F0 as `termination`; β-tin density. |
+| Bright tin | (0.78, 0.78, 0.80) | 1 | 0.22 | – | – | 7265 | **est.** A smoother brightened deposit. |
+| SAC solder | (0.78, 0.78, 0.80) | 1 | 0.38 | – | – | 7400 | **est.** As `solder` above. |
+| Gold plating | (1.000, 0.782, 0.344) | 1 | 0.22 | – | – | 19300 | Au F0, Johnson & Christy via Hoffman; roughness **est.** Hard gold is thick enough that the nickel does not show (unlike ENIG pads). |
+| Nickel | (0.660, 0.609, 0.526) | 1 | 0.30 | – | – | 8908 | Ni F0, Rakić 1998; roughness **est.** |
+| Copper-alloy leadframe | (0.955, 0.638, 0.538) | 1 | 0.32 | – | – | 8910 | Cu F0 (C194-like alloys are over 97 % Cu); roughness **est.** |
+| Phosphor bronze | (0.90, 0.70, 0.52) | 1 | 0.30 | – | – | 8860 | **est.** Cu with about 5 % Sn, shifted toward tin. |
+| Brass | (0.910, 0.778, 0.423) | 1 | 0.28 | – | – | 8500 | Brass F0, Hoffman's table; roughness **est.** |
+| Aluminium | (0.913, 0.922, 0.924) | 1 | 0.30 | – | – | 2700 | Al F0, Hoffman's table; roughness **est.** |
+| PVC sleeve | (0.020, 0.045, 0.16) | 0 | 0.35 | 1.54 | – | 1380 | **est.** colour of a blue sleeve; n handbook. |
+| Borosilicate glass | (0.85, 0.88, 0.86) | 0 | 0.05 | 1.47 | transmission 1.0, (0.92, 0.95, 0.93) at 1 mm | 2230 | n and density handbook; attenuation **est.** Saved as an opaque tint until a layered saved appearance exists. |
+| PBT | (0.030, 0.030, 0.032) | 0 | 0.50 | 1.57 | – | 1530 | **est.** Black 30 % glass-filled housing. |
+| LCP | (0.025, 0.025, 0.028) | 0 | 0.35 | 1.60 | – | 1620 | **est.** Black glass-filled housing. |
+| PA9T | (0.030, 0.030, 0.030) | 0 | 0.45 | 1.53 | – | 1450 | **est.** Black glass-filled housing. |
+| Clear silicone | (0.90, 0.90, 0.90) | 0 | 0.08 | 1.41 | transmission 1.0, (0.97, 0.97, 0.96) at 1 mm | 1030 | n of PDMS handbook; attenuation **est.** |
+| Diffuse silicone | (0.75, 0.75, 0.72) | 0 | 0.40 | 1.41 | transmission 0.3, (0.80, 0.80, 0.78) at 0.5 mm | 1100 | **est.** Scattering filler. |
+| Polyimide | (0.40, 0.15, 0.02) | 0 | 0.25 | 1.70 | – | 1420 | n and density handbook; amber colour **est.** |
+
+Family defaults (`library::default_material`, never from names): chip bodies alumina (resistor), barium titanate (capacitor) or ferrite (inductor); header housings PBT and pins gold; leads, terminations and exposed pads matte tin; markings laser-marked epoxy; lenses clear silicone; sleeves PVC; every other body epoxy mould compound. A generated model may override a role (`GeneratedMaterials`).
 
 ## Fabrication presets
 
@@ -124,7 +159,7 @@ Show-through is **est.** No measured print-through value was found in public sou
 
 | Pad finish | Base colour (linear F0) | Rough | Source |
 |---|---|---|---|
-| ENIG (default) | (0.95, 0.76, 0.37) | 0.30 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin (**est.** roughness, raised from 0.25 so a typical view averages more of the studio and reads as pale gold, not brass). |
+| ENIG (default) | (1.0, 0.73, 0.30) | 0.28 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin (**est.** roughness, raised from 0.25 so a typical view averages more of the studio and reads as pale gold, not brass). The M1–M3 visual review found the blend reading as desaturated khaki, so the F0 was moved to the gold F0 with a little nickel showing (1.0, 0.73, 0.30) at 0.28 (**est.**). |
 | HASL (tin-lead) | (0.62, 0.62, 0.63) | 0.16 | **est.** Eutectic Sn63Pb37 is about 30 % lead by volume; lead reflects less than tin, so the blend sits a little below tin. Eutectic solder freezes bright. To be confirmed against Palik's Sn and Pb n, k. |
 | Lead-free HASL | (0.64, 0.64, 0.66) | 0.20 | **est.** Lead-free solders (SAC, SnCuNi) are over 95 % tin. Polished tin reflects ≈ 0.7, flat across the visible; a reflowed or plated surface carries an oxide film, so it is taken lower. They freeze duller and grainier than eutectic tin-lead, hence the higher roughness. |
 | OSP | (0.955, 0.638, 0.538) | 0.35 | Bare copper F0 (as `copper_track`). The organic film is sub-micrometre and transparent (**est.**: its thin-film tint is ignored); the copper under it is micro-etched, hence the roughness. |
@@ -141,6 +176,8 @@ The PCB 3D view and Component 3D preview draw with Solidcraft's opt-in product l
 Tin and tin-lead were lowered (from 0.70 and 0.68) and made smoother (HASL from 0.20, solder from 0.15, terminations from 0.35) after the visual check found HASL pads and fillets reading as flat white paper: at a high F0 and moderate roughness the studio's average saturated to a uniform white, with no reflection detail. Both changes are **est.**
 
 ## Sources
+
+The core table's source keys are `johnson-christy-1972`, `rakic-1998`, `hoffman` and `palik-crc` (Palik and the CRC Handbook), the first four entries below; `est` marks an estimate.
 
 - P. B. Johnson and R. W. Christy, "Optical Constants of the Noble Metals", *Phys. Rev. B* 6, 4370 (1972). Au and Cu; tabulated at refractiveindex.info.
 - A. D. Rakić et al., "Optical properties of metallic films for vertical-cavity optoelectronic devices", *Applied Optics* 37, 5271 (1998). Ni.

@@ -5,7 +5,7 @@ use crate::catalog::synthetic;
 use crate::completeness::CheckTarget;
 use crate::format::{EditorFile, FILE_VERSION};
 use crate::instances::{self, NewInstance};
-use crate::library::{Drafts, PackageBody, PackageTerminal};
+use crate::library::{ChipForm, ChipKind, Drafts, PackageForm, PackageTerminal};
 use crate::{
     ComponentRef, Engine, Error, InstanceCommand, Operation, Outcome, PackageTerminalId,
     PhysicalChoice, Result, Stage, UnitId,
@@ -203,14 +203,14 @@ fn prefix_and_chip_body_are_checked_at_publication() -> Result<()> {
     with(&mut engine, f.component, component_body, |c| {
         c.designator_prefix = "C".into()
     })?;
-    // A chip body needs exactly two package terminals.
+    // A chip form needs exactly two package terminals.
     let chip_finding = |engine: &Engine| -> Result<bool> {
         Ok(blocking(engine, f.package)?
             .iter()
-            .any(|c| c == "package.body"))
+            .any(|c| c == "package.form_terminals"))
     };
     with(&mut engine, f.package, package_body, |p| {
-        p.body = PackageBody::ChipCapacitor
+        p.form = PackageForm::Chip(Box::new(ChipForm::new(ChipKind::Capacitor, p.envelope)))
     })?;
     assert!(!chip_finding(&engine)?);
     with(&mut engine, f.package, package_body, |p| {
@@ -222,7 +222,7 @@ fn prefix_and_chip_body_are_checked_at_publication() -> Result<()> {
     })?;
     assert!(chip_finding(&engine)?);
     with(&mut engine, f.package, package_body, |p| {
-        p.body = PackageBody::Moulded
+        p.form = PackageForm::Generic
     })?;
     assert!(!chip_finding(&engine)?);
     Ok(())
@@ -235,9 +235,9 @@ fn synthetic_families_carry_prefix_and_body() -> Result<()> {
     let engine = catalog()?;
     let library = &engine.project().library;
     for (prefix, body) in [
-        ("R", PackageBody::ChipResistor),
-        ("C", PackageBody::ChipCapacitor),
-        ("J", PackageBody::Moulded),
+        ("R", Some(ChipKind::Resistor)),
+        ("C", Some(ChipKind::Capacitor)),
+        ("J", None),
     ] {
         let component = with_prefix(&engine, prefix)?;
         let binding = library
@@ -248,7 +248,7 @@ fn synthetic_families_carry_prefix_and_body() -> Result<()> {
         let package = library
             .package(binding.definition.package)
             .ok_or_else(|| Error::NotFound("package".into()))?;
-        assert_eq!(package.definition.body, body, "{prefix}");
+        assert_eq!(package.definition.chip_kind(), body, "{prefix}");
     }
     Ok(())
 }

@@ -12,10 +12,11 @@ use crate::ids::{
 };
 use crate::instances::{self, Regroup, Resolved, UnitCarry};
 pub use crate::instances::{RegroupAction, UnitTarget};
+use crate::library::footprint_source::ParamValue;
 use crate::library::{
-    BindingDefinition, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
-    PackageDefinition, Pad, PadKind, PadShape, PasteRule, Pin, PinDirection, PinText,
-    SymbolDefinition, Terminal, TerminalClass,
+    BindingDefinition, BodyRole, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
+    PackageDefinition, PackageForm, PackageModel, Pad, PadKind, PadShape, PasteRule, Pin,
+    PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
 use crate::{erc, layout, nets, schematic, validate};
@@ -823,6 +824,107 @@ pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usi
     (added, removed, changed)
 }
 
+/// Package difference lines and the designators each one reaches.
+type PackageLines = Vec<(String, Vec<String>)>;
+
+/// `[l, w, h]` as `L×W×H`.
+fn size_text(size: &[f64; 3]) -> String {
+    format!("{:?}×{:?}×{:?}", size[0], size[1], size[2])
+}
+
+/// Physical differences between two package revisions: the form family and
+/// each changed `pkg_*` value, the envelope, the model source and body
+/// materials, and the model placement. Empty when they agree.
+pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<String> {
+    let mut out = Vec::new();
+    if a.form.label() != b.form.label() {
+        out.push(format!(
+            "package form {} → {}.",
+            a.form.label(),
+            b.form.label()
+        ));
+    } else if a.form != b.form {
+        let before = a.form.values();
+        let after = b.form.values();
+        for value in &after {
+            match before.iter().find(|v| v.name == value.name) {
+                Some(old) if old.value != value.value => out.push(format!(
+                    "package parameter {} {} → {}.",
+                    value.name.0,
+                    show_value(&old.value),
+                    show_value(&value.value)
+                )),
+                Some(_) => {}
+                None => out.push(format!(
+                    "package parameter {} added ({}).",
+                    value.name.0,
+                    show_value(&value.value)
+                )),
+            }
+        }
+        for old in before
+            .iter()
+            .filter(|v| after.iter().all(|n| n.name != v.name))
+        {
+            out.push(format!("package parameter {} removed.", old.name.0));
+        }
+        if let (PackageForm::Chip(x), PackageForm::Chip(y)) = (&a.form, &b.form)
+            && x.kind != y.kind
+        {
+            out.push(format!("chip kind {:?} → {:?}.", x.kind, y.kind));
+        }
+    }
+    if a.envelope != b.envelope {
+        out.push(format!(
+            "body {} → {} mm (L×W×H).",
+            size_text(&a.envelope),
+            size_text(&b.envelope)
+        ));
+    }
+    match (&a.model, &b.model) {
+        (
+            PackageModel::Generated {
+                family_rev: ra,
+                materials: ma,
+            },
+            PackageModel::Generated {
+                family_rev: rb,
+                materials: mb,
+            },
+        ) => {
+            if ra != rb {
+                out.push(format!("generated model builder rev {ra} → {rb}."));
+            }
+            for role in BodyRole::ALL {
+                let (x, y) = (ma.material(&a.form, role), mb.material(&b.form, role));
+                if x != y {
+                    out.push(format!("{role:?} material {x:?} → {y:?}."));
+                }
+            }
+        }
+        (x, y) if x != y => out.push(format!("3D model {} → {}.", x.describe(), y.describe())),
+        _ => {}
+    }
+    if a.placement != b.placement {
+        out.push(format!(
+            "model placement {:?} mm, {:?}° → {:?} mm, {:?}°.",
+            a.placement.translation,
+            a.placement.rotation_deg,
+            b.placement.translation,
+            b.placement.rotation_deg
+        ));
+    }
+    out
+}
+
+fn show_value(value: &ParamValue) -> String {
+    match value {
+        ParamValue::Length(v) => format!("{v} mm"),
+        ParamValue::Angle(v) => format!("{v}°"),
+        ParamValue::Count(n) => n.to_string(),
+    }
+}
+
 /// Definition differences reachable from two resolved states of one instance.
 fn definition_details(
     plan: &mut UpdatePlan,
@@ -831,6 +933,7 @@ fn definition_details(
     a: &View<'_>,
     b: &View<'_>,
     mapping_endpoints: &mut BTreeSet<Endpoint>,
+    packages: &mut PackageLines,
 ) {
     if a.name != b.name {
         plan.detail(format!(
@@ -838,13 +941,13 @@ fn definition_details(
             a.name, b.name
         ));
     }
-    if let (Some(pa), Some(pb)) = (a.package, b.package)
-        && (pa.body_size != pb.body_size || pa.model_offset != pb.model_offset)
-    {
-        plan.detail(format!(
-            "{designator}: model dimensions {:?} → {:?} mm; model offset {:?} → {:?} mm.",
-            pa.body_size, pb.body_size, pa.model_offset, pb.model_offset
-        ));
+    if let (Some(pa), Some(pb)) = (a.package, b.package) {
+        for line in package_details(pa, pb) {
+            match packages.iter_mut().find(|(l, _)| *l == line) {
+                Some((_, designators)) => designators.push(designator.to_owned()),
+                None => packages.push((line, vec![designator.to_owned()])),
+            }
+        }
     }
     // Units, pins and graphics.
     for unit in &a.symbol.units {
@@ -1176,6 +1279,7 @@ fn instance_details(
     old: &ComponentInstance,
     new: &ComponentInstance,
     mapping_endpoints: &mut BTreeSet<Endpoint>,
+    packages: &mut PackageLines,
 ) {
     let designator = old.designator.as_str();
     if old.designator != new.designator {
@@ -1219,7 +1323,15 @@ fn instance_details(
         != (new.component, new.representation, new.physical)
         && let (Some(a), Some(b)) = (view(project, old), view(next, new))
     {
-        definition_details(plan, designator, old.id, &a, &b, mapping_endpoints);
+        definition_details(
+            plan,
+            designator,
+            old.id,
+            &a,
+            &b,
+            mapping_endpoints,
+            packages,
+        );
     }
     if old.functions != new.functions {
         selection_details(plan, old, new);
@@ -1476,6 +1588,7 @@ pub(crate) fn preview(
         }
     }
     let mut mapping_endpoints = BTreeSet::new();
+    let mut packages = PackageLines::new();
     for old in &project.instances {
         let Some(new) = next.instance(old.id) else {
             plan.detail(format!(
@@ -1484,7 +1597,19 @@ pub(crate) fn preview(
             ));
             continue;
         };
-        instance_details(&mut plan, project, &next, old, new, &mut mapping_endpoints);
+        instance_details(
+            &mut plan,
+            project,
+            &next,
+            old,
+            new,
+            &mut mapping_endpoints,
+            &mut packages,
+        );
+    }
+    // A package change is listed once for every instance it reaches.
+    for (line, designators) in packages {
+        plan.detail(format!("{}: {line}", designators.join(", ")));
     }
     for instance in &next.instances {
         if project.instance(instance.id).is_none() {

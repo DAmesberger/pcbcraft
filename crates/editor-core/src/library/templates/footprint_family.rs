@@ -224,13 +224,13 @@ impl FootprintTemplate {
 
     /// The template form prefilled for `kind` from the package: sizes are
     /// expressions over `pkg_L`, `pkg_W` and `pkg_n` where the package
-    /// gives them, else estimated literals (a package without a body size
+    /// gives them, else estimated literals (a package without an envelope
     /// or with a terminal count that does not divide gets literal values).
     /// Estimated prototype defaults, not copied tables or a compliance
     /// claim.
     pub fn defaults(kind: TemplateKind, package: &PackageDefinition) -> Self {
         let excess = e(TEMPLATE_COURTYARD_EXCESS);
-        let [l, w, _] = package.body_size;
+        let [l, w, _] = package.envelope;
         let sized = |v: f64| v.is_finite() && v > 0.0;
         let n = package.terminals.len();
         match kind {

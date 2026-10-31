@@ -65,6 +65,8 @@ struct Revisions {
 pub enum Template {
     TwoTerminal,
     Header,
+    /// A component on a typed package preset with a generated model.
+    Package(samples::Preset),
 }
 
 impl Template {
@@ -72,6 +74,7 @@ impl Template {
         match self {
             Self::TwoTerminal => "Resistor",
             Self::Header => "Connector",
+            Self::Package(preset) => preset.label(),
         }
     }
     fn edits(self, refs: SampleRefs) -> Vec<DraftEdit> {
@@ -80,6 +83,7 @@ impl Template {
             Self::Header => {
                 samples::two_terminal_header(self.name(), samples::Kind::CONNECTOR, refs)
             }
+            Self::Package(preset) => samples::packaged(self.name(), preset, refs),
         }
     }
 }

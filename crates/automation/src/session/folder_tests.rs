@@ -721,3 +721,181 @@ fn publish_library_again(author: &mut Session, library: &Value) -> Fallible<usiz
     }
     Ok(written)
 }
+
+/// Reserve a component's five drafts and fill them from `preset`'s
+/// generated-model sample, as the Component workspace's templates do.
+fn packaged_engine(
+    preset: pcbcraft_core::library::samples::Preset,
+) -> Fallible<(Engine, [DefinitionId; 5])> {
+    use pcbcraft_core::library::samples::{self, SampleRefs};
+    use pcbcraft_core::library::{Definition, DefinitionMeta};
+    use pcbcraft_core::{BindingRef, DefinitionKind, FootprintRef, Outcome, PackageRef, SymbolRef};
+    let mut engine = Engine::default();
+    let mut ids = Vec::new();
+    for kind in [
+        DefinitionKind::Component,
+        DefinitionKind::Symbol,
+        DefinitionKind::Package,
+        DefinitionKind::Footprint,
+        DefinitionKind::Binding,
+    ] {
+        if let Outcome::DraftCreated { id } = engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta::default(),
+                definition: Definition::empty(kind),
+            }),
+        )? {
+            ids.push(id);
+        }
+    }
+    let [component, symbol, package, footprint, binding] = ids[..] else {
+        return Err("draft reservation failed".into());
+    };
+    let first = Revision::FIRST;
+    let edits = samples::packaged(
+        preset.label(),
+        preset,
+        SampleRefs {
+            component,
+            symbol: SymbolRef::new(symbol, first),
+            package: PackageRef::new(package, first),
+            footprint: FootprintRef::new(footprint, first),
+            binding: BindingRef::new(binding, first),
+        },
+    );
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Edit { edits }),
+    )?;
+    Ok((engine, [component, symbol, package, footprint, binding]))
+}
+
+/// M1–M3 × S3: a package whose generated model has a body-role material
+/// override and an authored placement is promoted to a folder through io,
+/// then imported into another project from the folder's files. The copy's
+/// form, envelope, model (builder revision and materials) and placement
+/// equal the author's, and its origin is recorded.
+#[test]
+fn a_generated_package_model_round_trips_through_a_folder() -> TestResult {
+    use pcbcraft_core::PackageRef;
+    use pcbcraft_core::library::samples::Preset;
+    use pcbcraft_core::library::{
+        BodyRole, Definition, GeneratedMaterials, ModelPlacement, PackageEdit, PackageModel,
+        RoleMaterial,
+    };
+    use pcbcraft_core::materials::MaterialId;
+    let temp = tempfile::tempdir()?;
+    let folder = temp.path().join("models");
+    let folder_text = folder.display().to_string();
+
+    let (mut engine, drafts) = packaged_engine(Preset::Soic8)?;
+    let [component, _, package, _, _] = drafts;
+    let family_rev = match engine.drafts().get(package).map(|d| &d.definition) {
+        Some(Definition::Package(p)) => match &p.model {
+            PackageModel::Generated { family_rev, .. } => *family_rev,
+            other => return Err(format!("not generated: {other:?}").into()),
+        },
+        _ => return Err("no package draft".into()),
+    };
+    let placement = ModelPlacement {
+        translation: [0.02, -0.01, 0.0],
+        rotation_deg: [0.0, 0.0, 0.0],
+    };
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::EditPackage {
+            draft: package,
+            edits: vec![
+                PackageEdit::SetModel(PackageModel::Generated {
+                    family_rev,
+                    materials: GeneratedMaterials {
+                        roles: vec![RoleMaterial {
+                            role: BodyRole::Lead,
+                            material: MaterialId::Gold,
+                        }],
+                    },
+                }),
+                PackageEdit::SetPlacement(placement),
+            ],
+        }),
+    )?;
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: drafts.to_vec(),
+        }),
+    )?;
+    let authored = engine
+        .project()
+        .library
+        .package(PackageRef::new(package, Revision::FIRST))
+        .ok_or("no published package")?
+        .definition
+        .clone();
+    assert_eq!(authored.placement, placement);
+
+    let mut author = Session::new(engine);
+    let sample = publish_library(&mut author, &folder_text, "Models")?;
+    let library = sample["library"].clone();
+    let origin = |session: &Session, id: DefinitionId| {
+        session
+            .engine()
+            .project()
+            .library
+            .origins
+            .iter()
+            .find(|o| o.local.id == id)
+            .map(|o| o.origin)
+    };
+    let package_origin = origin(&author, package).ok_or("package not promoted")?;
+    let component_origin = origin(&author, component).ok_or("component not promoted")?;
+    // The record on disk carries the generated model and its override.
+    let record = std::fs::read_to_string(
+        folder.join(format!("lineages/{}/r0001.json", package_origin.lineage)),
+    )?;
+    assert!(
+        record.contains("\"generated\"") && record.contains("gold"),
+        "{record}"
+    );
+
+    let mut designer = user_session(Engine::default(), &dirs(&temp.path().join("designer")))?;
+    let added = ok(
+        &mut designer,
+        "library.source.add",
+        json!({"path": folder_text}),
+    )?;
+    assert_eq!(added["added"]["state"], "ready", "{added}");
+    let revision = designer.engine().revision();
+    let imported = ok(
+        &mut designer,
+        "library.import_from_folder",
+        json!({
+            "expected_revision": revision,
+            "library": library,
+            "lineage": component_origin.lineage,
+            "revision": component_origin.revision,
+        }),
+    )?;
+    let report = &imported["outcome"]["report"];
+    assert!(report["root"].is_object(), "{imported}");
+    let held = &designer.engine().project().library;
+    let copy = held
+        .origins
+        .iter()
+        .find(|o| o.origin.lineage == package_origin.lineage)
+        .ok_or("the package's origin is not recorded")?;
+    assert_eq!(copy.origin, package_origin);
+    let copied = held
+        .package(PackageRef::new(copy.local.id, copy.local.revision))
+        .ok_or("the package was not imported")?
+        .definition
+        .clone();
+    assert_eq!(copied, authored);
+    assert!(matches!(
+        &copied.model,
+        PackageModel::Generated { materials, .. }
+            if materials.roles == [RoleMaterial { role: BodyRole::Lead, material: MaterialId::Gold }]
+    ));
+    Ok(())
+}

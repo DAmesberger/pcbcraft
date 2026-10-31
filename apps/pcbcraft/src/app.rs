@@ -408,9 +408,11 @@ impl App {
     /// The model the active view displays, if it is a 3D view.
     fn model_key(&self) -> Option<ModelKey> {
         match self.workspace {
-            Workspace::Part if self.part.is_model_view() => {
-                self.part.preview_package().and_then(ModelKey::package)
-            }
+            Workspace::Part if self.part.is_model_view() => self
+                .part
+                .preview_package()
+                .as_ref()
+                .and_then(ModelKey::package),
             Workspace::Pcb if self.pcb.is_3d() => {
                 Some(ModelKey::Project(Arc::clone(self.engine.project_arc())))
             }
@@ -420,7 +422,8 @@ impl App {
 
     fn request_model(&mut self) {
         if let Some(key) = self.model_key() {
-            self.scene.request(key, self.part.preview_package());
+            self.scene
+                .request(key, self.part.preview_package().as_ref());
         }
     }
 
@@ -461,9 +464,14 @@ impl App {
         // Component previews never change PCB selection.
         let pick = if self.workspace == Workspace::Part {
             self.scene.highlight(None, None, None);
+            self.part
+                .model_view_prepare(&mut self.scene.viewport, &self.engine);
             self.scene.viewport.show(ui);
+            let operation = self.part.model_view(ui, &self.scene.viewport, &self.engine);
+            self.apply(operation);
             None
         } else {
+            crate::part_editor::reset_model_view(&mut self.scene.viewport);
             self.scene.highlight(
                 self.pcb.selected_instance(),
                 self.pcb.selected_track(),

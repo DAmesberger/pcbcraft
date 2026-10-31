@@ -16,6 +16,7 @@ pub mod ids;
 pub mod instances;
 pub mod layout;
 pub mod library;
+pub mod materials;
 pub mod model;
 pub mod nets;
 pub mod quantity;

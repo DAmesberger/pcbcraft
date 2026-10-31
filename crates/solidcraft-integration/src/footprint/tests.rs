@@ -29,7 +29,7 @@ const EV: SketchEvaluator = SketchEvaluator;
 
 fn package(terminals: usize) -> PackageDefinition {
     PackageDefinition {
-        body_size: [4.9, 3.9, 1.5],
+        envelope: [4.9, 3.9, 1.5],
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(u32::try_from(n).unwrap_or(0) + 100),

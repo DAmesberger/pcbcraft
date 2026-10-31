@@ -1529,7 +1529,7 @@ pub fn inspect(
                 name: b.meta.name.clone(),
                 package: b.definition.package,
                 package_name: package.map_or_else(String::new, |p| p.meta.name.clone()),
-                envelope: package.map_or([0.0; 3], |p| p.definition.body_size),
+                envelope: package.map_or([0.0; 3], |p| p.definition.envelope),
                 footprints: b
                     .definition
                     .footprints

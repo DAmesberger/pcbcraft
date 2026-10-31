@@ -1,6 +1,30 @@
 use super::*;
 use pcbcraft_core::geometry::cos_sin;
-use pcbcraft_core::library::PackageBody;
+use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
+
+/// Give `package` a chip form of `kind` over its envelope, or a generic
+/// (moulded) one, with an envelope model: these tests exercise the
+/// envelope path (generated models are `models::tests`).
+fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
+    package.form = kind.map_or(PackageForm::Generic, |kind| {
+        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
+    });
+    package.model = PackageModel::default();
+}
+
+/// The demo with envelope models instead of its generated chip models,
+/// lifted 0.05 mm off the lands as the samples lift an envelope.
+fn envelope_demo() -> Result<Project> {
+    let mut project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    for package in &mut project.library.packages {
+        package.definition.model = PackageModel::default();
+        package.definition.placement.translation = [0.0, 0.0, 0.05];
+    }
+    Ok(project)
+}
 use pcbcraft_core::library::PadShape;
 use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
 use solidcraft_engine::geom::Vec3;
@@ -21,14 +45,11 @@ fn near(actual: f64, expected: f64) {
 }
 
 fn fixture() -> Result<Project> {
-    let mut project = Engine::demo()
-        .map_err(|error| Error::Verification(error.to_string()))?
-        .project()
-        .clone();
+    let mut project = envelope_demo()?;
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
-    project.library.packages[0].definition.model_offset = [0.25, -0.4, 0.2];
+    project.library.packages[0].definition.placement.translation = [0.25, -0.4, 0.2];
     project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
@@ -148,8 +169,8 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     })?;
     bounds(bottom, [29.0, 11.25, -0.835], [30.2, 13.25, -0.235]);
     for (instance, center, z) in [
-        (r1, [9.6, 10.5], [1.6, 1.635]),
-        (r2, [30.4, 10.5], [-0.035, 0.0]),
+        (r1, [9.6, 10.9], [1.6, 1.635]),
+        (r2, [30.4, 10.9], [-0.035, 0.0]),
     ] {
         let pad = source_geometry(&model, BodyKind::PadCopper, |s| {
             s.instance == Some(instance) && s.pad == Some(PadId(1))
@@ -276,11 +297,11 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
     let top_pad = source_geometry(&changed, BodyKind::PadCopper, |s| {
         s.instance == Some(r1) && s.pad == pad1
     })?;
-    bounds(top_pad, [13.0, 17.7, 2.4], [14.0, 19.1, 2.47]);
+    bounds(top_pad, [13.4, 17.7, 2.4], [14.4, 19.1, 2.47]);
     let bottom_pad = source_geometry(&changed, BodyKind::PadCopper, |s| {
         s.instance == Some(r2) && s.pad == pad1
     })?;
-    bounds(bottom_pad, [31.0, 11.7, -0.07], [32.0, 13.1, 0.0]);
+    bounds(bottom_pad, [30.6, 11.7, -0.07], [31.6, 13.1, 0.0]);
     for source in changed.sources.iter().filter(|s| s.track.is_some()) {
         let geometry = source_geometry(&changed, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
@@ -307,9 +328,9 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .packages[0]
         .definition
         .clone();
-    package.body_size = [4.0, 3.0, 2.0];
-    package.model_offset = [1.5, -2.0, 0.4];
-    package.body = PackageBody::Moulded;
+    package.envelope = [4.0, 3.0, 2.0];
+    package.placement.translation = [1.5, -2.0, 0.4];
+    set_body(&mut package, None);
     let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
     assert_eq!(model.geometry[0].kind, BodyKind::PartBody);
@@ -318,9 +339,9 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     near(model.geometry[0].volume, 24.0);
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
-    package.body_size = [2.0, 1.25, 0.5];
-    package.model_offset = [0.0; 3];
-    package.body = PackageBody::ChipResistor;
+    package.envelope = [2.0, 1.25, 0.5];
+    package.placement.translation = [0.0; 3];
+    set_body(&mut package, Some(ChipKind::Resistor));
     let chip = preview(&package)?;
     assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
     assert_eq!(count(&chip, BodyKind::Termination), 2);
@@ -337,13 +358,13 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         assert!(end.min[0] <= -1.01 + 1e-9 || end.max[0] >= 1.01 - 1e-9);
     }
     // A chip-capacitor body: MLCC ceramic, terminations, no overcoat.
-    package.body = PackageBody::ChipCapacitor;
+    set_body(&mut package, Some(ChipKind::Capacitor));
     let ceramic = preview(&package)?;
     assert_eq!(ceramic.geometry[0].kind, BodyKind::ChipCapacitor);
     assert_eq!(count(&ceramic, BodyKind::Termination), 2);
     assert_eq!(count(&ceramic, BodyKind::Overcoat), 0);
     looks_match_the_native_file(&ceramic)?;
-    package.body_size[0] = 0.0;
+    package.envelope[0] = 0.0;
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
 }
@@ -366,14 +387,17 @@ fn placed_body_follows_the_package_body_not_the_designator() -> Result<()> {
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);
     assert_eq!(count(&model, BodyKind::Overcoat), 2);
     let mut project = fixture()?;
-    project.library.packages[0].definition.body = PackageBody::ChipCapacitor;
+    set_body(
+        &mut project.library.packages[0].definition,
+        Some(ChipKind::Capacitor),
+    );
     let model = build(&project)?;
     assert!(project.instance_by_designator("R1").is_some());
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 2);
     assert_eq!(count(&model, BodyKind::ChipResistor), 0);
     assert_eq!(count(&model, BodyKind::Overcoat), 0);
     assert_eq!(count(&model, BodyKind::Termination), 4);
-    project.library.packages[0].definition.body = PackageBody::Moulded;
+    set_body(&mut project.library.packages[0].definition, None);
     let model = build(&project)?;
     assert_eq!(count(&model, BodyKind::PackageBody), 2);
     assert_eq!(count(&model, BodyKind::ChipCapacitor), 0);
@@ -808,15 +832,52 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
 fn chip_terminations_wrap_the_ends_and_solder_wets_the_lands_on_both_sides() -> Result<()> {
     // The demo's centred chips get a fillet at every land; the fixture's
     // offset bodies leave one end hanging off its land, which gets none.
+    let demo = build(&envelope_demo()?)?;
+    assert_eq!(count(&demo, BodyKind::Solder), 4);
+    assert!(count(&build(&fixture()?)?, BodyKind::Solder) >= 1);
+    check_chip_parts(&demo)?;
+    check_chip_parts(&build(&fixture()?)?)?;
+    Ok(())
+}
+
+/// The demo's generated chips: a display-only fillet at every land, each
+/// on its land and against the end face of a real termination body.
+#[test]
+fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()> {
     let demo = build(
         Engine::demo()
             .map_err(|error| Error::Verification(error.to_string()))?
             .project(),
     )?;
-    assert_eq!(count(&demo, BodyKind::Solder), 4);
-    assert!(count(&build(&fixture()?)?, BodyKind::Solder) >= 1);
-    check_chip_parts(&demo)?;
-    check_chip_parts(&build(&fixture()?)?)?;
+    assert!(!demo.models.is_empty(), "the demo chips are generated");
+    let fillets = kind(&demo, BodyKind::Solder);
+    assert_eq!(fillets.len(), 4);
+    for solder in fillets {
+        let land = demo.sources.iter().filter(|s| s.pad.is_some()).any(|s| {
+            source_geometry(&demo, BodyKind::PadCopper, |x| x.pick_id == s.pick_id).is_ok_and(
+                |pad| {
+                    (0..2).all(|a| {
+                        solder.min[a] >= pad.min[a] - 1e-6 && solder.max[a] <= pad.max[a] + 1e-6
+                    })
+                },
+            )
+        });
+        assert!(land, "fillet off its land");
+        let ends: Vec<&Geometry> = demo
+            .geometry
+            .iter()
+            .filter(|g| g.item == solder.item && g.kind == BodyKind::ModelLead)
+            .collect();
+        assert_eq!(ends.len(), 2, "the model's two terminations");
+        let touches = ends.iter().any(|end| {
+            (0..2).any(|a| {
+                (solder.min[a] - end.max[a]).abs() < 1e-6
+                    || (solder.max[a] - end.min[a]).abs() < 1e-6
+            })
+        });
+        assert!(touches, "fillet does not meet its termination");
+        assert!(solder.volume > 0.0);
+    }
     Ok(())
 }
 
@@ -1232,5 +1293,165 @@ fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<
     }
     near(lo, -0.035);
     near(hi, 2.4 + 0.035);
+    Ok(())
+}
+
+#[test]
+fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> Result<()> {
+    let mut project = envelope_demo()?;
+    let package = &mut project.library.packages[0].definition;
+    set_body(package, None);
+    package.placement = pcbcraft_core::library::ModelPlacement {
+        translation: [0.25, -0.4, 0.0],
+        rotation_deg: [90.0, 0.0, 90.0],
+    };
+    let package = package.clone();
+    let datum = pcbcraft_core::library::Datum {
+        offset: [0.3, -0.4],
+        rotation_deg: 90.0,
+    };
+    project.library.footprints[0].definition.datum = datum;
+    for placement in &mut project.placements {
+        placement.rotation_deg = 30.0;
+    }
+    let model = build(&project)?;
+    for placement in &project.placements {
+        let body = source_geometry(&model, BodyKind::PackageBody, |s| {
+            s.instance == Some(placement.instance) && s.pad.is_none()
+        })?;
+        // Expected: each envelope corner through the model frame into the
+        // footprint frame, then onto the board as the pads are placed.
+        let frame = pcbcraft_core::library::model_frame(&datum, &package.placement);
+        let board = pcbcraft_core::layout::placement_transform(placement, &datum);
+        let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+        for corner in package.envelope_corners() {
+            let f = frame.apply(corner);
+            let [x, y] = board.apply([f[0], f[1]]);
+            let z = match placement.layer {
+                Layer::Top => 1.635 + f[2],
+                Layer::Bottom => -0.035 - f[2],
+            };
+            for (axis, v) in [x, y, z].into_iter().enumerate() {
+                lo[axis] = lo[axis].min(v);
+                hi[axis] = hi[axis].max(v);
+            }
+        }
+        bounds(body, lo, hi);
+    }
+    // The preview turns the box the same way (here in the datum frame).
+    let preview = preview(&package)?;
+    let body = preview
+        .geometry
+        .iter()
+        .find(|g| g.kind == BodyKind::PartBody)
+        .ok_or_else(|| Error::Verification("no preview body".into()))?;
+    let t = package.placement.transform();
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for corner in package.envelope_corners() {
+        let p = t.apply(corner);
+        for axis in 0..3 {
+            lo[axis] = lo[axis].min(p[axis]);
+            hi[axis] = hi[axis].max(p[axis]);
+        }
+    }
+    bounds(body, lo, hi);
+    Ok(())
+}
+
+#[test]
+fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definition() -> Result<()>
+{
+    use pcbcraft_core::library::GeneratedMaterials;
+    // The demo's chip package with a generated model: two instances, one
+    // on each side, both occurrences of one definition.
+    let mut project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    let package = &mut project.library.packages[0];
+    package.definition.model = PackageModel::Generated {
+        family_rev: 1,
+        materials: GeneratedMaterials::default(),
+    };
+    let stem = models::definition_name(package.id, package.revision.0);
+    if let Some(bottom) = project.placements.get_mut(1) {
+        bottom.layer = Layer::Bottom;
+    }
+    let (r1, r2) = instances(&project)?;
+    let original = build(&project)?;
+    assert_eq!(original.models.len(), 1);
+    let temporary = tempfile::tempdir()?;
+    let path = temporary
+        .path()
+        .join("shared.solidcraft")
+        .to_string_lossy()
+        .into_owned();
+    original.save(&path)?;
+    let reopened = Native::open(&path)?;
+    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
+    let retained: Vec<Source> =
+        serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
+    let before = finish(reopened, retained)?;
+    // Every generated body keeps its instance's pick, bounds and look.
+    let generated = |model: &NativeModel| -> Vec<Geometry> {
+        model
+            .geometry
+            .iter()
+            .filter(|g| g.kind.is_generated())
+            .cloned()
+            .collect()
+    };
+    let (was, now) = (generated(&original), generated(&before));
+    assert!(!was.is_empty());
+    assert_eq!(was.len(), now.len());
+    for previous in &was {
+        let restored = now
+            .iter()
+            .find(|g| {
+                g.item == previous.item
+                    && g.kind == previous.kind
+                    && (0..3).all(|a| (g.min[a] - previous.min[a]).abs() < 1e-6)
+            })
+            .ok_or_else(|| {
+                Error::Verification(format!(
+                    "reopen lost {:?} of pick {:?}",
+                    previous.kind, previous.item
+                ))
+            })?;
+        bounds(restored, previous.min, previous.max);
+        assert_eq!(restored.surface, previous.surface);
+    }
+    let pick_of = |model: &NativeModel, instance: Id| {
+        model
+            .sources
+            .iter()
+            .find(|s| s.instance == Some(instance) && s.occurrence.is_some())
+            .map(|s| s.pick_id)
+    };
+    // One definition parameter moves both occurrences; an instance's own
+    // position moves only its occurrence.
+    let span = |model: &NativeModel, pick: Option<u64>| {
+        let bodies: Vec<&Geometry> = model
+            .geometry
+            .iter()
+            .filter(|g| g.kind.is_generated() && g.item == pick)
+            .collect();
+        let lo = bodies.iter().map(|g| g.min[0]).fold(f64::MAX, f64::min);
+        let hi = bodies.iter().map(|g| g.max[0]).fold(f64::MIN, f64::max);
+        (lo, hi)
+    };
+    let (p1, p2) = (pick_of(&before, r1), pick_of(&before, r2));
+    let (a1, a2) = (span(&before, p1), span(&before, p2));
+    let mut native = before.native;
+    let mut changes = json!({ format!("{stem}_length"): "3 mm" });
+    changes[format!("instance_{r1}_x")] = json!("5 mm");
+    native.change_parameters(changes)?;
+    let changed = finish(native, before.sources)?;
+    let (b1, b2) = (span(&changed, p1), span(&changed, p2));
+    near(b1.1 - b1.0, 3.0);
+    near(b2.1 - b2.0, 3.0);
+    near((b1.0 + b1.1) / 2.0, 5.0);
+    near((b2.0 + b2.1) / 2.0, (a2.0 + a2.1) / 2.0);
+    assert!(((a1.0 + a1.1) / 2.0 - 5.0).abs() > 1.0, "R1 moved");
     Ok(())
 }

@@ -24,7 +24,7 @@ const TOL: f64 = 1e-6;
 
 fn package(terminals: usize, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
-        body_size: body,
+        envelope: body,
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(u32::try_from(n).unwrap_or(0) + 100),

@@ -252,7 +252,9 @@ fn shared_package(
         match &mut edit.definition {
             Definition::Package(package) => {
                 if small {
-                    package.body_size = SMALL.0;
+                    // A typed form other than a chip derives its envelope;
+                    // setting it by hand would publish a stale one.
+                    package.resize_envelope(SMALL.0)?;
                 }
                 body = Some(package.clone());
                 edit.meta = meta(label, "Synthetic two-terminal package");

@@ -736,6 +736,8 @@ pub mod sources;
 #[cfg(test)]
 mod folder_tests;
 #[cfg(test)]
+mod package_tests;
+#[cfg(test)]
 mod parts_tests;
 #[cfg(test)]
 mod svg_tests;

@@ -13,6 +13,9 @@ pub mod footprint_source;
 pub mod graphics;
 pub mod import;
 mod package;
+pub mod package_fit;
+pub mod package_form;
+pub mod package_model;
 mod part;
 mod publish;
 pub mod samples;
@@ -38,7 +41,14 @@ pub use graphics::{
     PinDirection, PinText, PlacedText, Polarity, Rotation, Side, SymbolHit, Text, TextContent,
     TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint,
 };
-pub use package::{PackageBody, PackageDefinition, PackageTerminal};
+pub use package::{PackageDefinition, PackageTerminal};
+pub use package_form::{
+    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm,
+};
+pub use package_model::{
+    Axis, BodyRole, GeneratedMaterials, ImportedModel, ModelPlacement, PackageEdit, PackageModel,
+    QuickAction, RoleMaterial, model_frame,
+};
 pub use part::{
     Basis, DistributorOffer, MAX_OFFERS, MAX_REFERENCES, MAX_URL, Origin, PartDefinition,
     Provenance, Reference, ReferenceKind,

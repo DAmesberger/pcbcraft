@@ -23,6 +23,12 @@ mod footprint_tools;
 mod footprint_tools_canvas;
 #[cfg(test)]
 mod footprint_tools_tests;
+mod model_body;
+mod model_place;
+mod model_props;
+#[cfg(test)]
+mod model_tests;
+mod model_view;
 mod part_props;
 mod snap;
 mod svg_import;
@@ -33,6 +39,7 @@ mod working_set;
 
 use crate::kit::{self, Tone};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
+pub use model_view::reset_model_view;
 pub use part_props::{meaning_label, spec_text};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
@@ -44,9 +51,10 @@ use pcbcraft_core::library::graphics::{
     self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM,
     TextContent, VAlign,
 };
+use pcbcraft_core::library::samples::Preset;
 use pcbcraft_core::library::{
-    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
-    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
+    ComponentDefinition, Drafts, FieldView, Item, Library, PackageTerminal, Pad, Pin, PinDirection,
+    Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
@@ -384,6 +392,8 @@ pub struct PartEditor {
     body: Option<(UnitId, GraphicId)>,
     /// The component's manufacturer parts.
     parts: part_props::PartProps,
+    /// The 3D tab's placement gestures.
+    model: model_place::ModelTab,
     /// A running Import SVG….
     svg: svg_import::SvgImport,
 }
@@ -431,15 +441,23 @@ impl Default for PartEditor {
             drawn_cache: None,
             body: None,
             parts: Default::default(),
+            model: Default::default(),
             svg: Default::default(),
         }
     }
 }
 
 impl PartEditor {
-    /// The package envelope the 3D preview shows.
-    pub fn preview_package(&self) -> Option<&pcbcraft_core::library::PackageDefinition> {
-        self.draft.as_ref().map(|set| &set.package)
+    /// The package the 3D preview builds, in its own model frame: the
+    /// placement is a display transform ([`Self::model_view_prepare`]), so
+    /// moving or turning the model never rebuilds it.
+    pub fn preview_package(&self) -> Option<pcbcraft_core::library::PackageDefinition> {
+        self.draft
+            .as_ref()
+            .map(|set| pcbcraft_core::library::PackageDefinition {
+                placement: Default::default(),
+                ..set.package.clone()
+            })
     }
     pub fn is_model_view(&self) -> bool {
         self.view == View::Model
@@ -604,6 +622,12 @@ impl PartEditor {
             tools: vec![
                 Tool::new("passive", "component", "Passive").tip("Two-terminal passive template"),
                 Tool::new("connector", "component", "Connector").tip("Two-pin header template"),
+                Tool::new("template-soic8", "component", "SOIC-8")
+                    .tip("8-lead gull-wing IC with a generated model"),
+                Tool::new("template-qfn16", "component", "QFN-16")
+                    .tip("16-terminal no-lead IC with an exposed pad and a generated model"),
+                Tool::new("template-header2x5", "component", "Header 2×5")
+                    .tip("2 × 5 pin header with gold pins and a generated model"),
                 Tool::new("publish", "save", "Publish")
                     .enabled(self.unpublished(engine))
                     .tip("Publish the five drafts as new immutable revisions"),
@@ -867,6 +891,9 @@ impl PartEditor {
             "snap" => self.snap = !self.snap,
             "passive" => self.load_template(Template::TwoTerminal),
             "connector" => self.load_template(Template::Header),
+            "template-soic8" => self.load_template(Template::Package(Preset::Soic8)),
+            "template-qfn16" => self.load_template(Template::Package(Preset::Qfn16)),
+            "template-header2x5" => self.load_template(Template::Package(Preset::Header2x5)),
             "terminal" => self.add_terminal(),
             "pad" => self.add_pad(footprint_geometry::NewPad::Smd),
             "pad-pth" => self.add_pad(footprint_geometry::NewPad::PlatedThrough),
@@ -1081,12 +1108,10 @@ impl PartEditor {
             .map(|n| n.to_string())
             .find(|n| !taken(n))
             .unwrap_or_else(|| physical.to_string());
-        if set.package.body.is_chip() && set.package.terminals.len() >= 2 {
-            self.notice = format!(
-                "A {} body has exactly two terminals; change Body on the 3D tab to Moulded, \
-                 or remove this terminal",
-                set.package.body.label().to_lowercase()
-            );
+        if set.package.chip_kind().is_some() && set.package.terminals.len() >= 2 {
+            self.notice = "A chip body has exactly two terminals; change Form on the 3D tab \
+                 to Generic, or remove this terminal"
+                .to_owned();
         }
         set.component.terminals.push(Terminal {
             id: electrical,
@@ -1396,7 +1421,11 @@ impl PartEditor {
                 self.footprint_inspector(ui);
             }
             View::Mapping => self.mapping_inspector(ui),
-            View::Model => self.model_inspector(ui),
+            View::Model => {
+                operation = self.body_inspector(ui);
+                let placement = self.placement_inspector(ui, engine);
+                operation = operation.or(placement);
+            }
         }
         self.fields_section(ui, engine);
         if let Some(set) = &self.draft {
@@ -1778,45 +1807,6 @@ impl PartEditor {
         );
     }
 
-    fn model_inspector(&mut self, ui: &mut Ui) {
-        let Some(set) = &mut self.draft else {
-            return;
-        };
-        let package = &mut set.package;
-        kit::section(ui, "model-body", "Body", true, None, |ui| {
-            let options: Vec<(PackageBody, String)> = PackageBody::ALL
-                .into_iter()
-                .map(|b| (b, b.label().to_owned()))
-                .collect();
-            kit::choice_row(ui, "Body", &mut package.body, &options);
-            for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                kit::number_row(
-                    ui,
-                    label,
-                    &mut package.body_size[index],
-                    "mm",
-                    0.01..=10000.0,
-                );
-            }
-            kit::note(
-                ui,
-                "Approximate parametric envelope, not a verified supplier model.",
-            );
-        });
-        kit::section(ui, "model-offset", "Model offset", true, None, |ui| {
-            for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
-                kit::number_row(
-                    ui,
-                    label,
-                    &mut package.model_offset[index],
-                    "mm",
-                    -10000.0..=10000.0,
-                );
-            }
-            kit::note(ui, "The live model and native export use Solidcraft.");
-        });
-    }
-
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.svg_frame(ui.ctx(), engine);
         if self.update.is_open() {
@@ -2043,7 +2033,10 @@ struct Listed {
 
 fn fix_hint(code: &str) -> Option<&'static str> {
     match code {
-        "package.body" => Some("Change Body on the 3D tab, or remove terminals."),
+        "package.form_terminals" => Some("Change Body on the 3D tab, or remove terminals."),
+        "package.envelope_derived" | "package.form_range" => {
+            Some("Check the package dimensions on the 3D tab.")
+        }
         _ => None,
     }
 }

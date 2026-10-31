@@ -314,8 +314,22 @@ pub fn check_row(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
 pub fn value_row(ui: &mut Ui, label: &str, value: &str) {
     row(ui, label, |ui| {
         let t = Tokens::get();
-        ui.add(egui::Label::new(RichText::new(value).color(t.form_ink)).truncate())
-            .on_hover_text(value);
+        let width = ui.available_width();
+        let response = ui.add(egui::Label::new(RichText::new(value).color(t.form_ink)).truncate());
+        // The full text as a tooltip only when it was cut short: a tooltip
+        // repeating the shown value lingers over it while the panel scrolls.
+        let full = ui
+            .painter()
+            .layout_no_wrap(
+                value.to_owned(),
+                egui::TextStyle::Body.resolve(ui.style()),
+                t.form_ink,
+            )
+            .size()
+            .x;
+        if full > width + 0.5 {
+            response.on_hover_text(value);
+        }
     });
 }
 

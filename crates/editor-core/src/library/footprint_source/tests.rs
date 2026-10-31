@@ -122,7 +122,7 @@ fn rotation_is_canonical_per_shape_symmetry() {
 #[test]
 fn package_values_are_typed_and_prefixed() {
     let package = PackageDefinition {
-        body_size: [2.0, 1.25, 0.6],
+        envelope: [2.0, 1.25, 0.6],
         ..PackageDefinition::default()
     };
     let values = package_values(&package);

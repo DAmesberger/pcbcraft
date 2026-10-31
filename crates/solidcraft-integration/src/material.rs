@@ -46,10 +46,15 @@ pub enum BodyKind {
     Solder,
     /// The envelope in the component authoring preview.
     PartBody,
+    /// A body of a generated package model (moulding, housing, ceramic).
+    /// Its material is recorded per body (`models::MODEL_BODIES_KEY`).
+    ModelBody,
+    /// A lead, termination or exposed pad of a generated package model.
+    ModelLead,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 14] = [
+    pub const ALL: [BodyKind; 16] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -64,6 +69,8 @@ impl BodyKind {
         BodyKind::Overcoat,
         BodyKind::Solder,
         BodyKind::PartBody,
+        BodyKind::ModelBody,
+        BodyKind::ModelLead,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -82,7 +89,14 @@ impl BodyKind {
                 | BodyKind::ChipResistor
                 | BodyKind::ChipCapacitor
                 | BodyKind::PartBody
+                | BodyKind::ModelBody
         )
+    }
+
+    /// A body of a generated package model, whose look comes from its
+    /// recorded material rather than from its kind.
+    pub fn is_generated(self) -> bool {
+        matches!(self, BodyKind::ModelBody | BodyKind::ModelLead)
     }
 
     /// Display-only appearance layers ([`crate::appearance`]): drawn and
@@ -268,9 +282,16 @@ pub const MASK_OVER_COPPER_UM: f64 = 12.0;
 const EPOXY_IOR: f64 = 1.55;
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
-/// Tin F0 of a reflowed or plated surface, flat across the visible (est.;
-/// below polished tin, for its oxide film; Palik's Sn n, k to confirm).
+/// Tin F0 of a hot-air levelled pad, flat across the visible (est.; below
+/// polished tin, for its oxide film; Palik's Sn n, k to confirm).
 const TIN: [f64; 3] = [0.64, 0.64, 0.66];
+/// Tin F0 of plated terminations and reflowed solder joints (est.; the
+/// core's package tin, `materials::MaterialId::TinMatte`).
+const TIN_PLATED: [f64; 3] = [0.78, 0.78, 0.80];
+/// ENIG pad F0 (est.): the gold F0 (1.000, 0.782, 0.344; J&C/Hoffman)
+/// with a little nickel showing through the 0.04–0.10 µm immersion gold,
+/// kept saturated so the finish reads gold, not khaki.
+const ENIG: [f64; 3] = [1.0, 0.73, 0.30];
 /// Eutectic tin-lead (Sn63Pb37) F0: about 30 % lead by volume, which
 /// reflects less than tin (est.).
 const TIN_LEAD: [f64; 3] = [0.62, 0.62, 0.63];
@@ -360,7 +381,7 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         BodyKind::PadFinish => match fabrication.pad_finish {
             // 85 % Au F0 (1.000, 0.782, 0.344) over 15 % Ni F0 (0.660, 0.609,
             // 0.526): the immersion gold is only 1–2 penetration depths thick.
-            PadFinish::Enig => metal("ENIG gold", [0.95, 0.76, 0.37], 0.30),
+            PadFinish::Enig => metal("ENIG gold", ENIG, 0.28),
             // Eutectic tin-lead freezes bright; lead-free tin alloys freeze
             // duller and grainier.
             PadFinish::Hasl => metal("HASL tin-lead", TIN_LEAD, 0.16),
@@ -370,10 +391,12 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
             // Immersion silver is many optical penetration depths thick.
             PadFinish::ImmersionSilver => metal("Immersion silver", SILVER, 0.20),
         },
-        BodyKind::Termination => metal("Matte tin", TIN, 0.28),
-        // Reflowed SAC solder freezes with a smooth, bright meniscus.
-        BodyKind::Solder => metal("Reflowed solder", TIN, 0.14),
-        BodyKind::PackageBody | BodyKind::PartBody => dielectric(
+        // Generated bodies take their recorded material's look; these are
+        // only the family defaults' stand-ins.
+        BodyKind::Termination | BodyKind::ModelLead => metal("Matte tin", TIN_PLATED, 0.40),
+        // Reflowed lead-free SAC solder freezes satin, not mirror-bright.
+        BodyKind::Solder => metal("Reflowed solder", TIN_PLATED, 0.38),
+        BodyKind::PackageBody | BodyKind::PartBody | BodyKind::ModelBody => dielectric(
             "Epoxy mould compound",
             [0.022, 0.022, 0.024],
             0.45,
@@ -547,7 +570,7 @@ mod tests {
             );
             (m.metallic, m.base_linear, m.roughness)
         };
-        assert_eq!(pad(PadFinish::Enig), (1.0, [0.95, 0.76, 0.37], 0.30));
+        assert_eq!(pad(PadFinish::Enig), (1.0, [1.0, 0.73, 0.30], 0.28));
         assert_eq!(pad(PadFinish::Hasl), (1.0, [0.62, 0.62, 0.63], 0.16));
         assert_eq!(
             pad(PadFinish::LeadFreeHasl),
@@ -560,7 +583,13 @@ mod tests {
         );
         for kind in [BodyKind::Termination, BodyKind::Solder] {
             let tin = default_look(kind);
-            assert_eq!((tin.metallic, tin.base_linear), (1.0, TIN), "{kind:?}");
+            assert_eq!(
+                (tin.metallic, tin.base_linear),
+                (1.0, TIN_PLATED),
+                "{kind:?}"
+            );
+            // Satin, never a mirror.
+            assert!(tin.roughness >= 0.3, "{kind:?}");
         }
         for kind in [
             BodyKind::Substrate,
