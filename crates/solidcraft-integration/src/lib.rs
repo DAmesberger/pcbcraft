@@ -21,7 +21,10 @@ mod fixtures;
 #[cfg(test)]
 mod footprint_spike;
 
-pub const SOLIDCRAFT_REVISION: &str = "4f3ac07aec69489183185071f07d7fbcf4f51e64";
+/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-product-look`
+/// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
+/// opt-in product look).
+pub const SOLIDCRAFT_REVISION: &str = "87b1009b029a1b381ad1799fe72bfec44a4b1a66";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

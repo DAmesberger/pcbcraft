@@ -3,8 +3,12 @@
 //! operations (middle-drag pan, right-drag orbit about the surface under the
 //! pointer, scroll zoom toward the pointer) directly.
 //!
-//! The model is drawn through Solidcraft's PBR path with the studio rig in
-//! [`crate::lighting`]. Three slots are published separately so each change
+//! The model is drawn through Solidcraft's PBR path with its opt-in product
+//! look (a studio environment reflected and lighting from all around, clear
+//! coats, procedural patterns, ambient occlusion, PBR Neutral tone mapping
+//! and dither) and the direct lights in [`crate::lighting`]. The studio is
+//! baked once on a worker thread and installed into the renderer, so the
+//! window never waits for it. Three slots are published separately so each change
 //! uploads only what it touches: the model's PBR vertices (`slot`: a new
 //! model, moved in without a copy, or the Hide-substrate toggle, repacked off
 //! the UI thread), shadows (`sketch_slot`: theme, side or toggle) and the
@@ -19,7 +23,8 @@ use pcbcraft_solidcraft::{
     scene::Geometry,
 };
 use solidcraft_ui_egui::gpu::{
-    self, Frame, GpuScene, GpuTarget, Palette, SceneSlot, ViewportCallback,
+    self, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
+    ViewportCallback,
 };
 use solidcraft_ui_egui::theme;
 use std::hash::{Hash, Hasher};
@@ -37,6 +42,9 @@ const SUPERSAMPLE: f32 = 2.0;
 const HIGHLIGHT_ALPHA: u8 = 110;
 /// Peak shadow opacity on light and dark backgrounds (Solidcraft's values).
 const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
+/// Ambient occlusion samples per pixel for a still and a moving view
+/// (Solidcraft's `AO_SAMPLES` and `AO_SAMPLES_MOVING`).
+const AO_SAMPLES: [u32; 2] = [32, 8];
 
 /// What the shadow slot was last built for: dark theme, seen from below,
 /// substrate hidden.
@@ -78,7 +86,7 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    pub fn new(rs: &egui_wgpu::RenderState) -> Self {
+    pub fn new(rs: &egui_wgpu::RenderState, ctx: &egui::Context) -> Self {
         let window = GpuTarget {
             format: rs.target_format,
             depth: None,
@@ -91,7 +99,30 @@ impl Viewport {
             ..window
         };
         gpu::install(rs, scene, window, false);
+        Self::bake_studio(rs, ctx);
         Self::detached()
+    }
+
+    /// Bake the product look's studio on a worker thread (tens of
+    /// milliseconds) and install it into the renderer; until then the look
+    /// draws with the direct lights only.
+    fn bake_studio(rs: &egui_wgpu::RenderState, ctx: &egui::Context) {
+        let (rs, ctx) = (rs.clone(), ctx.clone());
+        let preset = lighting::STUDIO;
+        let spawned = std::thread::Builder::new()
+            .name("pcb-3d-studio".into())
+            .spawn(move || {
+                let env = StudioEnvironment::bake(preset);
+                let mut renderer = rs.renderer.write();
+                if let Some(r) = renderer.callback_resources.get_mut::<Renderer>() {
+                    r.set_studio_environment(&rs.device, &rs.queue, &env);
+                }
+                drop(renderer);
+                ctx.request_repaint();
+            });
+        if let Err(error) = spawned {
+            eprintln!("pcbcraft: the 3D studio was not baked: {error}");
+        }
     }
 
     /// The viewport's state without a GPU (the renderer is installed by
@@ -266,7 +297,7 @@ impl Viewport {
 
     fn publish_pbr(&mut self, pbr: Vec<u8>) {
         let scene = GpuScene {
-            pbr,
+            pbr_detailed: pbr,
             ..GpuScene::default()
         };
         Self::publish(&self.slot, &mut self.key, scene);
@@ -422,6 +453,47 @@ impl Viewport {
         ui.painter().add(egui::Shape::mesh(mesh));
     }
 
+    /// The frame drawn for a view of `size_px` pixels.
+    pub(crate) fn frame(&self, view_proj: [[f32; 4]; 4], size_px: [f32; 2], ssaa: f32) -> Frame {
+        let eye = self.camera.eye().to_f32();
+        Frame {
+            product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
+            product_look: Some(lighting::look()),
+            product: false,
+            key: self.key,
+            slot: self.slot.clone(),
+            sketch_key: self.sketch_key,
+            sketch_slot: self.sketch_slot.clone(),
+            hl_key: self.hl_key,
+            hl_slot: self.hl_slot.clone(),
+            pv_key: 0,
+            pv_slot: self.empty.clone(),
+            pv_hide: true,
+            view_proj,
+            back: self.camera.back().to_f32(),
+            size_px,
+            clip: [0.0; 4],
+            cap: [0.0; 4],
+            images: vec![],
+            points: vec![],
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            access: None,
+            outline: false,
+            eye: [
+                eye[0],
+                eye[1],
+                eye[2],
+                if self.camera.fov > 0.0 { 1.0 } else { 0.0 },
+            ],
+            ao_radius: lighting::ao_radius(&self.bounds),
+            ao_samples: AO_SAMPLES[usize::from(ssaa <= 1.0)],
+            ssaa,
+            hover_tint: [0.1; 3],
+            selection_tint: [0.8, 0.7, 0.1],
+        }
+    }
+
     /// Draw the view; `Some(pick)` when it was clicked.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Option<Option<u64>> {
         let (rect, response) =
@@ -474,52 +546,13 @@ impl Viewport {
         }
         Self::background(ui, rect);
         let pp = ui.ctx().pixels_per_point();
-        let eye = self.camera.eye().to_f32();
         let size_px = [rect.width() * pp, rect.height() * pp];
         let view_proj = self
             .camera
             .view_proj_bounds(f64::from(rect.width() / rect.height()), &self.bounds)
             .to_f32();
         let ssaa = self.supersampling(ui.ctx(), &view_proj, size_px);
-        let cb = ViewportCallback(Frame {
-            product_lights: Some(lighting::studio(
-                &self.camera,
-                &self.bounds,
-                lighting::EXPOSURE,
-            )),
-            product: false,
-            key: self.key,
-            slot: self.slot.clone(),
-            sketch_key: self.sketch_key,
-            sketch_slot: self.sketch_slot.clone(),
-            hl_key: self.hl_key,
-            hl_slot: self.hl_slot.clone(),
-            pv_key: 0,
-            pv_slot: self.empty.clone(),
-            pv_hide: true,
-            view_proj,
-            back: self.camera.back().to_f32(),
-            size_px,
-            clip: [0.0; 4],
-            cap: [0.0; 4],
-            images: vec![],
-            points: vec![],
-            analysis: [0.0; 8],
-            analysis_colors: [0.0; 36],
-            access: None,
-            outline: false,
-            eye: [
-                eye[0],
-                eye[1],
-                eye[2],
-                if self.camera.fov > 0.0 { 1.0 } else { 0.0 },
-            ],
-            ao_radius: 0.0,
-            ao_samples: 0,
-            ssaa,
-            hover_tint: [0.1; 3],
-            selection_tint: [0.8, 0.7, 0.1],
-        });
+        let cb = ViewportCallback(self.frame(view_proj, size_px, ssaa));
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
         if response.clicked()
@@ -556,6 +589,9 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 }
 
 #[cfg(test)]
+mod pictures;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -585,7 +621,7 @@ mod tests {
     fn pbr_len(slot: &SceneSlot) -> usize {
         slot.lock()
             .ok()
-            .and_then(|s| s.as_ref().map(|s| s.pbr.len()))
+            .and_then(|s| s.as_ref().map(|s| s.pbr_detailed.len()))
             .unwrap_or(0)
     }
 

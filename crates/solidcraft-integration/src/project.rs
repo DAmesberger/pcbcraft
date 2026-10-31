@@ -8,12 +8,12 @@
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path};
-use crate::material::{self, BodyKind, DEFAULT_FINISH};
+use crate::material::{self, BodyKind};
 use crate::native::{BoardJoint, BoxBody, Expr, Native, mm};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::library::{FootprintDefinition, PackageDefinition};
-use pcbcraft_core::{Endpoint, Id, Layer, PadId, Point, Project, instances, layout};
+use pcbcraft_core::{Endpoint, Fabrication, Id, Layer, PadId, Point, Project, instances, layout};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -93,9 +93,11 @@ impl Builder {
                 .filter(|(_, k)| **k == kind)
                 .map(|(name, _)| name.as_str())
                 .collect();
+            // Saved bodies look the same for every fabrication; only the
+            // display-only layers take the project's mask and finish.
             if !names.is_empty() {
                 self.native
-                    .appearance(&names, &material::material(kind, DEFAULT_FINISH))?;
+                    .appearance(&names, &material::material(kind, &Fabrication::default()))?;
             }
         }
         self.native
@@ -195,6 +197,8 @@ fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
                 .map(|s| s.pick_id),
             kind,
             surface,
+            // Saved bodies' detail does not depend on the fabrication.
+            detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             mesh: body.mesh(),
             volume: m.volume,
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
@@ -495,6 +499,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             depth: project.board_size[1],
             thickness: BOARD_THICKNESS_MM,
             copper: COPPER_THICKNESS_MM,
+            fabrication: project.fabrication,
         },
         &lands,
         &paths,

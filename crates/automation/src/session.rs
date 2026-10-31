@@ -98,7 +98,7 @@ impl Request {
         vec![
             info::<ApplyParams>(
                 "project.apply",
-                "Apply one typed document operation (library, instance, schematic, layout or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
+                "Apply one typed document operation (library, instance, schematic, layout including layout.set_fabrication, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
             info::<NoParams>(
                 "project.inspect",

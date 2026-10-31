@@ -1,11 +1,14 @@
-//! Studio lighting for the PCB 3D view: a key/fill/rim product-shot rig
-//! that turns with the camera, so the model always reads, and reflection
-//! lights fixed in the world (a studio around the board), so highlights on
-//! the soldermask and metals slide across the board as it is orbited instead
-//! of following the view centre. Every light mirrors to the side of the
-//! board the camera sees. Solidcraft's PBR viewport (revision 4f3ac07) has no
-//! environment map, so these lights are the only reflections; see
-//! `docs/editor-evidence.md` for that limit. Materials and lights do not
+//! Lighting for the PCB 3D view. Solidcraft's opt-in product look supplies
+//! the studio: an environment (softboxes over a cyclorama) fixed in the
+//! world, which every surface reflects and is lit by, so highlights slide
+//! across the board as it is orbited and metal reads as metal from any side.
+//! On top of it a key/fill/rim rig turns with the camera, so the model's
+//! shape always reads and the side of the board the camera sees is lit. The
+//! high and wall reflection lights and the ambient light the view used
+//! before the environment existed are gone; the floor bounce stays (the
+//! studio's lower walls are dark, and vertical metal would read black), and an ambient light
+//! and stronger direct lights return when the board is seen from below,
+//! where it faces the studio's dark floor. Materials and lights do not
 //! follow the UI theme.
 //!
 //! Records use Solidcraft's product-light layout, packed as its render
@@ -16,40 +19,48 @@ use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     render::Camera,
 };
+use solidcraft_ui_egui::gpu::{ProductLook, StudioPreset};
 
 /// Most lights the viewport shader reads.
 pub const MAX_LIGHTS: usize = 21;
-/// Scene-referred scale of every light, tuned by screenshot so mid-grey
-/// diffuse reads about 0.3–0.5 after the shader's fixed Reinhard curve.
-pub const EXPOSURE: f64 = 3.0;
+/// Scene-referred scale of the radiance before PBR Neutral, tuned by
+/// screenshot so the board's mask sits in the curve's linear part and
+/// metal highlights roll off instead of clipping.
+pub const EXPOSURE: f32 = 1.0;
+/// The studio's share of the light against the rig below.
+pub const STUDIO_INTENSITY: f32 = 1.0;
+/// The studio the look reflects, and its turn about +Z: a quarter turn
+/// puts a softbox in the mirror direction of the default view, so the mask
+/// shows a lacquer sheen over part of the board and gold reads as gold,
+/// with the rest of the mask saturated (tuned by screenshot).
+pub const STUDIO: StudioPreset = StudioPreset::Product;
+const STUDIO_TURN_DEG: f32 = 90.0;
+/// Scale of the direct lights' records.
+const DIRECT: f64 = 1.0;
+/// Seen from below, the board's underside faces the studio's dark floor:
+/// the direct lights are scaled by this and an ambient light is added, so
+/// the bottom side reads (the role the ambient light had before).
+const BELOW_DIRECT: f64 = 2.5;
+const BELOW_AMBIENT: f64 = 0.6;
 
 /// Camera-relative (azimuth, elevation in degrees, intensity, colour).
-const KEY: (f64, f64, f64, [f64; 3]) = (-35.0, 50.0, 0.9, [1.0, 0.97, 0.92]);
+const KEY: (f64, f64, f64, [f64; 3]) = (-35.0, 50.0, 0.6, [1.0, 0.97, 0.92]);
 const FILL: (f64, f64, f64, [f64; 3]) = (60.0, 25.0, 0.30, [1.0, 1.0, 1.0]);
 const RIM: (f64, f64, f64, [f64; 3]) = (165.0, 35.0, 0.12, [0.92, 0.96, 1.0]);
-/// World-fixed reflection lights: (azimuth from +X, elevation, intensity).
-/// A high softbox, rings of dim panels at mid and low height (the studio's
-/// walls) whose glints make metal read as metal from any side, and light bounced off a pale studio
-/// floor below the horizon, which only vertical faces (termination ends,
-/// solder fillets, package sides) see.
-pub const STUDIO: [(f64, f64, f64); 15] = [
-    (120.0, 62.0, 0.05),
-    (20.0, 38.0, 0.045),
-    (75.0, 30.0, 0.045),
-    (140.0, 38.0, 0.045),
-    (200.0, 30.0, 0.045),
-    (260.0, 38.0, 0.045),
-    (320.0, 30.0, 0.045),
-    (0.0, 16.0, 0.035),
-    (90.0, 18.0, 0.035),
-    (180.0, 16.0, 0.035),
-    (270.0, 18.0, 0.035),
-    (45.0, -25.0, 0.06),
-    (135.0, -25.0, 0.06),
-    (225.0, -25.0, 0.06),
-    (315.0, -25.0, 0.06),
+/// Light bounced off a pale studio floor, fixed in the world: (azimuth from
+/// +X, elevation, intensity). Below the horizon, so only vertical faces
+/// (termination ends, solder fillets, package sides) see it; the studio's
+/// lower walls are dark, so without it vertical metal reads black.
+pub const FLOOR: [(f64, f64, f64); 4] = [
+    (45.0, -25.0, 0.25),
+    (135.0, -25.0, 0.25),
+    (225.0, -25.0, 0.25),
+    (315.0, -25.0, 0.25),
 ];
-const AMBIENT: f64 = 0.18;
+/// Contact darkening reaches this share of the model's diagonal, within
+/// [`AO_RADIUS_MM`]: about a chip's height on a board, less on a lone part.
+const AO_SHARE: f64 = 0.02;
+const AO_RADIUS_MM: [f64; 2] = [0.15, 1.2];
 
 fn record(position: Vec3, kind: f32, rgb: [f64; 3], scale: f64, ref2: f64) -> [f32; 16] {
     let mut value = [0.0_f32; 16];
@@ -91,49 +102,76 @@ fn fixed(camera: &Camera, azimuth: f64, elevation: f64) -> Vec3 {
     Vec3::new(ca * ce, sa * ce, se * side(camera))
 }
 
-/// The light rig for `camera` looking at a model within `bounds`.
-pub fn studio(camera: &Camera, bounds: &Aabb3, exposure: f64) -> Vec<[f32; 16]> {
-    let diagonal = if bounds.is_empty() {
+fn diagonal(bounds: &Aabb3) -> f64 {
+    if bounds.is_empty() {
         100.0
     } else {
         bounds.diagonal().max(1.0)
-    };
+    }
+}
+
+/// The direct lights for `camera` looking at a model within `bounds`.
+pub fn studio(camera: &Camera, bounds: &Aabb3) -> Vec<[f32; 16]> {
     let target = camera.target;
-    let mut rig = Vec::with_capacity(4 + STUDIO.len());
+    let below = camera.pitch < 0.0;
+    let direct = if below { DIRECT * BELOW_DIRECT } else { DIRECT };
+    let mut rig = Vec::with_capacity(4 + FLOOR.len());
     let (az, el, i, rgb) = KEY;
-    let distance = 1.6 * diagonal;
+    let distance = 1.6 * diagonal(bounds);
     rig.push(record(
         target + around(camera, az, el) * distance,
         1.0,
         rgb,
-        i * exposure,
+        i * direct,
         distance * distance,
     ));
     for (az, el, i, rgb) in [FILL, RIM] {
-        rig.push(record(around(camera, az, el), 0.0, rgb, i * exposure, 1.0));
+        rig.push(record(around(camera, az, el), 0.0, rgb, i * direct, 1.0));
     }
-    for (az, el, i) in STUDIO {
+    for (az, el, i) in FLOOR {
         rig.push(record(
             fixed(camera, az, el),
             0.0,
             [1.0; 3],
-            i * exposure,
+            i * direct,
             1.0,
         ));
     }
-    rig.push(record(Vec3::ZERO, 4.0, [1.0; 3], AMBIENT * exposure, 1.0));
+    if below {
+        rig.push(record(Vec3::ZERO, 4.0, [1.0; 3], BELOW_AMBIENT, 1.0));
+    }
     rig.truncate(MAX_LIGHTS);
     rig
+}
+
+/// The product look: the studio fixed in the world (it does not turn with
+/// the camera), patterns in millimetres at glass style 7628. The same for
+/// every view and model.
+pub fn look() -> ProductLook {
+    ProductLook {
+        exposure: EXPOSURE,
+        studio: STUDIO,
+        rotation: STUDIO_TURN_DEG.to_radians(),
+        intensity: STUDIO_INTENSITY,
+        units_per_mm: 1.0,
+        ..ProductLook::default()
+    }
+}
+
+/// Ambient-occlusion radius (mm) for a model within `bounds`.
+pub fn ao_radius(bounds: &Aabb3) -> f32 {
+    (AO_SHARE * diagonal(bounds)).clamp(AO_RADIUS_MM[0], AO_RADIUS_MM[1]) as f32
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use pcbcraft_solidcraft::material::{BodyKind, DEFAULT_FINISH, material};
+    use pcbcraft_core::Fabrication;
+    use pcbcraft_solidcraft::material::{BodyKind, material};
     use pcbcraft_solidcraft::render::surface::OpaqueSurface;
 
-    /// What the viewport's `fs_pbr` computes for one pixel: the rig's
-    /// unshadowed radiance through the surface BRDF, then Reinhard.
+    /// The rig's unshadowed direct radiance at one point through the
+    /// surface's base BRDF (before the studio, exposure and tone mapping).
     pub(crate) fn shade(
         rig: &[[f32; 16]],
         surface: OpaqueSurface,
@@ -146,12 +184,6 @@ pub(crate) mod tests {
         for light in rig {
             let rgb = Vec3::new(light[4].into(), light[5].into(), light[6].into());
             let source = Vec3::new(light[0].into(), light[1].into(), light[2].into());
-            if light[3] == 4.0 {
-                let base =
-                    surface.base_color() * ((1.0 - surface.metallic()) / std::f64::consts::PI);
-                radiance += Vec3::new(base.x * rgb.x, base.y * rgb.y, base.z * rgb.z);
-                continue;
-            }
             let (direction, weight) = if light[3] > 0.5 {
                 let delta = source - point;
                 let d = delta.len().max(f64::from(light[13]));
@@ -168,7 +200,7 @@ pub(crate) mod tests {
             let e = rgb * (weight * cosine);
             radiance += Vec3::new(f.x * e.x, f.y * e.y, f.z * e.z);
         }
-        Ok([radiance.x, radiance.y, radiance.z].map(|c| c / (1.0 + c)))
+        Ok([radiance.x, radiance.y, radiance.z])
     }
 
     pub(crate) fn luminance(c: [f64; 3]) -> f64 {
@@ -199,47 +231,12 @@ pub(crate) mod tests {
             .flat_map(|pitch| (0..12).map(move |k| camera(f64::from(k) * 30.0, pitch)))
     }
 
-    /// Exposed gold seen flat from 48 views. With reflections fixed in the
-    /// world, metal brightens and darkens as the board turns, as real metal
-    /// does: some views catch the softbox, a typical view reads as metal and
-    /// none goes black. (Discrete lights cannot do better; an environment
-    /// term in Solidcraft's PBR shader would.)
-    #[test]
-    fn exposed_gold_reads_as_metal_from_most_views_and_is_never_black()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let enig = material(BodyKind::PadFinish, DEFAULT_FINISH).surface()?;
-        let mut values = vec![];
-        for camera in views() {
-            let rig = studio(&camera, &board(), EXPOSURE);
-            let n = if camera.pitch < 0.0 {
-                -Vec3::Z
-            } else {
-                Vec3::Z
-            };
-            values.push(luminance(shade(
-                &rig,
-                enig,
-                n,
-                camera.eye(),
-                camera.target,
-            )?));
-        }
-        values.sort_by(f64::total_cmp);
-        let (lowest, median) = (values[0], values[values.len() / 2]);
-        let highest = values[values.len() - 1];
-        // Luminance 0.025 still encodes to about 45/255 after sRGB.
-        assert!(lowest >= 0.025, "darkest view {lowest}");
-        assert!(median >= 0.10, "median {median}");
-        assert!(highest >= 0.5, "no view catches the softbox: {highest}");
-        Ok(())
-    }
-
     #[test]
     fn soldermask_shading_varies_across_the_board() -> Result<(), Box<dyn std::error::Error>> {
-        let mask = material(BodyKind::MaskTop, DEFAULT_FINISH).surface()?;
+        let mask = material(BodyKind::MaskTop, &Fabrication::default()).surface()?;
         let b = board();
         for camera in views() {
-            let rig = studio(&camera, &b, EXPOSURE);
+            let rig = studio(&camera, &b);
             let (n, z) = if camera.pitch < 0.0 {
                 (-Vec3::Z, b.min.z)
             } else {
@@ -268,90 +265,67 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// The rig turns with the camera and lights the side it sees; the
+    /// environment, not lights, supplies reflections and ambient light.
     #[test]
-    #[ignore = "tuning printout"]
-    fn print_default_view() -> Result<(), Box<dyn std::error::Error>> {
-        let b = board();
-        let mut camera = Camera {
-            fov: 0.5,
-            ..Camera::default()
-        };
-        camera.fit(&b);
-        let rig = studio(&camera, &b, EXPOSURE);
-        let srgb = |c: f64| {
-            let c = c.clamp(0.0, 1.0);
-            let e = if c <= 0.0031308 {
-                12.92 * c
-            } else {
-                1.055 * c.powf(1.0 / 2.4) - 0.055
-            };
-            (e * 255.0).round() as u8
-        };
-        let body = material(BodyKind::PackageBody, DEFAULT_FINISH).surface()?;
-        for (k, light) in rig.iter().enumerate() {
-            let c = shade(&[*light], body, Vec3::Z, camera.eye(), camera.target)?;
-            println!(
-                "light {k} kind {} -> {:?}",
-                light[3],
-                c.map(|x| x / (1.0 - x))
-            );
-        }
-        for kind in [
-            BodyKind::MaskTop,
-            BodyKind::MaskCap,
-            BodyKind::PadFinish,
-            BodyKind::PackageBody,
-        ] {
-            let s = material(kind, DEFAULT_FINISH).surface()?;
-            println!("{kind:?}");
-            for j in (0..5).rev() {
-                let mut row = String::new();
-                for i in 0..5 {
-                    let p = Vec3::new(60.0 * f64::from(i) / 4.0, 40.0 * f64::from(j) / 4.0, 1.62);
-                    let c = shade(&rig, s, Vec3::Z, camera.eye(), p)?;
-                    row += &format!("{:?} ", c.map(srgb));
-                }
-                println!("{row}");
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn rig_is_bounded_finite_and_reflections_stay_in_the_world() {
+    fn rig_is_bounded_finite_and_turns_with_the_camera() {
         for camera in views() {
-            let rig = studio(&camera, &board(), EXPOSURE);
-            assert!(rig.len() <= MAX_LIGHTS);
-            assert_eq!(rig.len(), 3 + STUDIO.len() + 1);
+            let rig = studio(&camera, &board());
+            let below = camera.pitch < 0.0;
+            assert_eq!(rig.len(), 3 + FLOOR.len() + usize::from(below));
             for light in &rig {
                 assert!(light.iter().all(|x| x.is_finite()));
+                assert!(
+                    light[3] == 0.0 || light[3] == 1.0 || (below && light[3] == 4.0),
+                    "an ambient light only from below"
+                );
                 if light[3] == 0.0 {
                     let d = Vec3::new(light[0].into(), light[1].into(), light[2].into());
                     assert!((d.len() - 1.0).abs() < 1e-5);
+                    // Rig lights shine on the side seen; floor bounce from
+                    // below its horizon.
+                    assert!(d.z.abs() > 0.1);
                 }
             }
+            let key = Vec3::new(rig[0][0].into(), rig[0][1].into(), rig[0][2].into());
+            assert!((key - camera.target).z * side(&camera) > 0.0);
         }
-        let at = |yaw: f64, index: usize| {
+        let at = |yaw: f64| {
             let camera = camera(yaw, 45.0);
-            let rig = studio(&camera, &board(), EXPOSURE);
-            Vec3::new(
-                rig[index][0].into(),
-                rig[index][1].into(),
-                rig[index][2].into(),
-            ) - if index == 0 {
-                camera.target
-            } else {
-                Vec3::ZERO
-            }
+            let rig = studio(&camera, &board());
+            Vec3::new(rig[0][0].into(), rig[0][1].into(), rig[0][2].into()) - camera.target
         };
-        let (a, b) = (at(0.0, 0), at(90.0, 0));
+        let (a, b) = (at(0.0), at(90.0));
         assert!((a.len() - b.len()).abs() < 1e-3);
         // Turning the camera 90° about the vertical turns the key with it…
         let turned = Vec3::new(a.y, -a.x, a.z);
         assert!((turned - b).len() < 1e-3 * a.len(), "{a:?} {b:?}");
-        // …but not the studio's reflection lights.
-        for index in 3..3 + STUDIO.len() {
-            assert!((at(0.0, index) - at(90.0, index)).len() < 1e-6);
-        }
+        // …but not the floor bounce.
+        let floor = |yaw: f64| studio(&camera(yaw, 45.0), &board())[3];
+        assert_eq!(floor(0.0), floor(90.0));
+    }
+
+    /// The studio is fixed in the world (the look takes no view), so
+    /// highlights slide across the board as it is orbited; patterns keep
+    /// their physical size.
+    #[test]
+    fn the_look_is_fixed_in_the_world_and_in_millimetres() {
+        let l = look();
+        assert_eq!(l.sanitized(), l, "every value is within range");
+        assert_eq!(l.studio, STUDIO);
+        assert_eq!(l.units_per_mm, 1.0);
+        assert_eq!(l.weave_pitch, ProductLook::WEAVE_7628);
+        assert_eq!(l.ply_thickness, ProductLook::PLY_7628);
+    }
+
+    #[test]
+    fn occlusion_reaches_about_a_part_s_height() {
+        assert_eq!(ao_radius(&board()), 1.2);
+        let part = Aabb3 {
+            min: Vec3::new(-1.0, -0.5, 0.0),
+            max: Vec3::new(1.0, 0.5, 0.6),
+        };
+        assert!((ao_radius(&part) - 0.15).abs() < 1e-6);
+        assert!(ao_radius(&Aabb3::EMPTY).is_finite());
     }
 }

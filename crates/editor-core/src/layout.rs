@@ -4,7 +4,7 @@ use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
-use crate::model::{EditPolicy, Layer, PhysicalChoice, Placement, Project, Track};
+use crate::model::{EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Track};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,6 +47,10 @@ pub enum LayoutCommand {
     DeleteTrack { id: Id },
     #[serde(rename = "layout.track_lock")]
     SetTrackLock { id: Id, locked: bool },
+    /// Replace the board's fabrication attributes (mask colour and finish,
+    /// pad finish, silkscreen colour) as one undo step.
+    #[serde(rename = "layout.set_fabrication")]
+    SetFabrication(Fabrication),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -328,6 +332,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .ok_or_else(|| Error::NotFound("unknown track".into()))?
                 .locked = locked;
         }
+        LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
     }
     Ok(())
 }

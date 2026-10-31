@@ -1,26 +1,42 @@
 //! GPU-ready form of a built native model, prepared on the model worker so
 //! the UI thread only publishes it. PBR vertices carry each body's physical
-//! look in one buffer, parts first and board-level bodies after, so the
+//! look, clear coat and procedural pattern (Solidcraft's detailed PBR
+//! stream, drawn with the product look) in one buffer, parts first and
+//! board-level bodies after, so the
 //! buffer moves into the viewport once and is never copied on the UI thread;
 //! shadows are theme-free geometry with alpha weights; highlight blocks are
 //! flat copies keyed by pick identity, so selection only recolours.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
-//! revision 4f3ac07; see ATTRIBUTION.md), adapted to a Z-up board.
+//! upstream revision 4f3ac07, unchanged in the pinned fork; see
+//! ATTRIBUTION.md), adapted to a Z-up board.
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
-    material::BodyKind,
+    material::{BodyKind, Pattern},
     render::surface::unit_direction,
     scene::Geometry,
 };
 use solidcraft_ui_egui::gpu::{
-    BlockBuilder, GpuScene, PBR_SIZE, PaletteIndex, SceneBlock, TriClass,
+    BlockBuilder, GpuScene, PBR_DETAILED_SIZE, PaletteIndex, SceneBlock, SurfacePattern, TriClass,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Upper bound on PBR vertex bytes per model (about 466 000 triangles).
-pub const MAX_PBR_BYTES: usize = 64 << 20;
+/// Upper bound on PBR vertex bytes per model: about 480 000 triangles of
+/// detailed (64-byte) vertices, a little above what the earlier 48-byte
+/// stream accepted under 64 MiB, so no board that loaded before is refused.
+pub const MAX_PBR_BYTES: usize = 88 << 20;
+
+/// Solidcraft's pattern for a body's procedural detail.
+pub fn surface_pattern(pattern: Pattern) -> SurfacePattern {
+    match pattern {
+        Pattern::None => SurfacePattern::None,
+        Pattern::Weave => SurfacePattern::Fr4Weave,
+        Pattern::MaskPeel => SurfacePattern::SolderMask,
+        Pattern::MaskPeelOverWeave => SurfacePattern::SolderMaskOverWeave,
+        Pattern::Silkscreen => SurfacePattern::Silkscreen,
+    }
+}
 
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 
@@ -73,7 +89,7 @@ pub struct ModelScene {
     pub bounds: Aabb3,
 }
 
-/// PBR vertex bytes of `geometry`: parts first, then board-level bodies
+/// Detailed PBR vertex bytes of `geometry`: parts first, then board-level bodies
 /// when `board` is set. Returns the bytes and the parts' share.
 pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), String> {
     let bytes_of = |board: bool| {
@@ -84,7 +100,7 @@ pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), Stri
                 g.mesh
                     .triangles
                     .len()
-                    .checked_mul(3 * PBR_SIZE)
+                    .checked_mul(3 * PBR_DETAILED_SIZE)
                     .and_then(|b| n.checked_add(b))
             })
     };
@@ -102,7 +118,7 @@ pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), Stri
     }
     let mut scene = GpuScene::default();
     scene
-        .pbr
+        .pbr_detailed
         .try_reserve_exact(total)
         .map_err(|e| e.to_string())?;
     for segment in [false, true] {
@@ -110,6 +126,8 @@ pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), Stri
             break;
         }
         for g in geometry.iter().filter(|g| g.kind.is_board() == segment) {
+            let pattern = surface_pattern(g.detail.pattern);
+            let strength = g.detail.strength as f32;
             for indices in &g.mesh.triangles {
                 let Some(p) = g.mesh.tri(indices) else {
                     continue;
@@ -122,12 +140,18 @@ pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), Stri
                         .and_then(|i| g.mesh.normals.get(i))
                         .and_then(|n| unit_direction(*n).ok())
                         .unwrap_or(face);
-                    scene.pbr_tri(corner.to_f32(), normal.to_f32(), g.surface);
+                    scene.pbr_tri_with(
+                        corner.to_f32(),
+                        normal.to_f32(),
+                        g.surface,
+                        pattern,
+                        strength,
+                    );
                 }
             }
         }
     }
-    Ok((scene.pbr, parts))
+    Ok((scene.pbr_detailed, parts))
 }
 
 pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
@@ -390,10 +414,10 @@ pub(crate) mod tests {
                 .map(|g| g.mesh.triangles.len())
                 .sum::<usize>()
         };
-        assert_eq!(scene.parts_bytes, 3 * PBR_SIZE * triangles(false));
+        assert_eq!(scene.parts_bytes, 3 * PBR_DETAILED_SIZE * triangles(false));
         assert_eq!(
             scene.pbr.len(),
-            3 * PBR_SIZE * (triangles(true) + triangles(false))
+            3 * PBR_DETAILED_SIZE * (triangles(true) + triangles(false))
         );
         assert!(triangles(true) > 0 && triangles(false) > 0);
         let (parts, share) = pack(&scene.geometry, false)?;
@@ -411,7 +435,7 @@ pub(crate) mod tests {
                 .and_then(|b| b.try_into().ok())
                 .map(f32::from_le_bytes)
         };
-        for vertex in scene.pbr.chunks_exact(PBR_SIZE) {
+        for vertex in scene.pbr.chunks_exact(PBR_DETAILED_SIZE) {
             let v: Vec<f32> = (0..6).filter_map(|i| word(vertex, 4 * i)).collect();
             assert_eq!(v.len(), 6);
             let n = &v[3..6];
@@ -436,12 +460,68 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Each vertex is Solidcraft's detailed PBR vertex: position, normal,
+    /// base colour, (metallic, roughness, IOR) and the detail (pattern id
+    /// plus the coat IOR in its fraction, strength, coat weight, coat
+    /// roughness). Masks carry their lacquer coat and orange peel, the
+    /// laminate its weave, everything else neither.
+    #[test]
+    fn vertices_carry_each_body_s_coat_and_pattern() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(PBR_DETAILED_SIZE, 64);
+        let scene = demo_scene()?;
+        let floats = |vertex: &[u8]| -> Vec<f32> {
+            vertex
+                .chunks_exact(4)
+                .filter_map(|b| b.try_into().ok().map(f32::from_le_bytes))
+                .collect()
+        };
+        let mut at = 0;
+        let mut seen = std::collections::HashSet::new();
+        for segment in [false, true] {
+            for g in scene
+                .geometry
+                .iter()
+                .filter(|g| g.kind.is_board() == segment)
+            {
+                let bytes = 3 * PBR_DETAILED_SIZE * g.mesh.triangles.len();
+                let body = scene.pbr.get(at..at + bytes).ok_or("short buffer")?;
+                at += bytes;
+                let Some(vertex) = body.chunks_exact(PBR_DETAILED_SIZE).next() else {
+                    continue;
+                };
+                let v = floats(vertex);
+                assert_eq!(v.len(), 16);
+                let [id, strength, weight, coat_roughness] = [v[12], v[13], v[14], v[15]];
+                let pattern = surface_pattern(g.detail.pattern).id() as f32;
+                assert_eq!(id.floor(), pattern, "{:?}", g.kind);
+                assert!((strength - g.detail.strength as f32).abs() < 1e-6);
+                match g.surface.clear_coat() {
+                    Some(coat) => {
+                        assert_eq!(weight, 1.0, "{:?}", g.kind);
+                        assert!((coat_roughness - coat.roughness() as f32).abs() < 1e-6);
+                        let ior = 1.0 + (id.fract() - 0.25) * 4.0;
+                        assert!((ior - 1.52).abs() < 1e-3, "{:?}: {ior}", g.kind);
+                        assert_eq!(v[11], 1.0, "the body under the coat has IOR 1");
+                    }
+                    None => assert_eq!(weight, 0.0, "{:?}", g.kind),
+                }
+                seen.insert((g.kind, g.detail.pattern));
+            }
+        }
+        assert_eq!(at, scene.pbr.len());
+        assert!(seen.contains(&(BodyKind::Substrate, Pattern::Weave)));
+        assert!(seen.contains(&(BodyKind::MaskTop, Pattern::MaskPeelOverWeave)));
+        assert!(seen.contains(&(BodyKind::MaskCap, Pattern::MaskPeel)));
+        assert!(seen.contains(&(BodyKind::PadFinish, Pattern::None)));
+        Ok(())
+    }
+
     #[test]
     fn oversized_models_are_refused() -> Result<(), Box<dyn std::error::Error>> {
         let model = pcbcraft_solidcraft::project::build(Engine::demo()?.project())?;
         let mut geometry = model.geometry;
         let one = geometry.first().cloned().ok_or("no geometry")?;
-        let per_copy = one.mesh.triangles.len() * 3 * PBR_SIZE;
+        let per_copy = one.mesh.triangles.len() * 3 * PBR_DETAILED_SIZE;
         let copies = MAX_PBR_BYTES / per_copy.max(1) + 1;
         geometry.extend(std::iter::repeat_n(one, copies));
         assert!(build(geometry).is_err());

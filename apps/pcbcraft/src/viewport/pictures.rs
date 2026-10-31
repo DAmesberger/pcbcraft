@@ -1,0 +1,417 @@
+//! Headless pictures of the PCB 3D view: the viewport's own frame drawn by
+//! Solidcraft's renderer on an offscreen device, as the window draws it
+//! (scene target with depth, blitted to a target without). The prepare,
+//! paint and read-back steps follow Solidcraft's `ui-egui` offscreen test
+//! helper (MIT, fork revision 87b1009; see ATTRIBUTION.md).
+//!
+//! Without a GPU adapter the tests return early: they measure what the
+//! renderer draws and cannot run without one. With `PCBCRAFT_REQUIRE_GPU`
+//! set, a missing adapter is a failure instead, so a green run there is
+//! evidence of the look.
+use super::*;
+use egui_wgpu::wgpu;
+use pcbcraft_core::{Fabrication, MaskColour, PadFinish, Project};
+use pcbcraft_solidcraft::material::BodyKind;
+use solidcraft_ui_egui::gpu::StudioPreset;
+
+/// What the window clears to behind the model (the light theme's sweep,
+/// mid-way).
+const BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 0.72,
+    g: 0.73,
+    b: 0.75,
+    a: 1.0,
+};
+const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+struct Gpu {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    resources: egui_wgpu::CallbackResources,
+}
+
+impl Gpu {
+    fn new() -> Option<Gpu> {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        desc.backends = wgpu::Backends::PRIMARY;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+            ..Default::default()
+        }))
+        .ok()?;
+        let window = GpuTarget {
+            format: FORMAT,
+            depth: None,
+            samples: 1,
+            tess: false,
+            oit: false,
+        };
+        let scene = GpuTarget {
+            depth: Some(wgpu::TextureFormat::Depth32Float),
+            ..window
+        };
+        let mut renderer = Renderer::with_window_target(&device, scene, window, None);
+        for preset in StudioPreset::ALL {
+            renderer.set_studio_environment(&device, &queue, &StudioEnvironment::bake(preset));
+        }
+        let mut resources = egui_wgpu::CallbackResources::default();
+        resources.insert(renderer);
+        Some(Gpu {
+            device,
+            queue,
+            resources,
+        })
+    }
+
+    /// Tuning overrides from `PCBCRAFT_TWEAK` (`ao=…,exposure=…,intensity=…,
+    /// lights=…`), for comparing pictures; nothing is overridden without it.
+    fn tweak(frame: &mut Frame) {
+        let Ok(spec) = std::env::var("PCBCRAFT_TWEAK") else {
+            return;
+        };
+        for item in spec.split(',') {
+            let Some((key, value)) = item.split_once('=') else {
+                continue;
+            };
+            let Ok(value) = value.parse::<f32>() else {
+                continue;
+            };
+            match (key, frame.product_look.as_mut()) {
+                ("ao", _) => frame.ao_radius = value,
+                ("exposure", Some(look)) => look.exposure = value,
+                ("intensity", Some(look)) => look.intensity = value,
+                ("rotation", Some(look)) => look.rotation = value.to_radians(),
+                ("studio", Some(look)) => {
+                    if let Some(preset) = StudioPreset::from_id(value as u32) {
+                        look.studio = preset;
+                    }
+                }
+                ("lights", _) => {
+                    for light in frame.product_lights.iter_mut().flatten() {
+                        for c in &mut light[4..7] {
+                            *c *= value;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The viewport's frame at `w` × `h` pixels (supersampled `ssaa` times),
+    /// as straight RGBA.
+    fn draw(&mut self, viewport: &mut Viewport, w: u32, h: u32, ssaa: f32) -> Option<Vec<u8>> {
+        // As `show` does: shadows follow the side seen.
+        viewport.publish_shadows();
+        let view_proj = viewport
+            .camera
+            .view_proj_bounds(f64::from(w) / f64::from(h), &viewport.bounds)
+            .to_f32();
+        let mut frame = viewport.frame(view_proj, [w as f32, h as f32], ssaa);
+        Self::tweak(&mut frame);
+        let cb = ViewportCallback(frame);
+        let color = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pcbcraft picture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = color.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [w, h],
+            pixels_per_point: 1.0,
+        };
+        let extra = egui_wgpu::CallbackTrait::prepare(
+            &cb,
+            &self.device,
+            &self.queue,
+            &screen,
+            &mut encoder,
+            &mut self.resources,
+        );
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("pcbcraft picture"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(BACKGROUND),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                })
+                .forget_lifetime();
+            let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32, h as f32));
+            let info = egui::PaintCallbackInfo {
+                viewport: rect,
+                clip_rect: rect,
+                pixels_per_point: 1.0,
+                screen_size_px: [w, h],
+            };
+            egui_wgpu::CallbackTrait::paint(&cb, info, &mut pass, &self.resources);
+        }
+        let row = (w * 4).div_ceil(256) * 256;
+        let read = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pcbcraft picture read"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            color.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &read,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue
+            .submit(extra.into_iter().chain([encoder.finish()]));
+        let slice = read.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        let bytes = slice.get_mapped_range().ok()?.to_vec();
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let at = (y * row) as usize;
+            out.extend_from_slice(bytes.get(at..at + (w * 4) as usize)?);
+        }
+        Some(out)
+    }
+}
+
+fn project(fabrication: Fabrication) -> Result<Project, Box<dyn std::error::Error>> {
+    let mut project = crate::model_scene::tests::demo_project()?;
+    project.fabrication = fabrication;
+    Ok(project)
+}
+
+fn viewport(project: &Project) -> Result<Viewport, Box<dyn std::error::Error>> {
+    let model = pcbcraft_solidcraft::project::build(project)?;
+    let mut viewport = Viewport::detached();
+    viewport.set_model(crate::model_scene::build(model.geometry)?);
+    viewport.fit_to(4.0 / 3.0);
+    Ok(viewport)
+}
+
+/// Point the camera at `target` from `distance` (mm), `yaw` and `pitch` in
+/// degrees.
+fn aim(viewport: &mut Viewport, target: Vec3, distance: f64, yaw: f64, pitch: f64) {
+    viewport.camera.target = target;
+    viewport.camera.distance = distance;
+    viewport.camera.yaw = yaw.to_radians();
+    viewport.camera.pitch = pitch.to_radians();
+}
+
+fn centre(viewport: &Viewport, kind: BodyKind) -> Option<Vec3> {
+    let model = viewport.model.as_ref()?;
+    let g = model.geometry.iter().find(|g| g.kind == kind)?;
+    Some(Vec3::new(
+        (g.min[0] + g.max[0]) / 2.0,
+        (g.min[1] + g.max[1]) / 2.0,
+        g.max[2],
+    ))
+}
+
+fn luminance(p: &[u8]) -> f64 {
+    let lin = |c: u8| pcbcraft_solidcraft::material::srgb8_to_linear(c);
+    0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2])
+}
+
+/// Only the pad finish, seen flat from eight sides against black: the
+/// studio's softboxes make exposed gold read as bright metal from some
+/// views, as metal from a typical view, and never black. Discrete lights
+/// alone could not (see `docs/editor-evidence.md`).
+#[test]
+fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        // A machine that has a GPU sets PCBCRAFT_REQUIRE_GPU, so a missing
+        // adapter fails there instead of passing without measuring.
+        if std::env::var_os("PCBCRAFT_REQUIRE_GPU").is_some() {
+            return Err("PCBCRAFT_REQUIRE_GPU is set but no GPU adapter was found".into());
+        }
+        eprintln!("no GPU adapter: skipped");
+        return Ok(());
+    };
+    let model = pcbcraft_solidcraft::project::build(&project(Fabrication::default())?)?;
+    let pads: Vec<_> = model
+        .geometry
+        .into_iter()
+        .filter(|g| g.kind == BodyKind::PadFinish)
+        .collect();
+    assert!(!pads.is_empty());
+    let mut viewport = Viewport::detached();
+    viewport.set_model(crate::model_scene::build(pads)?);
+    let target = viewport.bounds.center();
+    let distance = 1.5 * viewport.bounds.diagonal();
+    let mut means = vec![];
+    for k in 0..8 {
+        aim(&mut viewport, target, distance, 45.0 * f64::from(k), 40.0);
+        let rgba = gpu.draw(&mut viewport, 256, 256, 1.0).ok_or("no picture")?;
+        let metal: Vec<f64> = rgba
+            .chunks_exact(4)
+            .filter(|p| {
+                let bg = |c: u8, b: f64| (f64::from(c) / 255.0 - b).abs() < 0.02;
+                !(bg(p[0], BACKGROUND.r) && bg(p[1], BACKGROUND.g) && bg(p[2], BACKGROUND.b))
+            })
+            .map(luminance)
+            .collect();
+        assert!(metal.len() > 50, "the pads cover pixels");
+        means.push(metal.iter().sum::<f64>() / metal.len() as f64);
+    }
+    means.sort_by(f64::total_cmp);
+    let (lowest, median, highest) = (means[0], means[4], means[7]);
+    eprintln!("gold luminance by view: {means:?}");
+    assert!(lowest >= 0.10, "darkest view {lowest}");
+    assert!(median >= 0.18, "median {median}");
+    assert!(highest >= 0.30, "no view catches a softbox: {highest}");
+    Ok(())
+}
+
+/// Pictures for tuning and evidence, written to `PCBCRAFT_PICTURES`.
+#[test]
+#[ignore = "writes tuning pictures"]
+fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1024, 768);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let clipped = rgba
+                .chunks_exact(4)
+                .filter(|p| p[..3].iter().all(|c| *c >= 254))
+                .count();
+            eprintln!(
+                "{name}: {:.3} % of pixels at white",
+                100.0 * clipped as f64 / f64::from(w * h)
+            );
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    let only = std::env::var("PCBCRAFT_PICTURES_ONLY").unwrap_or_default();
+    let colours = [
+        (MaskColour::Green, "green"),
+        (MaskColour::Blue, "blue"),
+        (MaskColour::Red, "red"),
+        (MaskColour::Purple, "purple"),
+        (MaskColour::Yellow, "yellow"),
+        (MaskColour::Black, "black"),
+        (MaskColour::White, "white"),
+        (MaskColour::Clear, "clear"),
+    ];
+    for (mask_colour, name) in colours {
+        if !only.is_empty() && !only.contains(name) {
+            continue;
+        }
+        let mut v = viewport(&project(Fabrication {
+            mask_colour,
+            ..Fabrication::default()
+        })?)?;
+        save(&mut v, &format!("mask-{name}-gloss-enig-board"))?;
+        if let Some(chip) = centre(&v, BodyKind::ChipResistor) {
+            aim(&mut v, chip, 9.0, 30.0, 35.0);
+            save(&mut v, &format!("mask-{name}-gloss-enig-chip-closeup"))?;
+        }
+    }
+    if !only.is_empty() && !only.contains("detail") {
+        return Ok(());
+    }
+    // The component 3D preview: each package as the Part editor shows it.
+    for (k, package) in project(Fabrication::default())?
+        .library
+        .packages
+        .iter()
+        .enumerate()
+    {
+        let model = pcbcraft_solidcraft::project::preview(&package.definition)?;
+        let mut v = Viewport::detached();
+        v.set_model(crate::model_scene::build(model.geometry)?);
+        v.fit_to(4.0 / 3.0);
+        save(&mut v, &format!("component-preview-{k}"))?;
+    }
+    for (pad_finish, name) in [
+        (PadFinish::Enig, "enig"),
+        (PadFinish::Hasl, "hasl"),
+        (PadFinish::LeadFreeHasl, "lead-free-hasl"),
+        (PadFinish::Osp, "osp"),
+        (PadFinish::ImmersionSilver, "silver"),
+    ] {
+        let mut v = viewport(&project(Fabrication {
+            pad_finish,
+            ..Fabrication::default()
+        })?)?;
+        if let Some(pad) = centre(&v, BodyKind::PadFinish) {
+            aim(&mut v, pad, 6.0, 200.0, 50.0);
+            save(&mut v, &format!("pads-{name}-closeup"))?;
+        }
+    }
+    let mut v = viewport(&project(Fabrication::default())?)?;
+    let b = v.bounds;
+    aim(
+        &mut v,
+        Vec3::new(b.min.x + 4.0, b.min.y, b.center().z),
+        6.0,
+        0.0,
+        12.0,
+    );
+    save(&mut v, "edge-weave-closeup")?;
+    let mut v = viewport(&project(Fabrication {
+        mask_colour: MaskColour::Clear,
+        ..Fabrication::default()
+    })?)?;
+    aim(&mut v, b.center(), 0.5 * b.diagonal(), 40.0, 30.0);
+    save(&mut v, "mask-clear-weave-midrange")?;
+    let mut v = viewport(&project(Fabrication::default())?)?;
+    v.camera.pitch = 8f64.to_radians();
+    v.fit_to(4.0 / 3.0);
+    save(&mut v, "grazing-8deg")?;
+    v.camera.pitch = (-40f64).to_radians();
+    v.fit_to(4.0 / 3.0);
+    save(&mut v, "bottom-side")?;
+    for (finish, name) in [
+        (pcbcraft_core::MaskFinish::Satin, "satin"),
+        (pcbcraft_core::MaskFinish::Matte, "matte"),
+    ] {
+        let mut v = viewport(&project(Fabrication {
+            mask_finish: finish,
+            ..Fabrication::default()
+        })?)?;
+        save(&mut v, &format!("mask-green-{name}-board"))?;
+    }
+    Ok(())
+}

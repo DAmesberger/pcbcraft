@@ -12,7 +12,7 @@ Upstream copyright: **Copyright (c) 2026 SolidCraft contributors**. Upstream off
 
 The Cargo development/CI profiles, pinned geometry patches and `xtask` workflow convention are adapted from the same Solidcraft revision under the MIT option above. The implementation of Pcbcraft's commands and checks is original. The desktop links Solidcraft’s UI package and uses its bundled visual assets directly.
 
-Pcbcraft directly depends on `solidcraft-engine` and its geometry patches at that revision. Cargo retrieves the original packages with their upstream license notices; `Cargo.lock` records resolved dependencies. Pcbcraft does not maintain a separate CAD engine or native-file writer. Record further adopted source/assets and their notices here.
+Pcbcraft directly depends on `solidcraft-engine`, `solidcraft-ui-egui` and the geometry and windowing patches built from the fork [DAmesberger/solidcraft](https://github.com/DAmesberger/solidcraft/tree/87b1009b029a1b381ad1799fe72bfec44a4b1a66) at revision `87b1009b029a1b381ad1799fe72bfec44a4b1a66` (branch `pcbcraft-product-look`): upstream revision `4f3ac07aec69489183185071f07d7fbcf4f51e64` plus an opt-in real-time "product look" for the PCB 3D view (studio environment, clear coats, procedural surface patterns, ambient occlusion and PBR Neutral tone mapping). The desktop turns the look on for its 3D views; Solidcraft's own app does not. The fork's renderer contains Apache-2.0 code adapted from the Khronos PBR Neutral tone mapper (`pbr_neutral`, `look_tone`; Copyright The Khronos Group Inc.); the fork's `NOTICE` carries that attribution and applies to the renderer Pcbcraft builds. The instructions and source adapted below cite upstream revision `4f3ac07` unless they say otherwise; those files are unchanged in the fork. Cargo retrieves the original packages with their upstream license notices; `Cargo.lock` records resolved dependencies. Pcbcraft does not maintain a separate CAD engine or native-file writer. Record further adopted source/assets and their notices here.
 
 Original Pcbcraft code is licensed MIT OR Apache-2.0, like Solidcraft; see [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Every workspace crate declares this license, and `cargo xtask licences --check` enforces it together with the dependency license policy.
 
@@ -22,7 +22,7 @@ The scripting feasibility slice embeds [Rhai](https://github.com/rhaiscript/rhai
 
 ## Desktop UI reference and reuse
 
-The desktop links `solidcraft-ui-egui` at the same pinned revision. Fonts, icons, theme tokens, controls, `Container`, camera math and GPU renderer are upstream implementations, not lookalike assets.
+The desktop links `solidcraft-ui-egui` from the pinned fork revision above. Fonts, icons, theme tokens, controls, `Container`, camera math and GPU renderer are upstream implementations, not lookalike assets.
 
 Adapted source references, under the MIT option above:
 
@@ -44,6 +44,7 @@ Adapted source references, under the MIT option above:
 - `viewport.rs`: upstream `gpu` renderer API and `solidcraft-render` camera API via the engine. Navigation is adapted locally because the complete upstream event handler is private to `SolveApp`. Adaptive supersampling follows upstream `crates/ui-egui/src/viewport.rs` `supersampling` and `view_settled` (a view hash and a settle delay before drawing at 2×).
 - `apps/pcbcraft/src/lighting.rs`: product-light record packing follows upstream `crates/ui-egui/src/render_workspace_light.rs` `preview()` (the `[position, kind, radiance, outer, axis, inner, reference distance², minimum distance]` layout). The studio rig itself is original.
 - `crates/solidcraft-integration/src/footprint_spike/` (test-only spike F0): point-expression application follows upstream `crates/doc/src/document.rs` `Document::apply_point_values` (evaluate each coordinate as a length, range-check, fix the point), and the scratch-`Session` bridge follows the `Session::scratch` + nested `execute` pattern in upstream `crates/engine/src/cmd/sketch.rs` (rounded rectangle). Pad templates, `check_sketch`, the copper-only pass, arrays, quantizer and fixtures are original; the fixtures are synthetic geometry.
+- `apps/pcbcraft/src/viewport/pictures.rs`: the offscreen prepare, paint and read-back steps follow `crates/ui-egui/src/gpu.rs` `offscreen` (a test helper) at fork revision `87b1009`. The pictures, views and measurements are original.
 - `apps/pcbcraft/src/model_scene.rs`: the ground shadow follows upstream `crates/ui-egui/src/viewport.rs` `ground_shadow` (four fading ellipse rings of 48 segments, 80/150 peak alpha), adapted to a Z-up board. The contact shadows are original.
 
 IBM Plex Sans and IBM Plex Mono are included by the upstream UI package. Their SIL Open Font License notices are preserved in `licenses/ibm-plex-sans-OFL.txt` and `licenses/ibm-plex-mono-OFL.txt`; original font assets and notices remain in the pinned upstream dependency. The installed Solidcraft 0.26.1 app was also inspected for visual comparison; implementation references remain pinned to the source revision above.

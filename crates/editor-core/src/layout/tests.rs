@@ -308,3 +308,152 @@ fn matching_xy_on_opposite_layers_does_not_connect_copper() -> Result<()> {
     );
     Ok(())
 }
+
+fn blue_matte_osp() -> Fabrication {
+    use crate::model::{MaskColour, MaskFinish, PadFinish, SilkscreenColour};
+    Fabrication {
+        mask_colour: MaskColour::Blue,
+        mask_finish: MaskFinish::Matte,
+        pad_finish: PadFinish::Osp,
+        silkscreen_colour: SilkscreenColour::Yellow,
+    }
+}
+
+#[test]
+fn fabrication_defaults_to_green_gloss_enig_with_white_legend() {
+    use crate::model::{MaskColour, MaskFinish, PadFinish, SilkscreenColour};
+    assert_eq!(
+        Project::default().fabrication,
+        Fabrication {
+            mask_colour: MaskColour::Green,
+            mask_finish: MaskFinish::Gloss,
+            pad_finish: PadFinish::Enig,
+            silkscreen_colour: SilkscreenColour::White,
+        }
+    );
+}
+
+/// `layout.set_fabrication` is one undo step through the engine, survives a
+/// save and reopen, and a stale request changes nothing.
+#[test]
+fn set_fabrication_is_one_undo_step_and_round_trips_through_the_file() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let before = engine.project().clone();
+    let revision = engine.revision();
+    let set = Operation::Layout(LayoutCommand::SetFabrication(blue_matte_osp()));
+    engine.apply(revision, set.clone())?;
+    assert_eq!(engine.project().fabrication, blue_matte_osp());
+    assert_eq!(engine.revision(), revision + 1);
+    // Only the fabrication changed.
+    let mut expected = before.clone();
+    expected.fabrication = blue_matte_osp();
+    assert_eq!(engine.project(), &expected);
+
+    let bytes = crate::format::encode(&engine.to_file())?;
+    let text = String::from_utf8(bytes.clone()).map_err(|e| Error::Invalid(e.to_string()))?;
+    for value in [
+        "\"mask_colour\": \"blue\"",
+        "\"mask_finish\": \"matte\"",
+        "\"pad_finish\": \"osp\"",
+        "\"silkscreen_colour\": \"yellow\"",
+    ] {
+        assert!(text.contains(value), "{value} missing from the saved file");
+    }
+    let reopened = Engine::from_file(crate::format::decode(&bytes)?)?;
+    assert_eq!(reopened.project(), engine.project());
+
+    let current = engine.revision();
+    assert!(matches!(
+        engine.apply(revision, set),
+        Err(Error::Stale { .. })
+    ));
+    assert_eq!(engine.revision(), current);
+
+    engine.undo()?;
+    assert_eq!(engine.project(), &before);
+    engine.redo()?;
+    assert_eq!(engine.project().fabrication, blue_matte_osp());
+    Ok(())
+}
+
+/// Restating the current fabrication from the CLI or MCP is a no-op: no
+/// revision, no undo step, the same project.
+#[test]
+fn unchanged_fabrication_takes_no_revision_or_undo_step() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let revision = engine.revision();
+    let current = engine.project().fabrication;
+    assert!(!engine.can_undo());
+    engine.apply(
+        revision,
+        Operation::Layout(LayoutCommand::SetFabrication(current)),
+    )?;
+    assert_eq!(engine.revision(), revision);
+    assert!(!engine.can_undo());
+    assert_eq!(engine.project().fabrication, current);
+    Ok(())
+}
+
+/// The wire form is typed: unknown colours, finishes or extra fields are
+/// refused before anything is applied, and a file without the attributes is
+/// not this format version's file.
+#[test]
+fn fabrication_rejects_unknown_values_and_files_without_it() -> Result<()> {
+    let wire = serde_json::json!({
+        "editor": "Layout",
+        "operation": {"command": "layout.set_fabrication", "params": {
+            "mask_colour": "purple", "mask_finish": "satin",
+            "pad_finish": "lead_free_hasl", "silkscreen_colour": "black"
+        }}
+    });
+    let operation: Operation = serde_json::from_value(wire.clone())?;
+    let Operation::Layout(LayoutCommand::SetFabrication(fabrication)) = operation else {
+        return Err(Error::Invalid("decoded another operation".into()));
+    };
+    assert_eq!(
+        serde_json::to_value(fabrication)?,
+        wire["operation"]["params"]
+    );
+    for (key, value) in [
+        ("mask_colour", serde_json::json!("orange")),
+        ("pad_finish", serde_json::json!("enepig")),
+        ("extra", serde_json::json!(true)),
+    ] {
+        let mut bad = wire.clone();
+        bad["operation"]["params"][key] = value;
+        assert!(serde_json::from_value::<Operation>(bad).is_err(), "{key}");
+    }
+    let mut missing = wire;
+    if let Some(params) = missing["operation"]["params"].as_object_mut() {
+        params.remove("silkscreen_colour");
+    }
+    assert!(serde_json::from_value::<Operation>(missing).is_err());
+
+    let file = Engine::demo()?.to_file();
+    let mut value = serde_json::to_value(&file)?;
+    if let Some(project) = value["project"].as_object_mut() {
+        project.remove("fabrication");
+    }
+    let bytes = serde_json::to_vec(&value)?;
+    assert!(crate::format::decode(&bytes).is_err());
+    Ok(())
+}
+
+#[test]
+fn schemas_list_the_fabrication_operation_and_every_choice() -> Result<()> {
+    let schemas = serde_json::to_string(&crate::schemas())?;
+    for name in [
+        "layout.set_fabrication",
+        "mask_colour",
+        "silkscreen_colour",
+        "\"clear\"",
+        "\"purple\"",
+        "\"satin\"",
+        "\"lead_free_hasl\"",
+        "\"immersion_silver\"",
+        "\"osp\"",
+    ] {
+        assert!(schemas.contains(name), "{name} missing from the schemas");
+    }
+    Ok(())
+}

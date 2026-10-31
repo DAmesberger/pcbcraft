@@ -6,16 +6,19 @@
 //! so the saved model's bodies stay disjoint (except copper joining copper)
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
-use crate::material::{self, BodyKind, DEFAULT_FINISH};
+use crate::material::{self, BodyKind};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::library::{FootprintDefinition, PackageBody, PackageDefinition};
-use pcbcraft_core::{Layer, Placement, Point, layout};
+use pcbcraft_core::{Fabrication, Layer, Placement, Point, layout};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
 
 /// Soldermask over bare laminate (display thickness; see `docs/materials.md`).
 pub const MASK_THICKNESS_MM: f64 = 0.020;
+/// Soldermask pull-back from the board outline (est.; fabricators pull mask
+/// and copper back from a routed edge).
+pub const MASK_EDGE_INSET_MM: f64 = 0.03;
 /// Soldermask above a track's copper.
 pub const MASK_CAP_MM: f64 = 0.015;
 /// ENIG nickel (3–6 µm, IPC-4552); the immersion gold is negligible.
@@ -52,16 +55,19 @@ const FILLET_MIN_TOE_MM: f64 = 0.02;
 /// Segments of a round track end and of a fillet profile.
 const ARC_STEPS: usize = 8;
 const FILLET_STEPS: usize = 10;
+const FILLET_ACROSS_STEPS: usize = 8;
 /// Adjacent prism walls turning less than this share a smoothed normal.
 const SMOOTH_TURN: f64 = 0.55;
 
-/// The board the layers sit on, in mm.
+/// The board the layers sit on, in mm, and the fabrication that sets the
+/// mask and finish looks.
 #[derive(Clone, Copy, Debug)]
 pub struct Board {
     pub width: f64,
     pub depth: f64,
     pub thickness: f64,
     pub copper: f64,
+    pub fabrication: Fabrication,
 }
 
 impl Board {
@@ -192,23 +198,33 @@ pub fn board(
     parts: &[Part<'_>],
 ) -> Result<Vec<Geometry>> {
     let mut out = Vec::new();
-    let outline = [
-        [0.0, 0.0],
-        [board.width, 0.0],
-        [board.width, board.depth],
-        [0.0, board.depth],
-    ];
+    // The mask stops short of the routed edge, so its walls never meet the
+    // laminate's at the silhouette.
+    let (i, w, d) = (MASK_EDGE_INSET_MM, board.width, board.depth);
+    let outline = [[i, i], [w - i, i], [w - i, d - i], [i, d - i]];
     for (kind, layer) in [
         (BodyKind::MaskTop, Layer::Top),
         (BodyKind::MaskBottom, Layer::Bottom),
     ] {
         let (z0, z1) = board.span(layer, 0.0, MASK_THICKNESS_MM);
-        push(&mut out, kind, None, prism(&outline, z0, z1))?;
+        push(
+            &mut out,
+            &board.fabrication,
+            kind,
+            None,
+            prism(&outline, z0, z1),
+        )?;
     }
     for land in lands {
         let (z0, z1) = board.span(land.layer, 0.0, board.copper + FINISH_THICKNESS_MM);
         let mesh = prism(&land.corners(FINISH_THICKNESS_MM), z0, z1);
-        push(&mut out, BodyKind::PadFinish, Some(land.pick), mesh)?;
+        push(
+            &mut out,
+            &board.fabrication,
+            BodyKind::PadFinish,
+            Some(land.pick),
+            mesh,
+        )?;
     }
     for path in paths {
         track(&mut out, board, lands, path)?;
@@ -291,6 +307,7 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], band, free_a);
         push(
             out,
+            &board.fabrication,
             BodyKind::MaskCap,
             Some(path.pick),
             prism(&outline, c0, c1),
@@ -312,6 +329,7 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], half, false);
         push(
             out,
+            &board.fabrication,
             BodyKind::PadFinish,
             Some(path.pick),
             prism(&outline, f0, f1),
@@ -402,6 +420,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         board,
         placement: part.placement,
     };
+    let looks = board.map_or_else(Fabrication::default, |b| b.fabrication);
     let package = part.package;
     let [length, width, height] = package.body_size;
     let offset = package.model_offset;
@@ -425,7 +444,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             let top = offset[2] + LEAD_HEIGHT_SHARE * height;
             if top > 0.001 {
                 let mesh = frame.cuboid([min[0], min[1], 0.0], [max[0], max[1], top]);
-                push(out, BodyKind::Termination, part.pick, mesh)?;
+                push(out, &looks, BodyKind::Termination, part.pick, mesh)?;
             }
         }
         return Ok(());
@@ -447,6 +466,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         max[2] = hi[2] + g;
         push(
             out,
+            &looks,
             BodyKind::Termination,
             part.pick,
             frame.cuboid(min, max),
@@ -461,7 +481,13 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         min[2] = hi[2] - OVERCOAT_MM;
         max[2] = hi[2] + OVERCOAT_MM;
         if min[axis] < max[axis] && min[across] < max[across] {
-            push(out, BodyKind::Overcoat, part.pick, frame.cuboid(min, max))?;
+            push(
+                out,
+                &looks,
+                BodyKind::Overcoat,
+                part.pick,
+                frame.cuboid(min, max),
+            )?;
         }
     }
     let (Some(footprint), Some(_)) = (part.footprint, board) else {
@@ -499,7 +525,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             rise,
             [mid - half, mid + half],
         );
-        push(out, BodyKind::Solder, part.pick, mesh)?;
+        push(out, &looks, BodyKind::Solder, part.pick, mesh)?;
     }
     Ok(())
 }
@@ -544,9 +570,12 @@ fn lead_band(
 
 /// A concave solder meniscus from a termination's end face (`face` along
 /// `axis`, facing `sign`) down to the land's toe `reach` further out, `rise`
-/// high at the face, between `span` across. The profile is the quadratic
-/// z = rise·(1 − s/reach)², tangent to the land at the toe like a wetted
-/// meniscus.
+/// high at the face, between `span` across. Along the land the profile is
+/// the quadratic z = rise·(1 − s/reach)², tangent to the land at the toe
+/// like a wetted meniscus; across it the solder rounds down to the land at
+/// both sides, z ∝ 1 − u⁴ (u = −1..1 over the span). A closed solid with
+/// no vertical side walls: every face of its top looks partly up, so it
+/// reflects the studio rather than its dark lower walls.
 fn fillet(
     frame: &Frame<'_>,
     axis: usize,
@@ -557,19 +586,8 @@ fn fillet(
     span: [f64; 2],
 ) -> Mesh {
     let base = FINISH_THICKNESS_MM;
-    // Profile in (s outward, z); the region under it is star-shaped from
-    // the face foot (0, base), so its side walls fan from there.
-    let profile: Vec<(f64, f64, f64, f64)> = (0..=FILLET_STEPS)
-        .map(|k| {
-            let t = k as f64 / FILLET_STEPS as f64;
-            let s = reach * t;
-            let z = base + rise * (1.0 - t) * (1.0 - t);
-            // Outward normal of the curve: (−dz/ds, 1), normalised.
-            let slope = -2.0 * rise * (1.0 - t) / reach;
-            let n = (-slope).hypot(1.0);
-            (s, z, -slope / n, 1.0 / n)
-        })
-        .collect();
+    let mid = (span[0] + span[1]) / 2.0;
+    let half = (span[1] - span[0]) / 2.0;
     let local = |s: f64, c: f64, z: f64| {
         let mut p = [0.0; 2];
         p[axis] = face + sign * s;
@@ -584,6 +602,16 @@ fn fillet(
             .direction(Vec3::new(p[0], p[1], z))
             .normalized()
             .unwrap_or(Vec3::Z)
+    };
+    // Height above the land at (t along, u across), and its outward normal
+    // in (s, across, z).
+    let surface = |t: f64, u: f64| {
+        let along = (1.0 - t) * (1.0 - t);
+        let across = 1.0 - u * u * u * u;
+        let z = base + rise * along * across;
+        let dz_ds = -2.0 * rise * (1.0 - t) * across / reach;
+        let dz_dc = -4.0 * rise * along * u * u * u / half;
+        (z, local_dir(-dz_ds, -dz_dc, 1.0))
     };
     let mut mesh = Mesh::default();
     // Is the (s, across, z) frame left-handed? Then flip the windings.
@@ -604,45 +632,42 @@ fn fillet(
         mesh.normals.push(n);
         u32::try_from(mesh.positions.len() - 1).unwrap_or(u32::MAX)
     };
-    // Curved top: rows at both span ends.
+    let across = |j: usize| -1.0 + 2.0 * j as f64 / FILLET_ACROSS_STEPS as f64;
+    // Curved top: a grid along (t) and across (u).
+    let row = FILLET_ACROSS_STEPS + 1;
     let first = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
-    for &(s, z, ns, nz) in &profile {
-        let n = local_dir(ns, 0.0, nz);
-        vertex(&mut mesh, local(s, span[0], z), n);
-        vertex(&mut mesh, local(s, span[1], z), n);
-    }
-    for k in 0..FILLET_STEPS {
-        let i = first + 2 * k as u32;
-        tri(&mut mesh, i, i + 2, i + 3, 0);
-        tri(&mut mesh, i, i + 3, i + 1, 0);
-    }
-    // Side walls, fanned from the face foot.
-    for (c, outward, face_id) in [(span[0], -1.0, 1), (span[1], 1.0, 2)] {
-        let n = local_dir(0.0, outward, 0.0);
-        let foot = vertex(&mut mesh, local(0.0, c, base), n);
-        let rim: Vec<u32> = profile
-            .iter()
-            .map(|&(s, z, _, _)| vertex(&mut mesh, local(s, c, z), n))
-            .collect();
-        for w in rim.windows(2) {
-            if outward > 0.0 {
-                tri(&mut mesh, foot, w[0], w[1], face_id);
-            } else {
-                tri(&mut mesh, foot, w[1], w[0], face_id);
-            }
+    for k in 0..=FILLET_STEPS {
+        let t = k as f64 / FILLET_STEPS as f64;
+        for j in 0..row {
+            let u = across(j);
+            let (z, n) = surface(t, u);
+            vertex(&mut mesh, local(reach * t, mid + half * u, z), n);
         }
     }
-    // The back (against the termination) and the bottom (on the land).
-    let top = base + rise;
+    let at = |k: usize, j: usize| first + u32::try_from(k * row + j).unwrap_or(u32::MAX);
+    for k in 0..FILLET_STEPS {
+        for j in 0..FILLET_ACROSS_STEPS {
+            tri(&mut mesh, at(k, j), at(k + 1, j), at(k + 1, j + 1), 0);
+            tri(&mut mesh, at(k, j), at(k + 1, j + 1), at(k, j + 1), 0);
+        }
+    }
+    // The back (against the termination), fanned from its foot's middle.
     let back = local_dir(-1.0, 0.0, 0.0);
-    let q = [
-        vertex(&mut mesh, local(0.0, span[0], base), back),
-        vertex(&mut mesh, local(0.0, span[1], base), back),
-        vertex(&mut mesh, local(0.0, span[1], top), back),
-        vertex(&mut mesh, local(0.0, span[0], top), back),
-    ];
-    tri(&mut mesh, q[0], q[2], q[1], 3);
-    tri(&mut mesh, q[0], q[3], q[2], 3);
+    let foot = vertex(&mut mesh, local(0.0, mid, base), back);
+    let rim: Vec<u32> = (0..row)
+        .map(|j| {
+            let u = across(j);
+            vertex(
+                &mut mesh,
+                local(0.0, mid + half * u, surface(0.0, u).0),
+                back,
+            )
+        })
+        .collect();
+    for w in rim.windows(2) {
+        tri(&mut mesh, foot, w[0], w[1], 1);
+    }
+    // The bottom, on the land.
     let down = local_dir(0.0, 0.0, -1.0);
     let q = [
         vertex(&mut mesh, local(0.0, span[0], base), down),
@@ -650,8 +675,8 @@ fn fillet(
         vertex(&mut mesh, local(reach, span[1], base), down),
         vertex(&mut mesh, local(reach, span[0], base), down),
     ];
-    tri(&mut mesh, q[0], q[1], q[2], 4);
-    tri(&mut mesh, q[0], q[2], q[3], 4);
+    tri(&mut mesh, q[0], q[1], q[2], 2);
+    tri(&mut mesh, q[0], q[2], q[3], 2);
     mesh
 }
 
@@ -732,7 +757,13 @@ fn positive(value: f64) -> bool {
     value > 0.0 && value.is_finite()
 }
 
-fn push(out: &mut Vec<Geometry>, kind: BodyKind, item: Option<u64>, mesh: Mesh) -> Result<()> {
+fn push(
+    out: &mut Vec<Geometry>,
+    looks: &Fabrication,
+    kind: BodyKind,
+    item: Option<u64>,
+    mesh: Mesh,
+) -> Result<()> {
     if mesh.triangles.is_empty() {
         return Ok(());
     }
@@ -746,7 +777,8 @@ fn push(out: &mut Vec<Geometry>, kind: BodyKind, item: Option<u64>, mesh: Mesh) 
     out.push(Geometry {
         item,
         kind,
-        surface: material::material(kind, DEFAULT_FINISH).surface()?,
+        surface: material::material(kind, looks).surface()?,
+        detail: material::detail(kind, looks),
         mesh: Arc::new(mesh),
         volume,
         min: [bounds.min.x, bounds.min.y, bounds.min.z],
