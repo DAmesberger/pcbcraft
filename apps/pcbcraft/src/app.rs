@@ -580,8 +580,29 @@ impl App {
         self.apply(&ui.ctx().clone(), Origin::Command, operation);
         if let Some((component, values)) = self.schematic.take_new_part() {
             self.clear_error();
+            // The Part dialog returns to the instance the request came from.
+            let back = self.schematic.selected_instance().map_or_else(
+                crate::part_editor::PartReturn::default,
+                |id| crate::part_editor::PartReturn {
+                    instance: Some(id),
+                    designator: self
+                        .engine
+                        .project()
+                        .instance(id)
+                        .map(|i| i.designator.clone())
+                        .unwrap_or_default(),
+                },
+            );
             self.workspace = Workspace::Part;
             self.part.new_part_for(component, values, &self.engine);
+            self.part.part_return_to(Some(back));
+        }
+        if let Some(back) = self.part.take_part_return() {
+            self.workspace = Workspace::Schematic;
+            if back.instance.is_some() {
+                self.schematic
+                    .select_instance(back.instance, self.engine.project());
+            }
         }
     }
 

@@ -63,7 +63,6 @@ const LEGACY_MESSAGES: &[(&str, usize)] = &[
     ("part_editor/footprint_template_picker.rs", 3),
     ("part_editor/model_body.rs", 2),
     ("part_editor/model_props.rs", 3),
-    ("part_editor/part_props.rs", 5),
     ("part_editor/symbol_props.rs", 1),
     ("pcb_editor/board_card.rs", 1),
     ("place_palette.rs", 4),

@@ -11,10 +11,13 @@
 //! `fields::parse_value`; the core decides what publishes.
 use super::FieldText;
 use super::working_set::WorkingSet;
-use crate::kit::{self, Tone};
+use crate::kit;
+use crate::kit::dialog::{DialogAction, DialogPanel};
+use crate::refusal::Origin;
 use egui::Ui;
-use pcbcraft_core::completeness::CheckTarget;
+use pcbcraft_core::diagnostics::ObjectRef;
 use pcbcraft_core::fields::{self, MAX_RATED_SPECS, RatedSpec, SpecMeaning, ValueType};
+use pcbcraft_core::issues::{IssueCounts, IssueScope};
 use pcbcraft_core::library::{
     Basis, Definition, DefinitionMeta, DistributorOffer, DraftEdit, Drafts, FieldView, Library,
     MAX_OFFERS, MAX_REFERENCES, PartDefinition, Provenance, Reference, ReferenceKind,
@@ -132,6 +135,25 @@ impl Listed {
             .as_ref()
             .or(self.published.as_ref().map(|(_, p)| p))
     }
+
+    /// The list row: MPN · maker · state.
+    fn label(&self) -> String {
+        let (mpn, maker) = self
+            .body()
+            .map_or(("", ""), |p| (p.mpn.trim(), p.manufacturer.trim()));
+        let mpn = if mpn.is_empty() { "New Part" } else { mpn };
+        let state = match (&self.draft, &self.published) {
+            (Some(_), None) => "draft \u{b7} new".to_owned(),
+            (Some(_), Some((r, _))) if self.unpublished() => format!("{} \u{b7} draft", r.revision),
+            (_, Some((r, _))) => r.revision.to_string(),
+            (None, None) => String::new(),
+        };
+        [mpn, maker, &state]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ")
+    }
 }
 
 #[derive(Default)]
@@ -151,14 +173,29 @@ pub struct PartProps {
     publish_next: bool,
     /// Typed rated values by field lineage.
     specs: BTreeMap<DefinitionId, FieldText>,
-    findings: Option<(u64, DefinitionId, Vec<String>)>,
-    notice: String,
+    /// Issues blocking the primary, by revision, Part lineage and cascade.
+    blockers: Option<(u64, DefinitionId, bool, Option<usize>)>,
     /// Fields added under Rated values that have no value typed yet. They
     /// join the draft once their text parses.
     pending: Vec<(FieldRef, SpecMeaning)>,
-    /// Publish was pressed for the open draft: show its findings even
-    /// before anything was typed.
-    tried: Option<DefinitionId>,
+    /// The Part dialog holds the subject slot.
+    dialog: bool,
+    /// The dialog opened this frame: its body scrolls to the top.
+    reset: bool,
+    /// A publish the dialog sent, until it lands or is refused.
+    publishing: Option<Publishing>,
+    /// The revision the dialog published.
+    done: Option<PartRef>,
+    /// The engine's refusal of the dialog's last operation.
+    refusal: Option<String>,
+    /// The Discard confirmation is open.
+    discarding: bool,
+    /// Where the return link goes after publishing.
+    back: Option<PartReturn>,
+    /// The return link was followed; the app takes it.
+    returning: Option<PartReturn>,
+    /// The Parts list shows every row.
+    show_all: bool,
     /// A New Part was requested from the schematic (Resolve parts): draft
     /// one as soon as the component's pins are known, with these values.
     prefill: Option<Vec<(FieldRef, fields::FieldValue)>>,
@@ -274,10 +311,11 @@ fn spec_label(library: &Library, spec: &RatedSpec) -> String {
 /// Parse a rated value; empty text is an error, a spec always has a value.
 fn parse_spec(text: &str, view: &FieldView<'_>) -> Result<fields::FieldValue, String> {
     if text.trim().is_empty() {
-        return Err("A rated value needs a value.".into());
+        return Err("Enter a value".into());
     }
-    fields::parse_value(text, &view.field.definition.value_type, view.kind_body())
-        .map_err(|e| e.to_string())
+    fields::parse_value(text, &view.field.definition.value_type, view.kind_body()).map_err(|e| {
+        crate::refusal::presentable(&e.to_string()).unwrap_or_else(|| "Enter a valid value".into())
+    })
 }
 
 /// A new Part of the working set: its pins, and a rated value for every
@@ -360,6 +398,179 @@ fn prefilled(
     part
 }
 
+/// The Part dialog's panel id: its refusals are handed back to it.
+fn dialog_id() -> egui::Id {
+    egui::Id::new("part-dialog")
+}
+
+const ICON: &str = "library";
+
+/// The dialog body fills the slot; the slot caps it.
+const BODY_ROWS: f32 = 32.0;
+
+/// The dialog header: "Part · MPN", or "Part · New" before an MPN is typed.
+fn title(mpn: &str) -> String {
+    match mpn.trim() {
+        "" => "Part \u{b7} New".to_owned(),
+        mpn => format!("Part \u{b7} {mpn}"),
+    }
+}
+
+/// A publish the dialog sent for `lineage`, while `before` was its latest
+/// published revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Publishing {
+    lineage: DefinitionId,
+    before: Option<PartRef>,
+}
+
+/// Where the dialog's return link goes after a Part requested from the
+/// schematic publishes ("Back to R1 ›").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PartReturn {
+    /// The instance to select again, when the request came from one.
+    pub instance: Option<pcbcraft_core::Id>,
+    /// Its designator; empty for the sheet.
+    pub designator: String,
+}
+
+impl PartReturn {
+    /// The return link's label.
+    pub fn label(&self) -> String {
+        if self.designator.is_empty() {
+            "Back to the schematic \u{203a}".to_owned()
+        } else {
+            format!("Back to {} \u{203a}", self.designator)
+        }
+    }
+}
+
+/// An identity text's inline error: empty, or longer than core accepts.
+fn identity_error(text: &str, empty: &'static str) -> Option<&'static str> {
+    if text.trim().is_empty() {
+        Some(empty)
+    } else if text.len() > 256 {
+        Some("At most 256 bytes")
+    } else {
+        None
+    }
+}
+
+/// The draft's identity: Maker and MPN (marked inline once an identity is
+/// typed), what it implements, its footprint and revision, and the pins it
+/// publishes with when they differ.
+fn identity_section(
+    ui: &mut Ui,
+    library: &Library,
+    set: &WorkingSet,
+    edit: &mut Edit,
+    published: Option<PartRef>,
+    unpublished: bool,
+    pins: Option<&Pins>,
+) {
+    kit::section(ui, "part-identity", "Identity", true, None, |ui| {
+        let typed = !edit.part.mpn.trim().is_empty() || !edit.part.manufacturer.trim().is_empty();
+        let maker_error =
+            identity_error(&edit.part.manufacturer, "Enter the manufacturer").filter(|_| typed);
+        let mpn_error = identity_error(&edit.part.mpn, "Enter the MPN").filter(|_| typed);
+        let maker = kit::checked_text_row(
+            ui,
+            "Maker",
+            &mut edit.part.manufacturer,
+            "Manufacturer",
+            false,
+        )
+        .on_hover_text("The manufacturer's name, as text");
+        if let Some(error) = maker_error {
+            kit::field_error(ui, &maker, error, false);
+        }
+        let mpn = kit::checked_text_row(ui, "MPN", &mut edit.part.mpn, "Full MPN", false)
+            .on_hover_text("The complete manufacturer part number, ordering suffixes included");
+        if let Some(error) = mpn_error {
+            kit::field_error(ui, &mpn, error, false);
+        }
+        if mpn.changed() {
+            edit.meta.name = edit.part.mpn.trim().to_owned();
+        }
+        let component = library.component(edit.part.component).map_or_else(
+            || {
+                format!(
+                    "{} \u{b7} {} \u{b7} pending",
+                    set.metas.component.name, edit.part.component.revision
+                )
+            },
+            |c| format!("{} \u{b7} {}", c.meta.name, edit.part.component.revision),
+        );
+        kit::value_row(ui, "Implements", &component);
+        let footprint = if library.binding(edit.part.binding).is_some() {
+            pcbcraft_core::instances::binding_name(library, edit.part.binding)
+        } else {
+            format!("{} \u{b7} pending", edit.part.binding.revision)
+        };
+        kit::value_row(ui, "Footprint", &footprint);
+        let next = |r: PartRef| {
+            r.revision
+                .next()
+                .map_or_else(String::new, |n| n.to_string())
+        };
+        let revision = match published {
+            None => "Draft \u{b7} new".to_owned(),
+            Some(r) if unpublished => {
+                format!(
+                    "{} \u{b7} unpublished edits \u{2192} {}",
+                    r.revision,
+                    next(r)
+                )
+            }
+            Some(r) => format!("{} \u{b7} published; edits create {}", r.revision, next(r)),
+        };
+        kit::value_row(ui, "Revision", &revision);
+        if let Some(pins) = pins
+            && (edit.part.component != pins.component || edit.part.binding != pins.binding)
+        {
+            kit::hint(
+                ui,
+                &format!(
+                    "Publishing pins {} {}",
+                    set.metas.component.name, pins.component.revision
+                ),
+                &format!(
+                    "The Part is pinned to component {} and footprint binding {} when it publishes",
+                    pins.component.revision, pins.binding.revision
+                ),
+            );
+        }
+    });
+}
+
+/// A published Part, read-only.
+fn published_rows(ui: &mut Ui, library: &Library, r: PartRef, part: &PartDefinition) {
+    kit::value_row(ui, "Maker", &part.manufacturer);
+    kit::value_row(ui, "MPN", &part.mpn);
+    let component = library.component(part.component).map_or_else(
+        || part.component.revision.to_string(),
+        |c| format!("{} \u{b7} {}", c.meta.name, part.component.revision),
+    );
+    kit::value_row(ui, "Implements", &component);
+    kit::value_row(ui, "Revision", &format!("{} \u{b7} published", r.revision));
+    for spec in &part.specs {
+        kit::value_row(
+            ui,
+            &spec_label(library, spec),
+            &format!(
+                "{} \u{b7} {}",
+                spec_text(library, spec),
+                meaning_label(spec.meaning)
+            ),
+        );
+    }
+    for reference in &part.references {
+        kit::value_row(ui, reference_kind_label(reference.kind), &reference.title);
+    }
+    for offer in &part.offers {
+        kit::value_row(ui, &offer.distributor, &offer.sku);
+    }
+}
 impl PartProps {
     /// Draft a new Part with `values` as its rated values once the section
     /// is shown with known pins.
@@ -384,6 +595,10 @@ impl PartProps {
             // is the one just created.
             if let Some(newest) = drafts.iter().map(|d| d.id).max() {
                 self.open = Some(newest);
+                self.dialog = true;
+                self.reset = true;
+                self.done = None;
+                self.refusal = None;
             }
         }
         let listed = listed(engine, component);
@@ -495,32 +710,6 @@ impl PartProps {
         Some(edit)
     }
 
-    /// Blocking publish findings of the open draft, from `component.check`.
-    fn findings(&mut self, engine: &Engine) -> Vec<String> {
-        let Some(id) = self.draft.as_ref().map(|d| d.id) else {
-            return Vec::new();
-        };
-        if let Some((revision, open, findings)) = &self.findings
-            && *revision == engine.revision()
-            && *open == id
-        {
-            return findings.clone();
-        }
-        let messages: Vec<String> = match engine.query(Query::CheckDrafts {}) {
-            Ok(QueryResult::Drafts(reports)) => reports
-                .into_iter()
-                .filter(|r| r.target == CheckTarget::Draft(id))
-                .flat_map(|r| r.findings)
-                .filter(|f| f.blocks_stage(Stage::Publish))
-                .map(|f| f.message)
-                .collect(),
-            Ok(_) => Vec::new(),
-            Err(error) => vec![error.to_string()],
-        };
-        self.findings = Some((engine.revision(), id, messages.clone()));
-        messages
-    }
-
     /// Publish the open draft alone, retargeting it first when its pins are
     /// not the published component's.
     fn publish_alone(
@@ -541,307 +730,403 @@ impl PartProps {
         Some(Operation::Library(LibraryCommand::Edit { edits }))
     }
 
-    /// The Parts list and, for the open Part, its identity, rated values,
-    /// references, offers and provenance.
-    ///
-    /// `blocked` is the first finding that blocks publishing the component
-    /// drafts, which a cascade publish would publish too.
-    pub fn section(
+    /// The Parts list of the Details card: one row per Part lineage
+    /// (MPN · maker · state); opening one opens the Part dialog, and New
+    /// Part… drafts one and opens it.
+    fn list(&mut self, ui: &mut Ui, engine: &Engine, set: &WorkingSet) -> Option<PartsAction> {
+        let component = set.ids.component;
+        self.sync(engine, component);
+        let pins = Pins::of(set, engine);
+        let listed = listed(engine, component);
+        let mut action = None;
+        let mut opened = None;
+        kit::section(ui, "parts", "Parts", true, Some(listed.len()), |ui| {
+            if listed.is_empty() {
+                kit::hint(
+                    ui,
+                    "No manufacturer part yet",
+                    "A Part is one exact orderable item: manufacturer, MPN and rated \
+                     values, pinned to this component",
+                );
+            }
+            let rows = if self.show_all {
+                listed.len()
+            } else {
+                kit::LIST_MAX_ROWS
+            };
+            let shown = kit::list_frame(ui, listed.len(), rows, |ui, index| {
+                if let Some(item) = listed.get(index)
+                    && ui
+                        .selectable_label(self.dialog && self.open == Some(item.id), item.label())
+                        .on_hover_text("Open this Part")
+                        .clicked()
+                {
+                    opened = Some(item.id);
+                }
+            });
+            if shown.show_all {
+                self.show_all = true;
+            }
+            kit::actions(ui, |ui| {
+                let enabled = pins.is_some();
+                let response = ui_kit::button(ui, "New Part\u{2026}", Button::Enabled(enabled))
+                    .on_hover_text("Draft a manufacturer part of this component");
+                let clicked = if enabled {
+                    response.clicked()
+                } else {
+                    response
+                        .on_disabled_hover_text("Publish the component first")
+                        .clicked()
+                };
+                if clicked
+                    && enabled
+                    && let Some(pins) = &pins
+                {
+                    action = Some(self.create(set, pins, &engine.project().library, &[]));
+                }
+            });
+        });
+        if let Some(id) = opened {
+            self.open_dialog(id);
+            self.sync(engine, component);
+        }
+        action.map(|op| PartsAction::Apply(Box::new(op)))
+    }
+
+    /// `library.new_draft` of a new Part with `values` as its rated values;
+    /// the next sync opens it in the dialog.
+    fn create(
+        &mut self,
+        set: &WorkingSet,
+        pins: &Pins,
+        library: &Library,
+        values: &[(FieldRef, fields::FieldValue)],
+    ) -> Operation {
+        self.creating = true;
+        self.awaiting = true;
+        Operation::Library(LibraryCommand::NewDraft {
+            meta: DefinitionMeta::default(),
+            definition: Definition::Part(Box::new(prefilled(set, pins, library, values))),
+        })
+    }
+
+    /// The New Part requested from the schematic, once the component's pins
+    /// are known: it opens in the dialog directly.
+    fn take_prefill(&mut self, engine: &Engine, set: &WorkingSet) -> Option<Operation> {
+        if self.prefill.is_none() || self.awaiting {
+            return None;
+        }
+        let pins = Pins::of(set, engine)?;
+        let values = self.prefill.take()?;
+        Some(self.create(set, &pins, &engine.project().library, &values))
+    }
+
+    /// Open the dialog on the Part lineage `id`.
+    fn open_dialog(&mut self, id: DefinitionId) {
+        if self.open != Some(id) {
+            self.open = Some(id);
+            self.source = None;
+        }
+        self.dialog = true;
+        self.reset = true;
+        self.done = None;
+        self.refusal = None;
+    }
+
+    /// Close the dialog. The draft keeps every committed edit.
+    fn close(&mut self) {
+        self.dialog = false;
+        self.done = None;
+        self.refusal = None;
+        self.publishing = None;
+        self.discarding = false;
+        self.back = None;
+    }
+
+    /// Whether the Part dialog holds the subject slot.
+    pub fn is_open(&self) -> bool {
+        self.dialog
+    }
+
+    /// A publish sent from the dialog has landed: a newer revision is
+    /// published and the draft equals it. The dialog then says so, and a toast
+    /// offers Undo.
+    fn settle(&mut self, ctx: &egui::Context, listed: &[Listed]) {
+        let Some(publishing) = self.publishing else {
+            return;
+        };
+        let Some(item) = listed.iter().find(|l| l.id == publishing.lineage) else {
+            self.publishing = None;
+            return;
+        };
+        // A publish keeps the draft, equal to the new revision.
+        if let Some((r, part)) = &item.published
+            && Some(*r) != publishing.before
+            && !item.unpublished()
+        {
+            self.publishing = None;
+            self.done = Some(*r);
+            kit::toast::post(
+                ctx,
+                kit::severity::Level::Ok,
+                format!("Published {} {}", part.mpn, r.revision),
+                vec![kit::toast::ToastAction::Undo],
+            );
+        }
+    }
+
+    /// Issues that block publishing what the primary would publish: the
+    /// Part draft and, with the cascade, the component's drafts. From the
+    /// one `project.issues` query, once per revision; `None` when the checks
+    /// could not run, which never reads as "no issues".
+    fn blockers(&mut self, engine: &Engine, set: &WorkingSet, cascade: bool) -> Option<usize> {
+        let id = self.draft.as_ref()?.id;
+        if let Some((revision, open, with_cascade, count)) = self.blockers
+            && revision == engine.revision()
+            && open == id
+            && with_cascade == cascade
+        {
+            return count;
+        }
+        let mut objects = vec![ObjectRef::Definition { id }];
+        if cascade {
+            objects.extend(
+                set.ids
+                    .all()
+                    .into_iter()
+                    .map(|id| ObjectRef::Definition { id }),
+            );
+        }
+        let count = match engine.query(Query::Issues {
+            scope: IssueScope::Selection { objects },
+        }) {
+            Ok(QueryResult::Issues(report)) => Some(
+                report
+                    .rows
+                    .iter()
+                    .filter(|r| r.blocks() == Some(Stage::Publish))
+                    .count(),
+            ),
+            _ => None,
+        };
+        self.blockers = Some((engine.revision(), id, cascade, count));
+        count
+    }
+
+    /// The Part dialog docked in the subject slot (docs/sidebar-ia.md,
+    /// "Dialogs and reviews"): a draft with Publish Part, or Publish with
+    /// component while the component has unpublished edits, gated on the
+    /// issues that block it; a published Part with Edit Part; after a
+    /// publish, the return link.
+    fn dialog(&mut self, ui: &mut Ui, engine: &Engine, set: &WorkingSet) -> Option<PartsAction> {
+        let ctx = ui.ctx().clone();
+        let component = set.ids.component;
+        self.sync(engine, component);
+        if let Some(refusal) = crate::refusal::claim(&ctx, Origin::Dialog(dialog_id())) {
+            self.refusal = Some(refusal);
+            self.publishing = None;
+        }
+        let listed = listed(engine, component);
+        self.settle(&ctx, &listed);
+        let Some(item) = listed.iter().find(|l| Some(l.id) == self.open) else {
+            self.close();
+            return None;
+        };
+        let reset = std::mem::take(&mut self.reset);
+        let library = &engine.project().library;
+        if let Some(r) = self.done
+            && let Some((_, part)) = &item.published
+        {
+            let back = self.back.as_ref().map(PartReturn::label);
+            let heading = title(&part.mpn);
+            let mut panel = DialogPanel::new(
+                dialog_id(),
+                ICON,
+                &heading,
+                back.as_deref().unwrap_or("Done"),
+            );
+            panel.kind = "Published";
+            panel.body_rows = BODY_ROWS;
+            panel.reset_scroll = reset;
+            let action = panel.show(ui, |ui| {
+                kit::summary_row(ui, &format!("Published {} {}", part.mpn, r.revision), None);
+                published_rows(ui, library, r, part);
+            });
+            match action {
+                Some(DialogAction::Primary) => {
+                    self.returning = self.back.take();
+                    self.close();
+                }
+                Some(DialogAction::Cancel) => self.close(),
+                None => {}
+            }
+            return None;
+        }
+        if self.draft.is_none() {
+            let (r, part) = item.published.as_ref()?;
+            let kind = r.revision.to_string();
+            let heading = title(&part.mpn);
+            let mut panel = DialogPanel::new(dialog_id(), ICON, &heading, "Edit Part");
+            panel.kind = &kind;
+            panel.body_rows = BODY_ROWS;
+            panel.reset_scroll = reset;
+            panel.refusal = self.refusal.as_deref();
+            let action = panel.show(ui, |ui| {
+                published_rows(ui, library, *r, part);
+                kit::hint(
+                    ui,
+                    "Editing drafts a new revision of this Part",
+                    "Placed instances keep the published revision until you choose the new one",
+                );
+            });
+            return match action {
+                Some(DialogAction::Primary) => {
+                    self.awaiting = true;
+                    self.refusal = None;
+                    Some(PartsAction::Apply(Box::new(Operation::Library(
+                        LibraryCommand::DraftFrom {
+                            revision: r.erased(),
+                        },
+                    ))))
+                }
+                Some(DialogAction::Cancel) => {
+                    self.close();
+                    None
+                }
+                None => None,
+            };
+        }
+        self.draft_dialog(ui, engine, set, item, reset)
+    }
+
+    /// The dialog on a Part draft.
+    fn draft_dialog(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
         set: &WorkingSet,
-        blocked: Option<&str>,
+        item: &Listed,
+        reset: bool,
     ) -> Option<PartsAction> {
-        let component = set.ids.component;
-        self.sync(engine, component);
+        let ctx = ui.ctx().clone();
         let library = &engine.project().library;
         let pins = Pins::of(set, engine);
-        let listed = listed(engine, component);
-        let mut action = None;
-        let mut open = self.open;
-        kit::section(ui, "parts", "Parts", true, Some(listed.len()), |ui| {
-            if listed.is_empty() {
-                kit::note(
-                    ui,
-                    "No manufacturer part yet. A Part is one exact orderable item: \
-                     manufacturer, MPN and rated values, pinned to this component.",
-                );
-            }
-            for item in &listed {
-                let body = item.body();
-                let mpn = body
-                    .map(|p| {
-                        if p.mpn.is_empty() {
-                            "New part".to_owned()
-                        } else if p.manufacturer.is_empty() {
-                            p.mpn.clone()
-                        } else {
-                            format!("{} {}", p.manufacturer, p.mpn)
-                        }
-                    })
-                    .unwrap_or_default();
-                let state = match (&item.draft, &item.published) {
-                    (Some(_), None) => "draft · new".to_owned(),
-                    (Some(_), Some((r, _))) if item.unpublished() => {
-                        format!("{} · draft", r.revision)
-                    }
-                    (Some(_), Some((r, _))) => r.revision.to_string(),
-                    (None, Some((r, _))) => r.revision.to_string(),
-                    (None, None) => String::new(),
-                };
-                let label = format!("{mpn}   {state}");
-                if ui.selectable_label(open == Some(item.id), label).clicked() {
-                    open = Some(item.id);
-                }
-            }
-            kit::actions(ui, |ui| {
-                let enabled = pins.is_some();
-                let clicked = ui_kit::button(ui, "New Part", Button::Enabled(enabled))
-                    .on_hover_text("Draft a manufacturer part of this component")
-                    .clicked();
-                let requested = enabled && self.prefill.is_some() && !self.awaiting;
-                if (clicked || requested)
-                    && let Some(pins) = &pins
-                {
-                    let values = self.prefill.take().unwrap_or_default();
-                    self.creating = true;
-                    self.awaiting = true;
-                    action = Some(PartsAction::Apply(Box::new(Operation::Library(
-                        LibraryCommand::NewDraft {
-                            meta: DefinitionMeta::default(),
-                            definition: Definition::Part(Box::new(prefilled(
-                                set, pins, library, &values,
-                            ))),
-                        },
-                    ))))
-                }
-            });
-        });
-        if open != self.open {
-            self.open = open;
-            self.source = None;
-            self.sync(engine, component);
-        }
-        let Some(item) = listed.iter().find(|l| Some(l.id) == self.open) else {
-            return action;
-        };
-        if self.draft.is_none() {
-            if let Some((r, part)) = &item.published {
-                action = action.or(self.published_view(ui, library, *r, part));
-            }
-            return action;
-        }
-        let findings = self.findings(engine);
-        let notice = std::mem::take(&mut self.notice);
-        let tried = self
-            .draft
-            .as_ref()
-            .is_some_and(|d| Some(d.id) == self.tried);
+        let cascade = pins.is_some_and(|p| p.cascade);
+        let blockers = self.blockers(engine, set, cascade);
         let Some(edit) = &mut self.draft else {
-            return action;
+            return None;
         };
         let published = item.published.as_ref().map(|(r, _)| *r);
         let unpublished = item
             .published
             .as_ref()
             .is_none_or(|(_, latest)| *latest != edit.part);
-        let mut publish = false;
-        let mut discard = false;
-        let title = if edit.part.mpn.is_empty() {
-            "Part · new".to_owned()
-        } else {
-            format!("Part · {}", edit.part.mpn)
+        let why = match (&pins, blockers) {
+            (None, _) => Some("Publish the component first".to_owned()),
+            (_, None) => Some("The publish checks could not run".to_owned()),
+            (_, Some(0)) if !unpublished => Some("No changes to publish".to_owned()),
+            (_, Some(0)) => None,
+            (_, Some(1)) => Some("1 issue blocks publishing".to_owned()),
+            (_, Some(n)) => Some(format!("{n} issues block publishing")),
         };
-        // Findings wait until the author typed an identity or tried to
-        // publish; the name finding repeats the MPN one while the name
-        // follows the MPN.
-        let typed = !edit.part.mpn.trim().is_empty() || !edit.part.manufacturer.trim().is_empty();
-        let follows = edit.meta.name == edit.part.mpn.trim();
-        let shown: Vec<&String> = findings
-            .iter()
-            .filter(|_| typed || tried)
-            .filter(|m| !(follows && m.contains("printable name")))
-            .take(4)
-            .collect();
-        kit::section(ui, "part-identity", &title, true, None, |ui| {
-            for message in shown {
-                kit::status(ui, message, Tone::Error);
-            }
-            if !notice.is_empty() {
-                kit::status(ui, &notice, Tone::Note);
-            }
-            kit::checked_text_row(
+        let primary = if cascade {
+            "Publish with component"
+        } else {
+            "Publish Part"
+        };
+        let kind = if published.is_some() { "Draft" } else { "New" };
+        let heading = title(&edit.part.mpn);
+        let mut panel = DialogPanel::new(dialog_id(), ICON, &heading, primary);
+        panel.kind = kind;
+        panel.body_rows = BODY_ROWS;
+        panel.reset_scroll = reset;
+        panel.primary_disabled = why.as_deref();
+        panel.refusal = self.refusal.as_deref();
+        let counts = IssueCounts {
+            error: blockers.unwrap_or(0),
+            ..IssueCounts::default()
+        };
+        let mut discard = false;
+        let mut show_issues = false;
+        let specs = &mut self.specs;
+        let pending = &mut self.pending;
+        let action = panel.show(ui, |ui| {
+            identity_section(
                 ui,
-                "Maker",
-                &mut edit.part.manufacturer,
-                "Manufacturer",
-                false,
-            )
-            .on_hover_text("The manufacturer's name, as text");
-            let mpn = kit::checked_text_row(ui, "MPN", &mut edit.part.mpn, "Full MPN", false)
-                .on_hover_text("The complete manufacturer part number, ordering suffixes included");
-            if mpn.changed() {
-                edit.meta.name = edit.part.mpn.trim().to_owned();
-            }
-            let component = library.component(edit.part.component).map_or_else(
-                || {
-                    format!(
-                        "{} · {} · pending",
-                        set.metas.component.name, edit.part.component.revision
-                    )
-                },
-                |c| format!("{} · {}", c.meta.name, edit.part.component.revision),
+                library,
+                set,
+                edit,
+                published,
+                unpublished,
+                pins.as_ref(),
             );
-            kit::value_row(ui, "Implements", &component);
-            let footprint = if library.binding(edit.part.binding).is_some() {
-                pcbcraft_core::instances::binding_name(library, edit.part.binding)
-            } else {
-                format!("{} · pending", edit.part.binding.revision)
+            Self::specs_section(ui, library, set, edit, specs, pending);
+            Self::references_section(ui, &mut edit.part);
+            Self::offers_section(ui, &mut edit.part);
+            Self::provenance_section(ui, &mut edit.part);
+            let line = kit::issue_line(ui, &counts, "block publishing");
+            show_issues = line.clicked() && counts.error > 0;
+            let summary = match published {
+                Some(r) => format!("{} stays published", r.revision),
+                None => String::new(),
             };
-            kit::value_row(ui, "Footprint", &footprint);
-            let next = |r: PartRef| {
-                r.revision
-                    .next()
-                    .map_or_else(String::new, |n| n.to_string())
-            };
-            let revision = match published {
-                None => "Draft · new".to_owned(),
-                Some(r) if unpublished => {
-                    format!("{} · unpublished edits → {}", r.revision, next(r))
-                }
-                Some(r) => format!("{} · published; edits create {}", r.revision, next(r)),
-            };
-            kit::value_row(ui, "Revision", &revision);
-            if let Some(pins) = &pins
-                && (edit.part.component != pins.component || edit.part.binding != pins.binding)
-            {
-                kit::note(
-                    ui,
-                    &format!(
-                        "Publishing pins component {} and binding {}.",
-                        pins.component.revision, pins.binding.revision
-                    ),
-                );
-            }
-            kit::actions(ui, |ui| {
-                let label = if pins.is_some_and(|p| p.cascade) {
-                    "Publish with component"
-                } else {
-                    "Publish Part"
-                };
-                // A draft that cannot publish disables the button and says
-                // why on hover, instead of offering a refused publish.
-                let why = findings
-                    .first()
-                    .map(String::as_str)
-                    .or_else(|| pins.is_some_and(|p| p.cascade).then_some(blocked).flatten());
-                let response =
-                    kit::primary(ui, label, pins.is_some() && unpublished && why.is_none())
-                        .on_hover_text("Publish the Part as a new immutable revision");
-                publish = match why {
-                    Some(why) if pins.is_some() && unpublished => response
-                        .on_disabled_hover_text(format!("Fix first: {why}"))
-                        .clicked(),
-                    _ => response.clicked(),
-                };
-                discard = ui_kit::button(ui, "Discard", Button::Normal)
-                    .on_hover_text(match published {
-                        Some(r) => format!(
-                            "Drop this draft; the published {} stays as it is",
-                            r.revision
-                        ),
-                        None => "Drop this new Part draft".to_owned(),
-                    })
-                    .clicked();
-            });
+            discard = kit::summary_row(ui, &summary, Some("Discard draft\u{2026}"));
         });
-        if publish {
-            self.tried = Some(edit.id);
+        if show_issues {
+            // The column's Issues card (app/chrome.rs) opens on this flag.
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("issues-expanded"), true));
         }
-        Self::specs_section(ui, library, set, edit, &mut self.specs, &mut self.pending);
-        Self::references_section(ui, &mut edit.part);
-        Self::offers_section(ui, &mut edit.part);
-        Self::provenance_section(ui, &mut edit.part);
-        let id = edit.id;
         if discard {
-            self.awaiting = true;
-            return Some(PartsAction::Apply(Box::new(Operation::Library(
-                LibraryCommand::DiscardDraft { id },
-            ))));
+            self.discarding = true;
         }
-        if publish
-            && unpublished
-            && findings.is_empty()
-            && let Some(pins) = pins
-        {
-            if pins.cascade {
-                return Some(PartsAction::PublishCascade);
+        let id = edit.id;
+        if self.discarding {
+            let text = match published {
+                Some(r) => format!(
+                    "Drop this draft? The published {} stays as it is.",
+                    r.revision
+                ),
+                None => "Drop this new Part draft?".to_owned(),
+            };
+            match kit::dialog::confirm(
+                &ctx,
+                dialog_id().with("discard"),
+                "Discard Part draft",
+                &text,
+                "Discard",
+            ) {
+                Some(true) => {
+                    self.discarding = false;
+                    self.awaiting = true;
+                    self.refusal = None;
+                    return Some(PartsAction::Apply(Box::new(Operation::Library(
+                        LibraryCommand::DiscardDraft { id },
+                    ))));
+                }
+                Some(false) => self.discarding = false,
+                None => {}
             }
-            return self
-                .publish_alone(engine, component, &pins)
-                .map(|op| PartsAction::Apply(Box::new(op)));
         }
-        action
-    }
-
-    /// A published Part without a draft: read-only, with Edit.
-    fn published_view(
-        &mut self,
-        ui: &mut Ui,
-        library: &Library,
-        r: PartRef,
-        part: &PartDefinition,
-    ) -> Option<PartsAction> {
-        let mut edit = false;
-        kit::section(
-            ui,
-            "part-identity",
-            &format!("Part · {}", part.mpn),
-            true,
-            None,
-            |ui| {
-                kit::value_row(ui, "Maker", &part.manufacturer);
-                kit::value_row(ui, "MPN", &part.mpn);
-                let component = library.component(part.component).map_or_else(
-                    || part.component.to_string(),
-                    |c| format!("{} · {}", c.meta.name, part.component.revision),
-                );
-                kit::value_row(ui, "Implements", &component);
-                kit::value_row(ui, "Revision", &format!("{} · published", r.revision));
-                for spec in &part.specs {
-                    kit::value_row(
-                        ui,
-                        &spec_label(library, spec),
-                        &format!(
-                            "{} · {}",
-                            spec_text(library, spec),
-                            meaning_label(spec.meaning)
-                        ),
-                    );
-                }
-                for reference in &part.references {
-                    kit::value_row(ui, reference_kind_label(reference.kind), &reference.title);
-                }
-                for offer in &part.offers {
-                    kit::value_row(ui, &offer.distributor, &offer.sku);
-                }
-                kit::actions(ui, |ui| {
-                    edit = ui_kit::button(ui, "Edit", Button::Normal)
-                        .on_hover_text("Draft a new revision of this Part")
-                        .clicked();
+        match action {
+            Some(DialogAction::Cancel) => {
+                self.close();
+                None
+            }
+            Some(DialogAction::Primary) if why.is_none() => {
+                let pins = pins?;
+                self.refusal = None;
+                self.publishing = Some(Publishing {
+                    lineage: id,
+                    before: published,
                 });
-            },
-        );
-        if edit {
-            self.awaiting = true;
-            return Some(PartsAction::Apply(Box::new(Operation::Library(
-                LibraryCommand::DraftFrom {
-                    revision: r.erased(),
-                },
-            ))));
+                if pins.cascade {
+                    return Some(PartsAction::PublishCascade);
+                }
+                self.publish_alone(engine, set.ids.component, &pins)
+                    .map(|op| PartsAction::Apply(Box::new(op)))
+            }
+            _ => None,
         }
-        None
     }
 
     /// Rated values: one typed row per field lineage, with its meaning.
@@ -875,12 +1160,8 @@ impl PartProps {
                 }
                 ui.push_id(("spec", lineage), |ui| {
                     let Some(view) = library.field_view(spec.field) else {
-                        kit::value_row(ui, "Field", &spec.field.to_string());
-                        kit::status(
-                            ui,
-                            "This field revision is not in the project library.",
-                            Tone::Error,
-                        );
+                        // Issues lists the missing field revision.
+                        kit::value_row(ui, "Field", "Not in the project library");
                         return;
                     };
                     let value_type = &view.field.definition.value_type;
@@ -917,7 +1198,7 @@ impl PartProps {
                         buffer.text = buffer.loaded.clone();
                     }
                     if let Some(error) = &error {
-                        kit::status(ui, error, Tone::Error);
+                        kit::field_error(ui, &response, error, true);
                     }
                     let options = meanings(value_type);
                     kit::choice_row(ui, "Meaning", &mut spec.meaning, &options);
@@ -975,10 +1256,10 @@ impl PartProps {
                             filled = Some((index, value));
                         }
                         Err(error) if !buffer.text.trim().is_empty() => {
-                            kit::status(ui, &error, Tone::Error);
+                            kit::field_error(ui, &response, &error, true);
                         }
                         _ => {
-                            kit::note(ui, "Not part of the draft until a value is typed.");
+                            kit::hint(ui, "Not in the draft until a value is typed", "");
                         }
                     }
                     let options = meanings(&view.field.definition.value_type);
@@ -1010,17 +1291,15 @@ impl PartProps {
                 .filter(|f| !pending.iter().any(|(p, _)| p.id == f.field.id))
                 .filter_map(|f| Some((f.field, f.default.clone(), library.field_view(f.field)?)))
                 .collect();
-            const ADD_FIELD: &str = "To rate another property (a tolerance, a power or voltage rating), add the field to the component under Fields → Add field.";
+            const ADD_FIELD: &str = "To rate another property (a tolerance, a power or voltage rating), add the field to the component under Fields \u{2192} Add field";
             if set.component.fields.is_empty() {
-                kit::note(
+                kit::hint(
                     ui,
-                    "The component selects no fields yet. Add them under Fields → Add field to rate them here.",
+                    "The component has no fields to rate yet",
+                    "Add them under Fields \u{2192} Add field to rate them here",
                 );
             } else if addable.is_empty() {
-                kit::note(
-                    ui,
-                    &format!("Every field of the component has a rated value. {ADD_FIELD}"),
-                );
+                kit::hint(ui, "Every field of the component is rated", ADD_FIELD);
             } else if part.specs.len() + pending.len() < MAX_RATED_SPECS {
                 let mut chosen = None;
                 kit::row(ui, "Add value", |ui| {
@@ -1048,7 +1327,7 @@ impl PartProps {
                     Some((field, None, meaning)) => pending.push((field, meaning)),
                     None => {}
                 }
-                kit::note(ui, ADD_FIELD);
+                kit::hint(ui, "Rate another property by adding a field", ADD_FIELD);
             }
         });
     }
@@ -1088,27 +1367,27 @@ impl PartProps {
                         let mut asset = reference.asset.clone().unwrap_or_default();
                         let invalid = !asset.is_empty()
                             && (asset.len() != 64 || !asset.bytes().all(|b| b.is_ascii_hexdigit()));
-                        if kit::checked_text_row(
+                        let copy = kit::checked_text_row(
                             ui,
                             "Copy",
                             &mut asset,
                             "No attached copy",
                             invalid,
-                        )
-                        .changed()
-                        {
+                        );
+                        if copy.changed() {
                             let asset = asset.trim().to_ascii_lowercase();
                             reference.asset = (!asset.is_empty()).then_some(asset);
                         }
                         if invalid {
-                            kit::status(
+                            kit::field_error(
                                 ui,
-                                "An attached copy is named by 64 hex digits.",
-                                Tone::Error,
+                                &copy,
+                                "Enter the copy's 64 hex digits, or leave it empty",
+                                false,
                             );
                         }
                         if reference.url.is_none() && reference.asset.is_some() {
-                            kit::note(ui, "No link: the attached copy is kept.");
+                            kit::hint(ui, "No link: the attached copy is kept", "");
                         }
                         kit::actions(ui, |ui| {
                             if ui_kit::button(ui, "Remove", Button::Small).clicked() {
@@ -1185,7 +1464,7 @@ impl PartProps {
                 {
                     part.offers.remove(index);
                 }
-                kit::note(ui, "Identity only: no price or stock is stored.");
+                kit::hint(ui, "Identity only: no price or stock is stored", "");
                 kit::actions(ui, |ui| {
                     let enabled = part.offers.len() < MAX_OFFERS;
                     if ui_kit::button(ui, "Add offer", Button::Enabled(enabled))
@@ -1250,32 +1529,84 @@ impl PartProps {
 }
 
 impl super::PartEditor {
-    /// The Parts section of the Properties card. `pending` is the open
-    /// card's operation this frame; a Part's edit or the cascade publish
-    /// is sent only when the card sent nothing.
+    /// The Parts list of the Properties card. `pending` is the open card's
+    /// operation this frame; a list action is sent only when the card sent
+    /// nothing.
     pub(super) fn part_section(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
         pending: Option<Operation>,
     ) -> Option<Operation> {
-        let blocked = self
-            .listed_findings(engine)
-            .into_iter()
-            .find(|f| f.blocking)
-            .map(|f| f.text);
         let mut operation = pending;
-        if let Some(set) = &self.draft {
-            match self.parts.section(ui, engine, set, blocked.as_deref()) {
-                Some(PartsAction::Apply(op)) => operation = operation.or(Some(*op)),
-                Some(PartsAction::PublishCascade) => {
-                    operation = operation.or_else(|| self.publish(engine));
-                }
-                None => {}
-            }
+        if let Some(set) = &self.draft
+            && let Some(PartsAction::Apply(op)) = self.parts.list(ui, engine, set)
+        {
+            operation = operation.or(Some(*op));
         }
         operation
     }
+
+    /// The Part dialog, when it holds the subject slot: `Some` with the
+    /// operation it sends this frame, `None` when the card shows instead.
+    /// A New Part requested from the schematic is drafted here, so it opens
+    /// in the dialog on whatever tab is showing.
+    pub(super) fn part_dialog(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+    ) -> Option<Option<Operation>> {
+        let set = self.draft.as_ref()?;
+        if let Some(operation) = self.parts.take_prefill(engine, set) {
+            return Some(Some(operation));
+        }
+        if !self.parts.is_open() {
+            return None;
+        }
+        let action = bounded(ui, |ui| self.parts.dialog(ui, engine, set));
+        let operation = match action {
+            Some(PartsAction::Apply(op)) => Some(*op),
+            Some(PartsAction::PublishCascade) => self.publish(engine),
+            None => None,
+        };
+        // The dialog's own operations, and the edit or publish that commit
+        // sends for it later this frame, are refused back to its row.
+        let deferred =
+            self.publish_next || self.parts.publish_next || self.parts.draft != self.parts.baseline;
+        if self.parts.is_open() && (operation.is_some() || deferred) {
+            crate::refusal::mark(ui.ctx(), Origin::Dialog(dialog_id()));
+        }
+        Some(operation)
+    }
+
+    /// Where the Part dialog's return link goes once the requested Part
+    /// publishes; `None` for no link.
+    pub fn part_return_to(&mut self, back: Option<PartReturn>) {
+        self.parts.back = back;
+    }
+
+    /// The return link the Part dialog followed, once.
+    pub fn take_part_return(&mut self) -> Option<PartReturn> {
+        self.parts.returning.take()
+    }
+}
+
+/// Run `add` in a rectangle as tall as the visible body, so a dialog that
+/// opens at the top of a scrolling card body fills it exactly and pins its
+/// footer to the slot's bottom (the card body pads 4 pt above and 8 pt
+/// below its content).
+fn bounded<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let top = ui.cursor().top();
+    let clip = ui.clip_rect().intersect(ui.ctx().content_rect());
+    let padding = t.space_4 + t.space_8 + 2.0 * ui.spacing().item_spacing.y;
+    let height = (clip.height() - padding).max(t.control_height * 4.0);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(ui.max_rect().left(), top),
+        egui::vec2(ui.max_rect().width(), height),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), add)
+        .inner
 }
 
 #[cfg(test)]
@@ -1549,9 +1880,11 @@ mod tests {
             })),
         )?;
         editor.commit(&ctx, &engine);
-        editor.parts.open = PartProps::draft_ids(&engine, set.ids.component)
+        let id = PartProps::draft_ids(&engine, set.ids.component)
             .first()
-            .copied();
+            .copied()
+            .ok_or("no Part draft")?;
+        editor.parts.open_dialog(id);
         // A designator with a digit: an unpublished, invalid component.
         if let Some(set) = &mut editor.draft {
             set.component.designator_prefix = "R1".into();
@@ -1613,6 +1946,282 @@ mod tests {
         Ok(())
     }
 
+    /// Press and release the pointer on the drawn text `label` in a
+    /// `width` × `height` window; returns what the inspector sent.
+    fn click_at(
+        editor: &mut PartEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        label: &str,
+        size: egui::Vec2,
+    ) -> Result<Option<Operation>, String> {
+        let shown = frame_sized(editor, engine, ctx, vec![], size);
+        let at = shown
+            .iter()
+            .find(|(t, _)| t == label)
+            .map(|(_, p)| *p)
+            .ok_or_else(|| format!("no {label}: {shown:?}"))?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut sent = None;
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![press(true)],
+            vec![press(false)],
+        ] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| sent = sent.take().or(editor.inspector(ui, engine)),
+            );
+            output.textures_delta.clear();
+        }
+        Ok(sent)
+    }
+
+    const TALL: egui::Vec2 = egui::vec2(360.0, 4000.0);
+    const SCREEN: egui::Vec2 = egui::vec2(360.0, 700.0);
+
+    fn has(shown: &[(String, egui::Pos2)], label: &str) -> bool {
+        shown.iter().any(|(t, _)| t == label)
+    }
+
+    /// New Part… in the card drafts a Part and opens it in the dialog, with
+    /// the footer pinned to the slot's bottom. Publish Part is gated while
+    /// issues block it (the dialog counts them and sends nothing); once an
+    /// identity is typed it publishes with one `library.publish`, the
+    /// dialog says so with a toast offering Undo, and its return link goes
+    /// back to the instance the request came from.
+    #[test]
+    fn the_part_dialog_gates_publish_and_returns_to_the_instance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let new = click_at(&mut editor, &engine, &ctx, "New Part\u{2026}", TALL)?;
+        assert!(
+            matches!(
+                &new,
+                Some(Operation::Library(LibraryCommand::NewDraft { .. }))
+            ),
+            "{new:?}"
+        );
+        apply(&mut engine, new)?;
+        editor.commit(&ctx, &engine);
+        assert!(editor.parts.is_open(), "the new Part opens in the dialog");
+        let back = PartReturn {
+            instance: engine.project().instances.first().map(|i| i.id),
+            designator: "R1".into(),
+        };
+        editor.part_return_to(Some(back.clone()));
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Part \u{b7} New"), "{shown:?}");
+        assert!(!has(&shown, "PARTS"), "the dialog holds the slot alone");
+        let primary = shown
+            .iter()
+            .find(|(t, _)| t == "Publish Part")
+            .map(|(_, p)| *p)
+            .ok_or("no Publish Part")?;
+        assert!(
+            primary.y > SCREEN.y - crate::kit::card::FOOTER_HEIGHT,
+            "the footer is pinned to the bottom: {primary:?}"
+        );
+        assert!(has(&shown, "block publishing"), "{shown:?}");
+        // A blank identity is not marked until something is typed.
+        assert!(!has(&shown, "Enter the MPN"));
+        let sent = click_at(&mut editor, &engine, &ctx, "Publish Part", SCREEN)?;
+        assert!(sent.is_none(), "a blocked Part does not publish: {sent:?}");
+        // Type the maker only: the MPN is marked inline.
+        if let Some(edit) = &mut editor.parts.draft {
+            edit.part.manufacturer = "ExampleCo".into();
+        }
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Enter the MPN"), "{shown:?}");
+        assert!(!has(&shown, "Enter the manufacturer"));
+        if let Some(edit) = &mut editor.parts.draft {
+            edit.part.mpn = "EX-R0603-10K0-F".into();
+            edit.meta.name = edit.part.mpn.clone();
+        }
+        let edit = editor.commit(&ctx, &engine);
+        apply(&mut engine, edit)?;
+        editor.commit(&ctx, &engine);
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Part \u{b7} EX-R0603-10K0-F"), "{shown:?}");
+        assert!(!has(&shown, "Enter the MPN"));
+        let publish = click_at(&mut editor, &engine, &ctx, "Publish Part", SCREEN)?;
+        assert!(
+            matches!(
+                &publish,
+                Some(Operation::Library(LibraryCommand::Publish { drafts })) if drafts.len() == 1
+            ),
+            "{publish:?}"
+        );
+        let before = engine.revision();
+        apply(&mut engine, publish)?;
+        assert_eq!(engine.revision(), before + 1, "one undo step");
+        crate::kit::toast::take_posted(&ctx);
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Published EX-R0603-10K0-F r1"), "{shown:?}");
+        let toasts = crate::kit::toast::take_posted(&ctx);
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.text == "Published EX-R0603-10K0-F r1"
+                    && t.actions.contains(&crate::kit::toast::ToastAction::Undo)),
+            "a toast offers Undo"
+        );
+        let label = back.label();
+        assert_eq!(label, "Back to R1 \u{203a}");
+        let sent = click_at(&mut editor, &engine, &ctx, &label, SCREEN)?;
+        assert!(sent.is_none());
+        assert_eq!(editor.take_part_return(), Some(back));
+        assert!(editor.take_part_return().is_none(), "taken once");
+        assert!(!editor.parts.is_open(), "the dialog closes");
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], TALL);
+        assert!(has(&shown, "PARTS"), "the card is back: {shown:?}");
+        Ok(())
+    }
+
+    /// A schematic request drafts the Part with its values and opens the
+    /// dialog directly, whatever the card showed; Cancel closes it, keeps
+    /// the draft and drops the return link.
+    #[test]
+    fn a_requested_part_opens_in_the_dialog_and_cancel_keeps_the_draft()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let set = editor.draft.clone().ok_or("no working set")?;
+        let field = set.component.fields.first().ok_or("no field")?.field;
+        editor.parts.request_new(vec![(
+            field,
+            fields::FieldValue::Quantity {
+                si: 4_700.0,
+                display_unit: None,
+            },
+        )]);
+        editor.part_return_to(Some(PartReturn::default()));
+        let mut sent = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            sent = editor.inspector(ui, &engine);
+        });
+        output.textures_delta.clear();
+        assert!(matches!(
+            &sent,
+            Some(Operation::Library(LibraryCommand::NewDraft { definition: Definition::Part(p), .. }))
+                if p.specs.iter().any(|s| matches!(s.value, fields::FieldValue::Quantity { si, .. } if (si - 4_700.0).abs() < 1e-6))
+        ));
+        apply(&mut engine, sent)?;
+        editor.commit(&ctx, &engine);
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Part \u{b7} New"), "{shown:?}");
+        let sent = click_at(&mut editor, &engine, &ctx, "Cancel", SCREEN)?;
+        assert!(sent.is_none());
+        assert!(!editor.parts.is_open());
+        assert!(editor.parts.back.is_none(), "the return link is dropped");
+        assert_eq!(
+            PartProps::draft_ids(&engine, set.ids.component).len(),
+            1,
+            "the draft is kept"
+        );
+        Ok(())
+    }
+
+    /// A refusal handed back to the dialog shows once, as its last body row,
+    /// and not as a toast.
+    #[test]
+    fn a_refusal_shows_in_the_dialog_row() -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let new = click_at(&mut editor, &engine, &ctx, "New Part\u{2026}", TALL)?;
+        apply(&mut engine, new)?;
+        editor.commit(&ctx, &engine);
+        crate::refusal::hand_back(
+            &ctx,
+            crate::refusal::Refused {
+                origin: Origin::Dialog(dialog_id()),
+                error: pcbcraft_core::Error::Conflict("ExampleCo EX-1 is already published".into()),
+            },
+            false,
+        );
+        frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(
+            has(&shown, "ExampleCo EX-1 is already published"),
+            "{shown:?}"
+        );
+        assert!(
+            crate::refusal::unclaimed(&ctx).is_empty(),
+            "claimed, so no toast"
+        );
+        Ok(())
+    }
+
+    /// A published Part without a draft opens read-only with Edit Part,
+    /// which drafts a new revision of it in the same dialog.
+    #[test]
+    fn a_published_part_opens_read_only_with_edit() -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let set = editor.draft.clone().ok_or("no working set")?;
+        let pins = Pins::of(&set, &engine).ok_or("no pins")?;
+        let mut part = new_part(&set, &pins);
+        part.manufacturer = "ExampleCo".into();
+        part.mpn = "EX-R0603-10K0-F".into();
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta {
+                    name: part.mpn.clone(),
+                    ..Default::default()
+                },
+                definition: Definition::Part(Box::new(part)),
+            })),
+        )?;
+        let id = PartProps::draft_ids(&engine, set.ids.component)
+            .first()
+            .copied()
+            .ok_or("no Part draft")?;
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::Publish {
+                drafts: vec![id],
+            })),
+        )?;
+        // Publishing keeps a draft equal to the revision; without one the
+        // Part is read-only.
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::DiscardDraft { id })),
+        )?;
+        editor.commit(&ctx, &engine);
+        let opened = click_at(
+            &mut editor,
+            &engine,
+            &ctx,
+            "EX-R0603-10K0-F \u{b7} ExampleCo \u{b7} r1",
+            TALL,
+        )?;
+        assert!(opened.is_none());
+        assert!(editor.parts.is_open());
+        let edit = click_at(&mut editor, &engine, &ctx, "Edit Part", SCREEN)?;
+        assert!(matches!(
+            &edit,
+            Some(Operation::Library(LibraryCommand::DraftFrom { .. }))
+        ));
+        apply(&mut engine, edit)?;
+        editor.commit(&ctx, &engine);
+        let shown = frame_sized(&mut editor, &engine, &ctx, vec![], SCREEN);
+        assert!(has(&shown, "Draft"), "{shown:?}");
+        assert!(has(&shown, "Publish Part"));
+        Ok(())
+    }
+
     /// One inspector frame; returns the drawn texts and their centres.
     fn frame(
         editor: &mut PartEditor,
@@ -1620,12 +2229,20 @@ mod tests {
         ctx: &egui::Context,
         events: Vec<egui::Event>,
     ) -> Vec<(String, egui::Pos2)> {
+        frame_sized(editor, engine, ctx, events, TALL)
+    }
+
+    /// One inspector frame in a `size` window.
+    fn frame_sized(
+        editor: &mut PartEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        size: egui::Vec2,
+    ) -> Vec<(String, egui::Pos2)> {
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(360.0, 4000.0),
-                )),
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                 events,
                 ..Default::default()
             },
@@ -1743,8 +2360,9 @@ mod tests {
         editor.commit(&ctx, &engine);
         let id = editor.parts.open.ok_or("no open Part")?;
         let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        // The new Part opens in the dialog, not in the card.
         for label in [
-            "PARTS",
+            "Part \u{b7} New",
             "RATED VALUES",
             "Maker",
             "MPN",
