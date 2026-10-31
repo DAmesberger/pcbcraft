@@ -63,9 +63,9 @@ Adapted source references, under the MIT option above:
 - `apps/pcbcraft/src/kit/toast.rs` (K3): upstream `crates/ui-egui/src/viewport.rs` (`transient_messages`, `paint_toast_with`, `STATUS_TOAST_MS`) and `ui_kit/viewport_status.rs` (`viewport_status_row`).
 - `apps/pcbcraft/src/kit/messages.rs` (K3): upstream `crates/ui-egui/src/messages.rs` (`KEEP`, `MAX_CHARS`, ×n folding).
 - `apps/pcbcraft/src/refusal.rs` (K3): upstream `crates/ui-egui/src/dialogs.rs` (`reveal_refusal`, `shown_error`).
-- `apps/pcbcraft/src/kit/dialog.rs` (K4): upstream `ui_kit/panel.rs` (`Panel::feature`, `body_rows`) and `ui_kit/confirm.rs`.
-- `apps/pcbcraft/src/kit/review.rs` (K4, R1): upstream `ui_kit/review.rs` (`ReviewAndApply`, a modal there and docked here).
-- `apps/pcbcraft/src/kit/rows.rs` (K4): upstream `ui_kit/layout.rs` (`summary_row`, `catalog_footer_with_tip`), `ui_kit/reports.rs` (`list_frame`), `ui_kit/name_list.rs`, `ui_kit/table.rs` and the feature-panel header.
+- `apps/pcbcraft/src/kit/dialog.rs` (K4): upstream `ui_kit/panel.rs` (`Panel::feature` and `body_rows`: the bounded body with its one-time scroll reset; `header_actions`: the 40 pt header with icon and close target), `ui_kit/actions.rs` (`footer_with_left`: the 48 pt footer band, primary last and left status slot; `ActionLook`: the danger fill; `keyboard`: Esc and Enter), `dialogs.rs` (`reveal_refusal`) and `ui_kit/confirm.rs` (the Danger tone's disc beside the message). Docking in the subject slot, the pinned footer and the focused-field key rule are original.
+- `apps/pcbcraft/src/kit/review.rs` (K4, R1): upstream `ui_kit/review.rs` (`ReviewAndApply`: impact rows, the acknowledgement and the apply gated on it; a modal `Confirm` there, docked here). The blocker order, stale Recompute row and gate wording are original.
+- `apps/pcbcraft/src/kit/rows.rs` (K4): upstream `ui_kit/layout.rs` (`summary_row`, `catalog_footer` and `catalog_footer_with_tip`: the clipped one-line note behind the information glyph), `ui_kit/reports.rs` (`list_frame` border, `report_divider`, `empty_box`'s dashed outline for the add row), `ui_kit/table.rs` (weighted column shares, `Column::flex`, and header captions) and the feature-panel header (`panel.rs` `header_actions`) for the tool card. The 8-row bound with "Show all", the virtualised long table, the field error line and the refusal band are original.
 
 The core issue types and message-style checker (`crates/editor-core/src/issues.rs`, `issues/style.rs`) and the app's `issues.rs` are original.
 
