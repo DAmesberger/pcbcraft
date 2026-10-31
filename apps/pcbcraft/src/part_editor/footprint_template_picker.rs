@@ -136,6 +136,7 @@ pub fn request(draft: DefinitionId, template: FootprintTemplate) -> Operation {
     Operation::Library(LibraryCommand::FootprintFromTemplate {
         draft,
         template: Box::new(template),
+        replace: false,
     })
 }
 

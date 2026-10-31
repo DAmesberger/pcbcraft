@@ -58,6 +58,19 @@ pub enum LayoutCommand {
     DeleteTrack { id: Id },
     #[serde(rename = "layout.track_lock")]
     SetTrackLock { id: Id, locked: bool },
+    /// Change one track's width, copper layer or both, as one undo step.
+    /// The track keeps its identity, net and ends. The edit goes through
+    /// the same checks as `layout.route_apply` (a locked track, a width
+    /// outside 0.05–5 mm, copper outside the board or a clearance
+    /// violation is refused and nothing changes); omitting both is refused.
+    #[serde(rename = "layout.track_set")]
+    SetTrack {
+        id: Id,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        layer: Option<Layer>,
+    },
     /// Replace the board's fabrication attributes (mask colour and finish,
     /// pad finish, silkscreen colour) as one undo step.
     #[serde(rename = "layout.set_fabrication")]
@@ -427,6 +440,30 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .find(|t| t.id == id)
                 .ok_or_else(|| Error::NotFound("unknown track".into()))?
                 .locked = locked;
+        }
+        LayoutCommand::SetTrack { id, width, layer } => {
+            if width.is_none() && layer.is_none() {
+                return invalid("layout.track_set needs a width, a layer or both");
+            }
+            let mut track = project
+                .tracks
+                .iter()
+                .find(|t| t.id == id)
+                .cloned()
+                .ok_or_else(|| Error::NotFound("unknown track".into()))?;
+            if let Some(width) = width {
+                track.width = width;
+            }
+            if let Some(layer) = layer {
+                track.layer = layer;
+            }
+            apply_routes(
+                project,
+                RouteEditSet {
+                    replace: vec![track],
+                    ..Default::default()
+                },
+            )?;
         }
         LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
     }
