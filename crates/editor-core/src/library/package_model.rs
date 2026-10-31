@@ -205,6 +205,16 @@ pub enum PackageEdit {
     ApplyQuick(QuickAction),
 }
 
+impl PackageEdit {
+    /// A quick action relative to the footprint's pads.
+    pub fn needs_footprint(&self) -> bool {
+        matches!(
+            self,
+            Self::ApplyQuick(QuickAction::CentreOnPads | QuickAction::Pin1ToPad1)
+        )
+    }
+}
+
 /// Apply `edits` to a copy of `package`. `ApplyQuick` actions relative to
 /// pads (`CentreOnPads`, `Pin1ToPad1`) need the footprint and refuse here;
 /// `package_fit::edit_package_in` takes it. Validation of the result is the

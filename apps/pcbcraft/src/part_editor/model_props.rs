@@ -13,6 +13,8 @@ use pcbcraft_core::{Engine, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 const LENGTH: std::ops::RangeInclusive<f64> = -10000.0..=10000.0;
+/// A fitted error above this is explained (mm, estimate).
+const FIT_TOLERANCE_MM: f64 = 0.05;
 const ANGLE: std::ops::RangeInclusive<f64> = -360.0..=360.0;
 
 /// The quick actions offered, in order, with their labels.
@@ -104,7 +106,10 @@ impl PartEditor {
             }
             kit::note(
                 ui,
-                "Drag the triad to move or turn the model; Esc cancels a drag.",
+                &format!(
+                    "Drag the triad to move or turn the model; Esc cancels a drag. Over the view, arrow keys nudge {} mm (Shift ×10), Page Up/Down lift.",
+                    model_place::NUDGE_MM
+                ),
             );
         });
         kit::section(ui, "model-fit", "Fit leads to pads", true, None, |ui| {
@@ -114,8 +119,11 @@ impl PartEditor {
             ];
             kit::choice_row(ui, "Rotation", &mut tab.quarter, &options);
             let rotation = tab.rotation();
-            let fit = package_fit::form_pairs(&package, &footprint)
-                .and_then(|pairs| package_fit::fit_leads(&package.placement, &pairs, rotation));
+            let pairs = package_fit::form_pairs(&package, &footprint);
+            let fit = match &pairs {
+                Ok(pairs) => package_fit::fit_leads(&package.placement, pairs, rotation),
+                Err(error) => Err(pcbcraft_core::Error::Invalid(error.to_string())),
+            };
             match &fit {
                 Ok(fit) => {
                     kit::value_row(ui, "Fitted error", &format!("{:.3} mm rms", fit.rms_mm));
@@ -137,6 +145,21 @@ impl PartEditor {
                         kit::status(
                             ui,
                             "A mirrored pin order fits better: check the footprint's numbering.",
+                            Tone::Warning,
+                        );
+                    }
+                    // A residual no placement removes: the body and the
+                    // lands disagree.
+                    if fit.rms_mm > FIT_TOLERANCE_MM
+                        && let Ok(pairs) = &pairs
+                        && let Some((leads, pads)) =
+                            package_fit::spacing_mismatch(pairs, FIT_TOLERANCE_MM)
+                    {
+                        kit::status(
+                            ui,
+                            &format!(
+                                "Lead spacing {leads:.2} mm vs pad spacing {pads:.2} mm: placement cannot close this. Change the body, or use Lands from body."
+                            ),
                             Tone::Warning,
                         );
                     }

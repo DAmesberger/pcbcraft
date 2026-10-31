@@ -35,6 +35,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "model",
         &[
+            "materials",
             "geometry",
             "ids",
             "diagnostics",
@@ -122,6 +123,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "validate",
         &[
+            "materials",
             "ids",
             "diagnostics",
             "library",

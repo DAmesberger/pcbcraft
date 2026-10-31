@@ -824,6 +824,14 @@ pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usi
     (added, removed, changed)
 }
 
+/// Package difference lines and the designators each one reaches.
+type PackageLines = Vec<(String, Vec<String>)>;
+
+/// `[l, w, h]` as `L×W×H`.
+fn size_text(size: &[f64; 3]) -> String {
+    format!("{:?}×{:?}×{:?}", size[0], size[1], size[2])
+}
+
 /// Physical differences between two package revisions: the form family and
 /// each changed `pkg_*` value, the envelope, the model source and body
 /// materials, and the model placement. Empty when they agree.
@@ -868,8 +876,9 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
     }
     if a.envelope != b.envelope {
         out.push(format!(
-            "model dimensions {:?} → {:?} mm.",
-            a.envelope, b.envelope
+            "body {} → {} mm (L×W×H).",
+            size_text(&a.envelope),
+            size_text(&b.envelope)
         ));
     }
     match (&a.model, &b.model) {
@@ -924,6 +933,7 @@ fn definition_details(
     a: &View<'_>,
     b: &View<'_>,
     mapping_endpoints: &mut BTreeSet<Endpoint>,
+    packages: &mut PackageLines,
 ) {
     if a.name != b.name {
         plan.detail(format!(
@@ -933,7 +943,10 @@ fn definition_details(
     }
     if let (Some(pa), Some(pb)) = (a.package, b.package) {
         for line in package_details(pa, pb) {
-            plan.detail(format!("{designator}: {line}"));
+            match packages.iter_mut().find(|(l, _)| *l == line) {
+                Some((_, designators)) => designators.push(designator.to_owned()),
+                None => packages.push((line, vec![designator.to_owned()])),
+            }
         }
     }
     // Units, pins and graphics.
@@ -1266,6 +1279,7 @@ fn instance_details(
     old: &ComponentInstance,
     new: &ComponentInstance,
     mapping_endpoints: &mut BTreeSet<Endpoint>,
+    packages: &mut PackageLines,
 ) {
     let designator = old.designator.as_str();
     if old.designator != new.designator {
@@ -1309,7 +1323,15 @@ fn instance_details(
         != (new.component, new.representation, new.physical)
         && let (Some(a), Some(b)) = (view(project, old), view(next, new))
     {
-        definition_details(plan, designator, old.id, &a, &b, mapping_endpoints);
+        definition_details(
+            plan,
+            designator,
+            old.id,
+            &a,
+            &b,
+            mapping_endpoints,
+            packages,
+        );
     }
     if old.functions != new.functions {
         selection_details(plan, old, new);
@@ -1566,6 +1588,7 @@ pub(crate) fn preview(
         }
     }
     let mut mapping_endpoints = BTreeSet::new();
+    let mut packages = PackageLines::new();
     for old in &project.instances {
         let Some(new) = next.instance(old.id) else {
             plan.detail(format!(
@@ -1574,7 +1597,19 @@ pub(crate) fn preview(
             ));
             continue;
         };
-        instance_details(&mut plan, project, &next, old, new, &mut mapping_endpoints);
+        instance_details(
+            &mut plan,
+            project,
+            &next,
+            old,
+            new,
+            &mut mapping_endpoints,
+            &mut packages,
+        );
+    }
+    // A package change is listed once for every instance it reaches.
+    for (line, designators) in packages {
+        plan.detail(format!("{}: {line}", designators.join(", ")));
     }
     for instance in &next.instances {
         if project.instance(instance.id).is_none() {

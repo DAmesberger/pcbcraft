@@ -155,6 +155,11 @@ pub fn build_definition(
             "model.form: package form values must be finite".into(),
         ));
     }
+    // The core's form rules are the one source; the builders' own checks
+    // below only guard their constructions.
+    if let Some(problem) = package.form.range_problems().first() {
+        return Err(Error::Invalid(format!("model.form: {problem}")));
+    }
     match &package.form {
         PackageForm::Chip(c) => chip::check(c)?,
         PackageForm::GullWing(g) => gull_wing::check(g)?,

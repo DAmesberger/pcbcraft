@@ -413,6 +413,59 @@ pub fn form_pairs(
     Ok(pairs)
 }
 
+/// Host-supplied pairs name terminals of `package` and, when the landing
+/// footprint is known, its pads landing that terminal; never accepted
+/// unchecked.
+pub fn check_pair_ids(
+    package: &PackageDefinition,
+    footprint: Option<&FootprintDefinition>,
+    pairs: &[LeadPair],
+) -> Result<()> {
+    for pair in pairs {
+        if package.terminal(pair.terminal).is_none() {
+            return Err(Error::NotFound(format!(
+                "package.fit_pairs: the package has no terminal {}",
+                pair.terminal
+            )));
+        }
+        if let Some(footprint) = footprint {
+            let pad = footprint.pad(pair.pad).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "package.fit_pairs: the footprint has no pad {}",
+                    pair.pad
+                ))
+            })?;
+            if pad.terminal != Some(pair.terminal) {
+                return Err(Error::Invalid(format!(
+                    "package.fit_pairs: pad {} does not land terminal {}",
+                    pair.pad, pair.terminal
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A fit residual that placement cannot remove: the leads' spread and the
+/// pads' differ, so the body or the footprint must change. Returns `(lead
+/// spacing, pad spacing)` of two pairs far apart (the pad furthest from the
+/// pads' centroid and the pad furthest from it), when they differ by more
+/// than `tolerance_mm`. Linear in the pairs.
+pub fn spacing_mismatch(pairs: &[LeadPair], tolerance_mm: f64) -> Option<(f64, f64)> {
+    let distance = |p: Point, q: Point| (p[0] - q[0]).hypot(p[1] - q[1]);
+    let furthest = |from: Point| {
+        pairs
+            .iter()
+            .max_by(|a, b| distance(a.pad_centre, from).total_cmp(&distance(b.pad_centre, from)))
+    };
+    let centre = centroid(&pairs.iter().map(|p| p.pad_centre).collect::<Vec<_>>());
+    let a = furthest(centre)?;
+    let b = furthest(a.pad_centre)?;
+    let leads = distance([a.lead[0], a.lead[1]], [b.lead[0], b.lead[1]]);
+    let pads = distance(a.pad_centre, b.pad_centre);
+    ((leads - pads).abs() > tolerance_mm).then_some((leads, pads))
+}
+
 fn needs_footprint(action: QuickAction) -> Error {
     Error::Invalid(format!(
         "package.quick_needs_footprint: {action:?} needs the footprint the package lands on"

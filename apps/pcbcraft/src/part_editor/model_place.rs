@@ -18,8 +18,34 @@ use solidcraft_ui_egui::gpu::GpuScene;
 /// Copper thickness the overlay lands are drawn with (display only; the
 /// board model uses the stack-up). The land top is the seating plane.
 const LAND_MM: f64 = 0.035;
-/// How far the drawn seating plane reaches past the lands and body.
-const PLANE_MARGIN_MM: f64 = 1.5;
+/// How far the drawn seating plane reaches past the lands and body: a
+/// share of their diagonal within these bounds, so Fit view frames the
+/// part and its lands rather than a wide plane.
+const PLANE_MARGIN_SHARE: f64 = 0.1;
+const PLANE_MARGIN_MM: [f64; 2] = [0.2, 1.5];
+
+/// The seating plane's margin around lands and body within `bounds`.
+fn plane_margin(bounds: &Aabb3) -> f64 {
+    let d = (bounds.max.x - bounds.min.x).hypot(bounds.max.y - bounds.min.y);
+    (PLANE_MARGIN_SHARE * d).clamp(PLANE_MARGIN_MM[0], PLANE_MARGIN_MM[1])
+}
+
+/// One arrow-key nudge of the model, in mm (Shift: ten times).
+pub const NUDGE_MM: f64 = 0.05;
+
+/// The datum-frame shift of a nudge key, if `key` is one.
+pub fn nudge(key: egui::Key, shift: bool) -> Option<[f64; 3]> {
+    let step = if shift { 10.0 * NUDGE_MM } else { NUDGE_MM };
+    Some(match key {
+        egui::Key::ArrowLeft => [-step, 0.0, 0.0],
+        egui::Key::ArrowRight => [step, 0.0, 0.0],
+        egui::Key::ArrowDown => [0.0, -step, 0.0],
+        egui::Key::ArrowUp => [0.0, step, 0.0],
+        egui::Key::PageUp => [0.0, 0.0, step],
+        egui::Key::PageDown => [0.0, 0.0, -step],
+        _ => return None,
+    })
+}
 
 /// A point-to-point move in progress.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,6 +69,8 @@ pub struct Drag {
 pub struct ModelTab {
     /// Typed placement values not yet committed.
     pub fields: Option<ModelPlacement>,
+    /// Typed form values not yet committed.
+    pub form: Option<pcbcraft_core::library::PackageForm>,
     pub drag: Option<Drag>,
     /// Esc ended the triad drag; ignore it until the button is released.
     pub cancelled: bool,
@@ -318,14 +346,9 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
         bounds.add(Vec3::new(0.0, 0.0, 0.0));
     }
     let z = -LAND_MM;
-    let (x0, y0) = (
-        bounds.min.x - PLANE_MARGIN_MM,
-        bounds.min.y - PLANE_MARGIN_MM,
-    );
-    let (x1, y1) = (
-        bounds.max.x + PLANE_MARGIN_MM,
-        bounds.max.y + PLANE_MARGIN_MM,
-    );
+    let margin = plane_margin(&bounds);
+    let (x0, y0) = (bounds.min.x - margin, bounds.min.y - margin);
+    let (x1, y1) = (bounds.max.x + margin, bounds.max.y + margin);
     let plane = [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]];
     for k in [0, 1, 2, 0, 2, 3] {
         scene.trans_tri(v3(plane[k]), [0.0, 0.0, 1.0], board);
@@ -475,7 +498,13 @@ mod tests {
         let (scene, bounds) = overlay(&soic_lands(), &soic());
         assert!(!scene.tris.is_empty());
         assert!(!scene.trans.is_empty());
-        assert!(bounds.min.x <= -2.7 - 0.775 - PLANE_MARGIN_MM + 1e-6);
+        // The plane reaches a little past the outermost land, not far.
+        let past = -2.7 - 0.775 - bounds.min.x;
+        assert!(
+            (PLANE_MARGIN_MM[0] - 1e-6..=PLANE_MARGIN_MM[1] + 1e-6).contains(&past),
+            "{past}"
+        );
+        assert!(past < 1.0, "a SOIC's plane stays near its lands: {past}");
         assert!((bounds.min.z + LAND_MM).abs() < 1e-9);
     }
 

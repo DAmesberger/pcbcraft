@@ -487,3 +487,107 @@ fn placement_findings_reach_draft_checks_as_advisories() -> Result<()> {
     assert!(findings.iter().all(|x| x.blocks.is_none()));
     Ok(())
 }
+
+#[test]
+fn host_pairs_name_real_terminals_and_pads_and_ambiguity_is_reported() -> Result<()> {
+    use crate::library::{Definition, DraftEdit};
+    use crate::tests::support::{Snapshot, apply};
+    use crate::{DefinitionKind, LibraryCommand, Operation};
+    let (mut engine, f) = soic_engine()?;
+    let footprint = match &engine.drafts().get(f.footprint).map(|d| &d.definition) {
+        Some(Definition::Footprint(fp)) => fp.clone(),
+        _ => return Err(Error::Invalid("no footprint draft".into())),
+    };
+    let mut pairs = soic_pairs(&footprint)?;
+    let kept = Snapshot::of(&engine);
+    let fit = |pairs: Vec<LeadPair>| {
+        Operation::Library(LibraryCommand::FitLeads {
+            draft: f.package,
+            pairs,
+            rotation: FitRotation::Free,
+            confirm: true,
+        })
+    };
+    let mut unknown_terminal = pairs.clone();
+    unknown_terminal[0].terminal = PackageTerminalId(99);
+    let error = apply(&mut engine, fit(unknown_terminal)).err();
+    assert!(
+        error
+            .as_ref()
+            .is_some_and(|e| e.to_string().contains("no terminal 99")),
+        "{error:?}"
+    );
+    let mut unknown_pad = pairs.clone();
+    unknown_pad[0].pad = PadId(99);
+    assert!(apply(&mut engine, fit(unknown_pad)).is_err());
+    // A pad of another terminal.
+    pairs[0].pad = pairs[1].pad;
+    let error = apply(&mut engine, fit(pairs)).err();
+    assert!(
+        error
+            .as_ref()
+            .is_some_and(|e| e.to_string().contains("does not land")),
+        "{error:?}"
+    );
+    kept.assert_kept(&engine, "refused pairs");
+    // A second footprint draft landing the package: the pad-relative quick
+    // action says so instead of "needs the footprint".
+    let second = engine.reserve(DefinitionKind::Footprint)?;
+    let meta = engine
+        .drafts()
+        .get(f.footprint)
+        .map(|d| d.meta.clone())
+        .ok_or_else(|| Error::Invalid("no footprint draft".into()))?;
+    apply(
+        &mut engine,
+        Operation::Library(LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id: second,
+                meta,
+                definition: Definition::Footprint(footprint),
+            }],
+        }),
+    )?;
+    let error = apply(
+        &mut engine,
+        Operation::Library(LibraryCommand::EditPackage {
+            draft: f.package,
+            edits: vec![PackageEdit::ApplyQuick(QuickAction::CentreOnPads)],
+        }),
+    )
+    .err();
+    assert!(
+        error
+            .as_ref()
+            .is_some_and(|e| e.to_string().contains("package.footprint_ambiguous")),
+        "{error:?}"
+    );
+    // Edits that need no pads still apply.
+    apply(
+        &mut engine,
+        Operation::Library(LibraryCommand::EditPackage {
+            draft: f.package,
+            edits: vec![PackageEdit::ApplyQuick(QuickAction::Seat)],
+        }),
+    )?;
+    Ok(())
+}
+
+#[test]
+fn a_spacing_mismatch_is_named_and_a_matching_one_is_not() -> Result<()> {
+    let fp = soic_footprint(false);
+    let pairs = soic_pairs(&fp)?;
+    assert_eq!(spacing_mismatch(&pairs, 0.05), None);
+    // Pads pushed 0.4 mm further out on each side.
+    let wide: Vec<LeadPair> = pairs
+        .iter()
+        .map(|p| LeadPair {
+            pad_centre: [p.pad_centre[0] * (3.1 / 2.7), p.pad_centre[1]],
+            ..*p
+        })
+        .collect();
+    let (leads, pads) = spacing_mismatch(&wide, 0.05)
+        .ok_or_else(|| Error::Invalid("expected a mismatch".into()))?;
+    assert!(pads > leads + 0.5, "{leads} vs {pads}");
+    Ok(())
+}

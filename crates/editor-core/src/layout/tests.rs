@@ -285,7 +285,9 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
             &mut project,
             LayoutCommand::Route {
                 request: RouteRequest {
-                    start: [9.49, 10.0],
+                    // R1.1's land ends at 9.7 (pad at 9.2, 1 mm wide): a
+                    // 0.3 mm track starting here is 0.04 mm from it.
+                    start: [9.89, 10.0],
                     ..request()
                 }
             }
@@ -297,7 +299,7 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
         &mut project,
         LayoutCommand::Route {
             request: RouteRequest {
-                start: [9.5, 10.0],
+                start: [9.9, 10.0],
                 ..request()
             },
         },

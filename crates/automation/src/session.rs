@@ -373,6 +373,8 @@ pub fn schemas() -> Value {
 }
 
 #[cfg(test)]
+mod package_tests;
+#[cfg(test)]
 mod parts_tests;
 #[cfg(test)]
 mod svg_tests;

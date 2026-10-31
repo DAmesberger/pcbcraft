@@ -116,7 +116,8 @@ impl Viewport {
         };
         let triangles: usize = model.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
         let identity = self.display == Transform3::IDENTITY;
-        if !identity && triangles > MAX_LIVE_TRIANGLES {
+        self.display_limited = !identity && triangles > MAX_LIVE_TRIANGLES;
+        if self.display_limited {
             return;
         }
         let moved;
@@ -178,6 +179,12 @@ impl Viewport {
             }
         }
         self.refresh_bounds();
+    }
+
+    /// The model is too large to follow the display transform live: it
+    /// shows its last placement until the command is applied and rebuilt.
+    pub fn display_limited(&self) -> bool {
+        self.display_limited
     }
 
     pub fn has_overlay(&self) -> bool {

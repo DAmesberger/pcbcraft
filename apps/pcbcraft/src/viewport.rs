@@ -91,6 +91,8 @@ pub struct Viewport {
     model_bounds: Aabb3,
     /// The display-only overlay (lands, seating plane) in the preview slot.
     overlay_bounds: Aabb3,
+    /// The display transform was not applied: too many triangles to repack.
+    display_limited: bool,
     pv_key: u64,
     pv_slot: SceneSlot,
     /// Where the view was last drawn.
@@ -167,6 +169,7 @@ impl Viewport {
             display: pcbcraft_core::geometry::Transform3::IDENTITY,
             model_bounds: Self::initial_bounds(),
             overlay_bounds: Aabb3::EMPTY,
+            display_limited: false,
             pv_key: 0,
             pv_slot: Arc::new(Mutex::new(None)),
             rect: None,
@@ -181,6 +184,17 @@ impl Viewport {
             min: Vec3::new(0.0, 0.0, -0.1),
             max: Vec3::new(40.0, 30.0, 1.7),
         }
+    }
+
+    /// The camera the view is drawn with.
+    pub fn camera(&self) -> Camera {
+        self.camera
+    }
+
+    /// Show the view from `camera` (a framing kept from earlier).
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
+        self.fit_pending = false;
     }
 
     /// Fit the model to the view now, and again on the next draw, when the

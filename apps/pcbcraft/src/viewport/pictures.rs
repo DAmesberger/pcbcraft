@@ -324,6 +324,34 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         };
     let only = std::env::var("PCBCRAFT_PICTURES_ONLY").unwrap_or_default();
+    if only.is_empty() || only.contains("generated") {
+        // The demo board's generated chips up close, and each package
+        // preset's generated model as the Component 3D tab shows it.
+        let mut v = viewport(&project(Fabrication::default())?)?;
+        if let Some(chip) = centre(&v, BodyKind::ModelBody) {
+            aim(&mut v, chip, 7.0, 30.0, 35.0);
+            save(&mut v, "generated-chip-closeup")?;
+            aim(&mut v, chip, 5.0, 120.0, 20.0);
+            save(&mut v, "generated-chip-side")?;
+        }
+        for preset in pcbcraft_core::library::samples::Preset::ALL {
+            let mut package = pcbcraft_core::library::PackageDefinition {
+                form: preset.form(),
+                model: pcbcraft_core::library::PackageModel::Generated {
+                    family_rev: 1,
+                    materials: Default::default(),
+                },
+                ..Default::default()
+            };
+            package.envelope = package.form.envelope().unwrap_or([1.0; 3]);
+            let model = pcbcraft_solidcraft::project::preview(&package)?;
+            let mut v = Viewport::detached();
+            v.set_model(crate::model_scene::build(model.geometry)?);
+            v.fit_to(4.0 / 3.0);
+            let name = preset.label().to_lowercase().replace([' ', '×'], "-");
+            save(&mut v, &format!("generated-{name}"))?;
+        }
+    }
     let colours = [
         (MaskColour::Green, "green"),
         (MaskColour::Blue, "blue"),

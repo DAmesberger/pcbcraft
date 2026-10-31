@@ -375,7 +375,15 @@ pub(crate) fn apply_library(
         }
         LibraryCommand::EditPackage { draft, edits } => {
             let (current, package) = package_draft(document, draft)?;
-            let footprint = landing_footprint(document, draft).ok();
+            // The pad-relative quick actions report why the footprint is
+            // missing or ambiguous; other edits need none.
+            let footprint = match landing_footprint(document, draft) {
+                Ok(footprint) => Some(footprint),
+                Err(error) if edits.iter().any(PackageEdit::needs_footprint) => {
+                    return Err(error);
+                }
+                Err(_) => None,
+            };
             let edited = package_fit::edit_package_in(package, footprint, &edits)?;
             let meta = current.meta.clone();
             store_package(document, draft, meta, edited)?;
@@ -391,6 +399,10 @@ pub(crate) fn apply_library(
             let pairs = if pairs.is_empty() {
                 package_fit::form_pairs(package, landing_footprint(document, draft)?)?
             } else {
+                // Pads are checked against the one landing footprint when
+                // there is one; host pairs may target several.
+                let landing = landing_footprint(document, draft).ok();
+                package_fit::check_pair_ids(package, landing, &pairs)?;
                 pairs
             };
             let fit = package_fit::fit_leads(&package.placement, &pairs, rotation)?;

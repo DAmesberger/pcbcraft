@@ -60,8 +60,8 @@ const FILLET_WIDTH_SHARE: f64 = 0.92;
 const FILLET_MIN_TOE_MM: f64 = 0.02;
 /// Segments of a round track end and of a fillet profile.
 const ARC_STEPS: usize = 8;
-const FILLET_STEPS: usize = 10;
-const FILLET_ACROSS_STEPS: usize = 8;
+const FILLET_STEPS: usize = 24;
+const FILLET_ACROSS_STEPS: usize = 24;
 /// Adjacent prism walls turning less than this share a smoothed normal.
 const SMOOTH_TURN: f64 = 0.55;
 

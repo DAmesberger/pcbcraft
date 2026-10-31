@@ -124,6 +124,9 @@ pub struct SceneController {
     shown: Option<ModelKey>,
     sources: Vec<Source>,
     status: Status,
+    /// The camera each kind of model (board, package) was last seen with,
+    /// so switching workspaces keeps each view's framing.
+    cameras: [Option<pcbcraft_solidcraft::render::Camera>; 2],
 }
 
 impl SceneController {
@@ -136,6 +139,7 @@ impl SceneController {
             shown: None,
             sources: vec![],
             status: Status::Idle,
+            cameras: [None; 2],
         }
     }
 
@@ -186,11 +190,18 @@ impl SceneController {
             }
             match built.result {
                 Ok((scene, sources)) => {
-                    let kind_changed = self.shown.as_ref().map(ModelKey::is_package)
-                        != self.key.as_ref().map(ModelKey::is_package);
+                    let was = self.shown.as_ref().map(ModelKey::is_package);
+                    let now = self.key.as_ref().map(ModelKey::is_package);
                     self.viewport.set_model(scene);
-                    if kind_changed {
-                        self.viewport.fit();
+                    if was != now {
+                        let slot = |package: bool| usize::from(package);
+                        if let Some(was) = was {
+                            self.cameras[slot(was)] = Some(self.viewport.camera());
+                        }
+                        match now.and_then(|now| self.cameras[slot(now)]) {
+                            Some(camera) => self.viewport.set_camera(camera),
+                            None => self.viewport.fit(),
+                        }
                     }
                     self.sources = sources;
                     self.shown = self.key.clone();

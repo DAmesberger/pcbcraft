@@ -147,6 +147,50 @@ impl PartEditor {
         }
         let centre = vec3(package_fit::body_centre(&package, &shown));
         let step = mm_per_px(&proj, centre).map_or(0.0, |m| model_place::snap_step(m, STEP_PX));
+        if viewport.display_limited() {
+            painter.text(
+                rect.center_top() + egui::vec2(0.0, tk.space_8),
+                egui::Align2::CENTER_TOP,
+                "This model is too large to follow the triad live; it moves when the drag ends.",
+                egui::FontId::proportional(tk.font_small),
+                tk.warning,
+            );
+        }
+        // The triad's snap step, shown where it applies.
+        painter.text(
+            rect.left_bottom() + egui::vec2(tk.space_8, -tk.space_8),
+            egui::Align2::LEFT_BOTTOM,
+            format!(
+                "Triad snaps {} mm · arrows nudge {} mm (Shift ×10)",
+                crate::kit::number_text(step),
+                model_place::NUDGE_MM
+            ),
+            egui::FontId::proportional(tk.font_small),
+            tk.text_dim,
+        );
+        // Arrow-key nudges over the view while no field has the keyboard:
+        // each press is one command.
+        let hovered = ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| rect.contains(p));
+        let typing = ui.ctx().memory(|m| m.focused().is_some());
+        if hovered && !typing && tab.drag.is_none() {
+            let pressed = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => model_place::nudge(*key, modifiers.shift),
+                    _ => None,
+                })
+            });
+            if let Some(shift_by) = pressed {
+                let moved = package_fit::moved(&shown, &Transform3::translation(shift_by)).ok()?;
+                return tab.set(draft, &package.placement, moved, revision);
+            }
+        }
         let triad = Triad {
             center: centre,
             translate: true,

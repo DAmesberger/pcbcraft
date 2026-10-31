@@ -111,6 +111,26 @@ pub struct GullWingForm {
     pub foot_length: f64,
 }
 
+impl GullWingForm {
+    /// Share of the body height above the standoff at which the leads
+    /// leave the moulding (mid-height); the generated model uses it too.
+    pub const LEAD_EXIT_SHARE: f64 = 0.5;
+
+    /// Height of the lead's centre line where it leaves the body.
+    pub fn lead_exit(&self) -> f64 {
+        self.standoff + Self::LEAD_EXIT_SHARE * self.body_height
+    }
+
+    /// Room outside the body for the lead to bend down to its foot, across
+    /// y and (four sides) across x: half span − foot − half body.
+    pub fn bend_room(&self) -> [f64; 2] {
+        [
+            self.span[0] / 2.0 - self.foot_length - self.body_width / 2.0,
+            self.span[1] / 2.0 - self.foot_length - self.body_length / 2.0,
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct NoLeadForm {
@@ -418,6 +438,7 @@ impl PackageForm {
                 positive("Row pitch", h.row_pitch);
                 positive("Body height", h.body_height);
                 positive("Pin side", h.pin_side);
+                positive("Pin length above", h.pin_above);
                 positive("Pin length below", h.pin_below);
             }
         }
@@ -464,9 +485,17 @@ impl PackageForm {
                     "The foot must lie outside the body (foot length ≤ (span − body width) / 2).",
                 );
                 rule(g.standoff >= 0.0, "The standoff must not be negative.");
+                // The generated lead leaves the body at `lead_exit`, a
+                // thickness above the seating plane at least, and inside
+                // the moulding; then needs a thickness of room to bend.
+                let t = g.lead_thickness;
                 rule(
-                    g.lead_thickness <= g.standoff + g.body_height,
-                    "Leads must not be thicker than the package is tall.",
+                    g.lead_exit() - t / 2.0 > t && t < g.body_height,
+                    "Leads must fit the body height: thinner than the body, and leaving it (at mid-height) more than 1.5 × lead thickness above the seating plane.",
+                );
+                rule(
+                    g.bend_room()[0] > t,
+                    "The span must leave more than a lead thickness outside the body for the lead to bend down to its foot ((span − body width) / 2 − foot length > lead thickness).",
                 );
                 match g.sides {
                     LeadSides::Two => rule(
@@ -486,6 +515,10 @@ impl PackageForm {
                         rule(
                             g.foot_length <= (g.span[1] - g.body_length) / 2.0,
                             "The foot must lie outside the body across x.",
+                        );
+                        rule(
+                            g.bend_room()[1] > t,
+                            "The span across x must leave more than a lead thickness outside the body for the lead to bend.",
                         );
                     }
                 }
@@ -548,10 +581,6 @@ impl PackageForm {
                 rule(
                     h.pin_side < h.row_pitch,
                     "Pins must fit the body width (pin side < row pitch).",
-                );
-                rule(
-                    h.pin_above >= 0.0,
-                    "The pin length above the body must not be negative.",
                 );
             }
         }

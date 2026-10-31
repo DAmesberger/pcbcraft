@@ -13,8 +13,6 @@ use pcbcraft_core::library::{BodyRole, GullWingForm, LeadSides};
 const ROOT_MM: f64 = 0.25;
 /// Share of the room between body and foot the straight shoulder takes.
 const SHOULDER_SHARE: f64 = 0.3;
-/// Lead exit height as a share of the body height above the standoff.
-const EXIT_SHARE: f64 = 0.5;
 /// Pin-1 dimple depth (est.).
 const DIMPLE_DEPTH_MM: f64 = 0.05;
 
@@ -72,28 +70,23 @@ pub(super) fn check(g: &GullWingForm) -> Result<()> {
         )?;
     }
     let t = g.lead_thickness;
-    let exit = g.standoff + EXIT_SHARE * g.body_height;
+    let exit = g.lead_exit();
     require(
         exit - t / 2.0 > t && exit + t / 2.0 < g.standoff + g.body_height,
         "the lead thickness must fit inside the body height above the seating plane",
     )?;
-    let mut across = vec![(g.body_width, g.span[0])];
-    if four {
-        across.push((g.body_length, g.span[1]));
-    }
-    for (body, span) in across {
-        require(
-            span / 2.0 - g.foot_length - body / 2.0 > t,
-            "the span must leave room outside the body for the lead to bend down to its foot",
-        )?;
-    }
+    let room = g.bend_room();
+    require(
+        room[0] > t && (!four || room[1] > t),
+        "the span must leave room outside the body for the lead to bend down to its foot",
+    )?;
     Ok(())
 }
 
 pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     let four = g.sides == LeadSides::Four;
     let t = g.lead_thickness;
-    let exit = g.standoff + EXIT_SHARE * g.body_height;
+    let exit = g.lead_exit();
 
     let n = b.count("leads", g.leads_per_side[0])?;
     let m = if four {

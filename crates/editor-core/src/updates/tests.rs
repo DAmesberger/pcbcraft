@@ -81,7 +81,13 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     assert!(plan.conflicting_tracks.is_empty());
     assert!(plan.warnings.iter().any(|w| w.contains("detached")));
-    assert!(plan.changes.iter().any(|c| c.contains("model dimensions")));
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.starts_with("R1: body ") && c.contains("→") && c.contains("(L×W×H)")),
+        "{:?}",
+        plan.changes
+    );
     assert!(
         plan.changes
             .iter()
@@ -1146,4 +1152,36 @@ fn package_details_name_each_physical_change() {
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].contains("Termination material TinMatte → Gold"));
     assert!(lines[1].starts_with("model placement"));
+}
+
+#[test]
+fn a_package_change_is_listed_once_for_every_instance_it_reaches() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let r2 = by_designator(&engine, "R2")?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.package, package_body, |p| {
+            let _ = p.resize_envelope([1.6, 0.8, 0.45]);
+        })
+    })?;
+    let plan = engine.preview_update(Change::ComponentRevision {
+        instances: vec![r1, r2],
+        target,
+        resolutions: Resolutions::default(),
+    });
+    let body: Vec<&String> = plan
+        .changes
+        .iter()
+        .filter(|c| c.contains(": body "))
+        .collect();
+    assert_eq!(body.len(), 1, "{:?}", plan.changes);
+    assert!(
+        body[0].starts_with("R1, R2: body 2.0×1.2×0.6 → 1.6×0.8×0.45 mm"),
+        "{body:?}"
+    );
+    Ok(())
 }

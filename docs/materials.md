@@ -16,8 +16,8 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 |---|---|---|---|---|---|---|
 | `copper_track`, `pad_copper` | Bare copper | (0.955, 0.638, 0.538) | 1 | 0.30 | – | Cu F0 from Johnson & Christy 1972 (Hoffman's table). Exposed only with Hide substrate; under the mask it is covered by the mask cap. |
 | `pad_finish` | Per pad finish | see [pad finishes](#pad-finishes) | 1 | 0.16–0.35 | – | The board's pad finish; ENIG by default. |
-| `termination` | Matte tin | (0.64, 0.64, 0.66) | 1 | 0.28 | – | **est.** Same Sn F0 as lead-free HASL. Electroplated matte tin is rougher than reflowed solder. |
-| `solder` | Reflowed solder fillet | (0.64, 0.64, 0.66) | 1 | 0.14 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. A reflowed meniscus freezes smooth and bright. |
+| `termination` | Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | **est.** Plated tin near polished Sn (≈ 0.75–0.8 across the visible); a satin finish. Raised from 0.64 / 0.28 after the M1–M3 visual review found terminations reading as grey plastic. |
+| `solder` | Reflowed solder fillet | (0.78, 0.78, 0.80) | 1 | 0.38 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. Lead-free joints freeze satin; at 0.14 the fillet mirrored the studio's dark walls and read as black chrome. |
 | `chip_resistor` | Alumina ceramic | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | **est.** 96 % alumina thick-film substrates reflect 0.75–0.85 across 400–700 nm (published substrate data); n from sapphire (n_o = 1.77, handbook). |
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
 | `overcoat` | Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | **est.** Glass or epoxy overcoat with a black marking layer over the resistive film. |
@@ -82,9 +82,9 @@ Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman
 | 96 % alumina | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | – | 3720 | **est.** colour as `chip_resistor` above; n from sapphire. |
 | Barium titanate | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | – | 6020 | **est.** colour as `chip_capacitor`; n and density handbook. |
 | Ferrite | (0.045, 0.045, 0.047) | 0 | 0.60 | 2.0 | – | 4800 | **est.** Dark grey sintered Mn-Zn/Ni-Zn ferrite. |
-| Matte tin | (0.64, 0.64, 0.66) | 1 | 0.28 | – | – | 7265 | **est.** F0 as `termination`; β-tin density. |
-| Bright tin | (0.64, 0.64, 0.66) | 1 | 0.14 | – | – | 7265 | **est.** A smoother brightened deposit. |
-| SAC solder | (0.64, 0.64, 0.66) | 1 | 0.14 | – | – | 7400 | **est.** As `solder` above. |
+| Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | – | 7265 | **est.** F0 as `termination`; β-tin density. |
+| Bright tin | (0.78, 0.78, 0.80) | 1 | 0.22 | – | – | 7265 | **est.** A smoother brightened deposit. |
+| SAC solder | (0.78, 0.78, 0.80) | 1 | 0.38 | – | – | 7400 | **est.** As `solder` above. |
 | Gold plating | (1.000, 0.782, 0.344) | 1 | 0.22 | – | – | 19300 | Au F0, Johnson & Christy via Hoffman; roughness **est.** Hard gold is thick enough that the nickel does not show (unlike ENIG pads). |
 | Nickel | (0.660, 0.609, 0.526) | 1 | 0.30 | – | – | 8908 | Ni F0, Rakić 1998; roughness **est.** |
 | Copper-alloy leadframe | (0.955, 0.638, 0.538) | 1 | 0.32 | – | – | 8910 | Cu F0 (C194-like alloys are over 97 % Cu); roughness **est.** |
@@ -159,7 +159,7 @@ Show-through is **est.** No measured print-through value was found in public sou
 
 | Pad finish | Base colour (linear F0) | Rough | Source |
 |---|---|---|---|
-| ENIG (default) | (0.95, 0.76, 0.37) | 0.30 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin (**est.** roughness, raised from 0.25 so a typical view averages more of the studio and reads as pale gold, not brass). |
+| ENIG (default) | (1.0, 0.73, 0.30) | 0.28 | 85 % Au F0 (1.000, 0.782, 0.344; J&C/Hoffman) blended with 15 % Ni F0 (0.660, 0.609, 0.526; Rakić 1998). IPC-4552 gold is 0.04–0.10 µm, only 1–2 optical penetration depths. The electroless Ni-P is nodular, so the finish is satin (**est.** roughness, raised from 0.25 so a typical view averages more of the studio and reads as pale gold, not brass). The M1–M3 visual review found the blend reading as desaturated khaki, so the F0 was moved to the gold F0 with a little nickel showing (1.0, 0.73, 0.30) at 0.28 (**est.**). |
 | HASL (tin-lead) | (0.62, 0.62, 0.63) | 0.16 | **est.** Eutectic Sn63Pb37 is about 30 % lead by volume; lead reflects less than tin, so the blend sits a little below tin. Eutectic solder freezes bright. To be confirmed against Palik's Sn and Pb n, k. |
 | Lead-free HASL | (0.64, 0.64, 0.66) | 0.20 | **est.** Lead-free solders (SAC, SnCuNi) are over 95 % tin. Polished tin reflects ≈ 0.7, flat across the visible; a reflowed or plated surface carries an oxide film, so it is taken lower. They freeze duller and grainier than eutectic tin-lead, hence the higher roughness. |
 | OSP | (0.955, 0.638, 0.538) | 0.35 | Bare copper F0 (as `copper_track`). The organic film is sub-micrometre and transparent (**est.**: its thin-film tint is ignored); the copper under it is micro-etched, hence the roughness. |

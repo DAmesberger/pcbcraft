@@ -14,6 +14,7 @@ mod footprint_geometry;
 mod footprint_props;
 #[cfg(test)]
 mod footprint_tests;
+mod model_body;
 mod model_place;
 mod model_props;
 #[cfg(test)]
@@ -41,10 +42,10 @@ use pcbcraft_core::library::graphics::{
     self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM,
     TextContent, VAlign,
 };
+use pcbcraft_core::library::samples::Preset;
 use pcbcraft_core::library::{
-    ChipForm, ChipKind, ComponentDefinition, Drafts, FieldView, Item, Library, PackageForm,
-    PackageModel, PackageTerminal, Pad, Pin, PinDirection, Published, Terminal, TerminalClass,
-    TerminalMap, Unit, designator_prefix_valid,
+    ComponentDefinition, Drafts, FieldView, Item, Library, PackageTerminal, Pad, Pin, PinDirection,
+    Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
@@ -589,6 +590,12 @@ impl PartEditor {
             tools: vec![
                 Tool::new("passive", "component", "Passive").tip("Two-terminal passive template"),
                 Tool::new("connector", "component", "Connector").tip("Two-pin header template"),
+                Tool::new("template-soic8", "component", "SOIC-8")
+                    .tip("8-lead gull-wing IC with a generated model"),
+                Tool::new("template-qfn16", "component", "QFN-16")
+                    .tip("16-terminal no-lead IC with an exposed pad and a generated model"),
+                Tool::new("template-header2x5", "component", "Header 2×5")
+                    .tip("2 × 5 pin header with gold pins and a generated model"),
                 Tool::new("publish", "save", "Publish")
                     .enabled(self.unpublished(engine))
                     .tip("Publish the five drafts as new immutable revisions"),
@@ -805,6 +812,9 @@ impl PartEditor {
             "snap" => self.snap = !self.snap,
             "passive" => self.load_template(Template::TwoTerminal),
             "connector" => self.load_template(Template::Header),
+            "template-soic8" => self.load_template(Template::Package(Preset::Soic8)),
+            "template-qfn16" => self.load_template(Template::Package(Preset::Qfn16)),
+            "template-header2x5" => self.load_template(Template::Package(Preset::Header2x5)),
             "terminal" => self.add_terminal(),
             "pad" => self.add_pad(footprint_geometry::NewPad::Smd),
             "pad-pth" => self.add_pad(footprint_geometry::NewPad::PlatedThrough),
@@ -1019,8 +1029,8 @@ impl PartEditor {
             .find(|n| !taken(n))
             .unwrap_or_else(|| physical.to_string());
         if set.package.chip_kind().is_some() && set.package.terminals.len() >= 2 {
-            self.notice = "A chip body has exactly two terminals; change Body on the 3D tab \
-                 to Moulded, or remove this terminal"
+            self.notice = "A chip body has exactly two terminals; change Form on the 3D tab \
+                 to Generic, or remove this terminal"
                 .to_owned();
         }
         set.component.terminals.push(Terminal {
@@ -1245,8 +1255,9 @@ impl PartEditor {
             View::Footprint => self.footprint_inspector(ui),
             View::Mapping => self.mapping_inspector(ui),
             View::Model => {
-                self.model_inspector(ui);
-                operation = self.placement_inspector(ui, engine);
+                operation = self.body_inspector(ui);
+                let placement = self.placement_inspector(ui, engine);
+                operation = operation.or(placement);
             }
         }
         self.fields_section(ui, engine);
@@ -1615,64 +1626,6 @@ impl PartEditor {
                 }
             },
         );
-    }
-
-    fn model_inspector(&mut self, ui: &mut Ui) {
-        let Some(set) = &mut self.draft else {
-            return;
-        };
-        let package = &mut set.package;
-        kit::section(ui, "model-body", "Body", true, None, |ui| {
-            // Generic (moulded) or a typed chip; other typed forms derive
-            // their envelope and are edited by their parameters.
-            let editable = matches!(package.form, PackageForm::Generic | PackageForm::Chip(_));
-            if editable {
-                let mut chip = package.chip_kind();
-                let options = [
-                    (None, "Moulded".to_owned()),
-                    (Some(ChipKind::Resistor), "Chip resistor".to_owned()),
-                    (Some(ChipKind::Capacitor), "Chip capacitor".to_owned()),
-                    (Some(ChipKind::Inductor), "Chip inductor".to_owned()),
-                ];
-                if kit::choice_row(ui, "Body", &mut chip, &options) {
-                    package.form = chip.map_or(PackageForm::Generic, |kind| {
-                        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
-                    });
-                    // A generic package has only its envelope model.
-                    if chip.is_none() && matches!(package.model, PackageModel::Generated { .. }) {
-                        package.model = PackageModel::default();
-                    }
-                }
-            } else {
-                kit::note(ui, &format!("{} form", package.form.label()));
-            }
-            let mut size = package.envelope;
-            let mut changed = false;
-            ui.add_enabled_ui(editable, |ui| {
-                for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                    changed |= kit::number_row(ui, label, &mut size[index], "mm", 0.01..=10000.0);
-                }
-            });
-            if changed && package.resize_envelope(size).is_err() {
-                self.notice = "This form's envelope follows its parameters".to_owned();
-            }
-            kit::note(
-                ui,
-                "Approximate parametric envelope, not a verified supplier model.",
-            );
-        });
-        kit::section(ui, "model-offset", "Model offset", true, None, |ui| {
-            for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
-                kit::number_row(
-                    ui,
-                    label,
-                    &mut package.placement.translation[index],
-                    "mm",
-                    -10000.0..=10000.0,
-                );
-            }
-            kit::note(ui, "The live model and native export use Solidcraft.");
-        });
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {

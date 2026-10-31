@@ -10,12 +10,12 @@
 use crate::appearance::{self, Body, Land, Part, Path};
 use crate::material::{self, BodyKind};
 use crate::models::{self, ModelDefinition, look};
-use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Native, ProfileBody, mm};
+use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
-use pcbcraft_core::library::{PackageDefinition, Pad, PadDefaults, PadShape, model_frame};
+use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
 use pcbcraft_core::{Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -385,6 +385,21 @@ fn holding_frame(frame: &Transform3) -> JointFrame {
     }
 }
 
+/// The model in the frame a board joint holds: the package datum frame.
+/// The board places the footprint's datum (`layout::placement_transform`
+/// undoes it), so `model_frame(datum, placement)` lands, footprint frame
+/// first, at `placement`'s datum-frame pose; the 2D drawing and checks use
+/// `model_frame` in the footprint frame.
+fn datum_frame(package: &PackageDefinition) -> Transform3 {
+    package.placement.transform()
+}
+
+/// The display-only terminations, overcoat and fillets draw in the package
+/// frame shifted by the placement: right while the placement does not turn.
+fn package_frame(frame: &Transform3) -> bool {
+    frame.rotation == Transform3::IDENTITY.rotation
+}
+
 fn next_pick(sources: &[Source]) -> u64 {
     u64::try_from(sources.len()).map_or(u64::MAX, |n| n.saturating_add(1))
 }
@@ -666,15 +681,11 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         if models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
             let created = b.model(&stem, package)?;
-            let frame = model_frame(&footprint.datum, &package.placement);
+            let frame = datum_frame(package);
             let pick = next_pick(&sources);
-            // Display-only solder fillets of a chip, while its model frame
-            // is the package frame the appearance layers draw in (no datum
-            // shift or turn).
-            if package.chip_kind().is_some()
-                && frame.rotation == Transform3::IDENTITY.rotation
-                && frame.translation == package.placement.translation
-            {
+            // Display-only solder fillets of a chip, while its placement
+            // does not turn it out of the package frame they draw in.
+            if package.chip_kind().is_some() && package_frame(&frame) {
                 parts.push(Part {
                     pick: Some(pick),
                     package,
@@ -716,16 +727,17 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         {
             b.param(&format!("{prefix}_{axis}"), value, "mm")?;
         }
-        let offset = package.placement.translation;
         let body = Body::of(package);
+        // The box in its model frame (z = 0 the seating plane), held at
+        // its placement in the datum frame as a generated model is.
         b.body(
             body.kind(),
             BoxBody {
                 name: &label,
                 corner: [
-                    format!("- {prefix}_length / 2 + {}", mm(offset[0])).into(),
-                    format!("- {prefix}_width / 2 + {}", mm(offset[1])).into(),
-                    format!("copper_thickness + {}", mm(offset[2])).into(),
+                    format!("- {prefix}_length / 2").into(),
+                    format!("- {prefix}_width / 2").into(),
+                    0.into(),
                 ],
                 size: [
                     format!("{prefix}_length").into(),
@@ -734,23 +746,32 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 ],
             },
         )?;
-        b.native.board_joint(BoardJoint {
-            board,
-            occurrence: created.occurrence,
-            x: format!("{prefix}_x").into(),
-            y: format!("{prefix}_y").into(),
-            angle: format!("{prefix}_angle").into(),
-            layer: placement.layer,
-        })?;
+        let frame = datum_frame(package);
+        b.native.board_joint_at(
+            BoardJoint {
+                board,
+                occurrence: created.occurrence,
+                x: format!("{prefix}_x").into(),
+                y: format!("{prefix}_y").into(),
+                angle: format!("{prefix}_angle").into(),
+                layer: placement.layer,
+            },
+            &holding_frame(&frame),
+            Some("copper_thickness"),
+        )?;
         let pick = next_pick(&sources);
-        parts.push(Part {
-            pick: Some(pick),
-            package,
-            footprint: Some(footprint),
-            body,
-            placement: Some(placement),
-            generated: false,
-        });
+        // The display-only terminations, overcoat and fillets are drawn in
+        // the package frame: only while the model frame is that frame.
+        if package_frame(&frame) {
+            parts.push(Part {
+                pick: Some(pick),
+                package,
+                footprint: Some(footprint),
+                body,
+                placement: Some(placement),
+                generated: false,
+            });
+        }
         sources.push(Source {
             pick_id: pick,
             instance: Some(instance.id),
@@ -997,34 +1018,56 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
     {
         b.param(name, value, "mm")?;
     }
-    let offset = package.placement.translation;
     let body = Body::of(package);
     let kind = match body {
         Body::Moulded => BodyKind::PartBody,
         chip => chip.kind(),
     };
+    // The box in its model frame, moved by the placement as a generated
+    // model's occurrence is.
+    let created = b.native.component("Package envelope", false)?;
     b.body(
         kind,
         BoxBody {
             name: "Package envelope",
-            corner: [
-                format!("-length/2 + {}", mm(offset[0])).into(),
-                format!("-width/2 + {}", mm(offset[1])).into(),
-                Expr::from(offset[2]),
-            ],
+            corner: ["-length/2".into(), "-width/2".into(), 0.into()],
             size: ["length".into(), "width".into(), "height".into()],
         },
     )?;
+    b.native.activate_root()?;
+    move_by(&mut b.native, created.occurrence, &package.placement)?;
     let mut model = b.finish(vec![])?;
-    model.geometry.extend(appearance::preview(&Part {
-        pick: None,
-        package,
-        footprint: None,
-        body,
-        placement: None,
-        generated: false,
-    })?);
+    // Display-only terminations and overcoat are drawn in the package
+    // frame, shifted but not turned.
+    if package.placement.transform().rotation == Transform3::IDENTITY.rotation {
+        model.geometry.extend(appearance::preview(&Part {
+            pick: None,
+            package,
+            footprint: None,
+            body,
+            placement: None,
+            generated: false,
+        })?);
+    }
     Ok(model)
+}
+
+/// Move an unmoved occurrence by a model placement (model → datum frame).
+fn move_by(native: &mut Native, occurrence: u64, placement: &ModelPlacement) -> Result<()> {
+    let t = placement.transform();
+    if t == Transform3::IDENTITY {
+        return Ok(());
+    }
+    let r = t.rotation;
+    let p = t.translation;
+    native.move_occurrence(
+        occurrence,
+        [
+            [r[0][0], r[0][1], r[0][2], p[0]],
+            [r[1][0], r[1][1], r[1][2], p[1]],
+            [r[2][0], r[2][1], r[2][2], p[2]],
+        ],
+    )
 }
 
 /// The definition name of an unpublished (draft) package's model.
@@ -1040,19 +1083,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
     }
     let mut b = Builder::new("Package model")?;
     let created = b.model(DRAFT_MODEL, package)?;
-    let t = package.placement.transform();
-    if t != Transform3::IDENTITY {
-        let r = t.rotation;
-        let p = t.translation;
-        b.native.move_occurrence(
-            created.occurrence,
-            [
-                [r[0][0], r[0][1], r[0][2], p[0]],
-                [r[1][0], r[1][1], r[1][2], p[1]],
-                [r[2][0], r[2][1], r[2][2], p[2]],
-            ],
-        )?;
-    }
+    move_by(&mut b.native, created.occurrence, &package.placement)?;
     b.finish(vec![])
 }
 

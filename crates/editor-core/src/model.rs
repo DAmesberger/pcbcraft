@@ -196,6 +196,11 @@ pub struct Project {
     /// What the fabricator is asked to build. Saved with the design; the 3D
     /// view draws it, but it never changes the saved native model.
     pub fabrication: Fabrication,
+    /// The built-in material table revision (`materials::BUILTIN_REVISION`)
+    /// the library snapshot's package materials are read from. Package
+    /// revisions store only `MaterialId`s, so a project of another table
+    /// revision is refused rather than reopened with different looks.
+    pub material_table: u16,
 }
 
 impl Default for Project {
@@ -213,6 +218,7 @@ impl Default for Project {
             tracks: vec![],
             board_size: [60.0, 40.0],
             fabrication: Fabrication::default(),
+            material_table: crate::materials::BUILTIN_REVISION,
         }
     }
 }

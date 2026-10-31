@@ -721,3 +721,59 @@ fn generated_parts_land_where_their_footprints_are() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn every_form_the_core_accepts_is_built() -> Result<()> {
+    // Gull-wing variants near the builders' limits: lead thickness against
+    // the body height and the bend room outside the body. The core's form
+    // rules are the builders' rules, so a form without range problems
+    // builds and one with problems is refused before building.
+    let PackageForm::GullWing(base) = soic8() else {
+        return Err(Error::Verification("not gull-wing".into()));
+    };
+    let mut cases = Vec::new();
+    for (span, foot, thickness, standoff) in [
+        (6.0, 0.6, 0.2, 0.1),
+        (6.0, 0.8, 0.2, 0.1),
+        (6.0, 0.9, 0.2, 0.1),
+        (5.0, 0.3, 0.15, 0.0),
+        (7.0, 0.6, 0.6, 0.3),
+        (7.0, 0.6, 0.6, 0.0),
+        (8.0, 0.6, 1.4, 0.1),
+    ] {
+        let mut g = base.clone();
+        g.span = [span, 0.0];
+        g.foot_length = foot;
+        g.lead_thickness = thickness;
+        g.standoff = standoff;
+        cases.push(PackageForm::GullWing(g));
+    }
+    let PackageForm::Header(mut h) = header2x5() else {
+        return Err(Error::Verification("not a header".into()));
+    };
+    h.pin_above = 0.0;
+    cases.push(PackageForm::Header(h));
+    let (mut accepted, mut refused) = (0, 0);
+    for form in cases {
+        let problems = form.range_problems();
+        let terminals = u32::try_from(form.lead_count()).unwrap_or(0);
+        let mut native = Native::new("models")?;
+        let built = build_definition(&mut native, "pkgt", &package(form, terminals));
+        if problems.is_empty() {
+            built?;
+            accepted += 1;
+        } else {
+            match built {
+                Err(e) if e.to_string().contains("model.form") => refused += 1,
+                other => {
+                    return Err(Error::Verification(format!(
+                        "{problems:?} but the builder gave {:?}",
+                        other.map(|d| d.bodies.len())
+                    )));
+                }
+            }
+        }
+    }
+    assert_eq!((accepted, refused), (4, 4), "built and refused");
+    Ok(())
+}

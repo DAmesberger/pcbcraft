@@ -29,7 +29,8 @@ struct Harness {
 fn chip() -> PackageForm {
     PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
-        length: 2.8,
+        // Terminations centred at ±0.8 mm, on the template's lands.
+        length: 2.0,
         width: 1.2,
         height: 0.55,
         termination: 0.4,
@@ -393,4 +394,164 @@ fn package_fit_lead(
         .get(k)
         .copied()
         .ok_or_else(|| "no lead".into())
+}
+
+fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+fn package_of(
+    h: &Harness,
+) -> Result<pcbcraft_core::library::PackageDefinition, Box<dyn std::error::Error>> {
+    let id = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
+    match &h.engine.drafts().get(id).ok_or("package")?.definition {
+        Definition::Package(p) => Ok(p.clone()),
+        _ => Err("not a package".into()),
+    }
+}
+
+#[test]
+fn the_form_chooser_sends_one_typed_form_and_parameters_commit_when_left() -> TestResult {
+    let mut h = Harness::new()?;
+    // The Body section offers every family; the chip's parameters show.
+    let texts = h.inspector(vec![]);
+    for label in ["Form", "Chip (R, C, L)", "Termination", "Lands from body"] {
+        assert!(texts.iter().any(|(t, _)| t == label), "{label}");
+    }
+    assert!(
+        !texts.iter().any(|(t, _)| t == "Model offset"),
+        "placement has one control"
+    );
+    h.click_label("Chip (R, C, L)")?;
+    h.click_label("Gull-wing (SOIC, QFP)")?;
+    assert!(
+        matches!(
+            h.sent.as_slice(),
+            [Operation::Library(LibraryCommand::EditPackage { edits, .. })]
+                if matches!(edits.as_slice(), [PackageEdit::SetForm(PackageForm::GullWing(_))])
+        ),
+        "{:?}",
+        h.sent
+    );
+    h.apply_sent()?;
+    let texts = h.inspector(vec![]);
+    for label in [
+        "Leads per side",
+        "Span",
+        "Foot length",
+        "Generated parametric model",
+    ] {
+        assert!(texts.iter().any(|(t, _)| t == label), "{label}");
+    }
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.contains("The form has 8 leads; the package has 2 terminals")),
+        "the terminal mismatch is named"
+    );
+    // A typed pitch is previewed and sent once the field is left.
+    let pitch = texts
+        .iter()
+        .find(|(t, _)| t == "1.27 mm")
+        .map(|(_, p)| *p)
+        .ok_or("no pitch field")?;
+    h.time += 1.0;
+    h.inspector(vec![egui::Event::PointerMoved(pitch)]);
+    h.inspector(vec![Harness::button(pitch, true)]);
+    h.inspector(vec![Harness::button(pitch, false)]);
+    h.inspector(vec![
+        key(egui::Key::A, egui::Modifiers::COMMAND),
+        egui::Event::Text("1.1 mm".into()),
+    ]);
+    assert!(h.sent.is_empty(), "nothing while typing");
+    h.inspector(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    h.inspector(vec![]);
+    assert_eq!(h.apply_sent()?, 1);
+    match package_of(&h)?.form {
+        PackageForm::GullWing(g) => assert!((g.pitch - 1.1).abs() < 1e-12),
+        other => return Err(format!("{other:?}").into()),
+    }
+    Ok(())
+}
+
+#[test]
+fn a_residual_from_mismatched_spacing_is_explained() -> TestResult {
+    let mut h = Harness::new()?;
+    let draft = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
+    h.sent.push(model_place::edit(
+        draft,
+        vec![PackageEdit::SetForm(PackageForm::Chip(Box::new(
+            ChipForm {
+                kind: ChipKind::Resistor,
+                length: 2.8,
+                width: 1.2,
+                height: 0.55,
+                termination: 0.4,
+            },
+        )))],
+    ));
+    h.apply_sent()?;
+    let texts = h.inspector(vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t.contains("Lead spacing 2.40 mm vs pad spacing 1.60 mm")),
+        "{:?}",
+        texts.iter().map(|(t, _)| t).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn arrow_keys_over_the_view_nudge_the_model_one_command_each() -> TestResult {
+    let mut h = Harness::new()?;
+    let centre = h.viewport.rect().ok_or("not drawn")?.center();
+    h.frame(vec![egui::Event::PointerMoved(centre)]);
+    h.frame(vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)]);
+    assert_eq!(h.apply_sent()?, 1);
+    assert_eq!(
+        h.placement()?.translation,
+        [model_place::NUDGE_MM, 0.0, 0.0]
+    );
+    h.frame(vec![key(egui::Key::PageUp, egui::Modifiers::SHIFT)]);
+    assert_eq!(h.apply_sent()?, 1);
+    let lifted = h.placement()?.translation;
+    assert!((lifted[2] - 10.0 * model_place::NUDGE_MM).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn package_templates_start_a_generated_model_on_fitted_lands() -> TestResult {
+    use pcbcraft_core::library::samples::Preset;
+    for preset in [Preset::Soic8, Preset::Qfn16, Preset::Header2x5] {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::default();
+        let mut editor = PartEditor::default();
+        editor.load_template(Template::Package(preset));
+        if let Some(request) = editor.take_request() {
+            run(&mut engine, request)?;
+        }
+        editor.commit(&ctx, &engine);
+        let set = editor.draft.as_ref().ok_or("draft")?;
+        assert_eq!(set.package.form, preset.form());
+        assert!(matches!(
+            set.package.model,
+            pcbcraft_core::library::PackageModel::Generated { .. }
+        ));
+        assert_eq!(set.footprint.pads.len(), set.package.terminals.len());
+        let pairs = pcbcraft_core::library::package_fit::form_pairs(&set.package, &set.footprint)?;
+        let fit = pcbcraft_core::library::package_fit::fit_leads(
+            &set.package.placement,
+            &pairs,
+            pcbcraft_core::library::package_fit::FitRotation::Free,
+        )?;
+        assert!(fit.rms_mm < 1e-9, "{preset:?}");
+    }
+    Ok(())
 }

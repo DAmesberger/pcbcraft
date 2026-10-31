@@ -1470,7 +1470,8 @@ mod tests {
             .into_iter()
             .find(|pad| pad.instance == r2)
             .ok_or_else(|| pcbcraft_core::Error::Invalid("drag endpoint missing".into()))?;
-        assert!((moved.position[0] - 18.8).abs() < 1e-9);
+        // R2's pad 1 sits 0.8 mm left of its origin.
+        assert!((moved.position[0] - 19.2).abs() < 1e-9);
         assert_eq!(moved.position[1], 13.0);
         editor.drag_position = Some([22.0, 15.0]);
         editor.refresh_drag_airwires(&engine);
