@@ -146,6 +146,12 @@ impl Expr {
     fn within_bounds(&self) -> bool {
         self.0.len() <= MAX_EXPR
     }
+
+    /// Core syntax: non-blank, at most [`MAX_EXPR`] bytes, no control
+    /// characters. The grammar itself is the evaluator's.
+    pub fn valid(&self) -> bool {
+        self.within_bounds() && !self.0.trim().is_empty() && !self.0.chars().any(char::is_control)
+    }
 }
 
 /// What a parameter's value measures.
@@ -749,21 +755,171 @@ pub trait FootprintEvaluator {
     fn evaluate(&self, request: EvaluationRequest<'_>) -> Result<Evaluation>;
 }
 
+/// Sketch ids, curve lists and skip lists one source entry may hold.
+const MAX_SOURCE_LIST: usize = MAX_SKETCH_POINTS;
+
+fn id_ok(id: &str) -> bool {
+    id.len() <= MAX_LABEL
+}
+
+fn curves_ok(curves: &[SketchCurveId]) -> bool {
+    curves.len() <= MAX_SOURCE_LIST && curves.iter().all(|c| id_ok(&c.0))
+}
+
+fn paste_ok(paste: &PasteRuleExpr) -> bool {
+    match paste {
+        PasteRuleExpr::Windows(curves) => curves_ok(curves),
+        _ => true,
+    }
+}
+
+impl PadShapeExpr {
+    fn exprs(&self) -> Vec<&Expr> {
+        match self {
+            Self::Rect { width, height } | Self::Oblong { width, height } => vec![width, height],
+            Self::RoundRect {
+                width,
+                height,
+                radius_ratio,
+            } => vec![width, height, radius_ratio],
+            Self::Circle { diameter } => vec![diameter],
+        }
+    }
+}
+
+fn mask_expr(mask: &MaskRuleExpr) -> Option<&Expr> {
+    match mask {
+        MaskRuleExpr::Expansion(e) => Some(e),
+        _ => None,
+    }
+}
+
+fn paste_expr(paste: &PasteRuleExpr) -> Option<&Expr> {
+    match paste {
+        PasteRuleExpr::Reduction(e) => Some(e),
+        _ => None,
+    }
+}
+
+impl ArrayLayout {
+    fn exprs(&self) -> Vec<&Expr> {
+        match self {
+            Self::Linear { count, pitch, .. } => vec![count, pitch],
+            Self::DualRow {
+                per_row,
+                pitch,
+                row_span,
+                ..
+            } => vec![per_row, pitch, row_span],
+            Self::Quad {
+                nx,
+                ny,
+                pitch,
+                span_x,
+                span_y,
+                ..
+            } => vec![nx, ny, pitch, span_x, span_y],
+            Self::Grid {
+                rows,
+                cols,
+                pitch_x,
+                pitch_y,
+                ..
+            } => vec![rows, cols, pitch_x, pitch_y],
+        }
+    }
+
+    fn ids_ok(&self) -> bool {
+        match self {
+            Self::Linear { direction, .. } | Self::DualRow { direction, .. } => id_ok(&direction.0),
+            Self::Quad { .. } | Self::Grid { .. } => true,
+        }
+    }
+}
+
 impl FootprintSource {
+    /// Every expression the source stores: parameters, pad roles, arrays,
+    /// overrides and graphic roles.
+    pub fn expressions(&self) -> Vec<&Expr> {
+        let mut out: Vec<&Expr> = self.parameters.iter().map(|p| &p.expr).collect();
+        for role in &self.pads {
+            out.extend(mask_expr(&role.mask));
+            out.extend(paste_expr(&role.paste));
+            if let Some(v) = &role.vias {
+                out.extend([&v.rows, &v.cols, &v.pitch, &v.drill]);
+            }
+        }
+        for array in &self.arrays {
+            out.extend(array.layout.exprs());
+        }
+        for o in &self.overrides {
+            if let Some(shape) = &o.value.shape {
+                out.extend(shape.exprs());
+            }
+            out.extend(o.value.mask.as_ref().and_then(mask_expr));
+            out.extend(o.value.paste.as_ref().and_then(paste_expr));
+        }
+        for g in &self.graphics {
+            out.push(&g.width);
+            if let GraphicSource::Derived(DerivedGraphic::CourtyardFromExtents { excess, round }) =
+                &g.source
+            {
+                out.extend([excess, round]);
+            }
+        }
+        out
+    }
+
+    /// Persistence bounds: list lengths, text and id lengths, expression
+    /// sizes. Syntax is a publish rule, not a bound.
     pub(super) fn within_bounds(&self) -> bool {
         self.sketch.0.len() <= MAX_SKETCH_BYTES
             && self.evaluator.engine.len() <= MAX_LABEL
             && self.evaluator.rev.len() <= MAX_LABEL
+            && self.solve.evaluator.engine.len() <= MAX_LABEL
+            && self.solve.evaluator.rev.len() <= MAX_LABEL
+            && self.solve.result_hash.len() <= MAX_LABEL
             && self.parameters.len() <= MAX_PARAMETERS
             && self
                 .parameters
                 .iter()
-                .all(|p| p.expr.within_bounds() && p.name.0.len() <= MAX_LABEL)
+                .all(|p| p.name.0.len() <= MAX_LABEL && p.comment.len() <= super::MAX_NOTE)
             && self.pads.len() <= MAX_PADS
+            && self.pads.iter().all(|r| {
+                id_ok(&r.anchor.0)
+                    && r.number.len() <= MAX_LABEL
+                    && r.orientation.as_ref().is_none_or(|c| id_ok(&c.0))
+                    && match &r.geometry {
+                        PadGeometry::Template { owned_curves, .. } => curves_ok(owned_curves),
+                        PadGeometry::Profile => true,
+                    }
+                    && r.hole.as_ref().is_none_or(|h| curves_ok(&h.curves))
+                    && paste_ok(&r.paste)
+            })
             && self.arrays.len() <= MAX_ARRAYS
+            && self.arrays.iter().all(|a| {
+                a.layout.ids_ok()
+                    && a.first_number.len() <= MAX_LABEL
+                    && a.skip.explicit.len() <= MAX_PADS
+                    && match &a.numbering {
+                        NumberingScheme::GridAlpha { skip_letters } => {
+                            skip_letters.len() <= MAX_LABEL
+                        }
+                        _ => true,
+                    }
+            })
             && self.graphics.len() <= MAX_GRAPHICS
+            && self.graphics.iter().all(|g| match &g.source {
+                GraphicSource::Curves(curves) => curves_ok(curves),
+                GraphicSource::Derived(_) => true,
+            })
             && self.keys.len() <= MAX_PADS
             && self.overrides.len() <= MAX_PADS
+            && self
+                .overrides
+                .iter()
+                .all(|o| o.value.paste.as_ref().is_none_or(paste_ok))
+            && self.expressions().iter().all(|e| e.within_bounds())
     }
 }
 

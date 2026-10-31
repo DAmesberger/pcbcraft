@@ -133,3 +133,49 @@ fn package_values_are_typed_and_prefixed() {
     assert!(!ParamName("pkg.e".into()).valid());
     assert!(!ParamName("1a".into()).valid());
 }
+
+#[test]
+fn parameter_names_and_expressions_have_core_syntax() {
+    for (name, valid, package) in [
+        ("pitch", true, false),
+        ("_e2", true, false),
+        ("pkg_L", true, true),
+        ("2e", false, false),
+        ("a-b", false, false),
+        ("", false, false),
+        ("pkg", true, false),
+    ] {
+        let n = ParamName(name.into());
+        assert_eq!(n.valid(), valid, "{name}");
+        assert_eq!(n.is_package(), package, "{name}");
+    }
+    assert!(!ParamName("x".repeat(MAX_LABEL + 1)).valid());
+    assert!(Expr("pkg_e * 2 + 0.1 mm".into()).valid());
+    for bad in ["", "   ", "1\n+2", &"1".repeat(MAX_EXPR + 1)] {
+        assert!(!Expr(bad.into()).valid(), "{bad:?}");
+    }
+}
+
+#[test]
+fn every_stored_expression_is_bounded() {
+    let mut s = source();
+    s.graphics.push(GraphicRole {
+        id: GraphicId(5),
+        layer: DrawingLayer::Courtyard,
+        side: Side::Component,
+        source: GraphicSource::Derived(DerivedGraphic::CourtyardFromExtents {
+            excess: Expr("0.25 mm".into()),
+            round: Expr("0.05 mm".into()),
+        }),
+        width: Expr("0.05 mm".into()),
+        fill: Fill::None,
+    });
+    assert_eq!(s.expressions().len(), 3);
+    assert!(s.within_bounds());
+    if let Some(GraphicSource::Derived(DerivedGraphic::CourtyardFromExtents { round, .. })) =
+        s.graphics.first_mut().map(|g| &mut g.source)
+    {
+        round.0 = "1".repeat(MAX_EXPR + 1);
+    }
+    assert!(!s.within_bounds(), "a nested expression is bounded too");
+}

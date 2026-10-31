@@ -14,7 +14,8 @@ use crate::instances::{self, Regroup, Resolved, UnitCarry};
 pub use crate::instances::{RegroupAction, UnitTarget};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Decorations, FootprintDefinition, Graphic,
-    PackageDefinition, Pad, Pin, PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
+    PackageDefinition, Pad, PadKind, PadShape, PasteRule, Pin, PinDirection, PinText,
+    SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
 use crate::{erc, layout, nets, schematic, validate};
@@ -220,6 +221,186 @@ fn local_pad(pad: Option<&Pad>) -> String {
         )
     })
     .unwrap_or_else(|| "removed".into())
+}
+
+/// What changed on one kept pad, by aspect: moved, rotated, reshaped,
+/// kind or side, terminal, number, hole, mask and paste, vias. Rotations
+/// compare canonically per shape symmetry.
+fn pad_changes(a: &Pad, b: &Pad) -> Vec<String> {
+    let mut out = Vec::new();
+    if a.position != b.position {
+        out.push(format!("moves {:?} → {:?} mm", a.position, b.position));
+    }
+    let (ra, rb) = (
+        a.shape.canonical_rotation(a.rotation_deg),
+        b.shape.canonical_rotation(b.rotation_deg),
+    );
+    if a.shape != b.shape {
+        out.push(format!(
+            "is reshaped {} → {}",
+            shape_label(&a.shape),
+            shape_label(&b.shape)
+        ));
+    }
+    if (ra - rb).abs() > 1e-9 {
+        out.push(format!("turns {ra}° → {rb}°"));
+    }
+    if a.kind != b.kind || a.side != b.side {
+        out.push(format!(
+            "kind {:?} on {:?} → {:?} on {:?}",
+            a.kind, a.side, b.kind, b.side
+        ));
+    }
+    if a.terminal != b.terminal {
+        let t = |t: Option<crate::ids::PackageTerminalId>| {
+            t.map_or_else(|| "none".to_string(), |t| t.to_string())
+        };
+        out.push(format!(
+            "lands package terminal {} → {}",
+            t(a.terminal),
+            t(b.terminal)
+        ));
+    }
+    if a.number != b.number {
+        out.push(format!(
+            "is renumbered ‘{}’ → ‘{}’ (display only)",
+            a.number, b.number
+        ));
+    }
+    if a.hole != b.hole {
+        out.push(format!("hole {:?} → {:?}", a.hole, b.hole));
+    }
+    if a.mask != b.mask || a.paste != b.paste {
+        out.push(format!(
+            "mask {:?} → {:?}, paste {} → {}",
+            a.mask,
+            b.mask,
+            paste_label(&a.paste),
+            paste_label(&b.paste)
+        ));
+    }
+    if a.vias != b.vias {
+        out.push(format!("pad vias {} → {}", a.vias.len(), b.vias.len()));
+    }
+    out
+}
+
+fn shape_label(shape: &PadShape) -> String {
+    match shape {
+        PadShape::Rect { size } => format!("rect {size:?} mm"),
+        PadShape::RoundRect {
+            size, radius_ratio, ..
+        } => format!("rounded rect {size:?} mm, ratio {radius_ratio}"),
+        PadShape::Circle { diameter } => format!("circle ⌀{diameter} mm"),
+        PadShape::Oblong { size } => format!("oblong {size:?} mm"),
+        PadShape::Custom { outline } => {
+            format!("custom outline of {} segments", outline.segments.len())
+        }
+    }
+}
+
+fn paste_label(paste: &PasteRule) -> String {
+    match paste {
+        PasteRule::Windows(w) => format!("{} windows", w.len()),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Footprint-wide differences: drawings by graphic ID (presentation only),
+/// polarity, pad defaults and array growth or shrink.
+fn footprint_details(
+    plan: &mut UpdatePlan,
+    designator: &str,
+    a: &FootprintDefinition,
+    b: &FootprintDefinition,
+) {
+    let old: BTreeMap<GraphicId, _> = a.graphics.iter().map(|g| (g.id, g)).collect();
+    let new: BTreeMap<GraphicId, _> = b.graphics.iter().map(|g| (g.id, g)).collect();
+    for layer in [
+        crate::library::DrawingLayer::Silkscreen,
+        crate::library::DrawingLayer::Courtyard,
+        crate::library::DrawingLayer::Assembly,
+    ] {
+        let on = |g: &&crate::library::FootprintGraphic| g.layer == layer;
+        let added = new
+            .iter()
+            .filter(|(id, g)| on(g) && !old.contains_key(id))
+            .count();
+        let removed = old
+            .iter()
+            .filter(|(id, g)| on(g) && !new.contains_key(id))
+            .count();
+        let changed = new
+            .iter()
+            .filter(|(id, g)| on(g) && old.get(id).is_some_and(|o| o != *g))
+            .count();
+        if (added, removed, changed) != (0, 0, 0) {
+            plan.detail(format!(
+                "{designator}: footprint {layer:?} graphics: {added} added, {removed} removed, {changed} changed (presentation only; terminals and nets unchanged)."
+            ));
+        }
+    }
+    if a.polarity != b.polarity {
+        let pad = |p: &Option<crate::library::Polarity>| {
+            p.as_ref()
+                .map_or_else(|| "none".to_string(), |p| p.pad.to_string())
+        };
+        plan.detail(format!(
+            "{designator}: footprint pin-1 polarity pad {} → {}.",
+            pad(&a.polarity),
+            pad(&b.polarity)
+        ));
+    }
+    if a.defaults != b.defaults {
+        plan.detail(format!(
+            "{designator}: footprint mask expansion {} → {} mm, paste reduction {} → {} mm.",
+            a.defaults.mask_expansion_mm,
+            b.defaults.mask_expansion_mm,
+            a.defaults.paste_reduction_mm,
+            b.defaults.paste_reduction_mm
+        ));
+    }
+    let keyed = |f: &FootprintDefinition| -> BTreeMap<u32, Vec<crate::ids::PadId>> {
+        let mut by_array: BTreeMap<u32, Vec<crate::ids::PadId>> = BTreeMap::new();
+        if let Some(source) = &f.source {
+            for k in &source.keys {
+                let crate::library::footprint_source::GenerationKey::Array { array, .. } = k.key;
+                by_array.entry(array.0).or_default().push(k.pad);
+            }
+        }
+        by_array
+    };
+    let (ka, kb) = (keyed(a), keyed(b));
+    for array in ka.keys().chain(kb.keys()).collect::<BTreeSet<_>>() {
+        let before = ka.get(array).map_or(&[][..], Vec::as_slice);
+        let after = kb.get(array).map_or(&[][..], Vec::as_slice);
+        let grown: Vec<_> = after.iter().filter(|p| !before.contains(p)).collect();
+        let retired: Vec<_> = before.iter().filter(|p| !after.contains(p)).collect();
+        if grown.is_empty() && retired.is_empty() {
+            continue;
+        }
+        let unresolved = grown
+            .iter()
+            .filter(|id| b.pad(***id).is_some_and(|p| p.terminal.is_none()))
+            .count();
+        let list = |ids: &[&crate::ids::PadId]| {
+            if ids.is_empty() {
+                "none".to_string()
+            } else {
+                ids.iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        };
+        plan.detail(format!(
+            "{designator}: footprint array {array} {} → {} instances; new pads {} ({unresolved} without a package terminal), retired pads {}.",
+            before.len(),
+            after.len(),
+            list(&grown),
+            list(&retired)
+        ));
+    }
 }
 
 fn world_pad(pad: Option<&layout::WorldPad>) -> String {
@@ -695,23 +876,42 @@ fn definition_details(
                 });
             }
         }
-        if replacement != Some(pad) {
-            plan.detail(format!(
-                "{designator}: footprint pad {} {} → {}.",
+        match replacement {
+            None => plan.detail(format!(
+                "{designator}: footprint pad {} ‘{}’ is retired ({}); copper touching it is listed below.",
                 pad.id,
-                local_pad(Some(pad)),
-                local_pad(replacement)
-            ));
+                pad.number,
+                local_pad(Some(pad))
+            )),
+            Some(next) => {
+                for aspect in pad_changes(pad, next) {
+                    plan.detail(format!(
+                        "{designator}: footprint pad {} ‘{}’ {aspect}.",
+                        pad.id, next.number
+                    ));
+                }
+            }
         }
     }
     for pad in b_pads {
         if !a_pads.iter().any(|p| p.id == pad.id) {
             plan.detail(format!(
-                "{designator}: add footprint pad {} {}.",
+                "{designator}: add footprint pad {} ‘{}’ {}{}.",
                 pad.id,
-                local_pad(Some(pad))
+                pad.number,
+                local_pad(Some(pad)),
+                if pad.terminal.is_none()
+                    && matches!(pad.kind, PadKind::Smd | PadKind::PlatedThrough)
+                {
+                    " (unresolved: no package terminal chosen)"
+                } else {
+                    ""
+                }
             ));
         }
+    }
+    if let (Some(fa), Some(fb)) = (a.footprint, b.footprint) {
+        footprint_details(plan, designator, fa, fb);
     }
     let datum = |f: Option<&FootprintDefinition>| f.map(|f| f.datum);
     if datum(a.footprint) != datum(b.footprint) {
@@ -1225,7 +1425,14 @@ pub(crate) fn preview(
                 conflicts.insert(track.id);
                 affected_tracks.insert(track.id);
             }
-            if touched_before && !touched_after && !conflicts.contains(&track.id) {
+            // The part stays placed but this pad is gone or unconnected.
+            let retired = after.is_none() && next.placements.iter().any(|p| p.instance == key.0);
+            if touched_before && retired {
+                plan.warnings.push(format!(
+                    "Track {} touches instance {} pad {}, which the update retires or disconnects; copper stays in place for rerouting.",
+                    track.id, key.0, key.1
+                ));
+            } else if touched_before && !touched_after && !conflicts.contains(&track.id) {
                 plan.warnings.push(format!(
                     "Track {} is detached from instance {} pad {} after its geometry changes; copper stays in place for rerouting.",
                     track.id, key.0, key.1

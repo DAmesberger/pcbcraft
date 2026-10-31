@@ -13,6 +13,7 @@ mod package;
 mod publish;
 pub mod samples;
 mod symbol;
+pub mod templates;
 
 pub use binding::{BindingDefinition, TerminalMap};
 pub use component::{
@@ -20,9 +21,10 @@ pub use component::{
 };
 pub use drafts::{Draft, DraftEdit, Drafts};
 pub use footprint::{
-    ApertureId, CornerMask, Datum, FootprintDefinition, Hole, HoleShape, MASK_EXPANSION_MM,
-    MAX_OUTLINE_SEGMENTS, MAX_PAD_VIAS, MAX_PASTE_WINDOWS, MaskRule, Outline, Pad, PadDefaults,
-    PadKind, PadShape, PadSide, PadVia, PasteRule, PasteWindow, Segment,
+    ApertureId, CHECK_CHORD_MM, CornerMask, Datum, FootprintDefinition, Hole, HoleShape,
+    MASK_EXPANSION_MM, MAX_OUTLINE_SEGMENTS, MAX_PAD_VIAS, MAX_PASTE_WINDOWS, MIN_MASK_WEB_MM,
+    MaskRule, Outline, Pad, PadDefaults, PadKind, PadShape, PadSide, PadVia, PasteRule,
+    PasteWindow, Segment,
 };
 pub use footprint_source::{FootprintEvaluator, FootprintSource};
 pub use graphics::{

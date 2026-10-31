@@ -9,11 +9,16 @@ use super::package::PackageDefinition;
 use super::publish::{issue, object};
 use super::{Library, MAX_PADS};
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{Bounds, Point, Shape, finite_within, point_valid, size_valid};
+use crate::geometry::{Bounds, Point, Shape, finite_within, point_valid};
 use crate::ids::{DefinitionId, PackageRef, PackageTerminalId, PadId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+mod checks;
+mod geometry;
+pub use checks::MIN_MASK_WEB_MM;
+pub use geometry::CHECK_CHORD_MM;
 
 /// Default solder-mask expansion around a pad, in mm (an estimated prototype
 /// default, not a manufacturer qualification).
@@ -453,7 +458,8 @@ impl Pad {
     }
 
     fn within_bounds(&self) -> bool {
-        self.vias.len() <= MAX_PAD_VIAS
+        self.number.len() <= super::MAX_LABEL
+            && self.vias.len() <= MAX_PAD_VIAS
             && match &self.shape {
                 PadShape::Custom { outline } => outline.segments.len() <= MAX_OUTLINE_SEGMENTS,
                 _ => true,
@@ -494,14 +500,27 @@ impl FootprintDefinition {
         self.pads.len() <= MAX_PADS
             && self.pads.iter().all(Pad::within_bounds)
             && self.graphics.len() <= super::graphics::MAX_GRAPHICS
+            && self.graphics.iter().all(|g| g.item.within_bounds())
+            && self
+                .graphics
+                .iter()
+                .map(|g| g.item.vertices())
+                .sum::<usize>()
+                <= super::graphics::MAX_VERTICES
+            && self
+                .polarity
+                .as_ref()
+                .is_none_or(|p| p.markers.len() <= super::graphics::MAX_POLARITY_MARKERS)
             && self.source.as_ref().is_none_or(|s| s.within_bounds())
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
         point_valid(self.datum.offset)
             && self.datum.rotation_deg.is_finite()
-            && self.defaults.mask_expansion_mm.is_finite()
-            && self.defaults.paste_reduction_mm.is_finite()
+            && finite_within(&[
+                self.defaults.mask_expansion_mm,
+                self.defaults.paste_reduction_mm,
+            ])
             && self.pads.iter().all(Pad::finite)
             && self.graphics.iter().all(|g| g.item.finite())
     }
@@ -524,15 +543,7 @@ impl FootprintDefinition {
                 vec![this],
             ));
         }
-        for pad in &self.pads {
-            if !size_valid(&pad.shape.extent()) {
-                out.push(issue(
-                    "footprint.pad_size",
-                    format!("Pad {} needs a positive finite size.", pad.id),
-                    vec![object(id, pad.id.0)],
-                ));
-            }
-        }
+        self.local_findings(id, out);
         let Some(package) = library.package(self.package) else {
             out.push(issue(
                 "reference.missing",

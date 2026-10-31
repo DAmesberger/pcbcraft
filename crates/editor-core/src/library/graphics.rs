@@ -644,15 +644,26 @@ pub(super) fn graphic_findings(
     graphic: &Graphic,
     out: &mut Vec<Finding>,
 ) {
-    let this = vec![object(definition, graphic.id.0)];
-    match &graphic.item {
+    item_findings(definition, graphic.id, &graphic.item, out);
+}
+
+/// Blocking findings of one drawn item with ID `id`, for symbols and
+/// footprints alike.
+pub(super) fn item_findings(
+    definition: DefinitionId,
+    id: GraphicId,
+    item: &Item,
+    out: &mut Vec<Finding>,
+) {
+    let this = vec![object(definition, id.0)];
+    match item {
         Item::Shape { shape, width, fill } => {
             if degenerate(shape) {
                 out.push(issue(
                     "graphic.degenerate",
                     format!(
                         "Graphic {} has no length or area, too few points or a radius below 0.01 mm.",
-                        graphic.id
+                        id
                     ),
                     this.clone(),
                 ));
@@ -662,7 +673,7 @@ pub(super) fn graphic_findings(
                     "graphic.radius_too_large",
                     format!(
                         "Graphic {} rounds a corner more than its edges allow, or rounds an open end.",
-                        graphic.id
+                        id
                     ),
                     this.clone(),
                 ));
@@ -672,21 +683,21 @@ pub(super) fn graphic_findings(
             {
                 out.push(issue(
                     "graphic.polygon_self_intersecting",
-                    format!("Polygon {} crosses itself.", graphic.id),
+                    format!("Polygon {} crosses itself.", id),
                     this.clone(),
                 ));
             }
             if *width <= 0.0 && *fill == Fill::None {
                 out.push(issue(
                     "graphic.invisible",
-                    format!("Graphic {} has no stroke and no fill.", graphic.id),
+                    format!("Graphic {} has no stroke and no fill.", id),
                     this.clone(),
                 ));
             }
             if *fill != Fill::None && !shape.is_closed() {
                 out.push(issue(
                     "graphic.fill_open",
-                    format!("Graphic {} is open and cannot be filled.", graphic.id),
+                    format!("Graphic {} is open and cannot be filled.", id),
                     this,
                 ));
             }
@@ -701,14 +712,14 @@ pub(super) fn graphic_findings(
                         "text.too_long",
                         format!(
                             "Text {} is longer than {MAX_LABEL} bytes or {MAX_TEXT_LINES} lines.",
-                            graphic.id
+                            id
                         ),
                         this,
                     )
                 } else {
                     issue(
                         "text.empty",
-                        format!("Text {} needs printable content.", graphic.id),
+                        format!("Text {} needs printable content.", id),
                         this,
                     )
                 });
@@ -935,11 +946,15 @@ pub enum SymbolHit {
     Field,
 }
 
-/// Advisory findings for one draft against the authoring grid. They never
+/// Advisory findings for one draft: symbols against the authoring grid,
+/// footprints for courtyard, pin-1 polarity and mask webs. They never
 /// block publishing and never touch stored files.
 pub fn lint(draft: &Draft, _library: &Library, grid: &Grid) -> Vec<Finding> {
     let mut out = Vec::new();
     let this = ObjectRef::Definition { id: draft.id };
+    if let Definition::Footprint(footprint) = &draft.definition {
+        out.extend(footprint.lint(draft.id));
+    }
     if let Definition::Symbol(symbol) = &draft.definition {
         let ratio = SHEET_GRID_MM / grid.symbol_mm;
         if (ratio - ratio.round()).abs() > 1e-6 {

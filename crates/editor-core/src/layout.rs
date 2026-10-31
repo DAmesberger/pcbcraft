@@ -543,6 +543,7 @@ pub fn validate(project: &Project) -> Result<()> {
     }
     let mut placed = BTreeSet::new();
     let mut pad_count = 0usize;
+    let mut graphic_vertices = 0usize;
     for placement in &project.placements {
         if !placed.insert(placement.instance) || project.instance(placement.instance).is_none() {
             return invalid("duplicate or unknown placement instance");
@@ -557,6 +558,18 @@ pub fn validate(project: &Project) -> Result<()> {
         pad_count = pad_count.saturating_add(physical.footprint.definition.pads.len());
         if pad_count > MAX_PLACED_PADS {
             return invalid("prototype supports at most 4096 placed pads");
+        }
+        graphic_vertices = graphic_vertices.saturating_add(
+            physical
+                .footprint
+                .definition
+                .graphics
+                .iter()
+                .map(|g| g.item.vertices())
+                .sum::<usize>(),
+        );
+        if graphic_vertices > MAX_PLACED_GRAPHIC_VERTICES {
+            return invalid("prototype supports at most 262144 placed footprint graphic vertices");
         }
         if !point_valid(placement.position)
             || !placement.rotation_deg.is_finite()
