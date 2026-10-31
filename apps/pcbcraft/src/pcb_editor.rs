@@ -1,20 +1,34 @@
 //! PCB content for Solidcraft's shared shell. Controls follow upstream
 //! ui_kit/layout.rs and fields.rs; gesture previews commit on release, following
 //! drag_snap.rs. The root owns the native Solidcraft viewport and its camera.
+//!
+//! Layout draws only what core places ([`layout::placed_pads`],
+//! [`layout::placed_graphics`]) and picks through core queries
+//! ([`layout::pick_pad`], [`layout::pick_graphic`]); it never decides pad or
+//! graphic geometry. The cached board is rebuilt per document revision, not
+//! on selection, layer or camera changes.
 use crate::kit::{self, Tone};
+use crate::symbol_view::{self, View};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
     Engine, Fabrication, Id, Layer, MaskColour, MaskFinish, Operation, PadFinish, Placement, Point,
-    Project, SilkscreenColour, Track, instances,
-    layout::{self, LayoutCommand, RouteRequest, WorldPad},
+    Project, SilkscreenColour, Track,
+    geometry::{Shape as CoreShape, Transform2},
+    instances,
+    layout::{
+        self, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
+        RouteRequest, WorldPad,
+    },
+    library::{PadKind, PlacedText, TextMetric},
     schematic,
     updates::Change,
 };
 use solidcraft_ui_egui::{
     fonts,
-    theme::Tokens,
+    theme::{self, Tokens},
     ui_kit::{self, Button},
 };
+use std::collections::BTreeSet;
 
 /// Bound on typed placement coordinates (mm); the board is far smaller.
 const COORDINATE_LIMIT: f64 = 10_000.0;
@@ -26,6 +40,127 @@ enum Tool {
     #[default]
     Select,
     Route,
+}
+
+/// Which board layers Layout draws and picks. Hidden layers do not pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Layers {
+    copper_top: bool,
+    copper_bottom: bool,
+    silk_top: bool,
+    silk_bottom: bool,
+    courtyard: bool,
+    assembly: bool,
+    holes: bool,
+}
+
+impl Default for Layers {
+    fn default() -> Self {
+        Self {
+            copper_top: true,
+            copper_bottom: true,
+            silk_top: true,
+            silk_bottom: true,
+            courtyard: true,
+            assembly: true,
+            holes: true,
+        }
+    }
+}
+
+impl Layers {
+    fn copper(&self, layer: Layer) -> bool {
+        match layer {
+            Layer::Top => self.copper_top,
+            Layer::Bottom => self.copper_bottom,
+        }
+    }
+    /// A through-hole pad shows while either copper layer does; a bare
+    /// hole with the hole layer.
+    fn pad(&self, pad: &PlacedPad) -> bool {
+        match pad.pad.kind {
+            PadKind::PlatedThrough => self.copper_top || self.copper_bottom,
+            PadKind::NonPlatedHole => self.holes,
+            PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => self.copper(pad.layer),
+        }
+    }
+    fn drawing(&self, layer: BoardDrawing) -> bool {
+        match layer {
+            BoardDrawing::Silkscreen(Layer::Top) => self.silk_top,
+            BoardDrawing::Silkscreen(Layer::Bottom) => self.silk_bottom,
+            BoardDrawing::Courtyard(_) => self.courtyard,
+            BoardDrawing::Assembly(_) => self.assembly,
+        }
+    }
+}
+
+/// The board side of a drawing layer.
+fn drawing_side(layer: BoardDrawing) -> Layer {
+    match layer {
+        BoardDrawing::Silkscreen(side)
+        | BoardDrawing::Courtyard(side)
+        | BoardDrawing::Assembly(side) => side,
+    }
+}
+
+/// One placed pad with its board outline and holes, cached per revision.
+struct BoardPad {
+    placed: PlacedPad,
+    outline: CoreShape,
+    holes: Vec<PlacedHole>,
+}
+
+/// Board millimetres to screen pixels, seen from above or (mirrored in x
+/// about the board centre) from below.
+#[derive(Clone, Copy)]
+struct BoardView {
+    view: View,
+    flip: Option<Transform2>,
+}
+
+impl BoardView {
+    fn new(view: View, board_width: f64, from_bottom: bool) -> Self {
+        Self {
+            view,
+            // x → width − x: reflect across the x-axis, then turn 180°.
+            flip: from_bottom.then_some(Transform2 {
+                translate: [board_width, 0.0],
+                rotation_deg: 180.0,
+                mirror: true,
+            }),
+        }
+    }
+    fn seen(&self, p: Point) -> Point {
+        self.flip.map_or(p, |f| f.apply(p))
+    }
+    fn screen(&self, p: Point) -> Pos2 {
+        self.view.screen(self.seen(p))
+    }
+    /// The flip is its own inverse.
+    fn world(&self, p: Pos2) -> Point {
+        self.seen(self.view.world(p))
+    }
+    fn shape(&self, shape: &CoreShape, delta: Point) -> CoreShape {
+        let moved = if delta == [0.0, 0.0] {
+            shape.clone()
+        } else {
+            shape.translated(delta)
+        };
+        match self.flip {
+            Some(f) => moved.transformed(&f),
+            None => moved,
+        }
+    }
+    fn text(&self, text: &PlacedText, delta: Point) -> PlacedText {
+        let mut seen = text.clone();
+        seen.at = [text.at[0] + delta[0], text.at[1] + delta[1]];
+        if let Some(f) = self.flip {
+            seen.at = f.apply(seen.at);
+            seen.rotation_deg = f.apply_angle(text.rotation_deg).rem_euclid(360.0);
+            seen.mirrored = !text.mirrored;
+        }
+        seen
+    }
 }
 
 struct DragAirwires {
@@ -58,6 +193,16 @@ pub struct PcbEditor {
     world_pads: Vec<WorldPad>,
     airwires: Vec<(WorldPad, WorldPad)>,
     issues: Vec<pcbcraft_core::Finding>,
+    pads: Vec<PlacedPad>,
+    board_pads: Vec<BoardPad>,
+    graphics: Vec<PlacedGraphic>,
+    /// Instances whose footprint draws an assembly or courtyard outline;
+    /// the others get the package envelope as their outline.
+    outlined: BTreeSet<Id>,
+    /// Instances whose designator a placed text already shows.
+    labelled: BTreeSet<Id>,
+    layers: Layers,
+    from_bottom: bool,
 }
 
 impl Default for PcbEditor {
@@ -87,6 +232,13 @@ impl Default for PcbEditor {
             world_pads: vec![],
             airwires: vec![],
             issues: vec![],
+            pads: vec![],
+            board_pads: vec![],
+            graphics: vec![],
+            outlined: BTreeSet::new(),
+            labelled: BTreeSet::new(),
+            layers: Layers::default(),
+            from_bottom: false,
         }
     }
 }
@@ -127,6 +279,7 @@ impl PcbEditor {
             self.world_pads = layout::pads(engine.project());
             self.airwires = layout::airwires(engine.project());
             self.issues = layout::checks(engine.project());
+            self.cache_board(engine.project());
             self.cached_revision = Some(engine.revision());
             if self
                 .instance
@@ -163,6 +316,42 @@ impl PcbEditor {
             }
             self.property_key = Some(key);
         }
+    }
+
+    /// Place pads and graphics once per revision.
+    fn cache_board(&mut self, project: &Project) {
+        self.pads = layout::placed_pads(project);
+        self.board_pads = self
+            .pads
+            .iter()
+            .map(|placed| BoardPad {
+                outline: placed.outline(),
+                holes: placed.holes(),
+                placed: placed.clone(),
+            })
+            .collect();
+        self.graphics = layout::placed_graphics(project);
+        self.outlined = self
+            .graphics
+            .iter()
+            .filter(|g| {
+                matches!(
+                    g.layer,
+                    BoardDrawing::Assembly(_) | BoardDrawing::Courtyard(_)
+                )
+            })
+            .map(|g| g.instance)
+            .collect();
+        self.labelled = self
+            .graphics
+            .iter()
+            .filter(|g| {
+                matches!(&g.item, PlacedItem::Text(text) if project
+                    .instance(g.instance)
+                    .is_some_and(|i| !i.designator.is_empty() && text.text == i.designator))
+            })
+            .map(|g| g.instance)
+            .collect();
     }
 
     fn cancel_drag(&mut self) {
@@ -327,6 +516,7 @@ impl PcbEditor {
             board_section(ui, project)
         };
         self.routing_section(ui, project);
+        self.layers_section(ui);
         self.checks_section(ui);
         operation
     }
@@ -421,6 +611,23 @@ impl PcbEditor {
         });
     }
 
+    /// Layer visibility and the board side Layout is seen from. Display
+    /// state only: nothing here changes the document.
+    fn layers_section(&mut self, ui: &mut Ui) {
+        kit::section(ui, "pcb-layers", "Layers", true, None, |ui| {
+            let l = &mut self.layers;
+            kit::check_row(ui, "Top copper", &mut l.copper_top);
+            kit::check_row(ui, "Bottom copper", &mut l.copper_bottom);
+            kit::check_row(ui, "Top silkscreen", &mut l.silk_top);
+            kit::check_row(ui, "Bottom silkscreen", &mut l.silk_bottom);
+            kit::check_row(ui, "Courtyard", &mut l.courtyard);
+            kit::check_row(ui, "Assembly", &mut l.assembly);
+            kit::check_row(ui, "Holes", &mut l.holes);
+            kit::check_row(ui, "View from bottom", &mut self.from_bottom);
+            kit::note(ui, "Hidden layers are not picked.");
+        });
+    }
+
     fn checks_section(&self, ui: &mut Ui) {
         let count = self.issues.len();
         kit::section(
@@ -468,18 +675,21 @@ impl PcbEditor {
         let origin = rect.center()
             + self.pan
             + egui::vec2(-project.board_size[0] as f32, project.board_size[1] as f32) * scale * 0.5;
-        let screen = |p: Point| origin + egui::vec2(p[0] as f32, -p[1] as f32) * scale;
-        let world = |p: Pos2| {
-            [
-                f64::from((p.x - origin.x) / scale),
-                f64::from((origin.y - p.y) / scale),
-            ]
-        };
+        let view = BoardView::new(
+            View { origin, scale },
+            project.board_size[0],
+            self.from_bottom,
+        );
+        let screen = |p: Point| view.screen(p);
+        let world = |p: Pos2| view.world(p);
         let painter = ui.painter().with_clip_rect(rect);
+        let metric = symbol_view::metric(&painter);
         let pointer = response
             .interact_pointer_pos()
             .or_else(|| ui.input(|i| i.pointer.hover_pos()));
         let cursor = pointer.map(world);
+        // Strokes and text pick within a few pixels.
+        let tolerance = f64::from(4.0 / scale);
         let mut operation = None;
         if response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.route_start = None;
@@ -493,7 +703,7 @@ impl PcbEditor {
             let start = ui.input(|i| i.pointer.press_origin()).or(pointer);
             if let Some(start) = start {
                 let at = world(start);
-                if let Some(id) = pick_instance(project, &self.world_pads, at) {
+                if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
                     self.set_selection(Some(id), None, None);
                     if let Some(placement) = project
                         .placements
@@ -526,21 +736,9 @@ impl PcbEditor {
         if response.clicked_by(PointerButton::Primary)
             && let Some(at) = cursor
         {
-            let snapped_pad = self
-                .world_pads
-                .iter()
-                .filter(|p| p.layer == self.layer)
-                .filter(|p| {
-                    screen(p.position).distance(screen(at)) < 8.0
-                        || layout::point_in_polygon(at, &layout::pad_polygon(p))
-                })
-                .min_by(|a, b| {
-                    screen(a.position)
-                        .distance(screen(at))
-                        .total_cmp(&screen(b.position).distance(screen(at)))
-                });
             if self.tool == Tool::Route {
-                let destination = snapped_pad.map(|p| p.position).unwrap_or_else(|| snap(at));
+                let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
+                let destination = snapped.map(|(c, _)| c).unwrap_or_else(|| snap(at));
                 if let Some(start) = self.route_start {
                     if let Some(net) = self.net {
                         operation = Some(Operation::Layout(LayoutCommand::Route {
@@ -557,34 +755,144 @@ impl PcbEditor {
                         self.route_start = None;
                     }
                 } else {
-                    if let Some(pad) = snapped_pad {
-                        self.net = Some(pad.net);
+                    if let Some((_, Some(net))) = snapped {
+                        self.net = Some(net);
                         self.highlighted = self.net;
                     }
                     if self.net.is_some() {
                         self.route_start = Some(destination);
                     }
                 }
-            } else if let Some(pad) = self
-                .world_pads
-                .iter()
-                .rev()
-                .find(|p| layout::point_in_polygon(at, &layout::pad_polygon(p)))
-            {
-                let (instance, net) = (pad.instance, pad.net);
-                self.set_selection(Some(instance), None, Some(net));
-            } else if let Some(track) = project
-                .tracks
-                .iter()
-                .rev()
-                .find(|track| layout::point_in_polygon(at, &layout::track_polygon(track)))
-            {
-                self.set_selection(None, Some(track.id), Some(track.net));
             } else {
-                self.set_selection(pick_instance(project, &self.world_pads, at), None, None);
+                self.select_at(project, at, tolerance, metric);
             }
         }
         self.refresh_drag_airwires(engine);
+        self.paint_board(&painter, view, project);
+        if let (Some(start), Some(at)) = (self.route_start, cursor) {
+            let end = self
+                .route_snap(at, scale)
+                .map(PlacedPad::center)
+                .unwrap_or_else(|| snap(at));
+            painter.line_segment(
+                [screen(start), screen(end)],
+                Stroke::new((self.width as f32 * scale).max(1.0), t.body_selected),
+            );
+            painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+        }
+        painter.text(
+            rect.left_bottom() + egui::vec2(t.space_16, -t.space_16),
+            Align2::LEFT_BOTTOM,
+            format!(
+                "{} · {:?} copper · grid 0.5 mm · {} airwires{}",
+                if self.tool == Tool::Route {
+                    "Route"
+                } else {
+                    "Select / move"
+                },
+                self.layer,
+                self.visible_airwires().len(),
+                if self.from_bottom {
+                    " · viewed from bottom"
+                } else {
+                    ""
+                }
+            ),
+            FontId::proportional(t.font_small),
+            t.text_dim,
+        );
+        operation
+    }
+
+    /// The pad a route click at `at` snaps to: a visible pad with a net and
+    /// copper on the routing layer, under the pointer or within 8 pixels of
+    /// its centre, nearest first.
+    fn route_snap(&self, at: Point, scale: f32) -> Option<&PlacedPad> {
+        let reach = f64::from(8.0 / scale);
+        self.pads
+            .iter()
+            .filter(|p| p.net.is_some() && p.on_copper(self.layer) && self.layers.pad(p))
+            .map(|p| (p, pcbcraft_core::geometry::distance(p.center(), at)))
+            .filter(|(p, d)| *d < reach || p.contains(at))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(p, _)| p)
+    }
+
+    /// Select what a click at `at` hits, topmost first among visible
+    /// layers: a pad (and its net), a track, then a part by its graphics or
+    /// outline; empty board clears the selection.
+    fn select_at(&mut self, project: &Project, at: Point, tolerance: f64, metric: TextMetric) {
+        let layers = self.layers;
+        if let Some(pad) = layout::pick_pad(&self.pads, at, |p| layers.pad(p)) {
+            let (instance, net) = (pad.instance, pad.net);
+            self.set_selection(Some(instance), None, net);
+        } else if let Some(track) = project.tracks.iter().rev().find(|track| {
+            layers.copper(track.layer)
+                && layout::point_in_polygon(at, &layout::track_polygon(track))
+        }) {
+            self.set_selection(None, Some(track.id), Some(track.net));
+        } else {
+            let instance = self.pick_instance(project, at, tolerance, metric);
+            self.set_selection(instance, None, None);
+        }
+    }
+
+    /// The part under `at`: its visible pads, then its visible graphics,
+    /// then its package envelope.
+    fn pick_instance(
+        &self,
+        project: &Project,
+        at: Point,
+        tolerance: f64,
+        metric: TextMetric,
+    ) -> Option<Id> {
+        let layers = self.layers;
+        layout::pick_pad(&self.pads, at, |p| layers.pad(p))
+            .map(|p| p.instance)
+            .or_else(|| {
+                layout::pick_graphic(&self.graphics, at, tolerance, metric, |g| {
+                    layers.drawing(g.layer)
+                })
+                .map(|g| g.instance)
+            })
+            .or_else(|| {
+                project
+                    .placements
+                    .iter()
+                    .rev()
+                    .find(|p| {
+                        body_polygon(project, p)
+                            .is_some_and(|polygon| layout::point_in_polygon(at, &polygon))
+                    })
+                    .map(|p| p.instance)
+            })
+    }
+
+    /// How far the dragged placement's preview has moved `instance`.
+    fn drag_delta(&self, instance: Id) -> Point {
+        match (&self.drag, self.drag_position) {
+            (Some((placement, _)), Some(position)) if placement.instance == instance => [
+                position[0] - placement.position[0],
+                position[1] - placement.position[1],
+            ],
+            _ => [0.0, 0.0],
+        }
+    }
+
+    /// Paint the board as seen from the chosen side, far side first: its
+    /// drawings, then its copper, through-hole copper, the near copper,
+    /// holes, then the near drawings, airwires, outlines and labels.
+    fn paint_board(&self, painter: &egui::Painter, view: BoardView, project: &Project) {
+        let t = Tokens::get();
+        let ink = BoardInk::get();
+        let scale = view.view.scale;
+        let screen = |p: Point| view.screen(p);
+        let near = if self.from_bottom {
+            Layer::Bottom
+        } else {
+            Layer::Top
+        };
+        let far = opposite(near);
         let board = [
             [0.0, 0.0],
             [project.board_size[0], 0.0],
@@ -615,6 +923,26 @@ impl PcbEditor {
                 Stroke::new(0.5, t.grid),
             );
         }
+        self.paint_drawings(painter, view, &ink, far, true);
+        self.paint_copper(painter, view, project, Some(far));
+        self.paint_copper(painter, view, project, None);
+        self.paint_copper(painter, view, project, Some(near));
+        if self.layers.holes {
+            for pad in &self.board_pads {
+                let delta = self.drag_delta(pad.placed.instance);
+                for hole in &pad.holes {
+                    let stroke = (!hole.plated).then(|| Stroke::new(1.0, ink.unplated));
+                    symbol_view::paint_shape(
+                        painter,
+                        view.view,
+                        &view.shape(&hole.shape, delta),
+                        Some(ink.drill),
+                        stroke,
+                    );
+                }
+            }
+        }
+        self.paint_drawings(painter, view, &ink, near, false);
         if self.show_airwires {
             for (a, b) in self.visible_airwires() {
                 painter.line_segment(
@@ -623,104 +951,219 @@ impl PcbEditor {
                 );
             }
         }
-        for track in &project.tracks {
-            let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
-            let ink = copper_color(track.layer, selected);
-            painter.add(Shape::convex_polygon(
-                layout::track_polygon(track).map(screen).to_vec(),
-                ink,
-                Stroke::NONE,
-            ));
-        }
         for placement in &project.placements {
+            let selected = self.instance == Some(placement.instance);
             let mut shown = placement.clone();
-            if self
-                .drag
-                .as_ref()
-                .is_some_and(|(p, _)| p.instance == placement.instance)
-                && let Some(position) = self.drag_position
-            {
-                shown.position = position;
+            let delta = self.drag_delta(placement.instance);
+            shown.position = [shown.position[0] + delta[0], shown.position[1] + delta[1]];
+            let outlined = self.outlined.contains(&placement.instance);
+            let labelled = self.labelled.contains(&placement.instance);
+            if outlined && labelled && !selected {
+                continue;
             }
-            if let Some(polygon) = body_polygon(project, &shown) {
-                let ink = if self.instance == Some(shown.instance) {
-                    t.body_selected
-                } else {
-                    t.text_dim
-                };
+            let Some(polygon) = body_polygon(project, &shown) else {
+                continue;
+            };
+            let color = if selected {
+                t.body_selected
+            } else {
+                t.text_dim
+            };
+            if !outlined || selected {
                 let vertices = polygon.map(screen);
                 for i in 0..4 {
-                    painter
-                        .line_segment([vertices[i], vertices[(i + 1) % 4]], Stroke::new(1.0, ink));
+                    painter.line_segment(
+                        [vertices[i], vertices[(i + 1) % 4]],
+                        Stroke::new(1.0, color),
+                    );
                 }
+            }
+            if !labelled {
                 let reference = project
                     .instance(shown.instance)
                     .map(|i| i.designator.as_str())
                     .unwrap_or("?");
+                let top = polygon
+                    .iter()
+                    .map(|p| screen(*p))
+                    .fold(f32::INFINITY, |y, p| y.min(p.y));
                 painter.text(
-                    screen(shown.position) + egui::vec2(0.0, -12.0),
+                    egui::pos2(screen(shown.position).x, top - 2.0),
                     Align2::CENTER_BOTTOM,
                     reference,
                     fonts::semibold(t.font_label),
-                    ink,
+                    color,
                 );
             }
         }
-        for pad in &self.world_pads {
-            let mut shown = pad.clone();
-            if let (Some((placement, _)), Some(position)) = (&self.drag, self.drag_position)
-                && placement.instance == shown.instance
-            {
-                shown.position[0] += position[0] - placement.position[0];
-                shown.position[1] += position[1] - placement.position[1];
-            }
-            let selected =
-                self.instance == Some(shown.instance) || self.highlighted == Some(shown.net);
-            painter.add(Shape::convex_polygon(
-                layout::pad_polygon(&shown).map(screen).to_vec(),
-                copper_color(shown.layer, selected),
-                Stroke::NONE,
-            ));
-            if scale > 7.0 {
+        if scale > 7.0 {
+            for pad in &self.board_pads {
+                if pad.placed.pad.number.is_empty() || !self.layers.pad(&pad.placed) {
+                    continue;
+                }
+                let delta = self.drag_delta(pad.placed.instance);
+                let c = pad.placed.center();
                 painter.text(
-                    screen(shown.position),
+                    screen([c[0] + delta[0], c[1] + delta[1]]),
                     Align2::CENTER_CENTER,
-                    shown.pad.to_string(),
+                    &pad.placed.pad.number,
                     FontId::proportional(t.font_small),
                     t.on_accent,
                 );
             }
         }
-        if let (Some(start), Some(at)) = (self.route_start, cursor) {
-            let end = self
-                .world_pads
-                .iter()
-                .find(|p| p.layer == self.layer && screen(p.position).distance(screen(at)) < 8.0)
-                .map(|p| p.position)
-                .unwrap_or_else(|| snap(at));
-            painter.line_segment(
-                [screen(start), screen(end)],
-                Stroke::new((self.width as f32 * scale).max(1.0), t.body_selected),
-            );
-            painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+    }
+
+    /// Copper of one side (tracks, then surface pads), or with `None` the
+    /// through-hole pads that span both.
+    fn paint_copper(
+        &self,
+        painter: &egui::Painter,
+        view: BoardView,
+        project: &Project,
+        side: Option<Layer>,
+    ) {
+        if let Some(layer) = side {
+            if !self.layers.copper(layer) {
+                return;
+            }
+            for track in project.tracks.iter().filter(|t| t.layer == layer) {
+                let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
+                painter.add(Shape::convex_polygon(
+                    layout::track_polygon(track)
+                        .map(|p| view.screen(p))
+                        .to_vec(),
+                    copper_color(track.layer, selected),
+                    Stroke::NONE,
+                ));
+            }
         }
-        painter.text(
-            rect.left_bottom() + egui::vec2(t.space_16, -t.space_16),
-            Align2::LEFT_BOTTOM,
-            format!(
-                "{} · {:?} copper · grid 0.5 mm · {} airwires",
-                if self.tool == Tool::Route {
-                    "Route"
+        let ink = BoardInk::get();
+        for pad in &self.board_pads {
+            let placed = &pad.placed;
+            let through = placed.pad.kind.through_hole();
+            match side {
+                Some(layer) if through || placed.layer != layer => continue,
+                None if !through => continue,
+                _ => {}
+            }
+            if !self.layers.pad(placed) {
+                continue;
+            }
+            let selected = self.instance == Some(placed.instance)
+                || (placed.net.is_some() && self.highlighted == placed.net);
+            let shape = view.shape(&pad.outline, self.drag_delta(placed.instance));
+            if placed.pad.kind == PadKind::NonPlatedHole {
+                // A bare hole has no copper: outline its keep-out land.
+                let color = if selected {
+                    copper_color(Layer::Top, true)
                 } else {
-                    "Select / move"
-                },
-                self.layer,
-                self.visible_airwires().len()
-            ),
-            FontId::proportional(t.font_small),
-            t.text_dim,
-        );
-        operation
+                    ink.unplated
+                };
+                symbol_view::paint_shape(
+                    painter,
+                    view.view,
+                    &shape,
+                    None,
+                    Some(Stroke::new(1.0, color)),
+                );
+                continue;
+            }
+            let layer = match side {
+                Some(layer) => layer,
+                None if self.from_bottom => Layer::Bottom,
+                None => Layer::Top,
+            };
+            symbol_view::paint_shape(
+                painter,
+                view.view,
+                &shape,
+                Some(copper_color(layer, selected)),
+                None,
+            );
+        }
+    }
+
+    /// Silkscreen, assembly and courtyard drawings on one side; the far
+    /// side is dimmed.
+    fn paint_drawings(
+        &self,
+        painter: &egui::Painter,
+        view: BoardView,
+        ink: &BoardInk,
+        side: Layer,
+        dim: bool,
+    ) {
+        let selected_ink = Tokens::get().body_selected;
+        for graphic in &self.graphics {
+            if drawing_side(graphic.layer) != side || !self.layers.drawing(graphic.layer) {
+                continue;
+            }
+            let mut color = if self.instance == Some(graphic.instance) {
+                selected_ink
+            } else {
+                match graphic.layer {
+                    BoardDrawing::Silkscreen(_) => ink.silkscreen,
+                    BoardDrawing::Courtyard(_) => ink.courtyard,
+                    BoardDrawing::Assembly(_) => ink.assembly,
+                }
+            };
+            if dim {
+                color = color.gamma_multiply(0.45);
+            }
+            let delta = self.drag_delta(graphic.instance);
+            match &graphic.item {
+                PlacedItem::Shape {
+                    shape,
+                    width,
+                    filled,
+                } => {
+                    let stroke = Stroke::new((*width as f32 * view.view.scale).max(1.0), color);
+                    symbol_view::paint_shape(
+                        painter,
+                        view.view,
+                        &view.shape(shape, delta),
+                        filled.then_some(color),
+                        Some(stroke),
+                    );
+                }
+                PlacedItem::Text(text) => {
+                    symbol_view::paint_text(painter, view.view, &view.text(text, delta), color);
+                }
+            }
+        }
+    }
+}
+
+/// Theme colours of the non-copper board layers in Layout.
+struct BoardInk {
+    silkscreen: Color32,
+    courtyard: Color32,
+    assembly: Color32,
+    /// Drilled holes: the canvas seen through the board.
+    drill: Color32,
+    unplated: Color32,
+}
+
+impl BoardInk {
+    fn get() -> Self {
+        let t = Tokens::get();
+        let dark = theme::is_dark();
+        Self {
+            silkscreen: if dark {
+                Color32::from_rgb(232, 232, 224)
+            } else {
+                Color32::from_rgb(70, 70, 76)
+            },
+            courtyard: if dark {
+                Color32::from_rgb(206, 120, 214)
+            } else {
+                Color32::from_rgb(150, 50, 160)
+            },
+            assembly: t.text_dim,
+            drill: t.viewport_bottom,
+            unplated: t.text,
+        }
     }
 }
 
@@ -887,41 +1330,18 @@ fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operat
 fn snap(p: Point) -> Point {
     p.map(|v| (v * 2.0).round() / 2.0)
 }
+/// The package envelope of a placement on the board: the footprint's
+/// [`envelope_outline`](pcbcraft_core::library::FootprintDefinition::envelope_outline)
+/// through the placement transform, the frame the Component editor draws.
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
     let instance = project.instance(placement.instance)?;
-    let package = &instances::resolve(&project.library, instance)
+    let physical = instances::resolve(&project.library, instance)
         .ok()?
-        .physical?
-        .package
-        .definition;
-    let [x, y, _] = package.body_size;
-    let [dx, dy, _] = package.model_offset;
-    Some(
-        [
-            [-x / 2.0 + dx, -y / 2.0 + dy],
-            [x / 2.0 + dx, -y / 2.0 + dy],
-            [x / 2.0 + dx, y / 2.0 + dy],
-            [-x / 2.0 + dx, y / 2.0 + dy],
-        ]
-        .map(|p| layout::placed_point(placement, p, [0.0; 2])),
-    )
-}
-fn pick_instance(project: &Project, pads: &[WorldPad], at: Point) -> Option<Id> {
-    pads.iter()
-        .rev()
-        .find(|p| layout::point_in_polygon(at, &layout::pad_polygon(p)))
-        .map(|p| p.instance)
-        .or_else(|| {
-            project
-                .placements
-                .iter()
-                .rev()
-                .find(|p| {
-                    body_polygon(project, p)
-                        .is_some_and(|polygon| layout::point_in_polygon(at, &polygon))
-                })
-                .map(|p| p.instance)
-        })
+        .physical?;
+    let footprint = &physical.footprint.definition;
+    let envelope = footprint.envelope_outline(&physical.package.definition);
+    let t = layout::placement_transform(placement, &footprint.datum);
+    Some(envelope.corners().map(|p| t.apply(p)))
 }
 
 #[cfg(test)]
@@ -1267,6 +1687,337 @@ mod tests {
         engine.apply(engine.revision(), operation)?;
         assert!(layout::sync_preview(engine.project()).is_empty());
         assert_eq!(engine.project().placements.len(), 3);
+        Ok(())
+    }
+
+    /// The demo with every footprint replaced by a plated through-hole
+    /// oblong (slot and via) and a turned custom SMD land, plus silkscreen,
+    /// courtyard, assembly and designator graphics; R1 at (20, 20) on the
+    /// top and R2 far away at (45, 20) on the bottom.
+    fn shaped_board() -> Result<Engine, Box<dyn std::error::Error>> {
+        use pcbcraft_core::library::{
+            DrawingLayer, Fill, FootprintGraphic, Hole, HoleShape, Item, Outline, PadShape, PadVia,
+            Segment, Side, designator_placeholder,
+        };
+        let engine = Engine::demo()?;
+        let mut file = engine.to_file();
+        for footprint in &mut file.project.library.footprints {
+            let f = &mut footprint.definition;
+            if f.pads.len() != 2 {
+                continue;
+            }
+            let pth = &mut f.pads[0];
+            pth.kind = PadKind::PlatedThrough;
+            pth.position = [-1.5, 0.0];
+            pth.shape = PadShape::Oblong { size: [1.6, 2.4] };
+            pth.hole = Some(Hole {
+                shape: HoleShape::Slot {
+                    width: 0.6,
+                    length: 1.2,
+                    angle_deg: 90.0,
+                },
+                plated: true,
+                offset: [0.0, 0.0],
+            });
+            pth.vias = vec![PadVia {
+                id: pcbcraft_core::library::ApertureId(1),
+                at: [0.0, 0.9],
+                drill: 0.2,
+            }];
+            let smd = &mut f.pads[1];
+            smd.position = [1.5, 0.0];
+            smd.rotation_deg = 30.0;
+            smd.shape = PadShape::Custom {
+                outline: Outline {
+                    start: [-0.6, -0.6],
+                    segments: vec![
+                        Segment::Line { to: [0.6, -0.6] },
+                        Segment::Arc {
+                            to: [0.6, 0.6],
+                            bulge: 0.6,
+                        },
+                        Segment::Line { to: [-0.6, 0.6] },
+                        Segment::Line { to: [-0.6, -0.6] },
+                    ],
+                },
+            };
+            let shape = |id, layer, shape| FootprintGraphic {
+                id: pcbcraft_core::GraphicId(id),
+                layer,
+                side: Side::Component,
+                item: Item::Shape {
+                    shape,
+                    width: 0.15,
+                    fill: Fill::None,
+                },
+            };
+            f.graphics = vec![
+                shape(
+                    10,
+                    DrawingLayer::Silkscreen,
+                    CoreShape::Line {
+                        a: [-2.0, 2.0],
+                        b: [2.0, 2.0],
+                    },
+                ),
+                shape(
+                    11,
+                    DrawingLayer::Courtyard,
+                    CoreShape::rect([-3.0, -2.5], [3.0, 2.5]),
+                ),
+                shape(
+                    12,
+                    DrawingLayer::Assembly,
+                    CoreShape::rect([-2.5, -1.5], [2.5, 1.5]),
+                ),
+                designator_placeholder(
+                    pcbcraft_core::GraphicId(13),
+                    [0.0, 3.2],
+                    DrawingLayer::Silkscreen,
+                ),
+            ];
+            f.next_local = f.next_local.max(14);
+        }
+        let mut engine = Engine::from_file(file)?;
+        let (r1, r2) = ids(&engine);
+        for (instance, position, layer) in [
+            (r1, [20.0, 20.0], Layer::Top),
+            (r2, [45.0, 20.0], Layer::Bottom),
+        ] {
+            engine.apply(
+                engine.revision(),
+                Operation::Layout(LayoutCommand::Move {
+                    instance,
+                    position,
+                    rotation_deg: 0.0,
+                    layer,
+                }),
+            )?;
+        }
+        Ok(engine)
+    }
+
+    /// One Layout frame of the canvas at 900 × 700 pixels.
+    fn canvas_frame(
+        editor: &mut PcbEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Option<Operation>) {
+        let mut command = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                command = editor.canvas(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        (output, command)
+    }
+
+    /// Fill and stroke colours and text painted in one frame.
+    #[derive(Default)]
+    struct Painted {
+        colors: Vec<Color32>,
+        texts: Vec<String>,
+    }
+
+    fn collect(shape: &Shape, out: &mut Painted) {
+        let stroke_color = |c: &egui::epaint::ColorMode| match c {
+            egui::epaint::ColorMode::Solid(c) => Some(*c),
+            _ => None,
+        };
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+            Shape::Path(path) => {
+                out.colors.push(path.fill);
+                out.colors.extend(stroke_color(&path.stroke.color));
+            }
+            Shape::Mesh(mesh) => out.colors.extend(mesh.vertices.iter().map(|v| v.color)),
+            Shape::Circle(circle) => out.colors.push(circle.fill),
+            Shape::LineSegment { stroke, .. } => out.colors.push(stroke.color),
+            Shape::Text(text) => out.texts.push(text.galley.job.text.clone()),
+            _ => {}
+        }
+    }
+
+    fn painted(output: &egui::FullOutput) -> Painted {
+        let mut out = Painted::default();
+        for shape in &output.shapes {
+            collect(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    /// Layout draws each pad shape, its holes and every graphic layer from
+    /// the core placement queries, and the layer toggles hide them without
+    /// rebuilding the cached board.
+    #[test]
+    fn layout_draws_pad_shapes_holes_and_graphic_layers_with_toggles()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = shaped_board()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let ink = BoardInk::get();
+        let board = crate::palette::board();
+        let all = painted(&output);
+        for (what, color) in [
+            ("top copper", board.copper_top),
+            ("bottom copper", board.copper_bottom),
+            ("drill", ink.drill),
+            ("silkscreen", ink.silkscreen),
+            ("courtyard", ink.courtyard),
+        ] {
+            assert!(all.colors.contains(&color), "{what} not painted");
+        }
+        // R2 is on the bottom: its silkscreen is the dimmed far side.
+        assert!(all.colors.contains(&ink.silkscreen.gamma_multiply(0.45)));
+        // The designator graphics label the parts; no extra label is drawn.
+        assert_eq!(all.texts.iter().filter(|t| *t == "R1").count(), 1);
+        assert_eq!(all.texts.iter().filter(|t| *t == "R2").count(), 1);
+        // Every pad, both placements: two holes and a via each for the
+        // through-hole pad, the custom land flattened with its arc.
+        assert_eq!(editor.board_pads.len(), 4);
+        assert!(
+            editor
+                .board_pads
+                .iter()
+                .all(|p| { p.placed.pad.kind != PadKind::PlatedThrough || p.holes.len() == 2 })
+        );
+        let custom = editor
+            .board_pads
+            .iter()
+            .find(|p| p.placed.pad.kind == PadKind::Smd)
+            .ok_or("custom pad missing")?;
+        assert!(custom.outline.flatten(0.01).len() > 5);
+
+        let cached = editor.board_pads.as_ptr();
+        editor.layers.silk_top = false;
+        editor.layers.silk_bottom = false;
+        editor.layers.courtyard = false;
+        editor.layers.holes = false;
+        editor.layers.copper_bottom = false;
+        editor.set_selection(Some(ids(&engine).0), None, None);
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let hidden = painted(&output);
+        for (what, color) in [
+            ("bottom copper", board.copper_bottom),
+            ("drill", ink.drill),
+            ("silkscreen", ink.silkscreen),
+            ("courtyard", ink.courtyard),
+        ] {
+            assert!(!hidden.colors.contains(&color), "hidden {what} painted");
+        }
+        // Hidden silkscreen hides the designator; no fallback label
+        // replaces it.
+        assert_eq!(hidden.texts.iter().filter(|t| *t == "R1").count(), 0);
+        // Layers and selection are display state: the board is not rebuilt.
+        assert_eq!(editor.board_pads.as_ptr(), cached);
+        Ok(())
+    }
+
+    /// Clicks pick through the core queries, respect hidden layers and land
+    /// on the same board point when the view is seen from the bottom.
+    #[test]
+    fn clicks_pick_pads_and_graphics_on_visible_layers_from_either_side()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = shaped_board()?;
+        let (r1, r2) = ids(&engine);
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let metric = TextMetric::default();
+        let project = engine.project();
+        // The silkscreen line of R1 sits outside its pads and envelope.
+        editor.select_at(project, [20.5, 22.0], 0.05, metric);
+        assert_eq!(editor.selected_instance(), Some(r1));
+        editor.set_selection(None, None, None);
+        editor.layers.silk_top = false;
+        editor.layers.courtyard = false;
+        editor.layers.assembly = false;
+        editor.select_at(project, [20.5, 22.0], 0.05, metric);
+        assert_eq!(editor.selected_instance(), None);
+        // The bottom part's surface land is on hidden bottom copper.
+        editor.layers.copper_bottom = false;
+        let r2_smd = editor
+            .pads
+            .iter()
+            .find(|p| p.instance == r2 && p.pad.kind == PadKind::Smd)
+            .map(PlacedPad::center)
+            .ok_or("R2 land")?;
+        editor.select_at(project, r2_smd, 0.0, metric);
+        assert_ne!(editor.selected_instance(), Some(r2));
+        editor.layers = Layers::default();
+        editor.select_at(project, r2_smd, 0.0, metric);
+        assert_eq!(editor.selected_instance(), Some(r2));
+        assert_eq!(
+            editor.net,
+            editor
+                .pads
+                .iter()
+                .find(|p| p.instance == r2 && p.pad.kind == PadKind::Smd)
+                .and_then(|p| p.net)
+        );
+
+        // Seen from the bottom, a click on the screen point of R1's
+        // through-hole pad still selects R1.
+        editor.set_selection(None, None, None);
+        editor.from_bottom = true;
+        let pth = editor
+            .pads
+            .iter()
+            .find(|p| p.instance == r1 && p.pad.kind == PadKind::PlatedThrough)
+            .map(PlacedPad::center)
+            .ok_or("R1 through-hole pad")?;
+        let view = BoardView::new(
+            View {
+                origin: Pos2::new(100.0, 600.0),
+                scale: 10.0,
+            },
+            project.board_size[0],
+            true,
+        );
+        let at = view.screen(pth);
+        // Mirrored in x about the board centre, y unchanged.
+        assert!((at.x - (100.0 + (60.0 - pth[0]) as f32 * 10.0)).abs() < 1e-3);
+        let back = view.world(at);
+        assert!((back[0] - pth[0]).abs() < 1e-4 && (back[1] - pth[1]).abs() < 1e-4);
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let screen_pad = output
+            .shapes
+            .iter()
+            .find_map(|s| text_position(&s.shape, "1"))
+            .ok_or("pad number 1 not drawn")?;
+        let click = vec![
+            egui::Event::PointerMoved(screen_pad),
+            egui::Event::PointerButton {
+                pos: screen_pad,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos: screen_pad,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let (_, none) = canvas_frame(&mut editor, &engine, &ctx, click);
+        assert!(none.is_none());
+        // R1's pads are drawn (and so numbered) first.
+        assert_eq!(editor.selected_instance(), Some(r1));
+        assert!((editor.board_pads[0].placed.center()[0] - pth[0]).abs() < 1e-9);
         Ok(())
     }
 }
