@@ -277,6 +277,12 @@ impl PcbEditor {
         self.track = track;
         self.net = net;
         self.highlighted = net;
+        self.discard_staged();
+    }
+
+    /// Drop unapplied Position, Rotation and Side edits; the next sync reloads
+    /// them from the document. Called on every tool or subject change.
+    fn discard_staged(&mut self) {
         self.property_key = None;
     }
 
@@ -289,9 +295,11 @@ impl PcbEditor {
             self.issues = self.copper.checks(engine.project());
             self.cache_board(engine.project());
             self.cached_revision = Some(engine.revision());
+            // An instance without a placement stays selected: the card
+            // shows it as not placed.
             if self
                 .instance
-                .is_some_and(|id| !engine.project().placements.iter().any(|p| p.instance == id))
+                .is_some_and(|id| engine.project().instance(id).is_none())
             {
                 self.instance = None;
             }
@@ -470,6 +478,7 @@ impl PcbEditor {
 
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        self.discard_staged();
         match tool {
             "update" => {
                 self.update.begin(engine, Change::SyncPcb {});
@@ -494,7 +503,9 @@ impl PcbEditor {
             return Header::new("component", "Update PCB", "Review");
         }
         if let Some(instance) = self.instance.and_then(|id| project.instance(id)) {
-            return Header::new("component", instance.designator.clone(), "Placement");
+            let placed = project.placements.iter().any(|p| p.instance == instance.id);
+            let kind = if placed { "Placement" } else { "Not placed" };
+            return Header::new("component", instance.designator.clone(), kind);
         }
         if let Some(track) = self.track {
             return Header::new("trace", format!("Track {track}"), "Track");
@@ -522,6 +533,9 @@ impl PcbEditor {
             .find(|p| Some(p.instance) == self.instance)
         {
             self.placement_section(ui, placement)
+        } else if let Some(instance) = self.instance.and_then(|id| project.instance(id)) {
+            self.unplaced_section(ui, engine, &instance.designator);
+            None
         } else if let Some(track) = project.tracks.iter().find(|t| Some(t.id) == self.track) {
             track_section(ui, project, track)
         } else {
@@ -534,6 +548,29 @@ impl PcbEditor {
         }
         self.checks_section(ui);
         operation
+    }
+
+    /// A selected instance without a placement: the header reads "Not
+    /// placed", and the body offers the update that places it.
+    fn unplaced_section(&mut self, ui: &mut Ui, engine: &Engine, designator: &str) {
+        let mut update = false;
+        kit::section(ui, "pcb-unplaced", "Placement", true, None, |ui| {
+            kit::note(
+                ui,
+                &format!("{designator} is not on the board yet. Run Update PCB to place it."),
+            );
+            kit::actions(ui, |ui| {
+                update = ui_kit::button(ui, "Update PCB…", Button::Normal)
+                    .on_hover_text("Review the schematic changes the board does not have yet")
+                    .clicked();
+            });
+        });
+        if update {
+            self.update.begin(engine, Change::SyncPcb {});
+            self.tool = Tool::Select;
+            self.route_start = None;
+            self.cancel_drag();
+        }
     }
 
     fn placement_section(&mut self, ui: &mut Ui, placement: &Placement) -> Option<Operation> {
@@ -661,14 +698,14 @@ impl PcbEditor {
     fn checks_section(&mut self, ui: &mut Ui) {
         let mut select = None;
         self.checks_list(ui, &mut select);
-        if let Some(instance) = select {
-            self.set_selection(Some(instance), None, None);
+        if let Some((instance, track, net)) = select {
+            self.set_selection(instance, track, net);
         }
     }
 
-    /// The Board checks list; a click on a finding naming parts selects
-    /// the first of them.
-    fn checks_list(&self, ui: &mut Ui, select: &mut Option<Id>) {
+    /// The Board checks list. Each row naming a part, pad, track or net is
+    /// a button that selects the first such object.
+    fn checks_list(&self, ui: &mut Ui, select: &mut Option<Selection>) {
         let count = self.issues.len();
         kit::section(
             ui,
@@ -681,19 +718,15 @@ impl PcbEditor {
                     kit::status(ui, "No issues found by these checks.", Tone::Dim);
                 }
                 for issue in self.issues.iter().take(MAX_LISTED_ISSUES) {
-                    let first = issue.objects.iter().find_map(|o| match o {
-                        pcbcraft_core::diagnostics::ObjectRef::Instance { id } => Some(*id),
-                        _ => None,
+                    let target = locate(&issue.objects);
+                    let hint = target.map(|(instance, track, _)| match (instance, track) {
+                        (Some(_), _) => "Select the part on the board",
+                        (None, Some(_)) => "Select the track on the board",
+                        (None, None) => "Select the net on the board",
                     });
-                    let response = kit::status(ui, &issue.message, Tone::Error);
-                    if let Some(id) = first
-                        && response
-                            .interact(Sense::click())
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text("Select the part on the board")
-                            .clicked()
-                    {
-                        *select = Some(id);
+                    let response = kit::finding_row(ui, &issue.message, Tone::Error, hint);
+                    if target.is_some() && response.clicked() {
+                        *select = target;
                     }
                 }
                 if count > MAX_LISTED_ISSUES {
@@ -754,6 +787,7 @@ impl PcbEditor {
             self.route_start = None;
             self.cancel_drag();
             self.tool = Tool::Select;
+            self.discard_staged();
         }
         if self.tool == Tool::Select
             && !self.update.is_open()
@@ -1507,6 +1541,40 @@ fn snap(p: Point) -> Point {
 /// The package envelope of a placement on the board: the footprint's
 /// [`envelope_outline`](pcbcraft_core::library::FootprintDefinition::envelope_outline)
 /// through the placement transform, the frame the Component editor draws.
+/// An (instance, track, net) selection, as `PcbEditor::set_selection` takes.
+type Selection = (Option<Id>, Option<Id>, Option<Id>);
+
+/// The object a finding row locates: the first part (directly, or through
+/// a pad or terminal) it names, else its first track, else its first net.
+fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Selection> {
+    use pcbcraft_core::diagnostics::ObjectRef;
+    let instance = objects.iter().find_map(|o| match o {
+        ObjectRef::Instance { id }
+        | ObjectRef::Pad { instance: id, .. }
+        | ObjectRef::Unit { instance: id, .. }
+        | ObjectRef::Property { instance: id, .. } => Some(*id),
+        ObjectRef::Terminal { endpoint } => Some(endpoint.instance),
+        _ => None,
+    });
+    let track = || {
+        objects.iter().find_map(|o| match o {
+            ObjectRef::Track { id } => Some(*id),
+            _ => None,
+        })
+    };
+    let net = || {
+        objects.iter().find_map(|o| match o {
+            ObjectRef::Net { id } => Some(*id),
+            _ => None,
+        })
+    };
+    match (instance, track()) {
+        (Some(id), _) => Some((Some(id), None, None)),
+        (None, Some(track)) => Some((None, Some(track), net())),
+        (None, None) => net().map(|net| (None, None, Some(net))),
+    }
+}
+
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
     let instance = project.instance(placement.instance)?;
     let physical = instances::resolve(&project.library, instance)
@@ -1862,6 +1930,173 @@ mod tests {
         engine.apply(engine.revision(), operation)?;
         assert!(layout::sync_preview(engine.project()).is_empty());
         assert_eq!(engine.project().placements.len(), 3);
+        Ok(())
+    }
+
+    /// The demo plus R3, placed on the schematic but not yet on the board.
+    fn with_unplaced() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let first = engine.project().instances[0].clone();
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(pcbcraft_core::InstanceCommand::Place(
+                pcbcraft_core::instances::NewInstance {
+                    component: first.component,
+                    designator: Some("R3".into()),
+                    properties: vec![],
+                    representation: first.representation,
+                    unit: pcbcraft_core::UnitId(1),
+                    position: [30.0, 0.0],
+                    physical: first.physical,
+                },
+            )),
+        )?;
+        let r3 = engine
+            .project()
+            .instance_by_designator("R3")
+            .map(|i| i.id)
+            .ok_or("R3 missing")?;
+        Ok((engine, r3))
+    }
+
+    /// B-a: an unplaced instance gets its own header and body, which agree,
+    /// and the body's one action opens the Update PCB review.
+    #[test]
+    fn an_unplaced_instance_reads_not_placed_and_offers_update_pcb()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (engine, r3) = with_unplaced()?;
+        assert!(!engine.project().placements.iter().any(|p| p.instance == r3));
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r3), None, None);
+        let header = editor.header(&engine);
+        assert_eq!((header.title.as_str(), header.kind), ("R3", "Not placed"));
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let has = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|s| text_position(&s.shape, label).is_some())
+        };
+        assert!(has(
+            "R3 is not on the board yet. Run Update PCB to place it."
+        ));
+        // Not the Board body under a placement header.
+        assert!(!has("Soldermask"));
+        assert!(click(&mut editor, &engine, &ctx, "Update PCB…")?.is_none());
+        assert!(editor.update.is_open());
+        assert_eq!(editor.header(&engine).title, "Update PCB");
+        // A placed instance still reads as a placement.
+        let (r1, _) = ids(&engine);
+        let mut placed = PcbEditor::default();
+        placed.set_selection(Some(r1), None, None);
+        assert_eq!(placed.header(&engine).kind, "Placement");
+        Ok(())
+    }
+
+    /// B-b: a Board checks row is a button that selects the part it names.
+    #[test]
+    fn a_board_check_row_click_selects_the_named_part() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.sync(&engine);
+        let (message, expected) = editor
+            .issues
+            .iter()
+            .find_map(|f| Some((f.message.clone(), locate(&f.objects)?)))
+            .ok_or("the demo board has no locatable finding")?;
+        assert!(click(&mut editor, &engine, &ctx, &message)?.is_none());
+        assert_eq!(
+            (
+                editor.selected_instance(),
+                editor.selected_track(),
+                editor.net
+            ),
+            expected
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn finding_rows_locate_pads_tracks_and_nets() {
+        use pcbcraft_core::diagnostics::ObjectRef;
+        let pad = ObjectRef::Pad {
+            instance: 7,
+            pad: pcbcraft_core::PadId(1),
+        };
+        assert_eq!(
+            locate(&[ObjectRef::Net { id: 3 }, pad]),
+            Some((Some(7), None, None))
+        );
+        assert_eq!(
+            locate(&[ObjectRef::Net { id: 3 }, ObjectRef::Track { id: 5 }]),
+            Some((None, Some(5), Some(3)))
+        );
+        assert_eq!(
+            locate(&[ObjectRef::Net { id: 3 }]),
+            Some((None, None, Some(3)))
+        );
+        assert_eq!(locate(&[]), None);
+    }
+
+    /// B-c: unapplied Position, Rotation and Side edits are dropped when the
+    /// tool or the selected subject changes; the form shows the document.
+    #[test]
+    fn staged_placement_edits_are_discarded_on_tool_or_subject_change()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let (r1, r2) = ids(&engine);
+        let placement = |id| {
+            engine
+                .project()
+                .placements
+                .iter()
+                .find(|p| p.instance == id)
+                .cloned()
+                .ok_or("fixture placement missing")
+        };
+        let before = placement(r1)?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let stage = |editor: &mut PcbEditor| {
+            editor.position = [12.0, 9.5];
+            editor.rotation = 90.0;
+            editor.placement_layer = Layer::Bottom;
+        };
+        let shown = |editor: &PcbEditor| (editor.position, editor.rotation, editor.placement_layer);
+        let document = (before.position, before.rotation_deg, before.layer);
+        editor.set_selection(Some(r1), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        // Staged edits survive plain redraws until applied.
+        stage(&mut editor);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(shown(&editor), ([12.0, 9.5], 90.0, Layer::Bottom));
+        for tool in ["route", "select"] {
+            stage(&mut editor);
+            editor.on_tool(tool, &engine);
+            frame(&mut editor, &engine, &ctx, vec![]);
+            assert_eq!(shown(&editor), document, "after the {tool} tool");
+        }
+        // Another part and back, and a re-selection of the same part.
+        stage(&mut editor);
+        editor.set_selection(Some(r2), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        let other = placement(r2)?;
+        assert_eq!(
+            shown(&editor),
+            (other.position, other.rotation_deg, other.layer)
+        );
+        editor.set_selection(Some(r1), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(shown(&editor), document);
+        stage(&mut editor);
+        editor.set_selection(Some(r1), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(shown(&editor), document);
         Ok(())
     }
 

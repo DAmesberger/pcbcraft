@@ -272,3 +272,63 @@ fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestRes
     assert!(values.iter().any(|(f, _)| f.id == field.id));
     Ok(())
 }
+
+/// B-b: a Checks row is a button that selects the instance it names. R1's
+/// pinned Part does not meet a changed value, an advisory purchasing row.
+#[test]
+fn a_check_row_click_selects_the_named_instance() -> TestResult {
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let (mut engine, _, r1, r2) = engine_with_part()?;
+    let field = engine
+        .project()
+        .instance(r1)
+        .and_then(|i| instances::requirements(&engine.project().library, i).ok())
+        .and_then(|r| r.first().map(|r| r.field))
+        .ok_or("R1 has a value")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SetProperties {
+            instance: r1,
+            edits: vec![PropertyEdit {
+                field: field.id,
+                input: PropertyInput::Text("22k".into()),
+            }],
+        }),
+    )?;
+    let message = engine
+        .project()
+        .instance(r1)
+        .and_then(|i| {
+            instances::part_findings(&engine.project().library, i)
+                .into_iter()
+                .next()
+        })
+        .map(|f| f.message)
+        .ok_or("R1 has no purchasing finding")?;
+    let mut editor = SchematicEditor {
+        show_checks: true,
+        ..Default::default()
+    };
+    editor.select(Some(r2), None, engine.project());
+    assert!(click(&mut editor, &engine, &ctx, &message)?.is_none());
+    assert_eq!(editor.selected, Some(r1));
+    Ok(())
+}
+
+#[test]
+fn a_check_row_locates_instances_through_terminals_then_nets() {
+    use pcbcraft_core::diagnostics::ObjectRef;
+    let terminal = ObjectRef::Terminal {
+        endpoint: Endpoint {
+            instance: 7,
+            terminal: pcbcraft_core::TerminalId(1),
+        },
+    };
+    assert_eq!(
+        locate(&[ObjectRef::Net { id: 3 }, terminal]),
+        Some(Locate::Instance(7))
+    );
+    assert_eq!(locate(&[ObjectRef::Net { id: 3 }]), Some(Locate::Net(3)));
+    assert_eq!(locate(&[]), None);
+}
