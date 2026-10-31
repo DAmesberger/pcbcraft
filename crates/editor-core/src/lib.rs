@@ -14,6 +14,7 @@ pub mod functions;
 pub mod geometry;
 pub mod ids;
 pub mod instances;
+pub mod issues;
 pub mod layout;
 pub mod library;
 pub mod materials;
@@ -131,6 +132,11 @@ pub enum Query {
         name: String,
         fresh: Vec<SourceLineageId>,
     },
+    /// Every issue of the project and its drafts in `scope`, with the
+    /// severity, group and one-line title core gives each finding
+    /// (docs/sidebar-ia.md). Not implemented yet: it refuses.
+    #[serde(rename = "project.issues")]
+    Issues { scope: issues::IssueScope },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -147,6 +153,7 @@ pub enum QueryResult {
     FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
     UpdatesAvailable(Vec<catalog::UpdateAvailable>),
     Promote(Box<library::import::PromotePlan>),
+    Issues(issues::IssueReport),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -528,6 +535,11 @@ impl Engine {
                 &name,
                 &fresh,
             )?))),
+            Query::Issues { scope } => Ok(QueryResult::Issues(issues::report(
+                &self.document.project,
+                &self.document.drafts,
+                &scope,
+            )?)),
         }
     }
 

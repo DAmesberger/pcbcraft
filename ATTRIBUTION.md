@@ -53,4 +53,20 @@ Adapted source references, under the MIT option above:
 - `apps/pcbcraft/src/viewport/pictures.rs`: the offscreen prepare, paint and read-back steps follow `crates/ui-egui/src/gpu.rs` `offscreen` (a test helper) at fork revision `87b1009`. The pictures, views and measurements are original.
 - `apps/pcbcraft/src/model_scene.rs`: the ground shadow follows upstream `crates/ui-egui/src/viewport.rs` `ground_shadow` (four fading ellipse rings of 48 segments, 80/150 peak alpha), adapted to a Z-up board. The contact shadows are original.
 
+
+### Sidebar redesign (contract and planned ports)
+
+[Sidebar IA](docs/sidebar-ia.md) slice S0 adds the following kit and app files. Their APIs follow the upstream helpers named below, from the pinned fork revision `87b1009`, which is unchanged from upstream `4f3ac07` in these files, under the MIT option above. Upstream keeps these helpers crate-private, so they are reproduced on the public tokens, fonts, icons, `Container` and `ui_kit::Window`. The slices named in the IA complete each port and update its entry here. Layout rules, issue severities and wording are original.
+
+- `apps/pcbcraft/src/kit/card.rs` (K1): upstream `crates/ui-egui/src/ui_kit/panel.rs` `workspace_with_header`, `editor_footer`, `stack_first_bounds` and `stack_next_bounds`.
+- `apps/pcbcraft/src/kit/severity.rs` and `kit/issues.rs` (K2): upstream `ui_kit/status.rs` (`check_status_line`, `CheckStatus`), `ui_kit/reports.rs` (`report_list`), `ui_kit/tree.rs` (`tree_header`) and `ui_kit/checks.rs`.
+- `apps/pcbcraft/src/kit/toast.rs` (K3): upstream `crates/ui-egui/src/viewport.rs` (`transient_messages`, `paint_toast_with`, `STATUS_TOAST_MS`) and `ui_kit/viewport_status.rs` (`viewport_status_row`).
+- `apps/pcbcraft/src/kit/messages.rs` (K3): upstream `crates/ui-egui/src/messages.rs` (`KEEP`, `MAX_CHARS`, ×n folding).
+- `apps/pcbcraft/src/refusal.rs` (K3): upstream `crates/ui-egui/src/dialogs.rs` (`reveal_refusal`, `shown_error`).
+- `apps/pcbcraft/src/kit/dialog.rs` (K4): upstream `ui_kit/panel.rs` (`Panel::feature`, `body_rows`) and `ui_kit/confirm.rs`.
+- `apps/pcbcraft/src/kit/review.rs` (K4, R1): upstream `ui_kit/review.rs` (`ReviewAndApply`, a modal there and docked here).
+- `apps/pcbcraft/src/kit/rows.rs` (K4): upstream `ui_kit/layout.rs` (`summary_row`, `catalog_footer_with_tip`), `ui_kit/reports.rs` (`list_frame`), `ui_kit/name_list.rs`, `ui_kit/table.rs` and the feature-panel header.
+
+The core issue types and message-style checker (`crates/editor-core/src/issues.rs`, `issues/style.rs`) and the app's `issues.rs` are original.
+
 IBM Plex Sans and IBM Plex Mono are included by the upstream UI package. Their SIL Open Font License notices are preserved in `licenses/ibm-plex-sans-OFL.txt` and `licenses/ibm-plex-mono-OFL.txt`; original font assets and notices remain in the pinned upstream dependency. The installed Solidcraft 0.26.1 app was also inspected for visual comparison; implementation references remain pinned to the source revision above.

@@ -9,13 +9,33 @@
 //! reproduced here on top of the public tokens, fonts and icons. Feature
 //! panels supply content and commands only; chrome and control looks come
 //! from this module.
+//!
+//! The sidebar redesign (docs/sidebar-ia.md) adds the column card, issue,
+//! feedback and dialog kits below; slice S0 fixed their signatures.
+pub mod card;
+pub mod dialog;
 mod form;
+pub mod issues;
+pub mod messages;
+pub mod review;
+mod rows;
 mod search;
+pub mod severity;
+pub mod toast;
 mod tree;
 
 pub use form::*;
 pub use search::*;
 pub use tree::*;
+#[allow(unused_imports, reason = "S0 contract; slices K1–K4 and A1 use it")]
+pub use {
+    dialog::{DialogPanel, confirm},
+    issues::{count_badge, detail, issue_line, issue_row, issues_bar, issues_list},
+    review::ReviewPanel,
+    rows::*,
+    severity::severity_glyph,
+    toast::pill,
+};
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};
 use solidcraft_ui_egui::{icons, theme::Tokens};

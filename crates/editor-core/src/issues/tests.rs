@@ -1,0 +1,119 @@
+//! Message-style skeleton. These tests pin the style rules on the wording
+//! examples of docs/sidebar-ia.md. Slice C1 adds the tests that run
+//! [`style::check`] over every finding code's fixtures through
+//! `project.issues` and over every `Error` display.
+use super::style::{Problem, check};
+use super::*;
+use crate::Engine;
+
+/// The rewritten titles of the design's wording table follow the style.
+#[test]
+fn rewritten_titles_follow_the_style() {
+    for title in [
+        "Package terminal 2 has no electrical terminal",
+        "2 pads have no package terminal",
+        "pad_l: the expression ends with an operator",
+        "Circular reference: pad_l → pad_x → gap → pad_l",
+        "Not published: 3 issues block publishing",
+        "Part needs a name",
+        "Enter the manufacturer",
+        "Part EXR-10K0-F is for an older revision (r1)",
+        "EXR-10K0-F is rated 5 %",
+        "Enter a number, such as 10k or 4.7 kΩ",
+        "R2 pad 1 moves from N2 to N5",
+        "Removes R1, 1 wire and its PCB placement",
+        "After this update: 4 new issues, 0 resolved",
+        "1 track on N22 would join two nets",
+        "R13 must stay inside the board (60 × 40 mm)",
+        "R3 ↔ R6: 4 pads closer than 0.2 mm",
+        "N7: 3 of 4 pads unrouted",
+        "Too close to R6 pad 1 (N3): needs 0.2 mm",
+        "Track · N22",
+        "No issues",
+        "Symbol \"X\" r2 is missing from the project library",
+    ] {
+        assert_eq!(check(title), Vec::<Problem>::new(), "{title}");
+    }
+}
+
+/// The audited messages the design replaces are each caught.
+#[test]
+fn audited_messages_break_the_style() {
+    for (text, problem) in [
+        (
+            "Binding D20 r2 maps package terminal 2 to nothing",
+            Problem::DefinitionId,
+        ),
+        (
+            "footprint.param_expr: `gap`: circular reference",
+            Problem::CodePrefix,
+        ),
+        ("Remove instance R1 (ID 8)", Problem::InternalId),
+        ("Explicit removal required for tracks [68]", Problem::IdList),
+        ("Conflicting tracks [3, 4] would merge", Problem::IdList),
+        (
+            "R2 pad 1 world geometry moves from net 2",
+            Problem::NetNumber,
+        ),
+        ("Missing reference Id(3)", Problem::DebugText),
+        ("Conflict { tracks: 2 } on N22", Problem::DebugText),
+        ("Some(Smd) lands no terminal", Problem::DebugText),
+        ("Part needs a name.", Problem::FullStop),
+        ("Part needs a name\nand an MPN", Problem::MultiLine),
+        ("", Problem::Empty),
+        (
+            "A Part needs a printable manufacturer and MPN before it can be published to the library",
+            Problem::TooLong,
+        ),
+    ] {
+        assert!(check(text).contains(&problem), "{text}: {problem:?}");
+    }
+}
+
+/// Words that only look like the patterns are not flagged.
+#[test]
+fn names_that_resemble_ids_pass() {
+    for text in [
+        "Subnet 3 of N4",
+        "Pad D1 r is unrouted",
+        "DP2 r3x has no pad",
+        "IDC header has 10 pins",
+        "Footprint [left] side",
+        "R13 · 10 kΩ · R0603",
+    ] {
+        assert_eq!(check(text), Vec::<Problem>::new(), "{text}");
+    }
+}
+
+/// Until slice C1, `project.issues` refuses instead of answering with an
+/// empty list that would hide every issue.
+#[test]
+fn issues_query_refuses_until_implemented() -> crate::Result<()> {
+    let engine = Engine::demo()?;
+    let result = engine.query(crate::Query::Issues {
+        scope: IssueScope::All,
+    });
+    assert!(matches!(result, Err(Error::Unsupported(_))));
+    Ok(())
+}
+
+/// Severity order is most severe first, so sorting rows puts errors on top.
+#[test]
+fn severity_sorts_most_severe_first() {
+    let mut order = vec![
+        Severity::Info,
+        Severity::ToDo,
+        Severity::Error,
+        Severity::Warning,
+    ];
+    order.sort();
+    assert_eq!(
+        order,
+        [
+            Severity::Error,
+            Severity::Warning,
+            Severity::ToDo,
+            Severity::Info
+        ]
+    );
+}
