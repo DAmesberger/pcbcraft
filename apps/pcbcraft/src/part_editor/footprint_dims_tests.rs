@@ -212,6 +212,77 @@ fn constrain_tools_take_the_entities_the_evaluator_accepts() {
     );
 }
 
+/// The default detail labels each independent parameter once and the
+/// unbound driving dimensions; derived, expression-bound and reference
+/// dimensions appear with All dims or when the selection touches them.
+#[test]
+fn key_detail_hides_derived_duplicate_and_expression_dimensions() {
+    use pcbcraft_core::library::footprint_source::FootprintParam;
+    let k = |id: &str, param: Option<&str>, driven: bool, points: &[&str]| ViewConstraint {
+        id: SketchConstraintId(id.into()),
+        kind: "LinearDimension",
+        value: Some(1.0),
+        param: param.map(str::to_string),
+        driven,
+        points: points.iter().map(|p| SketchPointId((*p).into())).collect(),
+        curves: Vec::new(),
+        text: None,
+    };
+    let view = SketchView {
+        constraints: vec![
+            k("pad", Some("pad_l"), false, &[]),
+            k("pad-again", Some("pad_l"), false, &[]),
+            k("seed", Some("seed_x"), false, &["anchor"]),
+            k("corner", Some("(0.25) * min((pad_l), (pad_w))"), false, &[]),
+            k("measured", None, true, &[]),
+            k("typed", None, false, &[]),
+        ],
+        ..SketchView::default()
+    };
+    let param = |name: &str, expr: &str| FootprintParam {
+        name: ParamName(name.into()),
+        expr: Expr(expr.into()),
+        unit: ParamUnit::Mm,
+        comment: String::new(),
+    };
+    let source = FootprintSource {
+        parameters: vec![
+            param("pad_l", "0.6"),
+            param("row_span", "5.4"),
+            param("seed_x", "row_span / 2"),
+        ],
+        ..FootprintSource::default()
+    };
+    let ids = |v: Vec<SketchConstraintId>| v.into_iter().map(|i| i.0).collect::<Vec<_>>();
+    let none = DimFocus::default();
+    assert_eq!(
+        ids(shown_dimensions(&view, &source, DimDetail::Key, &none)),
+        ["pad", "typed"]
+    );
+    let focus = DimFocus {
+        points: vec![SketchPointId("anchor".into())],
+        ..DimFocus::default()
+    };
+    assert_eq!(
+        ids(shown_dimensions(&view, &source, DimDetail::Key, &focus)),
+        ["pad", "seed", "typed"]
+    );
+    assert_eq!(
+        shown_dimensions(&view, &source, DimDetail::All, &none).len(),
+        6
+    );
+    // An expression-bound dimension labels its value, not the text.
+    assert_eq!(
+        label(&k(
+            "corner",
+            Some("(0.25) * min((pad_l), (pad_w))"),
+            false,
+            &[]
+        )),
+        "1"
+    );
+}
+
 #[test]
 fn labels_show_the_parameter_the_value_and_its_kind() {
     let k = |kind: &'static str, value: f64, param: Option<&str>, driven: bool| ViewConstraint {
@@ -582,6 +653,27 @@ fn a_refused_value_keeps_the_field_and_the_document_unchanged() -> TestResult {
     );
     assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing sent");
     assert_eq!(engine_source(&engine, &editor), before);
+    // An unknown name keeps the field open and says how to define it.
+    if let Some(field) = &mut editor.footprint_dims.field {
+        *field.text_mut() = "pad_q".into();
+    }
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(
+        editor.footprint_dims.field.is_some(),
+        "a refused value keeps the field open on the next frames"
+    );
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    canvas_frame(&mut editor, &engine, &ctx, vec![key(egui::Key::Enter)]);
+    let error = editor
+        .footprint_dims
+        .field
+        .as_ref()
+        .and_then(|f| f.error().map(str::to_owned));
+    assert!(
+        error.is_some_and(|e| e.contains("Unknown parameter pad_q") && e.contains("pad_q = ")),
+        "the field names the unknown parameter"
+    );
+    assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing sent");
     // Esc closes the field; nothing changes.
     canvas_frame(&mut editor, &engine, &ctx, vec![key(egui::Key::Escape)]);
     assert!(editor.footprint_dims.field.is_none());
@@ -700,7 +792,9 @@ fn the_parameters_panel_shows_values_and_readers_and_edits_once() -> TestResult 
     let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(shown.iter().any(|t| t == "pkg_L"), "{shown:?}");
     assert!(
-        shown.iter().any(|t| t == "= 1.25 mm · used by 1 dimension"),
+        shown
+            .iter()
+            .any(|t| t == "= 1.25 mm · used by 1 dimension, span"),
         "{shown:?}"
     );
     assert!(
@@ -721,7 +815,11 @@ fn the_parameters_panel_shows_values_and_readers_and_edits_once() -> TestResult 
     assert!(((b[0] - a[0]).hypot(b[1] - a[1]) - 3.0).abs() < 1e-6);
     // Removing a parameter a dimension reads is refused.
     editor.remove_parameter_for_test("span");
-    assert!(editor.footprint_dims.panel_error().is_some());
+    let why = editor.footprint_dims.panel_error().ok_or("refused")?;
+    assert!(
+        why.contains("`span` cannot be removed while it is used by 1 dimension"),
+        "{why}"
+    );
     assert!(!send(&mut editor, &mut engine, &ctx)?);
     Ok(())
 }

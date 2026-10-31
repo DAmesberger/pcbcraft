@@ -328,6 +328,28 @@ fn qfn16_has_an_exposed_pad_with_paste_windows_and_vias() -> Result<()> {
     Ok(())
 }
 
+/// "Used by" counts every reader, not only dimensions: the quad array's
+/// counts and spans and the derived courtyard's excess.
+#[test]
+fn parameter_readers_include_arrays_and_derived_roles() -> Result<()> {
+    use pcbcraft_solidcraft::footprint::view::readers;
+    let pkg = package(17, [4.0, 4.0, 0.9]);
+    let (def, _) = build(&pkg, &FootprintTemplate::defaults(TemplateKind::Qfn, &pkg))?;
+    let source = def
+        .source
+        .as_deref()
+        .ok_or_else(|| Error::NotFound("a sketched QFN".into()))?;
+    let of = |name: &str| readers(source, &ParamName(name.into()));
+    for name in ["nx", "span_y"] {
+        let r = of(name)?;
+        assert!(r.roles.contains(&"array"), "{name}: {r:?}");
+    }
+    let r = of("courtyard_excess")?;
+    assert!(r.roles.contains(&"courtyard"), "{r:?}");
+    assert!(!r.is_empty());
+    Ok(())
+}
+
 #[test]
 fn dfn8_has_pads_on_two_sides_and_no_windows_when_asked() -> Result<()> {
     let pkg = package(9, [3.0, 3.0, 0.8]);
@@ -597,5 +619,37 @@ fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
     assert_eq!(engine.drafts(), &built);
     engine.undo()?;
     assert_eq!(engine.drafts(), &before, "the template is one undo step");
+    Ok(())
+}
+
+/// A draft's silkscreen designator that the template's pads would cover
+/// moves just above them, off copper.
+#[test]
+fn a_template_keeps_the_designator_off_its_pads() -> Result<()> {
+    use pcbcraft_core::ids::GraphicId;
+    use pcbcraft_core::library::designator_placeholder;
+    let pkg = package(17, [4.0, 4.0, 0.9]);
+    let mut draft = empty();
+    draft.graphics.push(designator_placeholder(
+        GraphicId(1),
+        [-1.0, 1.9],
+        DrawingLayer::Silkscreen,
+    ));
+    draft.next_local = 2;
+    let template = FootprintTemplate::defaults(TemplateKind::Qfn, &pkg);
+    let (def, _) = footprint_family::build(&draft, &pkg, &template, &EV)?;
+    let top = def
+        .pads
+        .iter()
+        .map(|p| p.bounds().max[1])
+        .fold(f64::MIN, f64::max);
+    let Some(Item::Text(text)) = def.graphics.first().map(|g| &g.item) else {
+        return Err(Error::NotFound("the designator".into()));
+    };
+    assert!(
+        text.at[1] - text.height / 2.0 > top,
+        "{:?} over {top}",
+        text.at
+    );
     Ok(())
 }

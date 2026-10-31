@@ -643,7 +643,32 @@ impl PcbEditor {
         });
     }
 
-    fn checks_section(&self, ui: &mut Ui) {
+    /// The two parts of each courtyard-overlap finding, with the side.
+    fn courtyard_overlaps(&self) -> Vec<(Id, Id)> {
+        self.issues
+            .iter()
+            .filter(|f| f.code == layout::courtyard::COURTYARD_OVERLAP)
+            .filter_map(|f| {
+                let mut parts = f.objects.iter().filter_map(|o| match o {
+                    pcbcraft_core::diagnostics::ObjectRef::Instance { id } => Some(*id),
+                    _ => None,
+                });
+                Some((parts.next()?, parts.next()?))
+            })
+            .collect()
+    }
+
+    fn checks_section(&mut self, ui: &mut Ui) {
+        let mut select = None;
+        self.checks_list(ui, &mut select);
+        if let Some(instance) = select {
+            self.set_selection(Some(instance), None, None);
+        }
+    }
+
+    /// The Board checks list; a click on a finding naming parts selects
+    /// the first of them.
+    fn checks_list(&self, ui: &mut Ui, select: &mut Option<Id>) {
         let count = self.issues.len();
         kit::section(
             ui,
@@ -656,7 +681,20 @@ impl PcbEditor {
                     kit::status(ui, "No issues found by these checks.", Tone::Dim);
                 }
                 for issue in self.issues.iter().take(MAX_LISTED_ISSUES) {
-                    kit::status(ui, &issue.message, Tone::Error);
+                    let first = issue.objects.iter().find_map(|o| match o {
+                        pcbcraft_core::diagnostics::ObjectRef::Instance { id } => Some(*id),
+                        _ => None,
+                    });
+                    let response = kit::status(ui, &issue.message, Tone::Error);
+                    if let Some(id) = first
+                        && response
+                            .interact(Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Select the part on the board")
+                            .clicked()
+                    {
+                        *select = Some(id);
+                    }
                 }
                 if count > MAX_LISTED_ISSUES {
                     kit::note(ui, &format!("{} more issues", count - MAX_LISTED_ISSUES));
@@ -997,6 +1035,7 @@ impl PcbEditor {
         let courtyard = |l: BoardDrawing| matches!(l, BoardDrawing::Courtyard(_));
         self.paint_drawings(painter, view, &ink, near, false, silk);
         self.paint_drawings(painter, view, &ink, near, false, courtyard);
+        self.paint_courtyard_overlaps(painter, view, near);
         if self.show_airwires {
             for (a, b) in self.visible_airwires() {
                 painter.line_segment(
@@ -1137,6 +1176,41 @@ impl PcbEditor {
                 Some(shade(copper_color(layer, selected))),
                 None,
             );
+        }
+    }
+
+    /// The courtyards of parts a `board.courtyard_overlap` finding names,
+    /// tinted on the near side so the overlap reads darker where they
+    /// cross.
+    fn paint_courtyard_overlaps(&self, painter: &egui::Painter, view: BoardView, side: Layer) {
+        let pairs = self.courtyard_overlaps();
+        if pairs.is_empty() || !self.layers.courtyard {
+            return;
+        }
+        let error = Tokens::get().error;
+        for graphic in &self.graphics {
+            let BoardDrawing::Courtyard(layer) = graphic.layer else {
+                continue;
+            };
+            if layer != side
+                || !pairs
+                    .iter()
+                    .any(|(a, b)| *a == graphic.instance || *b == graphic.instance)
+            {
+                continue;
+            }
+            if let PlacedItem::Shape { shape, .. } = &graphic.item
+                && shape.is_closed()
+            {
+                let delta = self.drag_delta(graphic.instance);
+                symbol_view::paint_shape(
+                    painter,
+                    view.view,
+                    &view.shape(shape, delta),
+                    Some(error.gamma_multiply(0.22)),
+                    Some(Stroke::new(1.5, error)),
+                );
+            }
         }
     }
 

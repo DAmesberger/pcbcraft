@@ -255,6 +255,126 @@ pub fn dimensions_using(
         .collect())
 }
 
+/// Everything that reads a parameter, directly or through the parameters
+/// reading it: the "used by" of the parameters panel and the reason a
+/// removal is refused.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParamReaders {
+    /// Dimensions whose value reads it.
+    pub dimensions: Vec<SketchConstraintId>,
+    /// Other parameters whose expressions read it.
+    pub parameters: Vec<ParamName>,
+    /// Other kinds of reader, each once, in a fixed order: `array`,
+    /// `courtyard`, `pad rule`, `override`, `graphic`, `placement`.
+    pub roles: Vec<&'static str>,
+}
+
+impl ParamReaders {
+    /// Nothing reads the parameter: removing it changes nothing.
+    pub fn is_empty(&self) -> bool {
+        self.dimensions.is_empty() && self.parameters.is_empty() && self.roles.is_empty()
+    }
+}
+
+/// What reads `name`: dimensions, parameters, arrays, derived graphics,
+/// pad rules, overrides and expression-placed points (the same readers
+/// the evaluator's removal check counts).
+pub fn readers(source: &FootprintSource, name: &ParamName) -> Result<ParamReaders> {
+    use pcbcraft_core::library::footprint_source::{
+        ArrayLayout, DerivedGraphic, Expr, GraphicSource, MaskRuleExpr, PadShapeExpr, PasteRuleExpr,
+    };
+    let readers = readers_of(source, name);
+    let reads = |e: &Expr| params::references(&e.0).iter().any(|r| readers.contains(r));
+    let any = |es: &[&Expr]| es.iter().any(|e| reads(e));
+    let mask = |m: &MaskRuleExpr| matches!(m, MaskRuleExpr::Expansion(e) if reads(e));
+    let paste = |p: &PasteRuleExpr| matches!(p, PasteRuleExpr::Reduction(e) if reads(e));
+    let mut out = ParamReaders {
+        dimensions: dimensions_using(source, name)?,
+        parameters: source
+            .parameters
+            .iter()
+            .filter(|p| p.name != *name && readers.contains(&p.name.0))
+            .map(|p| p.name.clone())
+            .collect(),
+        roles: Vec::new(),
+    };
+    let array = source.arrays.iter().any(|a| match &a.layout {
+        ArrayLayout::Linear { count, pitch, .. } => any(&[count, pitch]),
+        ArrayLayout::DualRow {
+            per_row,
+            pitch,
+            row_span,
+            ..
+        } => any(&[per_row, pitch, row_span]),
+        ArrayLayout::Quad {
+            nx,
+            ny,
+            pitch,
+            span_x,
+            span_y,
+            ..
+        } => any(&[nx, ny, pitch, span_x, span_y]),
+        ArrayLayout::Grid {
+            rows,
+            cols,
+            pitch_x,
+            pitch_y,
+            ..
+        } => any(&[rows, cols, pitch_x, pitch_y]),
+    });
+    let courtyard = source.graphics.iter().any(|g| {
+        matches!(
+            &g.source,
+            GraphicSource::Derived(DerivedGraphic::CourtyardFromExtents { excess, round })
+                if any(&[excess, round])
+        )
+    });
+    let pad_rule = source.pads.iter().any(|r| {
+        mask(&r.mask)
+            || paste(&r.paste)
+            || r.vias
+                .as_ref()
+                .is_some_and(|v| any(&[&v.rows, &v.cols, &v.pitch, &v.drill]))
+    });
+    let shape = |s: &PadShapeExpr| match s {
+        PadShapeExpr::Rect { width, height } | PadShapeExpr::Oblong { width, height } => {
+            any(&[width, height])
+        }
+        PadShapeExpr::RoundRect {
+            width,
+            height,
+            radius_ratio,
+        } => any(&[width, height, radius_ratio]),
+        PadShapeExpr::Circle { diameter } => reads(diameter),
+    };
+    let overrides = source.overrides.iter().any(|o| {
+        o.value.shape.as_ref().is_some_and(shape)
+            || o.value.mask.as_ref().is_some_and(mask)
+            || o.value.paste.as_ref().is_some_and(paste)
+    });
+    let graphic = source.graphics.iter().any(|g| reads(&g.width));
+    let sketch = check::check_sketch(&source.sketch.0)?;
+    let placement = sketch
+        .points
+        .iter()
+        .filter_map(|p| p.exprs.as_deref())
+        .flat_map(|e| e.list().into_iter().map(|(_, s)| s.as_str()))
+        .any(|text| params::references(text).iter().any(|r| readers.contains(r)));
+    for (hit, label) in [
+        (array, "array"),
+        (courtyard, "courtyard"),
+        (pad_rule, "pad rule"),
+        (overrides, "override"),
+        (graphic, "graphic"),
+        (placement, "placement"),
+    ] {
+        if hit {
+            out.roles.push(label);
+        }
+    }
+    Ok(out)
+}
+
 /// `name` and every parameter that reads it, directly or through others.
 fn readers_of(source: &FootprintSource, name: &ParamName) -> BTreeSet<String> {
     let mut readers = BTreeSet::from([name.0.clone()]);

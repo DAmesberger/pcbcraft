@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use super::PartEditor;
-use super::footprint_params::{ParamRow, unit_of, value_text};
+use super::footprint_params::{ParamRow, readers_phrase, unit_of, value_text};
 use crate::kit;
 use pcbcraft_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
 use solidcraft_ui_egui::theme::Tokens;
@@ -90,11 +90,18 @@ fn expr_of(text: &str) -> Result<Expr, String> {
 
 /// "used by" as the panel says it.
 fn readers_text(row: &ParamRow) -> String {
-    match row.used_by.len() {
-        0 => "not used".into(),
-        1 => "used by 1 dimension".into(),
-        n => format!("used by {n} dimensions"),
-    }
+    readers_phrase(&row.readers).map_or_else(|| "not used".into(), |p| format!("used by {p}"))
+}
+
+/// Why a parameter cannot be removed, as a sentence; `None` when nothing
+/// reads it.
+fn in_use_text(row: &ParamRow) -> Option<String> {
+    readers_phrase(&row.readers).map(|p| {
+        format!(
+            "`{}` cannot be removed while it is used by {p}; change those first.",
+            row.name.0
+        )
+    })
 }
 
 impl PartEditor {
@@ -260,10 +267,21 @@ impl PartEditor {
                 Some(from.clone()),
                 name_of(&text).map(|to| FootprintEdit::RenameParameter { from, to }),
             ),
-            Change::Remove(name) => (
-                Some(name.clone()),
-                Ok(FootprintEdit::RemoveParameter { name }),
-            ),
+            Change::Remove(name) => {
+                let in_use = self
+                    .footprint_dims
+                    .loaded
+                    .as_ref()
+                    .and_then(|l| l.rows.iter().find(|r| r.name == name))
+                    .and_then(in_use_text);
+                (
+                    Some(name.clone()),
+                    match in_use {
+                        Some(why) => Err(why),
+                        None => Ok(FootprintEdit::RemoveParameter { name }),
+                    },
+                )
+            }
             Change::Add => (
                 None,
                 name_of(&panel.new_name).and_then(|name| {

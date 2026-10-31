@@ -341,9 +341,14 @@ pub struct PartEditor {
     footprint_tool: footprint_tools::ToolState,
     /// The open "New from template" form.
     template_picker: footprint_template_picker::TemplatePicker,
+    /// Fit the Footprint view once a template's pads arrive.
+    fit_on_build: bool,
     /// Footprint sketch dimensions, constraints, drags and parameters.
     footprint_dims: footprint_dims::DimsState,
-    findings: Option<(u64, Vec<String>)>,
+    findings: Option<(u64, Vec<Listed>)>,
+    /// The footprint graphic a clicked finding names, outlined on the
+    /// canvas.
+    finding_graphic: Option<GraphicId>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
     /// Typed component defaults by field lineage.
@@ -403,8 +408,10 @@ impl Default for PartEditor {
             footprint_layers: Default::default(),
             footprint_tool: Default::default(),
             template_picker: Default::default(),
+            fit_on_build: false,
             footprint_dims: Default::default(),
             findings: None,
+            finding_graphic: None,
             update: Default::default(),
             update_instances: Default::default(),
             field_buffers: Default::default(),
@@ -490,6 +497,10 @@ impl PartEditor {
             );
         }
         self.publishing = false;
+        if self.fit_on_build && set.as_ref().is_some_and(|s| !s.footprint.pads.is_empty()) {
+            self.fit_on_build = false;
+            self.footprint_view = None;
+        }
         self.baseline = set.clone();
         self.draft = set;
         self.source = Some(current);
@@ -615,31 +626,42 @@ impl PartEditor {
                 .enabled(has_draft && self.selected.is_some())
                 .tip("Remove the selected terminal everywhere in this component"),
         );
-        let mut groups = vec![Group {
+        let terminals = Group {
             label: "Terminals",
             tools: edit,
-        }];
+        };
+        let mut groups = Vec::new();
         if self.view == View::Footprint {
             // Publish stays ahead of the layer toggles, so at narrow widths
             // the toggles fold into the overflow first.
             let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
-            if self.footprint_sketching() {
-                let mut sketch = self.footprint_sketch_groups();
-                if let Some(group) = sketch.iter_mut().find(|g| g.label == "Pads") {
-                    group.tools.insert(0, self.template_tool(has_draft));
-                }
-                groups.extend(sketch);
-                groups.push(self.constrain_group());
-            } else {
-                groups.push(pads);
-            }
             let artwork = Group {
                 label: "Artwork",
                 tools: vec![self.import_svg_tool()],
             };
-            groups.extend([artwork, library, show]);
+            if self.footprint_sketching() {
+                // The pad and constraint tools lead: at narrow widths the
+                // drawing, layer and terminal groups fold away first.
+                let mut sketch = self.footprint_sketch_groups();
+                let take = |sketch: &mut Vec<Group>, label: &str| {
+                    sketch
+                        .iter()
+                        .position(|g| g.label == label)
+                        .map(|i| sketch.remove(i))
+                };
+                if let Some(mut group) = take(&mut sketch, "Pads") {
+                    group.tools.insert(0, self.template_tool(has_draft));
+                    groups.push(group);
+                }
+                groups.push(self.constrain_group());
+                groups.push(library);
+                groups.extend(sketch);
+                groups.extend([terminals, artwork, show]);
+            } else {
+                groups.extend([terminals, pads, artwork, library, show]);
+            }
         } else {
-            groups.push(library);
+            groups.extend([terminals, library]);
         }
         Ribbon {
             tabs,
@@ -823,6 +845,14 @@ impl PartEditor {
             return None;
         }
         if self.footprint_layer_tool(tool) {
+            return None;
+        }
+        if tool == footprint_dims::ALL_DIMS_TOOL {
+            let d = &mut self.footprint_dims.detail;
+            *d = match d {
+                footprint_dims::DimDetail::All => footprint_dims::DimDetail::Key,
+                footprint_dims::DimDetail::Key => footprint_dims::DimDetail::All,
+            };
             return None;
         }
         if let Some(action) = symbol_canvas::Arrange::from_id(tool) {
@@ -1203,32 +1233,117 @@ impl PartEditor {
     }
 
     /// Blocking publish findings of the committed drafts, from the engine.
+    #[cfg(test)]
     fn findings(&mut self, engine: &Engine) -> Vec<String> {
+        self.listed_findings(engine)
+            .into_iter()
+            .filter(|f| f.blocking)
+            .map(|f| f.text)
+            .collect()
+    }
+
+    /// Every finding of the committed drafts: blocking ones first, then
+    /// the advisory lint, each with the objects it names.
+    fn listed_findings(&mut self, engine: &Engine) -> Vec<Listed> {
         if let Some((revision, findings)) = &self.findings
             && *revision == engine.revision()
         {
             return findings.clone();
         }
-        let mut messages = Vec::new();
+        let mut listed = Vec::new();
         if let Some(set) = &self.draft
             && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
         {
             let mut ids = set.ids.all();
             ids.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
-            messages.extend(
+            listed.extend(
                 reports
                     .into_iter()
                     .filter(|r| matches!(r.target, CheckTarget::Draft(id) if ids.contains(&id)))
                     .flat_map(|r| r.findings)
-                    .filter(|f| f.blocks_stage(Stage::Publish))
-                    .map(|f| match fix_hint(&f.code) {
-                        Some(hint) => format!("{} {hint}", f.message),
-                        None => f.message,
+                    .map(|f| Listed {
+                        blocking: f.blocks_stage(Stage::Publish),
+                        text: match fix_hint(&f.code) {
+                            Some(hint) => format!("{} {hint}", f.message),
+                            None => f.message,
+                        },
+                        objects: f.objects,
                     }),
             );
+            listed.sort_by_key(|f| !f.blocking);
         }
-        self.findings = Some((engine.revision(), messages.clone()));
-        messages
+        self.findings = Some((engine.revision(), listed.clone()));
+        listed
+    }
+
+    /// The Findings section: errors that block publishing, then lint,
+    /// scrollable; clicking one shows the pad or graphic it names.
+    fn findings_section(&mut self, ui: &mut Ui, engine: &Engine) {
+        let listed = self.listed_findings(engine);
+        if listed.is_empty() {
+            return;
+        }
+        let errors = listed.iter().filter(|f| f.blocking).count();
+        let mut clicked = None;
+        kit::section(ui, "findings", "Findings", true, Some(listed.len()), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("findings-list")
+                .max_height(220.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, finding) in listed.iter().enumerate() {
+                        if i == 0 && errors > 0 {
+                            kit::note(ui, &format!("Blocks publishing ({errors})"));
+                        }
+                        if i == errors {
+                            kit::note(ui, &format!("Lint, advisory ({})", listed.len() - errors));
+                        }
+                        let tone = if finding.blocking {
+                            Tone::Error
+                        } else {
+                            Tone::Warning
+                        };
+                        let response = kit::status(ui, &finding.text, tone)
+                            .interact(Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Show it on the canvas");
+                        if response.clicked() {
+                            clicked = Some(finding.objects.clone());
+                        }
+                    }
+                });
+        });
+        if let Some(objects) = clicked {
+            self.show_finding(&objects);
+        }
+    }
+
+    /// Select the pad, or outline the graphic, a finding names in the
+    /// footprint draft, and switch to the Footprint tab.
+    fn show_finding(&mut self, objects: &[pcbcraft_core::diagnostics::ObjectRef]) {
+        use pcbcraft_core::diagnostics::ObjectRef;
+        let Some(set) = &self.draft else {
+            return;
+        };
+        self.finding_graphic = None;
+        for object in objects {
+            let ObjectRef::LibraryObject { definition, local } = object else {
+                continue;
+            };
+            if *definition != set.ids.footprint {
+                continue;
+            }
+            if let Some(pad) = set.footprint.pads.iter().find(|p| p.id.0 == *local) {
+                self.selected_pad = Some(pad.id);
+                if let Some(electrical) = pad.terminal.and_then(|t| set.binding.terminal_of(t)) {
+                    self.selected = Some(electrical);
+                }
+                self.view = View::Footprint;
+            } else if set.footprint.graphics.iter().any(|g| g.id.0 == *local) {
+                self.finding_graphic = Some(GraphicId(*local));
+                self.view = View::Footprint;
+            }
+        }
     }
 
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1237,13 +1352,7 @@ impl PartEditor {
             return self.update.show(ui, engine);
         }
         let unpublished = self.unpublished(engine);
-        let findings = self.findings(engine);
-        for message in findings.iter().take(6) {
-            kit::status(ui, message, Tone::Error);
-        }
-        if findings.len() > 6 {
-            kit::note(ui, &format!("{} more findings", findings.len() - 6));
-        }
+        self.findings_section(ui, engine);
         if !self.notice.is_empty() {
             kit::status(ui, &self.notice, Tone::Note);
         }
@@ -1907,6 +2016,15 @@ fn functions_section(
 
 /// Where an author fixes a blocking finding the Component editor shows,
 /// by finding code.
+/// One finding as the Findings section lists it.
+#[derive(Clone, Debug, PartialEq)]
+struct Listed {
+    text: String,
+    /// It blocks publishing; otherwise it is advisory lint.
+    blocking: bool,
+    objects: Vec<pcbcraft_core::diagnostics::ObjectRef>,
+}
+
 fn fix_hint(code: &str) -> Option<&'static str> {
     match code {
         "package.body" => Some("Change Body on the 3D tab, or remove terminals."),

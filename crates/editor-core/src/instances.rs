@@ -834,7 +834,7 @@ pub(crate) fn carry_properties(
         let Some(selection) = target.field(*lineage) else {
             if matches!(value, FieldOverride::Assigned(_)) {
                 return Err(Error::Conflict(format!(
-                    "{name}: field ‘{}’ has an assigned value and the target revision no longer selects it; supply a FieldResolution.",
+                    "{name}: field ‘{}’ has a value of its own, but the new revision no longer has this field. Decide what happens to the value: drop it, or keep the field on the component (an update FieldResolution).",
                     label(*lineage)
                 )));
             }
@@ -847,7 +847,7 @@ pub(crate) fn carry_properties(
                 .is_some_and(|f| fields::compatible(&f.definition.value_type, new_type));
             if !same_meaning || fields::check_value(assigned, new_type, view.kind_body()).is_err() {
                 return Err(Error::Conflict(format!(
-                    "{name}: the assigned value of field ‘{}’ does not fit field revision {}; supply a FieldResolution.",
+                    "{name}: the value of field ‘{}’ does not fit its new definition (field revision {}). Enter a value that fits, or drop it (an update FieldResolution).",
                     label(*lineage),
                     selection.field
                 )));

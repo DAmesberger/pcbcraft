@@ -18,7 +18,7 @@
 //! built).
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::distance;
-use pcbcraft_core::ids::{GraphicId, PackageTerminalId};
+use pcbcraft_core::ids::GraphicId;
 use pcbcraft_core::library::footprint_edit;
 use pcbcraft_core::library::footprint_source::{
     ArrayLayout, DimKind, DimValue, Expr, FootprintEdit, FootprintEvaluator, FootprintSource,
@@ -539,6 +539,9 @@ pub struct ToolState {
     arc_turn: f64,
     /// A finished gesture waiting to be sent as one commit.
     pub outbox: Option<Vec<FootprintEdit>>,
+    /// The working copy's footprint the held outbox was staged against,
+    /// while that copy is sent first.
+    pub held_for: Option<pcbcraft_core::library::FootprintDefinition>,
     /// A Select drag in progress.
     pub drag: Option<MoveDrag>,
     /// Delete was pressed; the canvas resolves it against its scene.
@@ -555,6 +558,24 @@ pub struct MoveDrag {
     pub start: Point,
     pub reference: Point,
     pub delta: Point,
+}
+
+/// Why a gesture finished while another waits to be sent is refused.
+pub const OUTBOX_BUSY: &str = "The previous change is still being applied; repeat this one.";
+
+impl ToolState {
+    /// Queue one finished gesture; refused (false) while another waits,
+    /// so no gesture is ever overwritten.
+    pub fn queue(&mut self, edits: Vec<FootprintEdit>) -> bool {
+        if edits.is_empty() {
+            return true;
+        }
+        if self.outbox.is_some() {
+            return false;
+        }
+        self.outbox = Some(edits);
+        true
+    }
 }
 
 impl Default for ToolState {
@@ -574,6 +595,7 @@ impl Default for ToolState {
             ],
             arc_turn: 0.0,
             outbox: None,
+            held_for: None,
             drag: None,
             delete_requested: false,
             view_cache: None,
@@ -884,8 +906,8 @@ impl ToolState {
                 if turned { (w, l) } else { (l, w) }
             }
         };
-        let (number, terminal) = if kind == PadKind::NonPlatedHole || kind == PadKind::Fiducial {
-            (String::new(), None)
+        let number = if kind == PadKind::NonPlatedHole || kind == PadKind::Fiducial {
+            String::new()
         } else {
             build.next_number()
         };
@@ -896,7 +918,7 @@ impl ToolState {
                 .then(|| Expr(crate::kit::number_text(o.radius_ratio.clamp(0.0, 0.5)))),
             kind,
             side: o.side,
-            terminal,
+            terminal: None,
             number,
         })
     }
@@ -1773,9 +1795,10 @@ impl<'s, 'a> Build<'s, 'a> {
         self.param_name(base, value).map(|n| Expr(n.0))
     }
 
-    /// The next free pad number and the package terminal of that
-    /// designation not yet landed, if any (never inferred otherwise).
-    fn next_number(&mut self) -> (String, Option<PackageTerminalId>) {
+    /// The next free pad number. A sketched pad lands no package
+    /// terminal: binding is the explicit `library.assign_terminals`
+    /// (nothing is inferred from matching numbers).
+    fn next_number(&mut self) -> String {
         let fp = self.scene.footprint;
         let taken = |n: &str, this: &Self| {
             fp.pads.iter().any(|p| p.number == n)
@@ -1788,21 +1811,8 @@ impl<'s, 'a> Build<'s, 'a> {
             .map(|n| n.to_string())
             .find(|n| !taken(n, self))
             .unwrap_or_default();
-        let landed = |t: PackageTerminalId| {
-            fp.pads.iter().any(|p| p.terminal == Some(t))
-                || self
-                    .source()
-                    .is_some_and(|s| s.pads.iter().any(|r| r.terminal == Some(t)))
-        };
-        let terminal = self
-            .scene
-            .package
-            .terminals
-            .iter()
-            .find(|t| t.designation == number && !landed(t.id))
-            .map(|t| t.id);
         self.numbers.push(number.clone());
-        (number, terminal)
+        number
     }
 }
 

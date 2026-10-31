@@ -108,3 +108,17 @@ fn parts_without_a_courtyard_are_not_checked() -> Result<()> {
     assert!(overlaps(&project).is_empty());
     Ok(())
 }
+
+/// Reaching either bound says so instead of passing silently.
+#[test]
+fn courtyard_bounds_report_a_limit_finding() -> Result<()> {
+    let (project, _, _) = board(3.0, [Layer::Top, Layer::Top])?;
+    let limits = |found: &[Finding]| found.iter().filter(|f| f.code == COURTYARD_LIMIT).count();
+    assert_eq!(limits(&findings(&project)), 0, "within bounds");
+    let few_yards = bounded_findings(&project, 1, MAX_OVERLAP_FINDINGS);
+    assert_eq!(limits(&few_yards), 1, "{few_yards:?}");
+    let few_findings = bounded_findings(&project, MAX_CHECKED_COURTYARDS, 0);
+    assert_eq!(limits(&few_findings), 1, "{few_findings:?}");
+    assert!(few_findings.iter().all(|f| f.code != COURTYARD_OVERLAP));
+    Ok(())
+}

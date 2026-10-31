@@ -24,6 +24,16 @@ fn pad_object(id: DefinitionId, pad: &Pad) -> Vec<ObjectRef> {
     vec![object(id, pad.id.0)]
 }
 
+/// The user's name for a pad in a message: its number, or its id when
+/// the number is empty (as `layout::pad_labels`).
+fn pad_label(pad: &Pad) -> String {
+    if pad.number.is_empty() {
+        pad.id.to_string()
+    } else {
+        pad.number.clone()
+    }
+}
+
 /// Shape validity of a pad's copper outline (`footprint.pad_size` for a
 /// size out of range, `footprint.pad_shape` for anything else). Returns
 /// whether the shape is valid.
@@ -35,7 +45,7 @@ fn shape_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) -> bool {
     if !size_ok {
         out.push(issue(
             "footprint.pad_size",
-            format!("Pad {} needs a positive finite size.", pad.id),
+            format!("Pad {} needs a positive finite size.", pad_label(pad)),
             pad_object(id, pad),
         ));
         return false;
@@ -75,7 +85,7 @@ fn shape_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) -> bool {
     if let Some(need) = problem {
         out.push(issue(
             "footprint.pad_shape",
-            format!("Pad {} needs {need}.", pad.id),
+            format!("Pad {} needs {need}.", pad_label(pad)),
             pad_object(id, pad),
         ));
         return false;
@@ -90,7 +100,7 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             "footprint.terminal_required",
             format!(
                 "Pad {} ({:?}) lands no package terminal; choose one, or make it Mechanical explicitly.",
-                pad.id, pad.kind
+                pad_label(pad), pad.kind
             ),
             pad_object(id, pad),
         )),
@@ -98,7 +108,7 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             "footprint.terminal_forbidden",
             format!(
                 "Pad {} ({:?}) has no copper connection and cannot land package terminal {terminal}.",
-                pad.id, pad.kind
+                pad_label(pad), pad.kind
             ),
             pad_object(id, pad),
         )),
@@ -109,7 +119,7 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             "footprint.pad_side",
             format!(
                 "Pad {} spans every copper layer and records the top side.",
-                pad.id
+                pad_label(pad)
             ),
             pad_object(id, pad),
         ));
@@ -125,7 +135,7 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
     if let Some(need) = hole {
         out.push(issue(
             "footprint.hole_kind",
-            format!("Pad {} ({:?}) needs {need}.", pad.id, pad.kind),
+            format!("Pad {} ({:?}) needs {need}.", pad_label(pad), pad.kind),
             pad_object(id, pad),
         ));
     }
@@ -147,14 +157,14 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                 "footprint.hole_shape",
                 format!(
                     "Pad {} needs a positive drill (a slot at least as long as it is wide).",
-                    pad.id
+                    pad_label(pad)
                 ),
                 pad_object(id, pad),
             ));
         } else if !ring_within(&hole.ring(CHECK_CHORD_MM), &land, tol) {
             out.push(issue(
                 "footprint.hole_outside_land",
-                format!("The hole of pad {} is not inside its land.", pad.id),
+                format!("The hole of pad {} is not inside its land.", pad_label(pad)),
                 pad_object(id, pad),
             ));
         }
@@ -164,7 +174,11 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
         if !apertures.insert(via.id) {
             out.push(issue(
                 "footprint.aperture_duplicate",
-                format!("Pad {} uses aperture {} more than once.", pad.id, via.id.0),
+                format!(
+                    "Pad {} uses aperture {} more than once.",
+                    pad_label(pad),
+                    via.id.0
+                ),
                 pad_object(id, pad),
             ));
         }
@@ -180,7 +194,8 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                 "footprint.hole_outside_land",
                 format!(
                     "Via {} of pad {} needs a positive drill inside the land.",
-                    via.id.0, pad.id
+                    via.id.0,
+                    pad_label(pad)
                 ),
                 pad_object(id, pad),
             ));
@@ -193,7 +208,8 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                     "footprint.aperture_duplicate",
                     format!(
                         "Pad {} uses aperture {} more than once.",
-                        pad.id, window.id.0
+                        pad_label(pad),
+                        window.id.0
                     ),
                     pad_object(id, pad),
                 ));
@@ -204,7 +220,8 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                     "footprint.paste_window_shape",
                     format!(
                         "Paste window {} of pad {} needs a closed shape with area.",
-                        window.id.0, pad.id
+                        window.id.0,
+                        pad_label(pad)
                     ),
                     pad_object(id, pad),
                 ));
@@ -213,7 +230,8 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                     "footprint.paste_window_outside_pad",
                     format!(
                         "Paste window {} of pad {} is not inside the pad.",
-                        window.id.0, pad.id
+                        window.id.0,
+                        pad_label(pad)
                     ),
                     pad_object(id, pad),
                 ));
@@ -571,14 +589,7 @@ impl FootprintDefinition {
                 reported += 1;
                 out.push(Finding::new(
                     "footprint.pad_outside_courtyard",
-                    format!(
-                        "Pad {} extends past the courtyard.",
-                        if pad.number.is_empty() {
-                            pad.id.to_string()
-                        } else {
-                            pad.number.clone()
-                        }
-                    ),
+                    format!("Pad {} extends past the courtyard.", pad_label(pad)),
                     pad_object(id, pad),
                 ));
             }
@@ -650,11 +661,7 @@ impl FootprintDefinition {
                         "footprint.silk_over_pad",
                         format!(
                             "Silkscreen lies over pad {}; it would be clipped at fabrication.",
-                            if pad.number.is_empty() {
-                                pad.id.to_string()
-                            } else {
-                                pad.number.clone()
-                            }
+                            pad_label(pad)
                         ),
                         vec![object(id, pad.id.0), object(id, graphic.id.0)],
                     ));

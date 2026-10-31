@@ -915,6 +915,29 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
     Ok(())
 }
 
+/// Footprint findings name a pad by its number, the user's label, not
+/// by its internal id.
+#[test]
+fn footprint_findings_name_pads_by_number() -> Result<()> {
+    let mut engine = Engine::default();
+    let f = draft(&mut engine, &two("Pair"))?;
+    with(&mut engine, f.footprint, footprint_body, |fp| {
+        fp.pads[0].terminal = None;
+        fp.pads[0].number = "A7".into();
+    })?;
+    let finding = check(&engine, CheckTarget::Draft(f.footprint))?
+        .findings
+        .into_iter()
+        .find(|x| x.code == "footprint.terminal_required")
+        .ok_or_else(|| Error::NotFound("no terminal finding".into()))?;
+    assert!(
+        finding.message.starts_with("Pad A7 "),
+        "{}",
+        finding.message
+    );
+    Ok(())
+}
+
 /// Every pad kind and shape, consistently built, publishes.
 #[test]
 fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {

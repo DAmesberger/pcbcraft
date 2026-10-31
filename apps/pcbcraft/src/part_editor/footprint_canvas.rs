@@ -138,6 +138,25 @@ fn ink() -> Ink {
     }
 }
 
+/// Scroll pixels per e-fold of zoom: one wheel notch (about 50 px) zooms
+/// by about 13 %.
+const ZOOM_PX: f32 = 400.0;
+/// Share of the canvas the fitted footprint fills.
+const FIT_FILL: f64 = 0.7;
+
+/// The view that centres `bounds` and fills [`FIT_FILL`] of `rect`.
+fn fitted(bounds: Bounds, rect: Rect) -> ViewState {
+    let [w, h] = bounds.size();
+    let scale = (rect.width() as f64 * FIT_FILL / w.max(0.5))
+        .min(rect.height() as f64 * FIT_FILL / h.max(0.5))
+        .clamp(0.5, 400.0) as f32;
+    let [cx, cy] = bounds.center();
+    ViewState {
+        pan: vec2(-(cx as f32) * scale, cy as f32 * scale),
+        scale,
+    }
+}
+
 /// Everything the view fits: lands, the envelope and drawings.
 fn drawn_bounds(set: &super::WorkingSet) -> Bounds {
     let envelope = set.footprint.envelope_outline(&set.package);
@@ -164,18 +183,9 @@ impl PartEditor {
         let Some(set) = &self.draft else {
             return;
         };
-        let view_state = *self.footprint_view.get_or_insert_with(|| {
-            let b = drawn_bounds(set);
-            let x = b.min[0].abs().max(b.max[0].abs());
-            let y = b.min[1].abs().max(b.max[1].abs());
-            let scale = (rect.width() as f64 / (2.0 * x + 2.0))
-                .min(rect.height() as f64 / (2.0 * y + 2.0))
-                .clamp(0.5, 400.0) as f32;
-            ViewState {
-                pan: egui::Vec2::ZERO,
-                scale,
-            }
-        });
+        let view_state = *self
+            .footprint_view
+            .get_or_insert_with(|| fitted(drawn_bounds(set), rect));
         let view = View {
             origin: rect.center() + view_state.pan,
             scale: view_state.scale,
@@ -308,6 +318,18 @@ impl PartEditor {
                 );
             }
         }
+        // The template picker's ghost: the pads Build would make.
+        if let Some(ghost) = self.template_picker.ghost() {
+            for pad in ghost {
+                symbol_view::paint_shape(
+                    &painter,
+                    view,
+                    &pad.land(chord),
+                    Some(t.accent.gamma_multiply(0.18)),
+                    Some(Stroke::new(1.0, t.accent)),
+                );
+            }
+        }
         if layers.paste {
             for pad in &set.footprint.pads {
                 for paste in pad.paste_openings(&defaults, chord) {
@@ -333,6 +355,28 @@ impl PartEditor {
         }
         if layers.drawing(DrawingLayer::Courtyard) {
             self.paint_drawings(&painter, view, DrawingLayer::Courtyard, ink.courtyard);
+        }
+        // The graphic a clicked finding names.
+        if let Some(graphic) = self
+            .finding_graphic
+            .and_then(|id| set.footprint.graphics.iter().find(|g| g.id == id))
+        {
+            let ring = Stroke::new(2.0, colors.selected);
+            match &graphic.item {
+                Item::Shape { shape, .. } => {
+                    symbol_view::paint_shape(&painter, view, shape, None, Some(ring));
+                }
+                Item::Text(text) => {
+                    let at = view.screen(text.at);
+                    let r = (text.height as f32 * view.scale).max(6.0);
+                    painter.rect_stroke(
+                        Rect::from_center_size(at, vec2(r * 3.0, r * 1.6)),
+                        2.0,
+                        ring,
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
         }
         // The sketch: curves, points, dimensions and constraint glyphs.
         let hover = response.hover_pos();
@@ -413,7 +457,7 @@ impl PartEditor {
         {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                let scale = (state.scale * (scroll / 200.0).exp()).clamp(0.5, 2000.0);
+                let scale = (state.scale * (scroll / ZOOM_PX).exp()).clamp(0.5, 2000.0);
                 let world = view.world(p);
                 let origin = p - vec2(world[0] as f32 * scale, -(world[1] as f32) * scale);
                 self.footprint_view = Some(ViewState {

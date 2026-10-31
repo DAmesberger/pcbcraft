@@ -361,3 +361,85 @@ fn layer_toggles_change_the_view_only() -> Result<(), Box<dyn std::error::Error>
     assert!(editor.commit(&ctx, &engine).is_none());
     Ok(())
 }
+
+/// The Findings section lists blocking findings before lint, names pads
+/// by number, and a click selects the pad it names on the Footprint tab.
+#[test]
+fn findings_are_grouped_and_a_click_selects_the_pad() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let pad = {
+        let set = editor.draft.as_mut().ok_or("draft")?;
+        let pad = set.footprint.pads.first_mut().ok_or("a pad")?;
+        pad.terminal = None;
+        pad.number = "7".into();
+        pad.id
+    };
+    assert!(commit(&mut editor, &mut engine, &ctx)?);
+    let listed = editor.listed_findings(&engine);
+    let blocking = listed.iter().take_while(|f| f.blocking).count();
+    assert!(
+        listed.iter().skip(blocking).all(|f| !f.blocking),
+        "errors first"
+    );
+    let finding = listed
+        .iter()
+        .find(|f| f.blocking && f.text.starts_with("Pad 7 "))
+        .ok_or("the pad's finding, by number")?
+        .clone();
+    let shown = inspector_frame(&mut editor, &engine, &ctx);
+    assert!(
+        shown.iter().any(|t| t.starts_with("Blocks publishing")),
+        "{shown:?}"
+    );
+    editor.on_tab("symbol");
+    editor.selected_pad = None;
+    editor.show_finding(&finding.objects);
+    assert_eq!(editor.selected_pad, Some(pad));
+    assert!(editor.view == View::Footprint, "the Footprint tab");
+    Ok(())
+}
+
+/// The picker previews what Build makes, warns when its pad count
+/// differs from the package, and clears a sourced footprint completely.
+#[test]
+fn the_template_picker_previews_warns_and_clears() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_template_picker::{accepts, cleared, count_warning};
+    use pcbcraft_core::library::templates::footprint_family::TemplateKind;
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let package = editor.draft.as_ref().ok_or("draft")?.package.clone();
+    editor.template_picker.open(TemplateKind::Qfn, &package);
+    let pads = editor
+        .template_picker
+        .preview(&package)
+        .ok_or("a preview")?
+        .clone()?;
+    assert!(pads.len() > package.terminals.len());
+    assert!(
+        editor
+            .template_picker
+            .ghost()
+            .is_some_and(|g| g.len() == pads.len())
+    );
+    assert!(count_warning(&pads, &package).is_some_and(|w| w.contains("terminals")));
+    // A sourced footprint (the built QFN) clears to an empty explicit one.
+    let empty = pcbcraft_core::library::FootprintDefinition {
+        next_local: 1,
+        ..Default::default()
+    };
+    let template = editor.template_picker.form.clone().ok_or("form")?;
+    let (built, _) = pcbcraft_core::library::templates::footprint_family::build(
+        &empty,
+        &package,
+        &template,
+        &pcbcraft_solidcraft::footprint::SketchEvaluator,
+    )?;
+    assert!(!accepts(&built));
+    let reset = cleared(&built);
+    assert!(accepts(&reset), "a template builds into it again");
+    assert!(reset.source.is_none() && reset.pads.is_empty() && reset.polarity.is_none());
+    Ok(())
+}

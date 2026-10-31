@@ -197,18 +197,38 @@ impl PartEditor {
             .as_ref()
             .is_some_and(|set| set.footprint.source.is_some());
         let armed = self.footprint_tool.tool;
-        let tools = FootprintTool::ALL
+        let tool = |tool: FootprintTool| {
+            let (icon, label, tip) = constrain_look(tool)?;
+            Some(
+                Tool::new(tool.id(), icon, label)
+                    .enabled(sourced)
+                    .selected(armed == Some(tool))
+                    .tip(tip),
+            )
+        };
+        // The constraints fold into one split button (the armed one, else
+        // the last used), so the group stays narrow on the ribbon.
+        let constraints: Vec<FootprintTool> = FootprintTool::ALL
             .into_iter()
-            .filter_map(|tool| {
-                let (icon, label, tip) = constrain_look(tool)?;
-                Some(
-                    Tool::new(tool.id(), icon, label)
-                        .enabled(sourced)
-                        .selected(armed == Some(tool))
-                        .tip(tip),
-                )
-            })
+            .filter(|t| matches!(t, FootprintTool::Constrain(_)))
             .collect();
+        let shown = armed
+            .filter(|t| constraints.contains(t))
+            .or(self.footprint_dims.last_constraint)
+            .or_else(|| constraints.first().copied());
+        let mut tools: Vec<Tool> = tool(FootprintTool::Dimension).into_iter().collect();
+        if let Some(shown) = shown.and_then(tool) {
+            tools.push(Tool::family(
+                shown,
+                constraints.into_iter().filter_map(tool).collect(),
+            ));
+        }
+        tools.push(
+            Tool::new(dims::ALL_DIMS_TOOL, "dimension", "All dims")
+                .enabled(sourced)
+                .selected(self.footprint_dims.detail == dims::DimDetail::All)
+                .tip("Show every dimension, including derived and template-internal ones; otherwise only the independent parameters' and the selection's"),
+        );
         Group {
             label: "Constrain",
             tools,
@@ -487,6 +507,49 @@ impl PartEditor {
         self.footprint_dims.fresh = 3;
     }
 
+    /// What the canvas labels whatever the detail level: the selected
+    /// dimension, the highlighted parameter's readers and the sketch
+    /// entities of the pads, points and curves selected on the canvas.
+    fn dim_focus(&self) -> dims::DimFocus {
+        use super::footprint_tools::Pick;
+        use pcbcraft_core::library::footprint_source::PadGeometry;
+        let mut focus = dims::DimFocus::default();
+        let Some(loaded) = &self.footprint_dims.loaded else {
+            return focus;
+        };
+        focus
+            .constraints
+            .extend(self.footprint_dims.selected.clone());
+        if let Some(row) = self
+            .footprint_dims
+            .highlight
+            .as_ref()
+            .and_then(|name| loaded.rows.iter().find(|row| row.name == *name))
+        {
+            focus.constraints.extend(row.used_by.iter().cloned());
+        }
+        if let Some(ValueField::Existing(e)) = &self.footprint_dims.field {
+            focus.constraints.push(e.constraint.clone());
+        }
+        // The canvas selection only: the Pad inspector always shows (and
+        // so names) some pad, which would focus it permanently.
+        let mut pads: Vec<pcbcraft_core::PadId> = Vec::new();
+        for pick in &self.footprint_tool.selection {
+            match pick {
+                Pick::Pad(id) => pads.push(*id),
+                Pick::Point(p) => focus.points.push(p.clone()),
+                Pick::Curve(c) => focus.curves.push(c.clone()),
+            }
+        }
+        for role in loaded.source.pads.iter().filter(|r| pads.contains(&r.pad)) {
+            focus.points.push(role.anchor.clone());
+            if let PadGeometry::Template { owned_curves, .. } = &role.geometry {
+                focus.curves.extend(owned_curves.iter().cloned());
+            }
+        }
+        focus
+    }
+
     /// Draw the sketch overlay: curves and points by the solver's verdict,
     /// dimensions, glyphs, picks and the status line.
     pub(super) fn paint_footprint_sketch(
@@ -598,14 +661,44 @@ impl PartEditor {
                 .find(|(_, r)| r.contains(h))
                 .map(|(id, _)| id.clone())
         });
-        let mut label_rects = Vec::new();
-        for layout in &layouts {
+        let shown = dims::shown_dimensions(drawn, &loaded.source, state.detail, &self.dim_focus());
+        let lit_of = |id: &SketchConstraintId| {
+            state.selected.as_ref() == Some(id)
+                || hovered_label.as_ref() == Some(id)
+                || highlighted.contains(id)
+        };
+        // Sketch order, so selecting or hovering never moves a label.
+        let order = layouts.iter().filter(|l| shown.contains(&l.id));
+        let mut label_rects: Vec<(SketchConstraintId, Rect)> = Vec::new();
+        for layout in order {
             let Some(constraint) = drawn.constraints.iter().find(|k| k.id == layout.id) else {
                 continue;
             };
-            let lit = state.selected.as_ref() == Some(&layout.id)
-                || hovered_label.as_ref() == Some(&layout.id)
-                || highlighted.contains(&layout.id);
+            let lit = lit_of(&layout.id);
+            let text = labels
+                .iter()
+                .find(|(k, _)| *k == layout.id)
+                .map_or_else(String::new, |(_, s)| s.clone());
+            // De-overlap: step the label off any label already placed; a
+            // dimension whose label finds no room is left out this frame
+            // (All dims, the selection or a zoom shows it).
+            let size = painter
+                .layout_no_wrap(text.clone(), font.clone(), t.text)
+                .size()
+                + vec2(6.0, 2.0);
+            let base = view.screen(layout.text);
+            let step = size.y + 2.0;
+            let Some(center) = [0.0, -1.0, 1.0, -2.0, 2.0]
+                .into_iter()
+                .map(|k| base + vec2(0.0, k * step))
+                .find(|c| {
+                    let r = Rect::from_center_size(*c, size);
+                    !label_rects.iter().any(|(_, q)| q.expand(1.0).intersects(r))
+                })
+                .or(lit.then_some(base))
+            else {
+                continue;
+            };
             let color = if conflicting.contains(&layout.id) {
                 t.sketch_conflict
             } else if lit {
@@ -635,11 +728,9 @@ impl PartEditor {
             }
             let editing =
                 matches!(&state.field, Some(ValueField::Existing(e)) if e.constraint == layout.id);
-            let text = labels
-                .iter()
-                .find(|(k, _)| *k == layout.id)
-                .map_or_else(String::new, |(_, s)| s.clone());
-            let center = view.screen(layout.text);
+            if center != base {
+                painter.line_segment([base, center], Stroke::new(0.75, color.gamma_multiply(0.6)));
+            }
             let galley = painter.layout_no_wrap(text, font.clone(), color);
             let r = Rect::from_center_size(center, galley.size() + vec2(6.0, 2.0));
             if !editing {
@@ -652,11 +743,12 @@ impl PartEditor {
         // they would overlap.
         let mut glyph_rects: Vec<(SketchConstraintId, Rect)> = Vec::new();
         let mut taken: Vec<Rect> = label_rects.iter().map(|(_, r)| r.expand(2.0)).collect();
-        for constraint in drawn
-            .constraints
-            .iter()
-            .filter(|k| k.value.is_none() && k.kind != "Coincident")
-        {
+        let focus = self.dim_focus();
+        for constraint in drawn.constraints.iter().filter(|k| {
+            k.value.is_none()
+                && k.kind != "Coincident"
+                && dims::shows_glyph(k, &loaded.source, state.detail, &focus)
+        }) {
             if glyph_rects.len() >= MAX_GLYPHS {
                 break;
             }
@@ -889,6 +981,22 @@ impl PartEditor {
                 return;
             }
         };
+        if let DimInput::Param(name) = &input {
+            let known = source.parameters.iter().any(|p| p.name == *name)
+                || self
+                    .footprint_dims
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|l| l.package.iter().any(|p| p.name == *name));
+            if !known {
+                let why = format!(
+                    "Unknown parameter {0} — use {0} = <value> to define it",
+                    name.0
+                );
+                self.keep_field(field, why);
+                return;
+            }
+        }
         let edits = match &field {
             ValueField::Existing(e) => {
                 let bound = self
@@ -916,6 +1024,8 @@ impl PartEditor {
     fn keep_field(&mut self, mut field: ValueField, error: String) {
         field.set_error(Some(error));
         self.footprint_dims.field = Some(field);
-        self.footprint_dims.fresh = 1;
+        // Enter's focus surrender reaches the field on the next frame; two
+        // fresh frames keep it open through that and then refocus it.
+        self.footprint_dims.fresh = 2;
     }
 }

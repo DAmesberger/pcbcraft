@@ -198,9 +198,15 @@ fn e(text: &str) -> Expr {
     Expr(text.into())
 }
 
-fn count_or(n: usize, divisor: usize, expr: &str) -> Expr {
+/// `expr` when the package's `n` terminals divide into `divisor` groups;
+/// fewer terminals than groups get the family's usual `family` count
+/// (the form then warns that the counts differ), else the rounded-up
+/// share.
+fn count_or(n: usize, divisor: usize, expr: &str, family: usize) -> Expr {
     if n > 0 && n.is_multiple_of(divisor) {
         e(expr)
+    } else if n < divisor {
+        Expr(family.to_string())
     } else {
         Expr(n.div_ceil(divisor).max(1).to_string())
     }
@@ -244,7 +250,7 @@ impl FootprintTemplate {
             }),
             TemplateKind::GullWing => Self::GullWing(GullWingTemplate {
                 pitch: e("1.27"),
-                per_row: count_or(n, 2, "pkg_n / 2"),
+                per_row: count_or(n, 2, "pkg_n / 2", 4),
                 row_span: if sized(w) { e("pkg_W + 1.5") } else { e("5.4") },
                 pad_l: e("1.55"),
                 pad_w: e("0.6"),
@@ -258,7 +264,7 @@ impl FootprintTemplate {
                 } else {
                     (n, "pkg_n / 4")
                 };
-                let per_side = count_or(perimeter, 4, side);
+                let per_side = count_or(perimeter, 4, side, 4);
                 let body = |v: f64, axis: &str| {
                     if sized(v) {
                         e(&format!("pkg_{axis} + 2 * 0.3 - pad_l"))
@@ -425,12 +431,44 @@ pub fn build(
         None => None,
     };
     let (mut def, report) = b.finish(last)?;
+    keep_designator_off_copper(&mut def);
     if let Some(pad) = marker {
         // The dot is the newest graphic role; the pad is the authority.
         let markers = report.graphics.last().copied().into_iter().collect();
         def.polarity = Some(Polarity { pad, markers });
     }
     Ok((def, report))
+}
+
+/// Move a silkscreen designator that now sits over the built pads to just
+/// above them, so the legend never lands on copper (the draft's text
+/// predates the template's pads).
+fn keep_designator_off_copper(def: &mut FootprintDefinition) {
+    use crate::library::graphics::{Item, TextContent};
+    let Some(pads) = def
+        .pads
+        .iter()
+        .map(|p| p.bounds())
+        .reduce(crate::geometry::Bounds::union)
+    else {
+        return;
+    };
+    for graphic in &mut def.graphics {
+        let Item::Text(text) = &mut graphic.item else {
+            continue;
+        };
+        if graphic.layer != DrawingLayer::Silkscreen || text.content != TextContent::Designator {
+            continue;
+        }
+        let half = text.height.max(0.0) / 2.0;
+        let extent = crate::geometry::Bounds::point(text.at).inflated(half);
+        if extent.intersects(&pads) {
+            text.at = [
+                pads.center()[0],
+                pads.max[1] + half + crate::library::graphics::SILK_STROKE_MM * 2.0,
+            ];
+        }
+    }
 }
 
 /// The clone being built and what its steps reported.

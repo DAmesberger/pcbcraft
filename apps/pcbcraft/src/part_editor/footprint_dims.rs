@@ -255,6 +255,120 @@ pub struct DimsState {
     pub glyphs: Vec<(SketchConstraintId, egui::Rect)>,
     /// The parameters panel's text buffers.
     pub panel: super::footprint_params_ui::Panel,
+    /// How many dimensions the canvas labels.
+    pub detail: DimDetail,
+    /// The constraint tool the Constrain split button shows.
+    pub last_constraint: Option<super::footprint_tools::FootprintTool>,
+}
+
+/// The ribbon toggle between [`DimDetail::Key`] and [`DimDetail::All`].
+pub const ALL_DIMS_TOOL: &str = "fp-dims-all";
+
+/// How many dimensions the canvas labels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DimDetail {
+    /// The independent parameters' dimensions, each parameter once, the
+    /// unbound driving ones, and everything the selection touches.
+    #[default]
+    Key,
+    /// Every dimension, driven and derived included.
+    All,
+}
+
+/// What the canvas labels whatever the detail: the selected dimension,
+/// the readers of a highlighted parameter and the dimensions touching
+/// the selected sketch entities.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DimFocus {
+    pub constraints: Vec<SketchConstraintId>,
+    pub points: Vec<SketchPointId>,
+    pub curves: Vec<SketchCurveId>,
+}
+
+/// The dimensions the canvas labels, in sketch order. At
+/// [`DimDetail::Key`] a dimension bound to an expression (a pad's corner
+/// radius) or to a derived parameter (one reading other parameters, as a
+/// template's seed and paste-grid positions) is left out, and each
+/// parameter is labelled once, unless the focus touches it.
+pub fn shown_dimensions(
+    view: &SketchView,
+    source: &FootprintSource,
+    detail: DimDetail,
+    focus: &DimFocus,
+) -> Vec<SketchConstraintId> {
+    let dimensions = view.constraints.iter().filter(|k| k.value.is_some());
+    if detail == DimDetail::All {
+        return dimensions.map(|k| k.id.clone()).collect();
+    }
+    let independent = |name: &str| {
+        source
+            .parameters
+            .iter()
+            .find(|p| p.name.0 == name)
+            .is_none_or(|p| {
+                !source
+                    .parameters
+                    .iter()
+                    .any(|q| q.name != p.name && mentions(&p.expr.0, &q.name.0))
+            })
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    dimensions
+        .filter(|k| {
+            let focused = focus.constraints.contains(&k.id)
+                || k.points.iter().any(|p| focus.points.contains(p))
+                || k.curves.iter().any(|c| focus.curves.contains(c));
+            if focused {
+                return true;
+            }
+            if k.driven {
+                return false;
+            }
+            match &k.param {
+                None => true,
+                Some(param) if ParamName(param.clone()).valid() => {
+                    independent(param) && seen.insert(param.clone())
+                }
+                Some(_) => false,
+            }
+        })
+        .map(|k| k.id.clone())
+        .collect()
+}
+
+/// Whether the canvas draws constraint `k`'s glyph. At
+/// [`DimDetail::Key`] the glyphs of a pad's own template, drill and paste
+/// curves are left out unless the focus touches them; the author's own
+/// sketch constraints always show.
+pub fn shows_glyph(
+    k: &ViewConstraint,
+    source: &FootprintSource,
+    detail: DimDetail,
+    focus: &DimFocus,
+) -> bool {
+    use pcbcraft_core::library::footprint_source::{PadGeometry, PasteRuleExpr};
+    if detail == DimDetail::All
+        || focus.constraints.contains(&k.id)
+        || k.points.iter().any(|p| focus.points.contains(p))
+        || k.curves.iter().any(|c| focus.curves.contains(c))
+        || k.curves.is_empty()
+    {
+        return true;
+    }
+    let owned = |c: &SketchCurveId| {
+        source.pads.iter().any(|r| {
+            matches!(&r.geometry, PadGeometry::Template { owned_curves, .. } if owned_curves.contains(c))
+                || r.hole.as_ref().is_some_and(|h| h.curves.contains(c))
+                || matches!(&r.paste, PasteRuleExpr::Windows(w) if w.contains(c))
+        })
+    };
+    !k.curves.iter().all(owned)
+}
+
+/// Whether `expr` names the identifier `name` (whole words only).
+fn mentions(expr: &str, name: &str) -> bool {
+    expr.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|w| w == name)
 }
 
 impl DimsState {
@@ -623,9 +737,11 @@ pub fn label(constraint: &ViewConstraint) -> String {
         DimKind::Diameter => format!("Ø{number}"),
         _ => number,
     };
+    // A bare parameter names itself; an expression shows its value only
+    // (the field and the parameters panel show the text).
     let text = match &constraint.param {
-        Some(param) => format!("{param} = {shown}"),
-        None => shown,
+        Some(param) if ParamName(param.clone()).valid() => format!("{param} = {shown}"),
+        _ => shown,
     };
     if constraint.driven {
         format!("({text})")

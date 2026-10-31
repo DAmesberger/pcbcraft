@@ -112,7 +112,8 @@ fn rect(w: f64, h: f64) -> PadShape {
 
 /// A SOIC-8 drawn as a dual row: pad 1, then the row direction. One
 /// commit makes eight pads numbered counter-clockwise, sized by named
-/// parameters, pad 1 landing package terminal 1.
+/// parameters. The pads land no package terminal until the explicit
+/// assign-by-designation command runs.
 #[test]
 fn a_dual_row_gesture_draws_a_soic8_in_one_commit() -> TestResult {
     let mut b = Bench::new(8);
@@ -140,6 +141,17 @@ fn a_dual_row_gesture_draws_a_soic8_in_one_commit() -> TestResult {
         assert!(near(pad.position, at), "pad {n} at {:?}", pad.position);
         assert_eq!(pad.shape, rect(1.55, 0.6), "pad {n}");
     }
+    assert!(
+        b.fp.pads.iter().all(|p| p.terminal.is_none()),
+        "sketched pads are not bound by matching numbers"
+    );
+    let (assigned, changes) = footprint_edit::assign_terminals(
+        &b.fp,
+        &b.pkg,
+        &footprint_edit::AssignRule::ByPackageDesignation,
+    )?;
+    assert_eq!(changes.len(), 8);
+    b.fp = assigned;
     assert_eq!(b.pad("1")?.terminal, Some(PackageTerminalId(101)));
     for name in ["pitch", "row_span", "pad_l", "pad_w"] {
         assert!(
@@ -166,7 +178,7 @@ fn pad_tools_place_one_pad_per_click_and_space_turns_it() -> TestResult {
     b.press([-1.0, 1.0])?.ok_or("and another")?;
     assert_eq!(b.fp.pads.len(), 2);
     assert!(near(b.pad("1")?.position, [1.0, 1.0]));
-    assert_eq!(b.pad("2")?.terminal, Some(PackageTerminalId(102)));
+    assert_eq!(b.pad("2")?.terminal, None, "no terminal is inferred");
     assert!(b.tools.turn(), "Space turns a pad tool");
     b.press([0.0, -2.0])?.ok_or("a turned pad")?;
     let turned = b.pad("3")?;
@@ -664,4 +676,16 @@ fn keys_arm_footprint_tools() -> TestResult {
     frame(&mut editor, &engine, &ctx, vec![key(egui::Key::Escape)]);
     assert_eq!(editor.footprint_tool.tool, None);
     Ok(())
+}
+
+/// A gesture finished while another waits is refused, never overwriting
+/// the waiting one.
+#[test]
+fn the_outbox_refuses_rather_than_overwrites() {
+    let mut tools = ToolState::default();
+    let first = vec![FootprintEdit::Detach];
+    assert!(tools.queue(first.clone()));
+    assert!(!tools.queue(vec![FootprintEdit::Detach, FootprintEdit::Detach]));
+    assert_eq!(tools.outbox, Some(first));
+    assert!(tools.queue(Vec::new()), "nothing to queue is no refusal");
 }

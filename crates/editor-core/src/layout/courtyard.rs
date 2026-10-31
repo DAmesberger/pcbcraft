@@ -15,6 +15,9 @@ use std::collections::BTreeSet;
 
 /// The finding code for overlapping courtyards.
 pub const COURTYARD_OVERLAP: &str = "board.courtyard_overlap";
+/// The finding code the board checks use when a bound leaves geometry
+/// unchecked.
+pub const COURTYARD_LIMIT: &str = "board.check_limit";
 
 /// One closed courtyard shape of one placed part, in board coordinates.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,11 +60,26 @@ const CHORD_MM: f64 = 0.01;
 /// `board.courtyard_overlap` findings between different placements on the
 /// same side: one per pair of parts, however many of their shapes
 /// overlap. Bounded by [`MAX_CHECKED_COURTYARDS`] and
-/// [`MAX_OVERLAP_FINDINGS`].
+/// [`MAX_OVERLAP_FINDINGS`]; reaching either adds one
+/// [`COURTYARD_LIMIT`] finding, so unchecked courtyards are never silent.
 pub fn findings(project: &Project) -> Vec<Finding> {
-    let yards: Vec<(PlacedCourtyard, Vec<Point>, Bounds)> = placed_courtyards(project)
+    bounded_findings(project, MAX_CHECKED_COURTYARDS, MAX_OVERLAP_FINDINGS)
+}
+
+fn limit_finding() -> Finding {
+    Finding::new(
+        COURTYARD_LIMIT,
+        "Courtyard check limit reached; remaining courtyards are unchecked".into(),
+        vec![],
+    )
+}
+
+fn bounded_findings(project: &Project, max_yards: usize, max_findings: usize) -> Vec<Finding> {
+    let all = placed_courtyards(project);
+    let truncated = all.len() > max_yards;
+    let yards: Vec<(PlacedCourtyard, Vec<Point>, Bounds)> = all
         .into_iter()
-        .take(MAX_CHECKED_COURTYARDS)
+        .take(max_yards)
         .filter_map(|c| {
             let ring = c.shape.flatten(CHORD_MM);
             let bounds = Bounds::of(ring.iter().copied())?;
@@ -72,9 +90,6 @@ pub fn findings(project: &Project) -> Vec<Finding> {
     let mut out = Vec::new();
     for (i, (a, ra, ba)) in yards.iter().enumerate() {
         for (b, rb, bb) in yards.iter().skip(i + 1) {
-            if out.len() >= MAX_OVERLAP_FINDINGS {
-                return out;
-            }
             if a.instance == b.instance || a.layer != b.layer || !ba.intersects(bb) {
                 continue;
             }
@@ -85,6 +100,10 @@ pub fn findings(project: &Project) -> Vec<Finding> {
             );
             if pairs.contains(&key) || !polygons_overlap(ra, rb) {
                 continue;
+            }
+            if out.len() >= max_findings {
+                out.push(limit_finding());
+                return out;
             }
             pairs.insert(key);
             let name = |id: Id| {
@@ -111,6 +130,9 @@ pub fn findings(project: &Project) -> Vec<Finding> {
                 ],
             ));
         }
+    }
+    if truncated {
+        out.push(limit_finding());
     }
     out
 }

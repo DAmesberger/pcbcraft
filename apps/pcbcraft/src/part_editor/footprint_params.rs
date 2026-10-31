@@ -26,6 +26,8 @@ pub struct ParamRow {
     pub comment: String,
     /// Dimensions that read the parameter.
     pub used_by: Vec<SketchConstraintId>,
+    /// Every reader: dimensions, parameters, arrays, derived roles…
+    pub readers: sketch::ParamReaders,
     /// A `pkg_*` package value: shown, never edited here.
     pub read_only: bool,
 }
@@ -47,7 +49,8 @@ pub fn rows(source: Option<&FootprintSource>, package: &[PackageValue]) -> Vec<P
         if !row.read_only {
             row.value = values.get(&row.name).copied();
         }
-        row.used_by = sketch::dimensions_using(source, &row.name).unwrap_or_default();
+        row.readers = sketch::readers(source, &row.name).unwrap_or_default();
+        row.used_by = row.readers.dimensions.clone();
     }
     rows
 }
@@ -65,6 +68,25 @@ pub fn errors(source: &FootprintSource, package: &[PackageValue]) -> BTreeMap<Pa
             .map(|p| (p.name.clone(), e.to_string()))
             .collect(),
     }
+}
+
+/// The readers as a phrase: "2 dimensions, array, courtyard"; `None`
+/// when nothing reads the parameter.
+pub fn readers_phrase(readers: &sketch::ParamReaders) -> Option<String> {
+    let mut parts = Vec::new();
+    match readers.dimensions.len() {
+        0 => {}
+        1 => parts.push("1 dimension".to_string()),
+        n => parts.push(format!("{n} dimensions")),
+    }
+    for p in readers.parameters.iter().take(3) {
+        parts.push(p.0.clone());
+    }
+    if readers.parameters.len() > 3 {
+        parts.push(format!("{} more parameters", readers.parameters.len() - 3));
+    }
+    parts.extend(readers.roles.iter().map(|r| r.to_string()));
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
 /// A value with its unit, as the table shows it.
@@ -104,6 +126,7 @@ fn bare_rows(source: Option<&FootprintSource>, package: &[PackageValue]) -> Vec<
             value: Some(p.value),
             comment: String::new(),
             used_by: Vec::new(),
+            readers: sketch::ParamReaders::default(),
             read_only: true,
         }
     });
@@ -117,6 +140,7 @@ fn bare_rows(source: Option<&FootprintSource>, package: &[PackageValue]) -> Vec<
             value: None,
             comment: p.comment.clone(),
             used_by: Vec::new(),
+            readers: sketch::ParamReaders::default(),
             read_only: false,
         });
     package_rows.chain(own).collect()

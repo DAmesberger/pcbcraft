@@ -135,6 +135,9 @@ impl PartEditor {
     pub(super) fn footprint_arm(&mut self, tool: FootprintTool) {
         self.footprint_tool.arm(tool);
         self.footprint_dims.picks.clear();
+        if matches!(tool, FootprintTool::Constrain(_)) {
+            self.footprint_dims.last_constraint = Some(tool);
+        }
         let source = self
             .draft
             .as_ref()
@@ -211,8 +214,8 @@ impl PartEditor {
     /// Queue one finished gesture's edits (a tool, dimension, constraint,
     /// drag or parameter edit) as the next `library.edit_footprint`.
     pub(super) fn queue_footprint_edits(&mut self, edits: Vec<FootprintEdit>) {
-        if !edits.is_empty() {
-            self.footprint_tool.outbox = Some(edits);
+        if !self.footprint_tool.queue(edits) {
+            self.notice = footprint_tools::OUTBOX_BUSY.into();
         }
     }
 
@@ -224,7 +227,19 @@ impl PartEditor {
             self.footprint_tool.outbox = Some(edits);
             return None;
         }
+        // The gesture was staged against the working copy sent before it:
+        // if the engine refused that copy, the ids no longer match.
+        if let Some(expected) = self.footprint_tool.held_for.take()
+            && self.draft.as_ref().map(|s| &s.footprint) != Some(&expected)
+        {
+            self.notice = "The sketch change was dropped: the edit before it was refused.".into();
+            return None;
+        }
         if self.draft != self.baseline {
+            self.footprint_tool.held_for = self
+                .draft
+                .as_ref()
+                .map(|s| s.retargeted(engine.drafts()).footprint);
             self.footprint_tool.outbox = Some(edits);
             return self.send(engine);
         }
@@ -308,8 +323,11 @@ impl PartEditor {
                           state: &mut footprint_tools::ToolState| {
             match result {
                 Ok(Gesture::Commit(edits)) if !edits.is_empty() => {
-                    state.outbox = Some(edits);
-                    notice.clear();
+                    if state.queue(edits) {
+                        notice.clear();
+                    } else {
+                        *notice = footprint_tools::OUTBOX_BUSY.into();
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => *notice = e.to_string(),
