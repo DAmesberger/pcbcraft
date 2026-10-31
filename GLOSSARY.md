@@ -82,14 +82,24 @@ A copper land in a footprint, associated with a package terminal when electrical
 An explicit association between a component definition and a package, including the mapping from electrical terminals to package terminals and the footprint variants it allows. A binding belongs to one component lineage, and component revisions list the bindings they allow.
 _Avoid_: Footprint assignment when a pin mapping is also required
 
-**Manufacturer part**:
-An exact manufacturer's part number, associated with its device binding and rated specifications. A supplier listing is an offer for that part, not its identity.
+**Manufacturer part** (Part):
+One exact orderable item: its own revisioned definition lineage holding the manufacturer as written, the complete manufacturer part number (MPN, ordering suffixes included), the exact component revision and device binding it implements, its rated specs, references, distributor offers and provenance. An instance may pin one Part revision; the Part must agree with the instance's component revision, physical choice and requirements, and a component update that leaves it behind is a finding, never a silent re-pointing. A supplier listing is an offer for that part, not its identity. An "atomic part" in other tools is a component plus exactly one Part.
+_Avoid_: Part for a component definition or a catalog entry
+
+**Rated spec**:
+One value a manufacturer part is rated at, typed by a field definition and carrying a spec meaning, such as resistance 10 kΩ (exact nominal) or voltage 25 V (minimum rating). It matches an instance requirement by field lineage, never by name.
+
+**Spec meaning**:
+How a rated spec meets a requirement of the same field: exact nominal (the value is the required one), minimum rating (rated at least the required value, so a 25 V part meets a 16 V requirement) or maximum tolerance (no wider than the required tolerance on either side). One core comparison, `fields::satisfies`, applies it for search, assignment and purchasing completeness.
+
+**Requirement** (part requirement):
+An instance's effective value of one selected field, compared with the rated spec of the same field lineage when a Part is chosen.
 
 **Distributor offer**:
-A distributor's listing for an exact manufacturer part, identified by the distributor and its own SKU or product link. Price and availability are observations about that offer, not properties of the electrical component definition.
+A distributor's listing for an exact manufacturer part, identified by the distributor and its own SKU or product link, with optional packaging text. It is part of the Part revision and holds only identity the user chose. Price and availability are observations about that offer, not properties of the electrical component definition, and Pcbcraft does not store them.
 
-**Reference link**:
-A labeled reference associated with a component, package or manufacturer part, such as a datasheet, application note or product page. A link identifies an external resource; it does not imply that a copy is available offline.
+**Reference link** (reference):
+A labeled reference associated with a component, package or manufacturer part, such as a datasheet, application note or product page. A Part's reference is a record with a stable local ID, kind, title, optional URL, document revision, licence, provenance and an optional attached copy named by its SHA-256. A link identifies an external resource; it does not imply that a copy is available offline, and a missing URL removes neither the record nor its attached copy.
 
 **Component instance**:
 One component used in a project, such as R12, with its electrical connections, chosen implementation and project-specific requirements.
@@ -205,3 +215,9 @@ One separately shown property of a catalog entry: a symbol, a footprint, a 3D en
 
 **Place palette**:
 The Schematic editor's searchable sheet for finding a component revision in the catalog and placing it, previewed in the properties card. It runs the same `library.search` query as the CLI and MCP and places through `component.place`.
+
+**Purchasing completeness**:
+Whether an instance can be bought as designed, derived and never stored: no part (generic), unresolved (a Part is chosen but its component revision, binding or a requirement disagrees, or it is stale) or resolved. Its findings are advisory and block no other stage.
+
+**Resolve parts**:
+The view and query (`library.resolve_groups`) that groups instances without an agreeing Part by component revision, footprint and identical requirements, as the BOM groups them, so that one Part is assigned to a whole group with one `instance.assign_part`, one undo step.

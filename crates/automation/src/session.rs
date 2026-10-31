@@ -55,8 +55,8 @@ pub enum Request {
     Inspect(NoParams),
     /// Answer one read-only core query (`component.inspect`,
     /// `component.check`, `component.check_drafts`, `library.search`,
-    /// `library.facets`, `library.inspect`), passed unchanged to
-    /// `Engine::query`.
+    /// `library.facets`, `library.inspect`, `project.bom`,
+    /// `library.resolve_groups`), passed unchanged to `Engine::query`.
     #[serde(rename = "project.query")]
     Query(Query),
     #[serde(rename = "project.undo")]
@@ -98,7 +98,7 @@ impl Request {
         vec![
             info::<ApplyParams>(
                 "project.apply",
-                "Apply one typed document operation (library, instance, schematic, layout including layout.set_fabrication, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
+                "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
             info::<NoParams>(
                 "project.inspect",
@@ -106,7 +106,7 @@ impl Request {
             ),
             info::<Query>(
                 "project.query",
-                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges. Nothing is stored.",
+                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges; project.bom lists the bill of materials, resolved instances grouped by their manufacturer Part and unresolved ones marked; library.resolve_groups lists instances without an agreeing Part that share component revision, footprint and requirements, each group with the library.search query that finds Parts for it. Nothing is stored.",
             ),
             info::<NoParams>("project.undo", "Undo the last document change."),
             info::<NoParams>("project.redo", "Redo the last undone document change."),
@@ -291,5 +291,7 @@ pub fn schemas() -> Value {
     })
 }
 
+#[cfg(test)]
+mod parts_tests;
 #[cfg(test)]
 mod tests;
