@@ -1,6 +1,7 @@
 //! File effects for Pcbcraft documents: bounded reads, atomic writes and crash
 //! recovery. Document meaning, versions and migrations stay in
 //! `pcbcraft_core::format`; this crate only moves bytes safely.
+pub mod artwork;
 pub mod library_folder;
 pub mod library_folder_index;
 pub mod persistence;

@@ -24,7 +24,7 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, LibraryCommand, Operation, Outcome, Query, QueryResult,
     Revision,
 };
-use pcbcraft_io::library_folder::{self as folder, Disabled, Folder, Manifest};
+use pcbcraft_io::library_folder::{self as folder, Disabled, Folder};
 use pcbcraft_io::library_folder_index::{self as index, IndexState};
 use pcbcraft_io::settings::{self, MAX_FAVOURITES, MAX_RECENT, MAX_SOURCES, SourceSetting};
 use pcbcraft_io::settings::{UserDirs, UserSettings};
@@ -129,7 +129,7 @@ fn folder_name(path: &Path) -> String {
 /// off the UI thread.
 pub fn load(setting: &SourceSetting, cache: Option<&Path>) -> SourceView {
     let mut view = SourceView::pending(setting.clone());
-    view.status = match open(&setting.path) {
+    view.status = match folder::inspect_folder(&setting.path) {
         Err(why) => Status::Disabled(why),
         Ok(opened) => {
             view.name = opened.manifest.name.clone();
@@ -151,24 +151,6 @@ pub fn load(setting: &SourceSetting, cache: Option<&Path>) -> SourceView {
         }
     };
     view
-}
-
-/// The manifest checks of `library_folder::open_folder`, with the reason
-/// kept typed instead of folded into an error message.
-fn open(root: &Path) -> Result<Folder, Disabled> {
-    let path = root.join(folder::MANIFEST_FILE);
-    let metadata = std::fs::metadata(&path).map_err(|_| Disabled::PathMissing)?;
-    if metadata.len() > folder::MAX_RECORD_BYTES as u64 {
-        return Err(Disabled::Malformed("the manifest is too large".into()));
-    }
-    let bytes = std::fs::read(&path).map_err(|e| Disabled::Malformed(e.to_string()))?;
-    let manifest: Manifest =
-        serde_json::from_slice(&bytes).map_err(|e| Disabled::Malformed(e.to_string()))?;
-    folder::check_manifest(&manifest)?;
-    Ok(Folder {
-        root: root.to_path_buf(),
-        manifest,
-    })
 }
 
 /// A second configured folder holding a library already listed is not
@@ -1359,7 +1341,7 @@ mod tests {
                 status: Status::Ready {
                     folder: Folder {
                         root,
-                        manifest: Manifest {
+                        manifest: folder::Manifest {
                             format: folder::FOLDER_FORMAT,
                             library: LibraryId(5),
                             name: "Team".into(),

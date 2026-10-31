@@ -16,6 +16,8 @@ mod footprint_props;
 mod footprint_tests;
 mod part_props;
 mod snap;
+mod svg_import;
+pub use svg_import::IMPORT_SVG;
 mod symbol_canvas;
 mod symbol_props;
 mod working_set;
@@ -362,6 +364,8 @@ pub struct PartEditor {
     body: Option<(UnitId, GraphicId)>,
     /// The component's manufacturer parts.
     parts: part_props::PartProps,
+    /// A running Import SVG….
+    svg: svg_import::SvgImport,
 }
 
 impl Default for PartEditor {
@@ -402,6 +406,7 @@ impl Default for PartEditor {
             drawn_cache: None,
             body: None,
             parts: Default::default(),
+            svg: Default::default(),
         }
     }
 }
@@ -597,7 +602,11 @@ impl PartEditor {
             // Publish stays ahead of the layer toggles, so at narrow widths
             // the toggles fold into the overflow first.
             let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
-            groups.extend([pads, library, show]);
+            let artwork = Group {
+                label: "Artwork",
+                tools: vec![self.import_svg_tool()],
+            };
+            groups.extend([pads, artwork, library, show]);
         } else {
             groups.push(library);
         }
@@ -707,6 +716,7 @@ impl PartEditor {
                         family(2),
                         tool(Draw::SINGLE),
                         family(3),
+                        self.import_svg_tool(),
                     ]
                 },
             },
@@ -1641,6 +1651,7 @@ impl PartEditor {
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        self.svg_frame(ui.ctx(), engine);
         if self.update.is_open() {
             ui.disable();
         }

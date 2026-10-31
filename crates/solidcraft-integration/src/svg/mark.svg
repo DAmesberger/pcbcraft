@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Original Pcbcraft test artwork, MIT OR Apache-2.0: a badge with a dot,
+     a wave, a tilted triangle, a ring and a rounded tab. 30 mm x 20 mm. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 300 200">
+  <rect x="10" y="10" width="280" height="180" rx="20" fill="none" stroke="#000" stroke-width="4"/>
+  <circle cx="70" cy="100" r="40"/>
+  <path d="M130 130 C 160 40, 200 40, 230 100 S 270 160, 280 70" fill="none" stroke="black" stroke-width="6"/>
+  <g transform="translate(150 160) rotate(15)" style="fill:#000">
+    <polygon points="0,0 40,0 20,-30"/>
+  </g>
+  <path d="M 225 150 a 25 25 0 1 0 50 0 a 25 25 0 1 0 -50 0 Z M 240 150 a 10 10 0 1 0 20 0 a 10 10 0 1 0 -20 0 Z" fill-rule="evenodd"/>
+  <path d="M 120 20 H 160 A 10 10 0 0 1 170 30 V 50 A 10 10 0 0 1 160 60 H 120 Z"/>
+</svg>

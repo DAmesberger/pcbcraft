@@ -2793,6 +2793,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "pcbcraft-core",
+ "quick-xml",
  "schemars",
  "serde",
  "serde_json",

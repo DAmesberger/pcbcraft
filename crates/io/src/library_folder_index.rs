@@ -134,34 +134,17 @@ mod tests {
     use super::*;
     use crate::library_folder::folder_tests::{bundle, field};
     use crate::library_folder::{create_folder, record_path, write_bundle};
-    use pcbcraft_core::catalog::SourceRecordInfo;
     use pcbcraft_core::ids::{Revision, SourceLineageId};
-    use pcbcraft_core::library::bundle::content_hash;
 
-    /// A stand-in for `source_catalog` until task 1 lands it: the record
-    /// list it is built from, which is what the index must keep exact.
+    /// The real catalog builder, as `load_or_build` uses it.
     fn listing(
         library: LibraryId,
         name: &str,
         records: &[RevisionRecord],
     ) -> Result<SourceCatalog> {
-        let revisions = records
-            .iter()
-            .map(|r| {
-                Ok(SourceRecordInfo {
-                    lineage: r.lineage,
-                    revision: r.revision,
-                    kind: r.kind,
-                    content_hash: content_hash(r)?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(SourceCatalog {
-            library,
-            name: name.into(),
-            revisions,
-            ..SourceCatalog::default()
-        })
+        Ok(pcbcraft_core::catalog::source_catalog(
+            library, name, records,
+        )?)
     }
 
     fn untouched(_: LibraryId, _: &str, _: &[RevisionRecord]) -> Result<SourceCatalog> {
@@ -274,7 +257,6 @@ mod tests {
     /// The real catalog builder: a deleted index rebuilds to an equal
     /// catalog. Same assertion as above, through `load_or_build`.
     #[test]
-    #[ignore = "needs task 1's catalog::source_catalog; un-ignore at S3 integration"]
     fn the_real_catalog_rebuilds_identically() -> Result<()> {
         let (_library, cache, folder) = sample()?;
         let (built, state) = load_or_build(cache.path(), &folder)?;

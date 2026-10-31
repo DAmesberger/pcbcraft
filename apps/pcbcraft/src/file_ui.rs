@@ -494,6 +494,24 @@ impl FileUi {
             let _ = events.send(Event::Picked(ticket, kind, picked));
         });
     }
+    /// Pick an SVG drawing to import, with the same parented native picker.
+    /// The answer (None when cancelled) arrives on the returned channel;
+    /// the caller reads the file off the UI thread.
+    pub fn pick_svg(&self) -> Receiver<Option<PathBuf>> {
+        let dialog = self
+            .picker
+            .clone()
+            .set_directory(&self.folder)
+            .set_title("Import SVG drawing")
+            .add_filter("SVG drawing", &["svg", "SVG"]);
+        let future = dialog.pick_file();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let picked = pollster::block_on(future).map(|handle| handle.path().to_path_buf());
+            let _ = sender.send(picked);
+        });
+        receiver
+    }
     fn clear_recovery(&mut self, close: bool) {
         let ticket = if close {
             self.begin(Kind::Close, None)

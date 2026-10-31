@@ -122,7 +122,10 @@ fn refused_manifests_are_listed_with_their_reason() -> TestResult {
     let featured = temp.path().join("featured");
     let broken = temp.path().join("broken");
     let missing = temp.path().join("missing");
+    // Settings refuse a repeated path, so "turned off" gets its own folder.
+    let off = temp.path().join("off");
     manifest(&future, &manifest_json(FOLDER_FORMAT + 1, &[]))?;
+    manifest(&off, &manifest_json(FOLDER_FORMAT + 1, &[]))?;
     manifest(
         &featured,
         &manifest_json(FOLDER_FORMAT, &["future-feature"]),
@@ -190,7 +193,7 @@ fn refused_manifests_are_listed_with_their_reason() -> TestResult {
                 setting(&future, true),
                 setting(&featured, true),
                 setting(&broken, true),
-                setting(&future, false),
+                setting(&off, false),
             ],
             ..UserSettings::default()
         },
@@ -215,6 +218,51 @@ fn refused_manifests_are_listed_with_their_reason() -> TestResult {
     // Disabled sources add nothing to searches.
     let search = query(&mut session, "library.search", json!({"query": "EX-"}))?;
     assert_eq!(search["total"], 0);
+    Ok(())
+}
+
+/// Two configured folders holding one library id (a copied folder): the
+/// first is searched, the second is listed as failed and never searched.
+#[test]
+fn a_second_folder_of_the_same_library_is_not_searched() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let dirs = dirs(root.path());
+    let first = root.path().join("first");
+    let copy = root.path().join("copy");
+    manifest(&first, &manifest_json(FOLDER_FORMAT, &[]))?;
+    manifest(&copy, &manifest_json(FOLDER_FORMAT, &[]))?;
+    let setting = |path: &Path| SourceSetting {
+        path: path.to_path_buf(),
+        enabled: true,
+        writable: false,
+    };
+    write_settings(
+        &dirs.settings_path(),
+        &UserSettings {
+            sources: vec![setting(&first), setting(&copy)],
+            ..UserSettings::default()
+        },
+    )?;
+    let mut session = user_session(Engine::default(), &dirs)?;
+    let listed = ok(&mut session, "library.sources", json!({}))?;
+    assert_eq!(listed["sources"][0]["state"], "ready", "{listed}");
+    assert_eq!(listed["sources"][1]["state"], "failed", "{listed}");
+    let message = listed["sources"][1]["error"]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(message.contains("same library as"), "{listed}");
+    // Adding the copy again through the request is refused outright.
+    let mut fresh = Session::with_sources(Engine::default(), Sources::default());
+    ok(
+        &mut fresh,
+        "library.source.add",
+        json!({"path": first.display().to_string()}),
+    )?;
+    let reply = fresh.dispatch(json!({
+        "command": "library.source.add",
+        "params": {"path": copy.display().to_string()},
+    }));
+    assert_eq!(reply["ok"], false, "{reply}");
     Ok(())
 }
 
@@ -335,7 +383,6 @@ fn instance<'a>(snapshot: &'a Value, designator: &str) -> Fallible<&'a Value> {
 /// update only R1, detect a modified record by hash, delete the folder and
 /// reopen the project offline.
 #[test]
-#[ignore = "runs once S3 core import/export (task 1) and the io folder reader and writer (task 2) land; do not weaken"]
 fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     let temp = tempfile::tempdir()?;
     let folder = temp.path().join("team-library");

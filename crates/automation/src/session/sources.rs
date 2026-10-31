@@ -8,9 +8,7 @@ use crate::{Error, Result};
 use pcbcraft_core::catalog::{CatalogContext, EntryKey, SourceCatalog};
 use pcbcraft_core::ids::{LibraryId, Revision, SourceLineageId};
 use pcbcraft_core::library::bundle::{self, Bundle, SourceRevision};
-use pcbcraft_io::library_folder::{
-    self, Disabled, Folder, MANIFEST_FILE, Manifest, check_manifest, open_folder,
-};
+use pcbcraft_io::library_folder::{self, Disabled, Folder};
 use pcbcraft_io::library_folder_index::{self, IndexState};
 use pcbcraft_io::settings::{
     self, MAX_FAVOURITES, MAX_RECENT, MAX_SOURCES, SourceSetting, UserDirs, UserSettings,
@@ -86,27 +84,6 @@ pub struct Sources {
     loaded: Vec<Loaded>,
 }
 
-/// A folder's manifest state, without trusting it: missing path, a
-/// malformed manifest, or an unsupported format or feature.
-fn probe(path: &Path) -> std::result::Result<Folder, Disabled> {
-    if !path.join(MANIFEST_FILE).is_file() {
-        return Err(Disabled::PathMissing);
-    }
-    match open_folder(path) {
-        Ok(folder) => Ok(folder),
-        Err(error) => {
-            // Classify the refusal: re-read the manifest only to name why.
-            let parsed = std::fs::read(path.join(MANIFEST_FILE))
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok());
-            match parsed.map(|manifest| check_manifest(&manifest)) {
-                Some(Err(why)) => Err(why),
-                _ => Err(Disabled::Malformed(error.to_string())),
-            }
-        }
-    }
-}
-
 impl Sources {
     /// Read the user's settings and load every configured source.
     pub fn with_dirs(dirs: UserDirs) -> Result<Self> {
@@ -134,7 +111,7 @@ impl Sources {
         if !setting.enabled {
             return State::Disabled(Disabled::Off);
         }
-        let folder = match probe(&setting.path) {
+        let folder = match library_folder::inspect_folder(&setting.path) {
             Ok(folder) => folder,
             Err(why) => return State::Disabled(why),
         };
@@ -172,15 +149,28 @@ impl Sources {
     /// Reload every configured source (after another process changed a
     /// folder, or to pick up a folder that came back).
     pub fn rescan(&mut self) {
-        let loaded = self
-            .settings
-            .sources
-            .iter()
-            .map(|setting| Loaded {
+        let mut seen: Vec<(LibraryId, String)> = Vec::new();
+        let mut loaded = Vec::with_capacity(self.settings.sources.len());
+        for setting in &self.settings.sources {
+            let mut state = self.load(setting);
+            // One library id, one catalog: a second folder holding a
+            // library already listed is not searched.
+            if let State::Ready { folder, .. } = &state {
+                let library = folder.manifest.library;
+                if let Some((_, first)) = seen.iter().find(|(l, _)| *l == library) {
+                    state = State::Failed(
+                        pcbcraft_core::Error::Conflict(format!("same library as {first}"))
+                            .diagnostic(),
+                    );
+                } else {
+                    seen.push((library, setting.path.display().to_string()));
+                }
+            }
+            loaded.push(Loaded {
                 setting: setting.clone(),
-                state: self.load(setting),
-            })
-            .collect();
+                state,
+            });
+        }
         self.loaded = loaded;
     }
 
@@ -206,7 +196,7 @@ impl Sources {
     /// Add a library folder. It must open (a valid manifest of this
     /// format) and must not repeat a configured path or library.
     pub fn add(&mut self, path: &Path, writable: bool) -> Result<SourceInfo> {
-        let folder = probe(path)
+        let folder = library_folder::inspect_folder(path)
             .map_err(|why| refusal(&why, &format!("library folder {}: {why}", path.display())))?;
         let path = std::fs::canonicalize(path).map_err(pcbcraft_io::Error::from)?;
         if self.settings.sources.len() >= MAX_SOURCES {

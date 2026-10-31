@@ -54,6 +54,52 @@ pub(crate) fn bundle(
     }
 }
 
+/// A Part revision whose datasheet reference names an attached copy of
+/// `bytes`, with its whole closure: the synthetic `ExampleCo` catalog
+/// exported to `folder` under lineage ids from `first_lineage` up. Only a
+/// Part's references name assets, so this is the smallest valid bundle
+/// that carries one.
+pub(crate) fn part_bundle(
+    folder: &Folder,
+    bytes: &[u8],
+    first_lineage: u128,
+) -> Result<(Bundle, PackedAsset)> {
+    let mut library = pcbcraft_core::catalog::synthetic::project_with_parts(1)?.library;
+    let packed = asset(bytes);
+    let part = library
+        .parts
+        .first_mut()
+        .ok_or_else(|| Error::Invalid("the synthetic catalog has no Part".into()))?;
+    let reference = part
+        .definition
+        .references
+        .first_mut()
+        .ok_or_else(|| Error::Invalid("the synthetic Part has no reference".into()))?;
+    reference.asset = Some(packed.hash.to_string());
+    let root = pcbcraft_core::ids::DefinitionRef {
+        kind: DefinitionKind::Part,
+        id: part.id,
+        revision: part.revision,
+    };
+    library.assets.push(packed.clone());
+    let fresh: Vec<SourceLineageId> = (0..64)
+        .map(|i| SourceLineageId(first_lineage + i))
+        .collect();
+    let plan = pcbcraft_core::library::import::export(
+        &library,
+        root,
+        folder.manifest.library,
+        &folder.manifest.name,
+        &fresh,
+    )?;
+    Ok((plan.bundle, packed))
+}
+
+fn sorted(mut records: Vec<RevisionRecord>) -> Vec<RevisionRecord> {
+    records.sort_by_key(|r| (r.lineage, r.revision));
+    records
+}
+
 fn manifest_text(format: u32, features: &[&str]) -> String {
     let features: Vec<String> = features.iter().map(|f| format!("\"{f}\"")).collect();
     format!(
@@ -142,22 +188,15 @@ fn corrupt_or_unknown_feature_manifests_are_rejected() -> Result<()> {
 fn bundles_write_one_pretty_file_per_revision_and_read_back() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let folder = create_folder(dir.path(), "Bench")?;
-    let mut with_asset = field(2, 1, "Datasheet holder");
-    let pdf = asset(b"%PDF-1.7 original fixture");
-    with_asset.assets = vec![pdf.hash];
-    let first = bundle(
-        &folder,
-        vec![field(1, 1, "Tolerance"), with_asset.clone()],
-        vec![pdf.clone()],
-    );
+    let (first, pdf) = part_bundle(&folder, b"%PDF-1.7 original fixture", 0x100)?;
     let report = write_bundle(&folder, &first)?;
-    assert_eq!(
-        report.written,
-        vec![
-            "lineages/00000000000000000000000000000001/r0001.json".to_string(),
-            "lineages/00000000000000000000000000000002/r0001.json".to_string(),
-        ]
-    );
+    let mut expected: Vec<String> = first
+        .records
+        .iter()
+        .map(|r| record_path(r.lineage, r.revision))
+        .collect();
+    expected.sort();
+    assert_eq!(report.written, expected);
     assert_eq!(report.assets, vec![pdf.hash]);
     for record in &first.records {
         let bytes = std::fs::read(
@@ -176,33 +215,33 @@ fn bundles_write_one_pretty_file_per_revision_and_read_back() -> Result<()> {
     );
 
     let stored = read_records(&folder)?;
-    assert_eq!(stored.len(), 2);
-    for (stored, record) in stored.iter().zip(&first.records) {
+    assert_eq!(stored.len(), first.records.len());
+    let originals = sorted(first.records.clone());
+    for (stored, record) in stored.iter().zip(&originals) {
         assert_eq!(&stored.record, record);
         assert_eq!(stored.content_hash, content_hash(record)?);
     }
 
-    let read = read_bundle(
-        &folder,
-        SourceRevision {
-            lineage: SourceLineageId(2),
-            revision: Revision(1),
-        },
-    )?;
-    assert_eq!(read.records, vec![with_asset]);
+    let read = read_bundle(&folder, first.root)?;
+    assert_eq!(sorted(read.records.clone()), originals);
     assert_eq!(read.assets, vec![pdf]);
     assert_eq!(read.library, folder.manifest.library);
+    assert_eq!(read.root, first.root);
 
     // Writing the same bundle again changes nothing.
     let again = write_bundle(&folder, &first)?;
     assert!(again.written.is_empty());
-    assert_eq!(again.unchanged.len(), 2);
+    assert_eq!(again.unchanged.len(), first.records.len());
     assert!(again.assets.is_empty());
 
     // r+1 is a new file beside r1.
+    write_bundle(
+        &folder,
+        &bundle(&folder, vec![field(1, 1, "Tolerance")], vec![]),
+    )?;
     let next = bundle(&folder, vec![field(1, 2, "Tolerance, revised")], vec![]);
     assert_eq!(write_bundle(&folder, &next)?.written.len(), 1);
-    assert_eq!(read_records(&folder)?.len(), 3);
+    assert_eq!(read_records(&folder)?.len(), first.records.len() + 2);
     Ok(())
 }
 
@@ -219,14 +258,14 @@ fn an_existing_revision_is_never_overwritten() -> Result<()> {
         .join(record_path(SourceLineageId(1), Revision(1)));
     let before = std::fs::read(&path)?;
 
-    let late = asset(b"would be an orphan");
-    let mut other = field(3, 1, "New");
-    other.assets = vec![late.hash];
-    let clash = bundle(
-        &folder,
-        vec![other, field(1, 1, "Tolerance, edited in place")],
-        vec![late.clone()],
-    );
+    // New records and a new asset beside one record edited in place.
+    let (parts, late) = part_bundle(&folder, b"would be an orphan", 0x300)?;
+    let mut records = parts.records.clone();
+    records.push(field(1, 1, "Tolerance, edited in place"));
+    let clash = Bundle {
+        records,
+        ..parts.clone()
+    };
     let refused = write_bundle(&folder, &clash);
     assert_eq!(refused.map(|_| ()).map_err(|e| e.code()), Err("conflict"));
     assert_eq!(std::fs::read(&path)?, before);
@@ -234,11 +273,14 @@ fn an_existing_revision_is_never_overwritten() -> Result<()> {
         !dir.path().join(asset_path(late.hash)).exists(),
         "nothing is written"
     );
-    assert!(
-        !dir.path()
-            .join(record_path(SourceLineageId(3), Revision(1)))
-            .exists()
-    );
+    for record in &parts.records {
+        assert!(
+            !dir.path()
+                .join(record_path(record.lineage, record.revision))
+                .exists(),
+            "nothing is written"
+        );
+    }
 
     let foreign = Bundle {
         library: LibraryId(folder.manifest.library.0 ^ 1),
@@ -345,10 +387,7 @@ fn record_names_are_canonical() {
 fn a_damaged_asset_is_refused_and_repaired_by_rewriting() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let folder = create_folder(dir.path(), "Bench")?;
-    let pdf = asset(b"%PDF-1.7 another original fixture");
-    let mut record = field(1, 1, "Holder");
-    record.assets = vec![pdf.hash];
-    let first = bundle(&folder, vec![record], vec![pdf.clone()]);
+    let (first, pdf) = part_bundle(&folder, b"%PDF-1.7 another original fixture", 0x100)?;
     write_bundle(&folder, &first)?;
     std::fs::write(dir.path().join(asset_path(pdf.hash)), b"tampered")?;
     assert!(read_bundle(&folder, first.root).is_err());
@@ -362,9 +401,12 @@ fn a_damaged_asset_is_refused_and_repaired_by_rewriting() -> Result<()> {
     assert!(write_bundle(&folder, &renamed).is_err());
 
     // A record naming an asset nobody holds is refused.
-    let mut orphan = field(2, 1, "Missing");
-    orphan.assets = vec![asset_hash(b"absent")];
-    assert!(write_bundle(&folder, &bundle(&folder, vec![orphan], vec![])).is_err());
+    let other = tempfile::tempdir()?;
+    let empty = create_folder(other.path(), "Bench")?;
+    let (mut orphan, _) = part_bundle(&empty, b"absent", 0x500)?;
+    orphan.assets.clear();
+    assert!(write_bundle(&empty, &orphan).is_err());
+    assert!(read_records(&empty)?.is_empty(), "nothing is written");
     Ok(())
 }
 
@@ -462,7 +504,6 @@ fn write_read_round_trip_over_generated_records() -> Result<()> {
 /// A field whose value type names a quantity kind: the closure follows the
 /// link and puts the dependency first.
 #[test]
-#[ignore = "needs task 1's rewrite_refs (bundle::references); un-ignore at S3 integration"]
 fn read_bundle_follows_links_dependencies_first() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let folder = create_folder(dir.path(), "Bench")?;
