@@ -415,3 +415,176 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// One generated package model of each family, as the Component 3D tab
+/// shows it (`project::preview`).
+fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDefinition)> {
+    use pcbcraft_core::library::{
+        ChipForm, ChipKind, GeneratedMaterials, GullWingForm, HeaderForm, LeadSides, NoLeadForm,
+        PackageDefinition, PackageForm, PackageModel, PackageTerminal,
+    };
+    let package = |form: PackageForm, terminals: u32| PackageDefinition {
+        next_local: terminals + 1,
+        terminals: (1..=terminals)
+            .map(|i| PackageTerminal {
+                id: pcbcraft_core::PackageTerminalId(i),
+                designation: i.to_string(),
+            })
+            .collect(),
+        model: PackageModel::Generated {
+            family_rev: 1,
+            materials: GeneratedMaterials::default(),
+        },
+        form,
+        ..PackageDefinition::default()
+    };
+    let chip = |kind| ChipForm {
+        kind,
+        length: 1.6,
+        width: 0.8,
+        height: 0.45,
+        termination: 0.3,
+    };
+    vec![
+        (
+            "chip-resistor-0603",
+            package(PackageForm::Chip(Box::new(chip(ChipKind::Resistor))), 2),
+        ),
+        (
+            "chip-capacitor-0603",
+            package(
+                PackageForm::Chip(Box::new(ChipForm {
+                    height: 0.8,
+                    ..chip(ChipKind::Capacitor)
+                })),
+                2,
+            ),
+        ),
+        (
+            "soic-8",
+            package(
+                PackageForm::GullWing(Box::new(GullWingForm {
+                    sides: LeadSides::Two,
+                    leads_per_side: [4, 0],
+                    pitch: 1.27,
+                    body_length: 4.9,
+                    body_width: 3.9,
+                    body_height: 1.45,
+                    standoff: 0.1,
+                    span: [6.0, 0.0],
+                    lead_width: 0.41,
+                    lead_thickness: 0.2,
+                    foot_length: 0.6,
+                })),
+                8,
+            ),
+        ),
+        (
+            "tqfp-32",
+            package(
+                PackageForm::GullWing(Box::new(GullWingForm {
+                    sides: LeadSides::Four,
+                    leads_per_side: [8, 8],
+                    pitch: 0.8,
+                    body_length: 7.0,
+                    body_width: 7.0,
+                    body_height: 1.0,
+                    standoff: 0.1,
+                    span: [9.0, 9.0],
+                    lead_width: 0.37,
+                    lead_thickness: 0.15,
+                    foot_length: 0.6,
+                })),
+                32,
+            ),
+        ),
+        (
+            "qfn-16",
+            package(
+                PackageForm::NoLead(Box::new(NoLeadForm {
+                    sides: LeadSides::Four,
+                    terminals_per_side: [4, 4],
+                    pitch: 0.5,
+                    body_length: 3.0,
+                    body_width: 3.0,
+                    body_height: 0.85,
+                    terminal_length: 0.4,
+                    terminal_width: 0.25,
+                    exposed_pad: Some([1.7, 1.7]),
+                })),
+                17,
+            ),
+        ),
+        (
+            "header-2x5",
+            package(
+                PackageForm::Header(Box::new(HeaderForm {
+                    rows: 2,
+                    pins_per_row: 5,
+                    pitch: 2.54,
+                    row_pitch: 2.54,
+                    body_height: 2.5,
+                    pin_side: 0.64,
+                    pin_above: 6.0,
+                    pin_below: 3.0,
+                })),
+                10,
+            ),
+        ),
+    ]
+}
+
+/// Close-ups of each generated family in the product look, from above and
+/// from below, and the demo board with generated chip resistors.
+#[test]
+#[ignore = "writes model pictures"]
+fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1024, 768);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    for (name, package) in generated_packages() {
+        let model = pcbcraft_solidcraft::project::preview(&package)?;
+        let mut v = Viewport::detached();
+        v.set_model(crate::model_scene::build(model.geometry)?);
+        v.fit_to(4.0 / 3.0);
+        let b = v.bounds;
+        aim(&mut v, b.center(), 1.7 * b.diagonal(), 35.0, 32.0);
+        save(&mut v, &format!("model-{name}"))?;
+        aim(&mut v, b.center(), 1.7 * b.diagonal(), 215.0, -30.0);
+        save(&mut v, &format!("model-{name}-below"))?;
+    }
+    let mut project = project(Fabrication::default())?;
+    let package = &mut project.library.packages[0].definition;
+    package.form =
+        pcbcraft_core::library::PackageForm::Chip(Box::new(pcbcraft_core::library::ChipForm {
+            kind: pcbcraft_core::library::ChipKind::Resistor,
+            length: 2.0,
+            width: 1.2,
+            height: 0.6,
+            termination: 0.4,
+        }));
+    package.model = pcbcraft_core::library::PackageModel::Generated {
+        family_rev: 1,
+        materials: Default::default(),
+    };
+    let mut v = viewport(&project)?;
+    if let Some(chip) = centre(&v, BodyKind::ModelBody) {
+        aim(&mut v, chip, 9.0, 30.0, 35.0);
+        save(&mut v, "model-board-chip-closeup")?;
+    }
+    Ok(())
+}

@@ -46,10 +46,15 @@ pub enum BodyKind {
     Solder,
     /// The envelope in the component authoring preview.
     PartBody,
+    /// A body of a generated package model (moulding, housing, ceramic).
+    /// Its material is recorded per body (`models::MODEL_BODIES_KEY`).
+    ModelBody,
+    /// A lead, termination or exposed pad of a generated package model.
+    ModelLead,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 14] = [
+    pub const ALL: [BodyKind; 16] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -64,6 +69,8 @@ impl BodyKind {
         BodyKind::Overcoat,
         BodyKind::Solder,
         BodyKind::PartBody,
+        BodyKind::ModelBody,
+        BodyKind::ModelLead,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -82,7 +89,14 @@ impl BodyKind {
                 | BodyKind::ChipResistor
                 | BodyKind::ChipCapacitor
                 | BodyKind::PartBody
+                | BodyKind::ModelBody
         )
+    }
+
+    /// A body of a generated package model, whose look comes from its
+    /// recorded material rather than from its kind.
+    pub fn is_generated(self) -> bool {
+        matches!(self, BodyKind::ModelBody | BodyKind::ModelLead)
     }
 
     /// Display-only appearance layers ([`crate::appearance`]): drawn and
@@ -370,10 +384,12 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
             // Immersion silver is many optical penetration depths thick.
             PadFinish::ImmersionSilver => metal("Immersion silver", SILVER, 0.20),
         },
-        BodyKind::Termination => metal("Matte tin", TIN, 0.28),
+        // Generated bodies take their recorded material's look; these are
+        // only the family defaults' stand-ins.
+        BodyKind::Termination | BodyKind::ModelLead => metal("Matte tin", TIN, 0.28),
         // Reflowed SAC solder freezes with a smooth, bright meniscus.
         BodyKind::Solder => metal("Reflowed solder", TIN, 0.14),
-        BodyKind::PackageBody | BodyKind::PartBody => dielectric(
+        BodyKind::PackageBody | BodyKind::PartBody | BodyKind::ModelBody => dielectric(
             "Epoxy mould compound",
             [0.022, 0.022, 0.024],
             0.45,

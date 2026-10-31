@@ -9,16 +9,17 @@
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path};
 use crate::material::{self, BodyKind};
-use crate::native::{BoardJoint, BoxBody, Expr, Native, ProfileBody, mm};
+use crate::models::{self, ModelDefinition, look};
+use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Native, ProfileBody, mm};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::geometry::cos_sin;
-use pcbcraft_core::library::{PackageDefinition, Pad, PadDefaults, PadShape};
+use pcbcraft_core::geometry::{Transform3, cos_sin};
+use pcbcraft_core::library::{PackageDefinition, Pad, PadDefaults, PadShape, model_frame};
 use pcbcraft_core::{Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const BOARD_THICKNESS_MM: f64 = 1.6;
 const COPPER_THICKNESS_MM: f64 = 0.035;
@@ -42,12 +43,18 @@ pub struct Source {
     pub layer: Option<Layer>,
     pub label: String,
     pub component: u64,
+    /// The occurrence of a shared generated-model definition this source
+    /// is; `None` for a component of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<u64>,
 }
 
 pub struct NativeModel {
     native: Native,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
+    /// The generated package-model definitions, one per package revision.
+    pub models: Vec<ModelDefinition>,
 }
 
 impl NativeModel {
@@ -55,12 +62,21 @@ impl NativeModel {
     pub fn save(&self, path: &str) -> Result<()> {
         self.native.save_new(path)
     }
+
+    /// The native design the model was built as.
+    pub fn native(&self) -> &Native {
+        &self.native
+    }
 }
 
 /// A native design under construction, recording each body's kind.
 struct Builder {
     native: Native,
     bodies: BTreeMap<String, BodyKind>,
+    /// Generated package-model definitions built so far.
+    models: Vec<ModelDefinition>,
+    /// Definitions whose first occurrence an instance already holds.
+    placed: BTreeSet<String>,
 }
 
 impl Builder {
@@ -68,6 +84,31 @@ impl Builder {
         Ok(Self {
             native: Native::new(name)?,
             bodies: BTreeMap::new(),
+            models: Vec::new(),
+            placed: BTreeSet::new(),
+        })
+    }
+
+    /// An occurrence of the generated definition `stem` of `package`,
+    /// unmoved: the definition is built on first use (its first occurrence
+    /// returned), then every further call places it once more.
+    fn model(&mut self, stem: &str, package: &PackageDefinition) -> Result<Created> {
+        if !self.models.iter().any(|d| d.component == stem) {
+            let definition = models::build_definition(&mut self.native, stem, package)?;
+            for body in &definition.bodies {
+                self.record(&body.name, body.kind())?;
+            }
+            self.models.push(definition);
+        }
+        let created = self.native.find_component(stem).ok_or_else(|| {
+            Error::Verification(format!("model definition {stem} has no occurrence"))
+        })?;
+        if self.placed.insert(stem.to_owned()) {
+            return Ok(created);
+        }
+        Ok(Created {
+            component: created.component,
+            occurrence: self.native.copy_occurrence(created.component)?,
         })
     }
 
@@ -93,7 +134,8 @@ impl Builder {
     /// body → kind map, then evaluate.
     fn finish(mut self, sources: Vec<Source>) -> Result<NativeModel> {
         self.native.activate_root()?;
-        for kind in BodyKind::ALL {
+        // Generated bodies already carry their materials' looks.
+        for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
             let names: Vec<&str> = self
                 .bodies
                 .iter()
@@ -114,7 +156,8 @@ impl Builder {
             self.native
                 .set_metadata(&format!("{BODIES_KEY}{index}"), json!(chunk))?;
         }
-        finish(self.native, sources)
+        models::record(&mut self.native, &self.models)?;
+        finish_with(self.native, sources, self.models)
     }
 }
 
@@ -176,36 +219,141 @@ fn body_kinds(native: &Native) -> Result<BTreeMap<String, BodyKind>> {
     Ok(kinds)
 }
 
+/// The pick of every world body that places a shared generated-model
+/// definition, by world body index. Solidcraft lists a design's world
+/// bodies placement by placement (`placements()` order), each placement's
+/// bodies in definition order; each run is checked against the
+/// placement's transform.
+fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u64>> {
+    let by_occurrence: BTreeMap<u64, u64> = sources
+        .iter()
+        .filter_map(|s| s.occurrence.map(|o| (o, s.pick_id)))
+        .collect();
+    let shared: BTreeSet<u64> = sources
+        .iter()
+        .filter(|s| s.occurrence.is_some())
+        .map(|s| s.component)
+        .collect();
+    let mut out = BTreeMap::new();
+    if shared.is_empty() {
+        return Ok(out);
+    }
+    let doc = &native.session().doc;
+    let world = native.session().world_state();
+    let placements = doc.placements();
+    for component in shared {
+        let paths: Vec<&Vec<u64>> = placements
+            .iter()
+            .filter(|(c, _, _)| *c == component)
+            .map(|(_, path, _)| path)
+            .collect();
+        let bodies: Vec<usize> = world
+            .bodies
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.component == component)
+            .map(|(i, _)| i)
+            .collect();
+        if paths.is_empty() || !bodies.len().is_multiple_of(paths.len()) {
+            return Err(Error::Verification(format!(
+                "component {component}: {} bodies over {} placements",
+                bodies.len(),
+                paths.len()
+            )));
+        }
+        let per = bodies.len() / paths.len();
+        for (k, index) in bodies.iter().enumerate() {
+            let path = paths
+                .get(k / per.max(1))
+                .ok_or_else(|| Error::Verification("placement run out of range".into()))?;
+            let body = world
+                .bodies
+                .get(*index)
+                .ok_or_else(|| Error::Verification("world body out of range".into()))?;
+            let expected = doc.path_transform(component, path);
+            let matches = expected.is_some_and(|m| {
+                m.iter()
+                    .flatten()
+                    .zip(body.source_transform.iter().flatten())
+                    .all(|(a, b)| (a - b).abs() <= 1e-9 * (1.0 + a.abs()))
+            });
+            if !matches {
+                return Err(Error::Verification(format!(
+                    "body {} does not sit at placement {path:?}",
+                    body.name
+                )));
+            }
+            let pick = path
+                .last()
+                .and_then(|o| by_occurrence.get(o))
+                .copied()
+                .ok_or_else(|| {
+                    Error::Verification(format!("placement {path:?} has no Pcbcraft source"))
+                })?;
+            out.insert(*index, pick);
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
 fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
+    finish_with(native, sources, Vec::new())
+}
+
+/// [`finish`] for a model whose generated definitions are `models`.
+fn finish_with(
+    native: Native,
+    sources: Vec<Source>,
+    models: Vec<ModelDefinition>,
+) -> Result<NativeModel> {
     if let Some(error) = native.evaluation_error() {
         return Err(Error::Verification(error));
     }
     let kinds = body_kinds(&native)?;
+    let generated = models::recorded(&native)?;
+    let shared = shared_picks(&native, &sources)?;
     let doc = &native.session().doc;
     let mut geometry = vec![];
-    for body in &native.session().world_state().bodies {
+    for (index, body) in native.session().world_state().bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
             .ok_or_else(|| Error::Verification(format!("body {name} has no Pcbcraft kind")))?;
-        let surface = doc
+        let saved = doc
             .model_body_look(body)
             .ok_or_else(|| Error::Verification(format!("body {name} has no look")))?
             .opaque_surface()
             .map_err(|e| Error::Verification(e.to_string()))?
             .ok_or_else(|| Error::Verification(format!("body {name} has no physical look")))?;
+        // A generated body is drawn with its material's full product look
+        // (coat, pattern); the file keeps the opaque projection.
+        let (surface, detail) = if kind.is_generated() {
+            let body = generated.get(name).ok_or_else(|| {
+                Error::Verification(format!("generated body {name} has no recorded material"))
+            })?;
+            let def = look::definition(body.material)?;
+            (look::surface(&def)?, look::detail(&def))
+        } else {
+            // Saved bodies' detail does not depend on the fabrication.
+            (
+                saved,
+                crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
+            )
+        };
         let m = body
             .measure()
             .map_err(|e| Error::Verification(e.to_string()))?;
         geometry.push(Geometry {
-            item: sources
-                .iter()
-                .find(|s| s.component == body.component)
-                .map(|s| s.pick_id),
+            item: shared.get(&index).copied().or_else(|| {
+                sources
+                    .iter()
+                    .find(|s| s.component == body.component && s.occurrence.is_none())
+                    .map(|s| s.pick_id)
+            }),
             kind,
             surface,
-            // Saved bodies' detail does not depend on the fabrication.
-            detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
+            detail,
             mesh: body.mesh(),
             volume: m.volume,
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
@@ -216,7 +364,25 @@ fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
         native,
         geometry,
         sources,
+        models,
     })
+}
+
+/// The joint origin that holds a generated definition (drawn in its model
+/// frame) so the footprint frame lands on the board: the footprint frame
+/// expressed in model coordinates, the inverse of `frame` (model →
+/// footprint).
+fn holding_frame(frame: &Transform3) -> JointFrame {
+    let r = frame.rotation;
+    let back = |v: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| r[0][i] * v[0] + r[1][i] * v[1] + r[2][i] * v[2])
+    };
+    let o = back(frame.translation);
+    JointFrame {
+        point: [-o[0], -o[1], -o[2]],
+        z: back([0.0, 0.0, 1.0]),
+        x: back([1.0, 0.0, 0.0]),
+    }
 }
 
 fn next_pick(sources: &[Source]) -> u64 {
@@ -474,6 +640,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let mut sources = vec![];
     let mut parts = vec![];
+    // Joints of shared definitions wait until every occurrence is placed:
+    // a copy starts where its first occurrence stands.
+    let mut shared_joints = vec![];
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -493,6 +662,33 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ("angle", placement.rotation_deg, "deg"),
         ] {
             b.param(&format!("{prefix}_{suffix}"), value, unit)?;
+        }
+        if models::is_generated(package) {
+            let stem = models::definition_name(physical.package.id, physical.package.revision.0);
+            let created = b.model(&stem, package)?;
+            shared_joints.push((
+                BoardJoint {
+                    board,
+                    occurrence: created.occurrence,
+                    x: format!("{prefix}_x").into(),
+                    y: format!("{prefix}_y").into(),
+                    angle: format!("{prefix}_angle").into(),
+                    layer: placement.layer,
+                },
+                holding_frame(&model_frame(&footprint.datum, &package.placement)),
+            ));
+            sources.push(Source {
+                pick_id: next_pick(&sources),
+                instance: Some(instance.id),
+                pad: None,
+                track: None,
+                net: None,
+                layer: Some(placement.layer),
+                label: format!("{} model", instance.designator),
+                component: created.component,
+                occurrence: Some(created.occurrence),
+            });
+            continue;
         }
         let label = format!("{} envelope", instance.designator);
         let created = b.native.component(&label, false)?;
@@ -545,7 +741,12 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             layer: Some(placement.layer),
             label,
             component: created.component,
+            occurrence: None,
         });
+    }
+    for (joint, frame) in shared_joints {
+        b.native
+            .board_joint_at(joint, &frame, Some("copper_thickness"))?;
     }
     let mut lands = Vec::with_capacity(pads.len());
     for pad in &pads {
@@ -684,6 +885,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             layer: Some(pad.placed.layer),
             label: format!("{} pad {}", pad.designator, local.number),
             component: created.component,
+            occurrence: None,
         });
     }
     let mut paths = Vec::with_capacity(project.tracks.len());
@@ -738,6 +940,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),
             component: created.component,
+            occurrence: None,
         });
     }
     let mut model = b.finish(sources)?;
@@ -760,6 +963,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
 /// The native envelope of one package definition, draft or published, with
 /// the same terminations and overcoat a placed chip part shows.
 pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
+    if models::is_generated(package) {
+        return preview_model(package);
+    }
     if !package.envelope_valid() {
         return Err(Error::Invalid(
             "package envelope dimensions must be finite and positive".into(),
@@ -799,6 +1005,35 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
         placement: None,
     })?);
     Ok(model)
+}
+
+/// The definition name of an unpublished (draft) package's model.
+pub const DRAFT_MODEL: &str = "pkgdraft";
+
+/// The generated model of one package, draft or published, at its
+/// placement in the datum frame (z = 0 the seating plane).
+fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
+    if !package.placement.finite() {
+        return Err(Error::Invalid(
+            "package.placement: placement values must be finite and within ±10000".into(),
+        ));
+    }
+    let mut b = Builder::new("Package model")?;
+    let created = b.model(DRAFT_MODEL, package)?;
+    let t = package.placement.transform();
+    if t != Transform3::IDENTITY {
+        let r = t.rotation;
+        let p = t.translation;
+        b.native.move_occurrence(
+            created.occurrence,
+            [
+                [r[0][0], r[0][1], r[0][2], p[0]],
+                [r[1][0], r[1][1], r[1][2], p[1]],
+                [r[2][0], r[2][1], r[2][2], p[2]],
+            ],
+        )?;
+    }
+    b.finish(vec![])
 }
 
 #[cfg(test)]
