@@ -7,6 +7,7 @@
 //! session with strict parameter checking for the commands that have
 //! contracts.
 use crate::material::Material;
+use crate::pad_outline::{Contour, bulge_midpoint};
 use crate::{Error, Result};
 use pcbcraft_core::Layer;
 use serde_json::{Value, json};
@@ -58,6 +59,16 @@ pub struct BoxBody<'a> {
     pub name: &'a str,
     pub corner: [Expr; 3],
     pub size: [Expr; 3],
+}
+
+/// A body extruded from closed contours drawn on the active component's XY
+/// plane, moved `offset` along its normal and extruded `height` along it.
+/// Nesting is even-odd: a contour inside another is its hole.
+pub struct ProfileBody<'a> {
+    pub name: &'a str,
+    pub offset: Expr,
+    pub contours: &'a [Contour],
+    pub height: Expr,
 }
 
 /// A planar joint attaching an occurrence to the board's top or bottom face.
@@ -141,6 +152,110 @@ impl Native {
             json!({"name": body.name, "body_name": body.name, "corner": corner,
                 "length": length, "width": width, "height": height}),
         )?;
+        Ok(())
+    }
+
+    /// Extrude closed contours into a new body (never joined to the
+    /// component's other bodies, so touching copper stays separate bodies).
+    pub fn profile_body(&mut self, body: ProfileBody<'_>) -> Result<()> {
+        let sketch = self.sketch(body.name, body.offset, body.contours)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(())
+    }
+
+    /// Cut closed contours on the active component's XY plane (moved
+    /// `offset` along its normal) `depth` along the normal out of `targets`.
+    pub fn profile_cut(
+        &mut self,
+        name: &str,
+        offset: Expr,
+        contours: &[Contour],
+        depth: Expr,
+        targets: &[&str],
+    ) -> Result<()> {
+        let sketch = self.sketch(name, offset, contours)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": depth.0, "operation": "cut",
+                "name": name, "targets": targets}),
+        )?;
+        Ok(())
+    }
+
+    /// A finished sketch of closed contours; returns its feature id.
+    fn sketch(&mut self, name: &str, offset: Expr, contours: &[Contour]) -> Result<u64> {
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": "XY", "offset": offset.0, "name": format!("{name} sketch")}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        for contour in contours {
+            self.contour(contour)?;
+        }
+        self.call("sketch.finish", json!({}))?;
+        Ok(sketch)
+    }
+
+    /// Draw one closed contour in the active sketch: a circle, a closed
+    /// polyline, or runs of lines and three-point arcs joined end to end.
+    fn contour(&mut self, contour: &Contour) -> Result<()> {
+        let outline = match contour {
+            Contour::Circle { center, radius } => {
+                self.call(
+                    "sketch.circle.center",
+                    json!({"center": center, "radius": radius}),
+                )?;
+                return Ok(());
+            }
+            Contour::Outline(outline) => outline,
+        };
+        use pcbcraft_core::library::Segment;
+        if outline
+            .segments
+            .iter()
+            .all(|s| matches!(s, Segment::Line { .. }))
+        {
+            let mut points = vec![outline.start];
+            points.extend(outline.segments.iter().map(Segment::to));
+            if points.len() > 2 && points.first() == points.last() {
+                points.pop();
+            }
+            self.call("sketch.line", json!({"points": points, "closed": true}))?;
+            return Ok(());
+        }
+        let mut from = outline.start;
+        let mut run: Vec<[f64; 2]> = vec![from];
+        for segment in &outline.segments {
+            match *segment {
+                Segment::Line { to } => run.push(to),
+                Segment::Arc { to, bulge } => {
+                    self.lines(&mut run)?;
+                    self.call(
+                        "sketch.arc.three_point",
+                        json!({"start": from, "end": to, "through": bulge_midpoint(from, to, bulge)}),
+                    )?;
+                    run.clear();
+                    run.push(to);
+                }
+            }
+            from = segment.to();
+        }
+        self.lines(&mut run)
+    }
+
+    /// Draw an open polyline run and restart it at its last point.
+    fn lines(&mut self, run: &mut Vec<[f64; 2]>) -> Result<()> {
+        if run.len() > 1 {
+            self.call("sketch.line", json!({"points": run}))?;
+        }
+        if let Some(last) = run.last().copied() {
+            run.clear();
+            run.push(last);
+        }
         Ok(())
     }
 

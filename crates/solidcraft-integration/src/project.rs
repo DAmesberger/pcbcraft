@@ -9,11 +9,13 @@
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path};
 use crate::material::{self, BodyKind};
-use crate::native::{BoardJoint, BoxBody, Expr, Native, mm};
+use crate::native::{BoardJoint, BoxBody, Expr, Native, ProfileBody, mm};
+use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::library::{FootprintDefinition, PackageDefinition};
-use pcbcraft_core::{Endpoint, Fabrication, Id, Layer, PadId, Point, Project, instances, layout};
+use pcbcraft_core::geometry::cos_sin;
+use pcbcraft_core::library::{PackageDefinition, Pad, PadDefaults, PadShape};
+use pcbcraft_core::{Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -76,7 +78,12 @@ impl Builder {
     fn body(&mut self, kind: BodyKind, body: BoxBody<'_>) -> Result<()> {
         let name = body.name.to_owned();
         self.native.solid_box(body)?;
-        if self.bodies.insert(name.clone(), kind).is_some() {
+        self.record(&name, kind)
+    }
+
+    /// Record a created body's kind.
+    fn record(&mut self, name: &str, kind: BodyKind) -> Result<()> {
+        if self.bodies.insert(name.to_owned(), kind).is_some() {
             return Err(Error::Verification(format!("duplicate body name {name}")));
         }
         Ok(())
@@ -216,66 +223,212 @@ fn next_pick(sources: &[Source]) -> u64 {
     u64::try_from(sources.len()).map_or(u64::MAX, |n| n.saturating_add(1))
 }
 
-/// A footprint pad as placed on the board, connected or not.
+/// Most drilled holes (pad holes and pad vias) on one board.
+pub const MAX_DRILLS: usize = 65_536;
+
+/// One placed pad and the frames its contours are drawn in.
 struct PlacedPad<'a> {
-    instance: Id,
+    placed: layout::PlacedPad,
+    placement: &'a Placement,
     designator: &'a str,
-    pad: &'a pcbcraft_core::library::Pad,
-    footprint: &'a FootprintDefinition,
-    net: Option<Id>,
-    center: Point,
-    rotation_deg: f64,
-    layer: Layer,
+    /// The footprint's mask and paste defaults.
+    defaults: PadDefaults,
+    /// The pad origin on the board.
+    origin: Point,
 }
 
-/// Every footprint pad of every placement. Unlike `layout::pads`, pads
-/// without a net are included: they are still copper on the board.
-fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
-    let net_by_terminal: BTreeMap<Endpoint, Id> = project
-        .nets
-        .iter()
-        .flat_map(|net| net.terminals.iter().map(move |t| (*t, net.id)))
-        .collect();
-    let mut result = Vec::new();
-    for placement in &project.placements {
-        let instance = project
-            .instance(placement.instance)
-            .ok_or_else(|| Error::Invalid("missing pad instance".into()))?;
-        let physical = instances::resolve(&project.library, instance)
-            .ok()
-            .and_then(|r| r.physical)
-            .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
-        let footprint = &physical.footprint.definition;
-        for pad in &footprint.pads {
-            if result.len() >= layout::MAX_PLACED_PADS {
-                return Err(Error::Invalid(format!(
-                    "the board has more than {} pads",
-                    layout::MAX_PLACED_PADS
-                )));
-            }
-            let net = pad
-                .terminal
-                .and_then(|t| physical.binding.definition.terminal_of(t))
-                .and_then(|terminal| {
-                    net_by_terminal.get(&Endpoint {
-                        instance: instance.id,
-                        terminal,
-                    })
-                })
-                .copied();
-            result.push(PlacedPad {
-                instance: instance.id,
-                designator: &instance.designator,
-                pad,
-                footprint,
-                net,
-                center: layout::placed_point(placement, pad.position, footprint.datum.offset),
-                rotation_deg: placement.rotation_deg,
-                layer: placement.layer,
-            });
-        }
+impl PlacedPad<'_> {
+    fn pad(&self) -> &Pad {
+        &self.placed.pad
     }
-    Ok(result)
+
+    /// Pad frame → footprint frame, as a vector (no translation).
+    fn turn(&self, v: Point) -> Point {
+        let (c, s) = cos_sin(self.pad().rotation_deg);
+        [c * v[0] - s * v[1], s * v[0] + c * v[1]]
+    }
+
+    /// A pad-frame contour on the board.
+    fn board(&self, contour: &Contour) -> Contour {
+        let t = self.placed.transform;
+        let position = self.pad().position;
+        contour.mapped(
+            |q| {
+                let v = self.turn(q);
+                t.apply([position[0] + v[0], position[1] + v[1]])
+            },
+            t.mirror,
+        )
+    }
+
+    /// A pad-frame contour in the pad component's frame: the component is
+    /// jointed to its layer's board face at [`Self::origin`], turned by the
+    /// placement angle (and turned over on the bottom face).
+    fn local(&self, contour: &Contour) -> Contour {
+        let t = self.placed.transform;
+        let bottom = self.placed.layer == Layer::Bottom;
+        let (c, s) = cos_sin(-self.placement.rotation_deg);
+        contour.mapped(
+            |q| {
+                let b = t.apply_vector(self.turn(q));
+                let r = [c * b[0] - s * b[1], s * b[0] + c * b[1]];
+                if bottom { [r[0], -r[1]] } else { r }
+            },
+            t.mirror != bottom,
+        )
+    }
+
+    /// The pad origin relative to the placement, in the placement's turned
+    /// frame (what the joint's expressions rotate by the placement angle).
+    fn offset(&self) -> Point {
+        let p = self.placement.position;
+        let d = [self.origin[0] - p[0], self.origin[1] - p[1]];
+        let (c, s) = cos_sin(-self.placement.rotation_deg);
+        [c * d[0] - s * d[1], s * d[0] + c * d[1]]
+    }
+
+    /// Drilled holes, pad frame: the pad's hole and its vias.
+    fn drills(&self) -> Vec<Contour> {
+        let pad = self.pad();
+        let mut out: Vec<Contour> = pad
+            .hole
+            .iter()
+            .filter_map(|h| pad_outline::hole_contour(h, 0.0))
+            .collect();
+        out.extend(pad.vias.iter().map(|v| Contour::Circle {
+            center: v.at,
+            radius: v.drill / 2.0,
+        }));
+        out
+    }
+
+    /// Finished bores, pad frame: drills less their plating.
+    fn bores(&self) -> Vec<Contour> {
+        let pad = self.pad();
+        let mut out: Vec<Contour> = pad.hole.iter().filter_map(pad_outline::bore).collect();
+        out.extend(pad.vias.iter().filter_map(|v| {
+            let radius = v.drill / 2.0 - PLATING_MM;
+            (radius > 0.0).then_some(Contour::Circle {
+                center: v.at,
+                radius,
+            })
+        }));
+        out
+    }
+
+    /// The plated barrels (drill outside, bore inside), pad frame.
+    fn barrels(&self) -> Vec<[Contour; 2]> {
+        let pad = self.pad();
+        let mut out = Vec::new();
+        if let Some(hole) = pad.hole.filter(|h| h.plated)
+            && let (Some(drill), Some(bore)) = (
+                pad_outline::hole_contour(&hole, 0.0),
+                pad_outline::bore(&hole),
+            )
+        {
+            out.push([drill, bore]);
+        }
+        for via in &pad.vias {
+            let radius = via.drill / 2.0;
+            if radius - PLATING_MM > 0.0 {
+                out.push([
+                    Contour::Circle {
+                        center: via.at,
+                        radius,
+                    },
+                    Contour::Circle {
+                        center: via.at,
+                        radius: radius - PLATING_MM,
+                    },
+                ]);
+            }
+        }
+        out
+    }
+}
+
+/// Every footprint pad of every placement, with or without a net or
+/// terminal: they are all copper (or holes) on the board.
+fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
+    let placed = layout::placed_pads(project);
+    if placed.len() > layout::MAX_PLACED_PADS {
+        return Err(Error::Invalid(format!(
+            "the board has more than {} pads",
+            layout::MAX_PLACED_PADS
+        )));
+    }
+    let drills: usize = placed
+        .iter()
+        .map(|p| usize::from(p.pad.hole.is_some()) + p.pad.vias.len())
+        .sum();
+    if drills > MAX_DRILLS {
+        return Err(Error::Invalid(format!(
+            "the board has more than {MAX_DRILLS} drilled holes"
+        )));
+    }
+    placed
+        .into_iter()
+        .map(|placed| {
+            let placement = project
+                .placements
+                .iter()
+                .find(|p| p.instance == placed.instance)
+                .ok_or_else(|| Error::Invalid("missing pad placement".into()))?;
+            let instance = project
+                .instance(placed.instance)
+                .ok_or_else(|| Error::Invalid("missing pad instance".into()))?;
+            let defaults = instances::resolve(&project.library, instance)
+                .ok()
+                .and_then(|r| r.physical)
+                .map(|p| p.footprint.definition.defaults)
+                .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
+            let designator = instance.designator.as_str();
+            let origin = placed.transform.apply(placed.pad.position);
+            Ok(PlacedPad {
+                placed,
+                placement,
+                designator,
+                defaults,
+                origin,
+            })
+        })
+        .collect()
+}
+
+/// The layer on the other side of the board.
+fn other(layer: Layer) -> Layer {
+    match layer {
+        Layer::Top => Layer::Bottom,
+        Layer::Bottom => Layer::Top,
+    }
+}
+
+/// A rectangular land without holes whose sides follow the component's
+/// axes: drawn as a box with editable size parameters. The flag says its
+/// length runs along the component's y axis.
+fn axis_box(pad: &PlacedPad<'_>) -> Option<bool> {
+    let p = pad.pad();
+    if !matches!(p.shape, PadShape::Rect { .. }) || p.hole.is_some() || !p.vias.is_empty() {
+        return None;
+    }
+    let axis = Contour::Circle {
+        center: [1.0, 0.0],
+        radius: 1.0,
+    };
+    let Contour::Circle { center: c, .. } = pad.local(&axis) else {
+        return None;
+    };
+    if c[1].abs() < 1e-12 {
+        Some(false)
+    } else if c[0].abs() < 1e-12 {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn flat(contour: &Contour) -> Result<Vec<Point>> {
+    contour.flatten(FLATTEN_TOLERANCE_MM)
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
@@ -302,6 +455,23 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ],
         },
     )?;
+    let pads = placed_pads(project)?;
+    // Every drill through the laminate, cut in one feature: the holes sit
+    // where the pads are placed now (they do not follow placement
+    // parameters edited in Solidcraft).
+    let drills: Vec<Contour> = pads
+        .iter()
+        .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
+        .collect();
+    if !drills.is_empty() {
+        b.native.profile_cut(
+            "Drills",
+            0.into(),
+            &drills,
+            "board_thickness".into(),
+            &["Substrate"],
+        )?;
+    }
     let mut sources = vec![];
     let mut parts = vec![];
     for placement in &project.placements {
@@ -377,35 +547,122 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             component: created.component,
         });
     }
-    let pads = placed_pads(project)?;
     let mut lands = Vec::with_capacity(pads.len());
     for pad in &pads {
-        let prefix = format!("instance_{}", pad.instance);
-        let pp = format!("pad_{}_{}", pad.instance, pad.pad.id);
-        let local = pad.pad;
-        let footprint = pad.footprint;
-        let dx = local.position[0] - footprint.datum.offset[0];
-        let dy = (local.position[1] - footprint.datum.offset[1])
-            * if pad.layer == Layer::Top { 1.0 } else { -1.0 };
-        b.param(&format!("{pp}_length"), local.shape.extent()[0], "mm")?;
-        b.param(&format!("{pp}_width"), local.shape.extent()[1], "mm")?;
+        let local = pad.pad();
+        let pick = next_pick(&sources);
+        let copper = pad_outline::copper(local);
+        let layers: Vec<Layer> = match copper {
+            Copper::None => vec![],
+            Copper::OneSide => vec![pad.placed.layer],
+            Copper::Through => vec![pad.placed.layer, other(pad.placed.layer)],
+        };
+        // Display: copper, bores and mask openings per outer layer.
+        let shape = pad_outline::shape_contour(&local.shape, 0.0);
+        let mask = pad_outline::mask_opening(local, &pad.defaults);
+        let drills: Vec<Vec<Point>> = pad
+            .drills()
+            .iter()
+            .map(|d| flat(&pad.board(d)))
+            .collect::<Result<_>>()?;
+        let bores = pad.bores();
+        let opening_layers = if drills.is_empty() && copper != Copper::None {
+            layers.clone()
+        } else {
+            vec![Layer::Top, Layer::Bottom]
+        };
+        for layer in opening_layers {
+            let has_copper = layers.contains(&layer);
+            let mut openings = drills.clone();
+            if (has_copper || copper == Copper::None)
+                && let Some(mask) = &mask
+            {
+                openings.push(flat(&pad.board(mask))?);
+            }
+            let (copper_outline, bore) = match (&shape, has_copper) {
+                (Some(shape), true) => (
+                    Some(flat(&pad.board(shape))?),
+                    match bores.first() {
+                        Some(bore) if local.hole.is_some() => Some(flat(&pad.board(bore))?),
+                        _ => None,
+                    },
+                ),
+                _ => (None, None),
+            };
+            lands.push(Land {
+                pick: has_copper.then_some(pick),
+                layer,
+                copper: copper_outline,
+                bore,
+                openings,
+            });
+        }
+        if copper == Copper::None {
+            continue;
+        }
+        let Some(shape) = shape else {
+            return Err(Error::Invalid(format!(
+                "{} pad {} has no copper outline",
+                pad.designator, local.id
+            )));
+        };
+        let prefix = format!("instance_{}", pad.placed.instance);
+        let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
         let created = b.native.component(&pp, false)?;
-        b.body(
-            BodyKind::PadCopper,
-            BoxBody {
-                name: &pp,
-                corner: [
-                    format!("-{pp}_length / 2").into(),
-                    format!("-{pp}_width / 2").into(),
-                    0.into(),
-                ],
-                size: [
-                    format!("{pp}_length").into(),
-                    format!("{pp}_width").into(),
-                    "copper_thickness".into(),
-                ],
-            },
-        )?;
+        let land = |b: &mut Builder, name: &str, offset: Expr| -> Result<()> {
+            let mut contours = vec![pad.local(&shape)];
+            contours.extend(bores.iter().map(|c| pad.local(c)));
+            b.native.profile_body(ProfileBody {
+                name,
+                offset,
+                contours: &contours,
+                height: "copper_thickness".into(),
+            })?;
+            b.record(name, BodyKind::PadCopper)
+        };
+        match axis_box(pad) {
+            Some(along_y) => {
+                let [length, width] = local.shape.extent();
+                b.param(&format!("{pp}_length"), length, "mm")?;
+                b.param(&format!("{pp}_width"), width, "mm")?;
+                let (x, y) = if along_y {
+                    (format!("{pp}_width"), format!("{pp}_length"))
+                } else {
+                    (format!("{pp}_length"), format!("{pp}_width"))
+                };
+                b.body(
+                    BodyKind::PadCopper,
+                    BoxBody {
+                        name: &pp,
+                        corner: [
+                            format!("-{x} / 2").into(),
+                            format!("-{y} / 2").into(),
+                            0.into(),
+                        ],
+                        size: [x.into(), y.into(), "copper_thickness".into()],
+                    },
+                )?;
+            }
+            None => land(&mut b, &pp, 0.into())?,
+        }
+        if copper == Copper::Through {
+            land(
+                &mut b,
+                &format!("{pp}_opposite"),
+                "- board_thickness - copper_thickness".into(),
+            )?;
+        }
+        for (index, [drill, bore]) in pad.barrels().iter().enumerate() {
+            let name = format!("{pp}_barrel_{index}");
+            b.native.profile_body(ProfileBody {
+                name: &name,
+                offset: "- board_thickness".into(),
+                contours: &[pad.local(drill), pad.local(bore)],
+                height: "board_thickness".into(),
+            })?;
+            b.record(&name, BodyKind::PadCopper)?;
+        }
+        let [dx, dy] = pad.offset();
         let x =
             format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
         let y =
@@ -416,24 +673,16 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             x: x.into(),
             y: y.into(),
             angle: format!("{prefix}_angle").into(),
-            layer: pad.layer,
+            layer: pad.placed.layer,
         })?;
-        let pick = next_pick(&sources);
-        lands.push(Land {
-            pick,
-            center: pad.center,
-            half: [local.shape.extent()[0] / 2.0, local.shape.extent()[1] / 2.0],
-            angle: pad.rotation_deg.to_radians(),
-            layer: pad.layer,
-        });
         sources.push(Source {
             pick_id: pick,
-            instance: Some(pad.instance),
+            instance: Some(pad.placed.instance),
             pad: Some(local.id),
             track: None,
-            net: pad.net,
-            layer: Some(pad.layer),
-            label: format!("{} pad {}", pad.designator, local.id),
+            net: pad.placed.net,
+            layer: Some(pad.placed.layer),
+            label: format!("{} pad {}", pad.designator, local.number),
             component: created.component,
         });
     }
