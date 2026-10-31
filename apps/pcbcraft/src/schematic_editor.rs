@@ -234,6 +234,52 @@ impl SchematicEditor {
         self.new_part.take()
     }
 
+    /// The Place palette, for the app's library sources (S3): its context,
+    /// its events and the other-revision choice.
+    pub fn palette_mut(&mut self) -> &mut PlacePalette {
+        &mut self.palette
+    }
+
+    /// Where a library folder placement goes: the first sheet-grid point,
+    /// scanning right then down from the view centre, where a nominal
+    /// symbol box clears every drawn symbol. The folder's symbol is not in
+    /// the project before the transaction, so its own size is not known.
+    pub fn place_point(&self) -> pcbcraft_core::geometry::Point {
+        /// Half the nominal box, in mm, and the scan pitch.
+        const HALF: [f64; 2] = [12.5, 7.5];
+        const PITCH: [f64; 2] = [25.0, 15.0];
+        let scale = f64::from(self.scale).max(f64::EPSILON);
+        let snap = |v: f64| (v / SHEET_GRID_MM).round() * SHEET_GRID_MM;
+        let centre = [
+            snap(f64::from(-self.pan.x) / scale),
+            snap(f64::from(self.pan.y) / scale),
+        ];
+        let free = |at: [f64; 2]| {
+            !self.placed_bounds.values().any(|b| {
+                at[0] - HALF[0] < b.max[0]
+                    && at[0] + HALF[0] > b.min[0]
+                    && at[1] - HALF[1] < b.max[1]
+                    && at[1] + HALF[1] > b.min[1]
+            })
+        };
+        (0..8u8)
+            .flat_map(|row| (0..8u8).map(move |column| (row, column)))
+            .map(|(row, column)| {
+                [
+                    centre[0] + f64::from(column) * PITCH[0],
+                    centre[1] - f64::from(row) * PITCH[1],
+                ]
+            })
+            .find(|at| free(*at))
+            .unwrap_or(centre)
+    }
+
+    /// Open the update review for `change` (the palette's "Update project
+    /// copy" after `library.import`).
+    pub fn review_update(&mut self, engine: &Engine, change: Change) {
+        let _ = self.stage_update(engine, change);
+    }
+
     fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
         self.update.begin(engine, change);
         self.tool = Tool::Select;
@@ -2063,6 +2109,31 @@ mod tests {
     /// Type a query, move with the arrows, Enter places the highlighted
     /// revision through `component.place`; undo removes it again. The
     /// properties panel previews the highlighted row.
+    /// A library folder placement lands where a nominal symbol box clears
+    /// every drawn symbol, on the sheet grid.
+    #[test]
+    fn a_folder_placement_point_clears_the_drawn_symbols() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(!editor.placed_bounds.is_empty());
+        let at = editor.place_point();
+        for b in editor.placed_bounds.values() {
+            let apart = at[0] + 12.5 <= b.min[0]
+                || at[0] - 12.5 >= b.max[0]
+                || at[1] + 7.5 <= b.min[1]
+                || at[1] - 7.5 >= b.max[1];
+            assert!(apart, "{at:?} overlaps {b:?}");
+        }
+        for v in at {
+            assert!(((v / SHEET_GRID_MM).round() * SHEET_GRID_MM - v).abs() < 1e-9);
+        }
+        Ok(())
+    }
+
     #[test]
     fn the_place_palette_finds_moves_and_places_through_component_place()
     -> Result<(), Box<dyn std::error::Error>> {

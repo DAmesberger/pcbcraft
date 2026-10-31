@@ -2,6 +2,7 @@
 mod app;
 mod file_ui;
 mod kit;
+mod library_sources;
 mod lighting;
 mod model_scene;
 mod palette;

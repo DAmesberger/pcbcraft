@@ -8,6 +8,8 @@ mod browser;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};
+use crate::library_sources::{self, LibrarySources};
+use crate::place_palette::PaletteEvent;
 use crate::scene::{Display, ModelKey, SceneController};
 use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
@@ -24,6 +26,8 @@ pub struct App {
     pcb: pcb_editor::PcbEditor,
     scene: SceneController,
     files: FileUi,
+    /// Library folders, favourites and recents (S3).
+    sources: LibrarySources,
     status: Option<chrome::Status>,
     show_browser: bool,
     closing: bool,
@@ -54,6 +58,7 @@ impl App {
                 viewport::Viewport::new(render_state, &cc.egui_ctx),
             ),
             files,
+            sources: LibrarySources::from_env(&cc.egui_ctx),
             engine,
             workspace: Workspace::Pcb,
             part: Default::default(),
@@ -116,6 +121,111 @@ impl App {
         match part_editor::run(&mut self.engine, request) {
             Ok(()) => self.clear_error(),
             Err(error) => self.say(error.to_string(), true),
+        }
+    }
+
+    /// Library sources before the editors draw: finished background work,
+    /// and the palette's context when it changed.
+    fn library_sources(&mut self, ctx: &egui::Context) {
+        let busy = self.files.busy();
+        self.sources.tick(ctx, &mut self.engine, busy);
+        for notice in self.sources.take_notices() {
+            self.say(notice.text, notice.error);
+        }
+        let sources = &self.sources;
+        self.schematic
+            .palette_mut()
+            .set_context(sources.generation(), || sources.context());
+    }
+
+    /// What the palette and the Component workspace asked of the library
+    /// sources this frame.
+    fn library_requests(&mut self, ctx: &egui::Context) {
+        let events = self.schematic.palette_mut().take_events();
+        let action = library_sources::take_component_action(ctx);
+        let mutating = events.iter().any(|e| {
+            matches!(
+                e,
+                PaletteEvent::PlaceFrom { .. } | PaletteEvent::UpdateProjectCopy(_)
+            )
+        }) || matches!(
+            action,
+            Some(library_sources::ComponentAction::Duplicate { .. })
+        );
+        if mutating && self.files.busy() {
+            self.say("Wait for the file operation to finish", false);
+            return;
+        }
+        for event in events {
+            match event {
+                PaletteEvent::Used(key) => self.sources.used(key),
+                PaletteEvent::ToggleFavourite(key) => self.sources.toggle_favourite(key),
+                PaletteEvent::PlaceFrom {
+                    pick,
+                    other_revision,
+                } => self.place_from(pick, other_revision),
+                PaletteEvent::UpdateProjectCopy(pick) => self.update_project_copy(pick),
+            }
+        }
+        match action {
+            Some(library_sources::ComponentAction::Promote { component, name }) => {
+                self.sources.begin_promote(component, name);
+            }
+            Some(library_sources::ComponentAction::Duplicate { component, name }) => {
+                match library_sources::duplicate(&mut self.engine, component, &name) {
+                    Ok(lineage) => {
+                        self.part.open(lineage, &self.engine);
+                        self.say(format!("Duplicated as {name}"), false);
+                    }
+                    Err(error) => self.say(error, true),
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// `library.place_from` of a folder entry; another project revision
+    /// reopens the palette on the Keep both / Update / Cancel choice.
+    fn place_from(
+        &mut self,
+        pick: library_sources::FolderPick,
+        other_revision: pcbcraft_core::library::import::OtherRevision,
+    ) {
+        let bundle = match self.sources.bundle(&pick) {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                self.schematic.palette_mut().refuse(error);
+                return;
+            }
+        };
+        let position = self.schematic.place_point();
+        match library_sources::place(&mut self.engine, bundle, position, other_revision) {
+            Ok(library_sources::Placed::Placed { designator }) => {
+                self.say(format!("Placed {designator} from the library"), false);
+            }
+            Ok(library_sources::Placed::OtherRevision { message }) => {
+                self.schematic.palette_mut().offer_choice(pick, message);
+            }
+            Err(error) => self.schematic.palette_mut().refuse(error),
+        }
+    }
+
+    /// "Update project copy": `library.import`, then the update review.
+    fn update_project_copy(&mut self, pick: library_sources::FolderPick) {
+        let result = self
+            .sources
+            .bundle(&pick)
+            .and_then(|bundle| library_sources::import_for_update(&mut self.engine, bundle));
+        match result {
+            Ok(Some(change)) => self.schematic.review_update(&self.engine, change),
+            Ok(None) => self.say(
+                format!(
+                    "Imported {} {}; nothing placed uses an older revision",
+                    pick.name, pick.revision
+                ),
+                false,
+            ),
+            Err(error) => self.say(error, true),
         }
     }
 
@@ -296,17 +406,20 @@ impl eframe::App for App {
         follow_system_theme(&ctx, false);
         self.scene.receive();
         self.file_effects(&ctx);
+        self.library_sources(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
         // Draft edits commit once their gesture ends, as one undo step.
         self.part_requests();
+        self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(draft);
         self.shortcuts(&ctx);
         self.guard_close(&ctx);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
+        self.sources.dialogs(&ctx);
         self.request_model();
     }
 }

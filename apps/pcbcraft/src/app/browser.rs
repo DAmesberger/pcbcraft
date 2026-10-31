@@ -503,6 +503,86 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
     pick
 }
 
+/// A library-sources row the user picked: both open the sources card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourcePick {
+    Source(usize),
+    Manage,
+}
+
+/// The Library sources branch under the project (S3): every configured
+/// folder, a disabled one dimmed with its reason instead of left out, and
+/// a row to manage them.
+pub fn show_sources(
+    ui: &mut egui::Ui,
+    sources: &[crate::library_sources::SourceView],
+) -> Option<SourcePick> {
+    let mut pick = None;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let ready = sources.iter().filter(|s| s.ready()).count();
+    let count = if ready == sources.len() {
+        sources.len().to_string()
+    } else {
+        format!("{ready} of {}", sources.len())
+    };
+    if !folder_labelled(
+        ui,
+        "library-sources",
+        0,
+        "Library sources",
+        &count,
+        false,
+        true,
+    ) {
+        return pick;
+    }
+    for (at, source) in sources.iter().enumerate() {
+        let secondary = source.short();
+        let reason = source.reason();
+        let tip = match &reason {
+            Some(why) => format!("{} · disabled: {why}", source.setting.path.display()),
+            None => source.setting.path.display().to_string(),
+        };
+        let response = kit::tree_row(
+            ui,
+            egui::Id::new(("browser-source", at)),
+            &Row {
+                depth: 1,
+                icon: if reason.is_some() {
+                    "status_warning"
+                } else {
+                    "library"
+                },
+                label: &source.name,
+                secondary: &secondary,
+                dim: reason.is_some(),
+                tip: &tip,
+                ..Default::default()
+            },
+        );
+        if response.clicked {
+            pick = Some(SourcePick::Source(at));
+        }
+    }
+    if kit::tree_row(
+        ui,
+        egui::Id::new("browser-sources-manage"),
+        &Row {
+            depth: 1,
+            icon: "folder",
+            label: "Manage sources…",
+            dim: true,
+            tip: "Add a library folder, turn sources on or off, rescan",
+            ..Default::default()
+        },
+    )
+    .clicked
+    {
+        pick = Some(SourcePick::Manage);
+    }
+    pick
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,6 +661,57 @@ mod tests {
         assert_eq!(shown.iter().filter(|t| t.starts_with("EX-")).count(), 0);
         assert!(shown.iter().any(|t| t == "0 of 24"), "{shown:?}");
         Ok(())
+    }
+
+    /// Every configured source is listed; a disabled one keeps its row,
+    /// dimmed with the reason, and Manage sources… is always offered.
+    #[test]
+    fn library_sources_are_listed_with_their_disabled_reason() {
+        use crate::library_sources::{SourceView, Status};
+        use pcbcraft_io::library_folder::Disabled;
+        use pcbcraft_io::settings::SourceSetting;
+        let view = |name: &str, status| SourceView {
+            setting: SourceSetting {
+                path: format!("/libs/{name}").into(),
+                enabled: true,
+                writable: false,
+            },
+            name: name.into(),
+            status,
+        };
+        let sources = vec![
+            view("Team parts", Status::Loading),
+            view("Old", Status::Disabled(Disabled::UnsupportedFormat(7))),
+            view("Gone", Status::Disabled(Disabled::PathMissing)),
+            view(
+                "Vendor",
+                Status::Disabled(Disabled::UnknownFeatures(vec!["parametric-3d".into()])),
+            ),
+        ];
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let mut pick = None;
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            kit::form(ui, |ui| pick = show_sources(ui, &sources));
+        });
+        output.textures_delta.clear();
+        let shown = labels(&output);
+        for text in [
+            "Library sources",
+            "0 of 4",
+            "Team parts",
+            "loading…",
+            "Old",
+            "unsupported format v7",
+            "Vendor",
+            "unknown feature",
+            "Gone",
+            "path missing",
+            "Manage sources…",
+        ] {
+            assert!(shown.iter().any(|t| t == text), "{text}: {shown:?}");
+        }
+        assert_eq!(pick, None);
     }
 
     #[test]

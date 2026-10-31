@@ -216,15 +216,22 @@ impl App {
                     let summary = browser::summary(&self.engine);
                     let lit = self.lit();
                     let mut pick = None;
+                    let mut source_pick = None;
                     shell::card(
                         &ctx,
                         "project-browser",
                         rect,
                         |ui| kit::card_title(ui, "Browser", &summary),
-                        |ui| pick = browser::show(ui, &self.engine, lit),
+                        |ui| {
+                            pick = browser::show(ui, &self.engine, lit);
+                            source_pick = browser::show_sources(ui, self.sources.sources());
+                        },
                     );
                     if let Some(pick) = pick {
                         self.pick(pick);
+                    }
+                    if source_pick.is_some() {
+                        self.sources.open_card();
                     }
                 }
                 let header = match self.workspace {
