@@ -222,9 +222,11 @@ pub struct UpdateAvailable {
     pub source: String,
     /// The newest revision the source holds of `origin.lineage`.
     pub latest: Revision,
-    /// The source's record at `origin.revision` no longer hashes to
-    /// `origin.content_hash` (finding `library.source_modified`).
-    pub modified: bool,
+    /// Source revisions of `origin.lineage` the project copied whose record
+    /// no longer hashes to the recorded `content_hash`, ascending (finding
+    /// `library.source_modified`). Empty when every copied record matches.
+    #[serde(default)]
+    pub modified: Vec<Revision>,
 }
 
 /// `library.updates_available`: every project lineage whose origin source
@@ -264,11 +266,17 @@ pub fn updates_available(
             let Some(latest) = held.iter().map(|r| r.revision).max() else {
                 continue;
             };
-            let modified = origins.iter().any(|o| {
-                held.iter()
-                    .any(|r| r.revision == o.revision && r.content_hash != o.content_hash)
-            });
-            if latest > newest.revision || modified {
+            let mut modified: Vec<Revision> = origins
+                .iter()
+                .filter(|o| {
+                    held.iter()
+                        .any(|r| r.revision == o.revision && r.content_hash != o.content_hash)
+                })
+                .map(|o| o.revision)
+                .collect();
+            modified.sort();
+            modified.dedup();
+            if latest > newest.revision || !modified.is_empty() {
                 out.push(UpdateAvailable {
                     local: DefinitionRef {
                         kind,
@@ -306,12 +314,15 @@ pub fn update_findings(updates: &[UpdateAvailable]) -> Vec<crate::diagnostics::F
                 objects.clone(),
             ));
         }
-        if update.modified {
+        if !update.modified.is_empty() {
+            let revisions: Vec<String> = update.modified.iter().map(Revision::to_string).collect();
             out.push(Finding::new(
                 "library.source_modified",
                 format!(
-                    "A revision of {} in ‘{}’ changed after the project copied it; the project keeps its copy.",
-                    update.local.id, update.source
+                    "{} of {} in ‘{}’ changed after the project copied it; the project keeps its copy.",
+                    revisions.join(", "),
+                    update.local.id,
+                    update.source
                 ),
                 objects,
             ));
@@ -441,9 +452,32 @@ pub struct CatalogEntry {
     /// A project entry copied from a source that has a newer revision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateAvailable>,
+    /// A project entry imported from (or promoted to) a library source: the
+    /// origin of its newest copied revision. Favourites and recents of the
+    /// entry are kept under this library identity (see [`Self::user_key`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
 }
 
 impl CatalogEntry {
+    /// The identity a per-user favourite or recent keeps: a folder entry's
+    /// own key, a project entry's library origin, and `None` for a
+    /// project-only entry, whose lineage id means something else in every
+    /// other project.
+    pub fn user_key(&self) -> Option<EntryKey> {
+        match (self.source, self.origin) {
+            (Source::Library(_), _) => Some(self.key()),
+            (Source::Project, Some(origin)) => Some(EntryKey::Library {
+                library: origin.library,
+                lineage: origin.lineage,
+            }),
+            (Source::Project, None) => None,
+        }
+    }
+    /// Whether `keys` names this entry, by its own key or its origin's.
+    pub fn named_by(&self, keys: &BTreeSet<EntryKey>) -> bool {
+        keys.contains(&self.key()) || self.user_key().is_some_and(|k| keys.contains(&k))
+    }
     /// The lineage's identity across sources.
     pub fn key(&self) -> EntryKey {
         match (self.source, self.source_lineage) {
@@ -540,6 +574,7 @@ fn entry_of(
         implements: None,
         source_lineage: None,
         update: None,
+        origin: None,
     }
 }
 
@@ -614,6 +649,7 @@ fn part_entry(
         implements: Some(part.component),
         source_lineage: None,
         update: None,
+        origin: None,
     }
 }
 
@@ -726,6 +762,18 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
             entry.draft = true;
             out.push(entry);
         }
+    }
+    // The origin of each lineage's newest copied revision.
+    let mut origins: BTreeMap<DefinitionId, &crate::library::bundle::OriginRecord> =
+        BTreeMap::new();
+    for record in &library.origins {
+        let slot = origins.entry(record.local.id).or_insert(record);
+        if record.local.revision > slot.local.revision {
+            *slot = record;
+        }
+    }
+    for entry in &mut out {
+        entry.origin = origins.get(&entry.lineage).map(|r| r.origin);
     }
     out
 }
@@ -1207,11 +1255,12 @@ impl Index {
             .collect();
         let key = |&(i, tier): &(usize, MatchTier)| {
             let entry = &self.entries[i];
+            let recency = |k: &EntryKey| recent.get(k).copied().unwrap_or(usize::MAX);
             (
                 tier,
                 entry.used == 0,
-                !context.favourites.contains(&entry.key()),
-                recent.get(&entry.key()).copied().unwrap_or(usize::MAX),
+                !entry.named_by(&context.favourites),
+                recency(&entry.key()).min(entry.user_key().as_ref().map_or(usize::MAX, recency)),
             )
         };
         let compare = |a: &(usize, MatchTier), b: &(usize, MatchTier)| {
@@ -1236,7 +1285,7 @@ impl Index {
                 .map(|(i, tier)| Hit {
                     entry: self.entries[i].clone(),
                     tier,
-                    favourite: context.favourites.contains(&self.entries[i].key()),
+                    favourite: self.entries[i].named_by(&context.favourites),
                 })
                 .collect(),
         }

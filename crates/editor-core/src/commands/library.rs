@@ -425,12 +425,18 @@ pub(crate) fn apply_library(
             library::bundle::validate_bundle(&bundle)?;
             // The library is taken out so lineages can be allocated while it
             // is edited; a failure discards the whole candidate.
-            let project = Arc::make_mut(&mut document.project);
+            // Imported on a copy, so a bundle whose revisions are all in the
+            // project already leaves the document (revision, undo) alone.
+            let mut project = (*document.project).clone();
             let mut library = std::mem::take(&mut project.library);
             let mut allocate = || project.allocate().map(DefinitionId);
             let report = import::import(&mut library, &bundle, &mut allocate);
             project.library = library;
-            Ok(Outcome::Imported { report: report? })
+            let report = report?;
+            if report.revisions.iter().any(|r| !r.reused) {
+                document.project = Arc::new(project);
+            }
+            Ok(Outcome::Imported { report })
         }
         LibraryCommand::PlaceFrom {
             source,

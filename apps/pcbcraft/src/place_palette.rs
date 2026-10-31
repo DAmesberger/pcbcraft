@@ -20,14 +20,16 @@ use crate::library_sources::FolderPick;
 use egui::{Rect, Ui, pos2};
 use pcbcraft_core::catalog::{
     self, CatalogContext, CatalogEntry, EntryKey, Hit, ItemReport, MAX_CONTEXT, MAX_QUERY,
-    SearchReport, Source,
+    SearchReport, Source, UpdateAvailable,
 };
+use pcbcraft_core::ids::{LibraryId, SourceLineageId};
 use pcbcraft_core::library::import::OtherRevision;
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult,
+    ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
 };
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
+use std::collections::BTreeMap;
 
 /// Rows one search asks for.
 const ROWS: usize = 40;
@@ -38,7 +40,7 @@ const KEYS: &str = "↑↓ move   Enter place   Shift+Enter place & keep open   
 const KEYS_FOLDER: &str =
     "↑↓ move   Enter place   Shift+Enter place & keep open   Cmd+D favourite   Esc close";
 /// The footer while the other-revision choice is open.
-const KEYS_CHOICE: &str = "Choose how to place it   Esc cancel";
+const KEYS_CHOICE: &str = "Enter update project copy   Esc cancel";
 /// The footer while nothing can be placed.
 const KEYS_IDLE: &str = "↑↓ move   Esc close";
 /// The footer of assign mode.
@@ -102,6 +104,61 @@ pub enum PaletteEvent {
     /// "Update project copy": import the folder revision, then review
     /// updating the project's instances to it.
     UpdateProjectCopy(FolderPick),
+    /// Open the Library sources card.
+    ManageSources,
+}
+
+/// What rows say about the project around them, rebuilt with the results:
+/// how many instances pin each revision of a lineage, which revision of a
+/// folder lineage the project holds, and the folders' names.
+#[derive(Clone, Debug, Default)]
+pub struct RowContext {
+    usage: BTreeMap<DefinitionId, BTreeMap<Revision, usize>>,
+    copies: BTreeMap<(LibraryId, SourceLineageId), Revision>,
+    names: BTreeMap<LibraryId, String>,
+}
+
+impl RowContext {
+    fn of(project: &pcbcraft_core::Project, context: &CatalogContext) -> Self {
+        let mut usage: BTreeMap<DefinitionId, BTreeMap<Revision, usize>> = BTreeMap::new();
+        for instance in &project.instances {
+            *usage
+                .entry(instance.component.id)
+                .or_default()
+                .entry(instance.component.revision)
+                .or_default() += 1;
+            if let Some(part) = instance.part {
+                *usage
+                    .entry(part.id)
+                    .or_default()
+                    .entry(part.revision)
+                    .or_default() += 1;
+            }
+        }
+        let mut copies: BTreeMap<(LibraryId, SourceLineageId), Revision> = BTreeMap::new();
+        for record in &project.library.origins {
+            let slot = copies
+                .entry((record.origin.library, record.origin.lineage))
+                .or_insert(record.local.revision);
+            *slot = (*slot).max(record.local.revision);
+        }
+        Self {
+            usage,
+            copies,
+            names: context
+                .sources
+                .iter()
+                .map(|s| (s.library, s.name.clone()))
+                .collect(),
+        }
+    }
+
+    fn name(&self, library: LibraryId) -> String {
+        self.names
+            .get(&library)
+            .cloned()
+            .unwrap_or_else(|| "a library".into())
+    }
 }
 
 /// Results of one query text at one document revision.
@@ -141,6 +198,8 @@ pub struct PlacePalette {
     mode: Mode,
     /// Assign mode: the component revisions of the target instances.
     targets: Vec<ComponentRef>,
+    /// What the rows say about the project, rebuilt with the results.
+    rows: RowContext,
 }
 
 impl PlacePalette {
@@ -186,9 +245,12 @@ impl PlacePalette {
         self.choice = None;
     }
 
-    /// Remember a placed or picked project lineage for ranking.
-    pub fn used(&mut self, lineage: DefinitionId) {
-        self.used_key(EntryKey::Project { lineage });
+    /// Remember a placed, picked or assigned entry for ranking and tell the
+    /// app to keep it: under its library identity when it has one (a
+    /// folder entry, or a project copy of one), else as a project-only mark
+    /// the app keeps for this project alone.
+    fn used_entry(&mut self, entry: &CatalogEntry) {
+        self.used_key(entry.user_key().unwrap_or_else(|| entry.key()));
     }
 
     /// Remember an entry for ranking and tell the app to keep it.
@@ -318,6 +380,7 @@ impl PlacePalette {
                 .collect(),
             Mode::Place => Vec::new(),
         };
+        self.rows = RowContext::of(engine.project(), &self.context);
         self.results = Some(Results {
             revision: engine.revision(),
             context: generations,
@@ -434,8 +497,13 @@ impl PlacePalette {
             self.close();
             return Some(PaletteAction::Close);
         }
-        if self.choice.is_some() {
-            // The choice is made with its buttons.
+        let mut chosen = None;
+        if let Some((pick, _)) = &self.choice {
+            // Enter takes the default, Update project copy…; the others are
+            // its buttons.
+            if keys.enter {
+                chosen = Some(Choice::Update(pick.clone()));
+            }
             keys = kit::SearchKeys::default();
         }
         self.refresh(engine);
@@ -444,7 +512,10 @@ impl PlacePalette {
                 egui::Modifiers::COMMAND,
                 egui::Key::D,
             ))
-        }) && let Some(key) = self.hits().get(self.highlighted).map(|h| h.entry.key())
+        }) && let Some(key) = self
+            .hits()
+            .get(self.highlighted)
+            .map(|h| h.entry.user_key().unwrap_or_else(|| h.entry.key()))
         {
             self.toggle_favourite(key);
             self.refresh(engine);
@@ -517,8 +588,8 @@ impl PlacePalette {
                 "In this project",
             )
         };
-        let mut chosen = None;
         let groups = self.group_names();
+        let mut manage = false;
         kit::search_sheet(&ctx, "place-palette", top, width, footer, |ui| {
             let invalid = matches!(self.results.as_ref().map(|r| &r.report), Some(Err(_)));
             let field = kit::search_field(
@@ -538,8 +609,10 @@ impl PlacePalette {
             if let Some(notice) = &self.notice {
                 kit::search_message(ui, notice, true);
             }
-            if let Some((pick, message)) = &self.choice {
-                chosen = choice(ui, pick, message);
+            if let Some((pick, message)) = &self.choice
+                && let Some(clicked) = choice(ui, pick, message)
+            {
+                chosen = Some(clicked);
             }
             match self.results.as_ref().map(|r| &r.report) {
                 Some(Err(error)) => {
@@ -583,8 +656,7 @@ impl PlacePalette {
                                         };
                                         kit::search_heading(ui, &label, count);
                                     }
-                                    let favourite =
-                                        self.context.favourites.contains(&hit.entry.key());
+                                    let favourite = hit.entry.named_by(&self.context.favourites);
                                     let response = row(
                                         ui,
                                         hit,
@@ -592,6 +664,7 @@ impl PlacePalette {
                                         i == self.highlighted,
                                         &self.targets,
                                         favourite,
+                                        &self.rows,
                                     );
                                     if scroll && i == self.highlighted {
                                         response.scroll_to_me(None);
@@ -605,7 +678,20 @@ impl PlacePalette {
                 }
                 None => {}
             }
+            if !assigning {
+                kit::actions(ui, |ui| {
+                    if ui_kit::button(ui, "Library sources…", Button::Ghost)
+                        .on_hover_text("Add, rescan, turn on or off and remove library folders")
+                        .clicked()
+                    {
+                        manage = true;
+                    }
+                });
+            }
         });
+        if manage {
+            self.events.push(PaletteEvent::ManageSources);
+        }
         if focused {
             self.focus = false;
         }
@@ -638,24 +724,24 @@ impl PlacePalette {
             Some(Choice::Cancel) => self.choice = None,
             None => {}
         }
+        let entry = self.hits().get(self.highlighted).map(|h| h.entry.clone());
         match action {
-            Some(PaletteAction::Place {
-                component,
-                keep_open,
-            }) => {
-                self.used(component.id);
+            Some(PaletteAction::Place { keep_open, .. }) => {
+                if let Some(entry) = &entry {
+                    self.used_entry(entry);
+                }
                 if !keep_open {
                     self.close();
                 }
             }
-            Some(PaletteAction::Pick(component)) => {
-                self.used(component.id);
-                self.close();
-            }
             Some(
-                PaletteAction::Assign { part, .. } | PaletteAction::UpdateAndAssign { part, .. },
+                PaletteAction::Pick(_)
+                | PaletteAction::Assign { .. }
+                | PaletteAction::UpdateAndAssign { .. },
             ) => {
-                self.used(part.id);
+                if let Some(entry) = &entry {
+                    self.used_entry(entry);
+                }
                 self.close();
             }
             _ => {}
@@ -750,6 +836,10 @@ impl PlacePalette {
             };
             self.preview = Some((engine.revision(), component, report));
         }
+        let update = self
+            .hits()
+            .get(self.highlighted)
+            .and_then(|h| h.entry.update.clone().map(|u| (u, h.entry.name.clone())));
         let Some((_, _, report)) = &self.preview else {
             return None;
         };
@@ -758,6 +848,12 @@ impl PlacePalette {
             Err(error) => {
                 kit::status(ui, error, Tone::Error);
             }
+        }
+        if let Some((update, name)) = update
+            && let Some(pick) = update_section(ui, &update, &name)
+        {
+            self.events.push(PaletteEvent::UpdateProjectCopy(pick));
+            self.close();
         }
         None
     }
@@ -771,11 +867,8 @@ fn badges(entry: &CatalogEntry) -> [kit::SearchBadge<'static>; 4] {
     })
 }
 
-fn detail(entry: &CatalogEntry) -> String {
+fn detail(entry: &CatalogEntry, rows: &RowContext) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(mark) = update_mark(entry) {
-        parts.push(mark);
-    }
     parts.extend(entry.manufacturer.iter().cloned());
     parts.extend(entry.key_values().into_iter().take(4).map(str::to_owned));
     if let Some(revision) = entry.revision {
@@ -784,20 +877,69 @@ fn detail(entry: &CatalogEntry) -> String {
             Source::Library(_) => format!("library {revision}"),
         });
     }
-    if entry.used > 0 {
-        parts.push(format!("used {}×", entry.used));
+    // The project row and the folder row of one lineage name each other.
+    match (entry.source, entry.origin, entry.source_lineage) {
+        (Source::Project, Some(origin), _) => {
+            parts.push(format!("from {}", rows.name(origin.library)));
+        }
+        (Source::Library(library), _, Some(lineage)) => {
+            if let Some(copy) = rows.copies.get(&(library, lineage)) {
+                parts.push(format!("in project {copy}"));
+            }
+        }
+        _ => {}
+    }
+    match rows
+        .usage
+        .get(&entry.lineage)
+        .filter(|_| entry.source == Source::Project)
+    {
+        Some(by_revision) if by_revision.len() == 1 => {
+            if let Some((revision, count)) = by_revision.iter().next() {
+                parts.push(format!("{revision} used {count}×"));
+            }
+        }
+        Some(by_revision) => {
+            let each: Vec<String> = by_revision
+                .iter()
+                .map(|(revision, count)| format!("{revision} ×{count}"))
+                .collect();
+            parts.push(format!("used {}", each.join(", ")));
+        }
+        None if entry.used > 0 && entry.source == Source::Project => {
+            parts.push(format!("used {}×", entry.used));
+        }
+        None => {}
     }
     parts.join(" · ")
 }
 
-/// A project entry copied from a folder that has moved on: the newer
-/// revision, or that the copied record changed on disk.
-fn update_mark(entry: &CatalogEntry) -> Option<String> {
+/// A project entry copied from a folder that has moved on, as a chip: the
+/// newer revision, or the copied revisions whose records changed on disk.
+fn update_chip(entry: &CatalogEntry) -> Option<(String, bool)> {
     let update = entry.update.as_ref()?;
-    Some(if update.modified {
-        format!("{} changed its {}", update.source, update.origin.revision)
+    if !update.modified.is_empty() {
+        let revisions: Vec<String> = update.modified.iter().map(Revision::to_string).collect();
+        return Some((format!("{} changed", revisions.join(", ")), true));
+    }
+    (update.latest > update.origin.revision).then(|| (format!("Update {}", update.latest), false))
+}
+
+/// The tip of [`update_chip`].
+fn update_tip(entry: &CatalogEntry) -> Option<String> {
+    let update = entry.update.as_ref()?;
+    Some(if update.modified.is_empty() {
+        format!(
+            "{} has {}; this project has {}.",
+            update.source, update.latest, update.local.revision
+        )
     } else {
-        format!("update available: {} in {}", update.latest, update.source)
+        let revisions: Vec<String> = update.modified.iter().map(Revision::to_string).collect();
+        format!(
+            "{} of this lineage changed in {} after the project copied it; the project keeps its copy.",
+            revisions.join(", "),
+            update.source
+        )
     })
 }
 
@@ -820,26 +962,30 @@ enum Choice {
     Cancel,
 }
 
-/// The inline Keep both / Update project copy / Cancel choice under the
+/// The inline Update project copy… / Keep both / Cancel choice under the
 /// field, after `library.place_from` refused another project revision.
+/// Updating is the default (Enter); keeping two revisions of one part is
+/// the riskier choice and stays secondary.
 fn choice(ui: &mut Ui, pick: &FolderPick, message: &str) -> Option<Choice> {
     kit::search_message(ui, message, false);
     let mut chosen = None;
     kit::actions(ui, |ui| {
-        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
-            chosen = Some(Choice::Cancel);
-        }
-        if ui_kit::button(ui, "Update project copy", Button::Normal)
-            .on_hover_text("Import this revision, then review updating the placed instances to it")
+        if kit::primary(ui, "Update project copy…", true)
+            .on_hover_text(
+                "Copy this revision into the project, then review which instances move to it (Enter)",
+            )
             .clicked()
         {
             chosen = Some(Choice::Update(pick.clone()));
         }
-        if kit::primary(ui, "Keep both", true)
-            .on_hover_text("Import this revision beside the project's and place it")
+        if ui_kit::button(ui, "Keep both", Button::Normal)
+            .on_hover_text("Copy this revision beside the project's and place it; both stay in use")
             .clicked()
         {
             chosen = Some(Choice::KeepBoth(pick.clone()));
+        }
+        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
+            chosen = Some(Choice::Cancel);
         }
     });
     chosen
@@ -1062,32 +1208,94 @@ fn row(
     highlighted: bool,
     targets: &[ComponentRef],
     favourite: bool,
+    rows: &RowContext,
 ) -> egui::Response {
     let entry = &hit.entry;
     let badges = badges(entry);
-    let mut detail = detail(entry);
+    let mut detail = detail(entry, rows);
     if let Some(newer) = newer_than(entry, targets) {
         detail = format!("needs update to {} · {detail}", newer.revision);
     }
-    if favourite {
-        detail = format!("favourite · {detail}");
-    }
-    kit::search_row(
-        ui,
-        egui::Id::new(("place-palette-row", entry.key())),
-        &kit::SearchRow {
-            icon: if entry.kind == DefinitionKind::Part {
-                "library"
-            } else {
-                "component"
-            },
-            label: &entry.name,
-            query,
-            detail: &detail,
-            badges: &badges,
-            highlighted,
+    let chip = update_chip(entry);
+    let id = egui::Id::new(("place-palette-row", entry.key()));
+    let shown = kit::SearchRow {
+        icon: if entry.kind == DefinitionKind::Part {
+            "library"
+        } else {
+            "component"
         },
-    )
+        label: &entry.name,
+        query,
+        detail: &detail,
+        badges: &badges,
+        highlighted,
+    };
+    let response = if favourite || chip.is_some() {
+        kit::search_row_marked(
+            ui,
+            id,
+            &shown,
+            kit::RowMarks {
+                star: favourite,
+                chip: chip.as_ref().map(|(label, warning)| kit::RowChip {
+                    label,
+                    warning: *warning,
+                }),
+            },
+        )
+    } else {
+        kit::search_row(ui, id, &shown)
+    };
+    match update_tip(entry) {
+        Some(tip) => response.on_hover_text(tip),
+        None => response,
+    }
+}
+
+/// The Library section of a project entry whose source moved on: the
+/// revision the project has, the newer one, and Update… (the same
+/// import-then-review as the other-revision choice).
+fn update_section(ui: &mut Ui, update: &UpdateAvailable, name: &str) -> Option<FolderPick> {
+    let mut pick = None;
+    kit::section(ui, "palette-library", "Library", true, None, |ui| {
+        kit::value_row(ui, "Source", &update.source);
+        if update.latest > update.origin.revision {
+            kit::value_row(
+                ui,
+                "Revision",
+                &format!(
+                    "{} · {} available in {}",
+                    update.local.revision, update.latest, update.source
+                ),
+            );
+            kit::actions(ui, |ui| {
+                if kit::primary(ui, "Update…", true)
+                    .on_hover_text("Copy the newer revision into the project, then review which instances move to it")
+                    .clicked()
+                {
+                    pick = Some(FolderPick {
+                        library: update.origin.library,
+                        lineage: update.origin.lineage,
+                        revision: update.latest,
+                        name: name.to_owned(),
+                    });
+                }
+            });
+        }
+        if !update.modified.is_empty() {
+            let revisions: Vec<String> = update.modified.iter().map(Revision::to_string).collect();
+            kit::status(
+                ui,
+                &format!(
+                    "{} changed in {} after the project copied it. The project keeps its copy.",
+                    revisions.join(", "),
+                    update.source
+                ),
+                Tone::Warning,
+            );
+        }
+    });
+    pick
 }
 
 /// The preview sections of one inspected revision.
@@ -1314,7 +1522,7 @@ mod tests {
         let newer = ComponentRef::new(current.id, pcbcraft_core::Revision(current.revision.0 + 1));
         hit.entry.implements = Some(newer);
         assert!(
-            detail(&hit.entry).starts_with("ExampleCo"),
+            detail(&hit.entry, &RowContext::default()).starts_with("ExampleCo"),
             "the maker leads"
         );
         let mut palette = PlacePalette::default();
@@ -1502,13 +1710,12 @@ mod tests {
             lineage: pick.lineage,
         };
         assert_eq!(palette.take_events(), [PaletteEvent::ToggleFavourite(key)]);
-        let (_, shown_after) = run(&mut palette, vec![]);
+        run(&mut palette, vec![]);
+        // The row draws a star for it; the detail line stays the entry's own.
+        assert!(palette.context.favourites.contains(&key));
         assert!(
-            shown
-                .iter()
-                .chain(&shown_after)
-                .any(|t| t.starts_with("favourite · ")),
-            "{shown_after:?}"
+            !shown.iter().any(|t| t.starts_with("favourite · ")),
+            "{shown:?}"
         );
         assert_eq!(
             palette.highlighted_folder().as_ref(),
@@ -1542,16 +1749,10 @@ mod tests {
         run(&mut palette, vec![]);
         let (_, shown) = run(&mut palette, vec![]);
         assert!(palette.is_open());
-        for label in ["Keep both", "Update project copy", "Cancel"] {
+        for label in ["Update project copy…", "Keep both", "Cancel"] {
             assert!(shown.iter().any(|t| t == label), "{label}: {shown:?}");
         }
-        // Enter does not pick a choice; Esc cancels it and keeps the sheet.
-        let (action, _) = run(
-            &mut palette,
-            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
-        );
-        assert_eq!(action, None);
-        assert!(palette.take_events().is_empty());
+        // Esc cancels only the choice and keeps the sheet.
         let (action, shown) = run(
             &mut palette,
             vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
@@ -1559,6 +1760,19 @@ mod tests {
         assert_eq!(action, None);
         assert!(palette.is_open());
         assert!(!shown.iter().any(|t| t == "Keep both"), "{shown:?}");
+        assert!(palette.take_events().is_empty());
+        // Enter takes the default, Update project copy…, never Keep both.
+        palette.offer_choice(pick.clone(), "r1 is in the project".into());
+        run(&mut palette, vec![]);
+        let (action, _) = run(
+            &mut palette,
+            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert_eq!(action, Some(PaletteAction::Close));
+        assert_eq!(
+            palette.take_events(),
+            [PaletteEvent::UpdateProjectCopy(pick.clone())]
+        );
         Ok(())
     }
 
@@ -1593,17 +1807,20 @@ mod tests {
             },
             source: "Team parts".into(),
             latest: pcbcraft_core::Revision(2),
-            modified: false,
+            modified: Vec::new(),
         };
         entry.update = Some(update.clone());
-        assert!(
-            detail(&entry).starts_with("update available: r2 in Team parts · "),
-            "{}",
-            detail(&entry)
+        assert_eq!(update_chip(&entry), Some(("Update r2".into(), false)));
+        assert_eq!(
+            update_tip(&entry).as_deref(),
+            Some("Team parts has r2; this project has r1.")
         );
-        update.modified = true;
+        // The chip names the revision whose record changed.
+        update.modified = vec![pcbcraft_core::Revision(1)];
         entry.update = Some(update);
-        assert!(detail(&entry).starts_with("Team parts changed its r1 · "));
+        assert_eq!(update_chip(&entry), Some(("r1 changed".into(), true)));
+        entry.update = None;
+        assert_eq!(update_chip(&entry), None);
         Ok(())
     }
 
@@ -1673,7 +1890,10 @@ mod tests {
             return Err("not a search".into());
         };
         let entry = &report.results[0].entry;
-        assert_eq!(detail(entry), "10 kΩ · ±1% · 0603 · project r1");
+        assert_eq!(
+            detail(entry, &RowContext::default()),
+            "10 kΩ · ±1% · 0603 · project r1"
+        );
         let shown: Vec<(&str, bool)> = badges(entry).iter().map(|b| (b.label, b.present)).collect();
         assert_eq!(
             shown,

@@ -494,9 +494,35 @@ pub struct SearchRow<'a> {
     pub highlighted: bool,
 }
 
+/// What a row marks besides its badges: a favourite star after the name,
+/// and one coloured chip before the badges (an update or a changed record).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RowMarks<'a> {
+    pub star: bool,
+    pub chip: Option<RowChip<'a>>,
+}
+
+/// A coloured chip of [`RowMarks`].
+#[derive(Clone, Copy, Debug)]
+pub struct RowChip<'a> {
+    pub label: &'a str,
+    /// Draws as a warning (a changed source record) instead of the accent.
+    pub warning: bool,
+}
+
 /// The 38 pt search row: icon tile, highlighted match, detail line and
 /// badges (upstream `MenuItem::search_row`).
 pub fn search_row(ui: &mut Ui, id: egui::Id, row: &SearchRow<'_>) -> Response {
+    search_row_marked(ui, id, row, RowMarks::default())
+}
+
+/// [`search_row`] with a favourite star and a coloured chip.
+pub fn search_row_marked(
+    ui: &mut Ui,
+    id: egui::Id,
+    row: &SearchRow<'_>,
+    marks: RowMarks<'_>,
+) -> Response {
     let t = Tokens::get();
     let (r, _) = ui.allocate_exact_size(
         vec2(ui.available_width(), search_row_height()),
@@ -557,7 +583,37 @@ pub fn search_row(ui: &mut Ui, id: egui::Id, row: &SearchRow<'_>) -> Response {
         painter.galley(rect.min + vec2(t.space_10 / 2.0, t.space_2), galley, ink);
         right = rect.left() - t.space_4;
     }
+    if let Some(chip) = marks.chip {
+        let colour = if chip.warning { t.warning } else { t.accent };
+        let galley =
+            painter.layout_no_wrap(chip.label.to_owned(), fonts::semibold(t.font_small), colour);
+        let size = galley.size() + vec2(t.space_10, t.space_4);
+        let rect = Rect::from_min_size(pos2(right - size.x, r.center().y - size.y / 2.0), size);
+        painter.rect_filled(rect, inner_radius(), colour.gamma_multiply(0.16));
+        painter.rect_stroke(
+            rect,
+            inner_radius(),
+            Stroke::new(1.0, colour.gamma_multiply(0.6)),
+            egui::StrokeKind::Inside,
+        );
+        painter.galley(rect.min + vec2(t.space_10 / 2.0, t.space_2), galley, colour);
+        right = rect.left() - t.space_6;
+    }
     let left = tile.right() + t.space_10;
+    // The star sits at the end of the name line, inside the text column.
+    let star = t.font_label + t.space_2;
+    let right = if marks.star {
+        super::icon(
+            &painter,
+            pos2(right - star / 2.0, r.top() + t.space_3 + star / 2.0),
+            star,
+            "star",
+            1.0,
+        );
+        right - star - t.space_2
+    } else {
+        right
+    };
     let width = (right - t.space_6 - left).max(0.0);
     let normal = egui::TextFormat::simple(FontId::proportional(t.font_label), t.form_ink);
     let mut job = egui::text::LayoutJob::default();

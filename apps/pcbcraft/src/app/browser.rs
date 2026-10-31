@@ -3,7 +3,7 @@
 //! there. The tree reads state only; the app applies the returned
 //! [`Pick`] through the editors.
 use crate::kit::{self, Row};
-use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS};
+use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS, UpdateAvailable};
 use pcbcraft_core::library::Definition;
 use pcbcraft_core::{DefinitionId, Engine, Id, Query, QueryResult};
 use std::collections::{BTreeMap, BTreeSet};
@@ -205,7 +205,34 @@ pub fn summary(engine: &Engine) -> String {
     format!("{count} instance{}", if count == 1 { "" } else { "s" })
 }
 
-pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
+/// Whether an instance pins an older revision than the newest one it
+/// could move to: a newer revision of its lineage in the project, or one a
+/// library source offers. The text names that revision and where it is.
+pub fn stale_text(
+    library: &pcbcraft_core::library::Library,
+    component: pcbcraft_core::ComponentRef,
+    updates: &[UpdateAvailable],
+) -> Option<String> {
+    let in_project = library
+        .latest(component.id)
+        .map(|(_, r)| r)
+        .filter(|r| *r > component.revision);
+    let offered = updates
+        .iter()
+        .find(|u| u.local.id == component.id && u.latest > u.origin.revision);
+    match (in_project, offered) {
+        (Some(r), _) => Some(format!("{r} available")),
+        (None, Some(u)) => Some(format!("{} in {}", u.latest, u.source)),
+        (None, None) => None,
+    }
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    engine: &Engine,
+    lit: Lit,
+    updates: &[UpdateAvailable],
+) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -283,24 +310,38 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
             _ => {}
         }
         for component in components {
-            let secondary = match component.revision {
-                Some(r) => format!("r{r}"),
-                None => "draft".into(),
+            let update = updates
+                .iter()
+                .find(|u| u.local.id == component.id && u.latest > u.origin.revision);
+            let secondary = match (component.revision, update) {
+                (Some(r), Some(u)) => format!("r{r} · {} available", u.latest),
+                (Some(r), None) => format!("r{r}"),
+                (None, _) => "draft".into(),
             };
+            let update_tip = update.map(|u| {
+                format!(
+                    "{} holds {}; this project has {}",
+                    u.source, u.latest, u.local.revision
+                )
+            });
             let response = kit::tree_row(
                 ui,
                 egui::Id::new(("browser-component", component.id.0)),
                 &Row {
                     depth: 2,
-                    icon: "component",
+                    icon: if update.is_some() {
+                        "update"
+                    } else {
+                        "component"
+                    },
                     label: &component.name,
                     secondary: &secondary,
                     selected: lit.component == Some(component.id),
                     modified: component.draft,
-                    tip: if component.draft {
-                        "Unpublished draft changes"
-                    } else {
-                        "Published revision"
+                    tip: match &update_tip {
+                        Some(tip) => tip,
+                        None if component.draft => "Unpublished draft changes",
+                        None => "Published revision",
                     },
                     ..Default::default()
                 },
@@ -352,21 +393,34 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
                     .map_or_else(String::new, |c| c.meta.name.clone());
                 // A chosen Part that disagrees with the instance is marked.
                 let findings = pcbcraft_core::instances::part_findings(&project.library, instance);
-                let tip = findings.first().map_or("", |f| f.message.as_str());
-                let secondary = if findings.is_empty() {
-                    name
-                } else {
-                    format!("{name} · part mismatch")
+                let stale = stale_text(&project.library, instance.component, updates);
+                let stale_tip = stale.as_ref().map(|text| {
+                    format!(
+                        "Pinned to {}; {text}. Select it to review the update.",
+                        instance.component.revision
+                    )
+                });
+                let tip = findings
+                    .first()
+                    .map(|f| f.message.as_str())
+                    .or(stale_tip.as_deref())
+                    .unwrap_or("");
+                let secondary = match (&stale, findings.is_empty()) {
+                    (_, false) => format!("{name} · part mismatch"),
+                    (Some(text), true) => format!("{name} · {text}"),
+                    (None, true) => name,
                 };
                 let response = kit::tree_row(
                     ui,
                     egui::Id::new(("browser-instance", instance.id)),
                     &Row {
                         depth: 3,
-                        icon: if findings.is_empty() {
-                            "component"
-                        } else {
+                        icon: if !findings.is_empty() {
                             "status_warning"
+                        } else if stale.is_some() {
+                            "update"
+                        } else {
+                            "component"
                         },
                         label: &instance.designator,
                         secondary: &secondary,
@@ -613,7 +667,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                kit::form(ui, |ui| show(ui, engine, Lit::default()));
+                kit::form(ui, |ui| show(ui, engine, Lit::default(), &[]));
             },
         );
         output.textures_delta.clear();
@@ -675,6 +729,7 @@ mod tests {
                 path: format!("/libs/{name}").into(),
                 enabled: true,
                 writable: false,
+                name: None,
             },
             name: name.into(),
             status,

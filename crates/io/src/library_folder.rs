@@ -153,11 +153,14 @@ pub fn asset_path(hash: ContentHash) -> String {
 
 /// Check a parsed manifest: format version and required features.
 pub fn check_manifest(manifest: &Manifest) -> std::result::Result<(), Disabled> {
-    if manifest.format != FOLDER_FORMAT {
-        return Err(Disabled::UnsupportedFormat(manifest.format));
+    check_manifest_parts(manifest.format, &manifest.required_features)
+}
+
+fn check_manifest_parts(format: u32, required: &[String]) -> std::result::Result<(), Disabled> {
+    if format != FOLDER_FORMAT {
+        return Err(Disabled::UnsupportedFormat(format));
     }
-    let unknown: Vec<String> = manifest
-        .required_features
+    let unknown: Vec<String> = required
         .iter()
         .filter(|f| !SUPPORTED_FEATURES.contains(&f.as_str()))
         .cloned()
@@ -291,8 +294,33 @@ fn present(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
-fn parse_manifest(bytes: &[u8]) -> std::result::Result<Manifest, String> {
-    let manifest: Manifest = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+/// The fields every manifest format keeps, read leniently before the
+/// strict parse, so a newer format that adds fields is reported as
+/// unsupported rather than unreadable.
+#[derive(Deserialize)]
+struct ManifestProbe {
+    format: u32,
+    #[serde(default)]
+    required_features: Vec<String>,
+}
+
+/// Why a manifest is not usable: unreadable, or of another format or
+/// feature set (checked first, from the lenient probe).
+enum ManifestError {
+    Malformed(String),
+    Refused(Disabled),
+}
+
+fn parse_manifest(bytes: &[u8]) -> std::result::Result<Manifest, ManifestError> {
+    let probe: ManifestProbe =
+        serde_json::from_slice(bytes).map_err(|e| ManifestError::Malformed(e.to_string()))?;
+    check_manifest_parts(probe.format, &probe.required_features).map_err(ManifestError::Refused)?;
+    let manifest: Manifest =
+        serde_json::from_slice(bytes).map_err(|e| ManifestError::Malformed(e.to_string()))?;
+    parse_checked(manifest).map_err(ManifestError::Malformed)
+}
+
+fn parse_checked(manifest: Manifest) -> std::result::Result<Manifest, String> {
     if !printable(&manifest.name) {
         return Err("the library name is blank, too long or has control characters".into());
     }
@@ -316,8 +344,10 @@ pub fn inspect_folder(root: &Path) -> std::result::Result<Folder, Disabled> {
     }
     let bytes =
         read_bounded(&path, MAX_RECORD_BYTES).map_err(|e| Disabled::Malformed(e.to_string()))?;
-    let manifest = parse_manifest(&bytes).map_err(Disabled::Malformed)?;
-    check_manifest(&manifest)?;
+    let manifest = parse_manifest(&bytes).map_err(|e| match e {
+        ManifestError::Malformed(why) => Disabled::Malformed(why),
+        ManifestError::Refused(why) => why,
+    })?;
     Ok(Folder {
         root: root.to_path_buf(),
         manifest,
@@ -330,12 +360,12 @@ pub fn inspect_folder(root: &Path) -> std::result::Result<Folder, Disabled> {
 pub fn open_folder(root: &Path) -> Result<Folder> {
     let path = root.join(MANIFEST_FILE);
     let bytes = read_bounded(&path, MAX_RECORD_BYTES)?;
-    let manifest = parse_manifest(&bytes).map_err(|why| malformed(MANIFEST_FILE, why))?;
-    check_manifest(&manifest).map_err(|why| {
-        Error::Document(pcbcraft_core::Error::Unsupported(format!(
+    let manifest = parse_manifest(&bytes).map_err(|e| match e {
+        ManifestError::Malformed(why) => malformed(MANIFEST_FILE, why),
+        ManifestError::Refused(why) => Error::Document(pcbcraft_core::Error::Unsupported(format!(
             "library folder {}: {why}",
             root.display()
-        )))
+        ))),
     })?;
     Ok(Folder {
         root: root.to_path_buf(),
@@ -516,11 +546,78 @@ fn dependencies(stored: &StoredRecord) -> Result<(Vec<SourceRevision>, Vec<Sourc
     Ok((hard, soft))
 }
 
+/// Records read so far by [`read_bundle`]: each file is read once, on
+/// demand, and only the closure is read.
+struct OnDemand<'a> {
+    folder: &'a Folder,
+    records: BTreeMap<SourceRevision, StoredRecord>,
+}
+
+impl OnDemand<'_> {
+    /// The record at `at`, read from its file the first time.
+    fn get(&mut self, at: SourceRevision) -> Result<&StoredRecord> {
+        if !self.records.contains_key(&at) {
+            // The closure is bounded; so are the files read for it.
+            if self.records.len() > MAX_BUNDLE_RECORDS {
+                return Err(Error::TooLarge(format!(
+                    "a bundle carries at most {MAX_BUNDLE_RECORDS} revisions"
+                )));
+            }
+            if !present(&self.folder.root.join(record_path(at.lineage, at.revision))) {
+                return Err(Error::Document(pcbcraft_core::Error::NotFound(format!(
+                    "the folder has no {}",
+                    record_path(at.lineage, at.revision)
+                ))));
+            }
+            let stored = read_record_file(self.folder, at.lineage, at.revision)?;
+            self.records.insert(at, stored);
+        }
+        self.records
+            .get(&at)
+            .ok_or_else(|| Error::Invalid("a record read was lost".into()))
+    }
+
+    fn dependencies(
+        &mut self,
+        at: SourceRevision,
+    ) -> Result<(Vec<SourceRevision>, Vec<SourceLineageId>)> {
+        dependencies(self.get(at)?)
+    }
+}
+
+/// The newest revision the folder holds of `lineage`, from its directory
+/// listing (no record is read).
+fn latest_revision(folder: &Folder, lineage: SourceLineageId) -> Result<Revision> {
+    let name = lineage.to_string();
+    let directory = folder.root.join(LINEAGES_DIR).join(&name);
+    if !present(&directory) {
+        return Err(Error::Document(pcbcraft_core::Error::NotFound(format!(
+            "the folder has no revision of lineage {lineage}"
+        ))));
+    }
+    let mut latest = None;
+    for (file, kind, _) in listing(&directory)? {
+        let revision = parse_record_name(&file)
+            .filter(|_| kind.is_file())
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "{LINEAGES_DIR}/{name}/{file} is not a revision file (r0001.json, …)"
+                ))
+            })?;
+        latest = latest.max(Some(revision));
+    }
+    latest.ok_or_else(|| {
+        Error::Document(pcbcraft_core::Error::NotFound(format!(
+            "the folder has no revision of lineage {lineage}"
+        )))
+    })
+}
+
 /// Append `start` and the exact revisions it reaches to `order`,
 /// dependencies first (iterative depth-first post-order).
 fn visit(
     start: SourceRevision,
-    records: &BTreeMap<SourceRevision, &StoredRecord>,
+    records: &mut OnDemand<'_>,
     done: &mut BTreeSet<SourceRevision>,
     order: &mut Vec<SourceRevision>,
     soft: &mut Vec<SourceLineageId>,
@@ -528,15 +625,8 @@ fn visit(
     if done.contains(&start) {
         return Ok(());
     }
-    let missing = |r: SourceRevision| {
-        Error::Document(pcbcraft_core::Error::NotFound(format!(
-            "the folder has no {}",
-            record_path(r.lineage, r.revision)
-        )))
-    };
     let mut on_path = BTreeSet::from([start]);
-    let first = records.get(&start).ok_or_else(|| missing(start))?;
-    let (hard, lineages) = dependencies(first)?;
+    let (hard, lineages) = records.dependencies(start)?;
     soft.extend(lineages);
     let mut stack = vec![(start, hard, 0usize)];
     while let Some((node, children, next)) = stack.last_mut() {
@@ -563,8 +653,7 @@ fn visit(
                 record_path(child.lineage, child.revision)
             )));
         }
-        let stored = records.get(&child).ok_or_else(|| missing(child))?;
-        let (hard, lineages) = dependencies(stored)?;
+        let (hard, lineages) = records.dependencies(child)?;
         soft.extend(lineages);
         stack.push((child, hard, 0));
     }
@@ -597,41 +686,28 @@ fn read_asset(folder: &Folder, hash: ContentHash) -> Result<PackedAsset> {
 /// A lineage named without a revision (a symbol's owning component) that
 /// the exact closure does not already carry is added at its latest
 /// revision, so every link resolves inside the bundle.
+///
+/// Only the closure is read: links are followed from the root and each
+/// `lineages/<id>/rNNNN.json` is read when first reached; a lineage
+/// directory is listed only to find a soft dependency's latest revision.
+/// Still blocking file I/O: hosts call it off their UI thread.
 pub fn read_bundle(folder: &Folder, root: SourceRevision) -> Result<Bundle> {
-    let stored = read_records(folder)?;
-    let records: BTreeMap<SourceRevision, &StoredRecord> = stored
-        .iter()
-        .map(|s| {
-            (
-                SourceRevision {
-                    lineage: s.record.lineage,
-                    revision: s.record.revision,
-                },
-                s,
-            )
-        })
-        .collect();
-    let mut latest: BTreeMap<SourceLineageId, Revision> = BTreeMap::new();
-    for key in records.keys() {
-        let entry = latest.entry(key.lineage).or_insert(key.revision);
-        *entry = (*entry).max(key.revision);
-    }
+    let mut records = OnDemand {
+        folder,
+        records: BTreeMap::new(),
+    };
     let mut done = BTreeSet::new();
     let mut order = Vec::new();
     let mut soft = Vec::new();
-    visit(root, &records, &mut done, &mut order, &mut soft)?;
+    visit(root, &mut records, &mut done, &mut order, &mut soft)?;
     while let Some(lineage) = soft.pop() {
         if done.iter().any(|r| r.lineage == lineage) {
             continue;
         }
-        let revision = latest.get(&lineage).copied().ok_or_else(|| {
-            Error::Document(pcbcraft_core::Error::NotFound(format!(
-                "the folder has no revision of lineage {lineage}"
-            )))
-        })?;
+        let revision = latest_revision(folder, lineage)?;
         visit(
             SourceRevision { lineage, revision },
-            &records,
+            &mut records,
             &mut done,
             &mut order,
             &mut soft,
@@ -641,8 +717,9 @@ pub fn read_bundle(folder: &Folder, root: SourceRevision) -> Result<Bundle> {
     let mut out = Vec::with_capacity(order.len());
     for key in order {
         let record = records
-            .get(&key)
-            .map(|s| s.record.clone())
+            .records
+            .remove(&key)
+            .map(|s| s.record)
             .ok_or_else(|| Error::Invalid("closure lost a record".into()))?;
         hashes.extend(record.assets.iter().copied());
         out.push(record);

@@ -13,11 +13,13 @@
 //! `library.promote_preview`, io's `write_bundle` and `library.promote`, and
 //! duplicating is `library.duplicate`.
 use crate::kit::{self, Tone};
-use pcbcraft_core::catalog::{CatalogContext, CatalogEntry, EntryKey, MAX_CONTEXT, SourceCatalog};
+use pcbcraft_core::catalog::{
+    CatalogContext, CatalogEntry, EntryKey, MAX_CONTEXT, SourceCatalog, UpdateAvailable,
+};
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::ids::{LibraryId, SourceLineageId};
 use pcbcraft_core::library::Bundle;
-use pcbcraft_core::library::bundle::SourceRevision;
+use pcbcraft_core::library::bundle::{Direction, SourceRevision};
 use pcbcraft_core::library::import::{MAX_FRESH_LINEAGES, OtherRevision, PlaceSource, PromotePlan};
 use pcbcraft_core::updates::Change;
 use pcbcraft_core::{
@@ -59,7 +61,8 @@ pub enum Status {
 #[derive(Clone, Debug)]
 pub struct SourceView {
     pub setting: SourceSetting,
-    /// The manifest's name, or the folder's file name when unreadable.
+    /// The manifest's name, else the one last seen (kept in settings),
+    /// else the folder's file name.
     pub name: String,
     pub status: Status,
 }
@@ -67,7 +70,10 @@ pub struct SourceView {
 impl SourceView {
     fn pending(setting: SourceSetting) -> Self {
         Self {
-            name: folder_name(&setting.path),
+            name: setting
+                .name
+                .clone()
+                .unwrap_or_else(|| folder_name(&setting.path)),
             setting,
             status: Status::Loading,
         }
@@ -206,12 +212,12 @@ impl FolderPick {
 pub enum Placed {
     Placed {
         designator: String,
+        instance: pcbcraft_core::Id,
+        position: Point,
     },
     /// The project holds another revision of this source lineage: offer
     /// Keep both / Update project copy / Cancel.
-    OtherRevision {
-        message: String,
-    },
+    OtherRevision { message: String },
 }
 
 /// `library.place_from` of a bundle root at `position`, one undo step.
@@ -230,7 +236,15 @@ pub fn place(
         other_revision,
     });
     match apply(engine, operation) {
-        Ok(Outcome::PlacedFrom { designator, .. }) => Ok(Placed::Placed { designator }),
+        Ok(Outcome::PlacedFrom {
+            designator,
+            instance,
+            ..
+        }) => Ok(Placed::Placed {
+            designator,
+            instance,
+            position,
+        }),
         Ok(_) => Err("library.place_from returned an unexpected outcome".into()),
         Err(error) if is_other_revision(&error) => Ok(Placed::OtherRevision {
             message: choice_text(&error.to_string()),
@@ -254,10 +268,30 @@ pub fn is_other_revision(error: &pcbcraft_core::Error) -> bool {
     matches!(error, pcbcraft_core::Error::Conflict(message) if message.contains(OTHER_REVISION))
 }
 
-/// "Update project copy": `library.import` of the bundle (one undo step),
-/// then the update review of every instance on another revision of the
-/// imported lineage. `None` when no instance needs moving.
-pub fn import_for_update(engine: &mut Engine, bundle: Bundle) -> Result<Option<Change>, String> {
+/// What "Update project copy" did before its review opens.
+#[derive(Clone, Debug)]
+pub struct UpdateImport {
+    /// The instances on another revision of the imported lineage and the
+    /// imported revision; `None` when no instance needs moving.
+    pub change: Option<Change>,
+    /// The imported revision.
+    pub target: ComponentRef,
+    /// The engine revision right after the import, when it copied anything
+    /// in: cancelling the review undoes exactly that step.
+    pub imported: Option<u64>,
+}
+
+/// "Update project copy": `library.import` of the bundle (one undo step,
+/// none when the project already holds it), then the update review of the
+/// instances on another revision of the imported lineage (`only` narrows
+/// them, as an instance's own Update… does). The review lists every
+/// instance with a checkbox.
+pub fn import_for_update(
+    engine: &mut Engine,
+    bundle: Bundle,
+    only: Option<&[pcbcraft_core::Id]>,
+) -> Result<UpdateImport, String> {
+    let before = engine.revision();
     let operation = Operation::Library(LibraryCommand::Import {
         bundle: Box::new(bundle),
     });
@@ -272,13 +306,18 @@ pub fn import_for_update(engine: &mut Engine, bundle: Bundle) -> Result<Option<C
         .instances
         .iter()
         .filter(|i| i.component.id == target.id && i.component.revision != target.revision)
+        .filter(|i| only.is_none_or(|only| only.contains(&i.id)))
         .map(|i| i.id)
         .collect();
-    Ok((!instances.is_empty()).then(|| Change::ComponentRevision {
-        instances,
+    Ok(UpdateImport {
+        change: (!instances.is_empty()).then(|| Change::ComponentRevision {
+            instances,
+            target,
+            resolutions: Default::default(),
+        }),
         target,
-        resolutions: Default::default(),
-    }))
+        imported: (engine.revision() != before).then(|| engine.revision()),
+    })
 }
 
 /// `library.duplicate` of a component revision into new draft lineages;
@@ -355,12 +394,31 @@ pub fn component_section(ui: &mut egui::Ui, engine: &Engine, component: Componen
                     .iter()
                     .find(|(l, _)| *l == record.origin.library)
                     .map_or_else(|| record.origin.library.to_string(), |(_, n)| n.clone());
-                kit::value_row(ui, "Source", &source);
-                kit::value_row(
-                    ui,
-                    "Copied from",
-                    &format!("{} as {}", record.origin.revision, record.local.revision),
-                );
+                match record.direction {
+                    Direction::Promoted => {
+                        kit::value_row(ui, "Source", "This project");
+                        kit::value_row(
+                            ui,
+                            "Published",
+                            &format!(
+                                "{} to {source} as {}",
+                                record.local.revision, record.origin.revision
+                            ),
+                        );
+                    }
+                    Direction::Imported => {
+                        kit::value_row(ui, "Source", &source);
+                        let text = if record.origin.revision == record.local.revision {
+                            format!("{source} {}", record.origin.revision)
+                        } else {
+                            format!(
+                                "{source} {} (project {})",
+                                record.origin.revision, record.local.revision
+                            )
+                        };
+                        kit::value_row(ui, "Copied from", &text);
+                    }
+                }
             }
             None => kit::value_row(ui, "Source", "This project"),
         }
@@ -422,7 +480,24 @@ enum Picked {
     Failed(String),
 }
 
+/// What a bundle read is for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BundlePurpose {
+    /// `library.place_from` with this policy.
+    Place(OtherRevision),
+    /// "Update project copy", for these instances only when given.
+    Update(Option<Vec<pcbcraft_core::Id>>),
+}
+
+/// A finished bundle read.
+pub struct ReadBundle {
+    pub pick: FolderPick,
+    pub purpose: BundlePurpose,
+    pub result: Result<Bundle, String>,
+}
+
 enum Event {
+    Bundle(ReadBundle),
     Scan(Scan),
     Written(Written),
     Picked(Picked),
@@ -477,6 +552,15 @@ pub struct LibrarySources {
     /// recorded on the next `tick`.
     finished: Option<usize>,
     notices: Vec<Notice>,
+    /// Favourites and recents of project-only entries: their lineage ids
+    /// name something else in every other project, so they are kept for
+    /// the open project only, never in the per-user settings.
+    session_favourites: Vec<EntryKey>,
+    session_recent: Vec<EntryKey>,
+    /// Finished bundle reads.
+    bundles: Vec<ReadBundle>,
+    /// `library.updates_available` at (project, document revision, generation).
+    updates: Option<(usize, u64, u64, Arc<Vec<UpdateAvailable>>)>,
 }
 
 impl LibrarySources {
@@ -530,6 +614,10 @@ impl LibrarySources {
             promote: None,
             finished: None,
             notices: Vec::new(),
+            session_favourites: Vec::new(),
+            session_recent: Vec::new(),
+            bundles: Vec::new(),
+            updates: None,
         }
     }
 
@@ -562,22 +650,25 @@ impl LibrarySources {
     }
 
     /// What searches use: favourites, recents and every ready catalog.
+    /// Project-only marks of this session come first among the recents.
     pub fn context(&self) -> CatalogContext {
+        let mut recent: Vec<EntryKey> = Vec::new();
+        for key in self.session_recent.iter().chain(&self.settings.recent) {
+            if !recent.contains(key) {
+                recent.push(*key);
+            }
+        }
+        recent.truncate(MAX_CONTEXT);
         CatalogContext {
             favourites: self
                 .settings
                 .favourites
                 .iter()
+                .chain(&self.session_favourites)
                 .copied()
                 .take(MAX_CONTEXT)
                 .collect(),
-            recent: self
-                .settings
-                .recent
-                .iter()
-                .copied()
-                .take(MAX_CONTEXT)
-                .collect(),
+            recent,
             sources: self
                 .sources
                 .iter()
@@ -594,23 +685,72 @@ impl LibrarySources {
         self.settings.favourites.contains(key)
     }
 
-    /// Cmd+D in the palette: mark or unmark a favourite, persisted.
+    /// Cmd+D in the palette: mark or unmark a favourite. A library key is
+    /// persisted per user; a project-only key is kept for this project.
     pub fn toggle_favourite(&mut self, key: EntryKey) {
-        if let Some(at) = self.settings.favourites.iter().position(|k| *k == key) {
-            self.settings.favourites.remove(at);
+        let list = match key {
+            EntryKey::Library { .. } => &mut self.settings.favourites,
+            EntryKey::Project { .. } => &mut self.session_favourites,
+        };
+        if let Some(at) = list.iter().position(|k| *k == key) {
+            list.remove(at);
         } else {
-            self.settings.favourites.insert(0, key);
-            self.settings.favourites.truncate(MAX_FAVOURITES);
+            list.insert(0, key);
+            list.truncate(MAX_FAVOURITES);
         }
-        self.changed();
+        self.marked(key);
     }
 
-    /// A placed or picked entry, most recent first, persisted.
+    /// A placed or picked entry, most recent first: persisted per user for
+    /// a library key, kept for this project for a project-only key.
     pub fn used(&mut self, key: EntryKey) {
-        self.settings.recent.retain(|k| *k != key);
-        self.settings.recent.insert(0, key);
-        self.settings.recent.truncate(MAX_RECENT);
-        self.changed();
+        let list = match key {
+            EntryKey::Library { .. } => &mut self.settings.recent,
+            EntryKey::Project { .. } => &mut self.session_recent,
+        };
+        list.retain(|k| *k != key);
+        list.insert(0, key);
+        list.truncate(MAX_RECENT);
+        self.marked(key);
+    }
+
+    fn marked(&mut self, key: EntryKey) {
+        match key {
+            EntryKey::Library { .. } => self.changed(),
+            EntryKey::Project { .. } => self.generation = self.generation.wrapping_add(1),
+        }
+    }
+
+    /// Another document was opened: forget the project-only marks, whose
+    /// lineage ids meant something in the old project only.
+    pub fn forget_project(&mut self) {
+        if !self.session_favourites.is_empty() || !self.session_recent.is_empty() {
+            self.session_favourites.clear();
+            self.session_recent.clear();
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    /// `library.updates_available` against the ready sources, kept until
+    /// the document or the sources change.
+    pub fn updates(&mut self, engine: &Engine) -> Arc<Vec<UpdateAvailable>> {
+        let key = (
+            Arc::as_ptr(engine.project_arc()) as usize,
+            engine.revision(),
+            self.generation,
+        );
+        if let Some((p, r, g, updates)) = &self.updates
+            && (*p, *r, *g) == key
+        {
+            return Arc::clone(updates);
+        }
+        let sources = self.context().sources;
+        let updates = Arc::new(
+            pcbcraft_core::catalog::updates_available(&engine.project().library, &sources)
+                .unwrap_or_default(),
+        );
+        self.updates = Some((key.0, key.1, key.2, Arc::clone(&updates)));
+        updates
     }
 
     fn changed(&mut self) {
@@ -668,6 +808,7 @@ impl LibrarySources {
             path,
             enabled: true,
             writable: true,
+            name: None,
         });
         self.persist();
         self.rescan();
@@ -730,12 +871,10 @@ impl LibrarySources {
         while let Ok(event) = self.receiver.try_recv() {
             changed = true;
             match event {
-                Event::Scan(scan) if scan.ticket == self.scan => {
-                    self.sources = scan.sources;
-                    self.generation = self.generation.wrapping_add(1);
-                }
+                Event::Scan(scan) if scan.ticket == self.scan => self.scanned(scan.sources),
                 Event::Scan(_) => {}
                 Event::Written(written) => self.written(written),
+                Event::Bundle(read) => self.bundles.push(read),
                 Event::Picked(picked) => self.picked(picked),
                 Event::Saved(sequence, result) => self.saved(sequence, result),
             }
@@ -756,17 +895,45 @@ impl LibrarySources {
                 .receiver
                 .recv_timeout(std::time::Duration::from_secs(20))
             {
-                Ok(Event::Scan(scan)) if scan.ticket == self.scan => {
-                    self.sources = scan.sources;
-                    self.generation = self.generation.wrapping_add(1);
-                }
+                Ok(Event::Scan(scan)) if scan.ticket == self.scan => self.scanned(scan.sources),
                 Ok(Event::Written(written)) => self.written(written),
                 Ok(Event::Saved(sequence, result)) => self.saved(sequence, result),
+                Ok(Event::Bundle(read)) => self.bundles.push(read),
                 Ok(_) => {}
                 Err(error) => return Err(error.to_string()),
             }
         }
         Ok(())
+    }
+
+    /// A finished scan: keep each readable manifest's name in the settings,
+    /// so a folder that goes missing is still listed as its library.
+    fn scanned(&mut self, sources: Vec<SourceView>) {
+        let mut renamed = false;
+        for view in &sources {
+            let Some(name) = (match &view.status {
+                Status::Ready { folder, .. } => Some(folder.manifest.name.clone()),
+                Status::Disabled(Disabled::Off) => Some(view.name.clone()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            if let Some(setting) = self
+                .settings
+                .sources
+                .iter_mut()
+                .find(|s| s.path == view.setting.path)
+                && setting.name.as_deref() != Some(name.as_str())
+            {
+                setting.name = Some(name);
+                renamed = true;
+            }
+        }
+        self.sources = sources;
+        self.generation = self.generation.wrapping_add(1);
+        if renamed {
+            self.persist();
+        }
     }
 
     fn folder(&self, library: LibraryId) -> Result<&Folder, String> {
@@ -779,18 +946,47 @@ impl LibrarySources {
             .ok_or_else(|| "That library source is not available any more".into())
     }
 
-    /// The bundle of a folder entry: its revision and closure, read from
-    /// the folder. A handful of small files; read on demand.
-    pub fn bundle(&self, pick: &FolderPick) -> Result<Bundle, String> {
-        let folder = self.folder(pick.library)?;
-        folder::read_bundle(
-            folder,
-            SourceRevision {
-                lineage: pick.lineage,
-                revision: pick.revision,
-            },
-        )
-        .map_err(|e| format!("Reading {} failed: {e}", pick.name))
+    /// Read the bundle of a folder entry (its revision and closure) on a
+    /// worker: `read_bundle` reads only the closure's files, but that is
+    /// still file I/O, kept off the UI thread. The result comes back from
+    /// [`Self::take_bundles`] tagged with `purpose`.
+    pub fn read_bundle(&mut self, pick: FolderPick, purpose: BundlePurpose) {
+        let folder = match self.folder(pick.library) {
+            Ok(folder) => folder.clone(),
+            Err(error) => {
+                self.bundles.push(ReadBundle {
+                    pick,
+                    purpose,
+                    result: Err(error),
+                });
+                return;
+            }
+        };
+        let sender = self.sender.clone();
+        let repaint = self.repaint.clone();
+        std::thread::spawn(move || {
+            let result = folder::read_bundle(
+                &folder,
+                SourceRevision {
+                    lineage: pick.lineage,
+                    revision: pick.revision,
+                },
+            )
+            .map_err(|e| format!("Reading {} failed: {e}", pick.name));
+            let _ = sender.send(Event::Bundle(ReadBundle {
+                pick,
+                purpose,
+                result,
+            }));
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Bundles read since the last call, in the order they finished.
+    pub fn take_bundles(&mut self) -> Vec<ReadBundle> {
+        std::mem::take(&mut self.bundles)
     }
 
     /// Ready sources `library.promote` may write to.
@@ -925,6 +1121,52 @@ enum CardAction {
     Add,
     Create,
     Rescan,
+    Reveal(PathBuf),
+}
+
+/// The file manager's name for revealing a folder.
+const REVEAL: &str = if cfg!(target_os = "macos") {
+    "Show in Finder"
+} else {
+    "Show folder"
+};
+
+/// Show a folder in the system file manager, without waiting for it.
+fn reveal(path: &Path) {
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R");
+        command
+    } else if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    // Spawned, never waited on: a slow file manager cannot block the UI.
+    let _ = command.arg(path).spawn();
+}
+
+/// A dim layer under a card that blocks the canvas and cards beneath it;
+/// a click on it closes the card. The card is kept above it.
+fn scrim(ctx: &egui::Context, card: egui::Id) -> bool {
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let id = card.with("scrim");
+    let rect = ctx.content_rect();
+    let clicked = ui_kit::Container::new(ctx, ui_kit::Surface::InputShield)
+        .area(id)
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .movable(false)
+        .show(ctx, |ui| {
+            let (r, response) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+            ui.painter()
+                .rect_filled(r, 0.0, t.tab_on_fill_dark.gamma_multiply(0.25));
+            response.clicked()
+        })
+        .inner;
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, card));
+    clicked
 }
 
 impl LibrarySources {
@@ -1050,34 +1292,16 @@ impl LibrarySources {
     fn sources_card(&mut self, ctx: &egui::Context) {
         let mut action = None;
         let settings_path = self.dirs.as_ref().map(UserDirs::settings_path);
-        let close = ui_kit::Window::new(
-            egui::Id::new("library-sources-card"),
-            "library",
-            "Library sources",
-        )
-        .show_body(ctx, |ui| {
+        let id = egui::Id::new("library-sources-card");
+        if scrim(ctx, id) {
+            self.card = false;
+            return;
+        }
+        let close = ui_kit::Window::new(id, "library", "Library sources").show_body(ctx, |ui| {
             body(ui, |ui| {
                 if let Some(problem) = &self.problem {
                     kit::status(ui, problem, Tone::Error);
                 }
-                kit::actions(ui, |ui| {
-                    if kit::primary(ui, "Add folder…", !self.picking).clicked() {
-                        action = Some(CardAction::Add);
-                    }
-                    if ui_kit::button(ui, "New library…", Button::Enabled(!self.picking))
-                        .on_hover_text("Make an empty library in a folder you choose")
-                        .clicked()
-                    {
-                        action = Some(CardAction::Create);
-                    }
-                    if ui_kit::button(ui, "Rescan", Button::Normal)
-                        .on_hover_text("Re-read every folder and refresh its index")
-                        .clicked()
-                    {
-                        action = Some(CardAction::Rescan);
-                    }
-                });
-                kit::rule(ui);
                 if self.sources.is_empty() {
                     kit::status(
                         ui,
@@ -1088,9 +1312,10 @@ impl LibrarySources {
                 for (at, source) in self.sources.iter().enumerate() {
                     ui.push_id(("library-source", at), |ui| {
                         kit::section(ui, "source", &source.name, true, None, |ui| {
-                            kit::value_row(ui, "Folder", &source.setting.path.display().to_string());
+                            let path = source.setting.path.display().to_string();
+                            kit::value_row(ui, "Folder", &folder_name(&source.setting.path));
                             match &source.status {
-                                Status::Ready { catalog, index, .. } => {
+                                Status::Ready { index, .. } => {
                                     kit::value_row(
                                         ui,
                                         "Status",
@@ -1100,16 +1325,18 @@ impl LibrarySources {
                                             match index {
                                                 IndexState::Cached => "index cached",
                                                 IndexState::Rebuilt => "index rebuilt",
+                                                IndexState::Uncached(_) => "index not cached",
                                             }
                                         ),
                                     );
-                                    kit::value_row(ui, "Library", &catalog.library.to_string());
                                 }
-                                Status::Loading => kit::value_row(ui, "Status", "loading…"),
+                                Status::Loading => {
+                                    kit::value_row(ui, "Status", "loading…");
+                                }
                                 _ => {
                                     kit::status(
                                         ui,
-                                        &format!("Disabled: {}", source.secondary()),
+                                        &format!("Not searchable: {}", source.secondary()),
                                         Tone::Warning,
                                     );
                                 }
@@ -1129,19 +1356,43 @@ impl LibrarySources {
                                 {
                                     action = Some(CardAction::Remove(at));
                                 }
+                                if ui_kit::button(ui, REVEAL, Button::Normal)
+                                    .on_hover_text(&path)
+                                    .clicked()
+                                {
+                                    action = Some(CardAction::Reveal(source.setting.path.clone()));
+                                }
                             });
                         });
                     });
                 }
-                if let Some(path) = &settings_path {
-                    kit::note(
-                        ui,
-                        &format!(
-                            "Sources, favourites and recents are yours, saved in {}, never in a project.",
-                            path.display()
-                        ),
-                    );
-                }
+                kit::note(
+                    ui,
+                    "Sources, favourites and recents are yours, kept in your user settings, never in a project.",
+                )
+                .on_hover_text(
+                    settings_path
+                        .as_ref()
+                        .map_or_else(String::new, |p| p.display().to_string()),
+                );
+                kit::rule(ui);
+                kit::actions(ui, |ui| {
+                    if kit::primary(ui, "Add folder…", !self.picking).clicked() {
+                        action = Some(CardAction::Add);
+                    }
+                    if ui_kit::button(ui, "New library…", Button::Enabled(!self.picking))
+                        .on_hover_text("Make an empty library in a folder you choose")
+                        .clicked()
+                    {
+                        action = Some(CardAction::Create);
+                    }
+                    if ui_kit::button(ui, "Rescan", Button::Normal)
+                        .on_hover_text("Re-read every folder and refresh its index")
+                        .clicked()
+                    {
+                        action = Some(CardAction::Rescan);
+                    }
+                });
             });
         });
         if close {
@@ -1154,6 +1405,7 @@ impl LibrarySources {
             Some(CardAction::Add) => self.pick(false),
             Some(CardAction::Create) => self.pick(true),
             Some(CardAction::Rescan) => self.rescan(),
+            Some(CardAction::Reveal(path)) => reveal(&path),
             None => {}
         }
     }
@@ -1195,8 +1447,43 @@ impl LibrarySources {
                     match &promote.plan {
                         Some((_, _, Ok(plan))) => {
                             let records = plan.bundle.records.len();
-                            kit::value_row(ui, "Revisions", &records.to_string());
-                            kit::value_row(ui, "Lineages", &format!("{} new", plan.used.len()));
+                            let new = plan.origins.len();
+                            kit::value_row(
+                                ui,
+                                "Revisions",
+                                &format!("{records} · {new} to write"),
+                            );
+                            kit::section(
+                                ui,
+                                "promote-records",
+                                "What is written",
+                                true,
+                                Some(records),
+                                |ui| {
+                                    let written: std::collections::BTreeSet<_> = plan
+                                        .origins
+                                        .iter()
+                                        .map(|o| (o.origin.lineage, o.origin.revision))
+                                        .collect();
+                                    for record in &plan.bundle.records {
+                                        let state = if written
+                                            .contains(&(record.lineage, record.revision))
+                                        {
+                                            "new"
+                                        } else {
+                                            "already in the library"
+                                        };
+                                        kit::value_row(
+                                            ui,
+                                            kind_label(record.kind),
+                                            &format!(
+                                                "{} · {} · {state}",
+                                                record.meta.name, record.revision
+                                            ),
+                                        );
+                                    }
+                                },
+                            );
                             kit::note(
                                 ui,
                                 "Each revision is written once as its own file; a file already in the library with equal content is kept. The project records where each revision went, as one undo step.",
@@ -1235,6 +1522,21 @@ impl LibrarySources {
     }
 }
 
+/// How the promote preview names a record's kind.
+fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
+    use pcbcraft_core::DefinitionKind as K;
+    match kind {
+        K::Component => "Component",
+        K::Symbol => "Symbol",
+        K::Package => "Package",
+        K::Footprint => "Footprint",
+        K::Binding => "Binding",
+        K::QuantityKind => "Quantity kind",
+        K::Field => "Field",
+        K::Part => "Part",
+    }
+}
+
 /// A dialog body inset like the file workflow's.
 fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let t = solidcraft_ui_egui::theme::Tokens::get();
@@ -1269,6 +1571,7 @@ mod tests {
             path,
             enabled,
             writable: true,
+            name: None,
         }
     }
 
@@ -1360,8 +1663,11 @@ mod tests {
         assert_eq!(sources[1].reason().as_deref(), Some("same library as /a"));
     }
 
-    /// Favourites and recents are keyed by `EntryKey`, bounded, persisted
-    /// per user and read back by the next session; every change bumps the
+    /// Favourites and recents of library items are keyed by their library
+    /// identity, bounded, persisted per user and read back by the next
+    /// session. A project-only entry's key names something else in every
+    /// project, so it ranks for the open project only: never written, and
+    /// forgotten when another document opens. Every change bumps the
     /// generation the palette refreshes on.
     #[test]
     fn favourites_and_recents_persist_per_user() -> Result<(), Box<dyn std::error::Error>> {
@@ -1381,15 +1687,21 @@ mod tests {
         let before = sources.generation();
         sources.toggle_favourite(folder_key);
         assert!(sources.generation() != before);
-        sources.used(project_key);
         sources.used(folder_key);
-        sources.used(project_key);
-        for lineage in 10..10 + MAX_RECENT as u64 {
-            sources.used(EntryKey::Project {
-                lineage: DefinitionId(lineage),
+        for lineage in 10..10 + MAX_RECENT as u128 {
+            sources.used(EntryKey::Library {
+                library: LibraryId(1),
+                lineage: SourceLineageId(lineage),
             });
         }
         sources.used(folder_key);
+        let before = sources.generation();
+        sources.used(project_key);
+        sources.toggle_favourite(project_key);
+        assert!(sources.generation() != before);
+        let context = sources.context();
+        assert_eq!(context.recent.first(), Some(&project_key), "ranked now");
+        assert!(context.favourites.contains(&project_key));
         sources.wait()?;
         assert_eq!(sources.problem(), None);
 
@@ -1404,7 +1716,21 @@ mod tests {
             "a recent is listed once"
         );
         assert!(context.favourites.contains(&folder_key));
+        assert!(
+            !context.recent.contains(&project_key) && !context.favourites.contains(&project_key),
+            "project-only marks are never kept per user"
+        );
+        let stored = settings::read_settings(&dirs.settings_path())?;
+        assert!(
+            stored
+                .recent
+                .iter()
+                .chain(&stored.favourites)
+                .all(|k| matches!(k, EntryKey::Library { .. }))
+        );
 
+        sources.forget_project();
+        assert!(!sources.context().recent.contains(&project_key));
         let mut again = again;
         again.toggle_favourite(folder_key);
         again.wait()?;
@@ -1514,10 +1840,124 @@ mod tests {
         )));
     }
 
+    /// The bundle of `root` promoted from `author` to library 7.
+    fn promoted(
+        author: &mut Engine,
+        root: pcbcraft_core::DefinitionRef,
+        from: u128,
+    ) -> Result<Bundle, Box<dyn std::error::Error>> {
+        let fresh: Vec<SourceLineageId> = (from..from + 64).map(SourceLineageId).collect();
+        let QueryResult::Promote(plan) = author.query(Query::PromotePreview {
+            root,
+            library: LibraryId(7),
+            name: "Sample Parts".into(),
+            fresh: fresh.clone(),
+        })?
+        else {
+            return Err("not a promote plan".into());
+        };
+        apply(
+            author,
+            Operation::Library(LibraryCommand::Promote {
+                root,
+                library: LibraryId(7),
+                name: "Sample Parts".into(),
+                fresh,
+            }),
+        )?;
+        Ok(plan.bundle)
+    }
+
+    /// "Update project copy" reports the import it made, so cancelling the
+    /// review undoes exactly it; narrowed to one instance, the review moves
+    /// only that one. A revision already in the project reports no import.
+    #[test]
+    fn update_project_copy_reports_its_import_for_cancel() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut author = Engine::demo()?;
+        let component = author
+            .project()
+            .library
+            .latest_components()
+            .first()
+            .map(|c| ComponentRef::new(c.id, c.revision))
+            .ok_or("a component")?;
+        let first = promoted(&mut author, component.erased(), 1)?;
+        let mut design = Engine::default();
+        let mut placed = Vec::new();
+        for x in [0.0, 30.0] {
+            match place(&mut design, first.clone(), [x, 0.0], OtherRevision::Refuse)? {
+                Placed::Placed { instance, .. } => placed.push(instance),
+                other => return Err(format!("unexpected {other:?}").into()),
+            }
+        }
+        let Outcome::Published { revisions } = apply(
+            &mut author,
+            Operation::Library(LibraryCommand::Publish {
+                drafts: vec![component.id],
+            }),
+        )?
+        else {
+            return Err("not published".into());
+        };
+        let second = promoted(&mut author, revisions[0], 100)?;
+        // Placing the newer revision is refused with the plain sentence.
+        match place(
+            &mut design,
+            second.clone(),
+            [60.0, 0.0],
+            OtherRevision::Refuse,
+        )? {
+            Placed::OtherRevision { message } => {
+                assert!(message.starts_with("This project uses "), "{message}");
+                assert!(
+                    message.contains("from Sample Parts; the library now has r2."),
+                    "{message}"
+                );
+            }
+            other => return Err(format!("unexpected {other:?}").into()),
+        }
+        let before = design.revision();
+        let kept = design.project().clone();
+        let only = [placed[0]];
+        let import = import_for_update(&mut design, second.clone(), Some(&only))?;
+        assert_eq!(import.imported, Some(design.revision()));
+        assert_ne!(design.revision(), before);
+        match &import.change {
+            Some(Change::ComponentRevision {
+                instances, target, ..
+            }) => {
+                assert_eq!(instances, &vec![placed[0]], "only the chosen instance");
+                assert_eq!(target.revision, Revision(2));
+            }
+            other => return Err(format!("unexpected {other:?}").into()),
+        }
+        // Cancel: the app undoes the import, and the project is as before.
+        design.undo()?;
+        assert_eq!(design.project(), &kept);
+        // Imported and kept, a second Update project copy copies nothing.
+        import_for_update(&mut design, second.clone(), None)?;
+        let again = import_for_update(&mut design, second, None)?;
+        assert_eq!(again.imported, None, "nothing new to undo");
+        match &again.change {
+            Some(Change::ComponentRevision { instances, .. }) => assert_eq!(instances.len(), 2),
+            other => return Err(format!("unexpected {other:?}").into()),
+        }
+        Ok(())
+    }
+
     /// The icons the Browser and cards use exist in Solidcraft's set.
     #[test]
     fn library_icons_resolve() {
-        for name in ["library", "folder", "status_warning", "component"] {
+        for name in [
+            "library",
+            "folder",
+            "status_warning",
+            "component",
+            "list",
+            "star",
+            "update",
+        ] {
             assert!(
                 !solidcraft_ui_egui::icon_svg::resolve(name).placeholder,
                 "{name}"

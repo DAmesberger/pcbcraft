@@ -184,6 +184,7 @@ fn refused_manifests_are_listed_with_their_reason() -> TestResult {
         path: path.to_path_buf(),
         enabled,
         writable: false,
+        name: None,
     };
     write_settings(
         &dirs.settings_path(),
@@ -235,6 +236,7 @@ fn a_second_folder_of_the_same_library_is_not_searched() -> TestResult {
         path: path.to_path_buf(),
         enabled: true,
         writable: false,
+        name: None,
     };
     write_settings(
         &dirs.settings_path(),
@@ -563,7 +565,7 @@ fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     assert_eq!(updates.len(), 1, "{updates:?}");
     assert_eq!(updates[0]["local"], local);
     assert_eq!(updates[0]["latest"], 2);
-    assert_eq!(updates[0]["modified"], false);
+    assert_eq!(updates[0]["modified"], json!([]));
 
     // Update only R1: import r2 as the next project revision of the same
     // lineage, then preview and apply the revision change for R1 alone.
@@ -617,7 +619,7 @@ fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     ok(&mut designer, "library.rescan", json!({}))?;
     let updates = updates_available(&mut designer)?;
     assert_eq!(updates.len(), 1, "{updates:?}");
-    assert_eq!(updates[0]["modified"], true);
+    assert_eq!(updates[0]["modified"], json!([2]), "the edited r2");
 
     // Save, delete the folder and reopen offline in a new session.
     ok(

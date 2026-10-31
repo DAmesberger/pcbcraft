@@ -33,16 +33,56 @@ pub(super) struct Layout {
     pub canvas: Rect,
     pub inspector: Rect,
     pub browser: Option<Rect>,
+    /// The Browser floats over the canvas (shown on request in a window too
+    /// narrow to dock it beside the canvas).
+    pub overlay: bool,
 }
 
-pub(super) fn layout(area: Rect, show_browser: bool) -> Layout {
+/// Whether the Browser shows: by width (`Auto`), or as the user toggled it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum BrowserMode {
+    #[default]
+    Auto,
+    Shown,
+    Hidden,
+}
+
+impl BrowserMode {
+    /// The mode after the Browser toggle, from what is on screen now.
+    pub fn toggled(self, visible: bool) -> Self {
+        if visible { Self::Hidden } else { Self::Shown }
+    }
+}
+
+/// Whether a viewport of `width` docks the Browser beside the canvas.
+fn docks(width: f32, card: f32) -> bool {
+    width > card * BROWSER_MIN_VIEWPORT_CARDS
+}
+
+pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
     let t = Tokens::get();
     let area = area.shrink(SHELL_GAP);
     let card = t.form_card_width.min(area.width() * 0.4).max(0.0);
     let inspector = Rect::from_min_max(pos2(area.right() - card, area.top()), area.max);
-    let browser = (show_browser && area.width() > card * BROWSER_MIN_VIEWPORT_CARDS)
-        .then(|| Rect::from_min_size(area.min, vec2(BROWSER_WIDTH.min(card), area.height())));
-    let left = browser.map_or(area.left(), |b| b.right() + SHELL_GAP);
+    let docked = docks(area.width(), card);
+    let shown = match mode {
+        BrowserMode::Auto => docked,
+        BrowserMode::Shown => true,
+        BrowserMode::Hidden => false,
+    };
+    let overlay = shown && !docked;
+    // Docked, it takes the canvas's left edge; as an overlay it floats over
+    // the canvas at the same place, as wide as fits beside Properties.
+    let width = if overlay {
+        BROWSER_WIDTH.min((inspector.left() - SHELL_GAP - area.left()).max(0.0))
+    } else {
+        BROWSER_WIDTH.min(card)
+    };
+    let browser = shown.then(|| Rect::from_min_size(area.min, vec2(width, area.height())));
+    let left = match browser {
+        Some(b) if !overlay => b.right() + SHELL_GAP,
+        _ => area.left(),
+    };
     let canvas = Rect::from_min_max(
         pos2(left, area.top()),
         pos2((inspector.left() - SHELL_GAP).max(left), area.bottom()),
@@ -51,6 +91,7 @@ pub(super) fn layout(area: Rect, show_browser: bool) -> Layout {
         canvas,
         inspector,
         browser,
+        overlay,
     }
 }
 
@@ -91,6 +132,21 @@ impl App {
                     }
                     if shell::icon_button(ui, "redo", "Redo", self.engine.can_redo()).clicked() {
                         self.history(true);
+                    }
+                    let visible = self.browser_visible;
+                    if shell::icon_button(
+                        ui,
+                        "list",
+                        if visible {
+                            "Hide Browser (⌘B)"
+                        } else {
+                            "Show Browser (⌘B)"
+                        },
+                        true,
+                    )
+                    .clicked()
+                    {
+                        self.toggle_browser();
                     }
                     ui.add_space(t.space_8);
                     self.document_tab(ui);
@@ -164,6 +220,24 @@ impl App {
                         ui,
                         "Export writes a native, parametric .solidcraft model of the board.",
                     );
+                    kit::rule(ui);
+                    if ui_kit::button(ui, "Library sources…", Button::Normal)
+                        .on_hover_text("Add, rescan, turn on or off and remove library folders")
+                        .clicked()
+                    {
+                        self.sources.open_card();
+                    }
+                    let label = if self.browser_visible {
+                        "Hide Browser"
+                    } else {
+                        "Show Browser"
+                    };
+                    if ui_kit::button(ui, label, Button::Normal)
+                        .on_hover_text("⌘B")
+                        .clicked()
+                    {
+                        self.toggle_browser();
+                    }
                 });
             });
     }
@@ -210,7 +284,8 @@ impl App {
             .central()
             .frame(egui::Frame::NONE.fill(t.viewport_bottom))
             .show(ui, |ui| {
-                let layout = layout(ui.max_rect(), self.show_browser);
+                let layout = layout(ui.max_rect(), self.browser);
+                self.browser_visible = layout.browser.is_some();
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
@@ -222,18 +297,23 @@ impl App {
                     let lit = self.lit();
                     let mut pick = None;
                     let mut source_pick = None;
+                    let updates = self.sources.updates(&self.engine);
                     shell::card(
                         &ctx,
                         "project-browser",
                         rect,
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
-                            pick = browser::show(ui, &self.engine, lit);
+                            pick = browser::show(ui, &self.engine, lit, &updates);
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
                     if let Some(pick) = pick {
                         self.pick(pick);
+                        // An overlay Browser gives the canvas back once used.
+                        if layout.overlay {
+                            self.browser = BrowserMode::Auto;
+                        }
                     }
                     if source_pick.is_some() {
                         self.sources.open_card();
@@ -453,18 +533,41 @@ mod tests {
     fn layout_keeps_cards_and_canvas_apart_and_hides_the_browser_when_narrow() {
         let wide = layout(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0)),
-            true,
+            BrowserMode::Auto,
         );
         assert!(wide.browser.is_some());
         assert!(wide.canvas.left() >= wide.browser.map_or(0.0, |b| b.right()));
         assert!(wide.canvas.right() <= wide.inspector.left());
         let narrow = layout(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 500.0)),
-            true,
+            BrowserMode::Auto,
         );
         assert!(narrow.browser.is_none());
         assert!(narrow.canvas.width() > 0.0);
-        let tiny = layout(Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0)), true);
+        let tiny = layout(
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0)),
+            BrowserMode::Auto,
+        );
         assert!(tiny.canvas.width() >= 0.0);
+    }
+
+    /// At half a laptop screen the Browser is hidden by width, but the
+    /// toggle shows it over the canvas, beside Properties; hidden on
+    /// request it stays hidden however wide the window.
+    #[test]
+    fn the_browser_toggle_overlays_it_when_narrow() {
+        let half = Rect::from_min_size(pos2(0.0, 0.0), vec2(860.0, 900.0));
+        assert!(layout(half, BrowserMode::Auto).browser.is_none());
+        let shown = layout(half, BrowserMode::Shown);
+        let browser = shown.browser.unwrap_or(Rect::NOTHING);
+        assert!(shown.overlay);
+        assert!(browser.width() > 100.0);
+        assert!(browser.right() <= shown.inspector.left());
+        assert!(shown.canvas.width() > 0.0, "the canvas keeps its width");
+        let wide = Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0));
+        assert!(layout(wide, BrowserMode::Hidden).browser.is_none());
+        assert!(!layout(wide, BrowserMode::Shown).overlay);
+        assert_eq!(BrowserMode::Auto.toggled(false), BrowserMode::Shown);
+        assert_eq!(BrowserMode::Shown.toggled(true), BrowserMode::Hidden);
     }
 }

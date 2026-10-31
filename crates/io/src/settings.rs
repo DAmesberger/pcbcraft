@@ -1,7 +1,10 @@
 //! Per-user settings (S3): library sources, favourites and recents. Stored
 //! as `settings.json` in the user config directory, never in a project.
-//! Favourites and recents are keyed by `EntryKey` (library id or project,
-//! and lineage), never by path or name.
+//! Favourites and recents are keyed by `EntryKey::Library` (library id and
+//! source lineage), never by path or name. A project lineage id names a
+//! different item in every project, so per-user settings never hold
+//! `EntryKey::Project`: a project copy of a library item is remembered by
+//! its origin, and a project-only item only for the open project.
 use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::atomic_write;
 use crate::{Error, Result};
@@ -39,6 +42,10 @@ pub struct SourceSetting {
     pub enabled: bool,
     /// Whether `library.promote` may write to it.
     pub writable: bool,
+    /// The manifest's name when the folder was last read, so a source
+    /// whose folder went missing is still listed by its library name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -182,12 +189,32 @@ impl UserSettings {
                     source.path.display()
                 )));
             }
+            if source
+                .name
+                .as_deref()
+                .is_some_and(|n| !pcbcraft_core::ids::printable(n))
+            {
+                return Err(Error::Invalid(format!(
+                    "library source {} has a blank, overlong or non-printable name",
+                    source.path.display()
+                )));
+            }
             if !paths.insert(&source.path) {
                 return Err(Error::Invalid(format!(
                     "library source {} is listed twice",
                     source.path.display()
                 )));
             }
+        }
+        if self
+            .favourites
+            .iter()
+            .chain(&self.recent)
+            .any(|k| matches!(k, EntryKey::Project { .. }))
+        {
+            return Err(Error::Invalid(
+                "favourites and recents name library items; a project lineage id means something else in every project".into(),
+            ));
         }
         let unique = |keys: &[EntryKey]| keys.iter().collect::<BTreeSet<_>>().len() == keys.len();
         if !unique(&self.favourites) || !unique(&self.recent) {
@@ -234,18 +261,31 @@ mod tests {
                 path: "/libs/team".into(),
                 enabled: true,
                 writable: false,
+                name: Some("Team".into()),
             }],
             favourites: vec![EntryKey::Library {
                 library: LibraryId(1),
                 lineage: SourceLineageId(2),
             }],
-            recent: vec![EntryKey::Project {
-                lineage: DefinitionId(3),
+            recent: vec![EntryKey::Library {
+                library: LibraryId(1),
+                lineage: SourceLineageId(3),
             }],
             ..UserSettings::default()
         };
         write_settings(&path, &settings)?;
         assert_eq!(read_settings(&path)?, settings);
+        // Project lineage ids are per project: never kept per user.
+        let mut project = settings.clone();
+        project.recent.push(EntryKey::Project {
+            lineage: DefinitionId(3),
+        });
+        assert!(write_settings(&path, &project).is_err());
+        assert_eq!(
+            read_settings(&path)?,
+            settings,
+            "the refused write changed nothing"
+        );
         Ok(())
     }
 
@@ -352,6 +392,7 @@ mod tests {
             path: p.into(),
             enabled: true,
             writable: true,
+            name: None,
         };
         let mut settings = UserSettings {
             sources: vec![source("/libs/a"), source("/libs/a")],
@@ -365,8 +406,9 @@ mod tests {
         assert!(write_settings(&path, &settings).is_err(), "relative source");
         settings.sources = vec![source("/libs/a")];
         settings.recent = vec![
-            EntryKey::Project {
-                lineage: DefinitionId(1)
+            EntryKey::Library {
+                library: LibraryId(1),
+                lineage: SourceLineageId(1),
             };
             2
         ];

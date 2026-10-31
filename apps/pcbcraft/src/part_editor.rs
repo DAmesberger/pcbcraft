@@ -1164,7 +1164,11 @@ impl PartEditor {
             && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
         {
             let mut ids = set.ids.all();
-            ids.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
+            // A blank new Part's findings wait in the Parts section.
+            ids.extend(part_props::PartProps::typed_draft_ids(
+                engine,
+                set.ids.component,
+            ));
             messages.extend(
                 reports
                     .into_iter()

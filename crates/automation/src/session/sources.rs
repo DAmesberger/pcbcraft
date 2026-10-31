@@ -25,7 +25,8 @@ pub enum IndexOrigin {
     Cached,
     /// The cache was missing or stale and was rebuilt.
     Rebuilt,
-    /// No cache directory: built in memory from the folder's records.
+    /// No cache directory, or the cache could not be written: built in
+    /// memory from the folder's records.
     Memory,
 }
 
@@ -121,6 +122,9 @@ impl Sources {
                     let index = match state {
                         IndexState::Cached => IndexOrigin::Cached,
                         IndexState::Rebuilt => IndexOrigin::Rebuilt,
+                        // The cache could not be written; the catalog is
+                        // the one built in memory.
+                        IndexState::Uncached(_) => IndexOrigin::Memory,
                     };
                     (catalog, index)
                 })
@@ -226,6 +230,7 @@ impl Sources {
             path: path.clone(),
             enabled: true,
             writable,
+            name: Some(folder.manifest.name.clone()),
         });
         self.commit(next)?;
         self.info(&path)
@@ -257,6 +262,7 @@ impl Sources {
 
     /// Add or remove a favourite.
     pub fn favourite(&mut self, key: EntryKey, favourite: bool) -> Result<()> {
+        per_user(key)?;
         let mut next = self.settings.clone();
         next.favourites.retain(|k| *k != key);
         if favourite {
@@ -273,6 +279,7 @@ impl Sources {
     /// Move `key` to the front of the recents, keeping at most
     /// [`MAX_RECENT`].
     pub fn used(&mut self, key: EntryKey) -> Result<()> {
+        per_user(key)?;
         let mut next = self.settings.clone();
         next.recent.retain(|k| *k != key);
         next.recent.insert(0, key);
@@ -445,6 +452,17 @@ fn describe(loaded: &Loaded) -> SourceInfo {
         }
     }
     info
+}
+
+/// Per-user favourites and recents name library items: a project lineage
+/// id means something else in every project.
+fn per_user(key: EntryKey) -> Result<()> {
+    match key {
+        EntryKey::Library { .. } => Ok(()),
+        EntryKey::Project { .. } => Err(core(pcbcraft_core::Error::Invalid(
+            "favourites and recents name library items (source library and lineage); a project lineage id means something else in every project".into(),
+        ))),
+    }
 }
 
 fn core(error: pcbcraft_core::Error) -> Error {

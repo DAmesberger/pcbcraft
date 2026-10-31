@@ -415,6 +415,17 @@ impl PartProps {
             .collect()
     }
 
+    /// Part drafts of `component` with an identity typed (maker or MPN).
+    /// A blank new Part's findings wait in its own section until the author
+    /// types an identity or presses Publish, so lists elsewhere skip it.
+    pub fn typed_draft_ids(engine: &Engine, component: DefinitionId) -> Vec<DefinitionId> {
+        part_drafts(engine.drafts(), component)
+            .into_iter()
+            .filter(|d| !d.part.mpn.trim().is_empty() || !d.part.manufacturer.trim().is_empty())
+            .map(|d| d.id)
+            .collect()
+    }
+
     /// Draft edits that make every Part draft of `component` pin `pins`,
     /// including the uncommitted working copy. The section then waits for
     /// the engine, so the next sync shows what it accepted.
@@ -1315,6 +1326,43 @@ mod tests {
         assert_eq!(part.definition.mpn, "EX-R0603-10K0-F");
         assert_eq!(part.definition.component, pins.component);
         assert_eq!(part.meta.name, "EX-R0603-10K0-F");
+        Ok(())
+    }
+
+    /// A blank new Part's findings wait until an identity is typed: the
+    /// Component workspace's top list leaves it out, then includes it.
+    #[test]
+    fn a_blank_new_part_is_left_out_of_the_top_findings() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_ctx, mut engine, editor) = ready()?;
+        let set = editor.draft.clone().ok_or("no working set")?;
+        let pins = Pins::of(&set, &engine).ok_or("no pins")?;
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta::default(),
+                definition: Definition::Part(Box::new(new_part(&set, &pins))),
+            })),
+        )?;
+        let component = set.ids.component;
+        let all = PartProps::draft_ids(&engine, component);
+        assert_eq!(all.len(), 1);
+        assert!(PartProps::typed_draft_ids(&engine, component).is_empty());
+        let mut part = part_drafts(engine.drafts(), component)
+            .pop()
+            .ok_or("the draft")?;
+        part.part.mpn = "EX-R0603-10K0-F".into();
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::Edit {
+                edits: vec![DraftEdit {
+                    id: part.id,
+                    meta: part.meta,
+                    definition: Definition::Part(Box::new(part.part)),
+                }],
+            })),
+        )?;
+        assert_eq!(PartProps::typed_draft_ids(&engine, component), all);
         Ok(())
     }
 

@@ -55,6 +55,11 @@ enum Arrange {
 
 /// Pick tolerance around drawn symbol content, in pixels.
 const HIT_PX: f32 = 6.0;
+/// Half the nominal symbol box a library placement keeps clear, in mm: a
+/// 25 × 15 mm box and half a sheet grid of clearance on each side.
+const PLACE_HALF: [f64; 2] = [15.0, 10.0];
+/// The search pitch of a library placement, in mm (sheet-grid multiples).
+const PLACE_PITCH: [f64; 2] = [15.0, 10.0];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Tool {
@@ -102,6 +107,8 @@ pub struct SchematicEditor {
     /// The extent of each resolved occurrence, with a wide text metric, so
     /// painting skips occurrences outside the view without measuring them.
     placed_bounds: BTreeMap<Id, Bounds>,
+    /// The canvas size of the last frame, in points.
+    view: Vec2,
     /// The Place tool's ghost: the component's first unit as core draws it
     /// in its own frame, resolved once per component and revision.
     ghost: Option<(ComponentRef, u64, PlacedUnit)>,
@@ -112,6 +119,11 @@ pub struct SchematicEditor {
     resolve: ResolveParts,
     /// New Part… was chosen: the app opens the component's Parts editor.
     new_part: Option<NewPartRequest>,
+    /// Library sources' update marks, set by the app each frame.
+    updates: Arc<Vec<pcbcraft_core::catalog::UpdateAvailable>>,
+    /// An instance's Update… for a revision only a library source holds:
+    /// the app copies it in, then opens the review for that instance.
+    library_update: Option<(Id, crate::library_sources::FolderPick)>,
 }
 
 impl Default for SchematicEditor {
@@ -144,10 +156,13 @@ impl Default for SchematicEditor {
             issues: Vec::new(),
             placed: Arc::default(),
             placed_bounds: BTreeMap::new(),
+            view: Vec2::ZERO,
             ghost: None,
             update: Default::default(),
             palette: PlacePalette::default(),
             resolve: ResolveParts::default(),
+            updates: Arc::default(),
+            library_update: None,
             new_part: None,
         }
     }
@@ -240,44 +255,96 @@ impl SchematicEditor {
         &mut self.palette
     }
 
-    /// Where a library folder placement goes: the first sheet-grid point,
-    /// scanning right then down from the view centre, where a nominal
-    /// symbol box clears every drawn symbol. The folder's symbol is not in
+    /// Where a library folder placement goes: the sheet-grid point nearest
+    /// the view centre, inside the view, where a nominal symbol box with
+    /// clearance clears every drawn symbol. The folder's symbol is not in
     /// the project before the transaction, so its own size is not known.
+    /// With no free point in view it is the view centre.
     pub fn place_point(&self) -> pcbcraft_core::geometry::Point {
-        /// Half the nominal box, in mm, and the scan pitch.
-        const HALF: [f64; 2] = [12.5, 7.5];
-        const PITCH: [f64; 2] = [25.0, 15.0];
         let scale = f64::from(self.scale).max(f64::EPSILON);
         let snap = |v: f64| (v / SHEET_GRID_MM).round() * SHEET_GRID_MM;
         let centre = [
             snap(f64::from(-self.pan.x) / scale),
             snap(f64::from(self.pan.y) / scale),
         ];
+        // Half the view in mm, less the box, bounds the search.
+        let reach = [
+            (f64::from(self.view.x) / scale / 2.0 - PLACE_HALF[0]).max(0.0),
+            (f64::from(self.view.y) / scale / 2.0 - PLACE_HALF[1]).max(0.0),
+        ];
         let free = |at: [f64; 2]| {
             !self.placed_bounds.values().any(|b| {
-                at[0] - HALF[0] < b.max[0]
-                    && at[0] + HALF[0] > b.min[0]
-                    && at[1] - HALF[1] < b.max[1]
-                    && at[1] + HALF[1] > b.min[1]
+                at[0] - PLACE_HALF[0] < b.max[0]
+                    && at[0] + PLACE_HALF[0] > b.min[0]
+                    && at[1] - PLACE_HALF[1] < b.max[1]
+                    && at[1] + PLACE_HALF[1] > b.min[1]
             })
         };
-        (0..8u8)
-            .flat_map(|row| (0..8u8).map(move |column| (row, column)))
+        let mut candidates: Vec<[f64; 2]> = (-8i8..=8)
+            .flat_map(|row| (-8i8..=8).map(move |column| (row, column)))
             .map(|(row, column)| {
                 [
-                    centre[0] + f64::from(column) * PITCH[0],
-                    centre[1] - f64::from(row) * PITCH[1],
+                    f64::from(column) * PLACE_PITCH[0],
+                    f64::from(row) * PLACE_PITCH[1],
                 ]
             })
+            .filter(|d| d[0].abs() <= reach[0] && d[1].abs() <= reach[1])
+            .collect();
+        // Nearest first; ties right, then down, so equal inputs give one
+        // answer.
+        candidates.sort_by(|a, b| {
+            let distance = |d: &[f64; 2]| d[0].hypot(d[1]);
+            distance(a)
+                .total_cmp(&distance(b))
+                .then(b[1].total_cmp(&a[1]))
+                .then(a[0].total_cmp(&b[0]))
+        });
+        candidates
+            .into_iter()
+            .map(|d| [snap(centre[0] + d[0]), snap(centre[1] + d[1])])
             .find(|at| free(*at))
             .unwrap_or(centre)
     }
 
+    /// After a library placement: select the new instance and bring it into
+    /// view when it is outside.
+    pub fn reveal_placed(
+        &mut self,
+        instance: Id,
+        position: pcbcraft_core::geometry::Point,
+        project: &Project,
+    ) {
+        self.select_instance(Some(instance), project);
+        let scale = self.scale;
+        let at = Vec2::new(position[0] as f32, -position[1] as f32) * scale;
+        let half = self.view / 2.0 - Vec2::new(PLACE_HALF[0] as f32, PLACE_HALF[1] as f32) * scale;
+        let screen = at + self.pan;
+        if screen.x.abs() > half.x.max(0.0) || screen.y.abs() > half.y.max(0.0) {
+            self.pan = -at;
+        }
+    }
+
     /// Open the update review for `change` (the palette's "Update project
-    /// copy" after `library.import`).
-    pub fn review_update(&mut self, engine: &Engine, change: Change) {
-        let _ = self.stage_update(engine, change);
+    /// copy" after `library.import`), with a checkbox per instance and
+    /// `note` (what the import already did) above the changes.
+    pub fn review_update(&mut self, engine: &Engine, change: Change, note: Option<String>) {
+        let _ = self.stage_update(engine, change.clone());
+        self.update.begin_choosing(engine, change, note);
+    }
+
+    /// How the last update review closed, once.
+    pub fn take_review_closed(&mut self) -> Option<crate::update_preview::Closed> {
+        self.update.take_closed()
+    }
+
+    /// The library sources' update marks, for the instance Update… row.
+    pub fn set_updates(&mut self, updates: Arc<Vec<pcbcraft_core::catalog::UpdateAvailable>>) {
+        self.updates = updates;
+    }
+
+    /// An instance's Update… for a revision a library source holds, once.
+    pub fn take_library_update(&mut self) -> Option<(Id, crate::library_sources::FolderPick)> {
+        self.library_update.take()
     }
 
     fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
@@ -795,6 +862,7 @@ impl SchematicEditor {
             })
             .unwrap_or_default();
         let position = self.selected_occurrence.and_then(|o| project.occurrence(o));
+        let mut update_clicked = None;
         kit::section(ui, "instance", "Instance", true, None, |ui| {
             kit::text_row(ui, "Designator", &mut self.draft_reference);
             let component = project.library.component(instance.component).map_or_else(
@@ -802,6 +870,32 @@ impl SchematicEditor {
                 |c| format!("{} · r{}", c.meta.name, instance.component.revision.0),
             );
             kit::value_row(ui, "Component", &component);
+            let newer = project
+                .library
+                .latest(instance.component.id)
+                .map(|(_, r)| r)
+                .filter(|r| *r > instance.component.revision);
+            let offered = self
+                .updates
+                .iter()
+                .find(|u| u.local.id == instance.component.id && u.latest > u.origin.revision)
+                .cloned();
+            let text = match (newer, &offered) {
+                (Some(r), _) => Some(format!("{r} available in the project")),
+                (None, Some(u)) => Some(format!("{} available in {}", u.latest, u.source)),
+                (None, None) => None,
+            };
+            if let Some(text) = text {
+                kit::status(ui, &text, Tone::Note);
+                kit::actions(ui, |ui| {
+                    if ui_kit::button(ui, "Update…", Button::Normal)
+                        .on_hover_text("Review moving this instance to the newer revision")
+                        .clicked()
+                    {
+                        update_clicked = Some((newer, offered.clone()));
+                    }
+                });
+            }
             if position.is_some() {
                 kit::pair_row(
                     ui,
@@ -835,6 +929,33 @@ impl SchematicEditor {
                 );
             }
         });
+        match update_clicked {
+            Some((Some(revision), _)) => {
+                let change = Change::ComponentRevision {
+                    instances: vec![instance.id],
+                    target: ComponentRef::new(instance.component.id, revision),
+                    resolutions: Default::default(),
+                };
+                self.review_update(engine, change, None);
+                return None;
+            }
+            Some((None, Some(update))) => {
+                let name = project
+                    .library
+                    .component(instance.component)
+                    .map_or_else(String::new, |c| c.meta.name.clone());
+                self.library_update = Some((
+                    instance.id,
+                    crate::library_sources::FolderPick {
+                        library: update.origin.library,
+                        lineage: update.origin.lineage,
+                        revision: update.latest,
+                        name,
+                    },
+                ));
+            }
+            _ => {}
+        }
         let count = self.draft_fields.len();
         kit::section(ui, "properties", "Properties", true, Some(count), |ui| {
             if self.draft_fields.is_empty() {
@@ -1099,6 +1220,7 @@ impl SchematicEditor {
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
+        self.view = rect.size();
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;
             for placed in self.placed.values() {
@@ -2122,12 +2244,19 @@ mod tests {
         assert!(!editor.placed_bounds.is_empty());
         let at = editor.place_point();
         for b in editor.placed_bounds.values() {
-            let apart = at[0] + 12.5 <= b.min[0]
-                || at[0] - 12.5 >= b.max[0]
-                || at[1] + 7.5 <= b.min[1]
-                || at[1] - 7.5 >= b.max[1];
+            let apart = at[0] + PLACE_HALF[0] <= b.min[0]
+                || at[0] - PLACE_HALF[0] >= b.max[0]
+                || at[1] + PLACE_HALF[1] <= b.min[1]
+                || at[1] - PLACE_HALF[1] >= b.max[1];
             assert!(apart, "{at:?} overlaps {b:?}");
         }
+        // Inside the view: on screen, the box's centre is within the canvas.
+        let screen = Vec2::new(at[0] as f32, -at[1] as f32) * editor.scale + editor.pan;
+        assert!(
+            screen.x.abs() <= editor.view.x / 2.0 && screen.y.abs() <= editor.view.y / 2.0,
+            "{at:?} is off screen ({screen:?} in {:?})",
+            editor.view
+        );
         for v in at {
             assert!(((v / SHEET_GRID_MM).round() * SHEET_GRID_MM - v).abs() < 1e-9);
         }

@@ -178,6 +178,29 @@ fn corrupt_or_unknown_feature_manifests_are_rejected() -> Result<()> {
         Err(Disabled::UnsupportedFormat(2))
     );
 
+    // A newer format that adds a field is unsupported, not unreadable: the
+    // version is checked before the strict parse.
+    std::fs::write(
+        &path,
+        manifest_text(2, &[]).replace("\"name\"", "\"shards\":16,\"name\""),
+    )?;
+    assert_eq!(
+        open_folder(dir.path()).map(|_| ()).map_err(|e| e.code()),
+        Err("unsupported")
+    );
+    assert_eq!(
+        inspect_folder(dir.path()),
+        Err(Disabled::UnsupportedFormat(2))
+    );
+    std::fs::write(
+        &path,
+        manifest_text(1, &["sharded-lineages"]).replace("\"name\"", "\"shards\":16,\"name\""),
+    )?;
+    assert_eq!(
+        inspect_folder(dir.path()),
+        Err(Disabled::UnknownFeatures(vec!["sharded-lineages".into()]))
+    );
+
     std::fs::write(&path, manifest_text(1, &[]))?;
     let folder = open_folder(dir.path())?;
     assert_eq!(folder.manifest.library, LibraryId(0xaa));
@@ -548,5 +571,55 @@ fn read_bundle_follows_links_dependencies_first() -> Result<()> {
         },
     )?;
     assert_eq!(read.records, vec![kind, quantity]);
+    Ok(())
+}
+
+/// `read_bundle` reads only the closure: an unrelated record that does not
+/// even parse is never opened, and a soft dependency's latest revision is
+/// found from its directory listing.
+#[test]
+fn read_bundle_reads_only_the_closure() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let folder = create_folder(dir.path(), "Bench")?;
+    write_bundle(
+        &folder,
+        &bundle(
+            &folder,
+            vec![field(1, 1, "Tolerance"), field(2, 1, "Voltage")],
+            vec![],
+        ),
+    )?;
+    let unrelated = dir
+        .path()
+        .join(record_path(SourceLineageId(2), Revision(1)));
+    std::fs::write(&unrelated, "{ damaged")?;
+    let read = read_bundle(
+        &folder,
+        SourceRevision {
+            lineage: SourceLineageId(1),
+            revision: Revision(1),
+        },
+    )?;
+    assert_eq!(read.records, vec![field(1, 1, "Tolerance")]);
+    // Reading the damaged one is still refused.
+    let damaged = read_bundle(
+        &folder,
+        SourceRevision {
+            lineage: SourceLineageId(2),
+            revision: Revision(1),
+        },
+    );
+    assert_eq!(
+        damaged.map(|_| ()).map_err(|e| e.code()),
+        Err("malformed_file")
+    );
+    let missing = read_bundle(
+        &folder,
+        SourceRevision {
+            lineage: SourceLineageId(1),
+            revision: Revision(9),
+        },
+    );
+    assert_eq!(missing.map(|_| ()).map_err(|e| e.code()), Err("not_found"));
     Ok(())
 }

@@ -1,10 +1,12 @@
 //! The per-source catalog index cache (S3): `<cache>/pcbcraft/index/
 //! <LibraryId>.json`, holding the manifest hash, each record's content hash
 //! and the `SourceCatalog` built by `pcbcraft_core::catalog::source_catalog`.
-//! Never authoritative: a version mismatch, an unreadable file or a changed
-//! record rebuilds it (only the changed lineages where possible), and a
-//! deleted index rebuilds identically. Never written into a project or a
-//! library folder. Run off the UI thread.
+//! Never authoritative: a version mismatch, an unreadable file or any
+//! changed record rebuilds the whole index from every record, and a
+//! deleted index rebuilds identically. A cache that cannot be written (an
+//! index over the 16 MiB file bound, a read-only cache directory) is not an
+//! error: the catalog is used from memory and rebuilt next time. Never
+//! written into a project or a library folder. Run off the UI thread.
 use crate::library_folder::{
     Folder, MANIFEST_FILE, MAX_RECORD_BYTES, StoredRecord, pretty, read_bounded, read_records,
     record_files,
@@ -40,12 +42,15 @@ pub struct SourceIndex {
 }
 
 /// How a load went, for the Browser and tests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndexState {
     /// The cache matched the folder.
     Cached,
     /// The cache was missing, stale or unreadable and was rebuilt.
     Rebuilt,
+    /// Rebuilt, but the cache file could not be written (the reason): the
+    /// catalog is used from memory and rebuilt on the next scan.
+    Uncached(String),
 }
 
 /// `<cache_dir>/index/<library>.json`.
@@ -114,11 +119,18 @@ pub fn load_or_build_with(
         bytes,
         catalog,
     };
+    match store(&path, &index) {
+        Ok(()) => Ok((index, IndexState::Rebuilt)),
+        Err(error) => Ok((index, IndexState::Uncached(error.to_string()))),
+    }
+}
+
+/// Write the cache file. Its failure never fails the load.
+fn store(path: &Path, index: &SourceIndex) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    atomic_write(&path, &pretty(&index)?)?;
-    Ok((index, IndexState::Rebuilt))
+    atomic_write(path, &pretty(index)?)
 }
 
 /// A cached index, or `None` when it is missing, unreadable or in another
@@ -242,6 +254,108 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&stale)?)?;
         let (_, state) = load_or_build_with(cache.path(), &renamed, listing)?;
         assert_eq!(state, IndexState::Rebuilt);
+        Ok(())
+    }
+
+    /// An index that cannot be cached (larger than the 16 MiB file bound,
+    /// or an unwritable cache directory) still loads from memory.
+    #[test]
+    fn an_uncachable_index_still_loads() -> Result<()> {
+        let (_library, cache, folder) = sample()?;
+        let huge = |library: LibraryId, _: &str, records: &[RevisionRecord]| {
+            let mut catalog = listing(library, "Bench", records)?;
+            catalog.name = "x".repeat(pcbcraft_core::format::MAX_FILE_BYTES + 1);
+            Ok(catalog)
+        };
+        let (index, state) = load_or_build_with(cache.path(), &folder, huge)?;
+        assert!(matches!(state, IndexState::Uncached(_)), "{state:?}");
+        assert_eq!(index.catalog.revisions.len(), 2);
+        assert!(!index_path(cache.path(), folder.manifest.library).exists());
+
+        let blocked = cache.path().join("not-a-directory");
+        std::fs::write(&blocked, "a file")?;
+        let (catalog, state) = load_or_build(&blocked, &folder)?;
+        assert!(matches!(state, IndexState::Uncached(_)), "{state:?}");
+        assert_eq!(catalog.revisions.len(), 2);
+        Ok(())
+    }
+
+    /// Folder indexing and searching at scale. Run with
+    /// `cargo test --release -p pcbcraft-io library_folder_index::tests::bench -- --ignored --nocapture`.
+    /// Targets (not gates, not yet measured on CI hardware): a cold index
+    /// of 1 000 component lineages ≤ 2 s, a cached load ≤ 200 ms, and
+    /// `Index::with_sources` plus one search (what each keystroke costs the
+    /// palette) ≤ 30 ms.
+    #[test]
+    #[ignore = "benchmark; run explicitly in release mode"]
+    fn bench_index_and_search_a_large_folder() -> Result<()> {
+        use pcbcraft_core::catalog::{CatalogContext, Index, SearchOptions};
+        use pcbcraft_core::library::import;
+        use std::sync::Arc;
+        use std::time::Instant;
+        let library_dir = tempfile::tempdir()?;
+        let cache = tempfile::tempdir()?;
+        let folder = create_folder(library_dir.path(), "Bench")?;
+        let mut project = pcbcraft_core::catalog::synthetic::project(1_000)?;
+        let roots: Vec<_> = project
+            .library
+            .latest_components()
+            .iter()
+            .map(|c| pcbcraft_core::ids::DefinitionRef {
+                kind: pcbcraft_core::DefinitionKind::Component,
+                id: c.id,
+                revision: c.revision,
+            })
+            .collect();
+        let started = Instant::now();
+        for root in roots {
+            let fresh = (0..64)
+                .map(|_| crate::library_folder::new_lineage_id())
+                .collect::<Result<Vec<_>>>()?;
+            let plan = import::export(
+                &project.library,
+                root,
+                folder.manifest.library,
+                "Bench",
+                &fresh,
+            )?;
+            project.library.origins.extend(plan.origins.iter().copied());
+            write_bundle(&folder, &plan.bundle)?;
+        }
+        let files = crate::library_folder::record_files(&folder)?.len();
+        println!(
+            "wrote {files} records in {:.0} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let started = Instant::now();
+        let (catalog, state) = load_or_build(cache.path(), &folder)?;
+        println!(
+            "cold index ({state:?}): {:.0} ms, {} entries",
+            started.elapsed().as_secs_f64() * 1e3,
+            catalog.entries.len()
+        );
+        let started = Instant::now();
+        let (_, state) = load_or_build(cache.path(), &folder)?;
+        println!(
+            "cached load ({state:?}): {:.0} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        let sources = vec![Arc::new(catalog)];
+        let empty = pcbcraft_core::model::Project::default();
+        let drafts = pcbcraft_core::library::Drafts::default();
+        for text in ["10k", "res>=10k pkg:0603", "ex-c"] {
+            let started = Instant::now();
+            let index = Index::with_sources(&empty, &drafts, &sources)?;
+            let query = index
+                .parse(text)
+                .map_err(|e| Error::Invalid(format!("{e:?}")))?;
+            let report = index.search(&query, &CatalogContext::default(), SearchOptions::default());
+            println!(
+                "with_sources + search {text:?}: {:.1} ms, {} matches",
+                started.elapsed().as_secs_f64() * 1e3,
+                report.total
+            );
+        }
         Ok(())
     }
 

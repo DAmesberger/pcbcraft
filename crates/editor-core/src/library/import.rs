@@ -9,7 +9,9 @@
 //! (`bundle::validate_snapshot` enforces it). Importing a new revision of a
 //! source lineage the project already holds appends the next revision of
 //! the same project lineage, so the existing reviewed update path moves
-//! instances to it. Promoting a new project revision of a lineage the
+//! instances to it. A source revision older than one already copied is
+//! refused (`library.older_revision`), so the project's latest revision is
+//! always its newest source revision. Promoting a new project revision of a lineage the
 //! library already holds writes the next source revision of the same
 //! source lineage.
 use super::bundle::{
@@ -32,6 +34,13 @@ pub const MAX_FRESH_LINEAGES: usize = 256;
 /// the project holds another revision of the bundle root's lineage (see
 /// [`OtherRevision::Refuse`]). Hosts test it with [`is_other_revision`].
 pub const OTHER_REVISION: &str = "library.other_revision";
+
+/// The message prefix of the `conflict` an import returns when a source
+/// revision is older than one the project already copied of the same
+/// source lineage. Project revisions are numbered in import order, so the
+/// older content would become the project's latest and an update would
+/// move instances backwards.
+pub const OLDER_REVISION: &str = "library.older_revision";
 
 /// The message prefix of the `conflict` an import returns when the project
 /// recorded another content hash for the same source revision: the folder's
@@ -181,6 +190,18 @@ pub fn import(
             map.lineages.get(&record.lineage).copied().ok_or_else(|| {
                 Error::Invalid(format!("lineage {} was not mapped", record.lineage))
             })?;
+        if let Some(newer) = map
+            .revisions
+            .keys()
+            .filter(|k| k.lineage == record.lineage && k.revision > record.revision)
+            .map(|k| k.revision)
+            .max()
+        {
+            return Err(Error::Conflict(format!(
+                "{OLDER_REVISION}: ‘{}’ in ‘{}’ is {}, older than the {newer} the project already copied as {id}; the project numbers revisions in import order, so it cannot take an older one. Use the newer revision, or update what pins {} in the library.",
+                record.meta.name, bundle.name, record.revision, record.revision
+            )));
+        }
         let revision = match library.latest(id) {
             None => Revision::FIRST,
             Some((kind, _)) if kind != record.kind => {
@@ -233,6 +254,7 @@ pub fn import(
                 revision: record.revision,
                 content_hash: hashes[i],
             },
+            direction: bundle::Direction::Imported,
         };
         library.origins.push(origin);
         map.revisions.insert(at, origin);
@@ -299,22 +321,17 @@ pub fn check_other_revision(library: &Library, bundle: &Bundle) -> Result<()> {
     let Some(id) = map.lineages.get(&bundle.root.lineage) else {
         return Ok(());
     };
-    let held: Vec<String> = library
+    // The newest source revision the project copied of this lineage.
+    let held = library
         .origins
         .iter()
         .filter(|o| o.local.id == *id && o.origin.library == bundle.library)
-        .map(|o| format!("{} (from {})", o.local.revision, o.origin.revision))
-        .collect();
-    let latest = library
-        .latest(*id)
-        .map(|(_, r)| r.to_string())
-        .unwrap_or_default();
+        .map(|o| o.origin.revision)
+        .max();
+    let held = held.map_or_else(|| "another revision".to_owned(), |r| r.to_string());
     Err(Error::Conflict(format!(
-        "{OTHER_REVISION}: the project holds ‘{}’ as {id} {latest} [{}]; ‘{}’ offers {}. Keep both, update the project copy, or cancel.",
-        root.meta.name,
-        held.join(", "),
-        bundle.name,
-        bundle.root.revision
+        "{OTHER_REVISION}: This project uses {} {held} from {}; the library now has {}.",
+        root.meta.name, bundle.name, bundle.root.revision
     )))
 }
 
@@ -468,6 +485,7 @@ pub fn export(
                     revision: at.revision,
                     content_hash: content_hash(&record)?,
                 },
+                direction: bundle::Direction::Promoted,
             });
         }
         records.push(record);
@@ -505,8 +523,9 @@ fn provenance(note: &str, line: &str) -> String {
 /// D6: copy a component revision with its symbols and bindings into new
 /// draft lineages from `allocate` (component first), references rewritten
 /// to the copies; footprints, packages and fields stay shared. The copies
-/// record their source in `DefinitionMeta::provenance` text. Returns the new
-/// lineages, component first.
+/// record their source in `DefinitionMeta::provenance` text only; a typed
+/// duplicate-of reference is not recorded in S3 (see docs/parts-library.md,
+/// D6). Returns the new lineages, component first.
 pub fn duplicate(
     library: &Library,
     drafts: &mut super::Drafts,

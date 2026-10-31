@@ -34,9 +34,15 @@ pub const MAX_BUNDLE_RECORDS: usize = 1024;
 pub const MAX_LINKS: usize = 256;
 /// Assets one bundle or project snapshot packs.
 pub const MAX_ASSETS: usize = 256;
-/// Bytes of one packed asset. The project file's 16 MiB bound applies to
-/// the total.
+/// Bytes of one packed asset.
 pub const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
+/// Encoded bytes all packed assets of one bundle or project snapshot may
+/// take together: their base64 text, 4 bytes per 3 (padded). The project
+/// file is bounded at 16 MiB, so this leaves 5 MiB for everything else; an
+/// import that would exceed it is refused instead of leaving a project
+/// that can no longer be saved. One asset of [`MAX_ASSET_BYTES`] fits.
+pub const MAX_PACKED_BYTES: usize = 11 * 1024 * 1024;
+const _: () = assert!(MAX_ASSET_BYTES.div_ceil(3) * 4 <= MAX_PACKED_BYTES);
 /// Bytes of a media type.
 pub const MAX_MEDIA_TYPE: usize = 128;
 
@@ -65,6 +71,22 @@ pub struct OriginRecord {
     /// The project's copy.
     pub local: DefinitionRef,
     pub origin: Origin,
+    /// Whether the revision came from the library or went to it.
+    #[serde(default)]
+    pub direction: Direction,
+}
+
+/// Which way an [`OriginRecord`] points.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    /// Copied into the project by `library.import` or `library.place_from`.
+    #[default]
+    Imported,
+    /// Published from the project by `library.promote`.
+    Promoted,
 }
 
 /// A record-local lineage reference and the source lineage it names.
@@ -918,7 +940,17 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
         return Err(Error::Limit(format!("at most {MAX_ASSETS} packed assets")));
     }
     let mut seen = BTreeSet::new();
+    let mut encoded: usize = 0;
     for asset in assets {
+        encoded = encoded
+            .checked_add(encoded_len(asset.data.0.len()))
+            .filter(|n| *n <= MAX_PACKED_BYTES)
+            .ok_or_else(|| {
+                Error::Limit(format!(
+                    "packed assets take at most {} MiB in the project file (as base64); remove or replace an attached copy first",
+                    MAX_PACKED_BYTES / (1024 * 1024)
+                ))
+            })?;
         if asset.data.0.len() > MAX_ASSET_BYTES {
             return Err(Error::Limit(format!(
                 "asset {} exceeds {MAX_ASSET_BYTES} bytes",
@@ -950,6 +982,11 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
     Ok(())
 }
 
+/// Bytes of the padded base64 text of `n` bytes.
+pub fn encoded_len(n: usize) -> usize {
+    n.div_ceil(3).saturating_mul(4)
+}
+
 /// Snapshot checks of `Library::origins` and `Library::assets`. Each origin
 /// names a published revision of its own kind; per library a project
 /// revision has at most one origin, a source revision is copied at most
@@ -963,7 +1000,7 @@ pub fn validate_snapshot(library: &Library) -> Result<()> {
     let mut forward: BTreeMap<(LibraryId, DefinitionId), SourceLineageId> = BTreeMap::new();
     let mut backward: BTreeMap<(LibraryId, SourceLineageId), DefinitionId> = BTreeMap::new();
     for record in &library.origins {
-        let OriginRecord { local, origin } = record;
+        let OriginRecord { local, origin, .. } = record;
         if library.definition(*local).is_none() {
             return Err(Error::Invalid(format!(
                 "origin of {} {} names a revision the project does not hold",

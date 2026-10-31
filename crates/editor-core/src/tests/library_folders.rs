@@ -923,7 +923,7 @@ fn place_from_a_folder_then_update_only_r1_and_reopen_offline() -> Result<()> {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].local, copy.erased());
     assert_eq!(found[0].latest, Revision(2));
-    assert!(!found[0].modified);
+    assert!(found[0].modified.is_empty());
     let codes: Vec<String> = catalog::update_findings(&found)
         .into_iter()
         .map(|f| f.code)
@@ -1069,7 +1069,7 @@ fn a_modified_folder_record_is_detected_by_hash_and_never_trusted() -> Result<()
     record.meta.description = "Edited in place.".into();
     let found = updates(&design, &tampered.records)?;
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].modified);
+    assert_eq!(found[0].modified, vec![Revision(1)], "the changed revision");
     assert_eq!(found[0].latest, Revision(1));
     let codes: Vec<String> = catalog::update_findings(&found)
         .into_iter()
@@ -1342,5 +1342,265 @@ fn origins_keep_project_and_source_lineages_one_to_one() -> Result<()> {
     crossed.origins[other].origin.lineage = first.origin.lineage;
     crossed.origins[other].origin.revision = Revision(40);
     assert!(bundle::validate_snapshot(&crossed).is_err());
+    Ok(())
+}
+
+fn import_bundle(engine: &mut Engine, bundle: &Bundle) -> Result<Outcome> {
+    apply(
+        engine,
+        Operation::Library(LibraryCommand::Import {
+            bundle: Box::new(bundle.clone()),
+        }),
+    )
+}
+
+fn is_older(result: &Result<Outcome>) -> bool {
+    matches!(result, Err(Error::Conflict(m)) if m.starts_with(import::OLDER_REVISION))
+}
+
+/// Project revisions are numbered in import order, so importing source r1
+/// after r2 would make the older content the project's latest. It is
+/// refused, directly, as Keep both and as a dependency of another bundle,
+/// and the document is unchanged.
+#[test]
+fn an_older_source_revision_is_never_imported_after_a_newer_one() -> Result<()> {
+    let mut author = Engine::demo()?;
+    let root = component_root(&author.project().library)?;
+    let ids = fresh(&mut Rng(21), 16);
+    let first = promote(&mut author, root, &ids)?;
+    let revised = publish(&mut author, vec![root.id])?;
+    let second = promote(&mut author, revised[0], &ids[first.used.len()..])?;
+    let mut folder = Vec::new();
+    write(&mut folder, &first.bundle)?;
+    write(&mut folder, &second.bundle)?;
+    let bundle2 = bundle_of(&folder, second.bundle.root)?;
+
+    let mut design = Engine::default();
+    place_from(&mut design, &bundle2, OtherRevision::Refuse)?;
+    let kept = Snapshot::of(&design);
+    let direct = import_bundle(&mut design, &first.bundle);
+    assert!(is_older(&direct), "{direct:?}");
+    kept.assert_kept(&design, "older root refused");
+    let both = place_from(&mut design, &first.bundle, OtherRevision::KeepBoth);
+    assert!(is_older(&both), "{both:?}");
+    kept.assert_kept(&design, "older keep-both refused");
+
+    // A dependency: the project holds r2 of a record that another bundle
+    // still pins at r1.
+    let mut design = Engine::default();
+    let leaf = first
+        .bundle
+        .records
+        .iter()
+        .find(|r| r.links.is_empty() && r.lineage != first.bundle.root.lineage)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("a record without links".into()))?;
+    let mut newer = leaf.clone();
+    newer.revision = Revision(2);
+    newer.meta.description = "Revised in the folder.".into();
+    let newer_bundle = Bundle {
+        library: FOLDER,
+        name: "Shared parts".into(),
+        root: SourceRevision {
+            lineage: newer.lineage,
+            revision: newer.revision,
+        },
+        records: vec![newer],
+        assets: Vec::new(),
+    };
+    import_bundle(&mut design, &newer_bundle)?;
+    let kept = Snapshot::of(&design);
+    let dependency = place_from(&mut design, &first.bundle, OtherRevision::Refuse);
+    assert!(is_older(&dependency), "{dependency:?}");
+    kept.assert_kept(&design, "older dependency refused");
+    // Imported in order (r1 first), both revisions are taken.
+    let mut ordered = Engine::default();
+    place_from(&mut ordered, &first.bundle, OtherRevision::Refuse)?;
+    import_bundle(&mut ordered, &newer_bundle)?;
+    Ok(())
+}
+
+/// Re-importing a bundle whose revisions are all in the project changes
+/// nothing: no revision, no undo step.
+#[test]
+fn a_fully_reused_import_takes_no_revision_or_undo_step() -> Result<()> {
+    let mut author = Engine::demo()?;
+    let root = component_root(&author.project().library)?;
+    let plan = promote(&mut author, root, &fresh(&mut Rng(31), 16))?;
+    let mut design = Engine::default();
+    place_from(&mut design, &plan.bundle, OtherRevision::Refuse)?;
+    prime_history(&mut design)?;
+    let kept = Snapshot::of(&design);
+    let Outcome::Imported { report } = import_bundle(&mut design, &plan.bundle)? else {
+        return Err(Error::Invalid("import".into()));
+    };
+    assert!(report.revisions.iter().all(|r| r.reused));
+    kept.assert_kept(&design, "fully reused import");
+    Ok(())
+}
+
+/// The bundle of Part `index` of `library` with its first reference's
+/// attached copy replaced by `data`.
+fn part_with_asset(library: &Library, index: usize, data: Vec<u8>) -> Result<Bundle> {
+    let part = library
+        .parts
+        .get(index)
+        .ok_or_else(|| Error::NotFound("a part".into()))?;
+    let root = DefinitionRef {
+        kind: DefinitionKind::Part,
+        id: part.id,
+        revision: part.revision,
+    };
+    // Separate fresh ids per bundle: two exports of one library.
+    let seed = 500 + u64::try_from(index).unwrap_or(0);
+    let mut plan = import::export(
+        library,
+        root,
+        FOLDER,
+        "Shared parts",
+        &fresh(&mut Rng(seed), 64),
+    )?;
+    let asset = PackedAsset {
+        hash: bundle::asset_hash(&data),
+        media_type: "application/pdf".into(),
+        data: bundle::AssetBytes(data),
+    };
+    let record = plan
+        .bundle
+        .records
+        .iter_mut()
+        .find(|r| r.lineage == plan.bundle.root.lineage)
+        .ok_or_else(|| Error::NotFound("part record".into()))?;
+    let Definition::Part(body) = &mut record.definition else {
+        return Err(Error::Invalid("the root is not a part".into()));
+    };
+    let reference = body
+        .references
+        .first_mut()
+        .ok_or_else(|| Error::NotFound("a reference".into()))?;
+    reference.asset = Some(asset.hash.to_string());
+    record.assets = bundle::named_assets(&record.definition)?;
+    let mut named = BTreeSet::new();
+    for r in &plan.bundle.records {
+        named.extend(bundle::named_assets(&r.definition)?);
+    }
+    let mut assets: Vec<PackedAsset> = plan
+        .bundle
+        .assets
+        .iter()
+        .filter(|a| named.contains(&a.hash))
+        .cloned()
+        .collect();
+    assets.push(asset);
+    assets.sort_by_key(|a| a.hash);
+    plan.bundle.assets = assets;
+    validate_bundle(&plan.bundle)?;
+    Ok(plan.bundle)
+}
+
+/// Packed assets are bounded in total, as base64, so imports can never
+/// leave a project too large to save: the second of two imports with a
+/// 6 MiB attached copy each is refused and changes nothing.
+#[test]
+fn an_over_budget_import_is_refused_and_leaves_the_document_unchanged() -> Result<()> {
+    let library = generated(17)?;
+    let big = |seed: u8| -> Vec<u8> {
+        (0..bundle::MAX_ASSET_BYTES / 4 * 3)
+            .map(|i| u8::try_from(i % 251).unwrap_or(0) ^ seed)
+            .collect()
+    };
+    assert!(
+        bundle::encoded_len(bundle::MAX_ASSET_BYTES / 4 * 3) * 2 > bundle::MAX_PACKED_BYTES,
+        "the fixture exceeds the budget"
+    );
+    let first = part_with_asset(&library, 0, big(1))?;
+    let second = part_with_asset(&library, 1, big(2))?;
+    let mut design = Engine::default();
+    import_bundle(&mut design, &first)?;
+    let kept = Snapshot::of(&design);
+    let refused = import_bundle(&mut design, &second);
+    assert!(matches!(&refused, Err(Error::Limit(_))), "{refused:?}");
+    kept.assert_kept(&design, "over-budget import");
+    // One bundle carrying both is refused by bundle validation alone.
+    let mut both = second.clone();
+    both.assets.extend(first.assets.iter().cloned());
+    both.assets.sort_by_key(|a| a.hash);
+    both.assets.dedup_by_key(|a| a.hash);
+    assert!(matches!(
+        bundle::validate_assets(&both.assets),
+        Err(Error::Limit(_))
+    ));
+    Ok(())
+}
+
+/// The modified mark names the revision whose record changed, not the
+/// newest one the project copied.
+#[test]
+fn a_modified_older_record_is_named_by_its_revision() -> Result<()> {
+    let mut author = Engine::demo()?;
+    let root = component_root(&author.project().library)?;
+    let ids = fresh(&mut Rng(9), 16);
+    let first = promote(&mut author, root, &ids)?;
+    let revised = publish(&mut author, vec![root.id])?;
+    let second = promote(&mut author, revised[0], &ids[first.used.len()..])?;
+    let mut folder = Vec::new();
+    write(&mut folder, &first.bundle)?;
+    write(&mut folder, &second.bundle)?;
+    let mut design = Engine::default();
+    place_from(&mut design, &first.bundle, OtherRevision::Refuse)?;
+    import_bundle(&mut design, &bundle_of(&folder, second.bundle.root)?)?;
+    assert!(updates(&design, &folder)?.is_empty());
+    let record = folder
+        .iter_mut()
+        .find(|r| r.lineage == first.bundle.root.lineage && r.revision == Revision(1))
+        .ok_or_else(|| Error::NotFound("r1".into()))?;
+    record.meta.description = "Edited in place.".into();
+    let found = updates(&design, &folder)?;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].origin.revision, Revision(2), "the newest copy");
+    assert_eq!(found[0].modified, vec![Revision(1)], "the edited record");
+    let finding = catalog::update_findings(&found);
+    assert!(
+        finding
+            .iter()
+            .any(|f| f.code == "library.source_modified" && f.message.starts_with("r1 of")),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// A project copy of a folder item is remembered per user by its origin,
+/// so a favourite or recent names the same item in every project; a
+/// project-only item has no per-user identity.
+#[test]
+fn project_copies_are_keyed_per_user_by_their_origin() -> Result<()> {
+    let mut author = Engine::demo()?;
+    let root = component_root(&author.project().library)?;
+    let plan = promote(&mut author, root, &fresh(&mut Rng(77), 16))?;
+    let mut design = Engine::default();
+    place_from(&mut design, &plan.bundle, OtherRevision::Refuse)?;
+    let index = Index::of_project(design.project(), design.drafts())?;
+    let copy = index
+        .entries()
+        .iter()
+        .find(|e| e.kind == DefinitionKind::Component)
+        .ok_or_else(|| Error::NotFound("project copy".into()))?;
+    let library_key = EntryKey::Library {
+        library: FOLDER,
+        lineage: plan.bundle.root.lineage,
+    };
+    assert_eq!(copy.user_key(), Some(library_key));
+    assert_eq!(copy.origin.map(|o| o.revision), Some(Revision(1)));
+    assert!(copy.named_by(&BTreeSet::from([library_key])));
+    // The author's own components were promoted, so they have an origin too;
+    // a fresh project's own component has none.
+    let local = Engine::demo()?;
+    let index = Index::of_project(local.project(), local.drafts())?;
+    assert!(
+        index
+            .entries()
+            .iter()
+            .all(|e| e.source == Source::Project && e.user_key().is_none())
+    );
     Ok(())
 }
