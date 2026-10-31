@@ -9,6 +9,7 @@ pub mod drafts;
 mod footprint;
 pub mod graphics;
 mod package;
+mod part;
 mod publish;
 pub mod samples;
 mod symbol;
@@ -24,6 +25,10 @@ pub use graphics::{
     SymbolHit, Text, TextContent, TextLine, TextMetric, TextSize, VAlign, lint,
 };
 pub use package::{PackageBody, PackageDefinition, PackageTerminal};
+pub use part::{
+    Basis, DistributorOffer, MAX_OFFERS, MAX_REFERENCES, MAX_URL, Origin, PartDefinition,
+    Provenance, Reference, ReferenceKind,
+};
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
 pub use symbol::{SymbolDefinition, Unit};
 
@@ -31,7 +36,7 @@ use crate::diagnostics::{Error, Result};
 use crate::fields::{FieldDefinition, QuantityKind};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, FieldRef, FootprintRef,
-    PackageRef, QuantityKindRef, Revision, SymbolRef,
+    PackageRef, PartRef, QuantityKindRef, Revision, SymbolRef,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -73,6 +78,8 @@ pub enum Definition {
     Binding(BindingDefinition),
     QuantityKind(QuantityKind),
     Field(FieldDefinition),
+    /// Boxed: a Part body is several times larger than the others.
+    Part(Box<PartDefinition>),
 }
 
 impl Definition {
@@ -85,6 +92,7 @@ impl Definition {
             Self::Binding(_) => DefinitionKind::Binding,
             Self::QuantityKind(_) => DefinitionKind::QuantityKind,
             Self::Field(_) => DefinitionKind::Field,
+            Self::Part(_) => DefinitionKind::Part,
         }
     }
     /// An empty body of `kind`, for a new lineage authored step by step.
@@ -97,6 +105,7 @@ impl Definition {
             DefinitionKind::Binding => Self::Binding(Default::default()),
             DefinitionKind::QuantityKind => Self::QuantityKind(Default::default()),
             DefinitionKind::Field => Self::Field(Default::default()),
+            DefinitionKind::Part => Self::Part(Default::default()),
         }
     }
 }
@@ -124,6 +133,9 @@ pub struct Library {
     pub bindings: Vec<Published<BindingDefinition>>,
     pub quantity_kinds: Vec<Published<QuantityKind>>,
     pub fields: Vec<Published<FieldDefinition>>,
+    /// Manufacturer parts (S2), published after the components they pin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<Published<PartDefinition>>,
 }
 
 /// A field revision with the quantity kind its value type names, if any.
@@ -172,6 +184,17 @@ impl Library {
     pub fn field(&self, r: FieldRef) -> Option<&Published<FieldDefinition>> {
         find(&self.fields, r.id, r.revision)
     }
+    pub fn part(&self, r: PartRef) -> Option<&Published<PartDefinition>> {
+        find(&self.parts, r.id, r.revision)
+    }
+    /// The latest published revision of each Part lineage, oldest lineage
+    /// first.
+    pub fn latest_parts(&self) -> Vec<&Published<PartDefinition>> {
+        let ids: BTreeSet<DefinitionId> = self.parts.iter().map(|p| p.id).collect();
+        ids.into_iter()
+            .filter_map(|id| latest_of(&self.parts, id))
+            .collect()
+    }
     /// A field revision and the quantity kind it names. `None` when either
     /// is missing from the snapshot.
     pub fn field_view(&self, r: FieldRef) -> Option<FieldView<'_>> {
@@ -213,6 +236,10 @@ impl Library {
             (
                 DefinitionKind::Field,
                 latest_of(&self.fields, id).map(|p| p.revision),
+            ),
+            (
+                DefinitionKind::Part,
+                latest_of(&self.parts, id).map(|p| p.revision),
             ),
         ]
         .into_iter()
@@ -260,6 +287,9 @@ impl Library {
                 Definition::QuantityKind,
             ),
             DefinitionKind::Field => take(find(&self.fields, r.id, r.revision), Definition::Field),
+            DefinitionKind::Part => take(find(&self.parts, r.id, r.revision), |d| {
+                Definition::Part(Box::new(d))
+            }),
         }
     }
 
@@ -282,6 +312,7 @@ impl Library {
         all.extend(refs(&self.bindings, DefinitionKind::Binding));
         all.extend(refs(&self.quantity_kinds, DefinitionKind::QuantityKind));
         all.extend(refs(&self.fields, DefinitionKind::Field));
+        all.extend(refs(&self.parts, DefinitionKind::Part));
         all
     }
 
@@ -336,6 +367,12 @@ impl Library {
                 meta,
                 definition,
             }),
+            Definition::Part(definition) => self.parts.push(Published {
+                id,
+                revision,
+                meta,
+                definition: *definition,
+            }),
         }
     }
 
@@ -348,6 +385,7 @@ impl Library {
             DefinitionKind::Binding => self.bindings.len(),
             DefinitionKind::QuantityKind => self.quantity_kinds.len(),
             DefinitionKind::Field => self.fields.len(),
+            DefinitionKind::Part => self.parts.len(),
         }
     }
 }
@@ -375,6 +413,7 @@ pub fn check_bounds(meta: &DefinitionMeta, definition: &Definition) -> Result<()
         Definition::Binding(d) => d.within_bounds(),
         Definition::QuantityKind(d) => d.within_bounds(),
         Definition::Field(d) => d.within_bounds(),
+        Definition::Part(d) => d.within_bounds(),
     };
     if !within {
         return Err(Error::Limit(
@@ -386,6 +425,7 @@ pub fn check_bounds(meta: &DefinitionMeta, definition: &Definition) -> Result<()
         Definition::Component(d) => d.values_finite(),
         Definition::QuantityKind(d) => d.values_finite(),
         Definition::Field(d) => d.values_finite(),
+        Definition::Part(d) => d.values_finite(),
         Definition::Symbol(d) => d.geometry_finite(),
         Definition::Package(d) => d.geometry_finite(),
         Definition::Footprint(d) => d.geometry_finite(),
@@ -408,6 +448,7 @@ pub(crate) fn publish_rank(kind: DefinitionKind) -> u8 {
         DefinitionKind::Binding => 4,
         DefinitionKind::Symbol => 5,
         DefinitionKind::Component => 6,
+        DefinitionKind::Part => 7,
     }
 }
 
@@ -425,6 +466,7 @@ pub fn validate(library: &Library) -> Result<()> {
         DefinitionKind::Binding,
         DefinitionKind::QuantityKind,
         DefinitionKind::Field,
+        DefinitionKind::Part,
     ] {
         if library.count(kind) > MAX_REVISIONS_PER_KIND {
             return Err(Error::Invalid(format!(

@@ -2,7 +2,7 @@ use super::Outcome;
 use crate::diagnostics::Result;
 use crate::fields::PropertyEdit;
 use crate::functions::FunctionEdit;
-use crate::ids::{Id, TerminalId, UnitId};
+use crate::ids::{Id, PartRef, TerminalId, UnitId};
 use crate::instances::{self, NewInstance};
 use crate::model::{EditPolicy, PhysicalChoice, Project};
 use crate::updates::{self, InstanceChange};
@@ -55,6 +55,16 @@ pub enum InstanceCommand {
         instance: Id,
         choice: Option<PhysicalChoice>,
     },
+    /// Pin one exact Part on 1–256 instances atomically, or clear it with
+    /// `None`. The Part must pin each instance's component revision and
+    /// the binding of its physical choice, and meet its requirements
+    /// (`fields::satisfies`); otherwise nothing changes. Resolve parts
+    /// assigns one Part to one group with one command.
+    #[serde(rename = "instance.assign_part")]
+    AssignPart {
+        instances: Vec<Id>,
+        part: Option<PartRef>,
+    },
 }
 
 pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) -> Result<Outcome> {
@@ -98,6 +108,9 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
             terminals,
             no_connect,
         } => instances::set_no_connect(project, instance, &terminals, no_connect)?,
+        InstanceCommand::AssignPart { instances, part } => {
+            instances::assign_part(project, &instances, part)?
+        }
         InstanceCommand::SetPhysical { instance, choice } => updates::stage(
             project,
             &InstanceChange::SetPhysical { instance, choice },

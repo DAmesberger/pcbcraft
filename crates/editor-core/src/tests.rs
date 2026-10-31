@@ -9,5 +9,6 @@ mod fields;
 mod graphics;
 mod library;
 mod orientation;
+mod parts;
 mod staged;
 pub(crate) mod support;

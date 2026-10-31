@@ -188,6 +188,11 @@ impl App {
             Workspace::Pcb => self.pcb.inspector(ui, &self.engine),
         };
         self.apply(operation);
+        if let Some((component, values)) = self.schematic.take_new_part() {
+            self.clear_error();
+            self.workspace = Workspace::Part;
+            self.part.new_part_for(component, values, &self.engine);
+        }
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {

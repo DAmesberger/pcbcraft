@@ -3,7 +3,7 @@
 use crate::fields::InstanceFields;
 use crate::functions::FunctionSelections;
 pub use crate::geometry::Point;
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, PartRef, TerminalId, UnitId};
 use crate::library::{Drafts, Library, Rotation};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,11 @@ pub struct ComponentInstance {
     /// Explicit function selections by terminal. A missing terminal uses its
     /// fixed function or design default.
     pub functions: FunctionSelections,
+    /// The exact manufacturer part, when one is chosen (S2). It pins the
+    /// same component revision and the binding of `physical`; rules in
+    /// `instances`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<PartRef>,
 }
 
 /// One unit of one instance drawn on the sheet. Each (instance, unit) has at

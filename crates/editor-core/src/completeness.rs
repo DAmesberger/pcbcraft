@@ -14,6 +14,12 @@ use crate::nets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+mod purchasing;
+pub use purchasing::{
+    BomLine, BomReport, BomValue, PurchasingReport, PurchasingState, ResolveGroup, ResolveReport,
+    bom, purchasing, requirement_query, resolve_groups,
+};
+
 /// The exact physical revisions an instance resolves to.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PhysicalReport {
@@ -53,9 +59,9 @@ pub struct InstanceReport {
     pub bom_quantity: u32,
     pub board_placeable: bool,
     pub electrically_resolved: bool,
-    /// Purchasing resolution needs a manufacturer-part model, which does not
-    /// exist yet; reports say so explicitly instead of claiming a state.
-    pub purchasing: String,
+    /// Purchasing completeness: the chosen Part, if any, and what disagrees
+    /// with it. Its findings are advisory and not repeated in `findings`.
+    pub purchasing: PurchasingReport,
     pub findings: Vec<Finding>,
 }
 
@@ -223,7 +229,7 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
         bom_quantity: 1,
         board_placeable: !blocked(Stage::BoardPlaceable),
         electrically_resolved: !blocked(Stage::ElectricallyResolved),
-        purchasing: "not computed: there is no manufacturer-part model yet".into(),
+        purchasing: purchasing(project, item),
         units,
         properties,
         functions,

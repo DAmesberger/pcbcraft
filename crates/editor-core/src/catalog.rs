@@ -2,8 +2,9 @@
 //! language, deterministic ranking and data-derived facets.
 //!
 //! Entries are derived, never stored. There is one entry per component
-//! lineage at its latest published revision (plus, on request, lineages that
-//! exist only as drafts). The project snapshot is the only source until
+//! lineage and one per manufacturer Part lineage, each at its latest
+//! published revision (plus, on request, lineages that exist only as
+//! drafts). The project snapshot is the only source until
 //! library folders exist; the [`Source`] tag keeps room for them. Nothing
 //! here branches on a component category, field name or unit: filters come
 //! from the field definitions and quantity kinds the data carries.
@@ -16,12 +17,15 @@ pub use query::{
 };
 
 use crate::diagnostics::{Error, Result};
-use crate::fields::{self, FieldSelection, FieldValue};
-use crate::ids::{
-    BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, Revision,
-    SymbolRef,
+use crate::fields::{
+    self, FieldSelection, FieldValue, RatedSpec, Requirement, SpecMeaning, ToleranceBasis,
+    ValueType,
 };
-use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library};
+use crate::ids::{
+    BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, PartRef,
+    Revision, SymbolRef,
+};
+use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library, PartDefinition};
 use crate::model::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,8 +61,8 @@ pub struct Badges {
     pub footprint: bool,
     /// A bound package has a valid envelope, the native 3D model.
     pub model: bool,
-    /// A manufacturer part number. Always absent before manufacturer parts
-    /// exist.
+    /// A manufacturer part number: the entry is a Part, or a component that
+    /// a published Part implements.
     pub mpn: bool,
 }
 
@@ -85,6 +89,27 @@ pub struct EntryField {
     pub text: String,
     /// Whether the component shows this field on its symbol: a key value.
     pub shown: bool,
+    /// On a Part entry, how the rated value meets a requirement. A field
+    /// predicate with `:` or a bare value then means "meets": a minimum
+    /// rating of 25 V meets `16V`, a maximum tolerance of ±0.5 % meets
+    /// `±1%`. Explicit comparisons keep their literal meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meaning: Option<SpecMeaning>,
+    /// On a Part entry, what `fields::satisfies` needs to compare the rated
+    /// value with a query predicate.
+    #[serde(skip)]
+    pub rated: Option<RatedReading>,
+}
+
+/// A Part's rated value as `fields::satisfies` reads it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RatedReading {
+    pub spec: RatedSpec,
+    /// The value type of the spec's own field revision.
+    pub value_type: ValueType,
+    /// For a tolerance: the Part's one rated quantity in the absolute
+    /// basis's quantity kind, the nominal a cross-basis comparison needs.
+    pub nominal: Option<f64>,
 }
 
 /// One searchable lineage.
@@ -106,12 +131,32 @@ pub struct CatalogEntry {
     pub badges: Badges,
     /// Instances in the project that pin any revision of this lineage.
     pub used: usize,
+    /// A Part entry's manufacturer, as the user wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    /// A Part entry's complete manufacturer part number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpn: Option<String>,
+    /// A Part entry's pinned generic component revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implements: Option<ComponentRef>,
 }
 
 impl CatalogEntry {
-    /// The placeable exact revision.
+    /// The placeable exact revision of a component entry; `None` for a
+    /// Part entry.
     pub fn component(&self) -> Option<ComponentRef> {
-        self.revision.map(|r| ComponentRef::new(self.lineage, r))
+        (self.kind == DefinitionKind::Component)
+            .then_some(self.revision)
+            .flatten()
+            .map(|r| ComponentRef::new(self.lineage, r))
+    }
+    /// The assignable exact revision of a Part entry.
+    pub fn part(&self) -> Option<PartRef> {
+        (self.kind == DefinitionKind::Part)
+            .then_some(self.revision)
+            .flatten()
+            .map(|r| PartRef::new(self.lineage, r))
     }
     /// Shown field values, then the first package: what a result row lists.
     pub fn key_values(&self) -> Vec<&str> {
@@ -180,6 +225,81 @@ fn entry_of(
         packages,
         badges,
         used: 0,
+        manufacturer: None,
+        mpn: None,
+        implements: None,
+    }
+}
+
+/// Build the entry of one Part body: its rated values as fields, badges
+/// and packages from the pinned component and binding.
+fn part_entry(
+    library: &Library,
+    lineage: DefinitionId,
+    revision: Option<Revision>,
+    meta: &DefinitionMeta,
+    part: &PartDefinition,
+) -> CatalogEntry {
+    let component = library.component(part.component).map(|c| &c.definition);
+    let fields = part
+        .specs
+        .iter()
+        .filter_map(|spec| {
+            let view = library.field_view(spec.field)?;
+            let value_type = view.field.definition.value_type.clone();
+            Some(EntryField {
+                field: spec.field.id,
+                label: view.field.meta.name.clone(),
+                text: fields::display(&spec.value, &value_type, view.kind_body()),
+                value: spec.value.clone(),
+                shown: component
+                    .and_then(|c| c.field(spec.field.id))
+                    .is_some_and(|s| s.show_on_symbol),
+                meaning: Some(spec.meaning),
+                rated: Some(RatedReading {
+                    nominal: rated_nominal(library, part, spec, &value_type),
+                    spec: spec.clone(),
+                    value_type,
+                }),
+            })
+        })
+        .collect();
+    let mut badges = Badges {
+        symbol: component.is_some_and(|c| {
+            c.representations
+                .iter()
+                .any(|s| library.symbol(*s).is_some())
+        }),
+        mpn: true,
+        ..Badges::default()
+    };
+    let mut packages = Vec::new();
+    if let Some(binding) = library.binding(part.binding) {
+        badges.footprint = binding
+            .definition
+            .footprints
+            .iter()
+            .any(|f| library.footprint(*f).is_some());
+        if let Some(package) = library.package(binding.definition.package) {
+            badges.model = package.definition.envelope_valid();
+            packages.push(package.meta.name.clone());
+        }
+    }
+    CatalogEntry {
+        source: Source::Project,
+        kind: DefinitionKind::Part,
+        lineage,
+        revision,
+        name: meta.name.clone(),
+        description: meta.description.clone(),
+        draft: false,
+        fields,
+        packages,
+        badges,
+        used: 0,
+        manufacturer: Some(part.manufacturer.clone()),
+        mpn: Some(part.mpn.clone()),
+        implements: Some(part.component),
     }
 }
 
@@ -195,17 +315,67 @@ fn entry_field(library: &Library, selection: &FieldSelection) -> Option<EntryFie
         text: fields::display(&value, &view.field.definition.value_type, view.kind_body()),
         value,
         shown: selection.show_on_symbol,
+        meaning: None,
+        rated: None,
     })
 }
 
-/// Every component lineage of the project: published lineages at their
-/// latest revision, then draft-only lineages, each in lineage order.
+/// The nominal a rated tolerance applies to: the Part's one rated quantity
+/// measured in the absolute basis's quantity kind (the spec's own basis or
+/// that of the field's latest revision).
+fn rated_nominal(
+    library: &Library,
+    part: &PartDefinition,
+    spec: &RatedSpec,
+    value_type: &ValueType,
+) -> Option<f64> {
+    let absolute = |t: &ValueType| match t {
+        ValueType::Tolerance {
+            basis: ToleranceBasis::Absolute { kind },
+        } => Some(kind.id),
+        _ => None,
+    };
+    let latest = library
+        .latest(spec.field.id)
+        .and_then(|(_, revision)| {
+            library.field_view(crate::ids::FieldRef::new(spec.field.id, revision))
+        })
+        .and_then(|v| absolute(&v.field.definition.value_type));
+    let kind = absolute(value_type).or(latest)?;
+    let mut measured = part.specs.iter().filter_map(|s| {
+        let view = library.field_view(s.field)?;
+        match (&view.field.definition.value_type, &s.value) {
+            (ValueType::Quantity { kind: k, .. }, FieldValue::Quantity { si, .. })
+                if k.id == kind && s.meaning == SpecMeaning::ExactNominal =>
+            {
+                Some(*si)
+            }
+            _ => None,
+        }
+    });
+    match (measured.next(), measured.next()) {
+        (Some(si), None) => Some(si),
+        _ => None,
+    }
+}
+
+/// Every component lineage of the project, then every Part lineage:
+/// published lineages at their latest revision, then draft-only lineages,
+/// each in lineage order.
 pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
     let library = &project.library;
     let mut used: BTreeMap<DefinitionId, usize> = BTreeMap::new();
     for instance in &project.instances {
         *used.entry(instance.component.id).or_default() += 1;
+        if let Some(part) = instance.part {
+            *used.entry(part.id).or_default() += 1;
+        }
     }
+    let latest_parts = library.latest_parts();
+    let implemented: BTreeSet<DefinitionId> = latest_parts
+        .iter()
+        .map(|p| p.definition.component.id)
+        .collect();
     let mut out: Vec<CatalogEntry> = library
         .latest_components()
         .into_iter()
@@ -213,6 +383,7 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
             let mut entry = entry_of(library, c.id, Some(c.revision), &c.meta, &c.definition);
             entry.draft = drafts.get(c.id).is_some();
             entry.used = used.get(&c.id).copied().unwrap_or(0);
+            entry.badges.mpn = implemented.contains(&c.id);
             entry
         })
         .collect();
@@ -222,6 +393,22 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
             && !published.contains(&draft.id)
         {
             let mut entry = entry_of(library, draft.id, None, &draft.meta, component);
+            entry.draft = true;
+            out.push(entry);
+        }
+    }
+    for p in latest_parts {
+        let mut entry = part_entry(library, p.id, Some(p.revision), &p.meta, &p.definition);
+        entry.draft = drafts.get(p.id).is_some();
+        entry.used = used.get(&p.id).copied().unwrap_or(0);
+        out.push(entry);
+    }
+    let published: BTreeSet<DefinitionId> = library.parts.iter().map(|p| p.id).collect();
+    for draft in &drafts.items {
+        if let crate::library::Definition::Part(part) = &draft.definition
+            && !published.contains(&draft.id)
+        {
+            let mut entry = part_entry(library, draft.id, None, &draft.meta, part);
             entry.draft = true;
             out.push(entry);
         }
@@ -261,6 +448,8 @@ pub struct CatalogContext {
 /// Case-folded text of one entry, built once per index.
 struct Folded {
     name: String,
+    /// A Part's MPN; an exact MPN ranks as an exact name.
+    mpn: Option<String>,
     words: Vec<String>,
     lineage: String,
     other: String,
@@ -276,6 +465,10 @@ impl Folded {
             .map(str::to_owned)
             .collect();
         let mut other = fold(&entry.description);
+        for text in entry.mpn.iter().chain(&entry.manufacturer) {
+            other.push('\n');
+            other.push_str(&fold(text));
+        }
         for package in &entry.packages {
             other.push('\n');
             other.push_str(&fold(package));
@@ -288,6 +481,7 @@ impl Folded {
             .join("\n");
         Self {
             name,
+            mpn: entry.mpn.as_deref().map(|m| fold(m.trim())),
             words,
             lineage: fold(&entry.lineage.to_string()),
             other,
@@ -296,9 +490,11 @@ impl Folded {
     }
 
     fn text_tier(&self, text: &str) -> Option<MatchTier> {
-        if self.name == text || self.lineage == text {
+        if self.name == text || self.lineage == text || self.mpn.as_deref() == Some(text) {
             Some(MatchTier::Exact)
-        } else if self.name.starts_with(text) {
+        } else if self.name.starts_with(text)
+            || self.mpn.as_ref().is_some_and(|m| m.starts_with(text))
+        {
             Some(MatchTier::Prefix)
         } else if self.words.iter().any(|w| w == text) {
             Some(MatchTier::Word)
@@ -316,7 +512,77 @@ fn field_hit(entry: &CatalogEntry, test: &FieldTest) -> bool {
     entry
         .fields
         .iter()
-        .any(|f| f.field == test.field && test.test.accepts(&f.value))
+        .any(|f| f.field == test.field && meets(f, test))
+}
+
+/// A test on one entry value. On a Part's rated value an equality (`:` or a
+/// bare value) means "meets", decided by `fields::satisfies` exactly as
+/// `instance.assign_part` and purchasing decide it; other operators keep
+/// their literal sense.
+fn meets(field: &EntryField, test: &FieldTest) -> bool {
+    let Some(rated) = &field.rated else {
+        return test.test.accepts(&field.value);
+    };
+    match requirement_of(field, rated, test) {
+        Some(requirement) => requirement
+            .satisfied_by(&rated.spec, &rated.value_type)
+            .is_empty(),
+        None => test.test.accepts(&field.value),
+    }
+}
+
+/// The requirement an equality predicate states, read in the predicate's
+/// value type; `None` for explicit comparisons and text, which keep their
+/// literal meaning.
+fn requirement_of(
+    field: &EntryField,
+    rated: &RatedReading,
+    test: &FieldTest,
+) -> Option<Requirement> {
+    let value_type = test
+        .value_type
+        .clone()
+        .unwrap_or_else(|| rated.value_type.clone());
+    let value = match (&test.test, &value_type) {
+        (Test::Compare { op: Op::Eq, value }, ValueType::Quantity { .. }) => FieldValue::Quantity {
+            si: *value,
+            display_unit: None,
+        },
+        (Test::Compare { op: Op::Eq, value }, ValueType::Integer { .. })
+            if value.fract() == 0.0 && value.abs() < 9.0e15 =>
+        {
+            FieldValue::Integer(*value as i64)
+        }
+        (Test::Compare { op: Op::Eq, value }, ValueType::Range { .. }) => FieldValue::Range {
+            min: *value,
+            max: *value,
+        },
+        (Test::Between { min, max }, ValueType::Range { .. }) => FieldValue::Range {
+            min: *min,
+            max: *max,
+        },
+        (
+            Test::Tolerance {
+                op: Op::Eq,
+                minus,
+                plus,
+            },
+            ValueType::Tolerance { .. },
+        ) => FieldValue::Tolerance {
+            minus: *minus,
+            plus: *plus,
+        },
+        (Test::Choice { choice }, ValueType::Enum { .. }) => FieldValue::Enum(*choice),
+        (Test::Boolean { value }, ValueType::Boolean) => FieldValue::Boolean(*value),
+        _ => return None,
+    };
+    Some(Requirement {
+        field: rated.spec.field,
+        label: field.label.clone(),
+        value,
+        value_type,
+        nominal: rated.nominal,
+    })
 }
 
 /// The worst tier over the text terms, or `None` when a term fails.
@@ -366,7 +632,26 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                 }
                 None
             }
-            Term::Components => None,
+            Term::Components | Term::Parts => {
+                let kind = match term {
+                    Term::Parts => DefinitionKind::Part,
+                    _ => DefinitionKind::Component,
+                };
+                if entry.kind != kind {
+                    return None;
+                }
+                None
+            }
+            Term::Mpn { text } => {
+                if !folded
+                    .mpn
+                    .as_ref()
+                    .is_some_and(|m| m.contains(text.as_str()))
+                {
+                    return None;
+                }
+                None
+            }
         };
         if let Some(tier) = tier {
             text_seen = true;

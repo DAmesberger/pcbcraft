@@ -2,7 +2,8 @@
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use crate::kit::{self, Tone};
-use crate::place_palette::{PaletteAction, PlacePalette};
+use crate::place_palette::{Mode as PaletteMode, PaletteAction, PlacePalette};
+use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
 use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2};
 use pcbcraft_core::completeness::InstanceReport;
@@ -107,6 +108,10 @@ pub struct SchematicEditor {
     update: crate::update_preview::UpdatePreview,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
+    /// The Resolve parts card.
+    resolve: ResolveParts,
+    /// New Part… was chosen: the app opens the component's Parts editor.
+    new_part: Option<NewPartRequest>,
 }
 
 impl Default for SchematicEditor {
@@ -142,6 +147,8 @@ impl Default for SchematicEditor {
             ghost: None,
             update: Default::default(),
             palette: PlacePalette::default(),
+            resolve: ResolveParts::default(),
+            new_part: None,
         }
     }
 }
@@ -215,7 +222,18 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
     ))
 }
 
+/// A component lineage and the values a new Part of it is rated at.
+pub type NewPartRequest = (
+    pcbcraft_core::DefinitionId,
+    Vec<(pcbcraft_core::FieldRef, pcbcraft_core::fields::FieldValue)>,
+);
+
 impl SchematicEditor {
+    /// New Part… from Resolve parts or Choose…, once.
+    pub fn take_new_part(&mut self) -> Option<NewPartRequest> {
+        self.new_part.take()
+    }
+
     fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
         self.update.begin(engine, change);
         self.tool = Tool::Select;
@@ -301,6 +319,10 @@ impl SchematicEditor {
                         Button::new("check", "inspect", "Check")
                             .selected(self.show_checks)
                             .tip("Show the electrical rule checks"),
+                        Button::new("resolve", "component", "Resolve")
+                            .enabled(!reviewing)
+                            .selected(self.resolve.is_open())
+                            .tip("Resolve parts: choose one manufacturer part per group of instances"),
                     ],
                 },
             ],
@@ -319,6 +341,17 @@ impl SchematicEditor {
             }
             "rotate" => return self.arranged(engine.project(), Arrange::Rotate),
             "mirror" => return self.arranged(engine.project(), Arrange::Mirror),
+            "resolve" => {
+                if self.resolve.is_open() {
+                    self.resolve.close();
+                } else {
+                    self.select(None, None, engine.project());
+                    self.palette.close();
+                    self.tool = Tool::Select;
+                    self.resolve.open();
+                }
+                return None;
+            }
             _ => return None,
         };
         // A creation tool takes over the panel, so the selection is released.
@@ -326,6 +359,8 @@ impl SchematicEditor {
             self.select(None, None, engine.project());
         }
         if next == Tool::Place {
+            // One tool owns the card: Place closes Resolve parts.
+            self.resolve.close();
             self.palette.open();
         } else {
             self.palette.close();
@@ -342,7 +377,13 @@ impl SchematicEditor {
             return Header::new("component", "Review change", "Review");
         }
         if self.palette.is_open() {
+            if matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
+                return Header::new("component", "Choose part", "Library");
+            }
             return Header::new("component", "Place part", "Library");
+        }
+        if self.resolve.is_open() {
+            return Header::new("component", "Resolve parts", "Purchasing");
         }
         if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
             return Header::new("component", instance.designator.clone(), "Instance");
@@ -487,9 +528,32 @@ impl SchematicEditor {
             self.select(None, None, project);
         }
         let mut output = None;
+        if self.palette.is_open() && matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
+            if let Some(request) = self.palette.preview(ui, engine) {
+                self.palette.close();
+                self.new_part = Some(request);
+            }
+            return None;
+        }
+        if self.resolve.is_open() {
+            match self.resolve.show(ui, engine) {
+                Some(ResolveAction::Choose { query, instances }) => {
+                    self.palette.open_assign(query, instances);
+                }
+                Some(ResolveAction::Select(id)) => {
+                    self.resolve.close();
+                    self.select(Some(id), None, project);
+                }
+                Some(ResolveAction::NewPart { component, values }) => {
+                    self.new_part = Some((component.id, values));
+                }
+                Some(ResolveAction::Close) | None => {}
+            }
+            return None;
+        }
         if self.tool == Tool::Place {
             if self.palette.is_open() {
-                self.palette.preview(ui, engine);
+                let _ = self.palette.preview(ui, engine);
             } else {
                 self.place_section(ui, project);
             }
@@ -505,18 +569,28 @@ impl SchematicEditor {
             self.sheet_section(ui, project);
         }
         if self.show_checks {
+            // Purchasing findings (advisory) join the electrical checks.
+            let purchasing: Vec<String> = project
+                .instances
+                .iter()
+                .flat_map(|i| instances::part_findings(&project.library, i))
+                .map(|f| f.message)
+                .collect();
             kit::section(
                 ui,
                 "checks",
                 "Checks",
                 true,
-                Some(self.issues.len()),
+                Some(self.issues.len() + purchasing.len()),
                 |ui| {
-                    if self.issues.is_empty() {
+                    if self.issues.is_empty() && purchasing.is_empty() {
                         kit::note(ui, "No issues in the supported check subset.");
                     }
                     for issue in &self.issues {
                         kit::status(ui, &issue.message, Tone::Error);
+                    }
+                    for message in &purchasing {
+                        kit::status(ui, message, Tone::Warning);
                     }
                     kit::note(
                         ui,
@@ -731,6 +805,8 @@ impl SchematicEditor {
                 );
                 if let Some(error) = error {
                     kit::status(ui, &error, Tone::Error);
+                } else if let Some(hint) = part_hint(project, instance, buffer) {
+                    kit::status(ui, &hint, Tone::Warning);
                 }
             }
         });
@@ -765,6 +841,7 @@ impl SchematicEditor {
                 self.select(self.selected, self.selected_occurrence, project);
             }
         });
+        output = output.or(self.part_section(ui, engine, instance));
         // Function choices apply at once; Apply covers the rows above.
         output = output.or(self.function_section(ui, project, instance, &functions));
         kit::rule(ui);
@@ -785,6 +862,63 @@ impl SchematicEditor {
                 );
             }
         });
+        output
+    }
+
+    /// The instance's manufacturer part: Choose… opens the palette in
+    /// assign mode, Clear sends `instance.assign_part` without a Part.
+    fn part_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        engine: &Engine,
+        instance: &pcbcraft_core::ComponentInstance,
+    ) -> Option<Operation> {
+        let purchasing = self.report(engine).map(|r| r.purchasing.clone());
+        let mut output = None;
+        let mut choose = false;
+        kit::section(ui, "part", "Part", true, None, |ui| {
+            let shown = match (&purchasing, instance.part) {
+                (Some(p), Some(r)) => match (&p.manufacturer, &p.mpn) {
+                    (Some(m), Some(mpn)) => format!("{m} {mpn} · {}", r.revision),
+                    _ => r.to_string(),
+                },
+                (None, Some(r)) => r.to_string(),
+                (_, None) => "None · generic".to_owned(),
+            };
+            kit::value_row(ui, "Part", &shown);
+            if let Some(p) = &purchasing {
+                kit::value_row(
+                    ui,
+                    "Purchasing",
+                    match p.state {
+                        pcbcraft_core::completeness::PurchasingState::NoPart => "no part chosen",
+                        pcbcraft_core::completeness::PurchasingState::Unresolved => "unresolved",
+                        pcbcraft_core::completeness::PurchasingState::Resolved => "resolved",
+                    },
+                );
+                for finding in p.findings.iter().take(4) {
+                    kit::status(ui, &finding.message, Tone::Warning);
+                }
+            }
+            kit::actions(ui, |ui| {
+                choose = ui_kit::button(ui, "Choose…", Button::Normal)
+                    .on_hover_text("Find a manufacturer part that meets this instance's values")
+                    .clicked();
+                if instance.part.is_some()
+                    && ui_kit::button(ui, "Clear", Button::Normal)
+                        .on_hover_text("Return the instance to a generic component")
+                        .clicked()
+                {
+                    output = Some(resolve_parts::assign(vec![instance.id], None));
+                }
+            });
+        });
+        if choose {
+            self.palette.open_assign(
+                resolve_parts::query_for(engine, instance.id),
+                vec![instance.id],
+            );
+        }
         output
     }
 
@@ -1009,6 +1143,19 @@ impl SchematicEditor {
                 self.component = Some(component);
                 self.tool = Tool::Place;
             }
+            Some(PaletteAction::Assign { instances, part }) => {
+                output = Some(resolve_parts::assign(instances, Some(part)));
+            }
+            Some(PaletteAction::UpdateAndAssign {
+                instances,
+                part,
+                target,
+            }) => {
+                output = self.stage_update(
+                    engine,
+                    resolve_parts::update_and_assign(instances, part, target),
+                );
+            }
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
@@ -1215,6 +1362,8 @@ impl SchematicEditor {
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
                 .map(|(e, _)| *e);
             match self.tool {
+                // A click beside the open assign palette dismisses it.
+                Tool::Select | Tool::Wire if self.palette.is_open() => self.palette.close(),
                 // A click beside the open palette dismisses it.
                 Tool::Place if self.palette.is_open() => {
                     self.palette.close();
@@ -1415,6 +1564,52 @@ fn shown_fields(
 
 /// Why the typed text would be rejected, from the same core parser the
 /// engine applies; the engine still decides when the edit is sent.
+/// Before Apply: whether an edited value contradicts the instance's pinned
+/// Part, through the same `fields::satisfies` comparison purchasing uses.
+fn part_hint(
+    project: &Project,
+    instance: &pcbcraft_core::ComponentInstance,
+    buffer: &FieldBuffer,
+) -> Option<String> {
+    let text = buffer.text.trim();
+    if text.is_empty() || text == buffer.loaded {
+        return None;
+    }
+    let library = &project.library;
+    let part = &library.part(instance.part?)?.definition;
+    let view = library.field_view(buffer.revision)?;
+    let value_type = view.field.definition.value_type.clone();
+    let value = pcbcraft_core::fields::parse_value(text, &value_type, view.kind_body()).ok()?;
+    let mpn = &part.mpn;
+    let Some(spec) = part.specs.iter().find(|s| s.field.id == buffer.field) else {
+        return Some(format!(
+            "{mpn} does not rate {}; applying keeps the Part and leaves purchasing unresolved.",
+            buffer.label
+        ));
+    };
+    let spec_view = library.field_view(spec.field)?;
+    let requirement = pcbcraft_core::fields::Requirement {
+        field: buffer.revision,
+        label: buffer.label.clone(),
+        value,
+        value_type,
+        nominal: None,
+    };
+    let findings = requirement.satisfied_by(spec, &spec_view.field.definition.value_type);
+    let finding = findings.first()?;
+    let rated = pcbcraft_core::fields::display(
+        &spec.value,
+        &spec_view.field.definition.value_type,
+        spec_view.kind_body(),
+    );
+    Some(match finding.code.as_str() {
+        "part.spec_mismatch" => format!(
+            "{text} does not match {mpn}'s rated {rated}; applying keeps the Part and leaves purchasing unresolved."
+        ),
+        _ => format!("{text} cannot be checked against {mpn}'s rated {rated}."),
+    })
+}
+
 fn typed_error(project: &Project, buffer: &FieldBuffer) -> Option<String> {
     let text = buffer.text.trim();
     if text.is_empty() || text == buffer.loaded {
@@ -1468,6 +1663,8 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + delta * t)
 }
 
+#[cfg(test)]
+mod part_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
