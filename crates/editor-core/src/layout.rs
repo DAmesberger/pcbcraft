@@ -1,6 +1,6 @@
 //! Placement and manual routing over the electrical document. Geometry here is
 //! electronics checking geometry; native 3D remains in the Solidcraft adapter.
-use crate::diagnostics::{Error, Finding, ObjectRef, Result};
+use crate::diagnostics::{Error, Finding, Result};
 use crate::geometry::{Point, Shape, Transform2, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
@@ -18,8 +18,10 @@ const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
 
+mod copper;
 pub mod courtyard;
 mod placed;
+pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
@@ -105,8 +107,10 @@ pub struct WorldPad {
     pub terminal: Endpoint,
     pub net: Id,
     pub position: Point,
+    /// The pad shape's extent (pad frame), for summaries; geometry reads
+    /// `shape` through [`WorldPad::outline`].
     pub size: Point,
-    /// The exact pad shape (pad frame); checks still use `size`.
+    /// The exact pad shape (pad frame).
     pub shape: PadShape,
     pub rotation_deg: f64,
     /// The copper layer of a surface pad, after its side flip. A plated
@@ -115,6 +119,10 @@ pub struct WorldPad {
     /// Copper on every layer around a plated barrel.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub through: bool,
+    /// Placed on the bottom: the pad frame is reflected across its x-axis
+    /// before `rotation_deg` turns it, as the placement transform does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mirrored: bool,
 }
 
 impl WorldPad {
@@ -123,18 +131,18 @@ impl WorldPad {
         self.through || self.layer == layer
     }
 
-    /// Pad frame to board coordinates.
+    /// Pad frame to board coordinates (reflected first on the bottom).
     pub fn frame(&self) -> Transform2 {
         Transform2 {
             translate: self.position,
             rotation_deg: self.rotation_deg,
-            mirror: false,
+            mirror: self.mirrored,
         }
     }
 
-    /// The exact copper outline on the board, flattened arcs within
-    /// [`PAD_ARC_TOLERANCE_MM`]. Board checks, airwires and routing snap
-    /// move to this from [`pad_polygon`] (docs/f45-contract.md, boardgeo).
+    /// The exact copper outline on the board, custom-pad arcs flattened
+    /// within [`PAD_ARC_TOLERANCE_MM`]. Board checks, airwires and routing
+    /// clearance measure it (through [`CopperRing`]).
     pub fn outline(&self) -> Shape {
         self.shape
             .outline(PAD_ARC_TOLERANCE_MM)
@@ -160,8 +168,8 @@ pub fn placed_point(placement: &Placement, point: Point, datum: Point) -> Point 
     ]
 }
 
-/// Connected copper pads as rotated rectangles of each pad's extent: the
-/// checking approximation until shape-aware checks use [`placed_pads`].
+/// Connected copper pads with their exact shapes. [`BoardCopper::of`]
+/// adds their board outlines.
 pub fn pads(project: &Project) -> Vec<WorldPad> {
     let net_by_terminal: BTreeMap<Endpoint, Id> = project
         .nets
@@ -224,6 +232,7 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                     PadSide::Bottom => placed::opposite(placement.layer),
                 },
                 through: pad.kind == PadKind::PlatedThrough,
+                mirrored: placement.layer == Layer::Bottom,
             });
         }
     }
@@ -498,11 +507,16 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         });
     }
     validate(project)?;
-    let world_pads = pads(project);
+    let copper = BoardCopper::of(project);
+    let track_rings: Vec<CopperRing> = project.tracks.iter().map(CopperRing::of_track).collect();
     let mut check_pairs = 0usize;
-    for track in project.tracks.iter().filter(|t| changed.contains(&t.id)) {
-        let polygon = track_polygon(track);
-        for other in &project.tracks {
+    for (track, ring) in project
+        .tracks
+        .iter()
+        .zip(&track_rings)
+        .filter(|(t, _)| changed.contains(&t.id))
+    {
+        for (other, other_ring) in project.tracks.iter().zip(&track_rings) {
             check_pairs += 1;
             if check_pairs > MAX_CHECK_PAIRS {
                 return Err(Error::Limit(
@@ -512,14 +526,14 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             if other.id != track.id
                 && other.layer == track.layer
                 && other.net != track.net
-                && polygon_distance(&polygon, &track_polygon(other)) < CLEARANCE_MM - EPS
+                && ring.violates_clearance(other_ring)
             {
                 return Err(Error::Conflict(
                     "route violates 0.2 mm clearance to another net's track".into(),
                 ));
             }
         }
-        for pad in &world_pads {
+        for (index, pad) in copper.pads().iter().enumerate() {
             check_pairs += 1;
             if check_pairs > MAX_CHECK_PAIRS {
                 return Err(Error::Limit(
@@ -528,7 +542,9 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             }
             if pad.on(track.layer)
                 && pad.net != track.net
-                && polygon_distance(&polygon, &pad_polygon(pad)) < CLEARANCE_MM - EPS
+                && copper
+                    .ring(index)
+                    .is_some_and(|pad_ring| ring.violates_clearance(pad_ring))
             {
                 return Err(Error::Conflict(
                     "route violates 0.2 mm clearance to another net's pad".into(),
@@ -679,18 +695,6 @@ fn inside_board(project: &Project, point: Point) -> bool {
         && point[1] <= project.board_size[1] + EPS
 }
 
-pub fn pad_polygon(pad: &WorldPad) -> [Point; 4] {
-    let (s, c) = pad.rotation_deg.to_radians().sin_cos();
-    [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)].map(|(x, y)| {
-        let x = x * pad.size[0];
-        let y = y * pad.size[1];
-        [
-            pad.position[0] + c * x - s * y,
-            pad.position[1] + s * x + c * y,
-        ]
-    })
-}
-
 /// Straight tracks use a rectangular cross-section and butt end caps. The
 /// Solidcraft native adapter uses the same footprint, including at diagonal angles.
 pub fn track_polygon(track: &Track) -> [Point; 4] {
@@ -715,9 +719,6 @@ fn add(a: Point, b: Point) -> Point {
 fn sub(a: Point, b: Point) -> Point {
     [a[0] - b[0], a[1] - b[1]]
 }
-fn dot(a: Point, b: Point) -> f64 {
-    a[0] * b[0] + a[1] * b[1]
-}
 fn distance(a: Point, b: Point) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
@@ -735,247 +736,29 @@ pub fn point_in_polygon(point: Point, polygon: &[Point; 4]) -> bool {
     !(positive && negative)
 }
 
-fn overlaps(a: &[Point; 4], b: &[Point; 4]) -> bool {
-    for polygon in [a, b] {
-        for i in 0..4 {
-            let edge = sub(polygon[(i + 1) % 4], polygon[i]);
-            let axis = [-edge[1], edge[0]];
-            let bounds = |points: &[Point; 4]| {
-                points
-                    .iter()
-                    .map(|p| dot(*p, axis))
-                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
-                        (lo.min(v), hi.max(v))
-                    })
-            };
-            let (amin, amax) = bounds(a);
-            let (bmin, bmax) = bounds(b);
-            if amax < bmin - EPS || bmax < amin - EPS {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-fn point_segment_distance(point: Point, a: Point, b: Point) -> f64 {
-    let ab = sub(b, a);
-    let length = dot(ab, ab);
-    let t = if length > EPS {
-        (dot(sub(point, a), ab) / length).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    distance(point, [a[0] + ab[0] * t, a[1] + ab[1] * t])
-}
-
-fn polygon_distance(a: &[Point; 4], b: &[Point; 4]) -> f64 {
-    if overlaps(a, b) {
-        return 0.0;
-    }
-    let mut best = f64::INFINITY;
-    for (vertices, edges) in [(a, b), (b, a)] {
-        for point in vertices {
-            for i in 0..4 {
-                best = best.min(point_segment_distance(*point, edges[i], edges[(i + 1) % 4]));
-            }
-        }
-    }
-    best
-}
-
 /// Same geometry and clearance rule as routing, used by revision impact plans.
 pub fn track_pad_clearance_conflict(track: &Track, pad: &WorldPad) -> bool {
     pad.on(track.layer)
         && track.net != pad.net
-        && polygon_distance(&track_polygon(track), &pad_polygon(pad)) < CLEARANCE_MM - EPS
+        && CopperRing::of_track(track).violates_clearance(&CopperRing::of_pad(pad))
 }
 
+/// Whether a track's copper touches a pad's exact outline on its layer.
 pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
-    pad.on(track.layer) && polygon_distance(&track_polygon(track), &pad_polygon(pad)) <= EPS
+    pad.on(track.layer) && CopperRing::of_track(track).touches(&CopperRing::of_pad(pad))
 }
 
-struct CopperShape {
-    net: Id,
-    layer: Layer,
-    /// A plated through-hole pad: copper on every layer.
-    through: bool,
-    polygon: [Point; 4],
-    label: String,
-    object: ObjectRef,
-    pad: Option<usize>,
-}
-
-/// Basic geometric connectivity and clearance checks. Pad membership in a net
-/// does not join separated copper: union happens only when same-layer polygons
-/// touch. No hidden interconnect through the component is assumed.
+/// Basic geometric connectivity and clearance checks over the exact pad
+/// outlines; see [`BoardCopper::checks`]. Callers holding a per-revision
+/// [`BoardCopper`] call that instead.
 pub fn checks(project: &Project) -> Vec<Finding> {
-    let mut issues = Vec::new();
-    for id in sync_preview(project) {
-        let reference = project
-            .instance(id)
-            .map(|i| i.designator.as_str())
-            .unwrap_or("component");
-        issues.push(Finding::new(
-            "board.unplaced",
-            format!("{reference} is not placed on the board"),
-            vec![ObjectRef::Instance { id }],
-        ));
-    }
-    let world_pads = pads(project);
-    let labels = pad_labels(project);
-    let mut shapes = world_pads
-        .iter()
-        .enumerate()
-        .map(|(i, pad)| CopperShape {
-            net: pad.net,
-            layer: pad.layer,
-            through: pad.through,
-            polygon: pad_polygon(pad),
-            label: format!(
-                "{} pad {}",
-                project
-                    .instance(pad.instance)
-                    .map(|i| i.designator.as_str())
-                    .unwrap_or("component"),
-                labels
-                    .get(&(pad.instance, pad.pad))
-                    .cloned()
-                    .unwrap_or_else(|| pad.pad.to_string())
-            ),
-            object: ObjectRef::Pad {
-                instance: pad.instance,
-                pad: pad.pad,
-            },
-            pad: Some(i),
-        })
-        .collect::<Vec<_>>();
-    shapes.extend(project.tracks.iter().map(|t| CopperShape {
-        net: t.net,
-        layer: t.layer,
-        through: false,
-        polygon: track_polygon(t),
-        label: format!("track {}", t.id),
-        object: ObjectRef::Track { id: t.id },
-        pad: None,
-    }));
-    let mut parents = (0..shapes.len()).collect::<Vec<_>>();
-    let mut pairs = 0usize;
-    for (i, a) in shapes.iter().enumerate() {
-        if a.polygon.iter().any(|p| !inside_board(project, *p)) {
-            issues.push(Finding::new(
-                "board.outside_outline",
-                format!("{} extends beyond board outline", a.label),
-                vec![a.object],
-            ));
-        }
-        for (j, b) in shapes.iter().enumerate().skip(i + 1) {
-            pairs += 1;
-            if pairs > MAX_CHECK_PAIRS {
-                issues.push(Finding::new(
-                    "board.check_limit",
-                    "Connectivity/clearance check limit reached; remaining geometry is unchecked"
-                        .into(),
-                    vec![],
-                ));
-                return issues;
-            }
-            if a.layer != b.layer && !a.through && !b.through {
-                continue;
-            }
-            let gap = polygon_distance(&a.polygon, &b.polygon);
-            if a.net == b.net && gap <= EPS {
-                union(&mut parents, i, j);
-            } else if a.net != b.net && gap < CLEARANCE_MM - EPS {
-                issues.push(Finding::new(
-                    "board.clearance",
-                    format!("Clearance < 0.2 mm: {} / {}", a.label, b.label),
-                    vec![a.object, b.object],
-                ));
-            }
-        }
-    }
-    let mut groups: BTreeMap<Id, BTreeSet<usize>> = BTreeMap::new();
-    for (i, shape) in shapes.iter().enumerate().filter(|(_, s)| s.pad.is_some()) {
-        groups
-            .entry(shape.net)
-            .or_default()
-            .insert(find(&parents, i));
-    }
-    for shape in &shapes {
-        if shape.pad.is_some() && groups.get(&shape.net).is_some_and(|g| g.len() > 1) {
-            issues.push(Finding::new(
-                "board.unrouted",
-                format!(
-                    "Unrouted: {} ({})",
-                    shape.label,
-                    project.net_name(shape.net)
-                ),
-                vec![shape.object, ObjectRef::Net { id: shape.net }],
-            ));
-        }
-    }
-    issues.extend(courtyard::findings(project));
-    issues
+    BoardCopper::of(project).checks(project)
 }
 
-fn find(parents: &[usize], mut at: usize) -> usize {
-    while parents.get(at).is_some_and(|p| *p != at) {
-        at = parents[at];
-    }
-    at
-}
-fn union(parents: &mut [usize], a: usize, b: usize) {
-    let a = find(parents, a);
-    let b = find(parents, b);
-    if let Some(parent) = parents.get_mut(b) {
-        *parent = a;
-    }
-}
-
-/// Airwires connect physically disconnected copper islands. The bounded scan
-/// conservatively leaves extra guides when it cannot prove connectivity.
+/// Airwires between physically disconnected copper islands; see
+/// [`BoardCopper::airwires`].
 pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
-    let world = pads(project);
-    let shapes = world
-        .iter()
-        .map(|p| (p.net, p.layer, p.through, pad_polygon(p)))
-        .chain(
-            project
-                .tracks
-                .iter()
-                .map(|t| (t.net, t.layer, false, track_polygon(t))),
-        )
-        .collect::<Vec<_>>();
-    let mut parents = (0..shapes.len()).collect::<Vec<_>>();
-    let mut pairs = 0usize;
-    'scan: for (i, a) in shapes.iter().enumerate() {
-        for (j, b) in shapes.iter().enumerate().skip(i + 1) {
-            pairs += 1;
-            if pairs > MAX_CHECK_PAIRS {
-                break 'scan;
-            }
-            if a.0 == b.0 && (a.1 == b.1 || a.2 || b.2) && polygon_distance(&a.3, &b.3) <= EPS {
-                union(&mut parents, i, j);
-            }
-        }
-    }
-    let mut islands: BTreeMap<Id, BTreeMap<usize, usize>> = BTreeMap::new();
-    for (i, pad) in world.iter().enumerate() {
-        islands
-            .entry(pad.net)
-            .or_default()
-            .entry(find(&parents, i))
-            .or_insert(i);
-    }
-    let mut result = Vec::new();
-    for representatives in islands.values() {
-        let ids = representatives.values().copied().collect::<Vec<_>>();
-        for pair in ids.windows(2) {
-            result.push((world[pair[0]].clone(), world[pair[1]].clone()));
-        }
-    }
-    result
+    BoardCopper::of(project).airwires(&project.tracks)
 }
 
 #[cfg(test)]

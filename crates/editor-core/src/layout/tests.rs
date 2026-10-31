@@ -557,3 +557,264 @@ fn board_checks_label_pads_by_number() -> Result<()> {
     );
     Ok(())
 }
+
+/// Give every demo pad `shape` (both resistors share the footprint).
+fn with_pad_shape(mut project: Project, shape: PadShape) -> Project {
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.shape = shape.clone();
+    }
+    project
+}
+
+fn circle() -> PadShape {
+    PadShape::Circle { diameter: 1.0 }
+}
+
+fn square() -> PadShape {
+    PadShape::Rect { size: [1.0, 1.0] }
+}
+
+fn shared_track(start: Point, end: Point) -> LayoutCommand {
+    LayoutCommand::Route {
+        request: RouteRequest {
+            start,
+            end,
+            ..request()
+        },
+    }
+}
+
+#[test]
+fn clearance_measures_a_round_pad_not_its_extent() -> Result<()> {
+    // R1 pad 1 (another net) sits at (8.8, 10). A shared-net track passes
+    // its upper-right corner diagonally 0.1 mm out in x and y: 0.141 mm
+    // from a square land, 0.349 mm from a round one of the same extent.
+    let pass = shared_track([9.4, 10.75], [11.2, 10.75]);
+    let mut square_board = with_pad_shape(fixture()?, square());
+    let before = square_board.clone();
+    assert!(apply(&mut square_board, pass.clone()).is_err());
+    assert_eq!(square_board, before, "a rejected route changes nothing");
+    let mut round_board = with_pad_shape(fixture()?, circle());
+    apply(&mut round_board, pass)?;
+    assert!(
+        !checks(&round_board)
+            .iter()
+            .any(|f| f.code == "board.clearance"),
+        "{:?}",
+        checks(&round_board)
+    );
+    Ok(())
+}
+
+#[test]
+fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
+    // A horizontal 0.3 mm track above R1 pad 1 (r 0.5 at (8.8, 10)):
+    // its lower edge is 0.21 mm, then 0.19 mm, from the circle.
+    let at = |gap: f64| 10.0 + 0.5 + gap + 0.15;
+    let mut project = with_pad_shape(fixture()?, circle());
+    let before = project.clone();
+    assert!(
+        apply(
+            &mut project,
+            shared_track([7.0, at(0.19)], [11.2, at(0.19)])
+        )
+        .is_err()
+    );
+    assert_eq!(project, before);
+    apply(
+        &mut project,
+        shared_track([7.0, at(0.21)], [11.2, at(0.21)]),
+    )?;
+    let track = project.tracks[0].clone();
+    let pad = pads(&project)
+        .into_iter()
+        .find(|p| p.net == R1_1)
+        .ok_or_else(|| Error::NotFound("R1 pad 1".into()))?;
+    assert!(!track_pad_clearance_conflict(&track, &pad));
+    assert!(!track_touches_pad(&track, &pad));
+    Ok(())
+}
+
+#[test]
+fn connectivity_follows_the_pad_outline_into_corners() -> Result<()> {
+    // The track ends at R1 pad 2's corner region (11.65, 10.3–10.6): inside
+    // a square land, 0.041 mm outside a round one.
+    let route = shared_track([23.8, 10.45], [11.65, 10.45]);
+    let mut square_board = with_pad_shape(fixture()?, square());
+    apply(&mut square_board, route.clone())?;
+    assert!(airwires(&square_board).is_empty());
+    let mut round_board = with_pad_shape(fixture()?, circle());
+    apply(&mut round_board, route)?;
+    assert_eq!(airwires(&round_board).len(), 1);
+    assert_eq!(
+        checks(&round_board)
+            .iter()
+            .filter(|f| f.code == "board.unrouted")
+            .count(),
+        2,
+        "both shared-net pads report the open connection"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_track_tangent_to_round_pads_connects_them_and_a_small_gap_does_not() -> Result<()> {
+    // The track's lower edge at y = 10.5 is tangent to both shared-net
+    // circles; flattening must not open that contact.
+    let mut tangent = with_pad_shape(fixture()?, circle());
+    apply(&mut tangent, shared_track([11.2, 10.65], [23.8, 10.65]))?;
+    assert!(airwires(&tangent).is_empty(), "{:?}", checks(&tangent));
+    let mut apart = with_pad_shape(fixture()?, circle());
+    apply(&mut apart, shared_track([11.2, 10.66], [23.8, 10.66]))?;
+    assert_eq!(airwires(&apart).len(), 1);
+    Ok(())
+}
+
+#[test]
+fn board_outlines_match_the_placed_pad_outlines() -> Result<()> {
+    use crate::library::{CornerMask, Outline, Segment};
+    let shapes = [
+        PadShape::Rect { size: [1.0, 0.6] },
+        PadShape::RoundRect {
+            size: [1.2, 0.8],
+            radius_ratio: 0.25,
+            max_radius: None,
+            corners: CornerMask::ALL,
+        },
+        PadShape::Oblong { size: [1.4, 0.7] },
+        // Neither symmetric about the pad's x-axis: the bottom side must
+        // mirror them, not only turn them.
+        PadShape::RoundRect {
+            size: [1.2, 0.8],
+            radius_ratio: 0.5,
+            max_radius: None,
+            corners: CornerMask {
+                top_left: true,
+                top_right: true,
+                bottom_right: false,
+                bottom_left: false,
+            },
+        },
+        PadShape::Custom {
+            outline: Outline {
+                start: [-0.5, -0.4],
+                segments: vec![
+                    Segment::Line { to: [0.5, -0.4] },
+                    Segment::Arc {
+                        to: [0.5, 0.4],
+                        bulge: 0.5,
+                    },
+                    Segment::Line { to: [-0.2, 0.4] },
+                    Segment::Line { to: [-0.5, -0.4] },
+                ],
+            },
+        },
+    ];
+    for shape in shapes {
+        let mut project = with_pad_shape(fixture()?, shape.clone());
+        let footprint = &mut project.library.footprints[0].definition;
+        footprint.datum.rotation_deg = 30.0;
+        footprint.datum.offset = [0.3, -0.2];
+        footprint.pads[0].rotation_deg = 15.0;
+        apply(
+            &mut project,
+            LayoutCommand::Move {
+                instance: ids()?.0,
+                position: [20.0, 20.0],
+                rotation_deg: 70.0,
+                layer: Layer::Bottom,
+            },
+        )?;
+        let placed = placed_pads(&project);
+        for pad in pads(&project) {
+            let exact = placed
+                .iter()
+                .find(|p| p.instance == pad.instance && p.pad.id == pad.pad)
+                .ok_or_else(|| Error::NotFound("placed pad".into()))?;
+            // The same land; the bottom-side placed outline runs the other
+            // way round (it is mirrored), so compare as point sets.
+            let a = pad.outline().flatten(CURVE_SLACK_MM);
+            let b = exact.outline().flatten(CURVE_SLACK_MM);
+            assert_eq!(a.len(), b.len(), "{shape:?}");
+            for p in &a {
+                assert!(
+                    b.iter()
+                        .any(|q| (p[0] - q[0]).abs() < 1e-9 && (p[1] - q[1]).abs() < 1e-9),
+                    "{shape:?}: {p:?} is not on the placed outline"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn moved_copper_gives_the_same_airwires_as_a_moved_placement() -> Result<()> {
+    let mut project = with_pad_shape(fixture()?, circle());
+    apply(&mut project, shared_track([11.2, 10.0], [23.8, 10.0]))?;
+    let copper = BoardCopper::of(&project);
+    assert_eq!(copper.airwires(&project.tracks), airwires(&project));
+    assert!(copper.airwires(&project.tracks).is_empty());
+    let r2 = ids()?.1;
+    for delta in [[0.0, 0.3], [0.0, 0.7], [1.0, -2.0]] {
+        let mut candidate = project.clone();
+        for placement in &mut candidate.placements {
+            if placement.instance == r2 {
+                placement.position = [
+                    placement.position[0] + delta[0],
+                    placement.position[1] + delta[1],
+                ];
+            }
+        }
+        let preview = copper.moved(r2, delta);
+        assert_eq!(preview.pads(), BoardCopper::of(&candidate).pads());
+        assert_eq!(
+            preview.airwires(&candidate.tracks),
+            airwires(&candidate),
+            "{delta:?}"
+        );
+    }
+    // Moved up 0.3 mm the round pad still overlaps the track's upper edge
+    // (y 10.15); at 0.7 mm it clears it by 0.05 mm, where the old 1.4 mm
+    // tall extent would still have connected.
+    assert!(
+        copper
+            .moved(r2, [0.0, 0.3])
+            .airwires(&project.tracks)
+            .is_empty()
+    );
+    assert_eq!(
+        copper.moved(r2, [0.0, 0.7]).airwires(&project.tracks).len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn copper_ring_gaps_are_exact_for_straight_edges_and_bounded_for_curves() {
+    let square = CopperRing::of_shape(&Shape::rect([0.0, 0.0], [1.0, 1.0]), false);
+    let beside = CopperRing::of_shape(&Shape::rect([1.2, 0.0], [2.0, 1.0]), false);
+    assert!((square.gap(&beside, 1.0) - 0.2).abs() < 1e-12);
+    assert!(!square.violates_clearance(&beside), "exact boundary passes");
+    let disc = |x: f64| {
+        CopperRing::of_shape(
+            &Shape::Circle {
+                center: [x, 0.5],
+                radius: 0.5,
+            },
+            true,
+        )
+    };
+    // Exact gap 0.25 from the square's right edge.
+    let gap = square.gap(&disc(1.75), 1.0);
+    assert!((0.25..=0.25 + CURVE_SLACK_MM).contains(&gap), "{gap}");
+    assert!(!square.violates_clearance(&disc(1.75)));
+    assert!(square.violates_clearance(&disc(1.65)));
+    assert!(square.touches(&disc(1.5)), "tangent");
+    assert!(!square.touches(&disc(1.51)));
+    // Bounds alone settle distant pairs.
+    assert!(square.gap(&disc(9.0), 0.3) >= 0.3);
+    let empty = CopperRing::of_shape(&Shape::polygon(Vec::new()), false);
+    assert_eq!(square.gap(&empty, 1.0), f64::INFINITY);
+    assert!(empty.inside([1.0, 1.0]));
+}
