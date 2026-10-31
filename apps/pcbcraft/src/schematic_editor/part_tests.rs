@@ -201,3 +201,74 @@ fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
     assert_eq!(editor.header(&engine).title, "Sheet");
     Ok(())
 }
+
+/// Place takes the card over from Resolve parts: only one ribbon tool is
+/// active and the properties show the palette, not the Resolve card.
+#[test]
+fn place_closes_resolve_parts() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = SchematicEditor::default();
+    editor.on_tool("resolve", &engine);
+    assert!(editor.resolve.is_open());
+    editor.on_tool("place", &engine);
+    assert!(!editor.resolve.is_open());
+    assert!(editor.palette.is_open());
+    assert_eq!(editor.header(&engine).title, "Place part");
+    let ribbon = editor.ribbon(&engine);
+    let active: Vec<&str> = ribbon
+        .groups
+        .iter()
+        .flat_map(|g| &g.tools)
+        .filter(|t| t.selected)
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(active, ["place"]);
+    Ok(())
+}
+
+/// A group whose Part disagrees says so: the card names the current Part
+/// and its finding, and the BOM line leads with its state.
+#[test]
+fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestResult {
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let (mut engine, _, r1, _) = engine_with_part()?;
+    let field = engine
+        .project()
+        .instance(r1)
+        .and_then(|i| instances::requirements(&engine.project().library, i).ok())
+        .and_then(|r| r.first().map(|r| r.field))
+        .ok_or("R1 has a value")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SetProperties {
+            instance: r1,
+            edits: vec![PropertyEdit {
+                field: field.id,
+                input: PropertyInput::Text("22k".into()),
+            }],
+        }),
+    )?;
+    let mut editor = SchematicEditor::default();
+    editor.on_tool("resolve", &engine);
+    let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let texts: Vec<&str> = shown.iter().map(|(t, _)| t.as_str()).collect();
+    assert!(texts.contains(&"Current part"), "{texts:?}");
+    assert!(
+        texts.iter().any(|t| t.contains("is not met by")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.starts_with("R1: unresolved")),
+        "{texts:?}"
+    );
+    assert!(texts.contains(&"New Part…"), "{texts:?}");
+    // New Part… asks the app to open the component's Parts editor with
+    // the group's values.
+    click(&mut editor, &engine, &ctx, "New Part…")?;
+    let (component, values) = editor.take_new_part().ok_or("no request")?;
+    let instance = engine.project().instance(r1).ok_or("R1")?;
+    assert_eq!(component, instance.component.id);
+    assert!(values.iter().any(|(f, _)| f.id == field.id));
+    Ok(())
+}

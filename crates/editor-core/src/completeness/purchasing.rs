@@ -153,8 +153,8 @@ struct Row<'a> {
     report: PurchasingReport,
     requirements: Vec<Requirement>,
     footprint: Option<FootprintRef>,
-    /// The requirements with presentation removed (display units), so equal
-    /// values group together.
+    /// The requirements with presentation and the Part-derived nominal
+    /// removed, so equal values group together.
     key: String,
 }
 
@@ -172,6 +172,9 @@ fn rows(project: &Project) -> Result<Vec<Row<'_>>> {
                     *display_unit = None;
                 }
                 r.label.clear();
+                // Derived from the pinned Part's tolerance basis, not a
+                // requirement of the instance.
+                r.nominal = None;
                 r
             })
             .collect();

@@ -20,8 +20,8 @@ use pcbcraft_core::library::{
     MAX_OFFERS, MAX_REFERENCES, PartDefinition, Provenance, Reference, ReferenceKind,
 };
 use pcbcraft_core::{
-    BindingRef, ComponentRef, DefinitionId, Engine, LibraryCommand, Operation, PartRef, Query,
-    QueryResult, Stage,
+    BindingRef, ComponentRef, DefinitionId, Engine, FieldRef, LibraryCommand, Operation, PartRef,
+    Query, QueryResult, Stage,
 };
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
@@ -153,6 +153,15 @@ pub struct PartProps {
     specs: BTreeMap<DefinitionId, FieldText>,
     findings: Option<(u64, DefinitionId, Vec<String>)>,
     notice: String,
+    /// Fields added under Rated values that have no value typed yet. They
+    /// join the draft once their text parses.
+    pending: Vec<(FieldRef, SpecMeaning)>,
+    /// Publish was pressed for the open draft: show its findings even
+    /// before anything was typed.
+    tried: Option<DefinitionId>,
+    /// A New Part was requested from the schematic (Resolve parts): draft
+    /// one as soon as the component's pins are known, with these values.
+    prefill: Option<Vec<(FieldRef, fields::FieldValue)>>,
 }
 
 /// Part drafts and published Parts of one component lineage, by lineage.
@@ -319,7 +328,45 @@ fn optional_row(ui: &mut Ui, label: &str, value: &mut Option<String>, hint: &str
     }
 }
 
+/// `new_part` with requested values in place of the component defaults,
+/// for every field the component selects.
+fn prefilled(
+    set: &WorkingSet,
+    pins: &Pins,
+    library: &Library,
+    values: &[(FieldRef, fields::FieldValue)],
+) -> PartDefinition {
+    let mut part = new_part(set, pins);
+    for (field, value) in values {
+        let Some(selection) = set.component.fields.iter().find(|f| f.field.id == field.id) else {
+            continue;
+        };
+        let meaning = library
+            .field_view(selection.field)
+            .map_or(SpecMeaning::ExactNominal, |v| {
+                default_meaning(&v.field.definition.value_type)
+            });
+        let full = part.specs.len() >= MAX_RATED_SPECS;
+        match part.specs.iter_mut().find(|s| s.field.id == field.id) {
+            Some(spec) => spec.value = value.clone(),
+            None if !full => part.specs.push(RatedSpec {
+                field: selection.field,
+                value: value.clone(),
+                meaning,
+            }),
+            None => {}
+        }
+    }
+    part
+}
+
 impl PartProps {
+    /// Draft a new Part with `values` as its rated values once the section
+    /// is shown with known pins.
+    pub fn request_new(&mut self, values: Vec<(FieldRef, fields::FieldValue)>) {
+        self.prefill = Some(values);
+    }
+
     /// Reload the working copy when the engine's drafts changed.
     fn sync(&mut self, engine: &Engine, component: DefinitionId) {
         let current = Arc::clone(&engine.document().drafts);
@@ -535,17 +582,22 @@ impl PartProps {
             }
             kit::actions(ui, |ui| {
                 let enabled = pins.is_some();
-                if ui_kit::button(ui, "New Part", Button::Enabled(enabled))
+                let clicked = ui_kit::button(ui, "New Part", Button::Enabled(enabled))
                     .on_hover_text("Draft a manufacturer part of this component")
-                    .clicked()
+                    .clicked();
+                let requested = enabled && self.prefill.is_some() && !self.awaiting;
+                if (clicked || requested)
                     && let Some(pins) = &pins
                 {
+                    let values = self.prefill.take().unwrap_or_default();
                     self.creating = true;
                     self.awaiting = true;
                     action = Some(PartsAction::Apply(Box::new(Operation::Library(
                         LibraryCommand::NewDraft {
                             meta: DefinitionMeta::default(),
-                            definition: Definition::Part(Box::new(new_part(set, pins))),
+                            definition: Definition::Part(Box::new(prefilled(
+                                set, pins, library, &values,
+                            ))),
                         },
                     ))))
                 }
@@ -567,6 +619,10 @@ impl PartProps {
         }
         let findings = self.findings(engine);
         let notice = std::mem::take(&mut self.notice);
+        let tried = self
+            .draft
+            .as_ref()
+            .is_some_and(|d| Some(d.id) == self.tried);
         let Some(edit) = &mut self.draft else {
             return action;
         };
@@ -582,20 +638,34 @@ impl PartProps {
         } else {
             format!("Part · {}", edit.part.mpn)
         };
+        // Findings wait until the author typed an identity or tried to
+        // publish; the name finding repeats the MPN one while the name
+        // follows the MPN.
+        let typed = !edit.part.mpn.trim().is_empty() || !edit.part.manufacturer.trim().is_empty();
+        let follows = edit.meta.name == edit.part.mpn.trim();
+        let shown: Vec<&String> = findings
+            .iter()
+            .filter(|_| typed || tried)
+            .filter(|m| !(follows && m.contains("printable name")))
+            .take(4)
+            .collect();
         kit::section(ui, "part-identity", &title, true, None, |ui| {
-            for message in findings.iter().take(4) {
+            for message in shown {
                 kit::status(ui, message, Tone::Error);
             }
             if !notice.is_empty() {
                 kit::status(ui, &notice, Tone::Note);
             }
-            kit::checked_text_row(ui, "Maker", &mut edit.part.manufacturer, "ExampleCo", false)
-                .on_hover_text("The manufacturer's name, as text");
-            let mpn =
-                kit::checked_text_row(ui, "MPN", &mut edit.part.mpn, "EX-R0603-10K0-F", false)
-                    .on_hover_text(
-                        "The complete manufacturer part number, ordering suffixes included",
-                    );
+            kit::checked_text_row(
+                ui,
+                "Maker",
+                &mut edit.part.manufacturer,
+                "Manufacturer",
+                false,
+            )
+            .on_hover_text("The manufacturer's name, as text");
+            let mpn = kit::checked_text_row(ui, "MPN", &mut edit.part.mpn, "Full MPN", false)
+                .on_hover_text("The complete manufacturer part number, ordering suffixes included");
             if mpn.changed() {
                 edit.meta.name = edit.part.mpn.trim().to_owned();
             }
@@ -609,11 +679,23 @@ impl PartProps {
                 |c| format!("{} · {}", c.meta.name, edit.part.component.revision),
             );
             kit::value_row(ui, "Implements", &component);
-            kit::value_row(ui, "Binding", &edit.part.binding.revision.to_string());
+            let footprint = if library.binding(edit.part.binding).is_some() {
+                pcbcraft_core::instances::binding_name(library, edit.part.binding)
+            } else {
+                format!("{} · pending", edit.part.binding.revision)
+            };
+            kit::value_row(ui, "Footprint", &footprint);
+            let next = |r: PartRef| {
+                r.revision
+                    .next()
+                    .map_or_else(String::new, |n| n.to_string())
+            };
             let revision = match published {
                 None => "Draft · new".to_owned(),
-                Some(r) if unpublished => format!("{} · unpublished edits", r.revision),
-                Some(r) => format!("{} · published", r.revision),
+                Some(r) if unpublished => {
+                    format!("{} · unpublished edits → {}", r.revision, next(r))
+                }
+                Some(r) => format!("{} · published; edits create {}", r.revision, next(r)),
             };
             kit::value_row(ui, "Revision", &revision);
             if let Some(pins) = &pins
@@ -637,11 +719,20 @@ impl PartProps {
                     .on_hover_text("Publish the Part as a new immutable revision")
                     .clicked();
                 discard = ui_kit::button(ui, "Discard", Button::Normal)
-                    .on_hover_text("Drop this Part draft")
+                    .on_hover_text(match published {
+                        Some(r) => format!(
+                            "Drop this draft; the published {} stays as it is",
+                            r.revision
+                        ),
+                        None => "Drop this new Part draft".to_owned(),
+                    })
                     .clicked();
             });
         });
-        Self::specs_section(ui, library, set, edit, &mut self.specs);
+        if publish {
+            self.tried = Some(edit.id);
+        }
+        Self::specs_section(ui, library, set, edit, &mut self.specs, &mut self.pending);
         Self::references_section(ui, &mut edit.part);
         Self::offers_section(ui, &mut edit.part);
         Self::provenance_section(ui, &mut edit.part);
@@ -732,10 +823,18 @@ impl PartProps {
         set: &WorkingSet,
         edit: &mut Edit,
         buffers: &mut BTreeMap<DefinitionId, FieldText>,
+        pending: &mut Vec<(FieldRef, SpecMeaning)>,
     ) {
         let part = &mut edit.part;
-        buffers.retain(|lineage, _| part.specs.iter().any(|s| s.field.id == *lineage));
-        let count = part.specs.len();
+        pending.retain(|(field, _)| {
+            !part.specs.iter().any(|s| s.field.id == field.id)
+                && set.component.fields.iter().any(|f| f.field.id == field.id)
+        });
+        buffers.retain(|lineage, _| {
+            part.specs.iter().any(|s| s.field.id == *lineage)
+                || pending.iter().any(|(f, _)| f.id == *lineage)
+        });
+        let count = part.specs.len() + pending.len();
         kit::section(ui, "part-specs", "Rated values", true, Some(count), |ui| {
             let mut remove = None;
             for index in 0..part.specs.len() {
@@ -801,6 +900,75 @@ impl PartProps {
             {
                 part.specs.remove(index);
             }
+            // Added fields without a value yet: typed text that parses
+            // joins the draft.
+            let mut drop = None;
+            let mut filled = None;
+            for (index, (field, meaning)) in pending.iter_mut().enumerate() {
+                let Some(view) = library.field_view(*field) else {
+                    continue;
+                };
+                if index > 0 || !part.specs.is_empty() {
+                    kit::rule(ui);
+                }
+                ui.push_id(("pending-spec", field.id), |ui| {
+                    let buffer = buffers
+                        .entry(field.id)
+                        .or_insert_with(|| FieldText::new(String::new()));
+                    let response = kit::row(ui, &view.field.meta.name, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui_kit::button(ui, "Remove", Button::Small)
+                                .on_hover_text("Remove this rated value")
+                                .clicked()
+                            {
+                                drop = Some(index);
+                            }
+                            ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
+                            kit::text_field(
+                                ui,
+                                "spec",
+                                &mut buffer.text,
+                                "type the rated value",
+                                false,
+                            )
+                            .on_hover_text("The rated value, typed as the field reads it")
+                        })
+                        .inner
+                    });
+                    match parse_spec(&buffer.text, &view) {
+                        Ok(value) if response.changed() || response.lost_focus() => {
+                            buffer.loaded = fields::display(
+                                &value,
+                                &view.field.definition.value_type,
+                                view.kind_body(),
+                            );
+                            filled = Some((index, value));
+                        }
+                        Err(error) if !buffer.text.trim().is_empty() => {
+                            kit::status(ui, &error, Tone::Error);
+                        }
+                        _ => {
+                            kit::note(ui, "Not part of the draft until a value is typed.");
+                        }
+                    }
+                    let options = meanings(&view.field.definition.value_type);
+                    kit::choice_row(ui, "Meaning", meaning, &options);
+                });
+            }
+            if let Some((index, value)) = filled
+                && index < pending.len()
+            {
+                let (field, meaning) = pending.remove(index);
+                part.specs.push(RatedSpec {
+                    field,
+                    value,
+                    meaning,
+                });
+            } else if let Some(index) = drop
+                && index < pending.len()
+            {
+                pending.remove(index);
+            }
             if count > 0 {
                 kit::rule(ui);
             }
@@ -809,13 +977,21 @@ impl PartProps {
                 .fields
                 .iter()
                 .filter(|f| !part.specs.iter().any(|s| s.field.id == f.field.id))
+                .filter(|f| !pending.iter().any(|(p, _)| p.id == f.field.id))
                 .filter_map(|f| Some((f.field, f.default.clone(), library.field_view(f.field)?)))
                 .collect();
+            const ADD_FIELD: &str = "To rate another property (a tolerance, a power or voltage rating), add the field to the component under Fields → Add field.";
             if set.component.fields.is_empty() {
-                kit::note(ui, "Select fields on the component to rate them here.");
+                kit::note(
+                    ui,
+                    "The component selects no fields yet. Add them under Fields → Add field to rate them here.",
+                );
             } else if addable.is_empty() {
-                kit::note(ui, "Every field of the component has a rated value.");
-            } else if part.specs.len() < MAX_RATED_SPECS {
+                kit::note(
+                    ui,
+                    &format!("Every field of the component has a rated value. {ADD_FIELD}"),
+                );
+            } else if part.specs.len() + pending.len() < MAX_RATED_SPECS {
                 let mut chosen = None;
                 kit::row(ui, "Add value", |ui| {
                     kit::dropdown_menu(ui, "add-spec", "Choose a field", |ui| {
@@ -838,15 +1014,11 @@ impl PartProps {
                         value,
                         meaning,
                     }),
-                    Some((_, None, _)) => {
-                        kit::status(
-                            ui,
-                            "Give the field a component default first; a rated value needs a value.",
-                            Tone::Warning,
-                        );
-                    }
+                    // No default to start from: an empty row to type into.
+                    Some((field, None, meaning)) => pending.push((field, meaning)),
                     None => {}
                 }
+                kit::note(ui, ADD_FIELD);
             }
         });
     }
@@ -881,19 +1053,14 @@ impl PartProps {
                             false,
                         );
                         optional_row(ui, "Link", &mut reference.url, "https://…");
-                        optional_row(
-                            ui,
-                            "Document rev.",
-                            &mut reference.document_revision,
-                            "Rev. A",
-                        );
+                        optional_row(ui, "Doc rev", &mut reference.document_revision, "Rev. A");
                         optional_row(ui, "Licence", &mut reference.licence, "None stated");
                         let mut asset = reference.asset.clone().unwrap_or_default();
                         let invalid = !asset.is_empty()
                             && (asset.len() != 64 || !asset.bytes().all(|b| b.is_ascii_hexdigit()));
                         if kit::checked_text_row(
                             ui,
-                            "Copy SHA-256",
+                            "Copy",
                             &mut asset,
                             "No attached copy",
                             invalid,

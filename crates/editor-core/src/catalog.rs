@@ -17,7 +17,10 @@ pub use query::{
 };
 
 use crate::diagnostics::{Error, Result};
-use crate::fields::{self, FieldSelection, FieldValue, SpecMeaning};
+use crate::fields::{
+    self, FieldSelection, FieldValue, RatedSpec, Requirement, SpecMeaning, ToleranceBasis,
+    ValueType,
+};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, PartRef,
     Revision, SymbolRef,
@@ -92,6 +95,21 @@ pub struct EntryField {
     /// `±1%`. Explicit comparisons keep their literal meaning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meaning: Option<SpecMeaning>,
+    /// On a Part entry, what `fields::satisfies` needs to compare the rated
+    /// value with a query predicate.
+    #[serde(skip)]
+    pub rated: Option<RatedReading>,
+}
+
+/// A Part's rated value as `fields::satisfies` reads it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RatedReading {
+    pub spec: RatedSpec,
+    /// The value type of the spec's own field revision.
+    pub value_type: ValueType,
+    /// For a tolerance: the Part's one rated quantity in the absolute
+    /// basis's quantity kind, the nominal a cross-basis comparison needs.
+    pub nominal: Option<f64>,
 }
 
 /// One searchable lineage.
@@ -228,19 +246,21 @@ fn part_entry(
         .iter()
         .filter_map(|spec| {
             let view = library.field_view(spec.field)?;
+            let value_type = view.field.definition.value_type.clone();
             Some(EntryField {
                 field: spec.field.id,
                 label: view.field.meta.name.clone(),
-                text: fields::display(
-                    &spec.value,
-                    &view.field.definition.value_type,
-                    view.kind_body(),
-                ),
+                text: fields::display(&spec.value, &value_type, view.kind_body()),
                 value: spec.value.clone(),
                 shown: component
                     .and_then(|c| c.field(spec.field.id))
                     .is_some_and(|s| s.show_on_symbol),
                 meaning: Some(spec.meaning),
+                rated: Some(RatedReading {
+                    nominal: rated_nominal(library, part, spec, &value_type),
+                    spec: spec.clone(),
+                    value_type,
+                }),
             })
         })
         .collect();
@@ -296,7 +316,47 @@ fn entry_field(library: &Library, selection: &FieldSelection) -> Option<EntryFie
         value,
         shown: selection.show_on_symbol,
         meaning: None,
+        rated: None,
     })
+}
+
+/// The nominal a rated tolerance applies to: the Part's one rated quantity
+/// measured in the absolute basis's quantity kind (the spec's own basis or
+/// that of the field's latest revision).
+fn rated_nominal(
+    library: &Library,
+    part: &PartDefinition,
+    spec: &RatedSpec,
+    value_type: &ValueType,
+) -> Option<f64> {
+    let absolute = |t: &ValueType| match t {
+        ValueType::Tolerance {
+            basis: ToleranceBasis::Absolute { kind },
+        } => Some(kind.id),
+        _ => None,
+    };
+    let latest = library
+        .latest(spec.field.id)
+        .and_then(|(_, revision)| {
+            library.field_view(crate::ids::FieldRef::new(spec.field.id, revision))
+        })
+        .and_then(|v| absolute(&v.field.definition.value_type));
+    let kind = absolute(value_type).or(latest)?;
+    let mut measured = part.specs.iter().filter_map(|s| {
+        let view = library.field_view(s.field)?;
+        match (&view.field.definition.value_type, &s.value) {
+            (ValueType::Quantity { kind: k, .. }, FieldValue::Quantity { si, .. })
+                if k.id == kind && s.meaning == SpecMeaning::ExactNominal =>
+            {
+                Some(*si)
+            }
+            _ => None,
+        }
+    });
+    match (measured.next(), measured.next()) {
+        (Some(si), None) => Some(si),
+        _ => None,
+    }
 }
 
 /// Every component lineage of the project, then every Part lineage:
@@ -452,34 +512,77 @@ fn field_hit(entry: &CatalogEntry, test: &FieldTest) -> bool {
     entry
         .fields
         .iter()
-        .any(|f| f.field == test.field && meets(f, &test.test))
+        .any(|f| f.field == test.field && meets(f, test))
 }
 
 /// A test on one entry value. On a Part's rated value an equality (`:` or a
-/// bare value) means "meets", through the spec's meaning, as
-/// `fields::satisfies` reads it; other operators keep their literal sense.
-fn meets(field: &EntryField, test: &Test) -> bool {
-    match (field.meaning, test) {
-        (Some(SpecMeaning::MinimumRating), Test::Compare { op: Op::Eq, value }) => Test::Compare {
-            op: Op::Ge,
-            value: *value,
+/// bare value) means "meets", decided by `fields::satisfies` exactly as
+/// `instance.assign_part` and purchasing decide it; other operators keep
+/// their literal sense.
+fn meets(field: &EntryField, test: &FieldTest) -> bool {
+    let Some(rated) = &field.rated else {
+        return test.test.accepts(&field.value);
+    };
+    match requirement_of(field, rated, test) {
+        Some(requirement) => requirement
+            .satisfied_by(&rated.spec, &rated.value_type)
+            .is_empty(),
+        None => test.test.accepts(&field.value),
+    }
+}
+
+/// The requirement an equality predicate states, read in the predicate's
+/// value type; `None` for explicit comparisons and text, which keep their
+/// literal meaning.
+fn requirement_of(
+    field: &EntryField,
+    rated: &RatedReading,
+    test: &FieldTest,
+) -> Option<Requirement> {
+    let value_type = test
+        .value_type
+        .clone()
+        .unwrap_or_else(|| rated.value_type.clone());
+    let value = match (&test.test, &value_type) {
+        (Test::Compare { op: Op::Eq, value }, ValueType::Quantity { .. }) => FieldValue::Quantity {
+            si: *value,
+            display_unit: None,
+        },
+        (Test::Compare { op: Op::Eq, value }, ValueType::Integer { .. })
+            if value.fract() == 0.0 && value.abs() < 9.0e15 =>
+        {
+            FieldValue::Integer(*value as i64)
         }
-        .accepts(&field.value),
+        (Test::Compare { op: Op::Eq, value }, ValueType::Range { .. }) => FieldValue::Range {
+            min: *value,
+            max: *value,
+        },
+        (Test::Between { min, max }, ValueType::Range { .. }) => FieldValue::Range {
+            min: *min,
+            max: *max,
+        },
         (
-            Some(SpecMeaning::MaximumTolerance),
             Test::Tolerance {
                 op: Op::Eq,
                 minus,
                 plus,
             },
-        ) => Test::Tolerance {
-            op: Op::Le,
+            ValueType::Tolerance { .. },
+        ) => FieldValue::Tolerance {
             minus: *minus,
             plus: *plus,
-        }
-        .accepts(&field.value),
-        _ => test.accepts(&field.value),
-    }
+        },
+        (Test::Choice { choice }, ValueType::Enum { .. }) => FieldValue::Enum(*choice),
+        (Test::Boolean { value }, ValueType::Boolean) => FieldValue::Boolean(*value),
+        _ => return None,
+    };
+    Some(Requirement {
+        field: rated.spec.field,
+        label: field.label.clone(),
+        value,
+        value_type,
+        nominal: rated.nominal,
+    })
 }
 
 /// The worst tier over the text terms, or `None` when a term fails.

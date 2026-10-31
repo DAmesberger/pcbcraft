@@ -8,7 +8,7 @@ use crate::diagnostics::{Error, Result};
 use crate::fields::{EffectiveField, PropertyEdit, PropertyInput};
 use crate::functions::{Function, FunctionEdit, TerminalFunctions};
 use crate::ids::{
-    ComponentRef, DefinitionId, Endpoint, FunctionId, GraphicId, Id, TerminalId, UnitId,
+    ComponentRef, DefinitionId, Endpoint, FunctionId, GraphicId, Id, PartRef, TerminalId, UnitId,
 };
 use crate::instances::{self, Regroup, Resolved, UnitCarry};
 pub use crate::instances::{RegroupAction, UnitTarget};
@@ -96,6 +96,11 @@ pub enum PartAction {
     Keep,
     /// Clear the Part; the instance becomes generic.
     Clear,
+    /// Assign this Part, which must agree with the instance at the target
+    /// revision (as `instance.assign_part` requires); otherwise the whole
+    /// update is refused. This is how a Part published for a newer
+    /// component revision is assigned together with the update.
+    Assign { part: PartRef },
 }
 
 /// An explicit decision for a terminal whose selected function the target
@@ -455,7 +460,7 @@ fn revise_instance(
             functions,
         },
     )?;
-    let clear = resolutions
+    let action = resolutions
         .parts
         .iter()
         .filter(|r| r.instance == id)
@@ -464,16 +469,36 @@ fn revise_instance(
                 "{name}: the update names its Part twice."
             ))),
             None => Ok(Some(r.action)),
-        })?
-        == Some(PartAction::Clear);
-    if clear {
-        instances::instance_mut(next, id)?.part = None;
+        })?;
+    match action {
+        Some(PartAction::Clear) => instances::instance_mut(next, id)?.part = None,
+        Some(PartAction::Assign { part }) => {
+            if next.library.part(part).is_none() {
+                return Err(not_found(
+                    "The Part to assign is not in the project library.",
+                ));
+            }
+            instances::instance_mut(next, id)?.part = Some(part);
+        }
+        Some(PartAction::Keep) | None => {}
     }
     if physical.is_none() {
         layout::detach_instance(next, id, EditPolicy::Consequential)?;
     }
     if !places.is_empty() {
         schematic::place_units(next, id, &places)?;
+    }
+    if matches!(action, Some(PartAction::Assign { .. }))
+        && let Some(instance) = next.instance(id)
+    {
+        let findings = instances::part_findings(&next.library, instance);
+        if !findings.is_empty() {
+            let messages: Vec<String> = findings.into_iter().map(|f| f.message).collect();
+            return Err(Error::Conflict(format!(
+                "No Part was assigned. {}",
+                messages.join(" ")
+            )));
+        }
     }
     Ok(())
 }
@@ -550,7 +575,9 @@ fn definition_details(
             a.name, b.name
         ));
     }
-    if let (Some(pa), Some(pb)) = (a.package, b.package) {
+    if let (Some(pa), Some(pb)) = (a.package, b.package)
+        && (pa.body_size != pb.body_size || pa.model_offset != pb.model_offset)
+    {
         plan.detail(format!(
             "{designator}: model dimensions {:?} → {:?} mm; model offset {:?} → {:?} mm.",
             pa.body_size, pb.body_size, pa.model_offset, pb.model_offset
@@ -881,9 +908,14 @@ fn instance_details(
         field_details(plan, project, next, old, new);
     }
     if old.component != new.component {
+        let name = next
+            .library
+            .component(new.component)
+            .or_else(|| project.library.component(old.component))
+            .map_or_else(|| old.component.id.to_string(), |c| c.meta.name.clone());
         plan.detail(format!(
-            "{designator}: component {} revision {} → {}.",
-            old.component.id, old.component.revision, new.component.revision
+            "{designator}: {name} {} → {}.",
+            old.component.revision, new.component.revision
         ));
     }
     if old.representation != new.representation {
@@ -1026,7 +1058,6 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
     }
 }
 
-/// Preview never mutates the source. Apply recomputes this plan at its bound revision.
 /// Parts of changed instances: a cleared Part is a change; a Part the
 /// change leaves disagreeing with its instance (a stale component revision,
 /// another binding, an unmet requirement) is a warning that names the
@@ -1046,8 +1077,17 @@ fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
                     .map_or_else(|| r.to_string(), |p| p.definition.mpn.clone())
             })
         };
-        if let (Some(before), None) = (mpn(project, old), new.part) {
-            plan.detail(format!("{}: clear Part {before}.", new.designator));
+        match (mpn(project, old), mpn(next, new)) {
+            (Some(before), None) => {
+                plan.detail(format!("{}: clear Part {before}.", new.designator));
+            }
+            (before, Some(after)) if old.part != new.part => {
+                plan.detail(match before {
+                    Some(before) => format!("{}: Part {before} → {after}.", new.designator),
+                    None => format!("{}: assign Part {after}.", new.designator),
+                });
+            }
+            _ => {}
         }
         let known: BTreeSet<(String, String)> = instances::part_findings(&project.library, old)
             .into_iter()
@@ -1064,6 +1104,7 @@ fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
     }
 }
 
+/// Preview never mutates the source. Apply recomputes this plan at its bound revision.
 pub(crate) fn preview(
     project: &Project,
     revision: u64,
@@ -1226,11 +1267,15 @@ pub(crate) fn preview(
                     "Remove PCB placement {} at {:?} mm.",
                     placement.instance, placement.position
                 ));
-            } else {
-                plan.detail(format!(
-                    "Placement {} stays at {:?} mm, rotation {}°, {:?}; its exact component snapshot changes.",
-                    placement.instance, placement.position, placement.rotation_deg, placement.layer
-                ));
+            } else if replacement.is_some_and(|r| {
+                r.position != placement.position
+                    || r.rotation_deg != placement.rotation_deg
+                    || r.layer != placement.layer
+            }) {
+                let designator = project
+                    .instance(placement.instance)
+                    .map_or_else(|| placement.instance.to_string(), |i| i.designator.clone());
+                plan.detail(format!("{designator}: the PCB placement moves."));
             }
         }
     }

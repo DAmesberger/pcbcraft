@@ -230,6 +230,11 @@ impl Test {
 pub struct FieldTest {
     pub field: DefinitionId,
     pub test: Test,
+    /// The value type the predicate value was read in (the field's latest
+    /// revision). A Part's rated value is compared with it through
+    /// `fields::satisfies`.
+    #[serde(skip)]
+    pub value_type: Option<ValueType>,
     /// How the chip shows this reading, e.g. `Resistance ≥ 10 kΩ`.
     pub display: String,
 }
@@ -614,6 +619,7 @@ fn field_test(
     let make = |test: Test, shown: String| FieldTest {
         field: field.field,
         test,
+        value_type: Some(field.value_type.clone()),
         display: format!("{label} {shown}"),
     };
     match &field.value_type {
@@ -841,6 +847,7 @@ fn bare(token: &str, vocabulary: &Vocabulary) -> Term {
             if let Ok(si) = quantity_value(token, kind, None) {
                 readings.push(FieldTest {
                     field: field.field,
+                    value_type: Some(field.value_type.clone()),
                     test: Test::Compare {
                         op: Op::Eq,
                         value: si,

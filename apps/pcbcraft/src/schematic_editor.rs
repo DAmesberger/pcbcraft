@@ -93,6 +93,8 @@ pub struct SchematicEditor {
     palette: PlacePalette,
     /// The Resolve parts card.
     resolve: ResolveParts,
+    /// New Part… was chosen: the app opens the component's Parts editor.
+    new_part: Option<NewPartRequest>,
 }
 
 impl Default for SchematicEditor {
@@ -127,6 +129,7 @@ impl Default for SchematicEditor {
             update: Default::default(),
             palette: PlacePalette::default(),
             resolve: ResolveParts::default(),
+            new_part: None,
         }
     }
 }
@@ -200,7 +203,18 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
     ))
 }
 
+/// A component lineage and the values a new Part of it is rated at.
+pub type NewPartRequest = (
+    pcbcraft_core::DefinitionId,
+    Vec<(pcbcraft_core::FieldRef, pcbcraft_core::fields::FieldValue)>,
+);
+
 impl SchematicEditor {
+    /// New Part… from Resolve parts or Choose…, once.
+    pub fn take_new_part(&mut self) -> Option<NewPartRequest> {
+        self.new_part.take()
+    }
+
     fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
         self.update.begin(engine, change);
         self.tool = Tool::Select;
@@ -312,6 +326,8 @@ impl SchematicEditor {
             self.select(None, None, engine.project());
         }
         if next == Tool::Place {
+            // One tool owns the card: Place closes Resolve parts.
+            self.resolve.close();
             self.palette.open();
         } else {
             self.palette.close();
@@ -457,7 +473,10 @@ impl SchematicEditor {
         }
         let mut output = None;
         if self.palette.is_open() && matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
-            self.palette.preview(ui, engine);
+            if let Some(request) = self.palette.preview(ui, engine) {
+                self.palette.close();
+                self.new_part = Some(request);
+            }
             return None;
         }
         if self.resolve.is_open() {
@@ -469,13 +488,16 @@ impl SchematicEditor {
                     self.resolve.close();
                     self.select(Some(id), None, project);
                 }
+                Some(ResolveAction::NewPart { component, values }) => {
+                    self.new_part = Some((component.id, values));
+                }
                 Some(ResolveAction::Close) | None => {}
             }
             return None;
         }
         if self.tool == Tool::Place {
             if self.palette.is_open() {
-                self.palette.preview(ui, engine);
+                let _ = self.palette.preview(ui, engine);
             } else {
                 self.place_section(ui, project);
             }
@@ -491,18 +513,28 @@ impl SchematicEditor {
             self.sheet_section(ui, project);
         }
         if self.show_checks {
+            // Purchasing findings (advisory) join the electrical checks.
+            let purchasing: Vec<String> = project
+                .instances
+                .iter()
+                .flat_map(|i| instances::part_findings(&project.library, i))
+                .map(|f| f.message)
+                .collect();
             kit::section(
                 ui,
                 "checks",
                 "Checks",
                 true,
-                Some(self.issues.len()),
+                Some(self.issues.len() + purchasing.len()),
                 |ui| {
-                    if self.issues.is_empty() {
+                    if self.issues.is_empty() && purchasing.is_empty() {
                         kit::note(ui, "No issues in the supported check subset.");
                     }
                     for issue in &self.issues {
                         kit::status(ui, &issue.message, Tone::Error);
+                    }
+                    for message in &purchasing {
+                        kit::status(ui, message, Tone::Warning);
                     }
                     kit::note(
                         ui,
@@ -710,6 +742,8 @@ impl SchematicEditor {
                 );
                 if let Some(error) = error {
                     kit::status(ui, &error, Tone::Error);
+                } else if let Some(hint) = part_hint(project, instance, buffer) {
+                    kit::status(ui, &hint, Tone::Warning);
                 }
             }
         });
@@ -1025,6 +1059,16 @@ impl SchematicEditor {
             }
             Some(PaletteAction::Assign { instances, part }) => {
                 output = Some(resolve_parts::assign(instances, Some(part)));
+            }
+            Some(PaletteAction::UpdateAndAssign {
+                instances,
+                part,
+                target,
+            }) => {
+                output = self.stage_update(
+                    engine,
+                    resolve_parts::update_and_assign(instances, part, target),
+                );
             }
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
@@ -1429,6 +1473,52 @@ fn shown_fields(
 
 /// Why the typed text would be rejected, from the same core parser the
 /// engine applies; the engine still decides when the edit is sent.
+/// Before Apply: whether an edited value contradicts the instance's pinned
+/// Part, through the same `fields::satisfies` comparison purchasing uses.
+fn part_hint(
+    project: &Project,
+    instance: &pcbcraft_core::ComponentInstance,
+    buffer: &FieldBuffer,
+) -> Option<String> {
+    let text = buffer.text.trim();
+    if text.is_empty() || text == buffer.loaded {
+        return None;
+    }
+    let library = &project.library;
+    let part = &library.part(instance.part?)?.definition;
+    let view = library.field_view(buffer.revision)?;
+    let value_type = view.field.definition.value_type.clone();
+    let value = pcbcraft_core::fields::parse_value(text, &value_type, view.kind_body()).ok()?;
+    let mpn = &part.mpn;
+    let Some(spec) = part.specs.iter().find(|s| s.field.id == buffer.field) else {
+        return Some(format!(
+            "{mpn} does not rate {}; applying keeps the Part and leaves purchasing unresolved.",
+            buffer.label
+        ));
+    };
+    let spec_view = library.field_view(spec.field)?;
+    let requirement = pcbcraft_core::fields::Requirement {
+        field: buffer.revision,
+        label: buffer.label.clone(),
+        value,
+        value_type,
+        nominal: None,
+    };
+    let findings = requirement.satisfied_by(spec, &spec_view.field.definition.value_type);
+    let finding = findings.first()?;
+    let rated = pcbcraft_core::fields::display(
+        &spec.value,
+        &spec_view.field.definition.value_type,
+        spec_view.kind_body(),
+    );
+    Some(match finding.code.as_str() {
+        "part.spec_mismatch" => format!(
+            "{text} does not match {mpn}'s rated {rated}; applying keeps the Part and leaves purchasing unresolved."
+        ),
+        _ => format!("{text} cannot be checked against {mpn}'s rated {rated}."),
+    })
+}
+
 fn typed_error(project: &Project, buffer: &FieldBuffer) -> Option<String> {
     let text = buffer.text.trim();
     if text.is_empty() || text == buffer.loaded {

@@ -650,3 +650,118 @@ fn bench_search_on_synthetic_entries() -> TestResult {
     }
     Ok(())
 }
+
+/// A Part entry's rated value under `meets`: decided by `fields::satisfies`,
+/// so a rated range must cover the requirement and tolerances of another
+/// basis compare as intervals around the Part's nominal.
+#[test]
+fn part_predicates_are_decided_by_satisfies() {
+    use crate::fields::{RatedSpec, ToleranceBasis};
+    use crate::ids::{FieldRef, QuantityKindRef};
+    let kind = QuantityKindRef::new(DefinitionId(7), Revision::FIRST);
+    let field = FieldRef::new(DefinitionId(9), Revision::FIRST);
+    let rated = |value: FieldValue, value_type: ValueType, meaning, nominal| EntryField {
+        field: field.id,
+        label: "Rated".into(),
+        text: String::new(),
+        value: value.clone(),
+        shown: false,
+        meaning: Some(meaning),
+        rated: Some(RatedReading {
+            spec: RatedSpec {
+                field,
+                value,
+                meaning,
+            },
+            value_type,
+            nominal,
+        }),
+    };
+    let test = |test: Test, value_type: ValueType| FieldTest {
+        field: field.id,
+        test,
+        value_type: Some(value_type),
+        display: String::new(),
+    };
+    // An operating range of −40 … 125 °C rated as a minimum.
+    let range = ValueType::Range { kind };
+    let operating = rated(
+        FieldValue::Range {
+            min: -40.0,
+            max: 125.0,
+        },
+        range.clone(),
+        SpecMeaning::MinimumRating,
+        None,
+    );
+    let point = |value| test(Test::Compare { op: Op::Eq, value }, range.clone());
+    assert!(meets(&operating, &point(25.0)));
+    // The literal `≥` rewrite accepted any value below the maximum.
+    assert!(!meets(&operating, &point(-50.0)));
+    assert!(!meets(&operating, &point(150.0)));
+    assert!(meets(
+        &operating,
+        &test(
+            Test::Between {
+                min: -20.0,
+                max: 85.0
+            },
+            range.clone()
+        )
+    ));
+    assert!(!meets(
+        &operating,
+        &test(
+            Test::Between {
+                min: -55.0,
+                max: 85.0
+            },
+            range.clone()
+        )
+    ));
+    // Explicit comparisons keep their literal meaning.
+    assert!(meets(
+        &operating,
+        &test(
+            Test::Compare {
+                op: Op::Ge,
+                value: -50.0
+            },
+            range
+        )
+    ));
+
+    // A ±50 Ω absolute rating on a 10 kΩ Part is ±0.5 %: it meets ±1 %
+    // and not ±0.25 %. Compared literally, 50 > 0.01 would refuse it.
+    let relative = ValueType::Tolerance {
+        basis: ToleranceBasis::Relative,
+    };
+    let absolute = ValueType::Tolerance {
+        basis: ToleranceBasis::Absolute { kind },
+    };
+    let ohms = |nominal| {
+        rated(
+            FieldValue::Tolerance {
+                minus: 50.0,
+                plus: 50.0,
+            },
+            absolute.clone(),
+            SpecMeaning::MaximumTolerance,
+            nominal,
+        )
+    };
+    let percent = |p: f64| {
+        test(
+            Test::Tolerance {
+                op: Op::Eq,
+                minus: p,
+                plus: p,
+            },
+            relative.clone(),
+        )
+    };
+    assert!(meets(&ohms(Some(10e3)), &percent(0.01)));
+    assert!(!meets(&ohms(Some(10e3)), &percent(0.0025)));
+    // Without a nominal the bases cannot be compared: no hit.
+    assert!(!meets(&ohms(None), &percent(0.01)));
+}

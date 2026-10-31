@@ -6,9 +6,12 @@
 use crate::kit::{self, Tone};
 use egui::Ui;
 use pcbcraft_core::completeness::{BomReport, PurchasingState, ResolveGroup, ResolveReport};
-use pcbcraft_core::fields;
-use pcbcraft_core::library::Library;
-use pcbcraft_core::{Engine, Id, InstanceCommand, Operation, PartRef, Query, QueryResult};
+use pcbcraft_core::fields::{self, FieldValue, Requirement};
+use pcbcraft_core::instances;
+use pcbcraft_core::updates::{Change, PartAction, PartResolution, Resolutions};
+use pcbcraft_core::{
+    ComponentRef, Engine, FieldRef, Id, InstanceCommand, Operation, PartRef, Query, QueryResult,
+};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// Designators a group title lists before summarising the rest.
@@ -18,7 +21,7 @@ const TITLE_DESIGNATORS: usize = 6;
 pub const ANY_PART: &str = "kind:part";
 
 /// What the user chose in the card.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResolveAction {
     /// Open the Place palette in assign mode for these instances.
     Choose {
@@ -27,6 +30,11 @@ pub enum ResolveAction {
     },
     /// Select this instance on the sheet.
     Select(Id),
+    /// Author a new Part of `component` rated at the group's values.
+    NewPart {
+        component: ComponentRef,
+        values: Vec<(FieldRef, FieldValue)>,
+    },
     Close,
 }
 
@@ -67,6 +75,33 @@ pub fn query_for(engine: &Engine, instance: Id) -> String {
 /// One `instance.assign_part`: one Part for all `instances`, or clear it.
 pub fn assign(instances: Vec<Id>, part: Option<PartRef>) -> Operation {
     Operation::Instance(InstanceCommand::AssignPart { instances, part })
+}
+
+/// Update `instances` to the newer component revision `target` that `part`
+/// is for, assigning the Part in the same reviewed update.
+pub fn update_and_assign(instances: Vec<Id>, part: PartRef, target: ComponentRef) -> Change {
+    Change::ComponentRevision {
+        resolutions: Resolutions {
+            parts: instances
+                .iter()
+                .map(|instance| PartResolution {
+                    instance: *instance,
+                    action: PartAction::Assign { part },
+                })
+                .collect(),
+            ..Resolutions::default()
+        },
+        instances,
+        target,
+    }
+}
+
+/// The values a new Part for a group starts rated at.
+pub fn requirement_values(requirements: &[Requirement]) -> Vec<(FieldRef, FieldValue)> {
+    requirements
+        .iter()
+        .map(|r| (r.field, r.value.clone()))
+        .collect()
 }
 
 /// The designators of a group, the first few then a count.
@@ -126,7 +161,6 @@ impl ResolveParts {
         }
         self.refresh(engine);
         let project = engine.project();
-        let library = &project.library;
         let mut action = None;
         match self.groups.as_ref().map(|(_, g)| g) {
             Some(Ok(report)) if report.groups.is_empty() => {
@@ -144,7 +178,7 @@ impl ResolveParts {
             }
             Some(Ok(report)) => {
                 for (index, group) in report.groups.iter().enumerate() {
-                    if let Some(chosen) = group_section(ui, library, index, group) {
+                    if let Some(chosen) = group_section(ui, engine, index, group) {
                         action = Some(chosen);
                     }
                 }
@@ -175,10 +209,12 @@ impl ResolveParts {
 /// One group: what its instances share and Choose….
 fn group_section(
     ui: &mut Ui,
-    library: &Library,
+    engine: &Engine,
     index: usize,
     group: &ResolveGroup,
 ) -> Option<ResolveAction> {
+    let project = engine.project();
+    let library = &project.library;
     let title = designator_summary(&group.designators);
     kit::section(
         ui,
@@ -215,6 +251,21 @@ fn group_section(
             );
             kit::value_row(ui, "Footprint", &footprint);
             kit::value_row(ui, "Count", &group.instances.len().to_string());
+            // Why the group is here: its current Part and what disagrees.
+            let first = group.instances.first().and_then(|id| project.instance(*id));
+            match first.and_then(|i| i.part.map(|r| (i, r))) {
+                Some((instance, r)) => {
+                    let shown = library.part(r).map_or_else(
+                        || r.to_string(),
+                        |p| format!("{} {}", p.definition.manufacturer, p.definition.mpn),
+                    );
+                    kit::value_row(ui, "Current part", &shown);
+                    for finding in instances::part_findings(library, instance).iter().take(3) {
+                        kit::status(ui, &finding.message, Tone::Warning);
+                    }
+                }
+                None => kit::value_row(ui, "Current part", "None · generic"),
+            }
             let mut action = None;
             kit::actions(ui, |ui| {
                 if kit::primary(ui, "Choose…", true)
@@ -224,6 +275,17 @@ fn group_section(
                     action = Some(ResolveAction::Choose {
                         query: group.query.clone(),
                         instances: group.instances.clone(),
+                    });
+                }
+                if ui_kit::button(ui, "New Part…", Button::Normal)
+                    .on_hover_text(
+                        "Author a manufacturer part of this component, rated at the group's values",
+                    )
+                    .clicked()
+                {
+                    action = Some(ResolveAction::NewPart {
+                        component: group.component,
+                        values: requirement_values(&group.requirements),
                     });
                 }
                 if ui_kit::button(ui, "Select", Button::Normal)
@@ -243,7 +305,9 @@ fn group_section(
 /// The BOM lines, unresolved ones marked.
 fn bom_section(ui: &mut Ui, bom: &Result<BomReport, String>) {
     let count = bom.as_ref().ok().map(|b| b.lines.len());
-    kit::section(ui, "resolve-bom", "BOM", false, count, |ui| match bom {
+    // Open while lines are unresolved, so the marked lines are seen.
+    let open = bom.as_ref().is_ok_and(|b| b.unresolved > 0);
+    kit::section(ui, "resolve-bom", "BOM", open, count, |ui| match bom {
         Ok(report) => {
             if report.lines.is_empty() {
                 kit::note(ui, "No BOM lines yet.");
@@ -266,12 +330,22 @@ fn bom_section(ui: &mut Ui, bom: &Result<BomReport, String>) {
                     (None, Some(p)) => p.clone(),
                     _ => "—".to_owned(),
                 };
-                let shown = if line.unresolved {
-                    format!("{} × {part} · {}", line.quantity, state_text(line.state))
+                let designators = designator_summary(&line.designators);
+                if line.unresolved {
+                    // The state leads, in the warning tone, so a narrow
+                    // card truncates the MPN rather than the state.
+                    kit::status(
+                        ui,
+                        &format!(
+                            "{designators}: {} · {} × {part}",
+                            state_text(line.state),
+                            line.quantity
+                        ),
+                        Tone::Warning,
+                    );
                 } else {
-                    format!("{} × {part}", line.quantity)
-                };
-                kit::value_row(ui, &designator_summary(&line.designators), &shown);
+                    kit::value_row(ui, &designators, &format!("{} × {part}", line.quantity));
+                }
             }
         }
         Err(message) => {
@@ -291,6 +365,18 @@ pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRe
         .first()
         .ok_or_else(|| Error::NotFound("an instance".into()))?;
     let component = instance.component;
+    // Rated at the instance's values: an unrated requirement never passes.
+    let specs = instances::requirements(&engine.project().library, instance)?
+        .into_iter()
+        .map(|r| fields::RatedSpec {
+            meaning: match r.value_type {
+                fields::ValueType::Tolerance { .. } => fields::SpecMeaning::MaximumTolerance,
+                _ => fields::SpecMeaning::ExactNominal,
+            },
+            field: r.field,
+            value: r.value,
+        })
+        .collect();
     let binding = engine
         .project()
         .library
@@ -309,6 +395,7 @@ pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRe
                 mpn: mpn.into(),
                 component,
                 binding,
+                specs,
                 ..Default::default()
             })),
         }),

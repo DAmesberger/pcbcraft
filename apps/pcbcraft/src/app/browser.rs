@@ -308,6 +308,29 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
             if response.clicked {
                 pick = Some(Pick::Component(component.id));
             }
+            // The component's manufacturer Parts, opened in its Parts editor.
+            for part in project.library.latest_parts() {
+                if part.definition.component.id != component.id {
+                    continue;
+                }
+                let label = format!("{} {}", part.definition.manufacturer, part.definition.mpn);
+                let secondary = part.revision.to_string();
+                let response = kit::tree_row(
+                    ui,
+                    egui::Id::new(("browser-part", part.id.0)),
+                    &Row {
+                        depth: 3,
+                        icon: "library",
+                        label: &label,
+                        secondary: &secondary,
+                        tip: "Manufacturer part",
+                        ..Default::default()
+                    },
+                );
+                if response.clicked {
+                    pick = Some(Pick::Component(component.id));
+                }
+            }
         }
     }
 
@@ -327,15 +350,28 @@ pub fn show(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<Pick> {
                     .library
                     .component(instance.component)
                     .map_or_else(String::new, |c| c.meta.name.clone());
+                // A chosen Part that disagrees with the instance is marked.
+                let findings = pcbcraft_core::instances::part_findings(&project.library, instance);
+                let tip = findings.first().map_or("", |f| f.message.as_str());
+                let secondary = if findings.is_empty() {
+                    name
+                } else {
+                    format!("{name} · part mismatch")
+                };
                 let response = kit::tree_row(
                     ui,
                     egui::Id::new(("browser-instance", instance.id)),
                     &Row {
                         depth: 3,
-                        icon: "component",
+                        icon: if findings.is_empty() {
+                            "component"
+                        } else {
+                            "status_warning"
+                        },
                         label: &instance.designator,
-                        secondary: &name,
+                        secondary: &secondary,
                         selected: lit.instance == Some(instance.id),
+                        tip,
                         ..Default::default()
                     },
                 );

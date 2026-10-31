@@ -503,6 +503,55 @@ fn ce01_a_changed_value_after_an_mpn_is_chosen_is_a_mismatch_not_a_substitution(
 }
 
 #[test]
+fn a_requirement_the_part_does_not_rate_is_never_an_implicit_pass() -> Result<()> {
+    let mut s = setup()?;
+    // The Part rates only the voltage; R1 also requires 10 kΩ and ±1 %.
+    let voltage_only = publish_part(
+        &mut s.engine,
+        part_body(
+            "EX-R0603-ANY",
+            &s.fixture,
+            vec![(s.fields.voltage, quantity(25.0), SpecMeaning::MinimumRating)],
+        ),
+    )?;
+    let r1 = placed(&mut s, "R1", "10k")?;
+    let kept = Snapshot::of(&s.engine);
+    let error = assign(&mut s.engine, vec![r1], Some(voltage_only)).err();
+    assert!(
+        error.as_ref().is_some_and(
+            |e| e.code() == "conflict" && e.to_string().contains("no rated Resistance")
+        ),
+        "{error:?}"
+    );
+    kept.assert_kept(&s.engine, "unrated requirement");
+    // An instance that requires only the voltage, which the Part rates,
+    // resolves.
+    let (c1, _) = place(&mut s.engine, &s.fixture, "C1", 1, [10.0, 0.0])?;
+    set_properties(&mut s.engine, c1, vec![text(s.fields.voltage, "16V")])?;
+    assign(&mut s.engine, vec![c1], Some(voltage_only))?;
+    assert_eq!(
+        purchasing_codes(&s.engine, c1)?,
+        (PurchasingState::Resolved, vec![])
+    );
+    // A later resistance requirement the Part does not rate is unresolved,
+    // not silently resolved (CE-01).
+    set_properties(&mut s.engine, c1, vec![text(s.fields.resistance, "22k")])?;
+    assert_eq!(
+        purchasing_codes(&s.engine, c1)?,
+        (
+            PurchasingState::Unresolved,
+            vec!["part.spec_unrated".into()]
+        )
+    );
+    assert_eq!(
+        s.engine.project().instance(c1).and_then(|i| i.part),
+        Some(voltage_only),
+        "never substituted"
+    );
+    Ok(())
+}
+
+#[test]
 fn ce02_a_25_v_part_meets_a_16_v_requirement_and_the_reverse_is_refused() -> Result<()> {
     let mut s = setup()?;
     let rated = |volts: f64| {
@@ -777,6 +826,93 @@ fn a_component_update_keeps_or_clears_the_part_and_never_repoints_it() -> Result
         },
     });
     assert!(!plan.blockers.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_part_for_a_newer_revision_is_assigned_with_the_update_in_one_step() -> Result<()> {
+    let mut s = setup()?;
+    let r1 = placed(&mut s, "R1", "10k")?;
+    rewrite(&mut s.engine, s.fixture.component, |d| {
+        if let Definition::Component(c) = d {
+            c.designator_prefix = "R".into();
+        }
+    })?;
+    publish(&mut s.engine, vec![s.fixture.component])?;
+    let target = ComponentRef::new(s.fixture.component, Revision(2));
+    let mut body = resistor("EX-R0603-10K0-F", &s, 10e3);
+    body.component = target;
+    let part = publish_part(&mut s.engine, body)?;
+    // R1 is still on r1: assigning names the newer revision, by name.
+    let kept = Snapshot::of(&s.engine);
+    let error = assign(&mut s.engine, vec![r1], Some(part)).err();
+    let message = error.as_ref().map(ToString::to_string).unwrap_or_default();
+    assert!(
+        message.contains("Generic resistor r2") && message.contains("update R1"),
+        "{message}"
+    );
+    assert!(
+        !message.contains(&format!("{}", s.fixture.component)),
+        "{message}"
+    );
+    kept.assert_kept(&s.engine, "newer Part");
+    // Update and assign in one previewed transaction.
+    let change = Change::ComponentRevision {
+        instances: vec![r1],
+        target,
+        resolutions: Resolutions {
+            parts: vec![PartResolution {
+                instance: r1,
+                action: PartAction::Assign { part },
+            }],
+            ..Resolutions::default()
+        },
+    };
+    let plan = s.engine.preview_update(change.clone());
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c == "R1: assign Part EX-R0603-10K0-F."),
+        "{:?}",
+        plan.changes
+    );
+    let before = s.engine.revision();
+    s.engine.apply_update(s.engine.revision(), change, false)?;
+    let after = s
+        .engine
+        .project()
+        .instance(r1)
+        .ok_or_else(|| Error::NotFound("R1".into()))?;
+    assert_eq!((after.component, after.part), (target, Some(part)));
+    assert_eq!(
+        purchasing_codes(&s.engine, r1)?,
+        (PurchasingState::Resolved, vec![])
+    );
+    assert_eq!(s.engine.revision(), before + 1, "one step");
+    // A Part that does not agree at the target refuses the whole update.
+    let mut other = resistor("EX-R0603-22K0-F", &s, 22e3);
+    other.component = target;
+    let other = publish_part(&mut s.engine, other)?;
+    let r2 = placed(&mut s, "R2", "10k")?;
+    let kept = Snapshot::of(&s.engine);
+    let plan = s.engine.preview_update(Change::ComponentRevision {
+        instances: vec![r2],
+        target,
+        resolutions: Resolutions {
+            parts: vec![PartResolution {
+                instance: r2,
+                action: PartAction::Assign { part: other },
+            }],
+            ..Resolutions::default()
+        },
+    });
+    assert!(
+        plan.blockers.iter().any(|b| b.contains("Resistance")),
+        "{:?}",
+        plan.blockers
+    );
+    kept.assert_kept(&s.engine, "refused update");
     Ok(())
 }
 

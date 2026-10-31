@@ -752,6 +752,18 @@ impl PartEditor {
         self.notice.clear();
     }
 
+    /// Open the component lineage `id` and draft a new Part of it rated at
+    /// `values` (Resolve parts' New Part…).
+    pub fn new_part_for(
+        &mut self,
+        id: DefinitionId,
+        values: Vec<(pcbcraft_core::FieldRef, pcbcraft_core::fields::FieldValue)>,
+        engine: &Engine,
+    ) {
+        self.open(id, engine);
+        self.parts.request_new(values);
+    }
+
     /// Return the 2D views to their fitted scale.
     pub fn fit(&mut self) {
         self.drag_scale = None;

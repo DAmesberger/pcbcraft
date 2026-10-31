@@ -9,10 +9,35 @@
 use super::{check_instance, effective_fields, instance_mut, invalid};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::fields::{self, FieldValue, Requirement, ToleranceBasis, ValueType};
-use crate::ids::{Id, PartRef};
+use crate::ids::{BindingRef, ComponentRef, Id, PartRef};
 use crate::library::{Library, PartDefinition};
 use crate::model::{ComponentInstance, Project};
 use std::collections::BTreeSet;
+
+/// How a binding reads in messages: its package or first footprint name and
+/// revision, never its definition id alone.
+pub fn binding_name(library: &Library, b: BindingRef) -> String {
+    let Some(binding) = library.binding(b) else {
+        return format!("binding {b}");
+    };
+    let package = library
+        .package(binding.definition.package)
+        .map(|p| p.meta.name.clone());
+    let footprint = binding
+        .definition
+        .footprints
+        .first()
+        .and_then(|f| library.footprint(*f))
+        .map(|f| f.meta.name.clone());
+    let name = [Some(binding.meta.name.clone()), package, footprint]
+        .into_iter()
+        .flatten()
+        .find(|n| !n.trim().is_empty());
+    match name {
+        Some(name) => format!("{name} {}", b.revision),
+        None => format!("binding {b}"),
+    }
+}
 
 /// Instances one `instance.assign_part` changes together (one Resolve-parts
 /// group).
@@ -110,9 +135,11 @@ fn requirements_for(
 
 /// Findings of an instance's Part: wrong component lineage or revision
 /// (`part.component_mismatch`), an older component revision than the
-/// instance pins (`part.stale_component`), a binding other than the physical
-/// choice's (`part.binding_mismatch`), and every [`crate::fields::satisfies`]
-/// finding of a requirement the Part rates. Empty without a Part. Advisory:
+/// instance pins (`part.stale_component`), a newer one the instance must be
+/// updated to first (`part.newer_component`), a binding other than the physical
+/// choice's (`part.binding_mismatch`), a requirement the Part does not rate
+/// (`part.spec_unrated`), and every [`crate::fields::satisfies`] finding of a
+/// requirement it rates. Empty without a Part. Advisory:
 /// they block no stage.
 pub fn part_findings(library: &Library, instance: &ComponentInstance) -> Vec<Finding> {
     let Some(r) = instance.part else {
@@ -146,12 +173,31 @@ fn findings_with(
     ];
     let mut out = Vec::new();
     let pinned = instance.component;
+    let component = |c: ComponentRef| {
+        library.component(c).map_or_else(
+            || c.to_string(),
+            |p| format!("{} {}", p.meta.name, c.revision),
+        )
+    };
+    let binding = |b: BindingRef| binding_name(library, b);
     if part.component.id == pinned.id && part.component.revision < pinned.revision {
         out.push(Finding::new(
             "part.stale_component",
             format!(
-                "{name}: Part {mpn} pins component {}, older than the instance's {pinned}; keep it unresolved or choose a Part of {pinned}.",
-                part.component
+                "{name}: Part {mpn} is for {}, older than the instance's {}; keep it unresolved or choose a Part for {}.",
+                component(part.component),
+                component(pinned),
+                component(pinned)
+            ),
+            objects.clone(),
+        ));
+    } else if part.component.id == pinned.id && part.component.revision > pinned.revision {
+        out.push(Finding::new(
+            "part.newer_component",
+            format!(
+                "{name}: Part {mpn} is for {}; update {name} from {} to it first.",
+                component(part.component),
+                component(pinned)
             ),
             objects.clone(),
         ));
@@ -159,8 +205,9 @@ fn findings_with(
         out.push(Finding::new(
             "part.component_mismatch",
             format!(
-                "{name}: Part {mpn} pins component {}, not the instance's {pinned}.",
-                part.component
+                "{name}: Part {mpn} is for {}, not the instance's {}.",
+                component(part.component),
+                component(pinned)
             ),
             objects.clone(),
         ));
@@ -170,17 +217,20 @@ fn findings_with(
             .physical
             .and_then(|p| c.definition.implementation(p.binding))
     });
-    if listed != Some(part.binding) {
+    // A newer component revision lists its own binding revisions; the
+    // binding is compared once the instance is on the Part's revision.
+    let newer = part.component.id == pinned.id && part.component.revision > pinned.revision;
+    if !newer && listed != Some(part.binding) {
         let chosen = match (instance.physical, listed) {
             (None, _) => "no physical implementation".to_owned(),
-            (Some(_), Some(b)) => format!("binding {b}"),
-            (Some(p), None) => format!("unlisted implementation {}", p.binding),
+            (Some(_), Some(b)) => binding(b),
+            (Some(p), None) => format!("an unlisted implementation ({})", p.binding),
         };
         out.push(Finding::new(
             "part.binding_mismatch",
             format!(
-                "{name}: Part {mpn} is binding {}, but the instance uses {chosen}.",
-                part.binding
+                "{name}: Part {mpn} is implemented by {}, but the instance uses {chosen}.",
+                binding(part.binding)
             ),
             objects.clone(),
         ));
@@ -193,13 +243,6 @@ fn findings_with(
         )),
         Ok(requirements) => {
             for requirement in &requirements {
-                let Some(spec) = part
-                    .specs
-                    .iter()
-                    .find(|s| s.field.id == requirement.field.id)
-                else {
-                    continue;
-                };
                 let field_objects = vec![
                     ObjectRef::Property {
                         instance: instance.id,
@@ -207,6 +250,23 @@ fn findings_with(
                     },
                     ObjectRef::Definition { id: r.id },
                 ];
+                let Some(spec) = part
+                    .specs
+                    .iter()
+                    .find(|s| s.field.id == requirement.field.id)
+                else {
+                    // An unrated requirement is never an implicit pass:
+                    // nothing says the Part meets it.
+                    out.push(Finding::new(
+                        "part.spec_unrated",
+                        format!(
+                            "{name}: {mpn} has no rated {}; rate it on the Part or clear the value on the instance.",
+                            requirement.label
+                        ),
+                        field_objects,
+                    ));
+                    continue;
+                };
                 let Some(view) = library.field_view(spec.field) else {
                     out.push(Finding::new(
                         "part.spec_uncomparable",
