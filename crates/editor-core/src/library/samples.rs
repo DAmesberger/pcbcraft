@@ -88,6 +88,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         body_size: layout.envelope,
         model_offset: layout.offset,
         body: kind.body,
+        ..PackageDefinition::default()
     };
     vec![
         DraftEdit {

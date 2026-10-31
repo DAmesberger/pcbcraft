@@ -381,6 +381,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
         body_size: [4.0, 3.0, 1.0],
         model_offset: [0.0; 3],
         body: PackageBody::Moulded,
+        ..PackageDefinition::default()
     };
     let footprint = FootprintDefinition {
         package: PackageRef::new(f.package, first),

@@ -4,6 +4,8 @@ use crate::ids::{DefinitionId, DefinitionRef};
 use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
+use crate::library::package_fit::{self, FitRotation, LeadPair};
+use crate::library::package_model::{self, PackageEdit};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
@@ -71,6 +73,52 @@ pub enum LibraryCommand {
         rule: AssignRule,
         confirm: bool,
     },
+    /// Apply 1–256 package edits (form, model, placement, quick action) to
+    /// one package draft, in order, as one undo step; any failure leaves the
+    /// draft unchanged.
+    #[serde(rename = "library.edit_package")]
+    EditPackage {
+        draft: DefinitionId,
+        edits: Vec<PackageEdit>,
+    },
+    /// Fit the package draft's model leads onto footprint pads. The host
+    /// (app or automation, through the integration crate) supplies the
+    /// lead/pad pairs; with `confirm: false` it only reports the fit.
+    #[serde(rename = "library.fit_leads")]
+    FitLeads {
+        draft: DefinitionId,
+        pairs: Vec<LeadPair>,
+        rotation: FitRotation,
+        confirm: bool,
+    },
+}
+
+fn package_draft(
+    document: &Document,
+    draft: DefinitionId,
+) -> Result<(&library::Draft, &library::PackageDefinition)> {
+    let current = document
+        .drafts
+        .get(draft)
+        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+    match &current.definition {
+        Definition::Package(package) => Ok((current, package)),
+        _ => Err(Error::Invalid(format!("draft {draft} is not a package"))),
+    }
+}
+
+fn store_package(
+    document: &mut Document,
+    draft: DefinitionId,
+    meta: DefinitionMeta,
+    package: library::PackageDefinition,
+) -> Result<()> {
+    let edit = DraftEdit {
+        id: draft,
+        meta,
+        definition: Definition::Package(package),
+    };
+    drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])
 }
 
 fn footprint_draft(
@@ -296,6 +344,32 @@ pub(crate) fn apply_library(
             }
             Ok(Outcome::TerminalsAssigned {
                 changes,
+                applied: confirm,
+            })
+        }
+        LibraryCommand::EditPackage { draft, edits } => {
+            let (current, package) = package_draft(document, draft)?;
+            let edited = package_model::edit_package(package, &edits)?;
+            let meta = current.meta.clone();
+            store_package(document, draft, meta, edited)?;
+            Ok(Outcome::None)
+        }
+        LibraryCommand::FitLeads {
+            draft,
+            pairs,
+            rotation,
+            confirm,
+        } => {
+            let (current, package) = package_draft(document, draft)?;
+            let fit = package_fit::fit_leads(&package.placement, &pairs, rotation)?;
+            if confirm {
+                let mut edited = package.clone();
+                edited.placement = fit.placement;
+                let meta = current.meta.clone();
+                store_package(document, draft, meta, edited)?;
+            }
+            Ok(Outcome::LeadsFitted {
+                fit,
                 applied: confirm,
             })
         }

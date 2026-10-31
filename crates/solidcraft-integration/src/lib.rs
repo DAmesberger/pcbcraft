@@ -7,6 +7,7 @@
 pub mod appearance;
 pub mod footprint;
 pub mod material;
+pub mod models;
 pub mod native;
 pub mod pad_outline;
 pub mod project;

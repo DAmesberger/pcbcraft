@@ -339,6 +339,7 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
         body_size: [5.0, 5.0, 0.9],
         model_offset: [0.0; 3],
         body: PackageBody::Moulded,
+        ..PackageDefinition::default()
     };
     // Perimeter lands 1–20; package terminal 21 (the exposed pad) has three
     // lands, pads 21–23.

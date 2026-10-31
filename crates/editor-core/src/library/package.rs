@@ -1,4 +1,6 @@
 //! Package definitions: physical terminals and the parametric envelope.
+use super::package_form::PackageForm;
+use super::package_model::{ModelPlacement, PackageModel};
 use super::publish::{issue, object};
 use super::{MAX_LABEL, MAX_PACKAGE_TERMINALS, printable};
 use crate::diagnostics::{Finding, ObjectRef};
@@ -17,7 +19,14 @@ pub struct PackageDefinition {
     pub body_size: [f64; 3],
     pub model_offset: [f64; 3],
     /// What the envelope is made of, which sets its 3D look.
+    /// M1 replaces this with `form` and `model` (docs/m13-contract.md).
     pub body: PackageBody,
+    /// Typed physical parameters (M1). `Generic` keeps the authored envelope.
+    pub form: PackageForm,
+    /// Where the 3D model comes from and its body materials (M1/M2).
+    pub model: PackageModel,
+    /// The model in the datum frame (M1; replaces `model_offset`).
+    pub placement: ModelPlacement,
 }
 
 /// The physical construction of a package body. Authored data: the 3D view
@@ -83,7 +92,10 @@ impl PackageDefinition {
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
-        finite_within(&self.body_size) && finite_within(&self.model_offset)
+        finite_within(&self.body_size)
+            && finite_within(&self.model_offset)
+            && finite_within(&self.form.lengths())
+            && self.placement.finite()
     }
 
     pub(super) fn local_ids(&self) -> Vec<u32> {
@@ -119,6 +131,13 @@ impl PackageDefinition {
                     "A {} body has exactly two terminals.",
                     self.body.label().to_lowercase()
                 ),
+                vec![this],
+            ));
+        }
+        if matches!(self.model, PackageModel::Imported(_)) {
+            out.push(issue(
+                "package.model_unsupported",
+                "Imported package models are not supported yet.".into(),
                 vec![this],
             ));
         }
