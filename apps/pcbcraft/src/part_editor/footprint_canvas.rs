@@ -351,6 +351,7 @@ impl PartEditor {
                 );
             }
         }
+        self.footprint_tools_frame(ui, rect, response, view, grid);
         painter.text(
             rect.left_top() + vec2(t.space_16, t.space_16),
             Align2::LEFT_TOP,

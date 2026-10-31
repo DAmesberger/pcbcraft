@@ -18,6 +18,9 @@ mod footprint_template_picker;
 #[cfg(test)]
 mod footprint_tests;
 mod footprint_tools;
+mod footprint_tools_canvas;
+#[cfg(test)]
+mod footprint_tools_tests;
 mod part_props;
 mod snap;
 mod symbol_canvas;
@@ -604,7 +607,12 @@ impl PartEditor {
             // Publish stays ahead of the layer toggles, so at narrow widths
             // the toggles fold into the overflow first.
             let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
-            groups.extend([pads, library, show]);
+            if self.footprint_sketching() {
+                groups.extend(self.footprint_sketch_groups());
+            } else {
+                groups.push(pads);
+            }
+            groups.extend([library, show]);
         } else {
             groups.push(library);
         }
@@ -774,7 +782,10 @@ impl PartEditor {
             return None;
         }
         if let Some(t) = footprint_tools::FootprintTool::from_id(tool) {
-            self.footprint_tool.arm(t);
+            self.footprint_arm(t);
+            return None;
+        }
+        if self.footprint_layer_tool(tool) {
             return None;
         }
         if let Some(action) = symbol_canvas::Arrange::from_id(tool) {
@@ -1228,7 +1239,10 @@ impl PartEditor {
         });
         match self.view {
             View::Symbol => operation = self.symbol_inspector(ui, engine),
-            View::Footprint => self.footprint_inspector(ui),
+            View::Footprint => {
+                self.footprint_tool_options(ui);
+                self.footprint_inspector(ui);
+            }
             View::Mapping => self.mapping_inspector(ui),
             View::Model => self.model_inspector(ui),
         }
@@ -1664,7 +1678,7 @@ impl PartEditor {
             return None;
         }
         self.footprint_canvas(ui, rect, &response, engine.drafts().grid.footprint_mm);
-        None
+        self.footprint_tool_operation(engine)
     }
 
     fn mapping_canvas(&mut self, ui: &mut Ui, rect: Rect) {
