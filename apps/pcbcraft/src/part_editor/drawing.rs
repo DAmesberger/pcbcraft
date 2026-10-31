@@ -13,7 +13,7 @@ use pcbcraft_core::geometry::{Shape, distance, fit_corner_radii};
 use pcbcraft_core::library::graphics::{MAX_SHAPE_POINTS, MIN_RADIUS_MM};
 
 /// One ribbon tool of the Symbol view.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tool {
     Select,
     Line,

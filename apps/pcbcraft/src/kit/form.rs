@@ -381,19 +381,6 @@ pub fn status(ui: &mut Ui, text: &str, tone: Tone) -> Response {
     ui.add(egui::Label::new(RichText::new(text).size(t.font_label).color(tone_ink(tone))).wrap())
 }
 
-/// A wrapping message that is a button: a click acts on what it names (a
-/// finding locates its object). Its text is not selectable, so a press
-/// never starts a text selection instead of the click.
-pub fn status_button(ui: &mut Ui, text: &str, tone: Tone) -> Response {
-    let t = Tokens::get();
-    ui.add(
-        egui::Button::new(RichText::new(text).size(t.font_label).color(tone_ink(tone)))
-            .frame_when_inactive(false)
-            .wrap(),
-    )
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 /// A check finding as one full-width row. The text is not selectable; with
 /// `locate`, the row is a button (hover fill, pointing hand) whose click
 /// should select the object the finding names.

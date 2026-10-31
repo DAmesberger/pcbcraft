@@ -24,6 +24,7 @@ impl Harness {
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
         editor.commit(&ctx, &engine);
+        editor.on_tab("symbol");
         let mut h = Self {
             ctx,
             engine,
@@ -587,7 +588,14 @@ fn a_new_pin_numbers_its_terminal_and_warns_on_a_chip_body() -> TestResult {
         .and_then(|m| set.package.terminal(m.package_terminal))
         .ok_or("package terminal")?;
     assert_eq!(physical.designation, "3", "name and number agree");
-    assert!(h.editor.notice.contains("3D tab"), "{}", h.editor.notice);
+    h.editor.flush(&h.ctx);
+    let posted = crate::kit::toast::take_posted(&h.ctx);
+    assert!(
+        posted
+            .iter()
+            .any(|p| p.level == Level::Warning && p.text.contains("3D tab")),
+        "{posted:?}"
+    );
     // The publish finding names where to fix it.
     let findings = h.editor.findings(&h.engine);
     assert!(
