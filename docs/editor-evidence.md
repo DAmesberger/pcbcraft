@@ -34,6 +34,14 @@ Six packages plus checks: the pure electronics core (document, typed operations,
 - **Gate:** `cargo xtask ci` passed with 345 tests (164 core, 7 io, 18 automation, 46 native adapter, 98 desktop, 12 xtask), 3 ignored (benchmarks).
 - **Not yet:** alternates, lifecycle records, attaching asset files (only the hash is stored), library folders and import remapping (S3), and an in-app check of the S2 surfaces.
 
+## Parts library S3
+
+31 October 2026, macOS arm64, Rust 1.96.0, Solidcraft fork `87b1009`. Local library folders; see [S3 as built](parts-library.md#s3-as-built). This entry records the automation task's branch before integration.
+
+- **Automation:** over JSON only, `library.source.add` refuses a missing folder (`not_found`), a manifest of format 2 or with an unknown required feature (`unsupported`, naming it) and a malformed manifest (`invalid_input`) without writing settings; configured by hand, each is listed by `library.sources` as disabled with its reason (path missing, unsupported format v2, requires unsupported features, unreadable manifest, turned off) and adds nothing to `library.search`. Favourites persist in the user's settings across sessions and are no document change. `library.publish_to_folder` refuses an unknown source and a stale revision, and `library.place_from_folder` an unknown source, with the document unchanged. The request catalog, schemas and MCP tool list carry every folder request.
+- **Scenario:** `install_place_publish_update_delete_and_reopen_offline` is written against the contract and marked ignored on this branch, because it needs the core import/export and the io folder reader and writer of the parallel tasks; it runs unignored once they are integrated.
+- **Not yet:** the scenario run, an in-app check, and measurement of folder indexing (targets only).
+
 ## Solidcraft source reference
 
 The implementation directly imports Solidcraft's fonts, icons, tokens, UI controls, `Container` and GPU renderer. Shell proportions and floating panel treatment were adapted after reading its `toolbar.rs`, `shell.rs`, `ui_kit/panel.rs` and `ui_kit/layout.rs`. Editor forms reference its fields/layout implementations. The installed Solidcraft app was also inspected alongside Pcbcraft. [Attribution](../ATTRIBUTION.md) identifies the source and retains the notices.

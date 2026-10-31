@@ -167,3 +167,46 @@ fn graphic_edits_over_mcp_are_atomic() -> Result<(), Box<dyn std::error::Error>>
     assert_eq!(server.session().engine().revision(), revision + 1);
     Ok(())
 }
+
+/// The library-folder requests are MCP tools with generated schemas, and a
+/// refused source is a tool error carrying the diagnostic code.
+#[test]
+fn library_folder_tools_are_listed_and_report_refusals() {
+    let mut server = Server::new(Session::default());
+    let tools = call(&mut server, 1, "tools/list", json!({}));
+    let listed: Vec<_> = tools["result"]["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    for name in [
+        "library_sources",
+        "library_source_add",
+        "library_bundle",
+        "library_place_from_folder",
+        "library_import_from_folder",
+        "library_publish_to_folder",
+    ] {
+        assert!(listed.contains(&name), "{name}");
+    }
+    let sources = call(
+        &mut server,
+        2,
+        "tools/call",
+        json!({"name": "library_sources", "arguments": {}}),
+    );
+    assert_eq!(sources["result"]["isError"], false);
+    assert_eq!(sources["result"]["structuredContent"]["sources"], json!([]));
+    let missing = call(
+        &mut server,
+        3,
+        "tools/call",
+        json!({"name": "library_source_add", "arguments": {"path": "/nonexistent/pcbcraft-library"}}),
+    );
+    assert_eq!(missing["result"]["isError"], true);
+    assert_eq!(
+        missing["result"]["structuredContent"]["code"], "not_found",
+        "{missing}"
+    );
+}

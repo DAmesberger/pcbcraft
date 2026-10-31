@@ -220,7 +220,24 @@ A Solidcraft design containing the board and component models, with editable par
 Interactive routing that moves existing tracks to make room while preserving their connections and obeying the board rules and locked-object constraints.
 
 **Library source**:
-Where catalog entries come from. The project library snapshot is the only source today; local library folders are planned. A source is authoritative only for new imports, never for a project that already holds a revision.
+Where catalog entries come from: the project library snapshot, and the library folders listed in the user's settings. A folder source is read-only or writable, and one that cannot be read stays listed with its reason (path missing, unsupported format, unknown required feature). A source is authoritative only for new imports, never for a project that already holds a revision.
+
+**Library folder**:
+A directory of library items shared as plain files or through git: a `pcbcraft-library.json` manifest (format version, random 128-bit library id, name, required features), one immutable file per revision at `lineages/<lineage id>/rNNNN.json`, asset bytes at `assets/sha256/<hash>` and the mutable `catalog.json` of shelves and tags. Lineage ids inside a folder are random, so two authors adding lineages never collide. A manifest of another format or with an unknown required feature is refused, never read partly.
+_Avoid_: Library project, library file
+
+**Shelf**:
+A label grouping a folder's lineages for browsing, stored in the folder's `catalog.json`. Not revisioned, never copied into a project and never identity.
+_Avoid_: Category
+
+**Tag**:
+A free label on a lineage, kept like a shelf in the owning source's label map. Many tags may apply; none is identity.
+
+**Catalog index**:
+A per-user cache of one library folder's catalog entries and record hashes, kept in the user cache directory. Never authoritative: a deleted or stale index is rebuilt identically from the folder, and it is never written into a project or a folder.
+
+**Origin**:
+Where an imported project revision came from: library id, source lineage, source revision and the content hash of the source record. Imports dedupe on it, update-available marks compare with it, and a source record that no longer hashes to it is reported as modified. Origins are stored beside the project library, outside revision bodies, so a project reopens offline without its folders.
 
 **Catalog entry**:
 One searchable lineage at its latest published revision in one library source, derived from library data and never stored: its name, description, effective field defaults, package names, completeness badges and how many instances use it. A lineage that exists only as a draft has an entry that cannot be placed.
