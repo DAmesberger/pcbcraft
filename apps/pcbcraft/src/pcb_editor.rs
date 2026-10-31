@@ -9,15 +9,15 @@
 //! on selection, layer or camera changes.
 use crate::kit::{self, Tone};
 use crate::symbol_view::{self, View};
-use egui::{Align2, Color32, FontId, PointerButton, Pos2, Sense, Shape, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, FontId, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
     Engine, Fabrication, Id, Layer, MaskColour, MaskFinish, Operation, PadFinish, Placement, Point,
     Project, SilkscreenColour, Track,
     geometry::{Shape as CoreShape, Transform2},
     instances,
     layout::{
-        self, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
-        RouteRequest, WorldPad,
+        self, BoardCopper, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem,
+        PlacedPad, RouteRequest, WorldPad,
     },
     library::{PadKind, PlacedText, TextMetric},
     schematic,
@@ -30,6 +30,8 @@ use solidcraft_ui_egui::{
 };
 use std::collections::BTreeSet;
 
+/// Scroll and pinch zoom limits, relative to the board fitting the canvas.
+const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.2..=12.0;
 /// Bound on typed placement coordinates (mm); the board is far smaller.
 const COORDINATE_LIMIT: f64 = 10_000.0;
 /// Board-check findings listed in the card; the rest are counted.
@@ -196,7 +198,9 @@ pub struct PcbEditor {
     drag_airwires: Option<DragAirwires>,
     show_airwires: bool,
     cached_revision: Option<u64>,
-    world_pads: Vec<WorldPad>,
+    /// Connected pads with their exact outlines, built once per revision;
+    /// the checks, airwires and drag preview read it.
+    copper: BoardCopper,
     airwires: Vec<(WorldPad, WorldPad)>,
     issues: Vec<pcbcraft_core::Finding>,
     board_pads: Vec<BoardPad>,
@@ -234,7 +238,7 @@ impl Default for PcbEditor {
             drag_airwires: None,
             show_airwires: true,
             cached_revision: None,
-            world_pads: vec![],
+            copper: BoardCopper::default(),
             airwires: vec![],
             issues: vec![],
             board_pads: vec![],
@@ -280,9 +284,9 @@ impl PcbEditor {
         if self.cached_revision != Some(engine.revision()) {
             self.cancel_drag();
             self.route_start = None;
-            self.world_pads = layout::pads(engine.project());
-            self.airwires = layout::airwires(engine.project());
-            self.issues = layout::checks(engine.project());
+            self.copper = BoardCopper::of(engine.project());
+            self.airwires = self.copper.airwires(&engine.project().tracks);
+            self.issues = self.copper.checks(engine.project());
             self.cache_board(engine.project());
             self.cached_revision = Some(engine.revision());
             if self
@@ -363,14 +367,21 @@ impl PcbEditor {
     }
 
     /// Recompute only when the snapped position changes. The same bounded
-    /// connectivity kernel used by the committed board detects newly detached
-    /// routed pads as well as moving existing airwire endpoints. The candidate
-    /// never enters Engine history, and is discarded on release or Escape.
+    /// connectivity kernel used by the committed board, over the revision's
+    /// cached copper with the dragged part's outlines moved, detects newly
+    /// detached routed pads as well as moving existing airwire endpoints.
+    /// The preview never enters Engine history, and is discarded on release
+    /// or Escape.
     fn refresh_drag_airwires(&mut self, engine: &Engine) {
         let (Some((placement, _)), Some(position)) = (&self.drag, self.drag_position) else {
             self.drag_airwires = None;
             return;
         };
+        if self.cached_revision != Some(engine.revision()) {
+            // The copper belongs to another revision; sync cancels the drag.
+            self.drag_airwires = None;
+            return;
+        }
         let key = (engine.revision(), placement.instance, position);
         if self
             .drag_airwires
@@ -379,18 +390,17 @@ impl PcbEditor {
         {
             return;
         }
-        let mut candidate = engine.project().clone();
-        if let Some(target) = candidate
-            .placements
-            .iter_mut()
-            .find(|p| p.instance == placement.instance)
-        {
-            target.position = position;
-            self.drag_airwires = Some(DragAirwires {
-                key,
-                connections: layout::airwires(&candidate),
-            });
-        }
+        let delta = [
+            position[0] - placement.position[0],
+            position[1] - placement.position[1],
+        ];
+        self.drag_airwires = Some(DragAirwires {
+            key,
+            connections: self
+                .copper
+                .moved(placement.instance, delta)
+                .airwires(&engine.project().tracks),
+        });
     }
 
     fn visible_airwires(&self) -> &[(WorldPad, WorldPad)] {
@@ -670,31 +680,27 @@ impl PcbEditor {
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
-        let fit = ((rect.width() - 100.0).max(20.0) / project.board_size[0] as f32)
-            .min((rect.height() - 100.0).max(20.0) / project.board_size[1] as f32);
-        let centring =
-            egui::vec2(-project.board_size[0] as f32, project.board_size[1] as f32) * 0.5;
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            let zoom = (self.zoom * (scroll * 0.002).exp()).clamp(0.2, 12.0);
-            // Zoom about the hovered board point: it stays under the cursor.
+            // Scroll, or a pinch (and Ctrl+scroll), zooms about the hovered
+            // board point: it stays under the cursor.
+            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch)
+                .clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
             if zoom != self.zoom
                 && let Some(p) = response.hover_pos()
             {
-                let (before, after) = (fit * self.zoom, fit * zoom);
-                let origin = rect.center() + self.pan + centring * before;
-                let moved = p - (p - origin) * (after / before);
-                self.pan = moved - rect.center() - centring * after;
+                self.pan = zoom_pan(rect, project.board_size, self.zoom, zoom, self.pan, p);
             }
             self.zoom = zoom;
         }
-        let scale = fit * self.zoom;
-        let origin = rect.center() + self.pan + centring * scale;
-        let view = BoardView::new(
-            View { origin, scale },
-            project.board_size[0],
+        let view = board_view(
+            rect,
+            project.board_size,
+            self.zoom,
+            self.pan,
             self.from_bottom,
         );
+        let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
         let world = |p: Pos2| view.world(p);
         let painter = ui.painter().with_clip_rect(rect);
@@ -820,8 +826,9 @@ impl PcbEditor {
     }
 
     /// The pad a route click at `at` snaps to: a visible pad with a net and
-    /// copper on the routing layer, under the pointer or within 8 pixels of
-    /// its centre, nearest first.
+    /// copper on the routing layer whose exact outline is under the pointer
+    /// or within 8 pixels of it. The nearest outline wins; among pads the
+    /// pointer is inside, the nearest centre.
     fn route_snap(&self, at: Point, scale: f32) -> Option<&PlacedPad> {
         let reach = f64::from(8.0 / scale);
         self.board_pads
@@ -830,10 +837,16 @@ impl PcbEditor {
                 let p = &b.placed;
                 p.net.is_some() && p.on_copper(self.layer) && self.layers.pad(p)
             })
-            .map(|b| (b, pcbcraft_core::geometry::distance(b.placed.center(), at)))
-            .filter(|(b, d)| *d < reach || b.contains(at))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(b, _)| &b.placed)
+            .map(|b| {
+                (
+                    b,
+                    b.outline.distance(at, true),
+                    pcbcraft_core::geometry::distance(b.placed.center(), at),
+                )
+            })
+            .filter(|(_, edge, _)| *edge < reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.2.total_cmp(&b.2)))
+            .map(|(b, _, _)| &b.placed)
     }
 
     /// The topmost (last drawn) visible pad under `at`, against the cached
@@ -1388,6 +1401,32 @@ fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operat
     });
     action.map(Operation::Layout)
 }
+/// Board millimetres to the canvas `rect`: the board fitted with a 50 px
+/// margin and centred, times `zoom`, moved by `pan`.
+fn board_view(rect: Rect, board: Point, zoom: f32, pan: Vec2, from_bottom: bool) -> BoardView {
+    let scale = fit_scale(rect, board) * zoom;
+    let centring = egui::vec2(-board[0] as f32, board[1] as f32) * 0.5;
+    let origin = rect.center() + pan + centring * scale;
+    BoardView::new(View { origin, scale }, board[0], from_bottom)
+}
+
+fn fit_scale(rect: Rect, board: Point) -> f32 {
+    ((rect.width() - 100.0).max(20.0) / board[0] as f32)
+        .min((rect.height() - 100.0).max(20.0) / board[1] as f32)
+}
+
+/// The pan that keeps the board point under `pointer` in place while the
+/// zoom changes from `before` to `after`. The bottom view's flip is fixed
+/// in board space, so it needs no special case.
+fn zoom_pan(rect: Rect, board: Point, before: f32, after: f32, pan: Vec2, pointer: Pos2) -> Vec2 {
+    let fit = fit_scale(rect, board);
+    let centring = egui::vec2(-board[0] as f32, board[1] as f32) * 0.5;
+    let (from, to) = (fit * before, fit * after);
+    let origin = rect.center() + pan + centring * from;
+    let moved = pointer - (pointer - origin) * (to / from);
+    moved - rect.center() - centring * to
+}
+
 fn snap(p: Point) -> Point {
     p.map(|v| (v * 2.0).round() / 2.0)
 }
@@ -2092,6 +2131,104 @@ mod tests {
         // R1's pads are drawn (and so numbered) first.
         assert_eq!(editor.selected_instance(), Some(r1));
         assert!((editor.board_pads[0].placed.center()[0] - pth[0]).abs() < 1e-9);
+        Ok(())
+    }
+
+    /// Routing snaps to a pad's exact outline: just outside the rounded end
+    /// of R1's oblong through-hole pad, far from its centre, snaps; inside
+    /// its extent's corner but clear of the rounded end, it does not.
+    #[test]
+    fn route_snap_reaches_the_exact_pad_outline() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = shaped_board()?;
+        let (r1, _) = ids(&engine);
+        let mut editor = PcbEditor::default();
+        editor.sync(&engine);
+        let pth = editor
+            .board_pads
+            .iter()
+            .map(|b| &b.placed)
+            .find(|p| p.instance == r1 && p.pad.kind == PadKind::PlatedThrough)
+            .ok_or("R1 through-hole pad")?;
+        let (c, id) = (pth.center(), pth.pad.id);
+        // The oblong is 1.6 × 2.4 mm: its top is 1.2 mm above the centre.
+        // At 10 px/mm the 8 px reach is 0.8 mm.
+        let snapped = |at: Point, scale: f32| editor.route_snap(at, scale).map(|p| p.pad.id);
+        assert_eq!(snapped([c[0], c[1] + 1.25], 10.0), Some(id));
+        assert_eq!(snapped([c[0], c[1] + 2.2], 10.0), None);
+        // The extent's corner (0.75, 1.15) is 0.26 mm from the rounded end:
+        // outside the 0.2 mm reach at 40 px/mm.
+        assert_eq!(snapped([c[0] + 0.75, c[1] + 1.15], 40.0), None);
+        assert_eq!(snapped([c[0] + 0.75, c[1] + 1.15], 10.0), Some(id));
+        assert_eq!(snapped(c, 40.0), Some(id));
+        Ok(())
+    }
+
+    /// The board checks and airwires the editor caches per revision are
+    /// the core's, built once from the same copper.
+    #[test]
+    fn cached_copper_matches_the_core_checks_and_airwires() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let engine = shaped_board()?;
+        let mut editor = PcbEditor::default();
+        editor.sync(&engine);
+        assert_eq!(editor.airwires, layout::airwires(engine.project()));
+        assert_eq!(editor.issues, layout::checks(engine.project()));
+        assert_eq!(editor.copper.pads(), layout::pads(engine.project()));
+        Ok(())
+    }
+
+    /// Zooming keeps the board point under the cursor fixed, from either
+    /// side and at any pan.
+    #[test]
+    fn zoom_pan_keeps_the_board_point_under_the_cursor() {
+        let rect = Rect::from_min_size(Pos2::new(40.0, 30.0), egui::vec2(900.0, 700.0));
+        let board = [60.0, 40.0];
+        for from_bottom in [false, true] {
+            for (pan, pointer) in [
+                (Vec2::ZERO, Pos2::new(200.0, 500.0)),
+                (egui::vec2(-80.0, 35.0), Pos2::new(700.0, 120.0)),
+            ] {
+                for (before, after) in [(1.0, 1.7), (3.0, 0.4)] {
+                    let fixed = board_view(rect, board, before, pan, from_bottom).world(pointer);
+                    let pan = zoom_pan(rect, board, before, after, pan, pointer);
+                    let view = board_view(rect, board, after, pan, from_bottom);
+                    let at = view.world(pointer);
+                    assert!(
+                        (at[0] - fixed[0]).abs() < 1e-3 && (at[1] - fixed[1]).abs() < 1e-3,
+                        "{from_bottom} {before}→{after}: {at:?} vs {fixed:?}"
+                    );
+                    assert!((view.view.scale / fit_scale(rect, board) - after).abs() < 1e-5);
+                }
+            }
+        }
+    }
+
+    /// A pinch over the canvas zooms about the pointer: the pad the
+    /// pointer rests on stays under it.
+    #[test]
+    fn pinch_zooms_the_canvas_about_the_pointer() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = shaped_board()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let pad_label = |output: &egui::FullOutput| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, "1"))
+        };
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let before = pad_label(&output).ok_or("pad number 1 not drawn")?;
+        canvas_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::PointerMoved(before), egui::Event::Zoom(1.5)],
+        );
+        assert!((editor.zoom - 1.5).abs() < 1e-5, "{}", editor.zoom);
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let after = pad_label(&output).ok_or("pad number 1 not drawn after zoom")?;
+        assert!((after - before).length() < 0.5, "{before:?} → {after:?}");
         Ok(())
     }
 }
