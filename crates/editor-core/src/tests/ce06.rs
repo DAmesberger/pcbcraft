@@ -343,29 +343,33 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
     // Perimeter lands 1–20; package terminal 21 (the exposed pad) has three
     // lands, pads 21–23.
     let mut pads: Vec<Pad> = (1..=20u32)
-        .map(|i| Pad {
-            id: PadId(i),
-            terminal: PackageTerminalId(i),
-            position: [
-                -4.5 + f64::from((i - 1) % 10),
-                if i <= 10 { -3.0 } else { 3.0 },
-            ],
-            size: [0.4, 0.6],
+        .map(|i| {
+            Pad::smd_rect(
+                PadId(i),
+                PackageTerminalId(i),
+                i.to_string(),
+                [
+                    -4.5 + f64::from((i - 1) % 10),
+                    if i <= 10 { -3.0 } else { 3.0 },
+                ],
+                [0.4, 0.6],
+            )
         })
         .collect();
     for (n, y) in [(21u32, -1.0), (22, 0.0), (23, 1.0)] {
-        pads.push(Pad {
-            id: PadId(n),
-            terminal: PackageTerminalId(21),
-            position: [0.0, y],
-            size: [0.8, 0.6],
-        });
+        pads.push(Pad::smd_rect(
+            PadId(n),
+            PackageTerminalId(21),
+            "21",
+            [0.0, y],
+            [0.8, 0.6],
+        ));
     }
     let footprint = FootprintDefinition {
         package: PackageRef::new(m.package, first),
         next_local: 24,
         pads,
-        datum_offset: [0.0; 2],
+        ..FootprintDefinition::default()
     };
     let binding = |unavailable: Vec<FunctionKey>| BindingDefinition {
         component: m.component,

@@ -106,6 +106,14 @@ pub enum Query {
     /// query that finds Parts for it.
     #[serde(rename = "library.resolve_groups")]
     ResolveGroups {},
+    /// What `library.edit_footprint` would produce for these edits (pads,
+    /// graphics, findings, including blocking ones), without changing the
+    /// document. Needs the host's footprint evaluator.
+    #[serde(rename = "library.footprint_preview")]
+    FootprintPreview {
+        draft: DefinitionId,
+        edits: Vec<library::footprint_source::FootprintEdit>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -119,6 +127,7 @@ pub enum QueryResult {
     Lineage(Box<catalog::ItemReport>),
     Bom(completeness::BomReport),
     ResolveGroups(completeness::ResolveReport),
+    FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -316,6 +325,28 @@ impl Engine {
     /// Apply one operation at an expected revision as one undo step. A
     /// failure leaves document, revision and history unchanged.
     pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Outcome> {
+        self.apply_inner(expected_revision, operation, None)
+    }
+
+    /// [`apply`](Self::apply) with the host's footprint evaluator, which
+    /// footprint-source edits need (the core never interprets a sketch).
+    /// The evaluator runs on the candidate only; undo and redo restore
+    /// snapshots and never call it.
+    pub fn apply_with(
+        &mut self,
+        expected_revision: u64,
+        operation: Operation,
+        evaluator: &dyn library::FootprintEvaluator,
+    ) -> Result<Outcome> {
+        self.apply_inner(expected_revision, operation, Some(evaluator))
+    }
+
+    fn apply_inner(
+        &mut self,
+        expected_revision: u64,
+        operation: Operation,
+        evaluator: Option<&dyn library::FootprintEvaluator>,
+    ) -> Result<Outcome> {
         if expected_revision != self.revision {
             return Err(Error::Stale {
                 expected: expected_revision,
@@ -325,7 +356,9 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let outcome = match operation {
-            Operation::Library(command) => commands::apply_library(&mut candidate, command)?,
+            Operation::Library(command) => {
+                commands::apply_library(&mut candidate, command, evaluator)?
+            }
             Operation::Instance(command) => {
                 commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
             }
@@ -391,6 +424,17 @@ impl Engine {
         query: Query,
         context: &catalog::CatalogContext,
     ) -> Result<QueryResult> {
+        self.query_using(query, context, None)
+    }
+
+    /// [`query_with`](Self::query_with) with the host's footprint
+    /// evaluator, which `library.footprint_preview` needs.
+    pub fn query_using(
+        &self,
+        query: Query,
+        context: &catalog::CatalogContext,
+        evaluator: Option<&dyn library::FootprintEvaluator>,
+    ) -> Result<QueryResult> {
         let index = || catalog::Index::of_project(&self.document.project, &self.document.drafts);
         match query {
             Query::Search {
@@ -439,6 +483,11 @@ impl Engine {
                 &self.document.project,
                 &self.document.drafts,
             )?)),
+            Query::FootprintPreview { draft, edits } => {
+                Ok(QueryResult::FootprintPreview(Box::new(
+                    commands::preview_footprint(&self.document, draft, &edits, evaluator)?,
+                )))
+            }
         }
     }
 

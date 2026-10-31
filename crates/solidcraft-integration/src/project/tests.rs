@@ -1,6 +1,8 @@
 use super::*;
+use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::PackageBody;
-use pcbcraft_core::{Engine, TerminalId, Track};
+use pcbcraft_core::library::PadShape;
+use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
 use solidcraft_engine::geom::Vec3;
 
 /// The demo's two instances, by designator.
@@ -27,7 +29,7 @@ fn fixture() -> Result<Project> {
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
     project.library.packages[0].definition.model_offset = [0.25, -0.4, 0.2];
-    project.library.footprints[0].definition.datum_offset = [0.3, -0.4];
+    project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
         .iter_mut()
@@ -770,12 +772,13 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
         });
     package.next_local = 91;
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.pads.push(pcbcraft_core::library::Pad {
-        id: PadId(90),
-        terminal: unmapped,
-        position: [0.0, 3.0],
-        size: [0.8, 0.8],
-    });
+    footprint.pads.push(pcbcraft_core::library::Pad::smd_rect(
+        PadId(90),
+        unmapped,
+        "MP",
+        [0.0, 3.0],
+        [0.8, 0.8],
+    ));
     footprint.next_local = 91;
     // Library validation refuses such a definition today, so the
     // enumeration is checked directly; the core's pad list is unchanged.
@@ -786,12 +789,16 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
     for pad in &pads {
         let expected = connected
             .iter()
-            .find(|p| p.instance == pad.instance && p.pad == pad.pad.id)
+            .find(|p| p.instance == pad.placed.instance && p.pad == pad.pad().id)
             .map(|p| (p.net, p.position));
-        assert_eq!(pad.net.is_none(), pad.pad.terminal == unmapped);
+        assert_eq!(
+            pad.placed.net.is_none(),
+            pad.pad().terminal == Some(unmapped)
+        );
         if let Some((net, position)) = expected {
-            assert_eq!(pad.net, Some(net));
-            assert_eq!(pad.center, position);
+            assert_eq!(pad.placed.net, Some(net));
+            near(pad.origin[0], position[0]);
+            near(pad.origin[1], position[1]);
         }
     }
     Ok(())
@@ -920,5 +927,310 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
         }
     }
     assert!(restyled >= 4, "{restyled}");
+    Ok(())
+}
+
+/// The fixture with every kind of land on its one footprint (synthetic,
+/// original): an L-shaped custom pad turned 30°, a plated-through stadium
+/// turned 45° with an offset drill, a bare hole and a tented mechanical
+/// land on the far side; the datum is turned a quarter turn.
+fn shaped() -> Result<Project> {
+    use pcbcraft_core::library::{Hole, HoleShape, MaskRule, Outline, PadKind, PadSide, Segment};
+    let mut project = fixture()?;
+    let footprint = &mut project.library.footprints[0].definition;
+    footprint.datum.rotation_deg = 90.0;
+    let [first, second] = &mut footprint.pads[..] else {
+        return Err(Error::Verification("demo footprint has two pads".into()));
+    };
+    let l = |x: f64, y: f64| Segment::Line { to: [x, y] };
+    first.shape = PadShape::Custom {
+        outline: Outline {
+            start: [-0.5, -0.4],
+            segments: vec![
+                l(0.5, -0.4),
+                l(0.5, 0.0),
+                l(0.0, 0.0),
+                l(0.0, 0.4),
+                l(-0.5, 0.4),
+                l(-0.5, -0.4),
+            ],
+        },
+    };
+    first.rotation_deg = 30.0;
+    second.kind = PadKind::PlatedThrough;
+    second.shape = PadShape::Oblong { size: [1.6, 1.0] };
+    second.rotation_deg = 45.0;
+    second.hole = Some(Hole {
+        shape: HoleShape::Round { diameter: 0.6 },
+        plated: true,
+        offset: [0.2, 0.0],
+    });
+    let mut bare = first.clone();
+    bare.id = PadId(90);
+    bare.kind = PadKind::NonPlatedHole;
+    bare.terminal = None;
+    bare.number = "MH".into();
+    bare.position = [0.0, 2.5];
+    bare.rotation_deg = 0.0;
+    bare.shape = PadShape::Circle { diameter: 1.2 };
+    bare.hole = Some(Hole {
+        shape: HoleShape::Round { diameter: 1.0 },
+        plated: false,
+        offset: [0.0, 0.0],
+    });
+    let mut tab = bare.clone();
+    tab.id = PadId(91);
+    tab.kind = PadKind::Mechanical;
+    tab.number = "MP".into();
+    tab.position = [0.0, -2.5];
+    tab.side = PadSide::Bottom;
+    tab.shape = PadShape::RoundRect {
+        size: [0.8, 0.5],
+        radius_ratio: 0.25,
+        max_radius: None,
+        corners: pcbcraft_core::library::CornerMask::ALL,
+    };
+    tab.hole = None;
+    tab.mask = MaskRule::Tented;
+    footprint.pads.extend([bare, tab]);
+    footprint.next_local = 92;
+    Ok(project)
+}
+
+/// A pad-frame point of a placed pad on the board.
+fn on_board(pad: &layout::PlacedPad, q: Point) -> Point {
+    let (c, s) = cos_sin(pad.pad.rotation_deg);
+    let p = pad.pad.position;
+    pad.transform
+        .apply([p[0] + c * q[0] - s * q[1], p[1] + s * q[0] + c * q[1]])
+}
+
+/// Mid-height of the copper on a layer's face.
+fn copper_z(layer: Layer) -> f64 {
+    match layer {
+        Layer::Top => 1.6 + 0.0175,
+        Layer::Bottom => -0.0175,
+    }
+}
+
+fn inside(geometry: &[&Geometry], p: Point, z: f64) -> bool {
+    geometry
+        .iter()
+        .any(|g| g.mesh.contains(Vec3::new(p[0], p[1], z)))
+}
+
+fn pad_bodies(model: &NativeModel, instance: Id, pad: PadId) -> Vec<&Geometry> {
+    let Some(source) = model
+        .sources
+        .iter()
+        .find(|s| s.instance == Some(instance) && s.pad == Some(pad))
+    else {
+        return vec![];
+    };
+    native(model)
+        .filter(|g| g.item == Some(source.pick_id) && g.kind == BodyKind::PadCopper)
+        .collect()
+}
+
+fn kind(model: &NativeModel, kind: BodyKind) -> Vec<&Geometry> {
+    model.geometry.iter().filter(|g| g.kind == kind).collect()
+}
+
+#[test]
+fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
+    let project = shaped()?;
+    let model = build(&project)?;
+    let substrate = kind(&model, BodyKind::Substrate);
+    let placed = layout::placed_pads(&project);
+    assert_eq!(placed.len(), 8);
+    for pad in &placed {
+        let bodies = pad_bodies(&model, pad.instance, pad.pad.id);
+        let other = match pad.layer {
+            Layer::Top => Layer::Bottom,
+            Layer::Bottom => Layer::Top,
+        };
+        match pad.pad.id.0 {
+            // The L: both arms in, the notch out. A mirror or turn error
+            // swaps them.
+            1 => {
+                assert_eq!(bodies.len(), 1);
+                let z = copper_z(pad.layer);
+                for (q, expected) in [
+                    ([0.3, -0.2], true),
+                    ([-0.3, 0.2], true),
+                    ([0.3, 0.2], false),
+                    ([-0.3, -0.35], true),
+                    ([0.45, -0.35], true),
+                    ([0.6, -0.2], false),
+                ] {
+                    let p = on_board(pad, q);
+                    assert_eq!(
+                        inside(&bodies, p, z),
+                        expected,
+                        "pad 1 {q:?} on {:?}",
+                        pad.layer
+                    );
+                }
+            }
+            // Plated through: a land on each face, a barrel between them,
+            // the drill through the laminate.
+            2 => {
+                assert_eq!(bodies.len(), 3);
+                for layer in [pad.layer, other] {
+                    let z = copper_z(layer);
+                    assert!(inside(&bodies, on_board(pad, [0.7, 0.0]), z));
+                    assert!(inside(&bodies, on_board(pad, [-0.75, 0.0]), z));
+                    assert!(
+                        !inside(&bodies, on_board(pad, [0.75, 0.45]), z),
+                        "stadium end"
+                    );
+                    assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), z), "bore");
+                }
+                let wall = on_board(pad, [0.2 + 0.3 - PLATING_MM / 2.0, 0.0]);
+                assert!(inside(&bodies, wall, 0.8), "barrel");
+                assert!(!inside(&substrate, wall, 0.8), "barrel inside the laminate");
+                assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), 0.8));
+                assert!(!inside(&substrate, on_board(pad, [0.2, 0.0]), 0.8));
+                assert!(inside(&substrate, on_board(pad, [0.2 + 0.35, 0.0]), 0.8));
+            }
+            // A bare hole: no copper and no pick, the laminate drilled.
+            90 => {
+                assert!(bodies.is_empty());
+                assert!(
+                    !model
+                        .sources
+                        .iter()
+                        .any(|s| s.instance == Some(pad.instance) && s.pad == Some(pad.pad.id))
+                );
+                assert!(!inside(&substrate, on_board(pad, [0.45, 0.0]), 0.8));
+                assert!(inside(&substrate, on_board(pad, [0.55, 0.0]), 0.8));
+            }
+            // A far-side land: copper on the opposite face only.
+            91 => {
+                assert_eq!(bodies.len(), 1);
+                assert_ne!(
+                    Some(pad.layer),
+                    project
+                        .placements
+                        .iter()
+                        .find(|p| p.instance == pad.instance)
+                        .map(|p| p.layer)
+                );
+                assert!(inside(
+                    &bodies,
+                    on_board(pad, [0.35, 0.2]),
+                    copper_z(pad.layer)
+                ));
+                assert!(
+                    !inside(&bodies, on_board(pad, [0.39, 0.24]), copper_z(pad.layer)),
+                    "rounded corner"
+                );
+                assert!(!inside(&bodies, on_board(pad, [0.0, 0.0]), copper_z(other)));
+            }
+            id => return Err(Error::Verification(format!("unexpected pad {id}"))),
+        }
+    }
+    // The laminate lost two drills per placement.
+    let full = 60.0 * 40.0 * 1.6;
+    let drilled = 2.0 * std::f64::consts::PI * (0.3f64.powi(2) + 0.5f64.powi(2)) * 1.6;
+    let volume: f64 = substrate.iter().map(|g| g.volume).sum();
+    assert!((volume - (full - drilled)).abs() < 2e-3, "{volume}");
+    Ok(())
+}
+
+#[test]
+fn mask_openings_and_finish_follow_the_shapes_and_tented_lands_stay_covered() -> Result<()> {
+    let project = shaped()?;
+    let model = build(&project)?;
+    let mask = |layer: Layer| {
+        kind(
+            &model,
+            match layer {
+                Layer::Top => BodyKind::MaskTop,
+                Layer::Bottom => BodyKind::MaskBottom,
+            },
+        )
+    };
+    let mask_z = |layer: Layer| match layer {
+        Layer::Top => 1.61,
+        Layer::Bottom => -0.01,
+    };
+    let finish = kind(&model, BodyKind::PadFinish);
+    for pad in layout::placed_pads(&project) {
+        let layer = pad.layer;
+        let other = match layer {
+            Layer::Top => Layer::Bottom,
+            Layer::Bottom => Layer::Top,
+        };
+        match pad.pad.id.0 {
+            2 => {
+                for side in [layer, other] {
+                    // The 50 µm default opening around the stadium's tip.
+                    let ring = on_board(&pad, [0.8 + 0.025, 0.0]);
+                    let beyond = on_board(&pad, [0.8 + 0.08, 0.0]);
+                    assert!(!inside(&mask(side), ring, mask_z(side)), "ring on {side:?}");
+                    assert!(
+                        inside(&mask(side), beyond, mask_z(side)),
+                        "beyond on {side:?}"
+                    );
+                    let z = copper_z(side) + if side == Layer::Top { 0.02 } else { -0.02 };
+                    assert!(inside(&finish, on_board(&pad, [0.7, 0.0]), z));
+                    assert!(
+                        !inside(&finish, on_board(&pad, [0.2, 0.0]), z),
+                        "finish over the bore"
+                    );
+                }
+            }
+            90 => {
+                for side in [Layer::Top, Layer::Bottom] {
+                    assert!(!inside(
+                        &mask(side),
+                        on_board(&pad, [0.0, 0.0]),
+                        mask_z(side)
+                    ));
+                }
+            }
+            91 => {
+                assert!(inside(
+                    &mask(layer),
+                    on_board(&pad, [0.0, 0.0]),
+                    mask_z(layer)
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<()> {
+    let project = shaped()?;
+    let (r1, _) = instances(&project)?;
+    let original = build(&project)?;
+    let temporary = tempfile::tempdir()?;
+    let path = temporary
+        .path()
+        .join("shaped.solidcraft")
+        .to_string_lossy()
+        .into_owned();
+    original.save(&path)?;
+    let reopened = Native::open(&path)?;
+    let before = finish(reopened, original.sources.clone())?;
+    assert_eq!(before.geometry.len(), native(&original).count());
+    let total = |m: &NativeModel| -> f64 { native(m).map(|g| g.volume).sum() };
+    near(total(&before), total(&original));
+    let mut native_model = before.native;
+    native_model.change_parameters(json!({"board_thickness": "2.4 mm"}))?;
+    let changed = finish(native_model, before.sources)?;
+    let through = pad_bodies(&changed, r1, PadId(2));
+    assert_eq!(through.len(), 3);
+    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+    for g in &through {
+        lo = lo.min(g.min[2]);
+        hi = hi.max(g.max[2]);
+    }
+    near(lo, -0.035);
+    near(hi, 2.4 + 0.035);
     Ok(())
 }

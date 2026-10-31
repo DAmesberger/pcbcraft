@@ -4,6 +4,7 @@ use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
+use crate::library::{PadKind, PadShape, PadSide};
 use crate::model::{EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Track};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,12 @@ const EPS: f64 = 1e-8;
 const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
+
+mod placed;
+pub use placed::{
+    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
+    pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
+};
 const MAX_CHECK_PAIRS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -97,8 +104,22 @@ pub struct WorldPad {
     pub net: Id,
     pub position: Point,
     pub size: Point,
+    /// The exact pad shape (pad frame); checks still use `size`.
+    pub shape: PadShape,
     pub rotation_deg: f64,
+    /// The copper layer of a surface pad, after its side flip. A plated
+    /// through-hole pad records the placement layer and spans every layer.
     pub layer: Layer,
+    /// Copper on every layer around a plated barrel.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub through: bool,
+}
+
+impl WorldPad {
+    /// Whether the pad has copper on `layer`.
+    pub fn on(&self, layer: Layer) -> bool {
+        self.through || self.layer == layer
+    }
 }
 
 /// Package datum is the placement origin. The footprint records that datum's
@@ -119,6 +140,8 @@ pub fn placed_point(placement: &Placement, point: Point, datum: Point) -> Point 
     ]
 }
 
+/// Connected copper pads as rotated rectangles of each pad's extent: the
+/// checking approximation until shape-aware checks use [`placed_pads`].
 pub fn pads(project: &Project) -> Vec<WorldPad> {
     let net_by_terminal: BTreeMap<Endpoint, Id> = project
         .nets
@@ -141,8 +164,12 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
             continue;
         };
         let footprint = &physical.footprint.definition;
+        let datum = &footprint.datum;
         for pad in &footprint.pads {
-            let Some(electrical) = physical.binding.definition.terminal_of(pad.terminal) else {
+            let Some(electrical) = pad
+                .terminal
+                .and_then(|t| physical.binding.definition.terminal_of(t))
+            else {
                 continue;
             };
             let terminal = Endpoint {
@@ -152,19 +179,59 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
             let Some(net) = net_by_terminal.get(&terminal) else {
                 continue;
             };
+            // Pad rotation relative to the datum, reflected on the bottom.
+            let local = pad.rotation_deg - datum.rotation_deg;
+            let local = if placement.layer == Layer::Bottom {
+                -local
+            } else {
+                local
+            };
             result.push(WorldPad {
                 instance: instance.id,
                 pad: pad.id,
                 terminal,
                 net: *net,
-                position: placed_point(placement, pad.position, footprint.datum_offset),
-                size: pad.size,
-                rotation_deg: placement.rotation_deg,
-                layer: placement.layer,
+                position: placed_point(
+                    placement,
+                    placed::undo_datum_rotation(pad.position, datum),
+                    datum.offset,
+                ),
+                size: pad.shape.extent(),
+                shape: pad.shape.clone(),
+                rotation_deg: placement.rotation_deg + local,
+                layer: match pad.side {
+                    PadSide::Top => placement.layer,
+                    PadSide::Bottom => placed::opposite(placement.layer),
+                },
+                through: pad.kind == PadKind::PlatedThrough,
             });
         }
     }
     result
+}
+
+/// The user's label of a placed pad: its number, or its ID when the number
+/// is empty. Keyed by instance and pad ID; one resolution per placement.
+pub fn pad_labels(project: &Project) -> BTreeMap<(Id, PadId), String> {
+    let mut labels = BTreeMap::new();
+    for placement in &project.placements {
+        let Some(physical) = project
+            .instance(placement.instance)
+            .and_then(|i| instances::resolve(&project.library, i).ok())
+            .and_then(|r| r.physical)
+        else {
+            continue;
+        };
+        for pad in &physical.footprint.definition.pads {
+            let label = if pad.number.is_empty() {
+                pad.id.to_string()
+            } else {
+                pad.number.clone()
+            };
+            labels.insert((placement.instance, pad.id), label);
+        }
+    }
+    labels
 }
 
 /// Whether an instance has a resolvable physical choice.
@@ -439,7 +506,7 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                     "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
                 ));
             }
-            if pad.layer == track.layer
+            if pad.on(track.layer)
                 && pad.net != track.net
                 && polygon_distance(&polygon, &pad_polygon(pad)) < CLEARANCE_MM - EPS
             {
@@ -520,6 +587,7 @@ pub fn validate(project: &Project) -> Result<()> {
     }
     let mut placed = BTreeSet::new();
     let mut pad_count = 0usize;
+    let mut graphic_vertices = 0usize;
     for placement in &project.placements {
         if !placed.insert(placement.instance) || project.instance(placement.instance).is_none() {
             return invalid("duplicate or unknown placement instance");
@@ -534,6 +602,18 @@ pub fn validate(project: &Project) -> Result<()> {
         pad_count = pad_count.saturating_add(physical.footprint.definition.pads.len());
         if pad_count > MAX_PLACED_PADS {
             return invalid("prototype supports at most 4096 placed pads");
+        }
+        graphic_vertices = graphic_vertices.saturating_add(
+            physical
+                .footprint
+                .definition
+                .graphics
+                .iter()
+                .map(|g| g.item.vertices())
+                .sum::<usize>(),
+        );
+        if graphic_vertices > MAX_PLACED_GRAPHIC_VERTICES {
+            return invalid("prototype supports at most 262144 placed footprint graphic vertices");
         }
         if !point_valid(placement.position)
             || !placement.rotation_deg.is_finite()
@@ -686,18 +766,20 @@ fn polygon_distance(a: &[Point; 4], b: &[Point; 4]) -> f64 {
 
 /// Same geometry and clearance rule as routing, used by revision impact plans.
 pub fn track_pad_clearance_conflict(track: &Track, pad: &WorldPad) -> bool {
-    track.layer == pad.layer
+    pad.on(track.layer)
         && track.net != pad.net
         && polygon_distance(&track_polygon(track), &pad_polygon(pad)) < CLEARANCE_MM - EPS
 }
 
 pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
-    track.layer == pad.layer && polygon_distance(&track_polygon(track), &pad_polygon(pad)) <= EPS
+    pad.on(track.layer) && polygon_distance(&track_polygon(track), &pad_polygon(pad)) <= EPS
 }
 
 struct CopperShape {
     net: Id,
     layer: Layer,
+    /// A plated through-hole pad: copper on every layer.
+    through: bool,
     polygon: [Point; 4],
     label: String,
     object: ObjectRef,
@@ -721,12 +803,14 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         ));
     }
     let world_pads = pads(project);
+    let labels = pad_labels(project);
     let mut shapes = world_pads
         .iter()
         .enumerate()
         .map(|(i, pad)| CopperShape {
             net: pad.net,
             layer: pad.layer,
+            through: pad.through,
             polygon: pad_polygon(pad),
             label: format!(
                 "{} pad {}",
@@ -734,7 +818,10 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                     .instance(pad.instance)
                     .map(|i| i.designator.as_str())
                     .unwrap_or("component"),
-                pad.pad
+                labels
+                    .get(&(pad.instance, pad.pad))
+                    .cloned()
+                    .unwrap_or_else(|| pad.pad.to_string())
             ),
             object: ObjectRef::Pad {
                 instance: pad.instance,
@@ -746,6 +833,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     shapes.extend(project.tracks.iter().map(|t| CopperShape {
         net: t.net,
         layer: t.layer,
+        through: false,
         polygon: track_polygon(t),
         label: format!("track {}", t.id),
         object: ObjectRef::Track { id: t.id },
@@ -772,7 +860,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 ));
                 return issues;
             }
-            if a.layer != b.layer {
+            if a.layer != b.layer && !a.through && !b.through {
                 continue;
             }
             let gap = polygon_distance(&a.polygon, &b.polygon);
@@ -830,12 +918,12 @@ pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
     let world = pads(project);
     let shapes = world
         .iter()
-        .map(|p| (p.net, p.layer, pad_polygon(p)))
+        .map(|p| (p.net, p.layer, p.through, pad_polygon(p)))
         .chain(
             project
                 .tracks
                 .iter()
-                .map(|t| (t.net, t.layer, track_polygon(t))),
+                .map(|t| (t.net, t.layer, false, track_polygon(t))),
         )
         .collect::<Vec<_>>();
     let mut parents = (0..shapes.len()).collect::<Vec<_>>();
@@ -846,7 +934,7 @@ pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
             if pairs > MAX_CHECK_PAIRS {
                 break 'scan;
             }
-            if a.0 == b.0 && a.1 == b.1 && polygon_distance(&a.2, &b.2) <= EPS {
+            if a.0 == b.0 && (a.1 == b.1 || a.2 || b.2) && polygon_distance(&a.3, &b.3) <= EPS {
                 union(&mut parents, i, j);
             }
         }

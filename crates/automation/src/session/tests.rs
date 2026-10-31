@@ -563,3 +563,141 @@ fn orienting_a_unit_through_json_is_one_undo_step() -> TestResult {
     assert!(schemas().to_string().contains("symbol.orient_unit"));
     Ok(())
 }
+
+/// `library.edit_footprint`, `library.footprint_preview` and
+/// `library.assign_terminals` reach the core through JSON with the host's
+/// `SketchEvaluator`; a failed edit changes nothing; undo restores.
+#[test]
+fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
+    use pcbcraft_core::library::{
+        Definition, DefinitionMeta, FootprintDefinition, PackageDefinition, PackageTerminal,
+    };
+    use pcbcraft_core::{DefinitionId, LibraryCommand, PackageRef, PackageTerminalId, Revision};
+    let mut session = Session::default();
+    let meta = |name: &str| DefinitionMeta {
+        name: name.into(),
+        description: String::new(),
+        provenance: "original test fixture".into(),
+    };
+    let package = Definition::Package(PackageDefinition {
+        next_local: 3,
+        terminals: (1..=2)
+            .map(|n| PackageTerminal {
+                id: PackageTerminalId(n),
+                designation: n.to_string(),
+            })
+            .collect(),
+        body_size: [2.0, 1.2, 0.5],
+        ..PackageDefinition::default()
+    });
+    let created = |reply: &Value| -> std::result::Result<u64, Box<dyn std::error::Error>> {
+        reply["result"]["outcome"]["id"]
+            .as_u64()
+            .ok_or_else(|| format!("no draft id in {reply}").into())
+    };
+    let new_draft = |definition, name: &str| {
+        Operation::Library(LibraryCommand::NewDraft {
+            meta: meta(name),
+            definition,
+        })
+    };
+    let reply = session.dispatch(apply(
+        &new_draft(package, "chip"),
+        session.engine().revision(),
+    ));
+    let package_id = DefinitionId(created(&reply)?);
+    let footprint = Definition::Footprint(FootprintDefinition {
+        package: PackageRef::new(package_id, Revision::FIRST),
+        next_local: 1,
+        ..FootprintDefinition::default()
+    });
+    let reply = session.dispatch(apply(
+        &new_draft(footprint, "chip-fp"),
+        session.engine().revision(),
+    ));
+    let draft = created(&reply)?;
+    let pad = |x: f64, number: &str| {
+        json!({"add_pad": {"template": "rect", "at": [x, 0.0], "params": {
+            "width": "w", "height": "0.8 mm", "radius_ratio": null, "kind": "smd",
+            "side": "top", "terminal": null, "number": number}}})
+    };
+    let edit = |edits: Value, revision: u64| {
+        json!({"command": "project.apply", "params": {"expected_revision": revision,
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.edit_footprint",
+                "params": {"draft": draft, "edits": edits}}}}})
+    };
+    let revision = session.engine().revision();
+    let reply = session.dispatch(edit(
+        json!([{"set_parameter": {"name": "w", "expr": "0.6 mm", "unit": "mm"}},
+               pad(-0.75, "1"), pad(0.75, "2")]),
+        revision,
+    ));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let report = &reply["result"]["outcome"]["report"];
+    assert_eq!(report["pads"].as_array().map(Vec::len), Some(2));
+    let revision = session.engine().revision();
+
+    let bad = session.dispatch(edit(
+        json!([{"set_parameter": {"name": "w", "expr": "-1 mm", "unit": "mm"}}]),
+        revision,
+    ));
+    assert_eq!(bad["ok"], false, "{bad}");
+    assert_eq!(
+        session.engine().revision(),
+        revision,
+        "a refused edit changes nothing"
+    );
+
+    let preview = session.dispatch(query(
+        "library.footprint_preview",
+        json!({"draft": draft, "edits": [{"set_parameter": {"name": "w", "expr": "1 mm", "unit": "mm"}}]}),
+    ));
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["result"]["result"]["committable"], true);
+    assert_eq!(session.engine().revision(), revision);
+
+    let assign = |confirm: bool, revision: u64| {
+        json!({"command": "project.apply", "params": {"expected_revision": revision,
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.assign_terminals",
+                "params": {"draft": draft, "rule": "by_package_designation", "confirm": confirm}}}}})
+    };
+    let shown = session.dispatch(assign(false, revision));
+    assert_eq!(shown["result"]["outcome"]["applied"], false, "{shown}");
+    assert_eq!(
+        shown["result"]["outcome"]["changes"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        session.engine().revision(),
+        revision,
+        "a preview takes no revision"
+    );
+    let done = session.dispatch(assign(true, revision));
+    assert_eq!(done["result"]["outcome"]["applied"], true, "{done}");
+
+    let publish = session.dispatch(apply(
+        &Operation::Library(LibraryCommand::Publish {
+            drafts: vec![package_id, DefinitionId(draft)],
+        }),
+        session.engine().revision(),
+    ));
+    assert_eq!(
+        publish["ok"], true,
+        "the fresh footprint publishes: {publish}"
+    );
+
+    for _ in 0..2 {
+        session.dispatch(json!({"command": "project.undo", "params": {}}));
+    }
+    let drafts = session.engine().drafts();
+    let Some(Definition::Footprint(f)) = drafts.get(DefinitionId(draft)).map(|d| &d.definition)
+    else {
+        return Err("the footprint draft is back after undo".into());
+    };
+    assert!(f.pads.iter().all(|p| p.terminal.is_none()));
+    Ok(())
+}

@@ -73,7 +73,8 @@ fn run() -> Result<()> {
             Ok(())
         }
         "wasm" => wasm(),
-        "wasm-scripting" => wasm_scripting(),
+        "wasm-scripting" => wasm_tests("pcbcraft-core", "scripting::tests", "scripting"),
+        "wasm-footprint" => wasm_tests("pcbcraft-solidcraft", "footprint::tests", "footprint"),
         "layers" => layers::check(),
         "core-modules" => core_modules::check(),
         "clean-room" => clean_room::check(),
@@ -81,16 +82,19 @@ fn run() -> Result<()> {
         "ui-containers" => ui_containers::check(),
         "ui-forms" => ui_forms::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | layers | core-modules \
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules \
              | licences --check | clean-room | ui-containers | ui-forms"
                 .into(),
         ),
     }
 }
 
-/// Execute the scripting proof in Node, separately from the compile-only gate.
-/// Requires the wasm-bindgen test runner matching Cargo.lock and Node on PATH.
-fn wasm_scripting() -> Result<()> {
+/// Execute a crate's wasm proof tests in Node, separately from the
+/// compile-only gate: the scripting proof (`wasm-scripting`) and the
+/// footprint evaluator's golden hashes (`wasm-footprint`, native/wasm
+/// agreement). Requires the wasm-bindgen test runner matching Cargo.lock
+/// and Node on PATH.
+fn wasm_tests(package: &str, filter: &str, what: &str) -> Result<()> {
     let runner = std::env::var_os("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER")
         .unwrap_or_else(|| "wasm-bindgen-test-runner".into());
     let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
@@ -98,7 +102,7 @@ fn wasm_scripting() -> Result<()> {
             "test",
             "--locked",
             "-p",
-            "pcbcraft-core",
+            package,
             "--lib",
             "--profile",
             "ci",
@@ -106,13 +110,13 @@ fn wasm_scripting() -> Result<()> {
             "wasm32-unknown-unknown",
             "--target-dir",
             "target/wasm-test",
-            "scripting::tests",
+            filter,
         ])
         .env("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER", runner)
         .current_dir(root()?)
         .status()?;
     if !status.success() {
-        return Err(format!("wasm scripting tests failed: {status}").into());
+        return Err(format!("wasm {what} tests failed: {status}").into());
     }
     Ok(())
 }

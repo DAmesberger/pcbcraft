@@ -303,11 +303,7 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
         }),
     )?;
     let plan = engine.preview_update(revision_change(r1, target));
-    assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.contains(&format!("Placement {r1}")))
-    );
+    assert!(plan.blockers.iter().any(|b| b.contains("Placement of R1")));
     assert!(
         engine
             .apply_update(plan.revision, plan.change, true)
@@ -870,4 +866,205 @@ fn a_pin_that_moves_and_changes_drawing_is_not_called_presentation_only() -> Res
         plan.changes
     );
     Ok(())
+}
+
+#[test]
+fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
+    use crate::library::{
+        DrawingLayer, Fill, FootprintGraphic, Hole, HoleShape, Item, MaskRule, PadKind, PadShape,
+        Side,
+    };
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            // Pad 1: reshaped, renumbered and given a tented mask; a 180°
+            // turn of a rectangle is no turn. Pad 2: a plated hole, so it
+            // becomes plated-through. A new mechanical pad with no terminal.
+            let p1 = &mut fp.pads[0];
+            p1.shape = PadShape::Oblong { size: [1.0, 1.4] };
+            p1.number = "A".into();
+            p1.mask = MaskRule::Tented;
+            p1.rotation_deg = 180.0;
+            let p2 = &mut fp.pads[1];
+            p2.kind = PadKind::PlatedThrough;
+            p2.hole = Some(Hole {
+                shape: HoleShape::Round { diameter: 0.5 },
+                plated: true,
+                offset: [0.0, 0.0],
+            });
+            let mut tab = fp.pads[0].clone();
+            tab.id = crate::PadId(fp.next_local);
+            tab.kind = PadKind::Mechanical;
+            tab.terminal = None;
+            tab.number = "MP".into();
+            tab.position = [0.0, 3.0];
+            // One assembly graphic changes, one silkscreen line is added.
+            if let Some(FootprintGraphic {
+                item: Item::Shape { width, .. },
+                ..
+            }) = fp
+                .graphics
+                .iter_mut()
+                .find(|g| g.layer == DrawingLayer::Assembly)
+            {
+                *width = 0.12;
+            }
+            fp.graphics.push(FootprintGraphic {
+                id: crate::GraphicId(fp.next_local + 1),
+                layer: DrawingLayer::Silkscreen,
+                side: Side::Component,
+                item: Item::Shape {
+                    shape: crate::geometry::Shape::Line {
+                        a: [-1.0, 2.0],
+                        b: [1.0, 2.0],
+                    },
+                    width: 0.15,
+                    fill: Fill::None,
+                },
+            });
+            fp.next_local += 2;
+            fp.pads.push(tab);
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let has = |needle: &str| plan.changes.iter().any(|c| c.contains(needle));
+    for needle in [
+        "footprint pad ‘A’ is reshaped rect [1.0, 1.4] mm → oblong [1.0, 1.4] mm",
+        "footprint pad ‘A’ is renumbered ‘1’ → ‘A’ (display only)",
+        "footprint pad ‘A’ mask Inherit → Tented",
+        "footprint pad ‘2’ kind Smd on Top → PlatedThrough on Top",
+        "footprint pad ‘2’ hole none → drill ⌀0.5 mm",
+        "add footprint pad ‘MP’: mechanical oblong",
+        "at [0.0, 3.0] mm",
+        "R1 pad A world geometry: rect",
+        "→ oblong [1.0, 1.4] mm",
+        "footprint Silkscreen graphics: 1 added, 0 removed, 0 changed (presentation only",
+        "footprint Assembly graphics: 0 added, 0 removed, 1 changed (presentation only",
+    ] {
+        assert!(has(needle), "{needle}: {:#?}", plan.changes);
+    }
+    assert!(
+        !has("turns"),
+        "a rectangle turned 180° is unchanged: {:#?}",
+        plan.changes
+    );
+    assert!(!has("unresolved"), "a mechanical pad needs no terminal");
+    assert!(!has("moves"), "{:#?}", plan.changes);
+    Ok(())
+}
+
+#[test]
+fn a_retired_pad_lists_the_copper_touching_it() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            // Pad 2 is retired; a new pad with a new ID lands its terminal.
+            let mut replacement = fp.pads[1].clone();
+            replacement.id = crate::PadId(fp.next_local);
+            fp.next_local += 1;
+            fp.pads[1] = replacement;
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(
+        plan.changes
+            .iter()
+            .any(|c| c.starts_with("R1: footprint pad ‘2’ is retired")),
+        "{:#?}",
+        plan.changes
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.starts_with(&format!(
+            "Track {shared} touches R1 pad 2, which the update retires"
+        ))),
+        "{:#?}",
+        plan.warnings
+    );
+    Ok(())
+}
+
+#[test]
+fn array_growth_and_shrink_list_new_and_retired_pads() {
+    use crate::library::footprint_source::{
+        ArrayId, FootprintSource, GenerationKey, KeyedPad, SketchBlob, SolveSummary,
+    };
+    use crate::library::{FootprintDefinition, Pad};
+    use crate::{PackageTerminalId, PadId};
+    let key = |i| GenerationKey::Array {
+        array: ArrayId(9),
+        i,
+        j: 0,
+    };
+    let footprint = |pads: &[(u32, u16, Option<u32>)]| FootprintDefinition {
+        pads: pads
+            .iter()
+            .map(|(id, _, t)| {
+                let mut pad =
+                    Pad::smd_rect(PadId(*id), PackageTerminalId(1), "", [0.0, 0.0], [1.0, 1.0]);
+                pad.terminal = t.map(PackageTerminalId);
+                pad
+            })
+            .collect(),
+        source: Some(Box::new(FootprintSource {
+            evaluator: Default::default(),
+            sketch: SketchBlob("{}".into()),
+            parameters: vec![],
+            pads: vec![],
+            arrays: vec![],
+            graphics: vec![],
+            keys: pads
+                .iter()
+                .map(|(id, i, _)| KeyedPad {
+                    key: key(*i),
+                    pad: PadId(*id),
+                })
+                .collect(),
+            overrides: vec![],
+            solve: SolveSummary::default(),
+            datum: None,
+        })),
+        ..FootprintDefinition::default()
+    };
+    let mut plan = UpdatePlan {
+        revision: 0,
+        change: revision_change(1, ComponentRef::default()),
+        changes: vec![],
+        affected_wires: vec![],
+        removed_wires: vec![],
+        affected_placements: vec![],
+        removed_placements: vec![],
+        conflicting_tracks: vec![],
+        blockers: vec![],
+        warnings: vec![],
+    };
+    let a = footprint(&[(1, 0, Some(1)), (2, 1, Some(2)), (3, 2, Some(3))]);
+    let grown = footprint(&[
+        (1, 0, Some(1)),
+        (2, 1, Some(2)),
+        (3, 2, Some(3)),
+        (4, 3, None),
+        (5, 4, None),
+    ]);
+    footprint_details(&mut plan, "U1", &a, &grown);
+    let shrunk = footprint(&[(1, 0, Some(1))]);
+    footprint_details(&mut plan, "U1", &a, &shrunk);
+    assert_eq!(
+        plan.changes,
+        vec![
+            "U1: footprint array 9 3 → 5 instances; new pads 4, 5 (2 without a package terminal), retired pads none.".to_string(),
+            "U1: footprint array 9 3 → 1 instances; new pads none (0 without a package terminal), retired pads 2, 3.".to_string(),
+        ]
+    );
 }

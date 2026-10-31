@@ -389,14 +389,17 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
             .package
             .iter()
             .enumerate()
-            .map(|(i, (id, _))| Pad {
-                id: PadId(*id),
-                terminal: PackageTerminalId(*id),
-                position: [i as f64 * 1.5 - 1.5, 0.0],
-                size: [0.6, 0.8],
+            .map(|(i, (id, _))| {
+                Pad::smd_rect(
+                    PadId(*id),
+                    PackageTerminalId(*id),
+                    id.to_string(),
+                    [i as f64 * 1.5 - 1.5, 0.0],
+                    [0.6, 0.8],
+                )
             })
             .collect(),
-        datum_offset: [0.0; 2],
+        ..FootprintDefinition::default()
     };
     let binding = BindingDefinition {
         component: f.component,

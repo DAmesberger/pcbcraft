@@ -247,12 +247,14 @@ fn shared_package(
     };
     let edits = family.edits(label, refs);
     let small = label == "0402";
+    let mut body = None;
     for mut edit in edits {
         match &mut edit.definition {
             Definition::Package(package) => {
                 if small {
                     package.body_size = SMALL.0;
                 }
+                body = Some(package.clone());
                 edit.meta = meta(label, "Synthetic two-terminal package");
                 push(library, edit);
             }
@@ -260,7 +262,11 @@ fn shared_package(
                 if small {
                     for (pad, position) in footprint.pads.iter_mut().zip(SMALL.1) {
                         pad.position = position;
-                        pad.size = SMALL.2;
+                        pad.shape.set_size(SMALL.2);
+                    }
+                    // The drawings follow the smaller lands and body.
+                    if let Some(package) = &body {
+                        samples::redraw(footprint, package);
                     }
                 }
                 edit.meta = meta(&format!("{label} lands"), "Synthetic two-land footprint");

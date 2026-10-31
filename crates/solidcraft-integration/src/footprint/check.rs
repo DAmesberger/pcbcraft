@@ -1,20 +1,22 @@
 //! `check_sketch` (design §2.5 step 2): the only way an embedded sketch is
 //! loaded. Solidcraft's `Sketch` has no `deny_unknown_fields`, defaults most
-//! fields and has no public whole-sketch validator, so the spike bounds the
+//! fields and has no public whole-sketch validator, so the evaluator bounds the
 //! input, demands the canonical serde form (anything dropped or added on a
 //! round trip is refused), enforces the footprint subset and validates every
-//! curve and constraint by index.
+//! curve and constraint by index. Ported from the F0 spike.
 
 use std::collections::BTreeSet;
 
 use solidcraft_engine::sketch::{ConstraintKind, CurveKind, Sketch};
 
-use super::{Outcome, finding};
+use super::{Outcome, problem};
 
-pub(crate) const MAX_SKETCH_BYTES: usize = 1 << 20;
-pub(crate) const MAX_POINTS: usize = 4096;
+use pcbcraft_core::library::footprint_source::{
+    MAX_SKETCH_BYTES, MAX_SKETCH_CONSTRAINTS as MAX_CONSTRAINTS, MAX_SKETCH_POINTS as MAX_POINTS,
+};
+
+/// Curves in one footprint sketch.
 pub(crate) const MAX_CURVES: usize = 4096;
-pub(crate) const MAX_CONSTRAINTS: usize = 8192;
 /// Largest coordinate or dimension value, mm.
 pub(crate) const MAX_COORD_MM: f64 = 1000.0;
 
@@ -23,18 +25,19 @@ const TOO_LARGE: &str = "footprint.too_large";
 
 /// The canonical JSON the product stores for a sketch.
 pub(crate) fn canonical(sketch: &Sketch) -> Outcome<String> {
-    serde_json::to_string(sketch).map_err(|e| finding("footprint.internal", e.to_string()))
+    serde_json::to_string(sketch).map_err(|e| problem("footprint.internal", e.to_string()))
 }
 
+/// Load a stored sketch: bounded, canonical and within the footprint subset.
 pub(crate) fn check_sketch(json: &str) -> Outcome<Sketch> {
     if json.len() > MAX_SKETCH_BYTES {
-        return Err(finding(
+        return Err(problem(
             TOO_LARGE,
             format!("sketch is {} bytes", json.len()),
         ));
     }
     let given: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| finding(UNSUPPORTED, format!("not JSON: {e}")))?;
+        serde_json::from_str(json).map_err(|e| problem(UNSUPPORTED, format!("not JSON: {e}")))?;
     // Count before the typed parse allocates the whole structure.
     for (key, cap) in [
         ("points", MAX_POINTS),
@@ -46,15 +49,15 @@ pub(crate) fn check_sketch(json: &str) -> Outcome<Sketch> {
             .and_then(serde_json::Value::as_array)
             .map_or(0, Vec::len);
         if n > cap {
-            return Err(finding(TOO_LARGE, format!("{n} {key} (at most {cap})")));
+            return Err(problem(TOO_LARGE, format!("{n} {key} (at most {cap})")));
         }
     }
     let sketch: Sketch = serde_json::from_value(given.clone())
-        .map_err(|e| finding(UNSUPPORTED, format!("not a Solidcraft sketch: {e}")))?;
+        .map_err(|e| problem(UNSUPPORTED, format!("not a Solidcraft sketch: {e}")))?;
     let again =
-        serde_json::to_value(&sketch).map_err(|e| finding("footprint.internal", e.to_string()))?;
+        serde_json::to_value(&sketch).map_err(|e| problem("footprint.internal", e.to_string()))?;
     if again != given {
-        return Err(finding(
+        return Err(problem(
             UNSUPPORTED,
             format!(
                 "the sketch does not round-trip unchanged ({})",
@@ -71,7 +74,7 @@ pub(crate) fn check_sketch(json: &str) -> Outcome<Sketch> {
 /// The footprint subset: no links, offsets, wires, patterns or 3D.
 fn subset(sketch: &Sketch) -> Outcome<()> {
     let refuse = |what: &str| {
-        Err(finding(
+        Err(problem(
             UNSUPPORTED,
             format!("footprint sketches cannot have {what}"),
         ))
@@ -118,7 +121,7 @@ fn subset(sketch: &Sketch) -> Outcome<()> {
 fn ids(sketch: &Sketch) -> Outcome<()> {
     match sketch.points.first() {
         Some(o) if o.id == "origin" && o.fixed && o.pos.x == 0.0 && o.pos.y == 0.0 => {}
-        _ => return Err(finding(UNSUPPORTED, "point 0 must be the fixed origin")),
+        _ => return Err(problem(UNSUPPORTED, "point 0 must be the fixed origin")),
     }
     let mut seen = BTreeSet::new();
     let all = sketch
@@ -129,10 +132,10 @@ fn ids(sketch: &Sketch) -> Outcome<()> {
         .chain(sketch.constraints.iter().map(|c| &c.id));
     for id in all {
         if id.is_empty() || id.len() > 128 {
-            return Err(finding(UNSUPPORTED, format!("bad id `{id}`")));
+            return Err(problem(UNSUPPORTED, format!("bad id `{id}`")));
         }
         if !seen.insert(id.as_str()) {
-            return Err(finding(UNSUPPORTED, format!("duplicate id `{id}`")));
+            return Err(problem(UNSUPPORTED, format!("duplicate id `{id}`")));
         }
     }
     Ok(())
@@ -145,7 +148,7 @@ fn in_range(v: f64) -> bool {
 fn geometry(sketch: &Sketch) -> Outcome<()> {
     for p in &sketch.points {
         if !in_range(p.pos.x) || !in_range(p.pos.y) {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("point {} is out of range", p.id),
             ));
@@ -155,14 +158,14 @@ fn geometry(sketch: &Sketch) -> Outcome<()> {
     for c in &sketch.curves {
         let pts = c.kind.point_ids();
         if pts.iter().any(|&i| i >= n) {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("curve {} names a missing point", c.id),
             ));
         }
         let distinct: BTreeSet<_> = pts.iter().collect();
         if distinct.len() != pts.len() {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("curve {} repeats a point", c.id),
             ));
@@ -170,7 +173,7 @@ fn geometry(sketch: &Sketch) -> Outcome<()> {
         if let CurveKind::Circle { r, .. } = c.kind
             && !(r > 1e-9 && in_range(r))
         {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("curve {} has radius {r}", c.id),
             ));
@@ -179,17 +182,17 @@ fn geometry(sketch: &Sketch) -> Outcome<()> {
     for k in &sketch.constraints {
         sketch
             .validate(&k.kind)
-            .map_err(|e| finding(UNSUPPORTED, format!("constraint {}: {e}", k.id)))?;
+            .map_err(|e| problem(UNSUPPORTED, format!("constraint {}: {e}", k.id)))?;
         if let Some(v) = k.kind.value()
             && !in_range(v)
         {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("constraint {} has value {v}", k.id),
             ));
         }
         if k.param.is_some() && k.driven {
-            return Err(finding(
+            return Err(problem(
                 UNSUPPORTED,
                 format!("constraint {} is driven but bound to a parameter", k.id),
             ));

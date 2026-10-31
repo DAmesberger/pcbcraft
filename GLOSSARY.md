@@ -76,7 +76,36 @@ An alternative mounting pattern for the same package, such as a hand-soldering p
 _Avoid_: Revision when describing an alternative pattern
 
 **Pad**:
-A copper land in a footprint, associated with a package terminal when electrically connected. Several lands may belong to the same terminal without being connected by PCB copper.
+A copper land in a footprint, associated with a package terminal when electrically connected. Several lands may belong to the same terminal without being connected by PCB copper. Its number is a display label, never its identity.
+
+**Pad kind**:
+What a pad is for: SMD and plated-through pads land a package terminal; non-plated holes and fiducials never do; a mechanical pad is copper with an explicit decision not to land one. No terminal is inferred from a pad number.
+_Avoid_: Treating a terminal-less pad as unfinished when it is mechanical
+
+**Polarity pad**:
+The authored pin-1 pad of a footprint. Silkscreen or assembly markers only illustrate it; the pad is the authority.
+_Avoid_: Pin-1 dot (the marker, not the rule)
+
+**Courtyard**:
+The keep-out area a placed part and its assembly tools need, drawn as closed shapes on the courtyard layer. It is authored or explicitly generated, never inferred.
+
+**Mask web**:
+The strip of solder mask between two neighbouring pad openings. A web below the estimated 0.1 mm default is an advisory lint.
+
+**Footprint source**:
+How a footprint's solved pads and drawings were derived: an opaque sketch, parameters, pad roles and arrays, interpreted only by a footprint evaluator outside the core. Consumers read only the solved data.
+
+**Footprint evaluator**:
+The host component that interprets a footprint source: it applies sketch edits and solves the source into typed pads, drawings and the datum. The core never interprets a sketch; the desktop, CLI and MCP pass Solidcraft's sketch evaluator.
+
+**Pad frame**:
+A pad's own coordinates: origin at the pad position, axes turned by the pad rotation. Shapes, holes, vias and paste windows are stored in it.
+
+**Mask opening**:
+The gap in the solder mask over a pad: the land grown by the pad's mask expansion as a mitred offset, or none when the pad is tented. Display-only in 3D, never saved in the native model.
+
+**Package value**:
+A typed value a package offers footprint expressions under the reserved `pkg_` prefix, such as `pkg_L` (a length) or `pkg_n` (a count). Footprint parameters may not use the prefix.
 
 **Device binding**:
 An explicit association between a component definition and a package, including the mapping from electrical terminals to package terminals and the footprint variants it allows. A binding belongs to one component lineage, and component revisions list the bindings they allow.

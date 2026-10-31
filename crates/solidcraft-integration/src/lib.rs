@@ -5,8 +5,10 @@
 //! meshes in Solidcraft's mesh type ([`appearance`]), never saved.
 
 pub mod appearance;
+pub mod footprint;
 pub mod material;
 pub mod native;
+pub mod pad_outline;
 pub mod project;
 pub mod scene;
 pub use solidcraft_engine::{geom, render};
@@ -15,11 +17,6 @@ pub use solidcraft_engine::{geom, render};
 /// acceptance tests for Solidcraft capabilities, not product features.
 #[cfg(test)]
 mod fixtures;
-
-/// Spike F0: headless parametric-footprint evaluator prototype (tests only,
-/// not a product API; see `docs/footprint-spike.md`).
-#[cfg(test)]
-mod footprint_spike;
 
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-product-look`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the

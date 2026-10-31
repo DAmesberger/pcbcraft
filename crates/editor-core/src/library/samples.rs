@@ -3,6 +3,7 @@
 //! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::templates;
 use super::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
     FootprintDefinition, PackageBody, PackageDefinition, PackageTerminal, Pad, SymbolDefinition,
@@ -75,6 +76,19 @@ struct Layout {
 fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
     let terminals = [TerminalId(1), TerminalId(2)];
     let package_terminals = [PackageTerminalId(1), PackageTerminalId(2)];
+    let package = PackageDefinition {
+        next_local: 3,
+        terminals: package_terminals
+            .iter()
+            .map(|id| PackageTerminal {
+                id: *id,
+                designation: id.to_string(),
+            })
+            .collect(),
+        body_size: layout.envelope,
+        model_offset: layout.offset,
+        body: kind.body,
+    };
     vec![
         DraftEdit {
             id: refs.component,
@@ -110,39 +124,12 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         DraftEdit {
             id: refs.package.id,
             meta: meta(&format!("{name} package")),
-            definition: Definition::Package(PackageDefinition {
-                next_local: 3,
-                terminals: package_terminals
-                    .iter()
-                    .map(|id| PackageTerminal {
-                        id: *id,
-                        designation: id.to_string(),
-                    })
-                    .collect(),
-                body_size: layout.envelope,
-                model_offset: layout.offset,
-                body: kind.body,
-            }),
+            definition: Definition::Package(package.clone()),
         },
         DraftEdit {
             id: refs.footprint.id,
             meta: meta(&format!("{name} footprint")),
-            definition: Definition::Footprint(FootprintDefinition {
-                package: refs.package,
-                next_local: 3,
-                pads: package_terminals
-                    .iter()
-                    .zip(layout.pads)
-                    .enumerate()
-                    .map(|(i, (terminal, position))| Pad {
-                        id: PadId(if i == 0 { 1 } else { 2 }),
-                        terminal: *terminal,
-                        position,
-                        size: layout.land,
-                    })
-                    .collect(),
-                datum_offset: [0.0, 0.0],
-            }),
+            definition: Definition::Footprint(footprint(refs.package, &package, &layout)),
         },
         DraftEdit {
             id: refs.binding.id,
@@ -163,6 +150,43 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
             }),
         },
     ]
+}
+
+/// Two rectangular top-side lands, pads 1–2 landing package terminals 1–2,
+/// with the standard drawings (graphics from local ID 3).
+fn footprint(
+    package_ref: PackageRef,
+    package: &PackageDefinition,
+    layout: &Layout,
+) -> FootprintDefinition {
+    let pads = [PackageTerminalId(1), PackageTerminalId(2)]
+        .iter()
+        .zip(layout.pads)
+        .zip([PadId(1), PadId(2)])
+        .map(|((terminal, position), id)| {
+            Pad::smd_rect(id, *terminal, id.0.to_string(), position, layout.land)
+        })
+        .collect();
+    let mut footprint = FootprintDefinition {
+        package: package_ref,
+        next_local: 3,
+        pads,
+        ..FootprintDefinition::default()
+    };
+    redraw(&mut footprint, package);
+    footprint
+}
+
+/// Replace a two-land sample footprint's drawings with the standard ones
+/// for its current pads and `package` (graphics from local ID 3). A footprint
+/// whose identities are exhausted keeps no drawings.
+pub fn redraw(footprint: &mut FootprintDefinition, package: &PackageDefinition) {
+    footprint.graphics.clear();
+    footprint.polarity = None;
+    footprint.next_local = 3;
+    if templates::footprint::add_standard_graphics(footprint, package).is_err() {
+        footprint.graphics.clear();
+    }
 }
 
 /// One unit: a body rectangle, a pin per terminal pointing into it, the

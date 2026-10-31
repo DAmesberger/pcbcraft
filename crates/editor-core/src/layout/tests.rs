@@ -112,7 +112,7 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
     // Exact snapshots are immutable through commands; this fixture substitutes
     // a stored footprint to exercise the placement transform alone.
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.datum_offset = [1.0, 1.0];
+    footprint.datum.offset = [1.0, 1.0];
     footprint.pads[0].position = [3.0, 4.0];
     apply(
         &mut project,
@@ -130,7 +130,28 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
     assert_eq!(pad.layer, Layer::Bottom);
     assert_eq!(pad.terminal, ep(r1, 1));
     assert_eq!(pad.net, R1_1);
+    // The placement transform and the placed-pad query agree with it.
+    let placed = placed_pads(&project);
+    let first = placed
+        .iter()
+        .find(|p| p.instance == r1 && p.pad.id == pad.pad)
+        .ok_or_else(|| Error::NotFound("placed pad".into()))?;
+    let at = first.transform.apply(first.pad.position);
+    assert!((at[0] - 13.0).abs() < 1e-8 && (at[1] - 22.0).abs() < 1e-8);
+    assert_eq!(first.net, Some(R1_1));
+    assert_eq!(first.layer, Layer::Bottom);
+    let placement = project
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .ok_or_else(|| Error::NotFound("placement".into()))?;
+    let t = placement_transform(placement, &footprint_datum(&project));
+    assert_eq!(t, first.transform);
     Ok(())
+}
+
+fn footprint_datum(project: &Project) -> crate::library::Datum {
+    project.library.footprints[0].definition.datum
 }
 
 #[test]
@@ -455,5 +476,84 @@ fn schemas_list_the_fabrication_operation_and_every_choice() -> Result<()> {
     ] {
         assert!(schemas.contains(name), "{name} missing from the schemas");
     }
+    Ok(())
+}
+
+#[test]
+fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.kind = crate::library::PadKind::PlatedThrough;
+        pad.hole = Some(crate::library::Hole {
+            shape: crate::library::HoleShape::Round { diameter: 0.4 },
+            plated: true,
+            offset: [0.0, 0.0],
+        });
+    }
+    assert!(
+        pads(&project)
+            .iter()
+            .all(|p| p.on(Layer::Top) && p.on(Layer::Bottom))
+    );
+    apply(
+        &mut project,
+        LayoutCommand::Route {
+            request: RouteRequest {
+                layer: Layer::Bottom,
+                ..request()
+            },
+        },
+    )?;
+    assert!(airwires(&project).is_empty());
+    assert!(
+        !checks(&project).iter().any(|f| f.code == "board.unrouted"),
+        "{:?}",
+        checks(&project)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_opposite_side_smd_pad_is_on_the_other_layer() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.side = crate::library::PadSide::Bottom;
+    }
+    assert!(
+        pads(&project)
+            .iter()
+            .all(|p| p.layer == Layer::Bottom && !p.through)
+    );
+    // A top track no longer reaches them; a bottom track does.
+    apply(&mut project, LayoutCommand::Route { request: request() })?;
+    assert_eq!(airwires(&project).len(), 1);
+    project.tracks.clear();
+    apply(
+        &mut project,
+        LayoutCommand::Route {
+            request: RouteRequest {
+                layer: Layer::Bottom,
+                ..request()
+            },
+        },
+    )?;
+    assert!(airwires(&project).is_empty());
+    Ok(())
+}
+
+#[test]
+fn board_checks_label_pads_by_number() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.number = format!("N{}", pad.id);
+    }
+    let unrouted: Vec<_> = checks(&project)
+        .into_iter()
+        .filter(|f| f.code == "board.unrouted")
+        .collect();
+    assert!(
+        unrouted.iter().all(|f| f.message.contains(" pad N")),
+        "{unrouted:?}"
+    );
     Ok(())
 }
