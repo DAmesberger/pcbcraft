@@ -284,7 +284,7 @@ Paths are relative to `apps/pcbcraft/src`. Each editor's `inspector()` stays in 
 | `schematic_editor/sheet_card.rs` | Sheet, Place and Checks |
 | `schematic_editor/instance_card.rs` | the selected instance: properties, Part, pin functions |
 | `schematic_editor/net_card.rs` | the selected wire's net |
-| `pcb_editor/board_card.rs` | Board and fabrication, Layers, Board checks |
-| `pcb_editor/placement_card.rs` | Placement, and the not-placed state |
-| `pcb_editor/track_card.rs` | the selected track |
-| `pcb_editor/route_card.rs` | Routing |
+| `pcb_editor/board_card.rs` | W3: the Board card (size, copper, finish + Setup…), the Board setup dialog and the view popover (layers, view from bottom, net highlight, airwires); Board checks moved to Issues |
+| `pcb_editor/placement_card.rs` | W3: Placement (live position pair, rotation, side, lock), Connections, the Rotate 90° / Flip / Schematic › footer, and the not-placed state |
+| `pcb_editor/track_card.rs` | W3: Track (net, live layer and width through `layout.track_set`, length, ends, lock) and the Delete track footer |
+| `pcb_editor/route_card.rs` | W3: the Route tool card (width, layer, net); the route in progress is a canvas pill |

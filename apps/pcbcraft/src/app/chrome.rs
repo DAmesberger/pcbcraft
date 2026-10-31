@@ -429,6 +429,29 @@ impl App {
             .data(|d| d.get_temp::<bool>(expanded_id))
             .unwrap_or(false);
         let column = kit::card::column(rect, expanded);
+        if self.workspace == Workspace::Pcb {
+            // The PCB editor lays out its whole subject slot (W3).
+            let slot = shell::column_card(
+                ctx,
+                "properties",
+                column.subject,
+                shell::COLUMN_CARD_INSET,
+                |ui| self.pcb.subject_slot(ui, &self.engine),
+            );
+            if let Some(slot) = slot {
+                self.apply(ctx, crate::refusal::Origin::Command, slot.output);
+                if slot.show_issues {
+                    ctx.data_mut(|d| d.insert_temp(expanded_id, true));
+                }
+            }
+            if let Some(id) = self.pcb.take_show_in_schematic() {
+                self.workspace = Workspace::Schematic;
+                self.schematic
+                    .select_instance(Some(id), self.engine.project());
+            }
+            self.issues_column(ctx, column.issues, expanded_id, expanded, false);
+            return;
+        }
         let header = match self.workspace {
             Workspace::Part => self.part.header(&self.engine),
             Workspace::Schematic => self.schematic.header(&self.engine),
@@ -461,13 +484,26 @@ impl App {
             open_issues = card.show_issues;
             self.apply(ctx, crate::refusal::Origin::Command, card.output);
         }
+        self.issues_column(ctx, column.issues, expanded_id, expanded, open_issues);
+    }
+
+    /// The Issues card under the subject; `open` expands it (the subject's
+    /// issue slot was clicked).
+    fn issues_column(
+        &mut self,
+        ctx: &egui::Context,
+        rect: Rect,
+        expanded_id: egui::Id,
+        expanded: bool,
+        open: bool,
+    ) {
         let summary = self.issue_summary(ctx);
-        let toggle = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
+        let toggle = shell::column_card(ctx, "issues", rect, 0, |ui| {
             issues_card(ui, &summary, expanded)
         });
         if toggle == Some(true) {
             ctx.data_mut(|d| d.insert_temp(expanded_id, !expanded));
-        } else if open_issues {
+        } else if open {
             ctx.data_mut(|d| d.insert_temp(expanded_id, true));
         }
     }
@@ -572,7 +608,8 @@ impl App {
         let t = Tokens::get();
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
-        let buttons = if pcb_3d { 2.0 } else { 1.0 };
+        let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
+        let buttons = if pcb_3d || pcb_view { 2.0 } else { 1.0 };
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             t.control_height + 2.0 * t.space_4,
@@ -610,6 +647,15 @@ impl App {
                     Workspace::Pcb => self.pcb.fit(),
                 }
             }
+        }
+        if pcb_view {
+            // Layers and view toggles (W3): a popover above the bar.
+            let response = shell::icon_button(&mut child, "display", "Layers and view", true);
+            Container::new(ui.ctx(), Surface::Popup)
+                .menu(&response)
+                .align(egui::RectAlign::TOP_START)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| self.pcb.view_menu(ui));
         }
         if pcb_3d {
             let hidden = self.scene.viewport.hide_substrate();

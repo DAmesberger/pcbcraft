@@ -1,40 +1,63 @@
-//! The Routing section: the Route tool's width, layer and net, and the
-//! net highlight and airwire toggles.
-use super::{PcbEditor, layer_options};
-use crate::kit;
+//! The Route tool card: the width, copper layer and net the next route
+//! uses, while Route is armed in Layout (docs/sidebar-ia.md, "Tool card").
+//! The route in progress shows as a canvas pill; view toggles live in the
+//! view popover.
+use super::{PcbEditor, Tool, layer_options};
+use crate::kit::{self, ToolCard};
 use egui::Ui;
-use pcbcraft_core::{Project, schematic};
+use pcbcraft_core::{Operation, Project, schematic};
+
+/// Route widths the engine accepts (mm).
+const WIDTH_RANGE: std::ops::RangeInclusive<f64> = 0.05..=5.0;
 
 impl PcbEditor {
-    pub(super) fn routing_section(&mut self, ui: &mut Ui, project: &Project) {
-        kit::section(ui, "pcb-routing", "Routing", true, None, |ui| {
-            kit::number_row(ui, "Width", &mut self.width, "mm", 0.05..=10.0);
-            if kit::choice_row(ui, "Layer", &mut self.layer, &layer_options()) {
-                self.route_start = None;
-            }
-            let mut nets = vec![(None, "Select a net or pad".to_owned())];
-            nets.extend(
-                schematic::nets(project)
-                    .iter()
-                    .map(|net| (Some(net.id), net.name.clone())),
-            );
-            if kit::choice_row(ui, "Net", &mut self.net, &nets) {
-                self.route_start = None;
-                self.highlighted = self.net;
-            }
-            let mut highlight = self.highlighted.is_some();
-            if kit::check_row(ui, "Highlight complete net", &mut highlight) {
-                self.highlight_net(if highlight { self.net } else { None });
-            }
-            kit::check_row(ui, "Show airwires", &mut self.show_airwires);
-            kit::note(
-                ui,
-                if self.route_start.is_some() {
-                    "Click a point or pad. Escape ends the route."
-                } else {
-                    "Route: click a pad, then a point or pad."
-                },
-            );
-        });
+    /// The Route tool card. Done (or Esc on the canvas) returns to Select
+    /// and the Properties card of the previous selection. Tool settings
+    /// are editor state, not document edits, so it issues no operation.
+    pub(super) fn route_card(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
+        let routing = self.route_start.is_some();
+        let card = ToolCard {
+            icon: "trace",
+            name: "Route",
+            key: "",
+            hint: if routing {
+                "Click a point or pad; Esc ends the route"
+            } else {
+                "Click a pad, then points or a pad; Esc ends"
+            },
+            tip: "Routes run on the chosen copper layer at the chosen width. A route the \
+                  clearance rules refuse is not added, and the route stays in progress.",
+            finish: None,
+        };
+        let t = solidcraft_ui_egui::theme::Tokens::get();
+        // The same side inset as the Properties card's body.
+        let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
+        let response = egui::Frame::NONE
+            .inner_margin(margin)
+            .show(ui, |ui| {
+                kit::tool_card(ui, &card, |ui| {
+                    kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);
+                    if kit::choice_row(ui, "Layer", &mut self.layer, &layer_options()) {
+                        self.route_start = None;
+                    }
+                    let mut nets = vec![(None, "From the first pad".to_owned())];
+                    nets.extend(
+                        schematic::nets(project)
+                            .iter()
+                            .map(|net| (Some(net.id), net.name.clone())),
+                    );
+                    if kit::choice_row(ui, "Net", &mut self.net, &nets) {
+                        self.route_start = None;
+                        self.highlighted = self.net;
+                    }
+                })
+            })
+            .inner;
+        if response.done {
+            self.tool = Tool::Select;
+            self.route_start = None;
+            self.discard_staged();
+        }
+        None
     }
 }
