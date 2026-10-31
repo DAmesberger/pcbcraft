@@ -47,10 +47,3 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// An `unsupported` error for behaviour a later change implements.
-pub(crate) fn unsupported(what: &str) -> Error {
-    Error::Document(pcbcraft_core::Error::Unsupported(format!(
-        "{what} is not implemented yet"
-    )))
-}
