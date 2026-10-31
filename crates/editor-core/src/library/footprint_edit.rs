@@ -639,7 +639,30 @@ pub fn check_fresh(
     if let Some(e) = blocking(&evaluation) {
         return Err(e);
     }
-    if evaluation.summary.result_hash != source.solve.result_hash {
+    let hash = evaluation.summary.result_hash.clone();
+    // The hash alone does not prove the stored data: compare what the
+    // source derives (pads without their authored terminals, derived
+    // graphics, datum) with what is stored.
+    let mut fresh = footprint.clone();
+    commit(&mut fresh, evaluation)?;
+    let pads = |d: &FootprintDefinition| {
+        let mut pads = d.pads.clone();
+        for p in &mut pads {
+            p.terminal = None;
+        }
+        pads.sort_by_key(|p| p.id);
+        pads
+    };
+    let graphics = |d: &FootprintDefinition| {
+        let mut g = d.graphics.clone();
+        g.sort_by_key(|g| g.id);
+        g
+    };
+    if hash != source.solve.result_hash
+        || pads(&fresh) != pads(footprint)
+        || graphics(&fresh) != graphics(footprint)
+        || fresh.datum != footprint.datum
+    {
         return Err(conflict(
             "footprint.stale",
             "the stored pads differ from re-evaluating the source; edit the footprint to re-solve it",

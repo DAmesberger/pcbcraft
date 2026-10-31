@@ -148,6 +148,29 @@ pub fn paint_shape(
     }
 }
 
+/// A shape's outline as a dashed line (courtyards): `dash` and `gap` in
+/// screen points. No fill.
+pub fn paint_dashed(
+    painter: &Painter,
+    view: View,
+    shape: &Shape,
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+) {
+    let flat = flat(painter.ctx(), shape, view.scale);
+    let mut screen: Vec<Pos2> = flat.points.iter().map(|p| view.screen(*p)).collect();
+    if screen.len() < 2 {
+        return;
+    }
+    if shape.is_closed()
+        && let Some(first) = screen.first().copied()
+    {
+        screen.push(first);
+    }
+    painter.extend(egui::Shape::dashed_line(&screen, stroke, dash, gap));
+}
+
 /// A shape flattened for one zoom step, in millimetres.
 struct Flat {
     /// The shape flattened, kept to tell hash collisions apart.

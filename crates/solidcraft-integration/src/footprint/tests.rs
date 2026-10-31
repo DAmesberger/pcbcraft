@@ -413,6 +413,15 @@ fn pitch_and_count_changes_keep_pad_identity() -> Result<()> {
         shrunk.is_subset(&old),
         "survivors are exactly old keys still generated"
     );
+    // Retired keys go with their pads, so the shrunk draft still publishes.
+    let keyed: BTreeSet<PadId> = fp
+        .def
+        .source
+        .as_ref()
+        .map(|s| s.keys.iter().map(|k| k.pad).collect())
+        .unwrap_or_default();
+    assert!(keyed.is_subset(&shrunk), "{keyed:?} ⊄ {shrunk:?}");
+    footprint_edit::check_fresh(&fp.def, &fp.pkg, &EV)?;
     Ok(())
 }
 
@@ -1152,5 +1161,76 @@ fn evaluation_timings_against_the_targets() -> Result<()> {
             "{name} is far over its target: {ms} ms"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn tampered_pads_with_an_intact_hash_are_stale() -> Result<()> {
+    let (fp, _) = soic8()?;
+    let mut tampered = fp.def.clone();
+    if let Some(p) = tampered.pads.first_mut() {
+        p.position[0] += 0.5;
+    }
+    let err = footprint_edit::check_fresh(&tampered, &fp.pkg, &EV);
+    assert!(
+        matches!(&err, Err(Error::Conflict(m)) if m.starts_with("footprint.stale")),
+        "{err:?}"
+    );
+    let mut resized = fp.def.clone();
+    if let Some(p) = resized.pads.last_mut() {
+        p.shape = rect(2.0, 0.6);
+    }
+    assert!(footprint_edit::check_fresh(&resized, &fp.pkg, &EV).is_err());
+    Ok(())
+}
+
+/// A dual-row array whose seed has an outward offset drill: the turned row
+/// keeps the drill outward although its rectangle folds 180° back to 0°.
+#[test]
+fn a_folded_turn_carries_the_hole_offset() -> Result<()> {
+    let (mut fp, seed) = soic8()?;
+    let drill = fp.edit(vec![FootprintEdit::Sketch(SketchEdit::AddCircle {
+        center: [-2.9, 1.905],
+        radius: 0.15,
+        construction: true,
+    })])?;
+    let circle = first_curve(&drill)?;
+    let mut role = fp
+        .def
+        .source
+        .as_ref()
+        .and_then(|s| s.pads.iter().find(|r| r.pad == seed).cloned())
+        .ok_or_else(|| Error::NotFound("seed role".into()))?;
+    role.kind = PadKind::PlatedThrough;
+    role.hole = Some(HoleRole {
+        curves: vec![circle],
+        plated: true,
+    });
+    fp.edit(vec![FootprintEdit::SetPadRole { role }])?;
+    let world = |p: &Pad| -> Result<[f64; 2]> {
+        let h = p
+            .hole
+            .as_ref()
+            .ok_or_else(|| Error::NotFound("hole".into()))?;
+        let (c, s) = pcbcraft_core::geometry::cos_sin(p.rotation_deg);
+        Ok([
+            p.position[0] + c * h.offset[0] - s * h.offset[1],
+            p.position[1] + s * h.offset[0] + c * h.offset[1],
+        ])
+    };
+    let one = fp.pad("1")?;
+    let w1 = world(one)?;
+    assert!((w1[0] - (one.position[0] - 0.2)).abs() < 1e-6, "{w1:?}");
+    for n in ["5", "6", "7", "8"] {
+        let p = fp.pad(n)?;
+        assert_eq!(p.rotation_deg, 0.0, "pad {n} folds to 0°");
+        let w = world(p)?;
+        assert!(
+            (w[0] - (p.position[0] + 0.2)).abs() < 1e-6 && (w[1] - p.position[1]).abs() < 1e-6,
+            "pad {n}: drill at {w:?}, pad at {:?}",
+            p.position
+        );
+    }
+    footprint_edit::check_fresh(&fp.def, &fp.pkg, &EV)?;
     Ok(())
 }

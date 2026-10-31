@@ -537,8 +537,10 @@ impl Viewport {
                     let (x, y) = local(p);
                     self.surface_point(x, y, w, h)
                 });
+                // Scrolling up zooms in, as in Solidcraft and the 2D
+                // canvases: the camera distance shrinks.
                 self.camera
-                    .zoom_at((f64::from(scroll) * 0.002).exp(), anchor);
+                    .zoom_at((-f64::from(scroll) * 0.002).exp(), anchor);
             }
         }
         if self.shadow_view != Some(self.current_shadow_view()) {

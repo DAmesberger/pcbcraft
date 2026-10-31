@@ -272,15 +272,9 @@ impl PartEditor {
         for d in [vec2(8.0, 0.0), vec2(0.0, 8.0)] {
             painter.line_segment([datum - d, datum + d], Stroke::new(1.0, t.text_dim));
         }
-        // Drawings below the copper.
-        for layer in [DrawingLayer::Courtyard, DrawingLayer::Assembly] {
-            if layers.drawing(layer) {
-                let color = match layer {
-                    DrawingLayer::Courtyard => ink.courtyard,
-                    _ => ink.assembly,
-                };
-                self.paint_drawings(&painter, view, layer, color);
-            }
+        // Assembly below the copper; silkscreen and courtyard above it.
+        if layers.drawing(DrawingLayer::Assembly) {
+            self.paint_drawings(&painter, view, DrawingLayer::Assembly, ink.assembly);
         }
         if layers.mask {
             for pad in &set.footprint.pads {
@@ -334,6 +328,9 @@ impl PartEditor {
         }
         if layers.silkscreen {
             self.paint_drawings(&painter, view, DrawingLayer::Silkscreen, ink.silk);
+        }
+        if layers.drawing(DrawingLayer::Courtyard) {
+            self.paint_drawings(&painter, view, DrawingLayer::Courtyard, ink.courtyard);
         }
         // Pad numbers on top.
         for pad in &set.footprint.pads {
@@ -440,7 +437,13 @@ impl PartEditor {
                     let stroke = (*width > 0.0)
                         .then(|| Stroke::new((*width as f32 * view.scale).max(1.0), color));
                     let fill = (*fill != Fill::None).then_some(color);
-                    symbol_view::paint_shape(painter, view, shape, fill, stroke);
+                    match stroke {
+                        // Courtyards are dashed (graphics spec §6).
+                        Some(stroke) if layer == DrawingLayer::Courtyard && fill.is_none() => {
+                            symbol_view::paint_dashed(painter, view, shape, stroke, 6.0, 4.0);
+                        }
+                        _ => symbol_view::paint_shape(painter, view, shape, fill, stroke),
+                    }
                 }
                 Item::Text(text) if text.visible => {
                     let content = match &text.content {

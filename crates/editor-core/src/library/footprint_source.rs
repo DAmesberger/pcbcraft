@@ -1017,18 +1017,22 @@ pub fn commit(definition: &mut FootprintDefinition, evaluation: Evaluation) -> R
         allocated.push(id);
     }
     let mut pads = Vec::with_capacity(evaluation.pads.len());
+    let mut generated = BTreeMap::new();
     for EvaluatedPad { key, mut pad } in evaluation.pads {
         if let Some(key) = key {
             pad.id = *keys
                 .get(&key)
                 .ok_or_else(|| Error::Invalid("an evaluated pad has an unknown key".into()))?;
+            generated.insert(key, pad.id);
         }
         pads.push(pad);
     }
     if pads.len() > MAX_PADS {
         return Err(Error::Limit("a footprint has at most 1024 pads".into()));
     }
-    source.keys = keys
+    // Only keys generated now are kept: a retired instance's id is gone
+    // with its pad, and never returns because `next_local` only grows.
+    source.keys = generated
         .into_iter()
         .map(|(key, pad)| KeyedPad { key, pad })
         .collect();

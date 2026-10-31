@@ -261,7 +261,7 @@ fn pad_rows(
     }
     kit::pair_row(ui, "Position", &mut pad.position, "mm", COORD);
     if kit::number_row(ui, "Rotation", &mut pad.rotation_deg, "°", ANGLE) {
-        pad.rotation_deg = pad.shape.canonical_rotation(pad.rotation_deg);
+        pad.fold_rotation();
     }
     shape_rows(ui, pad);
 }
@@ -333,8 +333,7 @@ fn shape_rows(ui: &mut Ui, pad: &mut Pad) {
                 // than store a rectangle in rounded form.
                 *corners = before;
             }
-            let rotation = pad.rotation_deg;
-            pad.rotation_deg = pad.shape.canonical_rotation(rotation);
+            pad.fold_rotation();
         }
         PadShape::Circle { diameter } => {
             kit::number_row(ui, "Diameter", diameter, "mm", SIZE);
@@ -424,14 +423,20 @@ fn hole_rows(ui: &mut Ui, pad: &mut Pad) {
     }
 }
 
+/// `+0.05 mm` / `−0.05 mm`, and a plain `0 mm` for zero (never `−0`).
+fn signed_mm(value: f64, sign: char) -> String {
+    if value == 0.0 {
+        "0 mm".to_owned()
+    } else {
+        format!("{sign}{} mm", kit::number_text(value))
+    }
+}
+
 fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::PadDefaults) {
     let masks = [
         (
             MaskChoice::Inherit,
-            format!(
-                "Default (+{} mm)",
-                kit::number_text(defaults.mask_expansion_mm)
-            ),
+            format!("Default ({})", signed_mm(defaults.mask_expansion_mm, '+')),
         ),
         (MaskChoice::Tented, "Tented".to_owned()),
         (MaskChoice::Expansion, "Expansion".to_owned()),
@@ -450,15 +455,12 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
         };
     }
     if let MaskRule::Expansion(e) = &mut pad.mask {
-        kit::number_row(ui, "Mask expansion", e, "mm", OPENING);
+        kit::number_row(ui, "Expansion", e, "mm", OPENING);
     }
     let mut pastes = vec![
         (
             PasteChoice::Inherit,
-            format!(
-                "Default (−{} mm)",
-                kit::number_text(defaults.paste_reduction_mm)
-            ),
+            format!("Default ({})", signed_mm(defaults.paste_reduction_mm, '−')),
         ),
         (PasteChoice::None, "None".to_owned()),
         (PasteChoice::Reduction, "Reduction".to_owned()),
@@ -483,7 +485,7 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
     }
     match &mut pad.paste {
         PasteRule::Reduction(r) => {
-            kit::number_row(ui, "Paste reduction", r, "mm", OPENING);
+            kit::number_row(ui, "Reduction", r, "mm", OPENING);
         }
         PasteRule::Windows(w) => kit::value_row(ui, "Windows", &w.len().to_string()),
         _ => {}

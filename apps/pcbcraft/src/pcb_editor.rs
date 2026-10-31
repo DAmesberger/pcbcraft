@@ -110,6 +110,12 @@ struct BoardPad {
     holes: Vec<PlacedHole>,
 }
 
+impl BoardPad {
+    fn contains(&self, p: Point) -> bool {
+        self.outline.distance(p, true) <= 0.0
+    }
+}
+
 /// Board millimetres to screen pixels, seen from above or (mirrored in x
 /// about the board centre) from below.
 #[derive(Clone, Copy)]
@@ -193,7 +199,6 @@ pub struct PcbEditor {
     world_pads: Vec<WorldPad>,
     airwires: Vec<(WorldPad, WorldPad)>,
     issues: Vec<pcbcraft_core::Finding>,
-    pads: Vec<PlacedPad>,
     board_pads: Vec<BoardPad>,
     graphics: Vec<PlacedGraphic>,
     /// Instances whose footprint draws an assembly or courtyard outline;
@@ -232,7 +237,6 @@ impl Default for PcbEditor {
             world_pads: vec![],
             airwires: vec![],
             issues: vec![],
-            pads: vec![],
             board_pads: vec![],
             graphics: vec![],
             outlined: BTreeSet::new(),
@@ -320,14 +324,12 @@ impl PcbEditor {
 
     /// Place pads and graphics once per revision.
     fn cache_board(&mut self, project: &Project) {
-        self.pads = layout::placed_pads(project);
-        self.board_pads = self
-            .pads
-            .iter()
+        self.board_pads = layout::placed_pads(project)
+            .into_iter()
             .map(|placed| BoardPad {
                 outline: placed.outline(),
                 holes: placed.holes(),
-                placed: placed.clone(),
+                placed,
             })
             .collect();
         self.graphics = layout::placed_graphics(project);
@@ -516,7 +518,10 @@ impl PcbEditor {
             board_section(ui, project)
         };
         self.routing_section(ui, project);
-        self.layers_section(ui);
+        // The 2D layer toggles do not drive the 3D scene; hide them there.
+        if !self.view_3d {
+            self.layers_section(ui);
+        }
         self.checks_section(ui);
         operation
     }
@@ -665,16 +670,26 @@ impl PcbEditor {
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
+        let fit = ((rect.width() - 100.0).max(20.0) / project.board_size[0] as f32)
+            .min((rect.height() - 100.0).max(20.0) / project.board_size[1] as f32);
+        let centring =
+            egui::vec2(-project.board_size[0] as f32, project.board_size[1] as f32) * 0.5;
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            self.zoom = (self.zoom * (scroll * 0.002).exp()).clamp(0.2, 12.0);
+            let zoom = (self.zoom * (scroll * 0.002).exp()).clamp(0.2, 12.0);
+            // Zoom about the hovered board point: it stays under the cursor.
+            if zoom != self.zoom
+                && let Some(p) = response.hover_pos()
+            {
+                let (before, after) = (fit * self.zoom, fit * zoom);
+                let origin = rect.center() + self.pan + centring * before;
+                let moved = p - (p - origin) * (after / before);
+                self.pan = moved - rect.center() - centring * after;
+            }
+            self.zoom = zoom;
         }
-        let scale = ((rect.width() - 100.0).max(20.0) / project.board_size[0] as f32)
-            .min((rect.height() - 100.0).max(20.0) / project.board_size[1] as f32)
-            * self.zoom;
-        let origin = rect.center()
-            + self.pan
-            + egui::vec2(-project.board_size[0] as f32, project.board_size[1] as f32) * scale * 0.5;
+        let scale = fit * self.zoom;
+        let origin = rect.center() + self.pan + centring * scale;
         let view = BoardView::new(
             View { origin, scale },
             project.board_size[0],
@@ -809,13 +824,26 @@ impl PcbEditor {
     /// its centre, nearest first.
     fn route_snap(&self, at: Point, scale: f32) -> Option<&PlacedPad> {
         let reach = f64::from(8.0 / scale);
-        self.pads
+        self.board_pads
             .iter()
-            .filter(|p| p.net.is_some() && p.on_copper(self.layer) && self.layers.pad(p))
-            .map(|p| (p, pcbcraft_core::geometry::distance(p.center(), at)))
-            .filter(|(p, d)| *d < reach || p.contains(at))
+            .filter(|b| {
+                let p = &b.placed;
+                p.net.is_some() && p.on_copper(self.layer) && self.layers.pad(p)
+            })
+            .map(|b| (b, pcbcraft_core::geometry::distance(b.placed.center(), at)))
+            .filter(|(b, d)| *d < reach || b.contains(at))
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(p, _)| p)
+            .map(|(b, _)| &b.placed)
+    }
+
+    /// The topmost (last drawn) visible pad under `at`, against the cached
+    /// board outlines.
+    fn pick_pad(&self, at: Point, visible: impl Fn(&PlacedPad) -> bool) -> Option<&PlacedPad> {
+        self.board_pads
+            .iter()
+            .rev()
+            .find(|b| visible(&b.placed) && b.contains(at))
+            .map(|b| &b.placed)
     }
 
     /// Select what a click at `at` hits, topmost first among visible
@@ -823,7 +851,7 @@ impl PcbEditor {
     /// outline; empty board clears the selection.
     fn select_at(&mut self, project: &Project, at: Point, tolerance: f64, metric: TextMetric) {
         let layers = self.layers;
-        if let Some(pad) = layout::pick_pad(&self.pads, at, |p| layers.pad(p)) {
+        if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
             let (instance, net) = (pad.instance, pad.net);
             self.set_selection(Some(instance), None, net);
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
@@ -847,7 +875,7 @@ impl PcbEditor {
         metric: TextMetric,
     ) -> Option<Id> {
         let layers = self.layers;
-        layout::pick_pad(&self.pads, at, |p| layers.pad(p))
+        self.pick_pad(at, |p| layers.pad(p))
             .map(|p| p.instance)
             .or_else(|| {
                 layout::pick_graphic(&self.graphics, at, tolerance, metric, |g| {
@@ -923,26 +951,39 @@ impl PcbEditor {
                 Stroke::new(0.5, t.grid),
             );
         }
-        self.paint_drawings(painter, view, &ink, far, true);
-        self.paint_copper(painter, view, project, Some(far));
-        self.paint_copper(painter, view, project, None);
-        self.paint_copper(painter, view, project, Some(near));
+        // Far side dimmed underneath; then near assembly, copper, holes,
+        // silkscreen and courtyard (graphics spec §6 order).
+        self.paint_drawings(painter, view, &ink, far, true, |_| true);
+        self.paint_copper(painter, view, project, Some(far), true);
+        let assembly = |l: BoardDrawing| matches!(l, BoardDrawing::Assembly(_));
+        self.paint_drawings(painter, view, &ink, near, false, assembly);
+        self.paint_copper(painter, view, project, None, false);
+        self.paint_copper(painter, view, project, Some(near), false);
         if self.layers.holes {
             for pad in &self.board_pads {
                 let delta = self.drag_delta(pad.placed.instance);
                 for hole in &pad.holes {
-                    let stroke = (!hole.plated).then(|| Stroke::new(1.0, ink.unplated));
+                    // Always outlined, so holes stay visible with every
+                    // copper layer hidden.
+                    let edge = if hole.plated {
+                        ink.plated
+                    } else {
+                        ink.unplated
+                    };
                     symbol_view::paint_shape(
                         painter,
                         view.view,
                         &view.shape(&hole.shape, delta),
                         Some(ink.drill),
-                        stroke,
+                        Some(Stroke::new(1.0, edge)),
                     );
                 }
             }
         }
-        self.paint_drawings(painter, view, &ink, near, false);
+        let silk = |l: BoardDrawing| matches!(l, BoardDrawing::Silkscreen(_));
+        let courtyard = |l: BoardDrawing| matches!(l, BoardDrawing::Courtyard(_));
+        self.paint_drawings(painter, view, &ink, near, false, silk);
+        self.paint_drawings(painter, view, &ink, near, false, courtyard);
         if self.show_airwires {
             for (a, b) in self.visible_airwires() {
                 painter.line_segment(
@@ -1022,7 +1063,9 @@ impl PcbEditor {
         view: BoardView,
         project: &Project,
         side: Option<Layer>,
+        dim: bool,
     ) {
+        let shade = |c: Color32| if dim { c.gamma_multiply(0.45) } else { c };
         if let Some(layer) = side {
             if !self.layers.copper(layer) {
                 return;
@@ -1033,7 +1076,7 @@ impl PcbEditor {
                     layout::track_polygon(track)
                         .map(|p| view.screen(p))
                         .to_vec(),
-                    copper_color(track.layer, selected),
+                    shade(copper_color(track.layer, selected)),
                     Stroke::NONE,
                 ));
             }
@@ -1078,7 +1121,7 @@ impl PcbEditor {
                 painter,
                 view.view,
                 &shape,
-                Some(copper_color(layer, selected)),
+                Some(shade(copper_color(layer, selected))),
                 None,
             );
         }
@@ -1093,10 +1136,14 @@ impl PcbEditor {
         ink: &BoardInk,
         side: Layer,
         dim: bool,
+        layers: impl Fn(BoardDrawing) -> bool,
     ) {
         let selected_ink = Tokens::get().body_selected;
         for graphic in &self.graphics {
-            if drawing_side(graphic.layer) != side || !self.layers.drawing(graphic.layer) {
+            if drawing_side(graphic.layer) != side
+                || !layers(graphic.layer)
+                || !self.layers.drawing(graphic.layer)
+            {
                 continue;
             }
             let mut color = if self.instance == Some(graphic.instance) {
@@ -1119,6 +1166,17 @@ impl PcbEditor {
                     filled,
                 } => {
                     let stroke = Stroke::new((*width as f32 * view.view.scale).max(1.0), color);
+                    if matches!(graphic.layer, BoardDrawing::Courtyard(_)) && !*filled {
+                        symbol_view::paint_dashed(
+                            painter,
+                            view.view,
+                            &view.shape(shape, delta),
+                            stroke,
+                            6.0,
+                            4.0,
+                        );
+                        continue;
+                    }
                     symbol_view::paint_shape(
                         painter,
                         view.view,
@@ -1143,6 +1201,8 @@ struct BoardInk {
     /// Drilled holes: the canvas seen through the board.
     drill: Color32,
     unplated: Color32,
+    /// A plated barrel's edge.
+    plated: Color32,
 }
 
 impl BoardInk {
@@ -1163,6 +1223,7 @@ impl BoardInk {
             assembly: t.text_dim,
             drill: t.viewport_bottom,
             unplated: t.text,
+            plated: t.text_dim,
         }
     }
 }
@@ -1251,7 +1312,7 @@ fn board_section(ui: &mut Ui, project: &Project) -> Option<Operation> {
         );
         kit::note(
             ui,
-            "Saved with the design for fabrication. The 3D view shows mask and pad finish; silkscreen appears once the board has legend graphics.",
+            "Saved with the design for fabrication. The 3D view shows mask and pad finish; silkscreen is drawn in 2D Layout only for now.",
         );
     });
     fabrication_edit(project.fabrication, fabrication)
@@ -1872,13 +1933,19 @@ mod tests {
         let all = painted(&output);
         for (what, color) in [
             ("top copper", board.copper_top),
-            ("bottom copper", board.copper_bottom),
+            // Seen from the top, bottom copper is the dimmed far side.
+            ("bottom copper", board.copper_bottom.gamma_multiply(0.45)),
             ("drill", ink.drill),
             ("silkscreen", ink.silkscreen),
             ("courtyard", ink.courtyard),
         ] {
             assert!(all.colors.contains(&color), "{what} not painted");
         }
+        // Courtyard and silkscreen are drawn above the copper (spec order).
+        let last = |c: Color32| all.colors.iter().rposition(|x| *x == c);
+        let first = |c: Color32| all.colors.iter().position(|x| *x == c);
+        assert!(first(ink.courtyard) > last(board.copper_top));
+        assert!(first(ink.silkscreen) > last(board.copper_top));
         // R2 is on the bottom: its silkscreen is the dimmed far side.
         assert!(all.colors.contains(&ink.silkscreen.gamma_multiply(0.45)));
         // The designator graphics label the parts; no extra label is drawn.
@@ -1911,6 +1978,10 @@ mod tests {
         let hidden = painted(&output);
         for (what, color) in [
             ("bottom copper", board.copper_bottom),
+            (
+                "dimmed bottom copper",
+                board.copper_bottom.gamma_multiply(0.45),
+            ),
             ("drill", ink.drill),
             ("silkscreen", ink.silkscreen),
             ("courtyard", ink.courtyard),
@@ -1950,8 +2021,9 @@ mod tests {
         // The bottom part's surface land is on hidden bottom copper.
         editor.layers.copper_bottom = false;
         let r2_smd = editor
-            .pads
+            .board_pads
             .iter()
+            .map(|b| &b.placed)
             .find(|p| p.instance == r2 && p.pad.kind == PadKind::Smd)
             .map(PlacedPad::center)
             .ok_or("R2 land")?;
@@ -1963,8 +2035,9 @@ mod tests {
         assert_eq!(
             editor.net,
             editor
-                .pads
+                .board_pads
                 .iter()
+                .map(|b| &b.placed)
                 .find(|p| p.instance == r2 && p.pad.kind == PadKind::Smd)
                 .and_then(|p| p.net)
         );
@@ -1974,8 +2047,9 @@ mod tests {
         editor.set_selection(None, None, None);
         editor.from_bottom = true;
         let pth = editor
-            .pads
+            .board_pads
             .iter()
+            .map(|b| &b.placed)
             .find(|p| p.instance == r1 && p.pad.kind == PadKind::PlatedThrough)
             .map(PlacedPad::center)
             .ok_or("R1 through-hole pad")?;

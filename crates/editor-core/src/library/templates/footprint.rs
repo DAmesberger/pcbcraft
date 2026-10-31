@@ -285,6 +285,43 @@ mod tests {
     }
 
     #[test]
+    fn lint_flags_pads_outside_the_courtyard_and_silk_over_copper() -> Result<()> {
+        let (mut footprint, package) = chip();
+        add_standard_graphics(&mut footprint, &package)?;
+        let codes = |f: &FootprintDefinition| -> Vec<String> {
+            f.lint(crate::ids::DefinitionId(1))
+                .into_iter()
+                .map(|f| f.code)
+                .collect()
+        };
+        let mut outside = footprint.clone();
+        outside.pads[0].position[0] += 20.0;
+        assert!(
+            codes(&outside)
+                .iter()
+                .any(|c| c == "footprint.pad_outside_courtyard")
+        );
+        let mut silk = footprint.clone();
+        let centre = silk.pads[0].position;
+        silk.graphics.push(crate::library::FootprintGraphic {
+            id: GraphicId(silk.next_local),
+            layer: crate::library::DrawingLayer::Silkscreen,
+            side: crate::library::graphics::Side::Component,
+            item: crate::library::graphics::Item::Shape {
+                shape: crate::geometry::Shape::Line {
+                    a: [centre[0] - 5.0, centre[1]],
+                    b: [centre[0] + 5.0, centre[1]],
+                },
+                width: 0.15,
+                fill: crate::library::graphics::Fill::None,
+            },
+        });
+        silk.next_local += 1;
+        assert!(codes(&silk).iter().any(|c| c == "footprint.silk_over_pad"));
+        Ok(())
+    }
+
+    #[test]
     fn standard_graphics_allocate_ids_and_pass_rules_and_lint() -> Result<()> {
         let (mut footprint, package) = chip();
         let added = add_standard_graphics(&mut footprint, &package)?;

@@ -572,9 +572,13 @@ impl PartEditor {
             tools: edit,
         }];
         if self.view == View::Footprint {
-            groups.extend(self.footprint_groups(has_draft, selected_mapped));
+            // Publish stays ahead of the layer toggles, so at narrow widths
+            // the toggles fold into the overflow first.
+            let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
+            groups.extend([pads, library, show]);
+        } else {
+            groups.push(library);
         }
-        groups.push(library);
         Ribbon {
             tabs,
             groups,
@@ -583,7 +587,7 @@ impl PartEditor {
     }
 
     /// The Footprint tab's pad tools and layer toggles.
-    fn footprint_groups(&self, has_draft: bool, selected_mapped: bool) -> Vec<crate::shell::Group> {
+    fn footprint_groups(&self, has_draft: bool, selected_mapped: bool) -> [crate::shell::Group; 2] {
         use crate::shell::{Group, Tool};
         let explicit = self
             .draft
@@ -599,7 +603,7 @@ impl PartEditor {
             .is_some()
         });
         let pads = vec![
-            Tool::new("pad", "rect", "SMD pad")
+            Tool::new("pad", "rect", "SMD")
                 .enabled(selected_mapped && explicit)
                 .tip("Add a surface pad to the selected terminal"),
             Tool::new("pad-pth", "circle", "Through-hole")
@@ -623,7 +627,7 @@ impl PartEditor {
                     .tip(tip)
             })
             .collect();
-        vec![
+        [
             Group {
                 label: "Pads",
                 tools: pads,
@@ -995,8 +999,10 @@ impl PartEditor {
     }
 
     /// Add a pad of `which`: copper pads land the selected terminal's
-    /// package terminal; holes and fiducials land none. The pad goes to the
-    /// right of the existing lands and becomes the selected pad.
+    /// package terminal when no pad lands it yet (otherwise none, which
+    /// publishing reports); holes and fiducials land none. Numbers never
+    /// repeat an existing pad's. The pad goes to the right of the existing
+    /// lands and becomes the selected pad.
     fn add_pad(&mut self, which: footprint_geometry::NewPad) {
         let Some(set) = &mut self.draft else {
             return;
@@ -1010,10 +1016,8 @@ impl PartEditor {
             .mappings
             .iter()
             .find(|m| Some(m.terminal) == self.selected)
-            .map(|m| m.package_terminal);
-        if which.lands_terminal() && terminal.is_none() {
-            return;
-        }
+            .map(|m| m.package_terminal)
+            .filter(|t| !set.footprint.pads.iter().any(|p| p.terminal == Some(*t)));
         if set.footprint.pads.len() >= pcbcraft_core::library::MAX_PADS {
             self.notice = format!(
                 "Maximum {} pads in this edition",
@@ -1027,13 +1031,17 @@ impl PartEditor {
             return;
         };
         set.footprint.next_local = next;
-        let number = match terminal.filter(|_| which.lands_terminal()) {
-            Some(terminal) => set
-                .package
-                .terminals
-                .iter()
-                .find(|t| t.id == terminal)
-                .map(|t| t.designation.clone())
+        let used = |n: &str| set.footprint.pads.iter().any(|p| p.number == n);
+        let designation = terminal
+            .filter(|_| which.lands_terminal())
+            .and_then(|terminal| set.package.terminals.iter().find(|t| t.id == terminal))
+            .map(|t| t.designation.clone())
+            .filter(|d| !d.is_empty() && !used(d));
+        let number = match designation {
+            Some(designation) => designation,
+            None if which.lands_terminal() => (1..)
+                .map(|n: usize| n.to_string())
+                .find(|n| !used(n))
                 .unwrap_or_default(),
             None => {
                 let same = set

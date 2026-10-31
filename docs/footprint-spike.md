@@ -1,6 +1,6 @@
 # Footprint evaluator spike (F0)
 
-Status: spike, finished. The prototype is test-only code in `crates/solidcraft-integration/src/footprint_spike/` (`#[cfg(test)]`, not a product API). No core type, command or UI changed. Solidcraft revision: `4f3ac07aec69489183185071f07d7fbcf4f51e64`.
+Status: spike, finished. The prototype was test-only code in `crates/solidcraft-integration/src/footprint_spike/` (`#[cfg(test)]`, not a product API); it was removed once the product evaluator in `crates/solidcraft-integration/src/footprint/` carried its golden-hash tests, and remains in git history (the scratch-`Session` bridge is the starting point for F6). No core type, command or UI changed. Solidcraft revision: `4f3ac07aec69489183185071f07d7fbcf4f51e64`.
 
 It answers one question from the footprint design (slice F0): can Pcbcraft drive parametric footprints with Solidcraft's public sketch solver, keep stable pad identity, and get the same result on native and wasm? **Yes.** The numbers below are measured, not targets.
 

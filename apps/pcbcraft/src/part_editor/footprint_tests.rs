@@ -280,7 +280,8 @@ fn typed_pad_edits_round_trip_through_the_engine() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// The Hole and Fiducial tools add pads that land no terminal; the pad
+/// The Hole and Fiducial tools add pads that land no terminal, and a
+/// copper pad for an already landed terminal lands none either; the pad
 /// selector reaches them and Remove pad takes only the selected pad.
 #[test]
 fn pad_tools_add_terminal_less_pads_and_remove_the_selected_one()
@@ -303,11 +304,17 @@ fn pad_tools_add_terminal_less_pads_and_remove_the_selected_one()
         vec![
             (PadKind::NonPlatedHole, false),
             (PadKind::Fiducial, false),
-            (PadKind::PlatedThrough, true),
+            // The selected terminal already has a pad: the new copper pad
+            // lands none rather than a second, inferred one.
+            (PadKind::PlatedThrough, false),
         ]
     );
     assert_eq!(added[0].number, "MH1");
     assert_eq!(added[1].number, "FID1");
+    assert!(
+        before.iter().all(|p| p.number != added[2].number),
+        "a new pad's number repeats no existing pad's"
+    );
     // New pads land clear of the others.
     for pair in after.windows(2) {
         assert!(!pair[0].bounds().intersects(&pair[1].bounds()) || pair[0].id == pair[1].id);

@@ -397,6 +397,37 @@ pub struct PadVia {
 pub struct ApertureId(pub u32);
 
 impl Pad {
+    /// Normalise `rotation_deg` per shape symmetry without moving anything:
+    /// the turn the fold removes is applied to the pad-frame features the
+    /// shape symmetry does not cover (hole offset and slot angle, vias,
+    /// paste windows), so the pad's world geometry is unchanged.
+    pub fn fold_rotation(&mut self) {
+        let canonical = self.shape.canonical_rotation(self.rotation_deg);
+        let removed = (self.rotation_deg - canonical).rem_euclid(360.0);
+        self.rotation_deg = canonical;
+        if removed.abs() < 1e-12 || (360.0 - removed).abs() < 1e-12 {
+            return;
+        }
+        let turn = crate::geometry::Transform2 {
+            rotation_deg: removed,
+            ..crate::geometry::Transform2::IDENTITY
+        };
+        if let Some(hole) = &mut self.hole {
+            hole.offset = turn.apply(hole.offset);
+            if let HoleShape::Slot { angle_deg, .. } = &mut hole.shape {
+                *angle_deg = (*angle_deg + removed).rem_euclid(180.0);
+            }
+        }
+        for via in &mut self.vias {
+            via.at = turn.apply(via.at);
+        }
+        if let PasteRule::Windows(windows) = &mut self.paste {
+            for w in windows.iter_mut() {
+                w.shape = w.shape.transformed(&turn);
+            }
+        }
+    }
+
     /// A rectangular top-side SMD land with inherited mask and paste: the
     /// pad every footprint had before shapes were typed.
     pub fn smd_rect(

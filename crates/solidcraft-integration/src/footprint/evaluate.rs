@@ -499,7 +499,6 @@ fn apply_override(pad: &mut Pad, o: &PadOverride, values: &Values, sk: &Sketch) 
         let at = Vec2::new(pad.position[0], pad.position[1]);
         pad.paste = paste(p, values, sk, at, pad.rotation_deg)?;
     }
-    pad.rotation_deg = pad.shape.canonical_rotation(pad.rotation_deg);
     Ok(())
 }
 
@@ -554,14 +553,16 @@ fn expand(
             };
             let mut pad = seed.pad.clone();
             pad.position = [inst.centre.x, inst.centre.y];
-            pad.rotation_deg = pad
-                .shape
-                .canonical_rotation(pad.rotation_deg + inst.turn_deg);
+            // The full instance turn first: overrides are authored against
+            // it, and folding then carries the removed turn into the hole,
+            // vias and paste windows so nothing lands on the wrong side.
+            pad.rotation_deg += inst.turn_deg;
             pad.number = inst.number;
             if let Some(o) = overrides.get(&key) {
                 apply_override(&mut pad, o, values, sketch)?;
                 used_overrides.insert(key);
             }
+            pad.fold_rotation();
             let keyed = if inst.i == 0 && inst.j == 0 {
                 None
             } else {
@@ -887,9 +888,11 @@ fn q_shape(shape: &mut Shape) -> Outcome<()> {
 fn q_pad(pad: &mut Pad) -> Outcome<()> {
     pad.position = qp(pad.position)?;
     // Rounding can land exactly on the period (180° or 360°); fold it back.
-    let r = q(pad.shape.canonical_rotation(pad.rotation_deg))?;
-    let r = q(pad.shape.canonical_rotation(r))?;
-    pad.rotation_deg = r;
+    // Fold before quantising the pad-frame features the fold may turn.
+    pad.fold_rotation();
+    pad.rotation_deg = q(pad.rotation_deg)?;
+    pad.fold_rotation();
+    pad.rotation_deg = q(pad.rotation_deg)?;
     match &mut pad.shape {
         PadShape::Rect { size } | PadShape::Oblong { size } => *size = qp(*size)?,
         PadShape::RoundRect {

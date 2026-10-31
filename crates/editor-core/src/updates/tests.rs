@@ -303,11 +303,7 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
         }),
     )?;
     let plan = engine.preview_update(revision_change(r1, target));
-    assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.contains(&format!("Placement {r1}")))
-    );
+    assert!(plan.blockers.iter().any(|b| b.contains("Placement of R1")));
     assert!(
         engine
             .apply_update(plan.revision, plan.change, true)
@@ -938,12 +934,15 @@ fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let has = |needle: &str| plan.changes.iter().any(|c| c.contains(needle));
     for needle in [
-        "footprint pad 1 ‘A’ is reshaped rect [1.0, 1.4] mm → oblong [1.0, 1.4] mm",
-        "footprint pad 1 ‘A’ is renumbered ‘1’ → ‘A’ (display only)",
-        "footprint pad 1 ‘A’ mask Inherit → Tented",
-        "footprint pad 2 ‘2’ kind Smd on Top → PlatedThrough on Top",
-        "footprint pad 2 ‘2’ hole None → Some(",
-        "‘MP’ at [0.0, 3.0] mm",
+        "footprint pad ‘A’ is reshaped rect [1.0, 1.4] mm → oblong [1.0, 1.4] mm",
+        "footprint pad ‘A’ is renumbered ‘1’ → ‘A’ (display only)",
+        "footprint pad ‘A’ mask Inherit → Tented",
+        "footprint pad ‘2’ kind Smd on Top → PlatedThrough on Top",
+        "footprint pad ‘2’ hole none → drill ⌀0.5 mm",
+        "add footprint pad ‘MP’: mechanical oblong",
+        "at [0.0, 3.0] mm",
+        "R1 pad A world geometry: rect",
+        "→ oblong [1.0, 1.4] mm",
         "footprint Silkscreen graphics: 1 added, 0 removed, 0 changed (presentation only",
         "footprint Assembly graphics: 0 added, 0 removed, 1 changed (presentation only",
     ] {
@@ -981,13 +980,13 @@ fn a_retired_pad_lists_the_copper_touching_it() -> Result<()> {
     assert!(
         plan.changes
             .iter()
-            .any(|c| c.starts_with("R1: footprint pad 2 ‘2’ is retired")),
+            .any(|c| c.starts_with("R1: footprint pad ‘2’ is retired")),
         "{:#?}",
         plan.changes
     );
     assert!(
         plan.warnings.iter().any(|w| w.starts_with(&format!(
-            "Track {shared} touches instance {r1} pad 2, which the update retires"
+            "Track {shared} touches R1 pad 2, which the update retires"
         ))),
         "{:#?}",
         plan.warnings

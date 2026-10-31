@@ -210,15 +210,72 @@ fn members(project: &Project, terminals: &[Endpoint]) -> String {
     labels
 }
 
+/// A pad's user label: its number, or its ID when the number is empty.
+fn pad_name(pad: &Pad) -> String {
+    if pad.number.is_empty() {
+        pad.id.to_string()
+    } else {
+        format!("‘{}’", pad.number)
+    }
+}
+
+fn kind_label(pad: &Pad) -> &'static str {
+    match (pad.kind, pad.side) {
+        (PadKind::Smd, crate::library::PadSide::Top) => "SMD",
+        (PadKind::Smd, crate::library::PadSide::Bottom) => "SMD on the opposite side",
+        (PadKind::PlatedThrough, _) => "plated through-hole",
+        (PadKind::NonPlatedHole, _) => "non-plated hole",
+        (PadKind::Fiducial, _) => "fiducial",
+        (PadKind::Mechanical, _) => "mechanical",
+    }
+}
+
+fn hole_label(hole: &crate::library::Hole) -> String {
+    let shape = match hole.shape {
+        crate::library::HoleShape::Round { diameter } => format!("drill ⌀{diameter} mm"),
+        crate::library::HoleShape::Slot {
+            width,
+            length,
+            angle_deg,
+        } => format!("slot {width} × {length} mm at {angle_deg}°"),
+    };
+    if hole.offset == [0.0, 0.0] {
+        shape
+    } else {
+        format!("{shape}, offset {:?} mm", hole.offset)
+    }
+}
+
 fn local_pad(pad: Option<&Pad>) -> String {
     pad.map(|p| {
-        format!(
-            "at {:?} mm, size {:?} mm, package terminal {}",
-            p.position,
-            p.shape.extent(),
+        let mut out = format!(
+            "{} {} at {:?} mm",
+            kind_label(p),
+            shape_label(&p.shape),
+            p.position
+        );
+        if p.rotation_deg != 0.0 {
+            out.push_str(&format!(", {}°", p.rotation_deg));
+        }
+        if let Some(hole) = &p.hole {
+            out.push_str(&format!(", {}", hole_label(hole)));
+        }
+        match p.mask {
+            crate::library::MaskRule::Inherit => {}
+            crate::library::MaskRule::Tented => out.push_str(", tented"),
+            crate::library::MaskRule::Expansion(v) => {
+                out.push_str(&format!(", mask {} mm", v + 0.0));
+            }
+        }
+        if !matches!(p.paste, PasteRule::Inherit) {
+            out.push_str(&format!(", paste {}", paste_label(&p.paste)));
+        }
+        out.push_str(&format!(
+            ", package terminal {}",
             p.terminal
                 .map_or_else(|| "none".to_string(), |t| t.to_string())
-        )
+        ));
+        out
     })
     .unwrap_or_else(|| "removed".into())
 }
@@ -268,13 +325,16 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<String> {
         ));
     }
     if a.hole != b.hole {
-        out.push(format!("hole {:?} → {:?}", a.hole, b.hole));
+        let hole =
+            |h: &Option<crate::library::Hole>| h.as_ref().map_or_else(|| "none".into(), hole_label);
+        out.push(format!("hole {} → {}", hole(&a.hole), hole(&b.hole)));
     }
-    if a.mask != b.mask || a.paste != b.paste {
+    if a.mask != b.mask {
+        out.push(format!("mask {:?} → {:?}", a.mask, b.mask));
+    }
+    if a.paste != b.paste {
         out.push(format!(
-            "mask {:?} → {:?}, paste {} → {}",
-            a.mask,
-            b.mask,
+            "paste {} → {}",
             paste_label(&a.paste),
             paste_label(&b.paste)
         ));
@@ -406,11 +466,30 @@ fn footprint_details(
 fn world_pad(pad: Option<&layout::WorldPad>) -> String {
     pad.map(|p| {
         format!(
-            "at {:?} mm, size {:?} mm, {}°, {:?}, net {}",
-            p.position, p.size, p.rotation_deg, p.layer, p.net
+            "{} at {:?} mm, {}°, {}, net {}",
+            shape_label(&p.shape),
+            p.position,
+            p.rotation_deg,
+            if p.through {
+                "all layers".to_string()
+            } else {
+                format!("{:?}", p.layer)
+            },
+            p.net
         )
     })
     .unwrap_or_else(|| "absent".into())
+}
+
+/// An instance's designator in the current or the next project.
+fn designator_of(project: &Project, next: &Project, id: Id) -> String {
+    project
+        .instance(id)
+        .or_else(|| next.instance(id))
+        .map_or_else(
+            || format!("removed instance {id}"),
+            |i| i.designator.clone(),
+        )
 }
 
 /// The single composition of consequential instance edits. `component.remove`
@@ -696,7 +775,9 @@ fn definition_details(
             a.name, b.name
         ));
     }
-    if let (Some(pa), Some(pb)) = (a.package, b.package) {
+    if let (Some(pa), Some(pb)) = (a.package, b.package)
+        && (pa.body_size != pb.body_size || pa.model_offset != pb.model_offset)
+    {
         plan.detail(format!(
             "{designator}: model dimensions {:?} → {:?} mm; model offset {:?} → {:?} mm.",
             pa.body_size, pb.body_size, pa.model_offset, pb.model_offset
@@ -878,16 +959,15 @@ fn definition_details(
         }
         match replacement {
             None => plan.detail(format!(
-                "{designator}: footprint pad {} ‘{}’ is retired ({}); copper touching it is listed below.",
-                pad.id,
-                pad.number,
+                "{designator}: footprint pad {} is retired ({}); copper touching it is listed below.",
+                pad_name(pad),
                 local_pad(Some(pad))
             )),
             Some(next) => {
                 for aspect in pad_changes(pad, next) {
                     plan.detail(format!(
-                        "{designator}: footprint pad {} ‘{}’ {aspect}.",
-                        pad.id, next.number
+                        "{designator}: footprint pad {} {aspect}.",
+                        pad_name(next)
                     ));
                 }
             }
@@ -896,9 +976,8 @@ fn definition_details(
     for pad in b_pads {
         if !a_pads.iter().any(|p| p.id == pad.id) {
             plan.detail(format!(
-                "{designator}: add footprint pad {} ‘{}’ {}{}.",
-                pad.id,
-                pad.number,
+                "{designator}: add footprint pad {}: {}{}.",
+                pad_name(pad),
                 local_pad(Some(pad)),
                 if pad.terminal.is_none()
                     && matches!(pad.kind, PadKind::Smd | PadKind::PlatedThrough)
@@ -1027,6 +1106,17 @@ fn selection_details(plan: &mut UpdatePlan, old: &ComponentInstance, new: &Compo
     }
 }
 
+/// A component lineage's display name, from its newest stored revision.
+fn component_name(project: &Project, id: crate::ids::DefinitionId) -> Option<String> {
+    project
+        .library
+        .components
+        .iter()
+        .filter(|c| c.id == id)
+        .max_by_key(|c| c.revision)
+        .map(|c| format!("‘{}’", c.meta.name))
+}
+
 fn instance_details(
     plan: &mut UpdatePlan,
     project: &Project,
@@ -1048,7 +1138,11 @@ fn instance_details(
     if old.component != new.component {
         plan.detail(format!(
             "{designator}: component {} revision {} → {}.",
-            old.component.id, old.component.revision, new.component.revision
+            component_name(project, old.component.id)
+                .or_else(|| component_name(next, new.component.id))
+                .unwrap_or_else(|| old.component.id.to_string()),
+            old.component.revision,
+            new.component.revision
         ));
     }
     if old.representation != new.representation {
@@ -1343,20 +1437,24 @@ pub(crate) fn preview(
             plan.affected_placements.push(placement.instance);
             if placement.locked {
                 plan.blockers.push(format!(
-                    "Placement {} is locked; unlock it before updating.",
-                    placement.instance
+                    "Placement of {} is locked; unlock it before updating.",
+                    designator_of(project, &next, placement.instance)
                 ));
             }
             if replacement.is_none() {
                 plan.removed_placements.push(placement.instance);
                 plan.detail(format!(
-                    "Remove PCB placement {} at {:?} mm.",
-                    placement.instance, placement.position
+                    "Remove the PCB placement of {} at {:?} mm.",
+                    designator_of(project, &next, placement.instance),
+                    placement.position
                 ));
             } else {
                 plan.detail(format!(
-                    "Placement {} stays at {:?} mm, rotation {}°, {:?}; its exact component snapshot changes.",
-                    placement.instance, placement.position, placement.rotation_deg, placement.layer
+                    "{} stays at {:?} mm, rotation {}°, {:?}; its exact component snapshot changes.",
+                    designator_of(project, &next, placement.instance),
+                    placement.position,
+                    placement.rotation_deg,
+                    placement.layer
                 ));
             }
         }
@@ -1369,8 +1467,11 @@ pub(crate) fn preview(
         {
             plan.affected_placements.push(placement.instance);
             plan.detail(format!(
-                "Add PCB placement {} at {:?} mm, {}°, {:?}.",
-                placement.instance, placement.position, placement.rotation_deg, placement.layer
+                "Add the PCB placement of {} at {:?} mm, {}°, {:?}.",
+                designator_of(project, &next, placement.instance),
+                placement.position,
+                placement.rotation_deg,
+                placement.layer
             ));
         }
     }
@@ -1383,6 +1484,20 @@ pub(crate) fn preview(
         .map(|pad| ((pad.instance, pad.pad), pad))
         .collect();
     let pad_ids: BTreeSet<_> = old_pads.keys().chain(new_pads.keys()).copied().collect();
+    let mut pad_labels = layout::pad_labels(&next);
+    for (key, label) in layout::pad_labels(project) {
+        pad_labels.entry(key).or_insert(label);
+    }
+    let pad_label = |key: &(Id, crate::ids::PadId)| {
+        format!(
+            "{} pad {}",
+            designator_of(project, &next, key.0),
+            pad_labels
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| key.1.to_string())
+        )
+    };
     let mut conflicts: BTreeSet<_> = project
         .tracks
         .iter()
@@ -1398,13 +1513,8 @@ pub(crate) fn preview(
             continue;
         }
         plan.detail(format!(
-            "{} pad {} world geometry: {} → {}.",
-            project
-                .instance(key.0)
-                .or_else(|| next.instance(key.0))
-                .map(|i| i.designator.as_str())
-                .unwrap_or("Removed instance"),
-            key.1,
+            "{} world geometry: {} → {}.",
+            pad_label(&key),
             world_pad(before),
             world_pad(after)
         ));
@@ -1429,13 +1539,15 @@ pub(crate) fn preview(
             let retired = after.is_none() && next.placements.iter().any(|p| p.instance == key.0);
             if touched_before && retired {
                 plan.warnings.push(format!(
-                    "Track {} touches instance {} pad {}, which the update retires or disconnects; copper stays in place for rerouting.",
-                    track.id, key.0, key.1
+                    "Track {} touches {}, which the update retires or disconnects; copper stays in place for rerouting.",
+                    track.id,
+                    pad_label(&key)
                 ));
             } else if touched_before && !touched_after && !conflicts.contains(&track.id) {
                 plan.warnings.push(format!(
-                    "Track {} is detached from instance {} pad {} after its geometry changes; copper stays in place for rerouting.",
-                    track.id, key.0, key.1
+                    "Track {} is detached from {} after its geometry changes; copper stays in place for rerouting.",
+                    track.id,
+                    pad_label(&key)
                 ));
             }
         }

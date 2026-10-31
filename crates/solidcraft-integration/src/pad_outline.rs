@@ -360,6 +360,67 @@ mod tests {
     use super::*;
     use pcbcraft_core::library::CornerMask;
 
+    /// The native contour and the core's `PadShape::grown` (the one pad
+    /// geometry 2D, checks and the update preview use) agree to within
+    /// flattening for every primitive shape and grow value.
+    #[test]
+    fn native_contours_match_the_core_pad_geometry() -> Result<()> {
+        let d_shape = CornerMask {
+            top_left: true,
+            top_right: false,
+            bottom_right: false,
+            bottom_left: true,
+        };
+        let shapes = [
+            PadShape::Rect { size: [1.2, 0.6] },
+            PadShape::RoundRect {
+                size: [1.2, 0.6],
+                radius_ratio: 0.25,
+                max_radius: None,
+                corners: CornerMask::ALL,
+            },
+            PadShape::RoundRect {
+                size: [1.6, 0.8],
+                radius_ratio: 0.5,
+                max_radius: Some(0.3),
+                corners: d_shape,
+            },
+            PadShape::Circle { diameter: 0.9 },
+            PadShape::Oblong { size: [1.5, 0.7] },
+            PadShape::Oblong { size: [0.6, 1.4] },
+        ];
+        const TOL: f64 = 1e-4;
+        for shape in &shapes {
+            for grow in [0.0, 0.05, -0.1] {
+                let native = shape_contour(shape, grow)
+                    .ok_or_else(|| Error::Invalid(format!("{shape:?} {grow}")))?
+                    .flatten(TOL)?;
+                let core = shape
+                    .grown(grow, TOL)
+                    .ok_or_else(|| Error::Invalid(format!("core {shape:?} {grow}")))?;
+                let ring = Shape::Polygon {
+                    points: native.clone(),
+                    radii: Vec::new(),
+                };
+                for p in &native {
+                    let d = core.distance(*p, false);
+                    assert!(
+                        d < 1e-3,
+                        "{shape:?} grow {grow}: native point {p:?} off by {d}"
+                    );
+                }
+                for q in core.flatten(TOL) {
+                    let d = ring.distance(q, false);
+                    assert!(
+                        d < 1e-3,
+                        "{shape:?} grow {grow}: core point {q:?} off by {d}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn area(points: &[Point]) -> f64 {
         let n = points.len();
         (0..n)

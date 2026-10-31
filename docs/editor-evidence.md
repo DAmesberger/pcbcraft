@@ -100,8 +100,9 @@ Limits:
 
 - **Renderer:** the product look comes from the `pcbcraft-product-look` branch of the DAmesberger/solidcraft fork (see [README](../README.md) for the pinned revision); upstream Solidcraft does not have it. There are no cast shadows from the key light (contact decals and ambient occlusion stand in). The studio has no floor-facing softbox, so the board's underside relies on direct lights. Colour-only fabrication changes still rebuild the native model.
 - **Pictures:** evidence pictures come from the viewport's own frame drawn headless through Solidcraft's renderer (`viewport/pictures.rs`), not from window captures.
-- **Not modelled:** no silkscreen (the core has no outline or reference-designator graphics), no bare-laminate ring inside mask openings, no body edge chamfers or edge plating; the glass weave is procedural (no cut yarn ends). Track copper ends square under round mask caps.
+- **Not modelled:** no 3D silkscreen yet (footprints carry silkscreen graphics and 2D Layout draws them; the native legend layer is G5), no bare-laminate ring inside mask openings, no body edge chamfers or edge plating; the glass weave is procedural (no cut yarn ends). Track copper ends square under round mask caps.
 - **Terminations:** placed by package rules from the package's declared body: `chip_resistor` and `chip_capacitor` get wrapped end terminations (the resistor also its overcoat), `moulded` packages lead bands.
+- **Drills in the native model:** the saved `Drills` cut uses fixed board positions while pad copper follows the placement parameters, so moving a part inside Solidcraft separates its copper from its holes until Pcbcraft regenerates the model.
 - **Camera:** the 3D view is perspective, which changes fit and zoom feel compared with the earlier orthographic view.
 
 ## Copper fixture and performance boundary

@@ -480,7 +480,130 @@ impl FootprintDefinition {
             ));
         }
         self.mask_web_lint(id, &mut out);
+        self.courtyard_lint(id, &mut out);
+        self.silk_lint(id, &mut out);
         out
+    }
+
+    /// Copper pads not inside any closed courtyard shape
+    /// (`footprint.pad_outside_courtyard`). Open courtyard strokes decide
+    /// nothing, so a footprint without a closed courtyard is not checked.
+    fn courtyard_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+        let yards: Vec<&crate::geometry::Shape> = self
+            .graphics
+            .iter()
+            .filter(|g| g.layer == DrawingLayer::Courtyard)
+            .filter_map(|g| match &g.item {
+                Item::Shape { shape, .. } if shape.is_closed() => Some(shape),
+                _ => None,
+            })
+            .collect();
+        if yards.is_empty() {
+            return;
+        }
+        let mut reported = 0usize;
+        for pad in &self.pads {
+            if reported >= 64 || !pad.shape.finite() || !size_valid(&pad.shape.extent()) {
+                continue;
+            }
+            let ring = pad.outline(CHECK_CHORD_MM * 10.0);
+            let inside = ring
+                .iter()
+                .all(|p| yards.iter().any(|y| y.distance(*p, true) <= 1e-6));
+            if !inside {
+                reported += 1;
+                out.push(Finding::new(
+                    "footprint.pad_outside_courtyard",
+                    format!(
+                        "Pad {} extends past the courtyard.",
+                        if pad.number.is_empty() {
+                            pad.id.to_string()
+                        } else {
+                            pad.number.clone()
+                        }
+                    ),
+                    pad_object(id, pad),
+                ));
+            }
+        }
+    }
+
+    /// Silkscreen strokes over copper on the same side
+    /// (`footprint.silk_over_pad`): fabricators clip them, so the legend
+    /// would not print as drawn. Sampled every 0.05 mm, within a budget.
+    fn silk_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+        const STEP_MM: f64 = 0.05;
+        let mut budget = 1_000_000usize;
+        let lands: Vec<_> = self
+            .pads
+            .iter()
+            .filter(|p| {
+                p.kind != PadKind::NonPlatedHole
+                    && p.shape.finite()
+                    && size_valid(&p.shape.extent())
+            })
+            .map(|p| (p, p.land(CHECK_CHORD_MM * 10.0), p.bounds()))
+            .collect();
+        let mut flagged = BTreeSet::new();
+        for graphic in self
+            .graphics
+            .iter()
+            .filter(|g| g.layer == DrawingLayer::Silkscreen)
+        {
+            let Item::Shape { shape, width, .. } = &graphic.item else {
+                continue;
+            };
+            let half = width.max(0.0) / 2.0;
+            let mut points = shape.flatten(CHECK_CHORD_MM * 10.0);
+            if shape.is_closed()
+                && let Some(first) = points.first().copied()
+            {
+                points.push(first);
+            }
+            let Some(extent) = crate::geometry::Bounds::of(points.iter().copied()) else {
+                continue;
+            };
+            let extent = extent.inflated(half);
+            let opposite = graphic.side == graphics::Side::Opposite;
+            for (pad, land, bounds) in &lands {
+                let same_side =
+                    pad.kind.through_hole() || (pad.side == PadSide::Bottom) == opposite;
+                if !same_side || flagged.contains(&pad.id) || !bounds.intersects(&extent) {
+                    continue;
+                }
+                let over = points.windows(2).any(|w| {
+                    let length = crate::geometry::distance(w[0], w[1]);
+                    let steps = ((length / STEP_MM).ceil() as usize).clamp(1, 4096);
+                    (0..=steps).any(|k| {
+                        if budget == 0 {
+                            return false;
+                        }
+                        budget -= 1;
+                        let t = k as f64 / steps as f64;
+                        let p = [
+                            w[0][0] + (w[1][0] - w[0][0]) * t,
+                            w[0][1] + (w[1][1] - w[0][1]) * t,
+                        ];
+                        land.distance(p, true) < half - 1e-9
+                    })
+                });
+                if over && flagged.len() < 64 {
+                    flagged.insert(pad.id);
+                    out.push(Finding::new(
+                        "footprint.silk_over_pad",
+                        format!(
+                            "Silkscreen lies over pad {}; it would be clipped at fabrication.",
+                            if pad.number.is_empty() {
+                                pad.id.to_string()
+                            } else {
+                                pad.number.clone()
+                            }
+                        ),
+                        vec![object(id, pad.id.0), object(id, graphic.id.0)],
+                    ));
+                }
+            }
+        }
     }
 
     /// Pairs of mask openings on a shared copper side closer than

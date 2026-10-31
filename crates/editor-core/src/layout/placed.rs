@@ -203,7 +203,7 @@ pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
     result
 }
 
-fn opposite(layer: Layer) -> Layer {
+pub(crate) fn opposite(layer: Layer) -> Layer {
     match layer {
         Layer::Top => Layer::Bottom,
         Layer::Bottom => Layer::Top,

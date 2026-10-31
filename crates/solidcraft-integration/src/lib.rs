@@ -18,11 +18,6 @@ pub use solidcraft_engine::{geom, render};
 #[cfg(test)]
 mod fixtures;
 
-/// Spike F0: headless parametric-footprint evaluator prototype (tests only,
-/// not a product API; see `docs/footprint-spike.md`).
-#[cfg(test)]
-mod footprint_spike;
-
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-product-look`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
 /// opt-in product look).

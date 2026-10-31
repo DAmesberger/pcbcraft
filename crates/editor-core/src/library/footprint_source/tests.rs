@@ -180,3 +180,120 @@ fn every_stored_expression_is_bounded() {
     }
     assert!(!s.within_bounds(), "a nested expression is bounded too");
 }
+
+#[test]
+fn a_shrunk_array_retires_its_keys_and_still_passes_the_key_rule() -> Result<()> {
+    let mut footprint = FootprintDefinition {
+        next_local: 3,
+        source: Some(Box::new(source())),
+        ..FootprintDefinition::default()
+    };
+    let grown = Evaluation {
+        pads: vec![evaluated(key(0)), evaluated(key(1)), evaluated(key(2))],
+        new_keys: vec![key(1), key(2)],
+        ..Evaluation::default()
+    };
+    commit(&mut footprint, grown)?;
+    assert_eq!(footprint.source.as_ref().map(|s| s.keys.len()), Some(3));
+    let shrunk = Evaluation {
+        pads: vec![evaluated(key(0))],
+        ..Evaluation::default()
+    };
+    commit(&mut footprint, shrunk)?;
+    let keys: Vec<_> = footprint
+        .source
+        .as_ref()
+        .map(|s| s.keys.iter().map(|k| k.key).collect())
+        .unwrap_or_default();
+    assert_eq!(keys, vec![key(0)], "retired keys are pruned");
+    let mut findings = Vec::new();
+    footprint.local_findings(crate::ids::DefinitionId(1), &mut findings);
+    assert!(
+        !findings
+            .iter()
+            .any(|f| f.message.starts_with("Array key") && f.message.contains("no stored pad")),
+        "{findings:?}"
+    );
+    // Growing again allocates fresh ids: retired ids never return.
+    let regrown = Evaluation {
+        pads: vec![evaluated(key(0)), evaluated(key(1))],
+        new_keys: vec![key(1)],
+        ..Evaluation::default()
+    };
+    assert_eq!(commit(&mut footprint, regrown)?, vec![PadId(5)]);
+    Ok(())
+}
+
+#[test]
+fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
+    use crate::geometry::{Shape, Transform2};
+    use crate::library::{ApertureId, Hole, HoleShape, PadVia, PasteRule, PasteWindow};
+    let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [1.0, 2.0], [2.0, 1.0]);
+    pad.rotation_deg = 180.0;
+    pad.hole = Some(Hole {
+        shape: HoleShape::Slot {
+            width: 0.3,
+            length: 0.8,
+            angle_deg: 30.0,
+        },
+        plated: true,
+        offset: [0.4, 0.1],
+    });
+    pad.vias = vec![PadVia {
+        id: ApertureId(1),
+        at: [-0.5, 0.2],
+        drill: 0.2,
+    }];
+    pad.paste = PasteRule::Windows(vec![PasteWindow {
+        id: ApertureId(2),
+        shape: Shape::Circle {
+            center: [0.6, 0.0],
+            radius: 0.1,
+        },
+    }]);
+    let world = |p: &Pad, v: [f64; 2]| {
+        Transform2 {
+            translate: p.position,
+            rotation_deg: p.rotation_deg,
+            mirror: false,
+        }
+        .apply(v)
+    };
+    let before = pad.clone();
+    pad.fold_rotation();
+    assert_eq!(pad.rotation_deg, 0.0);
+    let hole = |p: &Pad| p.hole.map(|h| h.offset).unwrap_or_default();
+    assert_eq!(world(&pad, hole(&pad)), world(&before, hole(&before)));
+    assert_eq!(
+        world(&pad, pad.vias[0].at),
+        world(&before, before.vias[0].at)
+    );
+    assert!(matches!(
+        pad.hole.map(|h| h.shape),
+        Some(HoleShape::Slot { angle_deg, .. }) if (angle_deg - 30.0).abs() < 1e-9
+    ));
+    let centre = |p: &Pad| match &p.paste {
+        PasteRule::Windows(w) => match w[0].shape {
+            Shape::Circle { center, .. } => center,
+            _ => [f64::NAN; 2],
+        },
+        _ => [f64::NAN; 2],
+    };
+    assert_eq!(world(&pad, centre(&pad)), world(&before, centre(&before)));
+    // A D-shape has no 180° symmetry: nothing folds.
+    let mut d = before.clone();
+    d.shape = PadShape::RoundRect {
+        size: [2.0, 1.0],
+        radius_ratio: 0.5,
+        max_radius: None,
+        corners: CornerMask {
+            top_left: true,
+            top_right: false,
+            bottom_right: false,
+            bottom_left: true,
+        },
+    };
+    let unfolded = d.clone();
+    d.fold_rotation();
+    assert_eq!(d, unfolded);
+}

@@ -478,3 +478,82 @@ fn schemas_list_the_fabrication_operation_and_every_choice() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.kind = crate::library::PadKind::PlatedThrough;
+        pad.hole = Some(crate::library::Hole {
+            shape: crate::library::HoleShape::Round { diameter: 0.4 },
+            plated: true,
+            offset: [0.0, 0.0],
+        });
+    }
+    assert!(
+        pads(&project)
+            .iter()
+            .all(|p| p.on(Layer::Top) && p.on(Layer::Bottom))
+    );
+    apply(
+        &mut project,
+        LayoutCommand::Route {
+            request: RouteRequest {
+                layer: Layer::Bottom,
+                ..request()
+            },
+        },
+    )?;
+    assert!(airwires(&project).is_empty());
+    assert!(
+        !checks(&project).iter().any(|f| f.code == "board.unrouted"),
+        "{:?}",
+        checks(&project)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_opposite_side_smd_pad_is_on_the_other_layer() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.side = crate::library::PadSide::Bottom;
+    }
+    assert!(
+        pads(&project)
+            .iter()
+            .all(|p| p.layer == Layer::Bottom && !p.through)
+    );
+    // A top track no longer reaches them; a bottom track does.
+    apply(&mut project, LayoutCommand::Route { request: request() })?;
+    assert_eq!(airwires(&project).len(), 1);
+    project.tracks.clear();
+    apply(
+        &mut project,
+        LayoutCommand::Route {
+            request: RouteRequest {
+                layer: Layer::Bottom,
+                ..request()
+            },
+        },
+    )?;
+    assert!(airwires(&project).is_empty());
+    Ok(())
+}
+
+#[test]
+fn board_checks_label_pads_by_number() -> Result<()> {
+    let mut project = fixture()?;
+    for pad in &mut project.library.footprints[0].definition.pads {
+        pad.number = format!("N{}", pad.id);
+    }
+    let unrouted: Vec<_> = checks(&project)
+        .into_iter()
+        .filter(|f| f.code == "board.unrouted")
+        .collect();
+    assert!(
+        unrouted.iter().all(|f| f.message.contains(" pad N")),
+        "{unrouted:?}"
+    );
+    Ok(())
+}
