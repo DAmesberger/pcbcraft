@@ -1,11 +1,11 @@
 //! Application chrome: app bar, ribbon, the floating Browser and properties
-//! cards, the canvas navigation bar and status messages. Geometry comes from
+//! cards, the canvas navigation bar and the toast stack. Geometry comes from
 //! Solidcraft tokens and constants; content comes from the editors.
 use super::{App, browser};
 use crate::file_ui::Action;
 use crate::kit;
 use crate::shell::{self, RibbonEvent, Workspace};
-use egui::{FontId, Rect, pos2, vec2};
+use egui::{Rect, pos2, vec2};
 use solidcraft_ui_egui::{
     fonts,
     theme::Tokens,
@@ -22,11 +22,6 @@ const SHELL_GAP: f32 = 7.0;
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
 /// Upstream Browser card width.
 const BROWSER_WIDTH: f32 = 260.0;
-/// Informational status messages fade after this many seconds; errors stay
-/// until the next successful action, a workspace change or this many
-/// seconds, whichever comes first.
-const STATUS_SECONDS: f64 = 6.0;
-const ERROR_SECONDS: f64 = 12.0;
 
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
@@ -93,14 +88,6 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
         browser,
         overlay,
     }
-}
-
-/// How a status message reads.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub text: String,
-    pub error: bool,
-    pub at: f64,
 }
 
 impl App {
@@ -238,6 +225,12 @@ impl App {
                     {
                         self.toggle_browser();
                     }
+                    if ui_kit::button(ui, "Messages…", Button::Normal)
+                        .on_hover_text("Every message of this session, with the full text")
+                        .clicked()
+                    {
+                        self.messages_open = true;
+                    }
                 });
             });
     }
@@ -271,7 +264,11 @@ impl App {
                     Workspace::Schematic => self.schematic.on_tool(tool, &self.engine),
                     Workspace::Pcb => self.pcb.on_tool(tool, &self.engine),
                 };
-                self.apply(operation);
+                self.apply(
+                    &ui.ctx().clone(),
+                    crate::refusal::Origin::Command,
+                    operation,
+                );
             }
             None => {}
         }
@@ -290,7 +287,7 @@ impl App {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
                     self.navigation_bar(ui, layout.canvas);
-                    self.status_chip(ui, layout.canvas);
+                    self.toasts_above_navigation(ui, layout.canvas);
                 });
                 if let Some(rect) = layout.browser {
                     let summary = browser::summary(&self.engine);
@@ -476,58 +473,43 @@ impl App {
         }
     }
 
-    /// The latest status message, bottom-left in the canvas. Errors stay
-    /// longer than other messages; both fade.
-    fn status_chip(&mut self, ui: &mut egui::Ui, canvas: Rect) {
-        let t = Tokens::get();
-        let Some(status) = &self.status else {
-            return;
-        };
-        let now = ui.input(|i| i.time);
-        let lasts = if status.error {
-            ERROR_SECONDS
-        } else {
-            STATUS_SECONDS
-        };
-        if now - status.at > lasts {
-            self.status = None;
-            return;
+    /// The toast stack, bottom-centre of the canvas above the navigation
+    /// bar and clear of the bottom-left hint line.
+    fn toasts_above_navigation(&mut self, ui: &mut egui::Ui, canvas: Rect) {
+        let free = toast_area(canvas);
+        if let Some(event) = self.toasts.show(ui.ctx(), free, self.now) {
+            self.toast_event(event);
         }
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs_f64(
-                lasts - (now - status.at) + 0.05,
-            ));
-        let ink = if status.error { t.error } else { t.text };
-        let mut job = egui::text::LayoutJob::simple(
-            status.text.clone(),
-            FontId::proportional(t.font_label),
-            ink,
-            (canvas.width() * 0.45).max(120.0),
-        );
-        job.wrap.max_rows = 3;
-        let galley = ui.painter().layout_job(job);
-        let rect = Rect::from_min_size(
-            pos2(
-                canvas.left() + t.space_12,
-                canvas.bottom() - t.space_16 - galley.size().y - 2.0 * t.space_8,
-            ),
-            galley.size() + vec2(2.0 * t.space_12, 2.0 * t.space_8),
-        );
-        ui.painter().rect(
-            rect,
-            t.radius_md,
-            t.toolbar,
-            t.container_border(if status.error { t.error } else { t.border }),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter()
-            .galley(rect.min + vec2(t.space_12, t.space_8), galley, ink);
     }
+}
+
+/// Where toasts may go in `canvas`: above the navigation bar (its height
+/// and gap, see `navigation_bar`).
+fn toast_area(canvas: Rect) -> Rect {
+    let t = Tokens::get();
+    let navigation = t.space_16 + t.control_height + 2.0 * t.space_4;
+    Rect::from_min_max(
+        canvas.min,
+        pos2(
+            canvas.right(),
+            (canvas.bottom() - navigation).max(canvas.top()),
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toasts_stay_above_the_navigation_bar() {
+        let canvas = Rect::from_min_size(pos2(10.0, 20.0), vec2(600.0, 400.0));
+        let free = toast_area(canvas);
+        assert!(canvas.contains_rect(free));
+        assert!(free.bottom() < canvas.bottom() - Tokens::get().control_height);
+        let flat = toast_area(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 4.0)));
+        assert!(flat.height() >= 0.0);
+    }
 
     #[test]
     fn layout_keeps_cards_and_canvas_apart_and_hides_the_browser_when_narrow() {
