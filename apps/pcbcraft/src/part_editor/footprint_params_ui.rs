@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use super::PartEditor;
 use super::footprint_params::{ParamRow, readers_phrase, unit_of, value_text};
 use crate::kit;
-use pcbcraft_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
+use pcbcraft_core::library::footprint_source::{
+    Expr, FootprintEdit, FootprintParam, ParamName, ParamUnit, package_values,
+};
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
@@ -159,7 +161,7 @@ impl PartEditor {
                                             &format!("name-{}", row.name.0),
                                             name,
                                             "name",
-                                            false,
+                                            failed && name.trim() != row.name.0,
                                         )
                                     })
                                     .inner;
@@ -177,7 +179,8 @@ impl PartEditor {
                                             &format!("expr-{}", row.name.0),
                                             expr,
                                             "expression",
-                                            failed || errors.contains_key(&row.name),
+                                            (failed && expr.trim() != row.expr.0)
+                                                || errors.contains_key(&row.name),
                                         )
                                     })
                                     .inner;
@@ -193,20 +196,27 @@ impl PartEditor {
                                 change = Some(Change::Remove(row.name.clone()));
                             }
                         });
-                        let value = match (&row.value, errors.get(&row.name)) {
-                            (Some(v), _) => format!("= {} · {}", value_text(*v), readers_text(row)),
-                            (None, Some(e)) => e.clone(),
-                            (None, None) => readers_text(row),
-                        };
-                        if row.value.is_none() && errors.contains_key(&row.name) {
-                            kit::status(ui, &value, kit::Tone::Error);
-                        } else {
-                            kit::note(ui, &value);
-                        }
-                        if let Some((Some(name), why)) = &panel.error
-                            && *name == row.name
-                        {
+                        // A refused edit shows only why: the stored value
+                        // and its readers belong to the text it replaced.
+                        let refused = panel
+                            .error
+                            .as_ref()
+                            .and_then(|(n, why)| (n.as_ref() == Some(&row.name)).then_some(why));
+                        if let Some(why) = refused {
                             kit::status(ui, why, kit::Tone::Error);
+                        } else {
+                            let value = match (&row.value, errors.get(&row.name)) {
+                                (Some(v), _) => {
+                                    format!("= {} · {}", value_text(*v), readers_text(row))
+                                }
+                                (None, Some(e)) => e.clone(),
+                                (None, None) => readers_text(row),
+                            };
+                            if row.value.is_none() && errors.contains_key(&row.name) {
+                                kit::status(ui, &value, kit::Tone::Error);
+                            } else {
+                                kit::note(ui, &value);
+                            }
                         }
                     });
                     if response.response.hovered() {
@@ -321,8 +331,52 @@ impl PartEditor {
                 }
                 self.queue_footprint_edits(edits);
             }
-            Err(why) => self.footprint_dims.panel.error = Some((row, why)),
+            Err(why) => {
+                // The evaluator reports the first failing parameter by
+                // name; a new expression is refused for its own cause when
+                // it has one ("pad_l: …", not a cycle through `gap`).
+                let why = match edits.first() {
+                    Some(FootprintEdit::SetParameter { name, expr, unit }) => self
+                        .own_parameter_error(name, expr, *unit)
+                        .map_or(why, |own| format!("`{}`: {own}", name.0)),
+                    _ => why,
+                };
+                self.footprint_dims.panel.error = Some((row, why));
+            }
         }
+    }
+
+    /// Why `name` would have no value with `expr`: its own syntax, names
+    /// or units first, else what evaluating the list with it says about
+    /// `name` (a cycle through it).
+    fn own_parameter_error(
+        &self,
+        name: &ParamName,
+        expr: &Expr,
+        unit: ParamUnit,
+    ) -> Option<String> {
+        let set = self.draft.as_ref()?;
+        let package = package_values(&set.package);
+        let stored = set.footprint.source.as_deref()?;
+        if let Some(why) = pcbcraft_solidcraft::footprint::view::expression_error(
+            stored, &package, name, &expr.0, unit,
+        ) {
+            return Some(why);
+        }
+        let mut source = stored.clone();
+        match source.parameters.iter_mut().find(|p| p.name == *name) {
+            Some(param) => {
+                param.expr = expr.clone();
+                param.unit = unit;
+            }
+            None => source.parameters.push(FootprintParam {
+                name: name.clone(),
+                expr: expr.clone(),
+                unit,
+                comment: String::new(),
+            }),
+        }
+        super::footprint_params::errors(&source, &package).remove(name)
     }
 }
 

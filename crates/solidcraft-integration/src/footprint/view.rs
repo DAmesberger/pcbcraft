@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::library::footprint_source::{
-    FootprintSource, PackageValue, ParamName, ParamValue, SketchConstraintId, SketchCurveId,
-    SketchPointId, SolveStatus,
+    FootprintSource, PackageValue, ParamName, ParamUnit, ParamValue, SketchConstraintId,
+    SketchCurveId, SketchPointId, SolveStatus,
 };
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{
@@ -396,6 +396,20 @@ fn readers_of(source: &FootprintSource, name: &ParamName) -> BTreeSet<String> {
         }
     }
     readers
+}
+
+/// Why `expr` cannot define parameter `name` by itself: its syntax, an
+/// unknown name or its units, read against the other parameters' stored
+/// values. `None` when it reads by itself or when only the whole list's
+/// evaluation (a cycle through it) can refuse it.
+pub fn expression_error(
+    source: &FootprintSource,
+    package_values: &[PackageValue],
+    name: &ParamName,
+    expr: &str,
+    unit: ParamUnit,
+) -> Option<String> {
+    params::expression_error(&source.parameters, package_values, &name.0, expr, unit)
 }
 
 /// One footprint parameter's value (in its own unit: mm, degrees or a

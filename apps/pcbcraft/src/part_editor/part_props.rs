@@ -543,11 +543,15 @@ impl PartProps {
 
     /// The Parts list and, for the open Part, its identity, rated values,
     /// references, offers and provenance.
+    ///
+    /// `blocked` is the first finding that blocks publishing the component
+    /// drafts, which a cascade publish would publish too.
     pub fn section(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
         set: &WorkingSet,
+        blocked: Option<&str>,
     ) -> Option<PartsAction> {
         let component = set.ids.component;
         self.sync(engine, component);
@@ -726,9 +730,21 @@ impl PartProps {
                 } else {
                     "Publish Part"
                 };
-                publish = kit::primary(ui, label, pins.is_some() && unpublished)
-                    .on_hover_text("Publish the Part as a new immutable revision")
-                    .clicked();
+                // A draft that cannot publish disables the button and says
+                // why on hover, instead of offering a refused publish.
+                let why = findings
+                    .first()
+                    .map(String::as_str)
+                    .or_else(|| pins.is_some_and(|p| p.cascade).then_some(blocked).flatten());
+                let response =
+                    kit::primary(ui, label, pins.is_some() && unpublished && why.is_none())
+                        .on_hover_text("Publish the Part as a new immutable revision");
+                publish = match why {
+                    Some(why) if pins.is_some() && unpublished => response
+                        .on_disabled_hover_text(format!("Fix first: {why}"))
+                        .clicked(),
+                    _ => response.clicked(),
+                };
                 discard = ui_kit::button(ui, "Discard", Button::Normal)
                     .on_hover_text(match published {
                         Some(r) => format!(
@@ -756,6 +772,7 @@ impl PartProps {
         }
         if publish
             && unpublished
+            && findings.is_empty()
             && let Some(pins) = pins
         {
             if pins.cascade {
@@ -926,6 +943,8 @@ impl PartProps {
                     let buffer = buffers
                         .entry(field.id)
                         .or_insert_with(|| FieldText::new(String::new()));
+                    let invalid =
+                        !buffer.text.trim().is_empty() && parse_spec(&buffer.text, &view).is_err();
                     let response = kit::row(ui, &view.field.meta.name, |ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui_kit::button(ui, "Remove", Button::Small)
@@ -940,7 +959,7 @@ impl PartProps {
                                 "spec",
                                 &mut buffer.text,
                                 "type the rated value",
-                                false,
+                                invalid,
                             )
                             .on_hover_text("The rated value, typed as the field reads it")
                         })
@@ -1473,6 +1492,94 @@ mod tests {
         assert_eq!(
             editor.parts.draft.as_ref().map(|d| d.part.mpn.as_str()),
             Some("EX-R0603-10K0-F")
+        );
+        Ok(())
+    }
+
+    /// B-j: while the component drafts it would publish are invalid,
+    /// "Publish with component" is disabled with the reason on hover, and a
+    /// click sends nothing; once they are valid it publishes.
+    #[test]
+    fn publish_with_component_is_disabled_while_the_component_is_invalid()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let set = editor.draft.clone().ok_or("no working set")?;
+        let pins = Pins::of(&set, &engine).ok_or("no pins")?;
+        let mut part = new_part(&set, &pins);
+        part.manufacturer = "ExampleCo".into();
+        part.mpn = "EX-R0603-10K0-F".into();
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta {
+                    name: part.mpn.clone(),
+                    ..Default::default()
+                },
+                definition: Definition::Part(Box::new(part)),
+            })),
+        )?;
+        editor.commit(&ctx, &engine);
+        editor.parts.open = PartProps::draft_ids(&engine, set.ids.component)
+            .first()
+            .copied();
+        // A designator with a digit: an unpublished, invalid component.
+        if let Some(set) = &mut editor.draft {
+            set.component.designator_prefix = "R1".into();
+        }
+        let operation = editor.commit(&ctx, &engine);
+        apply(&mut engine, operation)?;
+        editor.commit(&ctx, &engine);
+        let label = "Publish with component";
+        let click = |editor: &mut PartEditor, engine: &Engine| -> Result<_, String> {
+            let shown = frame(editor, engine, &ctx, vec![]);
+            let at = shown
+                .iter()
+                .find(|(t, _)| t == label)
+                .map(|(_, p)| *p)
+                .ok_or_else(|| format!("no {label}: {shown:?}"))?;
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let mut sent = None;
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![press(true)],
+                vec![press(false)],
+            ] {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(360.0, 4000.0),
+                        )),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| sent = sent.take().or(editor.inspector(ui, engine)),
+                );
+                output.textures_delta.clear();
+            }
+            Ok(sent)
+        };
+        assert!(
+            click(&mut editor, &engine)?.is_none(),
+            "an invalid component does not publish"
+        );
+        // Valid again: the same button publishes (first retargeting the Part).
+        if let Some(set) = &mut editor.draft {
+            set.component.designator_prefix = "RN".into();
+        }
+        let operation = editor.commit(&ctx, &engine);
+        apply(&mut engine, operation)?;
+        editor.commit(&ctx, &engine);
+        let sent = click(&mut editor, &engine)?;
+        assert!(
+            matches!(sent, Some(Operation::Library(LibraryCommand::Edit { .. }))),
+            "{sent:?}"
         );
         Ok(())
     }

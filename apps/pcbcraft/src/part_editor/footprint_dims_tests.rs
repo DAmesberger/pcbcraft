@@ -823,3 +823,55 @@ fn the_parameters_panel_shows_values_and_readers_and_edits_once() -> TestResult 
     assert!(!send(&mut editor, &mut engine, &ctx)?);
     Ok(())
 }
+
+/// B-g: an expression refused for its own syntax names that cause, not a
+/// cycle the evaluator happens to report first for another parameter, and
+/// the row shows only the refusal: no stale value or readers line.
+#[test]
+fn a_refused_expression_shows_only_its_own_cause() -> TestResult {
+    let ctx = egui::Context::default();
+    let (mut engine, mut editor, line, _) = sketched(&ctx)?;
+    let draft = editor.draft.as_ref().ok_or("no draft")?.ids.footprint;
+    let set = |name: &str, expr: &str| FootprintEdit::SetParameter {
+        name: ParamName(name.into()),
+        expr: Expr(expr.into()),
+        unit: ParamUnit::Mm,
+    };
+    engine.apply_with(
+        engine.revision(),
+        Operation::Library(pcbcraft_core::LibraryCommand::EditFootprint {
+            draft,
+            edits: vec![
+                set("pitch", "1.25 mm"),
+                set("span", "2 * pitch"),
+                // Sorts before `pitch`, and reads it through `span`.
+                set("gap", "span - pitch"),
+                FootprintEdit::Sketch(SketchEdit::AddDimension {
+                    kind: DimKind::Distance,
+                    refs: vec![SketchRef::Curve(line)],
+                    value: DimValue::Param(ParamName("span".into())),
+                }),
+            ],
+        }),
+        &SketchEvaluator,
+    )?;
+    editor.commit(&ctx, &engine);
+    let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
+    let stale = shown
+        .iter()
+        .find(|t| t.starts_with("= 1.25 mm · used by"))
+        .ok_or_else(|| format!("pitch's value line in {shown:?}"))?
+        .clone();
+    editor.apply_parameter_change_for_test("pitch", "gap * 2 +");
+    let why = editor
+        .footprint_dims
+        .panel_error()
+        .ok_or("refused")?
+        .to_owned();
+    assert_eq!(why, "`pitch`: unexpected end of expression");
+    assert!(!send(&mut editor, &mut engine, &ctx)?);
+    let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(shown.contains(&why), "{why} in {shown:?}");
+    assert!(!shown.contains(&stale), "{stale} still shown: {shown:?}");
+    Ok(())
+}

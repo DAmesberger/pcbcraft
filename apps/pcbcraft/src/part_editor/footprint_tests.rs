@@ -401,6 +401,231 @@ fn findings_are_grouped_and_a_click_selects_the_pad() -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// One inspector frame with input; the drawn texts with their rects, and
+/// the clipboard text the frame produced.
+fn inspector_input(
+    editor: &mut PartEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> (Vec<(String, Rect)>, Vec<String>) {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(360.0, 4000.0))),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            editor.inspector(ui, engine);
+        },
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                Rect::from_min_size(text.pos, text.galley.size()),
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    let copied = output
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    (out, copied)
+}
+
+/// B-b: a finding row is a button. Dragging across it selects no text
+/// (Copy copies nothing), and a click on it selects the pad it names.
+#[test]
+fn a_finding_row_is_a_button_that_locates_its_pad() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let pad = {
+        let set = editor.draft.as_mut().ok_or("draft")?;
+        let pad = set.footprint.pads.first_mut().ok_or("a pad")?;
+        pad.terminal = None;
+        pad.number = "7".into();
+        pad.id
+    };
+    assert!(commit(&mut editor, &mut engine, &ctx)?);
+    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
+    let row = shown
+        .iter()
+        .find(|(t, _)| t.starts_with("Pad 7 "))
+        .map(|(_, r)| *r)
+        .ok_or("the pad's finding row")?;
+    let (from, to) = (
+        row.left_top() + egui::vec2(2.0, 4.0),
+        row.right_bottom() - egui::vec2(2.0, 4.0),
+    );
+    for events in [
+        vec![egui::Event::PointerMoved(from)],
+        vec![button(from, true)],
+        vec![egui::Event::PointerMoved(from + (to - from) * 0.5)],
+        vec![egui::Event::PointerMoved(to)],
+        vec![button(to, false)],
+    ] {
+        inspector_input(&mut editor, &engine, &ctx, events);
+    }
+    let (_, copied) = inspector_input(&mut editor, &engine, &ctx, vec![egui::Event::Copy]);
+    assert!(
+        copied.iter().all(|t| t.is_empty()),
+        "selected text {copied:?}"
+    );
+    editor.on_tab("symbol");
+    editor.selected_pad = None;
+    let at = row.center();
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(at, true)],
+        vec![button(at, false)],
+    ] {
+        inspector_input(&mut editor, &engine, &ctx, events);
+    }
+    assert_eq!(editor.selected_pad, Some(pad));
+    assert!(editor.view == View::Footprint, "the Footprint tab");
+    Ok(())
+}
+
+/// B-f: the Terminals list and the Pad section show one selection. An
+/// unmapped pad lights no terminal, a clicked terminal shows its own pad,
+/// and a terminal without a pad shows no other terminal's pad.
+#[test]
+fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    // Pad 2 lands no terminal; terminal 2 has no pad.
+    let (first, second) = {
+        let set = editor.draft.as_mut().ok_or("draft")?;
+        let [a, b] = set.footprint.pads.as_mut_slice() else {
+            return Err("two pads".into());
+        };
+        b.terminal = None;
+        (a.id, b.id)
+    };
+    assert!(commit(&mut editor, &mut engine, &ctx)?);
+    let set = editor.draft.as_ref().ok_or("draft")?;
+    let names: Vec<(TerminalId, String)> = set
+        .component
+        .terminals
+        .iter()
+        .map(|t| (t.id, t.name.clone()))
+        .collect();
+    let [(one, one_name), (two, two_name)] = names.as_slice() else {
+        return Err("two terminals".into());
+    };
+    let lit = |editor: &PartEditor| {
+        let set = editor.draft.as_ref()?;
+        let pad = footprint_props::current_pad(
+            &set.footprint,
+            &set.binding,
+            editor.selected_pad,
+            editor.selected,
+        )?;
+        Some(pad)
+    };
+    // The unmapped pad selected on the canvas, terminal 1 still selected.
+    editor.selected = Some(*one);
+    editor.selected_pad = Some(second);
+    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(lit(&editor), Some(second));
+    // A terminal's row: its name under the Terminals caption.
+    let label = |shown: &[(String, Rect)], name: &str| {
+        let below = shown.iter().find(|(t, _)| t == "TERMINALS")?.1.bottom();
+        shown
+            .iter()
+            .find(|(t, r)| t == name && r.top() > below)
+            .map(|(_, r)| r.center())
+    };
+    let at = label(&shown, one_name).ok_or("terminal 1's row")?;
+    // Clicking terminal 1 shows its pad, even though it was selected.
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(at, true)],
+        vec![button(at, false)],
+    ] {
+        inspector_input(&mut editor, &engine, &ctx, events);
+    }
+    assert_eq!(editor.selected, Some(*one));
+    assert_eq!(lit(&editor), Some(first));
+    // Terminal 2 has no pad: the Pad section shows none, not pad 1.
+    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
+    let at = label(&shown, two_name).ok_or("terminal 2's row")?;
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(at, true)],
+        vec![button(at, false)],
+    ] {
+        inspector_input(&mut editor, &engine, &ctx, events);
+    }
+    assert_eq!(editor.selected, Some(*two));
+    assert_eq!(lit(&editor), None);
+    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
+    let note = format!("No pad lands terminal ‘{two_name}’. Click a pad on the canvas to show it.");
+    assert!(shown.iter().any(|(t, _)| *t == note), "{shown:?}");
+    Ok(())
+}
+
+/// B-i: the Mapping canvas links mapped rows only; an unmapped row reads
+/// "Unmapped" with no link drawn.
+#[test]
+fn the_mapping_canvas_draws_no_link_for_an_unmapped_row() -> Result<(), Box<dyn std::error::Error>>
+{
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    editor.on_tab("mapping");
+    let links = |editor: &mut PartEditor, engine: &Engine| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(CANVAS),
+                ..Default::default()
+            },
+            |ui| {
+                editor.canvas(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        fn count(shape: &egui::Shape) -> usize {
+            match shape {
+                egui::Shape::LineSegment { .. } => 1,
+                egui::Shape::Vec(shapes) => shapes.iter().map(count).sum(),
+                _ => 0,
+            }
+        }
+        output.shapes.iter().map(|s| count(&s.shape)).sum::<usize>()
+    };
+    let mapped = links(&mut editor, &engine);
+    let set = editor.draft.as_mut().ok_or("draft")?;
+    let terminals = set.package.terminals.len();
+    let first = set
+        .package
+        .terminals
+        .first()
+        .ok_or("a package terminal")?
+        .id;
+    set.binding.mappings.retain(|m| m.package_terminal != first);
+    assert!(commit(&mut editor, &mut engine, &ctx)?);
+    let unmapped = links(&mut editor, &engine);
+    assert!(mapped >= terminals, "{mapped} links for {terminals} rows");
+    assert_eq!(unmapped, mapped - 1, "one link fewer");
+    Ok(())
+}
+
 /// The picker previews what Build makes, warns when its pad count
 /// differs from the package, and clears a sourced footprint completely.
 #[test]

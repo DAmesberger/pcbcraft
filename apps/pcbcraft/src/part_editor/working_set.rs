@@ -358,7 +358,9 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
 
 /// Draft every lineage of a published component revision's first symbol and
 /// implementation that has no draft yet.
-pub fn draft_closure(engine: &mut Engine, component: ComponentRef) -> Result<()> {
+/// Returns how many drafts it created: drafts are project state (saved
+/// with the project and undoable), so creating them is a real change.
+pub fn draft_closure(engine: &mut Engine, component: ComponentRef) -> Result<usize> {
     let library = &engine.project().library;
     let body = library
         .component(component)
@@ -378,13 +380,15 @@ pub fn draft_closure(engine: &mut Engine, component: ComponentRef) -> Result<()>
             }
         }
     }
+    let mut created = 0;
     for revision in wanted {
         if engine.drafts().get(revision.id).is_none() {
             engine.apply(
                 engine.revision(),
                 Operation::Library(LibraryCommand::DraftFrom { revision }),
             )?;
+            created += 1;
         }
     }
-    Ok(())
+    Ok(created)
 }

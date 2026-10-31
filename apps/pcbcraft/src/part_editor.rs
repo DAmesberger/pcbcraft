@@ -1332,9 +1332,7 @@ impl PartEditor {
                         } else {
                             Tone::Warning
                         };
-                        let response = kit::status(ui, &finding.text, tone)
-                            .interact(Sense::click())
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        let response = kit::status_button(ui, &finding.text, tone)
                             .on_hover_text("Show it on the canvas");
                         if response.clicked() {
                             clicked = Some(finding.objects.clone());
@@ -1428,8 +1426,13 @@ impl PartEditor {
             }
         }
         self.fields_section(ui, engine);
+        let blocked = self
+            .listed_findings(engine)
+            .into_iter()
+            .find(|f| f.blocking)
+            .map(|f| f.text);
         if let Some(set) = &self.draft {
-            match self.parts.section(ui, engine, set) {
+            match self.parts.section(ui, engine, set, blocked.as_deref()) {
                 Some(part_props::PartsAction::Apply(op)) => operation = operation.or(Some(*op)),
                 Some(part_props::PartsAction::PublishCascade) => {
                     operation = operation.or_else(|| self.publish(engine));
@@ -1648,13 +1651,18 @@ impl PartEditor {
         });
     }
 
-    /// One compact selectable row per terminal.
+    /// One compact selectable row per terminal, the selected one lit.
     fn terminal_list(&mut self, ui: &mut Ui) {
-        let Some(set) = &self.draft else {
-            return;
-        };
+        if let Some(clicked) = self.terminal_rows(ui, self.selected) {
+            self.selected = Some(clicked);
+        }
+    }
+
+    /// The terminal rows with `lit` highlighted; the clicked terminal.
+    fn terminal_rows(&self, ui: &mut Ui, lit: Option<TerminalId>) -> Option<TerminalId> {
+        let set = self.draft.as_ref()?;
         let terminals = &set.component.terminals;
-        let selected = &mut self.selected;
+        let mut clicked = None;
         kit::section(
             ui,
             "terminals",
@@ -1668,16 +1676,17 @@ impl PartEditor {
                         icon: "point",
                         label: &terminal.name,
                         secondary: &summary,
-                        selected: *selected == Some(terminal.id),
+                        selected: lit == Some(terminal.id),
                         tip: "Select this terminal",
                         ..Default::default()
                     };
                     if kit::tree_row(ui, ui.id().with(("terminal", terminal.id.0)), &row).clicked {
-                        *selected = Some(terminal.id);
+                        clicked = Some(terminal.id);
                     }
                 }
             },
         );
+        clicked
     }
 
     fn symbol_inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1867,15 +1876,18 @@ impl PartEditor {
                 .binding
                 .terminal_of(physical.id)
                 .and_then(|id| set.component.terminal(id));
-            let ink = if electrical.is_some_and(|e| Some(e.id) == self.selected) {
-                t.body_selected
-            } else {
-                t.accent
-            };
-            painter.line_segment(
-                [Pos2::new(left + 120.0, y), Pos2::new(right - 150.0, y)],
-                Stroke::new(2.0, ink),
-            );
+            // Only a mapped row is linked; an unmapped one reads "Unmapped".
+            if let Some(electrical) = electrical {
+                let ink = if Some(electrical.id) == self.selected {
+                    t.body_selected
+                } else {
+                    t.accent
+                };
+                painter.line_segment(
+                    [Pos2::new(left + 120.0, y), Pos2::new(right - 150.0, y)],
+                    Stroke::new(2.0, ink),
+                );
+            }
             let pad_ids = set
                 .footprint
                 .pads
@@ -1919,11 +1931,27 @@ impl PartEditor {
 }
 
 /// Run a request through the engine with public commands. Each command is its
-/// own undo step.
-pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<()> {
+/// own undo step. Returns what the app should tell the author: opening a
+/// published component for editing creates drafts, which are saved with the
+/// project, so the project becomes modified and says why.
+pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<Option<String>> {
     match request {
-        Request::Create(template) => working_set::create(engine, template),
-        Request::Draft(component) => working_set::draft_closure(engine, component),
+        Request::Create(template) => working_set::create(engine, template).map(|()| None),
+        Request::Draft(component) => {
+            let created = working_set::draft_closure(engine, component)?;
+            let name = engine
+                .project()
+                .library
+                .component(component)
+                .map(|c| c.meta.name.clone())
+                .unwrap_or_default();
+            Ok((created > 0).then(|| {
+                format!(
+                    "Draft created for {name} {}: edits are saved with the project until you publish or discard them",
+                    component.revision
+                )
+            }))
+        }
     }
 }
 
@@ -2295,6 +2323,46 @@ mod draft_tests {
         assert_eq!(engine.project().library.components.len(), 2);
         assert_eq!(engine.project().library.footprints.len(), 2);
         assert!(editor.notice.contains("Revision 2 published"));
+        Ok(())
+    }
+
+    /// B-d: opening a published component for editing drafts its lineages.
+    /// Drafts are project state (saved and undoable), so the project really
+    /// changes; the request says "Draft created" rather than hiding it, and
+    /// opening it again creates and says nothing.
+    #[test]
+    fn opening_a_published_component_creates_drafts_and_says_so()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        let set = editor.draft.as_ref().ok_or("no working set")?;
+        let component = set.ids.component;
+        for id in set.ids.all() {
+            if engine.drafts().get(id).is_some() {
+                engine.apply(
+                    engine.revision(),
+                    Operation::Library(LibraryCommand::DiscardDraft { id }),
+                )?;
+            }
+        }
+        let published = engine
+            .project()
+            .library
+            .latest_components()
+            .into_iter()
+            .find(|c| c.id == component)
+            .ok_or("the demo component is published")?;
+        let open = ComponentRef::new(component, published.revision);
+        let before = engine.revision();
+        let said = run(&mut engine, Request::Draft(open))?.ok_or("nothing said")?;
+        assert!(engine.revision() > before, "a real, undoable change");
+        assert!(engine.drafts().get(component).is_some());
+        assert!(said.starts_with("Draft created for "), "{said}");
+        let after = engine.revision();
+        assert_eq!(run(&mut engine, Request::Draft(open))?, None);
+        assert_eq!(engine.revision(), after);
         Ok(())
     }
 

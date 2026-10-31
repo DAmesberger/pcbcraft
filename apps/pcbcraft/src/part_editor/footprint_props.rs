@@ -42,7 +42,8 @@ enum PasteChoice {
 }
 
 /// The pad the inspector shows: the selected one while it exists, else the
-/// selected terminal's first pad, else the first pad.
+/// selected terminal's first pad (none when no pad lands it: another
+/// terminal's pad would contradict the Terminals list), else the first pad.
 pub(super) fn current_pad(
     footprint: &FootprintDefinition,
     binding: &BindingDefinition,
@@ -51,8 +52,10 @@ pub(super) fn current_pad(
 ) -> Option<PadId> {
     selected_pad
         .filter(|id| footprint.pad(*id).is_some())
-        .or_else(|| first_pad_of(footprint, binding, terminal))
-        .or_else(|| footprint.pads.first().map(|p| p.id))
+        .or_else(|| match terminal {
+            Some(_) => first_pad_of(footprint, binding, terminal),
+            None => footprint.pads.first().map(|p| p.id),
+        })
 }
 
 /// The first pad landing one of `terminal`'s package terminals.
@@ -87,11 +90,26 @@ impl PartEditor {
     pub(super) fn footprint_inspector(&mut self, ui: &mut Ui) {
         self.footprint_section(ui);
         self.footprint_parameters(ui);
-        let before = self.selected;
-        self.terminal_list(ui);
-        if self.selected != before
+        // One selection: the list lights the terminal of the pad the Pad
+        // section shows (none for an unmapped pad), and a clicked terminal
+        // shows its own first pad.
+        let lit = self.draft.as_ref().and_then(|set| {
+            match current_pad(
+                &set.footprint,
+                &set.binding,
+                self.selected_pad,
+                self.selected,
+            )
+            .and_then(|id| set.footprint.pad(id))
+            {
+                Some(pad) => pad.terminal.and_then(|t| set.binding.terminal_of(t)),
+                None => self.selected,
+            }
+        });
+        if let Some(clicked) = self.terminal_rows(ui, lit)
             && let Some(set) = &self.draft
         {
+            self.selected = Some(clicked);
             self.selected_pad = first_pad_of(&set.footprint, &set.binding, self.selected);
         }
         self.pad_sections(ui);
@@ -144,8 +162,23 @@ impl PartEditor {
             self.selected_pad,
             self.selected,
         ) else {
-            kit::section(ui, "pad", "Pad", true, Some(0), |ui| {
-                kit::note(ui, "This footprint has no pads.");
+            let count = set.footprint.pads.len();
+            let name = self
+                .selected
+                .and_then(|id| set.component.terminal(id))
+                .map(|t| t.name.clone())
+                .unwrap_or_default();
+            kit::section(ui, "pad", "Pad", true, Some(count), |ui| {
+                if count == 0 {
+                    kit::note(ui, "This footprint has no pads.");
+                } else {
+                    kit::note(
+                        ui,
+                        &format!(
+                            "No pad lands terminal ‘{name}’. Click a pad on the canvas to show it."
+                        ),
+                    );
+                }
             });
             return;
         };

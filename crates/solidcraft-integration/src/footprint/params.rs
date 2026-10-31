@@ -126,6 +126,44 @@ pub(crate) fn evaluate_each(
         .collect())
 }
 
+/// Why `expr` cannot define parameter `name` by itself (its syntax, an
+/// unknown name or its units), read against the stored values of the other
+/// parameters and the package. `None` when it reads by itself, or when it
+/// names `name` or a parameter without a value: then only the evaluation
+/// of the whole list (a cycle, a failing reader) can say why.
+pub(crate) fn expression_error(
+    params: &[FootprintParam],
+    package: &[PackageValue],
+    name: &str,
+    text: &str,
+    param_unit: ParamUnit,
+) -> Option<String> {
+    let defs = defs(params, package).ok()?;
+    let (values, _) = expr::eval_params(&defs, 1.0);
+    if expr::references(text)
+        .iter()
+        .any(|r| r == name || (!values.contains_key(r) && defs.iter().any(|d| d.name == *r)))
+    {
+        return None;
+    }
+    let def = ParamDef {
+        name: name.into(),
+        expr: text.into(),
+        unit: unit(param_unit).into(),
+    };
+    let lookup = |n: &str| {
+        values
+            .get(n)
+            .copied()
+            .ok_or_else(|| DocError::Expr(format!("unknown parameter `{n}`")))
+    };
+    match expr::eval_def(&def, &lookup, 1.0) {
+        Ok(_) => None,
+        Err(DocError::Expr(why)) => Some(why),
+        Err(other) => Some(other.to_string()),
+    }
+}
+
 /// The expression definitions of the parameters and the package values.
 fn defs(params: &[FootprintParam], package: &[PackageValue]) -> Outcome<Vec<ParamDef>> {
     if params.len() > MAX_PARAMETERS || package.len() > MAX_PARAMETERS {

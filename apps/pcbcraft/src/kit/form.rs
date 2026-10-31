@@ -107,7 +107,12 @@ pub fn multiline_row(ui: &mut Ui, label: &str, value: &mut String, invalid: bool
             .desired_rows(3)
             .desired_width(ui.available_width())
             .text_color(if invalid { t.error } else { t.text });
-        ui.add(edit)
+        let response = ui.add(edit);
+        if invalid {
+            not_stored(response)
+        } else {
+            response
+        }
     })
 }
 
@@ -131,7 +136,22 @@ pub fn text_field(
     invalid: bool,
 ) -> Response {
     let id = ui.id().with(("text", id));
-    ui_kit::cell_editor(ui, id, value, hint, invalid)
+    let response = ui_kit::cell_editor(ui, id, value, hint, invalid);
+    if invalid {
+        not_stored(response)
+    } else {
+        response
+    }
+}
+
+/// The hover text of a field whose text is invalid: what it shows is not
+/// what the document holds (plan principle 13: invalid input never
+/// commits and is marked).
+pub const NOT_STORED: &str = "Not stored: this text is invalid, so the document keeps its last valid value. Fix the text to store it.";
+
+/// Mark an invalid field's response as not stored.
+pub fn not_stored(response: Response) -> Response {
+    response.on_hover_text(NOT_STORED)
 }
 
 /// Units written directly after the number ("45°"); others take a space ("6 mm").
@@ -185,7 +205,10 @@ pub fn number_field(
     };
     let mut text = ui.data(|d| d.get_temp::<String>(key)).unwrap_or_else(shown);
     let parsed = parse_number(&text, unit).filter(|v| range.contains(v));
-    let response = ui_kit::cell_editor(ui, key.with("edit"), &mut text, "", parsed.is_none());
+    let mut response = ui_kit::cell_editor(ui, key.with("edit"), &mut text, "", parsed.is_none());
+    if parsed.is_none() {
+        response = not_stored(response);
+    }
     let mut changed = false;
     if response.has_focus() {
         if let Some(v) = parse_number(&text, unit).filter(|v| range.contains(v))
@@ -342,16 +365,33 @@ pub enum Tone {
     Error,
 }
 
-/// Full-width wrapping message outside any row.
-pub fn status(ui: &mut Ui, text: &str, tone: Tone) -> Response {
+fn tone_ink(tone: Tone) -> egui::Color32 {
     let t = Tokens::get();
-    let ink = match tone {
+    match tone {
         Tone::Dim => t.text_dim,
         Tone::Note => t.form_primary,
         Tone::Warning => t.warning,
         Tone::Error => t.error,
-    };
-    ui.add(egui::Label::new(RichText::new(text).size(t.font_label).color(ink)).wrap())
+    }
+}
+
+/// Full-width wrapping message outside any row.
+pub fn status(ui: &mut Ui, text: &str, tone: Tone) -> Response {
+    let t = Tokens::get();
+    ui.add(egui::Label::new(RichText::new(text).size(t.font_label).color(tone_ink(tone))).wrap())
+}
+
+/// A wrapping message that is a button: a click acts on what it names (a
+/// finding locates its object). Its text is not selectable, so a press
+/// never starts a text selection instead of the click.
+pub fn status_button(ui: &mut Ui, text: &str, tone: Tone) -> Response {
+    let t = Tokens::get();
+    ui.add(
+        egui::Button::new(RichText::new(text).size(t.font_label).color(tone_ink(tone)))
+            .frame_when_inactive(false)
+            .wrap(),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A small dim note, for guidance under a group of rows.
@@ -475,6 +515,62 @@ pub fn rule(ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B-h: invalid text kept in a field it lost focus from keeps the error
+    /// look and says on hover that it is not stored; valid text does not.
+    #[test]
+    fn an_invalid_field_says_it_is_not_stored() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut time = 0.0;
+        let mut frame = |text: &mut String, invalid: bool, events: Vec<egui::Event>| {
+            time += 0.4;
+            let mut rect = egui::Rect::NOTHING;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(360.0, 200.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| rect = text_field(ui, "value", text, "", invalid).rect,
+            );
+            output.textures_delta.clear();
+            fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+                match shape {
+                    egui::Shape::Text(t) => out.push(t.galley.job.text.clone()),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                    _ => {}
+                }
+            }
+            let mut out = Vec::new();
+            for shape in &output.shapes {
+                texts(&shape.shape, &mut out);
+            }
+            (rect, out)
+        };
+        for invalid in [true, false] {
+            let mut text = "ten kilo".to_owned();
+            let (rect, _) = frame(&mut text, invalid, vec![]);
+            let mut shown = Vec::new();
+            frame(
+                &mut text,
+                invalid,
+                vec![egui::Event::PointerMoved(rect.center())],
+            );
+            for _ in 0..4 {
+                shown = frame(&mut text, invalid, vec![]).1;
+            }
+            assert_eq!(
+                shown.iter().any(|t| t == NOT_STORED),
+                invalid,
+                "invalid {invalid}: {shown:?}"
+            );
+        }
+    }
 
     #[test]
     fn numbers_read_with_or_without_their_unit_and_print_without_trailing_zeros() {

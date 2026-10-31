@@ -135,7 +135,8 @@ impl App {
             return;
         }
         match part_editor::run(&mut self.engine, request) {
-            Ok(()) => self.clear_error(),
+            Ok(None) => self.clear_error(),
+            Ok(Some(created)) => self.say(created, false),
             Err(error) => self.say(error.to_string(), true),
         }
     }
