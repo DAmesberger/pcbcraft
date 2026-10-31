@@ -242,7 +242,7 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | --- | --- | --- | --- |
 | **B0** Bugs (done) | B-a…B-j | the three editors | — |
 | **S0** Contract (this page) | IA, types, signatures, style checker, skill rules, planned attribution | `docs/sidebar-ia.md`, `crates/editor-core/src/issues*`, the new kit and app files above | — |
-| **S1** Split | Mechanical, no behaviour change: `part_editor::inspector()` per-view bodies → `part_editor/{details,symbol,footprint,mapping,model}_card.rs`; the Part section → `part_props.rs`; the same for the schematic and PCB `inspector()` dispatch | the three editors | B0 |
+| **S1** Split (done) | Mechanical, no behaviour change: `part_editor::inspector()` per-view bodies → `part_editor/{details,symbol,footprint,mapping,model}_card.rs`; the Part section → `part_props.rs`; the same for the schematic and PCB `inspector()` dispatch (see [the card files](#card-files-after-s1)) | the three editors | B0 |
 | **K1** Card + column | `kit::card`; the `chrome.rs` column stack with the always-visible Issues bar slot | `kit/card.rs`, `shell.rs`, `app/chrome.rs` (column) | S0 |
 | **K2** Issues kit | severity, rows, list, line, bar, badge, detail | `kit/severity.rs`, `kit/issues.rs` | S0 |
 | **K3** Feedback kit + routing | toast, Messages, pill; `App::say(severity)`; `Refused` from `App::apply`; `status_chip` removed | `kit/toast.rs`, `kit/messages.rs`, `refusal.rs`, `app.rs`, `app/chrome.rs` (status only; rebased after K1) | S0 |
@@ -252,12 +252,12 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | **C3** Core commands | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
 | **A1** Issues surface | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
 | **R1** Review panel | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview | `update_preview.rs` | K4, C2 |
-| **W1a** Component Details + Symbol | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
-| **W1b** Component Footprint + Mapping + 3D | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate`; `notice` sites | `part_editor/footprint_*.rs`, `part_editor/{mapping,model}_card.rs` | S1, K1, K3, K4 |
+| **W1a** Component Details + Symbol | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
+| **W1b** Component Footprint + Mapping + 3D | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate` targets for its tabs (methods in its own files that W1a's `Locate` calls); `notice` sites | `part_editor/footprint_*.rs` (with `footprint_card.rs`), `part_editor/{mapping,model}_card.rs`, `part_editor/model_{body,props}.rs` | S1, K1, K3, K4 |
 | **W1c** Part dialog | Part as a `DialogPanel` with cascade publish, gated primary and return link | `part_editor/part_props.rs` | S1, K4 |
-| **W2a** Schematic cards | Sheet, Instance (live per field), Net/Wire, Place preview; Checks section removed; `Locate`; `notice` sites | `schematic_editor.rs`, `place_palette.rs` (preview) | S1, K1, K3 |
+| **W2a** Schematic cards | Sheet, Instance (live per field), Net/Wire, Place preview; Checks section removed; `Locate`; `notice` sites | `schematic_editor.rs`, `schematic_editor/{sheet,instance,net}_card.rs`, `place_palette.rs` (preview) | S1, K1, K3 |
 | **W2b** Schematic dialogs | Choose part dialog; Resolve parts table Window | `resolve_parts.rs`, `place_palette.rs` (assign part; merged after W2a) | S1, K4 |
-| **W3** PCB | Board card + Board setup; Placement and Track cards; Route tool card; view popover; 3D rules; unplaced state; `Locate`; `notice` sites | `pcb_editor.rs` | S1, K1, K3, K4, C3 (track edits) |
+| **W3** PCB | Board card + Board setup; Placement and Track cards; Route tool card; view popover; 3D rules; unplaced state; `Locate`; `notice` sites | `pcb_editor.rs`, `pcb_editor/{board,placement,track,route}_card.rs` | S1, K1, K3, K4, C3 (track edits) |
 | **V1** Evidence | After-screenshots of every audit state; measure the one-screen target; update [editor evidence](editor-evidence.md); scenarios for locate, toast, refusal on a field, review gating and a stable layout while typing | `docs/`, tests | all |
 
 **Waves.**
@@ -267,3 +267,24 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 3. K1, K2, K3, K4, C1, C2 and C3 in parallel. K3 rebases its `chrome.rs` edits after K1.
 4. A1, R1, W1a, W1b, W1c, W2a, W2b and W3 in parallel. Files are disjoint after S1. W slices only call `kit::issue_line`, implement `Locate` and migrate their own `notice` sites.
 5. V1.
+
+### Card files after S1
+
+Paths are relative to `apps/pcbcraft/src`. Each editor's `inspector()` stays in the editor file and only dispatches to these files.
+
+| File | Holds |
+| --- | --- |
+| `part_editor.rs` | `inspector()`: Findings, the notice, the empty state, then Definition, the open tab's card, Fields, Parts, Provenance, instance updates and library actions |
+| `part_editor/details_card.rs` | Definition, Fields, Provenance, Update placed instances, library folder actions (component-level; shown on every tab today) |
+| `part_editor/symbol_card.rs` | the Symbol tab: tool, selection, unit, grid, terminal list, selected terminal, Functions |
+| `part_editor/footprint_card.rs` | the Footprint tab: tool options, template section, footprint and pad sections (bodies in `footprint_*.rs`) |
+| `part_editor/mapping_card.rs` | the Mapping tab: package terminals and their mapping |
+| `part_editor/model_card.rs` | the 3D tab: Body and placement (bodies in `model_body.rs`, `model_props.rs`) |
+| `part_editor/part_props.rs` | the Parts section and its glue (`part_section`) |
+| `schematic_editor/sheet_card.rs` | Sheet, Place and Checks |
+| `schematic_editor/instance_card.rs` | the selected instance: properties, Part, pin functions |
+| `schematic_editor/net_card.rs` | the selected wire's net |
+| `pcb_editor/board_card.rs` | Board and fabrication, Layers, Board checks |
+| `pcb_editor/placement_card.rs` | Placement, and the not-placed state |
+| `pcb_editor/track_card.rs` | the selected track |
+| `pcb_editor/route_card.rs` | Routing |

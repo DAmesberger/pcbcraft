@@ -7,12 +7,10 @@
 //! ([`layout::pick_pad`], [`layout::pick_graphic`]); it never decides pad or
 //! graphic geometry. The cached board is rebuilt per document revision, not
 //! on selection, layer or camera changes.
-use crate::kit::{self, Tone};
 use crate::symbol_view::{self, View};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Fabrication, Id, Layer, MaskColour, MaskFinish, Operation, PadFinish, Placement, Point,
-    Project, SilkscreenColour, Track,
+    Engine, Id, Layer, Operation, Placement, Point, Project,
     geometry::{Shape as CoreShape, Transform2},
     instances,
     layout::{
@@ -20,22 +18,21 @@ use pcbcraft_core::{
         PlacedPad, RouteRequest, WorldPad,
     },
     library::{PadKind, PlacedText, TextMetric},
-    schematic,
     updates::Change,
 };
 use solidcraft_ui_egui::{
     fonts,
     theme::{self, Tokens},
-    ui_kit::{self, Button},
 };
 use std::collections::BTreeSet;
 
+mod board_card;
+mod placement_card;
+mod route_card;
+mod track_card;
+
 /// Scroll and pinch zoom limits, relative to the board fitting the canvas.
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.2..=12.0;
-/// Bound on typed placement coordinates (mm); the board is far smaller.
-const COORDINATE_LIMIT: f64 = 10_000.0;
-/// Board-check findings listed in the card; the rest are counted.
-const MAX_LISTED_ISSUES: usize = 40;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Tool {
@@ -537,9 +534,9 @@ impl PcbEditor {
             self.unplaced_section(ui, engine, &instance.designator);
             None
         } else if let Some(track) = project.tracks.iter().find(|t| Some(t.id) == self.track) {
-            track_section(ui, project, track)
+            track_card::track_section(ui, project, track)
         } else {
-            board_section(ui, project)
+            board_card::board_section(ui, project)
         };
         self.routing_section(ui, project);
         // The 2D layer toggles do not drive the 3D scene; hide them there.
@@ -548,136 +545,6 @@ impl PcbEditor {
         }
         self.checks_section(ui);
         operation
-    }
-
-    /// A selected instance without a placement: the header reads "Not
-    /// placed", and the body offers the update that places it.
-    fn unplaced_section(&mut self, ui: &mut Ui, engine: &Engine, designator: &str) {
-        let mut update = false;
-        kit::section(ui, "pcb-unplaced", "Placement", true, None, |ui| {
-            kit::note(
-                ui,
-                &format!("{designator} is not on the board yet. Run Update PCB to place it."),
-            );
-            kit::actions(ui, |ui| {
-                update = ui_kit::button(ui, "Update PCB…", Button::Normal)
-                    .on_hover_text("Review the schematic changes the board does not have yet")
-                    .clicked();
-            });
-        });
-        if update {
-            self.update.begin(engine, Change::SyncPcb {});
-            self.tool = Tool::Select;
-            self.route_start = None;
-            self.cancel_drag();
-        }
-    }
-
-    fn placement_section(&mut self, ui: &mut Ui, placement: &Placement) -> Option<Operation> {
-        let locked = placement.locked;
-        let mut action = None;
-        kit::section(ui, "pcb-placement", "Placement", true, None, |ui| {
-            ui.add_enabled_ui(!locked, |ui| {
-                kit::pair_row(
-                    ui,
-                    "Position",
-                    &mut self.position,
-                    "mm",
-                    -COORDINATE_LIMIT..=COORDINATE_LIMIT,
-                );
-                kit::number_row(ui, "Rotation", &mut self.rotation, "°", 0.0..=360.0);
-                kit::choice_row(ui, "Side", &mut self.placement_layer, &layer_options());
-            });
-            let mut lock = locked;
-            if kit::check_row(ui, "Locked", &mut lock) {
-                action = Some(LayoutCommand::SetPlacementLock {
-                    instance: placement.instance,
-                    locked: lock,
-                });
-            }
-            if locked {
-                kit::note(ui, "Unlock the placement to move, rotate or flip it.");
-            }
-            let edit = placement_edit(
-                placement,
-                self.position,
-                self.rotation,
-                self.placement_layer,
-            );
-            kit::actions(ui, |ui| {
-                let apply = kit::primary(ui, "Apply", edit.is_some());
-                if apply.clicked() && edit.is_some() {
-                    action = edit;
-                }
-                if ui_kit::button(ui, "Flip", Button::Enabled(!locked)).clicked() && !locked {
-                    action = Some(LayoutCommand::Move {
-                        instance: placement.instance,
-                        position: placement.position,
-                        rotation_deg: placement.rotation_deg,
-                        layer: opposite(placement.layer),
-                    });
-                }
-                if ui_kit::button(ui, "Rotate 90°", Button::Enabled(!locked)).clicked() && !locked
-                {
-                    action = Some(LayoutCommand::Move {
-                        instance: placement.instance,
-                        position: placement.position,
-                        rotation_deg: (placement.rotation_deg + 90.0).rem_euclid(360.0),
-                        layer: placement.layer,
-                    });
-                }
-            });
-        });
-        action.map(Operation::Layout)
-    }
-
-    fn routing_section(&mut self, ui: &mut Ui, project: &Project) {
-        kit::section(ui, "pcb-routing", "Routing", true, None, |ui| {
-            kit::number_row(ui, "Width", &mut self.width, "mm", 0.05..=10.0);
-            if kit::choice_row(ui, "Layer", &mut self.layer, &layer_options()) {
-                self.route_start = None;
-            }
-            let mut nets = vec![(None, "Select a net or pad".to_owned())];
-            nets.extend(
-                schematic::nets(project)
-                    .iter()
-                    .map(|net| (Some(net.id), net.name.clone())),
-            );
-            if kit::choice_row(ui, "Net", &mut self.net, &nets) {
-                self.route_start = None;
-                self.highlighted = self.net;
-            }
-            let mut highlight = self.highlighted.is_some();
-            if kit::check_row(ui, "Highlight complete net", &mut highlight) {
-                self.highlight_net(if highlight { self.net } else { None });
-            }
-            kit::check_row(ui, "Show airwires", &mut self.show_airwires);
-            kit::note(
-                ui,
-                if self.route_start.is_some() {
-                    "Click a point or pad. Escape ends the route."
-                } else {
-                    "Route: click a pad, then a point or pad."
-                },
-            );
-        });
-    }
-
-    /// Layer visibility and the board side Layout is seen from. Display
-    /// state only: nothing here changes the document.
-    fn layers_section(&mut self, ui: &mut Ui) {
-        kit::section(ui, "pcb-layers", "Layers", true, None, |ui| {
-            let l = &mut self.layers;
-            kit::check_row(ui, "Top copper", &mut l.copper_top);
-            kit::check_row(ui, "Bottom copper", &mut l.copper_bottom);
-            kit::check_row(ui, "Top silkscreen", &mut l.silk_top);
-            kit::check_row(ui, "Bottom silkscreen", &mut l.silk_bottom);
-            kit::check_row(ui, "Courtyard", &mut l.courtyard);
-            kit::check_row(ui, "Assembly", &mut l.assembly);
-            kit::check_row(ui, "Holes", &mut l.holes);
-            kit::check_row(ui, "View from bottom", &mut self.from_bottom);
-            kit::note(ui, "Hidden layers are not picked.");
-        });
     }
 
     /// The two parts of each courtyard-overlap finding, with the side.
@@ -693,51 +560,6 @@ impl PcbEditor {
                 Some((parts.next()?, parts.next()?))
             })
             .collect()
-    }
-
-    fn checks_section(&mut self, ui: &mut Ui) {
-        let mut select = None;
-        self.checks_list(ui, &mut select);
-        if let Some((instance, track, net)) = select {
-            self.set_selection(instance, track, net);
-        }
-    }
-
-    /// The Board checks list. Each row naming a part, pad, track or net is
-    /// a button that selects the first such object.
-    fn checks_list(&self, ui: &mut Ui, select: &mut Option<Selection>) {
-        let count = self.issues.len();
-        kit::section(
-            ui,
-            "pcb-checks",
-            "Board checks",
-            count > 0,
-            Some(count),
-            |ui| {
-                if self.issues.is_empty() {
-                    kit::status(ui, "No issues found by these checks.", Tone::Dim);
-                }
-                for issue in self.issues.iter().take(MAX_LISTED_ISSUES) {
-                    let target = locate(&issue.objects);
-                    let hint = target.map(|(instance, track, _)| match (instance, track) {
-                        (Some(_), _) => "Select the part on the board",
-                        (None, Some(_)) => "Select the track on the board",
-                        (None, None) => "Select the net on the board",
-                    });
-                    let response = kit::finding_row(ui, &issue.message, Tone::Error, hint);
-                    if target.is_some() && response.clicked() {
-                        *select = target;
-                    }
-                }
-                if count > MAX_LISTED_ISSUES {
-                    kit::note(ui, &format!("{} more issues", count - MAX_LISTED_ISSUES));
-                }
-                kit::note(
-                    ui,
-                    "Connectivity, outline and 0.2 mm copper clearance only; not a full manufacturing DRC.",
-                );
-            },
-        );
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1374,141 +1196,6 @@ fn layer_name(layer: Layer) -> &'static str {
 fn layer_options() -> [(Layer, String); 2] {
     [Layer::Top, Layer::Bottom].map(|layer| (layer, layer_name(layer).to_owned()))
 }
-/// The Move that the placement form's Apply button issues: `None` while the
-/// placement is locked or the form still matches it.
-fn placement_edit(
-    placement: &Placement,
-    position: Point,
-    rotation_deg: f64,
-    layer: Layer,
-) -> Option<LayoutCommand> {
-    let unchanged = placement.position == position
-        && placement.rotation_deg == rotation_deg
-        && placement.layer == layer;
-    (!placement.locked && !unchanged).then_some(LayoutCommand::Move {
-        instance: placement.instance,
-        position,
-        rotation_deg,
-        layer,
-    })
-}
-/// Board size and layers, and the fabrication choices. Choosing another
-/// option issues `layout.set_fabrication` with the other attributes kept.
-fn board_section(ui: &mut Ui, project: &Project) -> Option<Operation> {
-    let mut fabrication = project.fabrication;
-    kit::section(ui, "pcb-board", "Board", true, None, |ui| {
-        kit::value_row(
-            ui,
-            "Size",
-            &format!(
-                "{} × {} mm",
-                kit::number_text(project.board_size[0]),
-                kit::number_text(project.board_size[1])
-            ),
-        );
-        kit::value_row(ui, "Copper", "2 layers");
-        kit::choice_row(
-            ui,
-            "Soldermask",
-            &mut fabrication.mask_colour,
-            &mask_colour_options(),
-        );
-        kit::choice_row(
-            ui,
-            "Mask finish",
-            &mut fabrication.mask_finish,
-            &mask_finish_options(),
-        );
-        kit::choice_row(
-            ui,
-            "Pad finish",
-            &mut fabrication.pad_finish,
-            &pad_finish_options(),
-        );
-        kit::choice_row(
-            ui,
-            "Silkscreen",
-            &mut fabrication.silkscreen_colour,
-            &silkscreen_options(),
-        );
-        kit::note(
-            ui,
-            "Saved with the design for fabrication. The 3D view shows mask and pad finish; silkscreen is drawn in 2D Layout only for now.",
-        );
-    });
-    fabrication_edit(project.fabrication, fabrication)
-}
-/// The operation a changed fabrication form issues; `None` when unchanged.
-fn fabrication_edit(current: Fabrication, edited: Fabrication) -> Option<Operation> {
-    (current != edited).then_some(Operation::Layout(LayoutCommand::SetFabrication(edited)))
-}
-fn mask_colour_options() -> [(MaskColour, String); 8] {
-    [
-        (MaskColour::Green, "Green"),
-        (MaskColour::Blue, "Blue"),
-        (MaskColour::Red, "Red"),
-        (MaskColour::Purple, "Purple"),
-        (MaskColour::Yellow, "Yellow"),
-        (MaskColour::Black, "Black"),
-        (MaskColour::White, "White"),
-        (MaskColour::Clear, "Clear"),
-    ]
-    .map(|(value, label)| (value, label.to_owned()))
-}
-fn mask_finish_options() -> [(MaskFinish, String); 3] {
-    [
-        (MaskFinish::Gloss, "Gloss"),
-        (MaskFinish::Satin, "Satin"),
-        (MaskFinish::Matte, "Matte"),
-    ]
-    .map(|(value, label)| (value, label.to_owned()))
-}
-fn pad_finish_options() -> [(PadFinish, String); 5] {
-    [
-        (PadFinish::Enig, "ENIG"),
-        (PadFinish::Hasl, "HASL (tin-lead)"),
-        (PadFinish::LeadFreeHasl, "Lead-free HASL"),
-        (PadFinish::Osp, "OSP"),
-        (PadFinish::ImmersionSilver, "Immersion silver"),
-    ]
-    .map(|(value, label)| (value, label.to_owned()))
-}
-fn silkscreen_options() -> [(SilkscreenColour, String); 3] {
-    [
-        (SilkscreenColour::White, "White"),
-        (SilkscreenColour::Black, "Black"),
-        (SilkscreenColour::Yellow, "Yellow"),
-    ]
-    .map(|(value, label)| (value, label.to_owned()))
-}
-/// Read-only track properties with lock and delete.
-fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operation> {
-    let mut action = None;
-    kit::section(ui, "pcb-track", "Track", true, None, |ui| {
-        kit::value_row(ui, "Net", project.net_name(track.net));
-        kit::value_row(
-            ui,
-            "Width",
-            &format!("{} mm", kit::number_text(track.width)),
-        );
-        kit::value_row(ui, "Layer", layer_name(track.layer));
-        let mut locked = track.locked;
-        if kit::check_row(ui, "Locked", &mut locked) {
-            action = Some(LayoutCommand::SetTrackLock {
-                id: track.id,
-                locked,
-            });
-        }
-        kit::actions(ui, |ui| {
-            if ui_kit::button(ui, "Delete track", Button::Enabled(!track.locked)).clicked()
-                && !track.locked
-            {
-                action = Some(LayoutCommand::DeleteTrack { id: track.id });
-            }
-        });
-    });
-    action.map(Operation::Layout)
-}
 /// Board millimetres to the canvas `rect`: the board fitted with a 50 px
 /// margin and centred, times `zoom`, moved by `pan`.
 fn board_view(rect: Rect, board: Point, zoom: f32, pan: Vec2, from_bottom: bool) -> BoardView {
@@ -1588,7 +1275,10 @@ fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> 
 
 #[cfg(test)]
 mod tests {
+    use super::board_card::fabrication_edit;
+    use super::placement_card::placement_edit;
     use super::*;
+    use pcbcraft_core::{Fabrication, MaskColour};
 
     fn ids(engine: &Engine) -> (Id, Id) {
         let id = |d| {

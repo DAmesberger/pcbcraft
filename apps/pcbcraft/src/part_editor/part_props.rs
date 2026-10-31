@@ -1249,6 +1249,35 @@ impl PartProps {
     }
 }
 
+impl super::PartEditor {
+    /// The Parts section of the Properties card. `pending` is the open
+    /// card's operation this frame; a Part's edit or the cascade publish
+    /// is sent only when the card sent nothing.
+    pub(super) fn part_section(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+        pending: Option<Operation>,
+    ) -> Option<Operation> {
+        let blocked = self
+            .listed_findings(engine)
+            .into_iter()
+            .find(|f| f.blocking)
+            .map(|f| f.text);
+        let mut operation = pending;
+        if let Some(set) = &self.draft {
+            match self.parts.section(ui, engine, set, blocked.as_deref()) {
+                Some(PartsAction::Apply(op)) => operation = operation.or(Some(*op)),
+                Some(PartsAction::PublishCascade) => {
+                    operation = operation.or_else(|| self.publish(engine));
+                }
+                None => {}
+            }
+        }
+        operation
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

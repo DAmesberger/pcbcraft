@@ -1,8 +1,10 @@
 //! Schematic tests of manufacturer parts: the Part row, assign mode and
 //! the Resolve parts card, driven through the engine.
 use super::*;
+use crate::kit;
 use crate::resolve_parts::demo_part;
 use pcbcraft_core::PartRef;
+use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::format::{EditorFile, FILE_VERSION};
 use solidcraft_ui_egui::fonts;
 
