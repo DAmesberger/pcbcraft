@@ -11,7 +11,8 @@ use crate::library::graphics::{
 };
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
-    PackageDefinition, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit, VAlign,
+    PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
+    VAlign,
 };
 use crate::model::{EditPolicy, Net, Project, SymbolOccurrence, Wire};
 use crate::nets;
@@ -35,6 +36,15 @@ pub enum SchematicCommand {
     /// Presentation only; electrical identities are unchanged.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
+    /// Set an occurrence's orientation about its origin: `mirror` reflects
+    /// the unit across its local x-axis, then `rotation` turns it
+    /// counter-clockwise. Presentation only; wires follow their pins.
+    #[serde(rename = "symbol.orient_unit")]
+    OrientUnit {
+        occurrence: Id,
+        rotation: Rotation,
+        mirror: bool,
+    },
     /// Remove a unit from the sheet. Direct only when no wire touches its
     /// terminals; otherwise preview it as `Change::Schematic`.
     #[serde(rename = "symbol.unplace_unit")]
@@ -76,6 +86,11 @@ pub fn apply(
             occurrence,
             position,
         } => move_unit(project, occurrence, position).map(|()| None),
+        SchematicCommand::OrientUnit {
+            occurrence,
+            rotation,
+            mirror,
+        } => orient_unit(project, occurrence, rotation, mirror).map(|()| None),
         SchematicCommand::UnplaceUnit { occurrence } => {
             unplace_unit(project, occurrence, policy).map(|()| None)
         }
@@ -130,6 +145,41 @@ pub fn move_unit(project: &mut Project, occurrence: Id, position: Point) -> Resu
         .ok_or_else(|| not_found("Unknown symbol occurrence."))?
         .position = position;
     Ok(())
+}
+
+/// Presentation only: wires reference terminals, so their ends follow the
+/// turned or mirrored pins.
+pub fn orient_unit(
+    project: &mut Project,
+    occurrence: Id,
+    rotation: Rotation,
+    mirror: bool,
+) -> Result<()> {
+    let item = project
+        .occurrences
+        .iter_mut()
+        .find(|o| o.id == occurrence)
+        .ok_or_else(|| not_found("Unknown symbol occurrence."))?;
+    item.rotation = rotation;
+    item.mirror = mirror;
+    Ok(())
+}
+
+/// The orientation after turning an occurrence a further 90°
+/// counter-clockwise on the sheet about its origin.
+pub fn rotated_on_sheet(rotation: Rotation, mirror: bool) -> (Rotation, bool) {
+    (rotation.turned(1), mirror)
+}
+
+/// The orientation after flipping an occurrence left to right on the sheet
+/// about the vertical line through its origin: a reflection across the
+/// local x-axis followed by a half turn, composed after the current
+/// orientation.
+pub fn mirrored_on_sheet(rotation: Rotation, mirror: bool) -> (Rotation, bool) {
+    (
+        Rotation::from_quarter_turns(2 - i64::from(rotation.quarter_turns())),
+        !mirror,
+    )
 }
 
 /// Wires on terminals the occurrence's unit draws.
@@ -320,10 +370,16 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-/// The frame an occurrence draws its unit in. Translation only today; the
-/// single seam for rotating and mirroring occurrences later.
+/// The frame an occurrence draws its unit in: reflect across the local
+/// x-axis if mirrored, turn by its rotation, then move to its position.
+/// Every placed coordinate (drawing, pins, wire ends, picking and fit) goes
+/// through it.
 pub fn occurrence_transform(occurrence: &SymbolOccurrence) -> Transform2 {
-    Transform2::translation(occurrence.position)
+    Transform2 {
+        translate: occurrence.position,
+        rotation_deg: occurrence.rotation.degrees(),
+        mirror: occurrence.mirror,
+    }
 }
 
 /// Global schematic pin position in millimetres: the pin's connection end in
@@ -354,7 +410,9 @@ pub struct PlacedText {
     pub height: f64,
     pub rotation_deg: f64,
     pub justify: Justify,
-    /// Drawn reflected (an occurrence or board side mirror).
+    /// Drawn reflected (a board side mirror). Schematic text is always
+    /// readable: under a mirrored occurrence its box is reflected through
+    /// its vertical justification instead, so this stays `false`.
     pub mirrored: bool,
     /// Distance between lines in cap heights; `text` breaks at `\n`.
     pub line_spacing: f64,
@@ -550,6 +608,14 @@ fn pin_numbers(
     (!designations.is_empty()).then(|| designations.join(","))
 }
 
+fn flip(v: VAlign) -> VAlign {
+    match v {
+        VAlign::Top => VAlign::Bottom,
+        VAlign::Middle => VAlign::Middle,
+        VAlign::Bottom => VAlign::Top,
+    }
+}
+
 /// Draw `unit` through `t` with its placeholders resolved by `r`.
 fn draw(
     symbol: &SymbolDefinition,
@@ -570,8 +636,17 @@ fn draw(
         at: t.apply(at),
         height,
         rotation_deg: t.apply_angle(rotation_deg).rem_euclid(360.0),
-        justify,
-        mirrored: t.mirror,
+        // A reflection across the baseline puts the box on the other side
+        // of it while the glyphs stay readable.
+        justify: if t.mirror {
+            Justify {
+                h: justify.h,
+                v: flip(justify.v),
+            }
+        } else {
+            justify
+        },
+        mirrored: false,
         line_spacing: TEXT_LINE_SPACING,
     };
     let mut shapes = Vec::new();

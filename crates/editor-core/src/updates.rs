@@ -973,6 +973,18 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
                 occurrence.position,
                 after.position
             )),
+            Some(after)
+                if (after.rotation, after.mirror) != (occurrence.rotation, occurrence.mirror) =>
+            {
+                plan.detail(format!(
+                    "{}: schematic orientation {}°{} → {}°{}; electrical identities stay unchanged.",
+                    label(project, occurrence),
+                    occurrence.rotation.degrees(),
+                    if occurrence.mirror { " mirrored" } else { "" },
+                    after.rotation.degrees(),
+                    if after.mirror { " mirrored" } else { "" },
+                ))
+            }
             Some(_) => {}
         }
     }

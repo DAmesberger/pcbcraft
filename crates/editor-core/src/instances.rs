@@ -16,7 +16,7 @@ use crate::geometry::{Point, point_valid};
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, TerminalId, UnitId};
 use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
-    PackageDefinition, Published, SymbolDefinition, designator_prefix_valid,
+    PackageDefinition, Published, Rotation, SymbolDefinition, designator_prefix_valid,
 };
 use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
 use schemars::JsonSchema;
@@ -567,6 +567,8 @@ pub(crate) fn add_occurrence(
         instance,
         unit,
         position,
+        rotation: Rotation::R0,
+        mirror: false,
     });
     Ok(id)
 }

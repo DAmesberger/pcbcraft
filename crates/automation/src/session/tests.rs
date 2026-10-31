@@ -507,3 +507,59 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
     assert!(schemas.contains("immersion_silver"));
     Ok(())
 }
+
+/// `symbol.orient_unit` sent as JSON turns and mirrors R1 in one undo step,
+/// its pins (and so its wire ends) follow, and the generated schemas list
+/// the command.
+#[test]
+fn orienting_a_unit_through_json_is_one_undo_step() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let r1 = r1(session.engine());
+    let occurrence = session
+        .engine()
+        .project()
+        .occurrences_of(r1)
+        .next()
+        .map(|o| o.id)
+        .ok_or("occurrence")?;
+    let before = session.engine().project().clone();
+    let revision = session.engine().revision();
+    let reply = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "symbol.orient_unit",
+            "params": {"occurrence": occurrence, "rotation": "r90", "mirror": true}
+        }}
+    }}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let stored = reply["result"]["project"]["occurrences"]
+        .as_array()
+        .and_then(|all| all.iter().find(|o| o["id"] == occurrence))
+        .ok_or("occurrence in reply")?;
+    assert_eq!(stored["rotation"], "r90");
+    assert_eq!(stored["mirror"], true);
+    // R1 at (−12, 0): local pin 1 (−5, 0) mirrors to itself, then turns.
+    let pin = pcbcraft_core::schematic::pin_position(
+        session.engine().project(),
+        pcbcraft_core::Endpoint {
+            instance: r1,
+            terminal: pcbcraft_core::TerminalId(1),
+        },
+    );
+    assert_eq!(pin, Some([-12.0, -5.0]));
+    let bad = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision + 1,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "symbol.orient_unit",
+            "params": {"occurrence": occurrence, "rotation": "r45", "mirror": false}
+        }}
+    }}));
+    assert_eq!(bad["error"]["code"], "malformed_request", "{bad}");
+    assert_eq!(
+        session.dispatch(json!({"command": "project.undo", "params": {}}))["ok"],
+        true
+    );
+    assert_eq!(session.engine().project(), &before);
+    assert!(schemas().to_string().contains("symbol.orient_unit"));
+    Ok(())
+}

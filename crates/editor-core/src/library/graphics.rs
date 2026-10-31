@@ -174,6 +174,31 @@ impl Rotation {
             Self::R270 => 270.0,
         }
     }
+
+    /// Counter-clockwise quarter turns, 0–3.
+    pub fn quarter_turns(self) -> u8 {
+        match self {
+            Self::R0 => 0,
+            Self::R90 => 1,
+            Self::R180 => 2,
+            Self::R270 => 3,
+        }
+    }
+
+    /// `n` counter-clockwise quarter turns, reduced to one turn.
+    pub fn from_quarter_turns(n: i64) -> Self {
+        match n.rem_euclid(4) {
+            0 => Self::R0,
+            1 => Self::R90,
+            2 => Self::R180,
+            _ => Self::R270,
+        }
+    }
+
+    /// This rotation followed by `n` further counter-clockwise quarter turns.
+    pub fn turned(self, n: i64) -> Self {
+        Self::from_quarter_turns(i64::from(self.quarter_turns()) + n.rem_euclid(4))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

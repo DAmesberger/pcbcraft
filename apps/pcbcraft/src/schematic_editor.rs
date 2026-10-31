@@ -11,7 +11,7 @@ use pcbcraft_core::functions::{FunctionEdit, Resolution, TerminalFunctions};
 use pcbcraft_core::geometry::{Bounds, Transform2};
 use pcbcraft_core::instances::{self, NewInstance, UnitState};
 use pcbcraft_core::library::graphics::SHEET_GRID_MM;
-use pcbcraft_core::library::{Terminal, TextMetric, Unit};
+use pcbcraft_core::library::{Rotation, Terminal, TextMetric, Unit};
 use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, Operation,
@@ -35,6 +35,21 @@ struct FieldBuffer {
     label: String,
     loaded: String,
     text: String,
+}
+
+/// The occurrence rotations the instance properties offer.
+const ROTATIONS: [(Rotation, &str); 4] = [
+    (Rotation::R0, "0°"),
+    (Rotation::R90, "90°"),
+    (Rotation::R180, "180°"),
+    (Rotation::R270, "270°"),
+];
+
+/// A sheet action on the selected occurrence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Arrange {
+    Rotate,
+    Mirror,
 }
 
 /// Pick tolerance around drawn symbol content, in pixels.
@@ -61,6 +76,8 @@ pub struct SchematicEditor {
     draft_reference: String,
     draft_fields: Vec<FieldBuffer>,
     draft_position: Point,
+    draft_rotation: Rotation,
+    draft_mirror: bool,
     draft_id: Option<Id>,
     pan: Vec2,
     scale: f32,
@@ -105,6 +122,8 @@ impl Default for SchematicEditor {
             draft_reference: String::new(),
             draft_fields: Vec::new(),
             draft_position: [0.0; 2],
+            draft_rotation: Rotation::R0,
+            draft_mirror: false,
             draft_id: None,
             pan: Vec2::ZERO,
             scale: 12.0,
@@ -236,6 +255,7 @@ impl SchematicEditor {
         use crate::shell::{Group, Ribbon, Tab, Tool as Button};
         let reviewing = self.update.is_open();
         let has_parts = !engine.project().library.components.is_empty();
+        let arrangeable = !reviewing && self.arranged(engine.project(), Arrange::Rotate).is_some();
         Ribbon {
             tabs: vec![Tab {
                 id: "sheet",
@@ -265,6 +285,17 @@ impl SchematicEditor {
                     ],
                 },
                 Group {
+                    label: "Arrange",
+                    tools: vec![
+                        Button::new("rotate", "spin", "Rotate")
+                            .enabled(arrangeable)
+                            .tip("Turn the selected symbol 90° counter-clockwise (Cmd/Ctrl+R)"),
+                        Button::new("mirror", "mirror", "Mirror")
+                            .enabled(arrangeable)
+                            .tip("Mirror the selected symbol left to right (Shift+X)"),
+                    ],
+                },
+                Group {
                     label: "Inspect",
                     tools: vec![
                         Button::new("check", "inspect", "Check")
@@ -286,6 +317,8 @@ impl SchematicEditor {
                 self.show_checks = !self.show_checks;
                 return None;
             }
+            "rotate" => return self.arranged(engine.project(), Arrange::Rotate),
+            "mirror" => return self.arranged(engine.project(), Arrange::Mirror),
             _ => return None,
         };
         // A creation tool takes over the panel, so the selection is released.
@@ -322,6 +355,27 @@ impl SchematicEditor {
             Tool::Wire => Header::new("line", "Wire", "Tool"),
             Tool::Select => Header::new("sketch", "Sheet", "Schematic"),
         }
+    }
+
+    /// Turn or mirror the selected occurrence on the sheet about its origin:
+    /// one `symbol.orient_unit`. `None` without a selected occurrence or
+    /// while a change is reviewed.
+    fn arranged(&self, project: &Project, action: Arrange) -> Option<Operation> {
+        if self.update.is_open() || self.tool != Tool::Select {
+            return None;
+        }
+        let o = self
+            .selected_occurrence
+            .and_then(|o| project.occurrence(o))?;
+        let (rotation, mirror) = match action {
+            Arrange::Rotate => schematic::rotated_on_sheet(o.rotation, o.mirror),
+            Arrange::Mirror => schematic::mirrored_on_sheet(o.rotation, o.mirror),
+        };
+        operation(SchematicCommand::OrientUnit {
+            occurrence: o.id,
+            rotation,
+            mirror,
+        })
     }
 
     pub fn fit(&mut self) {
@@ -373,6 +427,8 @@ impl SchematicEditor {
         }
         if let Some(o) = self.selected_occurrence.and_then(|o| project.occurrence(o)) {
             self.draft_position = o.position;
+            self.draft_rotation = o.rotation;
+            self.draft_mirror = o.mirror;
         }
     }
 
@@ -634,6 +690,13 @@ impl SchematicEditor {
                     "mm",
                     -10_000.0..=10_000.0,
                 );
+                kit::choice_row(
+                    ui,
+                    "Rotation",
+                    &mut self.draft_rotation,
+                    &ROTATIONS.map(|(r, l)| (r, l.to_owned())),
+                );
+                kit::check_row(ui, "Mirror", &mut self.draft_mirror);
             }
             for (label, state) in &units {
                 let label = if label.is_empty() {
@@ -672,8 +735,11 @@ impl SchematicEditor {
             }
         });
         let moved = position.is_some_and(|o| o.position != self.draft_position);
+        let oriented = position
+            .is_some_and(|o| (o.rotation, o.mirror) != (self.draft_rotation, self.draft_mirror));
         let dirty = self.draft_reference != instance.designator
             || moved
+            || oriented
             || self.draft_fields.iter().any(|b| b.text.trim() != b.loaded);
         kit::actions(ui, |ui| {
             if kit::primary(ui, "Apply", dirty).clicked() && dirty {
@@ -682,6 +748,13 @@ impl SchematicEditor {
                     operations.push(Operation::Schematic(SchematicCommand::MoveUnit {
                         occurrence: o.id,
                         position: self.draft_position,
+                    }));
+                }
+                if let Some(o) = position.filter(|_| oriented) {
+                    operations.push(Operation::Schematic(SchematicCommand::OrientUnit {
+                        occurrence: o.id,
+                        rotation: self.draft_rotation,
+                        mirror: self.draft_mirror,
                     }));
                 }
                 self.queued = operations.into();
@@ -895,6 +968,19 @@ impl SchematicEditor {
             self.tool = Tool::Place;
             self.wire_from = None;
             self.palette.open();
+        }
+        // Cmd/Ctrl+R and Shift+X as in the Component editor's symbol canvas.
+        if !self.palette.is_open() && !ui.ctx().egui_wants_keyboard_input() {
+            for (modifiers, key, action) in [
+                (egui::Modifiers::COMMAND, egui::Key::R, Arrange::Rotate),
+                (egui::Modifiers::SHIFT, egui::Key::X, Arrange::Mirror),
+            ] {
+                if let Some(op) = self.arranged(project, action)
+                    && ui.input_mut(|i| i.consume_key(modifiers, key))
+                {
+                    output = Some(op);
+                }
+            }
         }
         // The palette owns Esc, arrows and Enter while it is open.
         let placeable = |c: ComponentRef| first_choices(project, c).is_some();
@@ -1251,7 +1337,12 @@ impl SchematicEditor {
                     .occurrences
                     .iter()
                     .filter(|o| !self.placed.contains_key(&o.id))
-                    .filter_map(|o| Some(symbol_bounds(unit_of(project, o)?, o.position))),
+                    .filter_map(|o| {
+                        Some(symbol_bounds(
+                            unit_of(project, o)?,
+                            schematic::occurrence_transform(o),
+                        ))
+                    }),
             )
             .collect();
         let steps = |extent: f64| ((extent / step).ceil() as i32).clamp(0, 64);
@@ -1274,7 +1365,7 @@ impl SchematicEditor {
                 ]
             })
             .find(|p| {
-                let bounds = symbol_bounds(unit, *p).expand(MARGIN);
+                let bounds = symbol_bounds(unit, Transform2::translation(*p)).expand(MARGIN);
                 visible.contains_rect(bounds) && taken.iter().all(|r| !r.intersects(bounds))
             })
             .unwrap_or(centre)
@@ -1355,11 +1446,11 @@ fn sheet_rect(b: Bounds) -> Rect {
     )
 }
 
-/// A unit's extent in sheet millimetres (y up) when placed at `at`, from
-/// the core's unit bounds (graphics, approximate text and pin stubs), or a
-/// point when it draws nothing.
-fn symbol_bounds(unit: &Unit, at: Point) -> Rect {
-    let t = Transform2::translation(at);
+/// A unit's extent in sheet millimetres (y up) when placed through `t`,
+/// from the core's unit bounds (graphics, approximate text and pin stubs),
+/// or a point when it draws nothing.
+fn symbol_bounds(unit: &Unit, t: Transform2) -> Rect {
+    let at = t.translate;
     let local = unit
         .bounds(TextMetric::default())
         .unwrap_or(Bounds::point([0.0, 0.0]));
@@ -1903,7 +1994,8 @@ mod tests {
         // Their symbols, pin ends included, keep a gap: no pin lands on
         // the other part's pin.
         let bounds = |o: &pcbcraft_core::SymbolOccurrence| {
-            unit_of(engine.project(), o).map(|unit| symbol_bounds(unit, o.position))
+            unit_of(engine.project(), o)
+                .map(|unit| symbol_bounds(unit, schematic::occurrence_transform(o)))
         };
         let (Some(first), Some(second)) = (bounds(a), bounds(b)) else {
             return Err("no symbol bounds".into());
@@ -2141,6 +2233,121 @@ mod tests {
                 .iter()
                 .all(|v| ((v / grid).round() * grid - v).abs() < 1e-9)
         );
+        Ok(())
+    }
+
+    /// Cmd/Ctrl+R turns and Shift+X mirrors the selected occurrence, each one
+    /// `symbol.orient_unit` that undo reverts; the Arrange buttons send the
+    /// same operation, the properties show the stored orientation, and the
+    /// sheet draws and picks the turned pins where core places them.
+    #[test]
+    fn rotate_and_mirror_orient_the_selected_occurrence_in_one_step()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let r1 = engine.project().instances[0].id;
+        let occurrence = engine.project().occurrences_of(r1).next().ok_or("R1")?.id;
+        let before = engine.project().clone();
+        let arrange = |editor: &mut SchematicEditor, engine: &Engine| {
+            let ribbon = editor.ribbon(engine);
+            ribbon
+                .groups
+                .iter()
+                .find(|g| g.label == "Arrange")
+                .map(|g| {
+                    g.tools
+                        .iter()
+                        .map(|t| (t.label, t.enabled))
+                        .collect::<Vec<_>>()
+                })
+        };
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(
+            arrange(&mut editor, &engine),
+            Some(vec![("Rotate", false), ("Mirror", false)])
+        );
+        // Nothing selected: the keys are left for others.
+        let (_, ops) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::R, egui::Modifiers::COMMAND)],
+        );
+        assert!(ops.is_empty());
+        let r1_body = pos2(400.0 - 12.0 * 12.0, 400.0);
+        let (labels, _) = click_at(&mut editor, &engine, &ctx, r1_body);
+        assert_eq!(editor.selected_instance(), Some(r1));
+        for row in ["Rotation", "0°", "Mirror"] {
+            assert!(labels.iter().any(|l| l == row), "{row} in {labels:?}");
+        }
+        assert_eq!(
+            arrange(&mut editor, &engine),
+            Some(vec![("Rotate", true), ("Mirror", true)])
+        );
+        let (_, ops) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::R, egui::Modifiers::COMMAND)],
+        );
+        let expected = Operation::Schematic(SchematicCommand::OrientUnit {
+            occurrence,
+            rotation: Rotation::R90,
+            mirror: false,
+        });
+        assert_eq!(
+            serde_json::to_value(&ops)?,
+            serde_json::to_value([&expected])?
+        );
+        assert_eq!(
+            serde_json::to_value(editor.on_tool("rotate", &engine))?,
+            serde_json::to_value(Some(&expected))?
+        );
+        engine.apply(engine.revision(), expected)?;
+        // R1 at (−12, 0) turned: pin 1 at (−12, −5), 5 mm below on screen.
+        let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        assert!(labels.iter().any(|l| l == "90°"), "{labels:?}");
+        let pin_one = pos2(400.0 - 12.0 * 12.0, 400.0 + 4.5 * 12.0);
+        let (_, ops) = workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![key(egui::Key::X, egui::Modifiers::SHIFT)],
+        );
+        let [
+            op @ Operation::Schematic(SchematicCommand::OrientUnit {
+                rotation, mirror, ..
+            }),
+        ] = &ops[..]
+        else {
+            return Err(format!("expected one orient, got {ops:?}").into());
+        };
+        assert_eq!((*rotation, *mirror), (Rotation::R90, true));
+        engine.apply(engine.revision(), op.clone())?;
+        let placed = schematic::placed_unit(engine.project(), occurrence)?;
+        let end = placed
+            .pins
+            .iter()
+            .find(|p| p.terminal == pcbcraft_core::TerminalId(1))
+            .ok_or("pin 1")?
+            .end;
+        assert_eq!(end, [-12.0, -5.0]);
+        // The wire tool picks the turned pin where it is drawn.
+        editor.on_tool("wire", &engine);
+        click_at(&mut editor, &engine, &ctx, pin_one);
+        assert_eq!(
+            editor.wire_from,
+            Some(Endpoint {
+                instance: r1,
+                terminal: pcbcraft_core::TerminalId(1)
+            })
+        );
+        engine.undo()?;
+        engine.undo()?;
+        assert_eq!(engine.project(), &before);
         Ok(())
     }
 

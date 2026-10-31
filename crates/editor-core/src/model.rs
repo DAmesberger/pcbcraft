@@ -4,7 +4,7 @@ use crate::fields::InstanceFields;
 use crate::functions::FunctionSelections;
 pub use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, TerminalId, UnitId};
-use crate::library::{Drafts, Library};
+use crate::library::{Drafts, Library, Rotation};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -50,6 +50,13 @@ pub struct SymbolOccurrence {
     pub instance: Id,
     pub unit: UnitId,
     pub position: Point,
+    /// Quarter turns counter-clockwise about the unit origin, applied after
+    /// `mirror`.
+    pub rotation: Rotation,
+    /// Reflected across the unit's local x-axis (y → −y) before rotating.
+    /// A left-to-right flip on the sheet is `mirror` with the rotation
+    /// taken from 180°.
+    pub mirror: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
