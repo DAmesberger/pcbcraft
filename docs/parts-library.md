@@ -1,6 +1,6 @@
 # Parts library
 
-Design, decisions and slice plan, 30 October 2026. Condensed from the reviewed design proposal. **Slice S1 is implemented** (see [S1 as built](#s1-as-built)). S2–S5 are plans. Every estimate and performance figure is labelled a target, an estimate or a measurement. Nothing here is legal advice.
+Design, decisions and slice plan, 30 October 2026. Condensed from the reviewed design proposal. **Slice S1 is implemented** (see [S1 as built](#s1-as-built)). **Slice S2 is in progress** (see [S2 as built](#s2-as-built)); S3–S5 are plans. Every estimate and performance figure is labelled a target, an estimate or a measurement. Nothing here is legal advice.
 
 ## Summary
 
@@ -86,12 +86,32 @@ Equal inputs always give the same order, whatever the entry order. Hidden entrie
 | Slice | Delivers | Depends on | Estimate |
 | --- | --- | --- | --- |
 | **S1 — Find what the project has** (done) | `catalog` core module, `library.search` / `facets` / `inspect`, Place palette replacing the component dropdown, Browser filter, CLI and MCP | — | ~1.5–2 weeks (estimate) |
-| S2 — Manufacturer parts | `Part` kind and its cascade; references; offers; structured provenance; `fields::satisfies`; `instance.assign_part`; Part consistency on component updates; purchasing completeness; Resolve-parts view | D3, D5 | ~3–4 weeks (estimate) |
+| **S2 — Manufacturer parts** (in progress: contract, automation and docs built; core rules and desktop UI pending) | `Part` kind and its cascade; references; offers; structured provenance; `fields::satisfies`; `instance.assign_part`; Part consistency on component updates; purchasing completeness; Resolve-parts view | D3, D5 | ~3–4 weeks (estimate) |
 | S3 — Local library folders | D1 ref-rewrite visitor; folder manifest v1; io read/write; asset store (D7); index cache; `library.import` / `place_from` / `promote` / `duplicate`; update available; sources settings; favourites and recents | D1, D2, D7 | ~3–4 weeks (estimate) |
 | S4 — Organise and curate | Library workspace; shelves and tags; health findings and filters; lifecycle and review records; hide obsolete with "N hidden"; small original starter library | D4, D10, D13 | ~2 weeks (estimate) |
 | S5 — Connectors (after the first edition) | `pcbcraft-catalog-net` with a policy table and one per-user-key supplier; nothing from a supplier enters a project, folder or index | D9 | ~2 weeks (estimate) |
 
 Supplier terms reviewed for S5 forbid redistributing data or building a database from it, several cap caching at 24–48 h, and one could not be verified; re-check the live terms before building, and keys stay per user.
+
+## S2 as built
+
+31 October 2026. S2 is built as three parallel tasks over one contract (`docs/s2-contract.md`, deleted when S2 is complete): (1) core rules, (2) desktop UI, (3) automation and docs. This section records what exists on the automation branch; tasks 1 and 2 replace their "pending" lines when they merge.
+
+**Types (the contract, in core).**
+
+- `DefinitionKind::Part` and `PartRef { id, revision }`. `Definition::Part(Box<PartDefinition>)` (boxed for size; serde does not see the box) with `Library.parts`, which is `serde(default)` and skipped when empty, so files without Parts are unchanged. There is still one format version and no migration.
+- `PartDefinition { next_local, manufacturer, mpn, component: ComponentRef, binding: BindingRef, specs: Vec<RatedSpec>, references: Vec<Reference>, offers: Vec<DistributorOffer>, provenance: Provenance }`. References and offers share `next_local` for their local IDs. Bounds: 64 rated specs, 32 references, 32 offers, 2048-byte URLs, `MAX_LABEL` text and 64-byte hashes.
+- `Reference { id, kind: datasheet | application_note | other, title, url?, document_revision?, asset? (SHA-256 hex), licence?, provenance }`. `DistributorOffer { id, distributor, sku, url?, packaging? }`, with no price or stock (D9). `Provenance { origin?: Origin { library, lineage, revision, content_hash }, basis: authored | from_reference(id) | imported, licence? }` (D1). The free-text note stays in `DefinitionMeta::provenance` for every kind.
+- `fields::spec`: `RatedSpec { field, value, meaning }`, `SpecMeaning` (`exact_nominal`, `minimum_rating`, `maximum_tolerance`), `Requirement` and `satisfies(requirement, spec) -> Vec<Finding>` with the codes `part.spec_mismatch`, `part.spec_field_mismatch` and `part.spec_uncomparable`.
+- `ComponentInstance.part: Option<PartRef>`. The only invariant is that a pinned Part resolves in the project library; disagreement with the instance is a finding.
+- `instance.assign_part { instances, part }` (1–256, atomic, one undo step); `project.bom` → `BomReport`; `library.resolve_groups` → `ResolveReport`; `InstanceReport.purchasing: PurchasingReport { state: no_part | unresolved | resolved, part, manufacturer, mpn, findings }`.
+- Publish rank 7 for Parts, after components, so one `library.publish` set publishes footprint → binding → component → Part. Publish findings in the contract: `part.identity` and `reference.missing`.
+
+**Automation (built).** CLI `stdio` and MCP reach `instance.assign_part` through `project.apply` and both queries through `project.query`; their schemas are generated from the core types and the MCP instructions describe the Resolve-parts workflow. An automation test authors a Part over JSON only (`library.new_draft` with an empty body, `library.edit` with ExampleCo `EX-R0603-10K0-F` pinning the demo resistor's component revision and binding, its resistance as an exact nominal spec, a datasheet reference without a URL but with an attached copy, and one offer; then `library.publish`), mirrors every step on a second engine, and checks that the published body and a save and reopen through `project.save`/`project.open` keep the reference's identity and `asset` (the CE-07 automation step). Clearing a Part works; an empty instance set is `invalid_input` and changes nothing. A second test checks that the request, document and MCP tool schemas list the command, both queries and the Part types, and that the guard against retired `part.*` command names still holds.
+
+**Pending (task 1, core rules).** `satisfies` across tolerance bases, the remaining Part publish rules, `requirements`, `part_findings`, `assign_part` with a Part, `part.stale_component` on component updates, purchasing without the temporary `part.unchecked` finding, `bom`, `resolve_groups`, catalog indexing of Parts (`kind:part`, `mpn:`, the MPN badge) and synthetic ExampleCo Parts. Until it merges, the automation test asserts `unsupported` for `library.resolve_groups`, `project.bom` and `instance.assign_part` with a Part; the full workflow test (Resolve parts → one `instance.assign_part` for the group, one undo step → `component.inspect` `purchasing.state` `resolved` → `project.bom` with no unresolved lines, each compared with the engine's query) is written and `ignore`d, to be enabled at merge.
+
+**Pending (task 2, desktop).** Part authoring in the Component workspace, the Part row and Choose… in Schematic properties, and the Resolve parts card.
 
 ## S1 as built
 
@@ -120,4 +140,4 @@ Supplier terms reviewed for S5 forbid redistributing data or building a database
 
 These measure core `search` over a prebuilt index. `Engine::query` rebuilds the project's index on every call, which is cheap at project scale; folder indexes (S3) will be built once and cached. Cold build and rescan targets for 10 k revision files belong to S3 and are not measured.
 
-**Limits.** One source (the project). No Part, MPN, shelves, tags, favourites, lifecycle, health or folders yet. Case folding is lower-casing with µ/μ unified, not full Unicode NFKC. Facets are reported by `library.facets` but not yet shown as clickable filters in the palette.
+**Limits** (at S1). One source (the project). No Part, MPN, shelves, tags, favourites, lifecycle, health or folders yet. Case folding is lower-casing with µ/μ unified, not full Unicode NFKC. Facets are reported by `library.facets` but not yet shown as clickable filters in the palette.

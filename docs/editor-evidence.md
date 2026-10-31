@@ -23,6 +23,14 @@ Six packages plus checks: the pure electronics core (document, typed operations,
 - **Gate:** `cargo xtask ci` passed with 203 tests (97 core, 7 io, 13 automation, 26 native adapter, 48 desktop, 12 xtask) plus the ignored benchmark.
 - **Not yet:** library folders, manufacturer parts, shelves, tags, persisted favourites and recents, lifecycle and health, clickable facets in the palette.
 
+## Parts library S2 (in progress)
+
+31 October 2026, macOS arm64, Rust 1.96.0, Solidcraft fork `87b1009`. The S2 contract (the `Part` definition kind, `instance.assign_part`, `project.bom`, `library.resolve_groups` and purchasing completeness; see [S2 as built](parts-library.md#s2-as-built)) and its automation are built; the core rules and the desktop UI are pending in parallel tasks.
+
+- **Automation:** a Part for the demo resistor (fictitious ExampleCo, `EX-R0603-10K0-F`) is authored and published over JSON only (`library.new_draft`, `library.edit`, `library.publish`), with every step mirrored on a directly driven engine and the same outcome and document. The published body and a save and reopen keep a datasheet reference without a URL together with its attached copy (CE-07's automation step). `library.resolve_groups`, `project.bom` and `instance.assign_part` with a Part report `unsupported` without changing anything until the core rules merge; clearing a Part works. The full workflow test (Resolve parts, one group assignment and one undo step, `purchasing.state` `resolved`, a BOM without unresolved lines) is written and ignored until then. The request, document and MCP tool schemas list the new command and queries.
+- **Gate:** `cargo xtask ci` passed with 316 tests (148 core, 7 io, 17 automation, 46 native adapter, 86 desktop, 12 xtask), 4 ignored (benchmarks and the pending S2 workflow test).
+- **Not yet:** the CE-01 and CE-02 Part checks, Part consistency on component updates, catalog indexing of Parts, BOM and Resolve-parts grouping, and every desktop surface. The app was not launched for this task.
+
 ## Solidcraft source reference
 
 The implementation directly imports Solidcraft's fonts, icons, tokens, UI controls, `Container` and GPU renderer. Shell proportions and floating panel treatment were adapted after reading its `toolbar.rs`, `shell.rs`, `ui_kit/panel.rs` and `ui_kit/layout.rs`. Editor forms reference its fields/layout implementations. The installed Solidcraft app was also inspected alongside Pcbcraft. [Attribution](../ATTRIBUTION.md) identifies the source and retains the notices.
