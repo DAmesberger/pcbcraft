@@ -19,6 +19,7 @@ fn source() -> FootprintSource {
         }],
         overrides: Vec::new(),
         solve: SolveSummary::default(),
+        datum: None,
     }
 }
 

@@ -39,7 +39,7 @@ pub const PACKAGE_PREFIX: &str = "pkg_";
 
 /// How a footprint's solved data was derived. Stored with the result it
 /// produced; published revisions are never re-solved.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FootprintSource {
     /// Which evaluator (and exact engine revision) wrote `sketch`.
@@ -61,6 +61,19 @@ pub struct FootprintSource {
     /// The last evaluation (status, dof, quantized result hash) of this
     /// source, stored with the solved data it produced.
     pub solve: SolveSummary,
+    /// The package datum (set by `SetDatum`); `None` is the sketch origin
+    /// with no rotation.
+    #[serde(default)]
+    pub datum: Option<DatumRole>,
+}
+
+/// The package datum as a sketch point, oriented along an optional line.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DatumRole {
+    pub point: SketchPointId,
+    /// A line whose direction is the datum's +X; `None` is 0°.
+    pub orientation: Option<SketchCurveId>,
 }
 
 /// The evaluator that owns a source: an engine name and its exact revision.
@@ -742,6 +755,16 @@ pub struct Evaluation {
     pub findings: Vec<Finding>,
 }
 
+/// What [`FootprintEvaluator::add_template_pad`] drew: the sketch, the new
+/// anchor and the curves the pad role owns.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TemplatePad {
+    pub outcome: SketchOutcome,
+    pub anchor: SketchPointId,
+    pub owned_curves: Vec<SketchCurveId>,
+}
+
 /// Interprets a [`FootprintSource`]. Pure with respect to the document:
 /// the engine clones the draft, calls the evaluator and commits or drops
 /// the clone. Undo and redo never call it.
@@ -753,6 +776,47 @@ pub trait FootprintEvaluator {
     /// Solve a source into typed pads, graphics and datum. Design problems
     /// are findings; `Err` is reserved for refusing the input outright.
     fn evaluate(&self, request: EvaluationRequest<'_>) -> Result<Evaluation>;
+    /// The canonical sketch a new source starts from (the fixed origin only).
+    fn new_sketch(&self) -> Result<SketchBlob> {
+        Err(Error::Unsupported(
+            "this footprint evaluator cannot start a sketch".into(),
+        ))
+    }
+    /// Draw a constrained pad template centred at `at` into `source`'s
+    /// sketch; its size dimensions are driven by `params`' expressions,
+    /// evaluated against the source's parameters and `package_values`.
+    fn add_template_pad(
+        &self,
+        _source: &FootprintSource,
+        _package_values: &[PackageValue],
+        _template: PadTemplate,
+        _at: Point,
+        _params: &PadTemplateParams,
+    ) -> Result<TemplatePad> {
+        Err(Error::Unsupported(
+            "this footprint evaluator cannot draw pad templates".into(),
+        ))
+    }
+    /// The source with every expression reference to `from` (parameters,
+    /// roles, arrays and the sketch's bound dimensions and point
+    /// expressions) renamed to `to`. The parameter itself is renamed too.
+    fn rename_parameter(
+        &self,
+        _source: &FootprintSource,
+        _from: &ParamName,
+        _to: &ParamName,
+    ) -> Result<FootprintSource> {
+        Err(Error::Unsupported(
+            "this footprint evaluator cannot rename parameters".into(),
+        ))
+    }
+    /// Whether any expression of the source (other than `name`'s own
+    /// definition) refers to `name`.
+    fn references(&self, _source: &FootprintSource, _name: &ParamName) -> Result<bool> {
+        Err(Error::Unsupported(
+            "this footprint evaluator cannot read expressions".into(),
+        ))
+    }
 }
 
 /// Sketch ids, curve lists and skip lists one source entry may hold.

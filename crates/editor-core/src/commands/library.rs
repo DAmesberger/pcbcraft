@@ -1,6 +1,8 @@
 use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{DefinitionId, DefinitionRef};
+use crate::library::footprint_edit::{self, AssignRule};
+use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
@@ -50,6 +52,78 @@ pub enum LibraryCommand {
         draft: DefinitionId,
         edits: Vec<GraphicEdit>,
     },
+    /// Apply 1–256 parametric edits to one footprint draft, in order, then
+    /// evaluate once and store source and solved pads together, as one
+    /// undo step; any failure (including a blocking evaluation finding)
+    /// leaves the draft unchanged. A draft without pads gains a source on
+    /// its first edit. Needs the host's footprint evaluator.
+    #[serde(rename = "library.edit_footprint")]
+    EditFootprint {
+        draft: DefinitionId,
+        edits: Vec<FootprintEdit>,
+    },
+    /// Land package terminals on footprint pads by an explicit rule. With
+    /// `confirm: false` it only reports the changes; nothing is ever
+    /// inferred without this command.
+    #[serde(rename = "library.assign_terminals")]
+    AssignTerminals {
+        draft: DefinitionId,
+        rule: AssignRule,
+        confirm: bool,
+    },
+}
+
+fn footprint_draft(
+    document: &Document,
+    draft: DefinitionId,
+) -> Result<(&library::Draft, &library::FootprintDefinition)> {
+    let current = document
+        .drafts
+        .get(draft)
+        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+    match &current.definition {
+        Definition::Footprint(footprint) => Ok((current, footprint)),
+        _ => Err(Error::Invalid(format!("draft {draft} is not a footprint"))),
+    }
+}
+
+fn package_of<'a>(
+    document: &'a Document,
+    footprint: &library::FootprintDefinition,
+) -> Result<&'a library::PackageDefinition> {
+    footprint_edit::footprint_package(
+        &document.project.library,
+        &document.drafts,
+        footprint.package,
+    )
+    .ok_or_else(|| {
+        Error::NotFound(format!(
+            "package {} {} is not in the library or the drafts",
+            footprint.package.id, footprint.package.revision
+        ))
+    })
+}
+
+fn need(
+    evaluator: Option<&dyn library::FootprintEvaluator>,
+) -> Result<&dyn library::FootprintEvaluator> {
+    evaluator.ok_or_else(|| {
+        Error::Unsupported(
+            "footprint.evaluator_required: parametric footprints need the host's footprint evaluator".into(),
+        )
+    })
+}
+
+/// `library.footprint_preview`: what `library.edit_footprint` would do.
+pub(crate) fn preview_footprint(
+    document: &Document,
+    draft: DefinitionId,
+    edits: &[FootprintEdit],
+    evaluator: Option<&dyn library::FootprintEvaluator>,
+) -> Result<footprint_edit::FootprintPreview> {
+    let (_, footprint) = footprint_draft(document, draft)?;
+    let package = package_of(document, footprint)?;
+    footprint_edit::preview(footprint, package, edits, need(evaluator)?)
 }
 
 /// `evaluator` is the host's footprint evaluator (`Engine::apply_with`);
@@ -57,7 +131,7 @@ pub enum LibraryCommand {
 pub(crate) fn apply_library(
     document: &mut Document,
     command: LibraryCommand,
-    _evaluator: Option<&dyn library::FootprintEvaluator>,
+    evaluator: Option<&dyn library::FootprintEvaluator>,
 ) -> Result<Outcome> {
     match command {
         LibraryCommand::NewDraft { meta, definition } => {
@@ -97,6 +171,17 @@ pub(crate) fn apply_library(
             Ok(Outcome::None)
         }
         LibraryCommand::Publish { drafts } => {
+            for id in &drafts {
+                if let Some(library::Draft {
+                    definition: Definition::Footprint(footprint),
+                    ..
+                }) = document.drafts.get(*id)
+                    && footprint.source.is_some()
+                {
+                    let package = package_of(document, footprint)?;
+                    footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
+                }
+            }
             let project = Arc::make_mut(&mut document.project);
             let revisions = library::publish(
                 &mut project.library,
@@ -115,6 +200,11 @@ pub(crate) fn apply_library(
                     "pad generation requires a footprint draft".into(),
                 ));
             };
+            if footprint.source.is_some() {
+                return Err(Error::Conflict(
+                    "footprint.derived: this footprint's pads are derived from its sketch; detach it (library.edit_footprint Detach) before scripting pads".into(),
+                ));
+            }
             let generated = scripting::generate_pads(&script, footprint)?;
             let edit = DraftEdit {
                 id: draft,
@@ -170,6 +260,41 @@ pub(crate) fn apply_library(
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
             Ok(Outcome::GraphicsEdited { added })
+        }
+        LibraryCommand::EditFootprint { draft, edits } => {
+            let (current, footprint) = footprint_draft(document, draft)?;
+            let package = package_of(document, footprint)?;
+            let (definition, report) =
+                footprint_edit::edit(footprint, package, &edits, need(evaluator)?)?;
+            let edit = DraftEdit {
+                id: draft,
+                meta: current.meta.clone(),
+                definition: Definition::Footprint(definition),
+            };
+            drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            Ok(Outcome::FootprintEdited { report })
+        }
+        LibraryCommand::AssignTerminals {
+            draft,
+            rule,
+            confirm,
+        } => {
+            let (current, footprint) = footprint_draft(document, draft)?;
+            let package = package_of(document, footprint)?;
+            let (definition, changes) =
+                footprint_edit::assign_terminals(footprint, package, &rule)?;
+            if confirm && !changes.is_empty() {
+                let edit = DraftEdit {
+                    id: draft,
+                    meta: current.meta.clone(),
+                    definition: Definition::Footprint(definition),
+                };
+                drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            }
+            Ok(Outcome::TerminalsAssigned {
+                changes,
+                applied: confirm,
+            })
         }
     }
 }

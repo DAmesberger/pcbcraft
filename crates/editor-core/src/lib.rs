@@ -96,6 +96,14 @@ pub enum Query {
         #[serde(default)]
         revision: Option<Revision>,
     },
+    /// What `library.edit_footprint` would produce for these edits (pads,
+    /// graphics, findings, including blocking ones), without changing the
+    /// document. Needs the host's footprint evaluator.
+    #[serde(rename = "library.footprint_preview")]
+    FootprintPreview {
+        draft: DefinitionId,
+        edits: Vec<library::footprint_source::FootprintEdit>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -107,6 +115,7 @@ pub enum QueryResult {
     Search(catalog::SearchReport),
     Facets(catalog::FacetReport),
     Lineage(Box<catalog::ItemReport>),
+    FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -403,6 +412,17 @@ impl Engine {
         query: Query,
         context: &catalog::CatalogContext,
     ) -> Result<QueryResult> {
+        self.query_using(query, context, None)
+    }
+
+    /// [`query_with`](Self::query_with) with the host's footprint
+    /// evaluator, which `library.footprint_preview` needs.
+    pub fn query_using(
+        &self,
+        query: Query,
+        context: &catalog::CatalogContext,
+        evaluator: Option<&dyn library::FootprintEvaluator>,
+    ) -> Result<QueryResult> {
         let index = || catalog::Index::of_project(&self.document.project, &self.document.drafts);
         match query {
             Query::Search {
@@ -447,6 +467,11 @@ impl Engine {
                 &self.document.project,
                 &self.document.drafts,
             )?)),
+            Query::FootprintPreview { draft, edits } => {
+                Ok(QueryResult::FootprintPreview(Box::new(
+                    commands::preview_footprint(&self.document, draft, &edits, evaluator)?,
+                )))
+            }
         }
     }
 
