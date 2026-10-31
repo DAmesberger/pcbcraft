@@ -1160,7 +1160,7 @@ fn scrim(ctx: &egui::Context, card: egui::Id) -> bool {
         .show(ctx, |ui| {
             let (r, response) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
             ui.painter()
-                .rect_filled(r, 0.0, t.tab_on_fill_dark.gamma_multiply(0.25));
+                .rect_filled(r, 0.0, t.app_bar.gamma_multiply(0.55));
             response.clicked()
         })
         .inner;
