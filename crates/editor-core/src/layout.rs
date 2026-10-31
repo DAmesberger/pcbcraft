@@ -19,8 +19,9 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 
 mod placed;
 pub use placed::{
-    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedItem, PlacedPad,
-    placed_graphics, placed_pads, placement_transform,
+    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PAD_ARC_TOLERANCE_MM, PlacedGraphic, PlacedHole,
+    PlacedItem, PlacedPad, hole_outline, pad_outline, pick_graphic, pick_pad, placed_graphics,
+    placed_pads, placement_transform,
 };
 const MAX_CHECK_PAIRS: usize = 100_000;
 
