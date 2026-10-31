@@ -86,6 +86,7 @@ pub(super) fn pad_label(pad: &Pad) -> String {
 impl PartEditor {
     pub(super) fn footprint_inspector(&mut self, ui: &mut Ui) {
         self.footprint_section(ui);
+        self.footprint_parameters(ui);
         let before = self.selected;
         self.terminal_list(ui);
         if self.selected != before

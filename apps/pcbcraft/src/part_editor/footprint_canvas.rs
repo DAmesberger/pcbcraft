@@ -194,12 +194,14 @@ impl PartEditor {
         // Pick on press, then move the picked pad while dragging.
         // A drag picks where the button went down, not where it started
         // counting as a drag.
+        let sketch_took = self.footprint_sketch_input(ui, response, view, panning);
         let pressed_at = if response.drag_started() {
             ui.input(|i| i.pointer.press_origin())
         } else {
             response.interact_pointer_pos()
         };
         if !panning
+            && !sketch_took
             && (response.clicked() || response.drag_started_by(egui::PointerButton::Primary))
             && let Some(p) = pressed_at
             && let Some(set) = &self.draft
@@ -332,6 +334,12 @@ impl PartEditor {
         if layers.drawing(DrawingLayer::Courtyard) {
             self.paint_drawings(&painter, view, DrawingLayer::Courtyard, ink.courtyard);
         }
+        // The sketch: curves, points, dimensions and constraint glyphs.
+        let hover = response.hover_pos();
+        self.paint_footprint_sketch(&painter, rect, view, hover);
+        let Some(set) = &self.draft else {
+            return;
+        };
         // Pad numbers on top.
         for pad in &set.footprint.pads {
             let at = view.screen(pad.position);
@@ -351,7 +359,7 @@ impl PartEditor {
                 );
             }
         }
-        self.footprint_tools_frame(ui, rect, response, view, grid);
+        self.footprint_tools_frame(ui, rect, response, view, grid, sketch_took);
         painter.text(
             rect.left_top() + vec2(t.space_16, t.space_16),
             Align2::LEFT_TOP,
@@ -359,6 +367,7 @@ impl PartEditor {
             fonts::semibold(t.font_panel),
             t.text,
         );
+        self.footprint_value_field(ui, view);
         if let Some(p) = response.hover_pos() {
             let at = view.world(p);
             painter.text(

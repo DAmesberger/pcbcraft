@@ -55,6 +55,79 @@ pub(crate) fn check_name(name: &str) -> Outcome<()> {
 /// Evaluate the footprint parameters with the typed package values
 /// injected (each already named `pkg_<name>`).
 pub(crate) fn evaluate(params: &[FootprintParam], package: &[PackageValue]) -> Outcome<Values> {
+    let defs = defs(params, package)?;
+    let (values, errors) = expr::eval_params(&defs, 1.0);
+    if let Some((name, error)) = errors.into_iter().next() {
+        return Err(problem(EXPR, format!("`{name}`: {error}")));
+    }
+    for p in params {
+        if p.unit == ParamUnit::Count {
+            let v = values
+                .get(&p.name.0)
+                .copied()
+                .unwrap_or(Value::num(f64::NAN));
+            count_value(&p.name.0, v)?;
+        }
+    }
+    Ok(Values(values))
+}
+
+/// A count parameter's value: whole and within 0…[`MAX_COUNT`].
+fn count_value(name: &str, v: Value) -> Outcome<f64> {
+    let n = v.to_kind(Kind::Unitless).unwrap_or(f64::NAN);
+    if n.fract() != 0.0 || !(0.0..=f64::from(MAX_COUNT)).contains(&n) {
+        return Err(problem(
+            EXPR,
+            format!("count `{name}` = {n} is not a whole number in 0…{MAX_COUNT}"),
+        ));
+    }
+    Ok(n)
+}
+
+/// Each footprint parameter's value in its own unit (mm, degrees or a
+/// count) or why it has none, for the parameters panel. A source whose
+/// names or sizes are refused at all gives the one problem.
+pub(crate) fn evaluate_each(
+    params: &[FootprintParam],
+    package: &[PackageValue],
+) -> Outcome<Vec<std::result::Result<ParamValue, String>>> {
+    let defs = defs(params, package)?;
+    let (values, errors) = expr::eval_params(&defs, 1.0);
+    Ok(params
+        .iter()
+        .map(|p| {
+            if let Some(e) = errors.get(&p.name.0) {
+                return Err(e.clone());
+            }
+            let v = values
+                .get(&p.name.0)
+                .copied()
+                .ok_or_else(|| format!("`{}` has no value", p.name.0))?;
+            let typed = match p.unit {
+                ParamUnit::Mm => v.to_kind(Kind::Length).map(ParamValue::Length),
+                ParamUnit::Deg => v
+                    .to_kind(Kind::Angle)
+                    .map(|rad| ParamValue::Angle(rad.to_degrees())),
+                ParamUnit::Count => {
+                    return count_value(&p.name.0, v)
+                        // Whole and within 0…1024, so the conversion is exact.
+                        .map(|n| ParamValue::Count(n as u32))
+                        .map_err(|e| e.message);
+                }
+            };
+            match typed {
+                Ok(ParamValue::Length(x) | ParamValue::Angle(x)) if !x.is_finite() => {
+                    Err(format!("`{}` is not finite", p.name.0))
+                }
+                Ok(value) => Ok(value),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+        .collect())
+}
+
+/// The expression definitions of the parameters and the package values.
+fn defs(params: &[FootprintParam], package: &[PackageValue]) -> Outcome<Vec<ParamDef>> {
     if params.len() > MAX_PARAMETERS || package.len() > MAX_PARAMETERS {
         return Err(problem("footprint.too_large", "too many parameters"));
     }
@@ -111,29 +184,7 @@ pub(crate) fn evaluate(params: &[FootprintParam], package: &[PackageValue]) -> O
             return Err(problem(NAME, format!("`{}` is defined twice", d.name)));
         }
     }
-    let (values, errors) = expr::eval_params(&defs, 1.0);
-    if let Some((name, error)) = errors.into_iter().next() {
-        return Err(problem(EXPR, format!("`{name}`: {error}")));
-    }
-    for p in params {
-        if p.unit == ParamUnit::Count {
-            let v = values
-                .get(&p.name.0)
-                .copied()
-                .unwrap_or(Value::num(f64::NAN));
-            let n = v.to_kind(Kind::Unitless).unwrap_or(f64::NAN);
-            if n.fract() != 0.0 || !(0.0..=f64::from(MAX_COUNT)).contains(&n) {
-                return Err(problem(
-                    EXPR,
-                    format!(
-                        "count `{}` = {n} is not a whole number in 0…{MAX_COUNT}",
-                        p.name.0
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(Values(values))
+    Ok(defs)
 }
 
 impl Values {

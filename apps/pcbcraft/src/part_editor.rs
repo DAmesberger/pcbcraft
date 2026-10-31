@@ -11,8 +11,10 @@ mod drawing;
 mod drawing_tests;
 mod footprint_canvas;
 mod footprint_dims;
+mod footprint_dims_ui;
 mod footprint_geometry;
 mod footprint_params;
+mod footprint_params_ui;
 mod footprint_props;
 mod footprint_template_picker;
 #[cfg(test)]
@@ -337,6 +339,8 @@ pub struct PartEditor {
     footprint_tool: footprint_tools::ToolState,
     /// The open "New from template" form.
     template_picker: footprint_template_picker::TemplatePicker,
+    /// Footprint sketch dimensions, constraints, drags and parameters.
+    footprint_dims: footprint_dims::DimsState,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
@@ -395,6 +399,7 @@ impl Default for PartEditor {
             footprint_layers: Default::default(),
             footprint_tool: Default::default(),
             template_picker: Default::default(),
+            footprint_dims: Default::default(),
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
@@ -502,6 +507,9 @@ impl PartEditor {
         }
         if interacting {
             return None;
+        }
+        if let Some(sketch) = self.footprint_tool_operation(engine) {
+            return Some(sketch);
         }
         // A finished Part edit travels with the working set's, so neither
         // reload discards the other's uncommitted work.
@@ -612,6 +620,7 @@ impl PartEditor {
             let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
             if self.footprint_sketching() {
                 groups.extend(self.footprint_sketch_groups());
+                groups.push(self.constrain_group());
             } else {
                 groups.push(pads);
             }
@@ -1690,8 +1699,9 @@ impl PartEditor {
             self.symbol_canvas(ui, rect, &response, engine);
             return None;
         }
+        // A finished sketch gesture is sent by `commit`, after the frame.
         self.footprint_canvas(ui, rect, &response, engine.drafts().grid.footprint_mm);
-        self.footprint_tool_operation(engine)
+        None
     }
 
     fn mapping_canvas(&mut self, ui: &mut Ui, rect: Rect) {

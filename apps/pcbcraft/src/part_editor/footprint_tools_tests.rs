@@ -493,7 +493,8 @@ fn frame(
         },
     );
     output.textures_delta.clear();
-    sent
+    // As the app: the canvas frame, then the editor's commit.
+    sent.or_else(|| editor.commit(ctx, engine))
 }
 
 fn click(

@@ -13,7 +13,7 @@ use crate::kit;
 use crate::symbol_view::{self, View};
 use egui::{Align2, Color32, Rect, Response, Stroke, Ui, vec2};
 use pcbcraft_core::geometry::{Shape, distance};
-use pcbcraft_core::library::footprint_source::{PadTemplate, Pin1Position};
+use pcbcraft_core::library::footprint_source::{FootprintEdit, PadTemplate, Pin1Position};
 use pcbcraft_core::library::{PadKind, PadSide};
 use pcbcraft_core::{Engine, Operation, Point};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
@@ -134,6 +134,7 @@ impl PartEditor {
     /// parameters.
     pub(super) fn footprint_arm(&mut self, tool: FootprintTool) {
         self.footprint_tool.arm(tool);
+        self.footprint_dims.picks.clear();
         let source = self
             .draft
             .as_ref()
@@ -207,6 +208,14 @@ impl PartEditor {
         ]
     }
 
+    /// Queue one finished gesture's edits (a tool, dimension, constraint,
+    /// drag or parameter edit) as the next `library.edit_footprint`.
+    pub(super) fn queue_footprint_edits(&mut self, edits: Vec<FootprintEdit>) {
+        if !edits.is_empty() {
+            self.footprint_tool.outbox = Some(edits);
+        }
+    }
+
     /// The commit of a finished gesture: the working copy goes first when
     /// it has unsent edits, so neither reload discards the other.
     pub(super) fn footprint_tool_operation(&mut self, engine: &Engine) -> Option<Operation> {
@@ -225,7 +234,9 @@ impl PartEditor {
     }
 
     /// Handle one canvas frame of the sketch tools and paint their
-    /// overlay.
+    /// overlay. `taken` is true when the dimension overlay
+    /// (`footprint_dims_ui`) already took the pointer this frame: a label,
+    /// glyph, Dimension or Constrain pick or a live point drag.
     pub(super) fn footprint_tools_frame(
         &mut self,
         ui: &Ui,
@@ -233,6 +244,7 @@ impl PartEditor {
         response: &Response,
         view: View,
         grid: f64,
+        taken: bool,
     ) {
         if !self.footprint_sketching() {
             return;
@@ -248,6 +260,7 @@ impl PartEditor {
         let Self {
             draft,
             footprint_tool: state,
+            footprint_dims: dims,
             notice,
             selected_pad,
             ..
@@ -302,7 +315,7 @@ impl PartEditor {
                 Err(e) => *notice = e.to_string(),
             }
         };
-        if !panning && !self.space_held {
+        if !panning && !self.space_held && !taken {
             if response.secondary_clicked() {
                 state.cancel();
                 state.drag = None;
@@ -311,6 +324,9 @@ impl PartEditor {
             {
                 let raw = view.world(p);
                 if tool == FootprintTool::Select {
+                    // One selection: a pad or sketch pick drops a selected
+                    // dimension or constraint.
+                    dims.selected = None;
                     state.select(raw, &scene, shift_held);
                     *selected_pad = state.selection.iter().find_map(|p| match p {
                         Pick::Pad(id) => Some(*id),
@@ -617,23 +633,18 @@ fn paint(
             .iter()
             .any(|p| matches!(p, Pick::Curve(c) if c == id))
     };
-    // Construction geometry dashed, free sketch curves thin; template
-    // outlines are drawn as their pads.
-    for c in &sketch.curves {
+    // The sketch itself is drawn by the dimension overlay
+    // (`footprint_dims_ui`) in the solver's colours; only the selection is
+    // drawn here.
+    for c in sketch.curves.iter().filter(|c| selected_curve(&c.id)) {
         let Some(shape) = shape_of(&c.geometry) else {
             continue;
         };
-        let selected = selected_curve(&c.id);
-        let ink = if selected {
-            colors.selected
-        } else {
-            t.text_dim
-        };
-        let width = if selected { 2.0 } else { 1.0 };
+        let stroke = Stroke::new(2.0, colors.selected);
         if c.construction {
-            symbol_view::paint_dashed(painter, view, &shape, Stroke::new(width, ink), 5.0, 3.0);
-        } else if selected {
-            symbol_view::paint_shape(painter, view, &shape, None, Some(Stroke::new(width, ink)));
+            symbol_view::paint_dashed(painter, view, &shape, stroke, 5.0, 3.0);
+        } else {
+            symbol_view::paint_shape(painter, view, &shape, None, Some(stroke));
         }
     }
     for p in &sketch.points {
