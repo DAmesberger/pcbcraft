@@ -671,6 +671,7 @@ fn a_representation_lineage_change_needs_explicit_unit_resolutions() -> Result<(
                 regroups: vec![],
                 fields: vec![],
                 functions: vec![],
+                parts: vec![],
             },
         };
         let blocked = engine.preview_update(change(vec![]));

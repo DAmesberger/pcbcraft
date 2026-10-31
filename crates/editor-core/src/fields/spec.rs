@@ -4,7 +4,7 @@
 //! `satisfies` is shared by catalog search, `instance.assign_part` and
 //! purchasing completeness. It compares by the spec's declared meaning,
 //! never by matching names or text.
-use super::{FieldValue, ValueType};
+use super::{FieldValue, ToleranceBasis, ValueType, tolerance_interval};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::ids::FieldRef;
 use schemars::JsonSchema;
@@ -63,42 +63,155 @@ pub struct Requirement {
 }
 
 fn close(a: f64, b: f64) -> bool {
-    (a - b).abs() <= QUANTITY_EPSILON * a.abs().max(b.abs())
+    a == b || (a - b).abs() <= QUANTITY_EPSILON * a.abs().max(b.abs())
 }
 
-/// Why `spec` does not meet `requirement`; empty when it does. Findings are
-/// advisory here: purchasing completeness and `instance.assign_part` decide
-/// what they block. Codes: `part.spec_mismatch` (the comparison fails),
-/// `part.spec_field_mismatch` (different field lineages) and
-/// `part.spec_uncomparable` (the meaning does not apply to the value, or the
-/// comparison needs data it does not have).
-pub fn satisfies(requirement: &Requirement, spec: &RatedSpec) -> Vec<Finding> {
-    let objects = vec![ObjectRef::Definition {
-        id: requirement.field.id,
-    }];
-    let label = &requirement.label;
-    if spec.field.id != requirement.field.id {
-        return vec![Finding::new(
-            "part.spec_field_mismatch",
-            format!("The rated value is not a value of {label}."),
-            objects,
-        )];
+/// `a ≥ b`, or equal within [`QUANTITY_EPSILON`].
+fn at_least(a: f64, b: f64) -> bool {
+    a >= b || close(a, b)
+}
+
+impl SpecMeaning {
+    /// Whether this meaning can compare values of `value_type`: exact
+    /// nominal for every type but tolerances, a minimum rating for
+    /// quantities, integers and ranges (the rated range covers the required
+    /// one), a maximum tolerance for tolerances only.
+    pub fn fits(self, value_type: &ValueType) -> bool {
+        match self {
+            Self::ExactNominal => !matches!(value_type, ValueType::Tolerance { .. }),
+            Self::MinimumRating => matches!(
+                value_type,
+                ValueType::Quantity { .. } | ValueType::Integer { .. } | ValueType::Range { .. }
+            ),
+            Self::MaximumTolerance => matches!(value_type, ValueType::Tolerance { .. }),
+        }
     }
+
+    /// How the meaning reads in messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ExactNominal => "exact nominal",
+            Self::MinimumRating => "minimum rating",
+            Self::MaximumTolerance => "maximum tolerance",
+        }
+    }
+}
+
+/// Whether two value types of one field lineage read values the same way:
+/// the same value type in the same quantity-kind lineage. Tolerance bases
+/// are compared separately, through the nominal value.
+fn same_reading(a: &ValueType, b: &ValueType) -> bool {
+    use std::mem::discriminant;
+    match (a, b) {
+        (ValueType::Tolerance { .. }, ValueType::Tolerance { .. }) => true,
+        _ => discriminant(a) == discriminant(b) && a.kind().map(|k| k.id) == b.kind().map(|k| k.id),
+    }
+}
+
+/// Whether the rated tolerance is no wider than the required one. Equal
+/// bases compare magnitudes side by side; different bases compare the
+/// intervals both give around `nominal`, which absolute bases of different
+/// quantity-kind lineages never share.
+fn tolerance_met(
+    required: (f64, f64, &ToleranceBasis),
+    rated: (f64, f64, &ToleranceBasis),
+    nominal: Option<f64>,
+) -> Option<bool> {
+    let (rm, rp, rb) = required;
+    let (sm, sp, sb) = rated;
+    match (rb, sb) {
+        (ToleranceBasis::Relative, ToleranceBasis::Relative) => {
+            return Some(at_least(rm, sm) && at_least(rp, sp));
+        }
+        (ToleranceBasis::Absolute { kind: a }, ToleranceBasis::Absolute { kind: b }) => {
+            return (a.id == b.id).then(|| at_least(rm, sm) && at_least(rp, sp));
+        }
+        _ => {}
+    }
+    let nominal = nominal?;
+    let (r_low, r_high) = tolerance_interval(nominal, rm, rp, rb).ok()?;
+    let (s_low, s_high) = tolerance_interval(nominal, sm, sp, sb).ok()?;
+    Some(at_least(s_low, r_low) && at_least(r_high, s_high))
+}
+
+impl Requirement {
+    /// [`satisfies`], with the rated value read in `spec_type`: the value
+    /// type of the spec's own field revision, which may be another revision
+    /// of the requirement's field lineage (a tolerance basis may change
+    /// between revisions; the comparison then goes through `nominal`).
+    pub fn satisfied_by(&self, spec: &RatedSpec, spec_type: &ValueType) -> Vec<Finding> {
+        let objects = vec![ObjectRef::Definition { id: self.field.id }];
+        let label = &self.label;
+        if spec.field.id != self.field.id {
+            return vec![Finding::new(
+                "part.spec_field_mismatch",
+                format!("The rated value is not a value of {label}."),
+                objects,
+            )];
+        }
+        let met = if same_reading(&self.value_type, spec_type) && spec.meaning.fits(spec_type) {
+            compare(self, spec, spec_type)
+        } else {
+            None
+        };
+        let meaning = spec.meaning.label();
+        match met {
+            Some(true) => Vec::new(),
+            Some(false) => vec![Finding::new(
+                "part.spec_mismatch",
+                format!("The rated {label} ({meaning}) does not meet the requirement."),
+                objects,
+            )],
+            None => vec![Finding::new(
+                "part.spec_uncomparable",
+                format!("The rated {label} ({meaning}) cannot be compared with the requirement."),
+                objects,
+            )],
+        }
+    }
+}
+
+fn compare(requirement: &Requirement, spec: &RatedSpec, spec_type: &ValueType) -> Option<bool> {
     use FieldValue as V;
-    let met = match (spec.meaning, &requirement.value, &spec.value) {
-        (SpecMeaning::ExactNominal, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
+    use SpecMeaning as M;
+    match (spec.meaning, &requirement.value, &spec.value) {
+        (M::ExactNominal, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
             Some(close(*r, *s))
         }
-        (SpecMeaning::ExactNominal, V::Integer(r), V::Integer(s)) => Some(r == s),
-        (SpecMeaning::ExactNominal, V::Boolean(r), V::Boolean(s)) => Some(r == s),
-        (SpecMeaning::ExactNominal, V::Enum(r), V::Enum(s)) => Some(r == s),
-        (SpecMeaning::ExactNominal, V::Text(r), V::Text(s)) => Some(r == s),
-        (SpecMeaning::MinimumRating, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
-            Some(*s >= *r || close(*r, *s))
-        }
-        (SpecMeaning::MinimumRating, V::Integer(r), V::Integer(s)) => Some(s >= r),
+        (M::ExactNominal, V::Integer(r), V::Integer(s)) => Some(r == s),
+        (M::ExactNominal, V::Boolean(r), V::Boolean(s)) => Some(r == s),
+        (M::ExactNominal, V::Enum(r), V::Enum(s)) => Some(r == s),
+        (M::ExactNominal, V::Text(r), V::Text(s)) => Some(r == s),
         (
-            SpecMeaning::MaximumTolerance,
+            M::ExactNominal,
+            V::Range {
+                min: r_min,
+                max: r_max,
+            },
+            V::Range {
+                min: s_min,
+                max: s_max,
+            },
+        ) => Some(close(*r_min, *s_min) && close(*r_max, *s_max)),
+        (M::MinimumRating, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
+            Some(at_least(*s, *r))
+        }
+        (M::MinimumRating, V::Integer(r), V::Integer(s)) => Some(s >= r),
+        // A rated range covers the required one: an operating range of
+        // −40 … 125 °C meets a requirement of −20 … 85 °C.
+        (
+            M::MinimumRating,
+            V::Range {
+                min: r_min,
+                max: r_max,
+            },
+            V::Range {
+                min: s_min,
+                max: s_max,
+            },
+        ) => Some(at_least(*r_min, *s_min) && at_least(*s_max, *r_max)),
+        (
+            M::MaximumTolerance,
             V::Tolerance {
                 minus: rm,
                 plus: rp,
@@ -107,24 +220,29 @@ pub fn satisfies(requirement: &Requirement, spec: &RatedSpec) -> Vec<Finding> {
                 minus: sm,
                 plus: sp,
             },
-        ) if matches!(requirement.value_type, ValueType::Tolerance { .. }) => {
-            // One field lineage read in one value type: both sides share the
-            // requirement's basis.
-            Some((*sm <= *rm || close(*sm, *rm)) && (*sp <= *rp || close(*sp, *rp)))
+        ) => {
+            let (ValueType::Tolerance { basis: rb }, ValueType::Tolerance { basis: sb }) =
+                (&requirement.value_type, spec_type)
+            else {
+                return None;
+            };
+            tolerance_met((*rm, *rp, rb), (*sm, *sp, sb), requirement.nominal)
         }
         _ => None,
-    };
-    match met {
-        Some(true) => Vec::new(),
-        Some(false) => vec![Finding::new(
-            "part.spec_mismatch",
-            format!("The part's rated {label} does not meet the requirement."),
-            objects,
-        )],
-        None => vec![Finding::new(
-            "part.spec_uncomparable",
-            format!("The part's rated {label} cannot be compared with the requirement."),
-            objects,
-        )],
     }
 }
+
+/// Why `spec` does not meet `requirement`; empty when it does. Findings are
+/// advisory here: purchasing completeness and `instance.assign_part` decide
+/// what they block. Codes: `part.spec_mismatch` (the comparison fails),
+/// `part.spec_field_mismatch` (different field lineages) and
+/// `part.spec_uncomparable` (the meaning does not apply to the value, or the
+/// comparison needs data it does not have). The spec is read in the
+/// requirement's value type; [`Requirement::satisfied_by`] takes the spec's
+/// own.
+pub fn satisfies(requirement: &Requirement, spec: &RatedSpec) -> Vec<Finding> {
+    requirement.satisfied_by(spec, &requirement.value_type)
+}
+
+#[cfg(test)]
+mod tests;

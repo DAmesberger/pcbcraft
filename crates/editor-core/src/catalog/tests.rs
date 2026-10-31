@@ -231,7 +231,7 @@ fn field_keys_resolve_from_data_and_report_unknown_or_ambiguous_keys() -> TestRe
     );
     assert!(error.message.contains("Resistance"));
     assert!(error.message.contains("filters: pkg, has"), "{error}");
-    // `kind:component` keeps every entry; it is not the source filter.
+    // `kind:component` lists component entries; it is not the source filter.
     assert_eq!(index.parse("kind:component")?.terms, [Term::Components]);
     // `ma` is a prefix of one field only; `t` of none; `c`/`ca` only one.
     assert!(index.parse("ma>=10").is_ok());

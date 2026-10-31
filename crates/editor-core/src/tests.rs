@@ -8,5 +8,6 @@ mod engine;
 mod fields;
 mod graphics;
 mod library;
+mod parts;
 mod staged;
 pub(crate) mod support;

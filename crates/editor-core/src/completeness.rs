@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 mod purchasing;
 pub use purchasing::{
     BomLine, BomReport, BomValue, PurchasingReport, PurchasingState, ResolveGroup, ResolveReport,
-    bom, purchasing, resolve_groups,
+    bom, purchasing, requirement_query, resolve_groups,
 };
 
 /// The exact physical revisions an instance resolves to.

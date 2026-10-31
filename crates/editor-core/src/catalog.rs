@@ -2,8 +2,9 @@
 //! language, deterministic ranking and data-derived facets.
 //!
 //! Entries are derived, never stored. There is one entry per component
-//! lineage at its latest published revision (plus, on request, lineages that
-//! exist only as drafts). The project snapshot is the only source until
+//! lineage and one per manufacturer Part lineage, each at its latest
+//! published revision (plus, on request, lineages that exist only as
+//! drafts). The project snapshot is the only source until
 //! library folders exist; the [`Source`] tag keeps room for them. Nothing
 //! here branches on a component category, field name or unit: filters come
 //! from the field definitions and quantity kinds the data carries.
@@ -16,12 +17,12 @@ pub use query::{
 };
 
 use crate::diagnostics::{Error, Result};
-use crate::fields::{self, FieldSelection, FieldValue};
+use crate::fields::{self, FieldSelection, FieldValue, SpecMeaning};
 use crate::ids::{
-    BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, Revision,
-    SymbolRef,
+    BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, PartRef,
+    Revision, SymbolRef,
 };
-use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library};
+use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library, PartDefinition};
 use crate::model::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,8 +58,8 @@ pub struct Badges {
     pub footprint: bool,
     /// A bound package has a valid envelope, the native 3D model.
     pub model: bool,
-    /// A manufacturer part number. Always absent before manufacturer parts
-    /// exist.
+    /// A manufacturer part number: the entry is a Part, or a component that
+    /// a published Part implements.
     pub mpn: bool,
 }
 
@@ -85,6 +86,12 @@ pub struct EntryField {
     pub text: String,
     /// Whether the component shows this field on its symbol: a key value.
     pub shown: bool,
+    /// On a Part entry, how the rated value meets a requirement. A field
+    /// predicate with `:` or a bare value then means "meets": a minimum
+    /// rating of 25 V meets `16V`, a maximum tolerance of ±0.5 % meets
+    /// `±1%`. Explicit comparisons keep their literal meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meaning: Option<SpecMeaning>,
 }
 
 /// One searchable lineage.
@@ -106,12 +113,32 @@ pub struct CatalogEntry {
     pub badges: Badges,
     /// Instances in the project that pin any revision of this lineage.
     pub used: usize,
+    /// A Part entry's manufacturer, as the user wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    /// A Part entry's complete manufacturer part number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpn: Option<String>,
+    /// A Part entry's pinned generic component revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implements: Option<ComponentRef>,
 }
 
 impl CatalogEntry {
-    /// The placeable exact revision.
+    /// The placeable exact revision of a component entry; `None` for a
+    /// Part entry.
     pub fn component(&self) -> Option<ComponentRef> {
-        self.revision.map(|r| ComponentRef::new(self.lineage, r))
+        (self.kind == DefinitionKind::Component)
+            .then_some(self.revision)
+            .flatten()
+            .map(|r| ComponentRef::new(self.lineage, r))
+    }
+    /// The assignable exact revision of a Part entry.
+    pub fn part(&self) -> Option<PartRef> {
+        (self.kind == DefinitionKind::Part)
+            .then_some(self.revision)
+            .flatten()
+            .map(|r| PartRef::new(self.lineage, r))
     }
     /// Shown field values, then the first package: what a result row lists.
     pub fn key_values(&self) -> Vec<&str> {
@@ -180,6 +207,79 @@ fn entry_of(
         packages,
         badges,
         used: 0,
+        manufacturer: None,
+        mpn: None,
+        implements: None,
+    }
+}
+
+/// Build the entry of one Part body: its rated values as fields, badges
+/// and packages from the pinned component and binding.
+fn part_entry(
+    library: &Library,
+    lineage: DefinitionId,
+    revision: Option<Revision>,
+    meta: &DefinitionMeta,
+    part: &PartDefinition,
+) -> CatalogEntry {
+    let component = library.component(part.component).map(|c| &c.definition);
+    let fields = part
+        .specs
+        .iter()
+        .filter_map(|spec| {
+            let view = library.field_view(spec.field)?;
+            Some(EntryField {
+                field: spec.field.id,
+                label: view.field.meta.name.clone(),
+                text: fields::display(
+                    &spec.value,
+                    &view.field.definition.value_type,
+                    view.kind_body(),
+                ),
+                value: spec.value.clone(),
+                shown: component
+                    .and_then(|c| c.field(spec.field.id))
+                    .is_some_and(|s| s.show_on_symbol),
+                meaning: Some(spec.meaning),
+            })
+        })
+        .collect();
+    let mut badges = Badges {
+        symbol: component.is_some_and(|c| {
+            c.representations
+                .iter()
+                .any(|s| library.symbol(*s).is_some())
+        }),
+        mpn: true,
+        ..Badges::default()
+    };
+    let mut packages = Vec::new();
+    if let Some(binding) = library.binding(part.binding) {
+        badges.footprint = binding
+            .definition
+            .footprints
+            .iter()
+            .any(|f| library.footprint(*f).is_some());
+        if let Some(package) = library.package(binding.definition.package) {
+            badges.model = package.definition.envelope_valid();
+            packages.push(package.meta.name.clone());
+        }
+    }
+    CatalogEntry {
+        source: Source::Project,
+        kind: DefinitionKind::Part,
+        lineage,
+        revision,
+        name: meta.name.clone(),
+        description: meta.description.clone(),
+        draft: false,
+        fields,
+        packages,
+        badges,
+        used: 0,
+        manufacturer: Some(part.manufacturer.clone()),
+        mpn: Some(part.mpn.clone()),
+        implements: Some(part.component),
     }
 }
 
@@ -195,17 +295,27 @@ fn entry_field(library: &Library, selection: &FieldSelection) -> Option<EntryFie
         text: fields::display(&value, &view.field.definition.value_type, view.kind_body()),
         value,
         shown: selection.show_on_symbol,
+        meaning: None,
     })
 }
 
-/// Every component lineage of the project: published lineages at their
-/// latest revision, then draft-only lineages, each in lineage order.
+/// Every component lineage of the project, then every Part lineage:
+/// published lineages at their latest revision, then draft-only lineages,
+/// each in lineage order.
 pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
     let library = &project.library;
     let mut used: BTreeMap<DefinitionId, usize> = BTreeMap::new();
     for instance in &project.instances {
         *used.entry(instance.component.id).or_default() += 1;
+        if let Some(part) = instance.part {
+            *used.entry(part.id).or_default() += 1;
+        }
     }
+    let latest_parts = library.latest_parts();
+    let implemented: BTreeSet<DefinitionId> = latest_parts
+        .iter()
+        .map(|p| p.definition.component.id)
+        .collect();
     let mut out: Vec<CatalogEntry> = library
         .latest_components()
         .into_iter()
@@ -213,6 +323,7 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
             let mut entry = entry_of(library, c.id, Some(c.revision), &c.meta, &c.definition);
             entry.draft = drafts.get(c.id).is_some();
             entry.used = used.get(&c.id).copied().unwrap_or(0);
+            entry.badges.mpn = implemented.contains(&c.id);
             entry
         })
         .collect();
@@ -222,6 +333,22 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
             && !published.contains(&draft.id)
         {
             let mut entry = entry_of(library, draft.id, None, &draft.meta, component);
+            entry.draft = true;
+            out.push(entry);
+        }
+    }
+    for p in latest_parts {
+        let mut entry = part_entry(library, p.id, Some(p.revision), &p.meta, &p.definition);
+        entry.draft = drafts.get(p.id).is_some();
+        entry.used = used.get(&p.id).copied().unwrap_or(0);
+        out.push(entry);
+    }
+    let published: BTreeSet<DefinitionId> = library.parts.iter().map(|p| p.id).collect();
+    for draft in &drafts.items {
+        if let crate::library::Definition::Part(part) = &draft.definition
+            && !published.contains(&draft.id)
+        {
+            let mut entry = part_entry(library, draft.id, None, &draft.meta, part);
             entry.draft = true;
             out.push(entry);
         }
@@ -261,6 +388,8 @@ pub struct CatalogContext {
 /// Case-folded text of one entry, built once per index.
 struct Folded {
     name: String,
+    /// A Part's MPN; an exact MPN ranks as an exact name.
+    mpn: Option<String>,
     words: Vec<String>,
     lineage: String,
     other: String,
@@ -276,6 +405,10 @@ impl Folded {
             .map(str::to_owned)
             .collect();
         let mut other = fold(&entry.description);
+        for text in entry.mpn.iter().chain(&entry.manufacturer) {
+            other.push('\n');
+            other.push_str(&fold(text));
+        }
         for package in &entry.packages {
             other.push('\n');
             other.push_str(&fold(package));
@@ -288,6 +421,7 @@ impl Folded {
             .join("\n");
         Self {
             name,
+            mpn: entry.mpn.as_deref().map(|m| fold(m.trim())),
             words,
             lineage: fold(&entry.lineage.to_string()),
             other,
@@ -296,9 +430,11 @@ impl Folded {
     }
 
     fn text_tier(&self, text: &str) -> Option<MatchTier> {
-        if self.name == text || self.lineage == text {
+        if self.name == text || self.lineage == text || self.mpn.as_deref() == Some(text) {
             Some(MatchTier::Exact)
-        } else if self.name.starts_with(text) {
+        } else if self.name.starts_with(text)
+            || self.mpn.as_ref().is_some_and(|m| m.starts_with(text))
+        {
             Some(MatchTier::Prefix)
         } else if self.words.iter().any(|w| w == text) {
             Some(MatchTier::Word)
@@ -316,7 +452,34 @@ fn field_hit(entry: &CatalogEntry, test: &FieldTest) -> bool {
     entry
         .fields
         .iter()
-        .any(|f| f.field == test.field && test.test.accepts(&f.value))
+        .any(|f| f.field == test.field && meets(f, &test.test))
+}
+
+/// A test on one entry value. On a Part's rated value an equality (`:` or a
+/// bare value) means "meets", through the spec's meaning, as
+/// `fields::satisfies` reads it; other operators keep their literal sense.
+fn meets(field: &EntryField, test: &Test) -> bool {
+    match (field.meaning, test) {
+        (Some(SpecMeaning::MinimumRating), Test::Compare { op: Op::Eq, value }) => Test::Compare {
+            op: Op::Ge,
+            value: *value,
+        }
+        .accepts(&field.value),
+        (
+            Some(SpecMeaning::MaximumTolerance),
+            Test::Tolerance {
+                op: Op::Eq,
+                minus,
+                plus,
+            },
+        ) => Test::Tolerance {
+            op: Op::Le,
+            minus: *minus,
+            plus: *plus,
+        }
+        .accepts(&field.value),
+        _ => test.accepts(&field.value),
+    }
 }
 
 /// The worst tier over the text terms, or `None` when a term fails.
@@ -366,7 +529,26 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                 }
                 None
             }
-            Term::Components => None,
+            Term::Components | Term::Parts => {
+                let kind = match term {
+                    Term::Parts => DefinitionKind::Part,
+                    _ => DefinitionKind::Component,
+                };
+                if entry.kind != kind {
+                    return None;
+                }
+                None
+            }
+            Term::Mpn { text } => {
+                if !folded
+                    .mpn
+                    .as_ref()
+                    .is_some_and(|m| m.contains(text.as_str()))
+                {
+                    return None;
+                }
+                None
+            }
         };
         if let Some(tier) = tier {
             text_seen = true;

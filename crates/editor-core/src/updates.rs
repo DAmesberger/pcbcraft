@@ -73,6 +73,29 @@ pub struct Resolutions {
     pub fields: Vec<FieldResolution>,
     #[serde(default)]
     pub functions: Vec<FunctionResolution>,
+    /// What happens to each instance's exact manufacturer Part. An instance
+    /// without an entry keeps its Part, which then pins the old component
+    /// revision and leaves purchasing unresolved until another Part is
+    /// chosen. The Part is never re-pointed to the target revision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartResolution>,
+}
+
+/// Keep or clear the Part of one instance in a component-revision update.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PartResolution {
+    pub instance: Id,
+    pub action: PartAction,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PartAction {
+    /// Keep the Part; the preview and purchasing report that it is stale.
+    Keep,
+    /// Clear the Part; the instance becomes generic.
+    Clear,
 }
 
 /// An explicit decision for a terminal whose selected function the target
@@ -292,7 +315,8 @@ fn revise(
         .chain(resolutions.units.iter().map(|r| r.instance))
         .chain(resolutions.regroups.iter().map(|r| r.instance))
         .chain(resolutions.fields.iter().map(|r| r.instance))
-        .chain(resolutions.functions.iter().map(|r| r.instance));
+        .chain(resolutions.functions.iter().map(|r| r.instance))
+        .chain(resolutions.parts.iter().map(|r| r.instance));
     for instance in named {
         if !selected.contains(&instance) {
             return Err(invalid(
@@ -431,6 +455,20 @@ fn revise_instance(
             functions,
         },
     )?;
+    let clear = resolutions
+        .parts
+        .iter()
+        .filter(|r| r.instance == id)
+        .try_fold(None, |seen: Option<PartAction>, r| match seen {
+            Some(_) => Err(Error::Invalid(format!(
+                "{name}: the update names its Part twice."
+            ))),
+            None => Ok(Some(r.action)),
+        })?
+        == Some(PartAction::Clear);
+    if clear {
+        instances::instance_mut(next, id)?.part = None;
+    }
     if physical.is_none() {
         layout::detach_instance(next, id, EditPolicy::Consequential)?;
     }
@@ -989,6 +1027,43 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
 }
 
 /// Preview never mutates the source. Apply recomputes this plan at its bound revision.
+/// Parts of changed instances: a cleared Part is a change; a Part the
+/// change leaves disagreeing with its instance (a stale component revision,
+/// another binding, an unmet requirement) is a warning that names the
+/// finding code. Nothing re-points a Part.
+fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    for new in &next.instances {
+        let Some(old) = project.instance(new.id) else {
+            continue;
+        };
+        if old == new {
+            continue;
+        }
+        let mpn = |p: &Project, i: &ComponentInstance| {
+            i.part.map(|r| {
+                p.library
+                    .part(r)
+                    .map_or_else(|| r.to_string(), |p| p.definition.mpn.clone())
+            })
+        };
+        if let (Some(before), None) = (mpn(project, old), new.part) {
+            plan.detail(format!("{}: clear Part {before}.", new.designator));
+        }
+        let known: BTreeSet<(String, String)> = instances::part_findings(&project.library, old)
+            .into_iter()
+            .map(|f| (f.code, f.message))
+            .collect();
+        for finding in instances::part_findings(&next.library, new) {
+            if !known.contains(&(finding.code.clone(), finding.message.clone())) {
+                plan.warnings.push(format!(
+                    "Part finding {}: {}",
+                    finding.code, finding.message
+                ));
+            }
+        }
+    }
+}
+
 pub(crate) fn preview(
     project: &Project,
     revision: u64,
@@ -1087,6 +1162,7 @@ pub(crate) fn preview(
         }
     }
     occurrence_details(&mut plan, project, &next);
+    part_details(&mut plan, project, &next);
     for endpoint in mapping_endpoints {
         for net in old_net_by_terminal
             .get(&endpoint)

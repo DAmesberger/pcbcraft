@@ -6,14 +6,18 @@
 use super::{CatalogEntry, Index, Vocabulary, entries};
 use crate::diagnostics::{Error, Result};
 use crate::fields::{
-    FieldDefinition, FieldSelection, FieldValue, QuantityKind, ToleranceBasis, ValueType,
+    FieldDefinition, FieldSelection, FieldValue, QuantityKind, RatedSpec, SpecMeaning,
+    ToleranceBasis, ValueType,
 };
 use crate::ids::{
-    BindingRef, DefinitionId, FieldRef, FootprintRef, PackageRef, QuantityKindRef, Revision,
-    SymbolRef,
+    BindingRef, ComponentRef, DefinitionId, FieldRef, FootprintRef, PackageRef, QuantityKindRef,
+    Revision, SymbolRef,
 };
 use crate::library::samples::{self, Kind, SampleRefs};
-use crate::library::{Definition, DefinitionMeta, DraftEdit, Library, Published};
+use crate::library::{
+    Definition, DefinitionMeta, DistributorOffer, DraftEdit, Library, PartDefinition, Provenance,
+    Published, Reference, ReferenceKind,
+};
 use crate::model::Project;
 use crate::quantity::{UnitOfMeasure, UnitSet};
 
@@ -350,9 +354,24 @@ fn part(index: usize, fields: &Fields) -> Part {
     }
 }
 
+/// The invented manufacturer of every synthetic Part.
+pub const MANUFACTURER: &str = "ExampleCo";
+
 /// A project whose library holds `parts` published synthetic components
 /// (resistors, capacitors and headers in turn) with typed field defaults.
 pub fn project(parts: usize) -> Result<Project> {
+    build(parts, false)
+}
+
+/// [`project`] plus two generic components without values, a 0603
+/// resistor and a 0402 capacitor, and exact `ExampleCo` Parts that pin
+/// them: `EX-R0603-10K0-F`, `EX-R0603-22K0-F` (±1 %), `EX-C0402-100N-16V`
+/// and `EX-C0402-100N-25V` (rated voltage as a minimum rating).
+pub fn project_with_parts(parts: usize) -> Result<Project> {
+    build(parts, true)
+}
+
+fn build(parts: usize, exact: bool) -> Result<Project> {
     if parts > MAX_PARTS {
         return Err(Error::Limit(format!(
             "a synthetic project holds at most {MAX_PARTS} parts"
@@ -417,12 +436,202 @@ pub fn project(parts: usize) -> Result<Project> {
             push(&mut library, edit);
         }
     }
+    if exact {
+        let small = |packages: &[(PackageRef, FootprintRef)], i: usize| {
+            packages.get(i).copied().unwrap_or(header)
+        };
+        exact_parts(
+            &mut library,
+            &mut ids,
+            &fields,
+            small(&resistors, 0),
+            small(&capacitors, 1),
+        )?;
+    }
     Ok(Project {
         name: "Synthetic parts".into(),
         next_id: ids.0,
         library,
         ..Project::default()
     })
+}
+
+/// A generic component of `family` selecting `selected` without defaults
+/// (the first shown on the symbol), with one binding to `package`.
+fn generic(
+    library: &mut Library,
+    ids: &mut Allocator,
+    family: Family,
+    name: &str,
+    (package, footprint): (PackageRef, FootprintRef),
+    selected: &[DefinitionId],
+) -> Result<(ComponentRef, BindingRef)> {
+    let refs = SampleRefs {
+        component: ids.next()?,
+        symbol: SymbolRef::new(ids.next()?, Revision::FIRST),
+        package,
+        footprint,
+        binding: BindingRef::new(ids.next()?, Revision::FIRST),
+    };
+    for mut edit in family.edits(name, refs) {
+        match &mut edit.definition {
+            Definition::Component(component) => {
+                component.fields = selected
+                    .iter()
+                    .enumerate()
+                    .map(|(i, field)| FieldSelection {
+                        field: FieldRef::new(*field, Revision::FIRST),
+                        default: None,
+                        show_on_symbol: i == 0,
+                    })
+                    .collect();
+                edit.meta = meta(name, "Synthetic generic part without a value");
+            }
+            Definition::Symbol(_) | Definition::Binding(_) => {
+                edit.meta.provenance = PROVENANCE.into();
+            }
+            _ => continue,
+        }
+        push(library, edit);
+    }
+    Ok((
+        ComponentRef::new(refs.component, Revision::FIRST),
+        refs.binding,
+    ))
+}
+
+/// One synthetic Part: invented MPN, a datasheet record without a copy and
+/// one invented distributor identity.
+fn exact_part(
+    mpn: &str,
+    (component, binding): (ComponentRef, BindingRef),
+    specs: Vec<(DefinitionId, FieldValue, SpecMeaning)>,
+) -> PartDefinition {
+    PartDefinition {
+        next_local: 3,
+        manufacturer: MANUFACTURER.into(),
+        mpn: mpn.into(),
+        component,
+        binding,
+        specs: specs
+            .into_iter()
+            .map(|(field, value, meaning)| RatedSpec {
+                field: FieldRef::new(field, Revision::FIRST),
+                value,
+                meaning,
+            })
+            .collect(),
+        references: vec![Reference {
+            id: 1,
+            kind: ReferenceKind::Datasheet,
+            title: format!("{mpn} synthetic datasheet"),
+            url: Some(format!(
+                "https://example.com/exampleco/{}",
+                mpn.to_lowercase()
+            )),
+            document_revision: Some("A".into()),
+            asset: None,
+            licence: None,
+            provenance: Provenance::default(),
+        }],
+        offers: vec![DistributorOffer {
+            id: 2,
+            distributor: "Example Distribution".into(),
+            sku: format!("EXD-{mpn}"),
+            url: None,
+            packaging: Some("cut tape".into()),
+        }],
+        provenance: Provenance::default(),
+    }
+}
+
+fn exact_parts(
+    library: &mut Library,
+    ids: &mut Allocator,
+    fields: &Fields,
+    resistor: (PackageRef, FootprintRef),
+    capacitor: (PackageRef, FootprintRef),
+) -> Result<()> {
+    let quantity = |si: f64| FieldValue::Quantity {
+        si,
+        display_unit: None,
+    };
+    let r = generic(
+        library,
+        ids,
+        Family::Resistor,
+        "EX-R0603 generic resistor",
+        resistor,
+        &[fields.resistance, fields.tolerance],
+    )?;
+    let c = generic(
+        library,
+        ids,
+        Family::Capacitor,
+        "EX-C0402 generic capacitor",
+        capacitor,
+        &[fields.capacitance, fields.voltage],
+    )?;
+    let one_percent = FieldValue::Tolerance {
+        minus: 0.01,
+        plus: 0.01,
+    };
+    let parts = [
+        exact_part(
+            "EX-R0603-10K0-F",
+            r,
+            vec![
+                (fields.resistance, quantity(10e3), SpecMeaning::ExactNominal),
+                (
+                    fields.tolerance,
+                    one_percent.clone(),
+                    SpecMeaning::MaximumTolerance,
+                ),
+            ],
+        ),
+        exact_part(
+            "EX-R0603-22K0-F",
+            r,
+            vec![
+                (fields.resistance, quantity(22e3), SpecMeaning::ExactNominal),
+                (fields.tolerance, one_percent, SpecMeaning::MaximumTolerance),
+            ],
+        ),
+        exact_part(
+            "EX-C0402-100N-16V",
+            c,
+            vec![
+                (
+                    fields.capacitance,
+                    quantity(100e-9),
+                    SpecMeaning::ExactNominal,
+                ),
+                (fields.voltage, quantity(16.0), SpecMeaning::MinimumRating),
+            ],
+        ),
+        exact_part(
+            "EX-C0402-100N-25V",
+            c,
+            vec![
+                (
+                    fields.capacitance,
+                    quantity(100e-9),
+                    SpecMeaning::ExactNominal,
+                ),
+                (fields.voltage, quantity(25.0), SpecMeaning::MinimumRating),
+            ],
+        ),
+    ];
+    for part in parts {
+        let id = ids.next()?;
+        let name = part.mpn.clone();
+        library.parts.push(first(
+            id,
+            meta(&name, "Synthetic exact part by an invented manufacturer"),
+            part,
+        ));
+    }
+    Ok(())
 }
 
 /// An index of `count` synthetic entries for benchmarks: the entries of a

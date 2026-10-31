@@ -4,13 +4,14 @@
 //!
 //! Only identity the user chose is stored (D9): manufacturer, MPN,
 //! distributor, SKU and links. No price, stock or supplier observation.
-use super::publish::issue;
-use super::{Library, printable};
+use super::publish::{issue, object};
+use super::{ComponentDefinition, Library, printable};
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::fields::{MAX_RATED_SPECS, RatedSpec};
+use crate::fields::{self, MAX_RATED_SPECS, RatedSpec};
 use crate::ids::{BindingRef, ComponentRef, DefinitionId, MAX_LABEL, Revision};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// References one Part revision lists.
 pub const MAX_REFERENCES: usize = 32;
@@ -187,8 +188,13 @@ impl PartDefinition {
             .collect()
     }
 
-    /// Contract-level publish rules: identity text and pinned revisions that
-    /// resolve. Spec typing, binding listing and the rest belong to S2 task 1.
+    /// Publish rules. Identity: a printable manufacturer and MPN. Pins: the
+    /// component revision resolves and lists the binding revision exactly.
+    /// Specs: each names a field revision that component selects, at most
+    /// one per field lineage, with a value that satisfies that field and a
+    /// meaning that fits its value type. Records: printable titles, names
+    /// and SKUs, well-formed links and hashes, and a basis that names one of
+    /// this Part's references.
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
         if !printable(&self.manufacturer) || !printable(&self.mpn) {
@@ -198,7 +204,8 @@ impl PartDefinition {
                 vec![this],
             ));
         }
-        if library.component(self.component).is_none() {
+        let component = library.component(self.component);
+        if component.is_none() {
             out.push(issue(
                 "reference.missing",
                 format!(
@@ -225,5 +232,204 @@ impl PartDefinition {
                 ],
             ));
         }
+        if let Some(component) = component {
+            let component = &component.definition;
+            if !component.implementations.contains(&self.binding) {
+                out.push(issue(
+                    "part.binding_unlisted",
+                    format!(
+                        "Component {} does not list binding {}.",
+                        self.component, self.binding
+                    ),
+                    vec![
+                        this,
+                        ObjectRef::Definition {
+                            id: self.binding.id,
+                        },
+                    ],
+                ));
+            }
+            self.spec_findings(id, component, library, out);
+        }
+        self.record_findings(id, out);
+    }
+
+    fn spec_findings(
+        &self,
+        id: DefinitionId,
+        component: &ComponentDefinition,
+        library: &Library,
+        out: &mut Vec<Finding>,
+    ) {
+        let mut lineages = BTreeSet::new();
+        for spec in &self.specs {
+            let objects = vec![
+                ObjectRef::Definition { id },
+                ObjectRef::Definition { id: spec.field.id },
+            ];
+            if !lineages.insert(spec.field.id) {
+                out.push(issue(
+                    "part.spec_duplicate",
+                    format!("Field {} has more than one rated value.", spec.field.id),
+                    objects.clone(),
+                ));
+            }
+            if component.field(spec.field.id).map(|s| s.field) != Some(spec.field) {
+                out.push(issue(
+                    "part.spec_field",
+                    format!(
+                        "Component {} does not select field {}.",
+                        self.component, spec.field
+                    ),
+                    objects,
+                ));
+                continue;
+            }
+            let Some(view) = library.field_view(spec.field) else {
+                out.push(issue(
+                    "reference.missing",
+                    format!(
+                        "Field {} or its quantity kind is not in the project library.",
+                        spec.field
+                    ),
+                    objects,
+                ));
+                continue;
+            };
+            let value_type = &view.field.definition.value_type;
+            let name = &view.field.meta.name;
+            if let Err(error) = fields::check_value(&spec.value, value_type, view.kind_body()) {
+                out.push(issue(
+                    "part.spec_value",
+                    format!("The rated {name} is invalid: {error}."),
+                    objects.clone(),
+                ));
+            }
+            if !spec.meaning.fits(value_type) {
+                out.push(issue(
+                    "part.spec_meaning",
+                    format!(
+                        "A {} cannot compare values of {name}.",
+                        spec.meaning.label()
+                    ),
+                    objects,
+                ));
+            }
+        }
+    }
+
+    fn record_findings(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+        let local = |l: u32| vec![object(id, l)];
+        for reference in &self.references {
+            if !printable(&reference.title)
+                || !optional_label(&reference.document_revision)
+                || !optional_label(&reference.licence)
+            {
+                out.push(issue(
+                    "part.reference_text",
+                    format!(
+                        "Reference {} needs a printable title, revision and licence.",
+                        reference.id
+                    ),
+                    local(reference.id),
+                ));
+            }
+            if !reference.url.as_deref().is_none_or(link) {
+                out.push(issue(
+                    "part.link",
+                    format!(
+                        "Reference {} needs an http(s) link without spaces.",
+                        reference.id
+                    ),
+                    local(reference.id),
+                ));
+            }
+            if !reference.asset.as_deref().is_none_or(sha256_hex)
+                || !reference.provenance.well_formed()
+            {
+                out.push(issue(
+                    "part.hash",
+                    format!(
+                        "Reference {} names a hash that is not 64 lower-case hex digits.",
+                        reference.id
+                    ),
+                    local(reference.id),
+                ));
+            }
+        }
+        for offer in &self.offers {
+            if !printable(&offer.distributor)
+                || !printable(&offer.sku)
+                || !optional_label(&offer.packaging)
+            {
+                out.push(issue(
+                    "part.offer_text",
+                    format!(
+                        "Offer {} needs a printable distributor, SKU and packaging.",
+                        offer.id
+                    ),
+                    local(offer.id),
+                ));
+            }
+            if !offer.url.as_deref().is_none_or(link) {
+                out.push(issue(
+                    "part.link",
+                    format!("Offer {} needs an http(s) link without spaces.", offer.id),
+                    local(offer.id),
+                ));
+            }
+        }
+        let this = vec![ObjectRef::Definition { id }];
+        if !self.provenance.well_formed() || !optional_label(&self.provenance.licence) {
+            out.push(issue(
+                "part.hash",
+                "The provenance needs a printable source and a 64-digit lower-case hex hash."
+                    .into(),
+                this.clone(),
+            ));
+        }
+        let bases =
+            std::iter::once(&self.provenance).chain(self.references.iter().map(|r| &r.provenance));
+        for provenance in bases {
+            if let Basis::FromReference(r) = provenance.basis
+                && !self.references.iter().any(|x| x.id == r)
+            {
+                out.push(issue(
+                    "part.provenance_basis",
+                    format!("The provenance names reference {r}, which this Part does not list."),
+                    this.clone(),
+                ));
+            }
+        }
+    }
+}
+
+fn optional_label(text: &Option<String>) -> bool {
+    text.as_deref().is_none_or(printable)
+}
+
+/// An absolute http(s) link: bounded, without whitespace or control
+/// characters. The link is never fetched.
+fn link(url: &str) -> bool {
+    let lower = url
+        .get(..8)
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && url.len() > 8
+        && url.len() <= MAX_URL
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// A SHA-256 digest as 64 lower-case hex digits.
+fn sha256_hex(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+impl Provenance {
+    fn well_formed(&self) -> bool {
+        self.origin
+            .as_ref()
+            .is_none_or(|o| printable(&o.library) && sha256_hex(&o.content_hash))
     }
 }

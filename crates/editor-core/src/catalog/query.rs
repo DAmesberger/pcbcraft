@@ -286,9 +286,13 @@ pub enum Term {
     Has { badge: Badge, present: bool },
     /// `src:project` — the only source before library folders exist.
     Project,
-    /// `kind:component` — the only entry kind before manufacturer parts
-    /// exist; it keeps every entry.
+    /// `kind:component` — generic component entries only.
     Components,
+    /// `kind:part` — exact manufacturer Part entries only.
+    Parts,
+    /// `mpn:` — a case-folded text match on the manufacturer part number
+    /// only.
+    Mpn { text: String },
 }
 
 impl Term {
@@ -317,6 +321,8 @@ impl Term {
             }
             Self::Project => "in this project".into(),
             Self::Components => "components".into(),
+            Self::Parts => "Parts".into(),
+            Self::Mpn { text } => format!("MPN: {text}"),
         }
     }
 }
@@ -351,8 +357,8 @@ pub const RESERVED: &[&str] = &[
     "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life",
 ];
 /// Reserved keys that name data arriving with library labels and
-/// manufacturer parts.
-const LATER: &[&str] = &["tag", "shelf", "mpn", "life"];
+/// lifecycle records.
+const LATER: &[&str] = &["tag", "shelf", "life"];
 
 /// Parse one query line against a vocabulary.
 pub fn parse_query(
@@ -492,15 +498,19 @@ fn predicate(
         }
         "kind" => {
             filter_op()?;
-            return if fold(value) == "component" {
-                Ok(Term::Components)
-            } else {
-                Err("the catalog lists components only until manufacturer parts exist".into())
+            return match fold(value).as_str() {
+                "component" => Ok(Term::Components),
+                "part" => Ok(Term::Parts),
+                _ => Err("the entry kinds are ‘component’ and ‘part’".into()),
             };
+        }
+        "mpn" => {
+            filter_op()?;
+            return Ok(Term::Mpn { text: fold(value) });
         }
         reserved if LATER.contains(&reserved) => {
             return Err(format!(
-                "‘{reserved}:’ is reserved for library labels and manufacturer parts, which this project has none of yet"
+                "‘{reserved}:’ is reserved for library labels and lifecycle records, which this project has none of yet"
             ));
         }
         _ => {}
