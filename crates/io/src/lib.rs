@@ -1,8 +1,11 @@
 //! File effects for Pcbcraft documents: bounded reads, atomic writes and crash
 //! recovery. Document meaning, versions and migrations stay in
 //! `pcbcraft_core::format`; this crate only moves bytes safely.
+pub mod library_folder;
+pub mod library_folder_index;
 pub mod persistence;
 pub mod recovery;
+pub mod settings;
 
 pub use persistence::{read_project, write_project};
 
@@ -44,3 +47,10 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// An `unsupported` error for behaviour a later change implements.
+pub(crate) fn unsupported(what: &str) -> Error {
+    Error::Document(pcbcraft_core::Error::Unsupported(format!(
+        "{what} is not implemented yet"
+    )))
+}

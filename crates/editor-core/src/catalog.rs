@@ -22,14 +22,16 @@ use crate::fields::{
     ValueType,
 };
 use crate::ids::{
-    BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, PackageRef, PartRef,
-    Revision, SymbolRef,
+    BindingRef, ComponentRef, ContentHash, DefinitionId, DefinitionKind, DefinitionRef,
+    FootprintRef, LibraryId, PackageRef, PartRef, Revision, SourceLineageId, SymbolRef,
 };
+use crate::library::bundle::{Link, Origin, RevisionRecord};
 use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library, PartDefinition};
 use crate::model::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Results one search returns.
 pub const MAX_RESULTS: usize = 500;
@@ -42,7 +44,7 @@ pub const MAX_INDEX_ENTRIES: usize = 200_000;
 /// Favourite and recent lineages a search context carries.
 pub const MAX_CONTEXT: usize = 256;
 
-/// Where an entry comes from. Library folders join in a later slice.
+/// Where an entry comes from.
 #[derive(
     Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
 )]
@@ -50,6 +52,103 @@ pub const MAX_CONTEXT: usize = 256;
 pub enum Source {
     #[default]
     Project,
+    /// A local library folder (S3), by its manifest identity.
+    Library(LibraryId),
+}
+
+/// A lineage's identity across sources: how favourites and recents are
+/// keyed (never by path or name), and what `CatalogEntry::key` returns.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EntryKey {
+    /// A lineage of the open project.
+    Project { lineage: DefinitionId },
+    /// A lineage of a library folder.
+    Library {
+        library: LibraryId,
+        lineage: SourceLineageId,
+    },
+}
+
+/// What one library folder offers the catalog (S3). io builds it with
+/// [`source_catalog`] from the folder's records and caches it per source;
+/// the host passes it in through [`CatalogContext::sources`]. Never
+/// authoritative and never written into a project or folder.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCatalog {
+    pub library: LibraryId,
+    pub name: String,
+    /// Catalog-local `DefinitionId`s and the source lineages they stand
+    /// for. Entry `lineage`s and every reference inside `fields` use them.
+    pub lineages: Vec<Link>,
+    /// One entry per component and Part lineage at its latest revision,
+    /// with `source = Library(library)` and `source_lineage` set.
+    pub entries: Vec<CatalogEntry>,
+    /// The source's quantity kinds and fields in catalog-local ids: the
+    /// vocabulary its entries' field predicates resolve against.
+    pub fields: Library,
+    /// Every record the folder holds, with its content hash: what
+    /// update-available and modified-record findings compare against.
+    pub revisions: Vec<SourceRecordInfo>,
+}
+
+/// One record a source holds.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRecordInfo {
+    pub lineage: SourceLineageId,
+    pub revision: Revision,
+    pub kind: DefinitionKind,
+    pub content_hash: ContentHash,
+}
+
+/// Build a source's catalog from its revision records (pure; io calls it
+/// off the UI thread and caches the result).
+pub fn source_catalog(
+    library: LibraryId,
+    name: &str,
+    records: &[RevisionRecord],
+) -> Result<SourceCatalog> {
+    let _ = (library, name, records);
+    Err(Error::Unsupported(
+        "library.sources: building a folder catalog is not implemented yet".into(),
+    ))
+}
+
+/// A project lineage copied from a source that now holds a newer revision,
+/// or whose recorded revision changed on disk.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAvailable {
+    /// The project's latest copy of the lineage.
+    pub local: DefinitionRef,
+    pub origin: Origin,
+    /// The source's display name.
+    pub source: String,
+    /// The newest revision the source holds of `origin.lineage`.
+    pub latest: Revision,
+    /// The source's record at `origin.revision` no longer hashes to
+    /// `origin.content_hash` (finding `library.source_modified`).
+    pub modified: bool,
+}
+
+/// `library.updates_available`: every project lineage whose origin source
+/// holds a newer revision or a modified record, in project lineage order.
+pub fn updates_available(
+    library: &Library,
+    sources: &[Arc<SourceCatalog>],
+) -> Result<Vec<UpdateAvailable>> {
+    if sources.is_empty() || library.origins.is_empty() {
+        return Ok(Vec::new());
+    }
+    Err(Error::Unsupported(
+        "library.updates_available: comparing with library sources is not implemented yet".into(),
+    ))
 }
 
 /// Separate completeness badges. There is no single "complete" flag.
@@ -140,20 +239,36 @@ pub struct CatalogEntry {
     /// A Part entry's pinned generic component revision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub implements: Option<ComponentRef>,
+    /// A folder entry's own lineage identity; `lineage` is then
+    /// catalog-local (see [`SourceCatalog::lineages`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_lineage: Option<SourceLineageId>,
+    /// A project entry copied from a source that has a newer revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdateAvailable>,
 }
 
 impl CatalogEntry {
-    /// The placeable exact revision of a component entry; `None` for a
-    /// Part entry.
+    /// The lineage's identity across sources.
+    pub fn key(&self) -> EntryKey {
+        match (self.source, self.source_lineage) {
+            (Source::Library(library), Some(lineage)) => EntryKey::Library { library, lineage },
+            _ => EntryKey::Project {
+                lineage: self.lineage,
+            },
+        }
+    }
+    /// The placeable exact revision of a project component entry; `None`
+    /// for a Part or a folder entry (place those with `library.place_from`).
     pub fn component(&self) -> Option<ComponentRef> {
-        (self.kind == DefinitionKind::Component)
+        (self.kind == DefinitionKind::Component && self.source == Source::Project)
             .then_some(self.revision)
             .flatten()
             .map(|r| ComponentRef::new(self.lineage, r))
     }
     /// The assignable exact revision of a Part entry.
     pub fn part(&self) -> Option<PartRef> {
-        (self.kind == DefinitionKind::Part)
+        (self.kind == DefinitionKind::Part && self.source == Source::Project)
             .then_some(self.revision)
             .flatten()
             .map(|r| PartRef::new(self.lineage, r))
@@ -228,6 +343,8 @@ fn entry_of(
         manufacturer: None,
         mpn: None,
         implements: None,
+        source_lineage: None,
+        update: None,
     }
 }
 
@@ -300,6 +417,8 @@ fn part_entry(
         manufacturer: Some(part.manufacturer.clone()),
         mpn: Some(part.mpn.clone()),
         implements: Some(part.component),
+        source_lineage: None,
+        update: None,
     }
 }
 
@@ -440,9 +559,25 @@ pub enum MatchTier {
 /// reads settings; the host passes these in.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct CatalogContext {
-    pub favourites: BTreeSet<DefinitionId>,
+    pub favourites: BTreeSet<EntryKey>,
     /// Most recent first.
-    pub recent: Vec<DefinitionId>,
+    pub recent: Vec<EntryKey>,
+    /// Library folder catalogs (S3), loaded by io. Searched with the
+    /// project's own entries; never part of a request on the wire.
+    #[serde(skip)]
+    pub sources: Vec<Arc<SourceCatalog>>,
+}
+
+impl CatalogContext {
+    /// Favourites and recents of project lineages only (S1 hosts).
+    pub fn of_project(favourites: &[DefinitionId], recent: &[DefinitionId]) -> Self {
+        let key = |lineage: &DefinitionId| EntryKey::Project { lineage: *lineage };
+        Self {
+            favourites: favourites.iter().map(key).collect(),
+            recent: recent.iter().map(key).collect(),
+            sources: Vec::new(),
+        }
+    }
 }
 
 /// Case-folded text of one entry, built once per index.
@@ -737,6 +872,22 @@ impl Index {
         Self::new(entries(project, drafts), Vocabulary::of(&project.library))
     }
 
+    /// The project's entries followed by each source's, in `sources` order.
+    /// Contract body (S3): the vocabulary is still the project's only, so a
+    /// field predicate does not yet reach a folder-only field, and project
+    /// entries carry no `update` mark yet.
+    pub fn with_sources(
+        project: &Project,
+        drafts: &Drafts,
+        sources: &[Arc<SourceCatalog>],
+    ) -> Result<Self> {
+        let mut all = entries(project, drafts);
+        for source in sources {
+            all.extend(source.entries.iter().cloned());
+        }
+        Self::new(all, Vocabulary::of(&project.library))
+    }
+
     pub fn entries(&self) -> &[CatalogEntry] {
         &self.entries
     }
@@ -807,7 +958,7 @@ impl Index {
                 other => other.chip(),
             })
             .collect();
-        let recent: BTreeMap<DefinitionId, usize> = context
+        let recent: BTreeMap<EntryKey, usize> = context
             .recent
             .iter()
             .take(MAX_CONTEXT)
@@ -820,8 +971,8 @@ impl Index {
             (
                 tier,
                 entry.used == 0,
-                !context.favourites.contains(&entry.lineage),
-                recent.get(&entry.lineage).copied().unwrap_or(usize::MAX),
+                !context.favourites.contains(&entry.key()),
+                recent.get(&entry.key()).copied().unwrap_or(usize::MAX),
             )
         };
         let compare = |a: &(usize, MatchTier), b: &(usize, MatchTier)| {
@@ -846,7 +997,7 @@ impl Index {
                 .map(|(i, tier)| Hit {
                     entry: self.entries[i].clone(),
                     tier,
-                    favourite: context.favourites.contains(&self.entries[i].lineage),
+                    favourite: context.favourites.contains(&self.entries[i].key()),
                 })
                 .collect(),
         }

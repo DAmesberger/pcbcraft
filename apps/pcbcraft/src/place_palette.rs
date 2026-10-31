@@ -157,10 +157,7 @@ impl PlacePalette {
         if fresh {
             return;
         }
-        let context = CatalogContext {
-            favourites: Default::default(),
-            recent: self.recent.clone(),
-        };
+        let context = CatalogContext::of_project(&[], &self.recent);
         let report = match engine.query_with(
             Query::Search {
                 query: self.query.clone(),

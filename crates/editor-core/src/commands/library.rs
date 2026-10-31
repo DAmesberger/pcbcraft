@@ -1,9 +1,12 @@
 use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
-use crate::ids::{DefinitionId, DefinitionRef};
+use crate::geometry::Point;
+use crate::ids::{ComponentRef, DefinitionId, DefinitionRef, LibraryId, SourceLineageId};
+use crate::library::Bundle;
 use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
+use crate::library::import::{self, OtherRevision, PlaceSource};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
@@ -70,6 +73,40 @@ pub enum LibraryCommand {
         draft: DefinitionId,
         rule: AssignRule,
         confirm: bool,
+    },
+    /// Import a library bundle (a root revision and its closure) into the
+    /// project snapshot as one undo step: dedupe by origin, fresh project
+    /// lineages, every reference rewritten, origins recorded, assets
+    /// packed. Places nothing.
+    #[serde(rename = "library.import")]
+    Import { bundle: Box<Bundle> },
+    /// Import if needed, then place the component, as one transaction and
+    /// one undo step.
+    #[serde(rename = "library.place_from")]
+    PlaceFrom {
+        source: PlaceSource,
+        position: Point,
+        #[serde(default)]
+        designator: Option<String>,
+        #[serde(default)]
+        other_revision: OtherRevision,
+    },
+    /// Record the origins of `library.promote_preview` with the same
+    /// arguments after io wrote its bundle to the folder. The core
+    /// recomputes the plan, so the recorded origins equal what was written.
+    #[serde(rename = "library.promote")]
+    Promote {
+        root: DefinitionRef,
+        library: LibraryId,
+        name: String,
+        fresh: Vec<SourceLineageId>,
+    },
+    /// D6: copy a component revision with its symbols and bindings into new
+    /// draft lineages named `name`.
+    #[serde(rename = "library.duplicate")]
+    Duplicate {
+        component: ComponentRef,
+        name: String,
     },
 }
 
@@ -297,6 +334,44 @@ pub(crate) fn apply_library(
             Ok(Outcome::TerminalsAssigned {
                 changes,
                 applied: confirm,
+            })
+        }
+        LibraryCommand::Import { bundle } => {
+            library::bundle::validate_bundle(&bundle)?;
+            // The library is taken out so lineages can be allocated while it
+            // is edited; a failure discards the whole candidate.
+            let project = Arc::make_mut(&mut document.project);
+            let mut library = std::mem::take(&mut project.library);
+            let mut allocate = || project.allocate().map(DefinitionId);
+            let report = import::import(&mut library, &bundle, &mut allocate);
+            project.library = library;
+            Ok(Outcome::Imported { report: report? })
+        }
+        LibraryCommand::PlaceFrom { .. } => Err(Error::Unsupported(
+            "library.place_from: placing from a library source is not implemented yet".into(),
+        )),
+        LibraryCommand::Promote {
+            root,
+            library,
+            name,
+            fresh,
+        } => {
+            let plan = import::export(&document.project.library, root, library, &name, &fresh)?;
+            let project = Arc::make_mut(&mut document.project);
+            project.library.origins.extend(plan.origins.iter().copied());
+            Ok(Outcome::Promoted {
+                origins: plan.origins,
+            })
+        }
+        LibraryCommand::Duplicate { component, name } => {
+            let project = Arc::make_mut(&mut document.project);
+            let drafts = Arc::make_mut(&mut document.drafts);
+            let library = std::mem::take(&mut project.library);
+            let mut allocate = || project.allocate().map(DefinitionId);
+            let lineages = import::duplicate(&library, drafts, component, &name, &mut allocate);
+            project.library = library;
+            Ok(Outcome::Duplicated {
+                lineages: lineages?,
             })
         }
     }
