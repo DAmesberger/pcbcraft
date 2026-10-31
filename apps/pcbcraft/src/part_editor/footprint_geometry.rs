@@ -1,230 +1,19 @@
-//! What the Footprint tab draws and picks, in the footprint frame, read
-//! from the typed pad data: each [`PadShape`] and [`Hole`] as a core
-//! [`Shape`] placed by the pad's position and rotation, the display-only
-//! mask and paste openings its rules resolve to, and pad kind and shape
-//! conversions the inspector offers. Nothing here is saved; the stored pad
-//! stays the authority.
+//! What the Footprint tab picks, and the pad kind and shape conversions
+//! the inspector offers. Outlines, holes and the display-only mask and
+//! paste openings come from the core's pad geometry
+//! (`Pad::land`, `Pad::mask_opening`, `Pad::paste_openings`); nothing here
+//! is saved and the stored pad stays the authority.
 use pcbcraft_core::PackageTerminalId;
 use pcbcraft_core::Point;
-use pcbcraft_core::geometry::{Shape, Transform2};
 use pcbcraft_core::library::{
-    CornerMask, Hole, HoleShape, MaskRule, Outline, Pad, PadDefaults, PadKind, PadShape, PadSide,
-    PasteRule, Segment,
+    CornerMask, Hole, HoleShape, MaskRule, Pad, PadKind, PadShape, PadSide, PasteRule, TerminalRule,
 };
-
-/// Pad frame to footprint frame: rotate about the pad origin, then move it.
-pub fn pad_frame(pad: &Pad) -> Transform2 {
-    Transform2 {
-        translate: pad.position,
-        rotation_deg: pad.rotation_deg,
-        mirror: false,
-    }
-}
-
-/// The corner radius of a rounded rectangle: `ratio` (clamped to 0–0.5) of
-/// the short side, capped at `max` mm.
-pub fn corner_radius(size: Point, ratio: f64, max: Option<f64>) -> f64 {
-    let r = ratio.clamp(0.0, 0.5) * size[0].min(size[1]).max(0.0);
-    max.map_or(r, |m| r.min(m.max(0.0)))
-}
-
-/// A `size` box centred on the origin, grown by `by` on every side, with
-/// `radius` on the corners `corners` selects. Growing rounds every corner
-/// by at least `by`, as an exact offset does. `None` when it vanishes.
-fn rounded_box(size: Point, radius: f64, corners: CornerMask, by: f64) -> Option<Shape> {
-    let (w, h) = (size[0] + 2.0 * by, size[1] + 2.0 * by);
-    if !(w > 0.0 && h > 0.0) {
-        return None;
-    }
-    let cap = 0.5 * w.min(h);
-    let rounded = (radius + by).clamp(0.0, cap);
-    let sharp = by.clamp(0.0, cap);
-    let (a, b) = ([-w / 2.0, -h / 2.0], [w / 2.0, h / 2.0]);
-    if corners == CornerMask::ALL || rounded == sharp {
-        return Some(Shape::Rect {
-            a,
-            b,
-            radius: rounded,
-        });
-    }
-    let pick = |on: bool| if on { rounded } else { sharp };
-    // Counter-clockwise from the bottom-left corner, as `Bounds::corners`.
-    Some(Shape::Polygon {
-        points: vec![a, [b[0], a[1]], b, [a[0], b[1]]],
-        radii: vec![
-            pick(corners.bottom_left),
-            pick(corners.bottom_right),
-            pick(corners.top_right),
-            pick(corners.top_left),
-        ],
-    })
-}
-
-/// An exact outline as one closed polygon, arcs flattened within
-/// `chord_mm`. At most `MAX_OUTLINE_SEGMENTS` arcs of bounded vertices.
-pub fn outline_points(outline: &Outline, chord_mm: f64) -> Vec<Point> {
-    let mut points = vec![outline.start];
-    let mut from = outline.start;
-    for segment in &outline.segments {
-        let to = segment.to();
-        if let Segment::Arc { bulge, .. } = segment
-            && bulge.abs() > 1e-12
-            && let Some(arc) = bulge_arc(from, to, *bulge)
-        {
-            points.extend(arc.flatten(chord_mm).into_iter().skip(1));
-        } else {
-            points.push(to);
-        }
-        from = to;
-    }
-    // The last segment closes on the start.
-    if points.len() > 1
-        && points
-            .first()
-            .zip(points.last())
-            .is_some_and(|(a, b)| pcbcraft_core::geometry::distance(*a, *b) <= 1e-9)
-    {
-        points.pop();
-    }
-    points
-}
-
-/// The circular arc from `a` to `b` with `bulge = tan(sweep / 4)`.
-fn bulge_arc(a: Point, b: Point, bulge: f64) -> Option<Shape> {
-    let chord = [b[0] - a[0], b[1] - a[1]];
-    let length = chord[0].hypot(chord[1]);
-    if length.is_nan() || length <= 1e-12 || !bulge.is_finite() {
-        return None;
-    }
-    // The centre sits on the chord's perpendicular, left of a → b for a
-    // counter-clockwise (positive) bulge below a half turn.
-    let k = (1.0 - bulge * bulge) / (4.0 * bulge);
-    let center = [
-        0.5 * (a[0] + b[0]) - chord[1] * k,
-        0.5 * (a[1] + b[1]) + chord[0] * k,
-    ];
-    let radius = (a[0] - center[0]).hypot(a[1] - center[1]);
-    let sweep_deg = 4.0 * bulge.atan().to_degrees();
-    Some(Shape::Arc {
-        center,
-        radius,
-        start_deg: (a[1] - center[1]).atan2(a[0] - center[0]).to_degrees(),
-        sweep_deg,
-    })
-}
-
-/// The pad shape grown by `by` mm (negative shrinks), in the pad frame.
-/// Custom outlines are shown unoffset (a display approximation).
-pub fn local_shape(shape: &PadShape, by: f64, chord_mm: f64) -> Option<Shape> {
-    match shape {
-        PadShape::Rect { size } => rounded_box(*size, 0.0, CornerMask::ALL, by),
-        PadShape::RoundRect {
-            size,
-            radius_ratio,
-            max_radius,
-            corners,
-        } => rounded_box(
-            *size,
-            corner_radius(*size, *radius_ratio, *max_radius),
-            *corners,
-            by,
-        ),
-        PadShape::Circle { diameter } => {
-            let radius = diameter / 2.0 + by;
-            (radius > 0.0).then_some(Shape::Circle {
-                center: [0.0, 0.0],
-                radius,
-            })
-        }
-        PadShape::Oblong { size } => {
-            rounded_box(*size, 0.5 * size[0].min(size[1]), CornerMask::ALL, by)
-        }
-        PadShape::Custom { outline } => {
-            let points = outline_points(outline, chord_mm);
-            (points.len() >= 3).then(|| Shape::polygon(points))
-        }
-    }
-}
-
-/// The pad's land in the footprint frame.
-pub fn pad_shape(pad: &Pad, chord_mm: f64) -> Option<Shape> {
-    local_shape(&pad.shape, 0.0, chord_mm).map(|s| s.transformed(&pad_frame(pad)))
-}
-
-/// A hole's outline in the pad frame: a round drill, or a slot of `length`
-/// overall with round ends of `width` along `angle_deg`.
-pub fn hole_local(hole: &Hole) -> Option<Shape> {
-    let shape = match hole.shape {
-        HoleShape::Round { diameter } => (diameter > 0.0).then_some(Shape::Circle {
-            center: [0.0, 0.0],
-            radius: diameter / 2.0,
-        })?,
-        HoleShape::Slot {
-            width,
-            length,
-            angle_deg,
-        } => rounded_box(
-            [length.max(width), width],
-            width / 2.0,
-            CornerMask::ALL,
-            0.0,
-        )?
-        .transformed(&Transform2 {
-            translate: [0.0, 0.0],
-            rotation_deg: angle_deg,
-            mirror: false,
-        }),
-    };
-    Some(shape.translated(hole.offset))
-}
-
-/// The pad's hole in the footprint frame.
-pub fn hole_shape(pad: &Pad) -> Option<Shape> {
-    hole_local(pad.hole.as_ref()?).map(|s| s.transformed(&pad_frame(pad)))
-}
-
-/// The display-only solder-mask opening, footprint frame; `None` when
-/// tented.
-pub fn mask_shape(pad: &Pad, defaults: &PadDefaults, chord_mm: f64) -> Option<Shape> {
-    let by = match pad.mask {
-        MaskRule::Inherit => defaults.mask_expansion_mm,
-        MaskRule::Tented => return None,
-        MaskRule::Expansion(e) => e,
-    };
-    local_shape(&pad.shape, by, chord_mm).map(|s| s.transformed(&pad_frame(pad)))
-}
-
-/// The display-only paste openings, footprint frame. Inherited paste is
-/// none for through-hole kinds and fiducials.
-pub fn paste_shapes(pad: &Pad, defaults: &PadDefaults, chord_mm: f64) -> Vec<Shape> {
-    let frame = pad_frame(pad);
-    let shrink = |by: f64| {
-        local_shape(&pad.shape, -by, chord_mm)
-            .map(|s| s.transformed(&frame))
-            .into_iter()
-            .collect()
-    };
-    match &pad.paste {
-        PasteRule::Inherit => match pad.kind {
-            PadKind::Smd | PadKind::Mechanical if pad.hole.is_none() => {
-                shrink(defaults.paste_reduction_mm)
-            }
-            _ => Vec::new(),
-        },
-        PasteRule::None => Vec::new(),
-        PasteRule::Reduction(r) => shrink(*r),
-        PasteRule::Windows(windows) => windows
-            .iter()
-            .map(|w| w.shape.transformed(&frame))
-            .collect(),
-    }
-}
 
 /// The topmost pad whose land is within `tolerance_mm` of `p`.
 pub fn pick(pads: &[Pad], p: Point, tolerance_mm: f64, chord_mm: f64) -> Option<usize> {
     pads.iter().rposition(|pad| {
         pad.bounds().inflated(tolerance_mm).contains(p)
-            && pad_shape(pad, chord_mm).is_some_and(|s| s.distance(p, true) <= tolerance_mm)
+            && pad.land(chord_mm).distance(p, true) <= tolerance_mm
     })
 }
 
@@ -331,22 +120,6 @@ pub fn set_kind(pad: &mut Pad, kind: PadKind, fallback: Option<PackageTerminalId
     }
 }
 
-/// Whether a kind lands a terminal: required, forbidden or optional.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TerminalRule {
-    Required,
-    Forbidden,
-    Optional,
-}
-
-pub fn terminal_rule(kind: PadKind) -> TerminalRule {
-    match kind {
-        PadKind::Smd | PadKind::PlatedThrough => TerminalRule::Required,
-        PadKind::NonPlatedHole | PadKind::Fiducial => TerminalRule::Forbidden,
-        PadKind::Mechanical => TerminalRule::Optional,
-    }
-}
-
 pub const KINDS: [(PadKind, &str); 5] = [
     (PadKind::Smd, "SMD"),
     (PadKind::PlatedThrough, "Plated through-hole"),
@@ -385,7 +158,7 @@ impl NewPad {
         }
     }
     pub fn lands_terminal(self) -> bool {
-        terminal_rule(self.kind()) == TerminalRule::Required
+        self.kind().terminal_rule() == TerminalRule::Required
     }
     /// The number prefix of a pad that lands no terminal.
     pub fn prefix(self) -> &'static str {
@@ -461,7 +234,8 @@ pub fn free_spot(pads: &[Pad]) -> Point {
 mod tests {
     use super::*;
     use pcbcraft_core::PadId;
-    use pcbcraft_core::geometry::Bounds;
+    use pcbcraft_core::geometry::{Bounds, Shape};
+    use pcbcraft_core::library::{Outline, PadDefaults, Segment};
 
     const CHORD: f64 = 0.001;
 
@@ -475,6 +249,16 @@ mod tests {
         Bounds::of(shape.flatten(CHORD))
     }
 
+    fn corner_radius(size: Point, radius_ratio: f64, max_radius: Option<f64>) -> f64 {
+        PadShape::RoundRect {
+            size,
+            radius_ratio,
+            max_radius,
+            corners: CornerMask::ALL,
+        }
+        .corner_radius()
+    }
+
     fn close(a: Point, b: Point) -> bool {
         (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3
     }
@@ -483,7 +267,7 @@ mod tests {
     fn a_rotated_rect_land_spans_its_turned_extent_and_picks_inside_only() {
         let mut p = pad(PadShape::Rect { size: [2.0, 1.0] });
         p.rotation_deg = 90.0;
-        let b = pad_shape(&p, CHORD).as_ref().and_then(bounds);
+        let b = bounds(&p.land(CHORD));
         assert_eq!(b, Some(p.bounds()));
         assert!(b.is_some_and(|b| close(b.size(), [1.0, 2.0])));
         let pads = [p];
@@ -521,7 +305,7 @@ mod tests {
                 bottom_left: false,
             },
         });
-        let shape = pad_shape(&d, CHORD);
+        let shape = Some(d.land(CHORD));
         let at = |q: Point| shape.as_ref().map(|s| s.distance(q, true));
         assert_eq!(
             at([3.0, 0.0]),
@@ -535,7 +319,7 @@ mod tests {
         // An oblong's ends are half circles: its tip is on the land, its
         // corner is not.
         let o = pad(PadShape::Oblong { size: [3.0, 1.0] });
-        let shape = pad_shape(&o, CHORD);
+        let shape = Some(o.land(CHORD));
         let at = |q: Point| shape.as_ref().map(|s| s.distance(q, true));
         assert!(at([3.5, 1.0]).is_some_and(|d| d < 1e-3));
         assert!(at([3.5, 1.5]).is_some_and(|d| d > 0.1));
@@ -549,20 +333,20 @@ mod tests {
         };
         let mut p = pad(PadShape::Rect { size: [1.0, 1.0] });
         let size = |s: Option<Shape>| s.as_ref().and_then(bounds).map(|b| b.size());
-        assert!(size(mask_shape(&p, &defaults, CHORD)).is_some_and(|s| close(s, [1.2, 1.2])));
-        let paste = paste_shapes(&p, &defaults, CHORD);
+        assert!(size(p.mask_opening(&defaults, CHORD)).is_some_and(|s| close(s, [1.2, 1.2])));
+        let paste = p.paste_openings(&defaults, CHORD);
         assert_eq!(paste.len(), 1);
         assert!(size(paste.into_iter().next()).is_some_and(|s| close(s, [0.9, 0.9])));
         p.mask = MaskRule::Tented;
-        assert!(mask_shape(&p, &defaults, CHORD).is_none());
+        assert!(p.mask_opening(&defaults, CHORD).is_none());
         p.mask = MaskRule::Expansion(0.3);
-        assert!(size(mask_shape(&p, &defaults, CHORD)).is_some_and(|s| close(s, [1.6, 1.6])));
+        assert!(size(p.mask_opening(&defaults, CHORD)).is_some_and(|s| close(s, [1.6, 1.6])));
         p.paste = PasteRule::None;
-        assert!(paste_shapes(&p, &defaults, CHORD).is_empty());
+        assert!(p.paste_openings(&defaults, CHORD).is_empty());
         // Inherited paste is none on a through-hole pad.
         p.paste = PasteRule::Inherit;
         set_kind(&mut p, PadKind::PlatedThrough, None);
-        assert!(paste_shapes(&p, &defaults, CHORD).is_empty());
+        assert!(p.paste_openings(&defaults, CHORD).is_empty());
     }
 
     #[test]
@@ -578,11 +362,11 @@ mod tests {
             plated: true,
             offset: [0.0, 0.0],
         });
-        let size = |p: &Pad| hole_shape(p).as_ref().and_then(bounds).map(|b| b.size());
+        let size = |p: &Pad| p.hole_shape().as_ref().and_then(bounds).map(|b| b.size());
         assert!(size(&p).is_some_and(|s| close(s, [2.0, 0.8])));
         p.rotation_deg = 90.0;
         assert!(size(&p).is_some_and(|s| close(s, [0.8, 2.0])));
-        let centre = hole_shape(&p).as_ref().and_then(bounds).map(|b| b.center());
+        let centre = p.hole_shape().as_ref().and_then(bounds).map(|b| b.center());
         assert!(centre.is_some_and(|c| close(c, [2.0, 1.0])));
     }
 
@@ -601,7 +385,7 @@ mod tests {
                 Segment::Line { to: [-1.0, -0.5] },
             ],
         };
-        let points = outline_points(&outline, CHORD);
+        let points = outline.flatten(CHORD);
         let b = Bounds::of(points.iter().copied());
         assert!(b.is_some_and(|b| close(b.max, [1.5, 0.5])), "{b:?}");
         assert!(points.iter().all(|p| p[0] <= 1.5 + 1e-9));
@@ -611,7 +395,7 @@ mod tests {
             to: [1.0, 0.5],
             bulge: -1.0,
         };
-        let b = Bounds::of(outline_points(&inward, CHORD));
+        let b = Bounds::of(inward.flatten(CHORD));
         assert!(b.is_some_and(|b| close(b.max, [1.0, 0.5])));
     }
 

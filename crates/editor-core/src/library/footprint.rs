@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 mod checks;
 mod geometry;
 pub use checks::MIN_MASK_WEB_MM;
-pub use geometry::CHECK_CHORD_MM;
+pub use geometry::{CHECK_CHORD_MM, PAD_ARC_TOLERANCE_MM, TerminalRule, bulge_arc, offset_polygon};
 
 /// Default solder-mask expansion around a pad, in mm (an estimated prototype
 /// default, not a manufacturer qualification).

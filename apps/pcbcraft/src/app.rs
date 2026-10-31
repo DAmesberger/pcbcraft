@@ -66,7 +66,9 @@ impl App {
         })
     }
 
-    /// The one path from UI gestures to document changes.
+    /// The one path from UI gestures to document changes. It carries the
+    /// footprint evaluator CLI and MCP use, so sourced footprints edit and
+    /// publish the same way here.
     fn apply(&mut self, operation: Option<Operation>) {
         let Some(operation) = operation else {
             return;
@@ -75,7 +77,11 @@ impl App {
             self.say("Wait for the file operation to finish", false);
             return;
         }
-        match self.engine.apply(self.engine.revision(), operation) {
+        match self.engine.apply_with(
+            self.engine.revision(),
+            operation,
+            &pcbcraft_solidcraft::footprint::SketchEvaluator,
+        ) {
             Ok(_) => self.clear_error(),
             Err(error) => self.say(error.to_string(), true),
         }

@@ -1,20 +1,21 @@
-//! Exact pad, hole and aperture outlines flattened at an explicit chord
-//! tolerance, for checks and display. The stored data stays exact.
-use super::{Hole, HoleShape, Outline, Pad, PadShape, Segment};
-use crate::geometry::{Point, Shape, cos_sin, distance, polygon_contains, segment_distance};
+//! The one source of pad, hole and aperture outlines: every [`PadShape`]
+//! and [`HoleShape`] as an exact core [`Shape`] (rounded corners keep their
+//! radii; only custom bulge arcs are flattened, at an explicit chord
+//! tolerance), grown or shrunk on request, plus the mask and paste openings
+//! a pad's rules resolve to. Checks, the PCB view and the Footprint tab all
+//! read these; the stored data stays exact.
+use super::{
+    Hole, HoleShape, MaskRule, Outline, Pad, PadDefaults, PadKind, PadShape, PasteRule, Segment,
+};
+use crate::geometry::{
+    Point, Shape, Transform2, distance, polygon_contains, segment_distance, signed_area2,
+};
 
 /// Chord tolerance the publish rules flatten curves at, in mm.
 pub const CHECK_CHORD_MM: f64 = 1e-3;
-
-fn arc(center: Point, radius: f64, start_deg: f64, sweep_deg: f64, tol: f64) -> Vec<Point> {
-    Shape::Arc {
-        center,
-        radius,
-        start_deg,
-        sweep_deg,
-    }
-    .flatten(tol)
-}
+/// Chord error, in mm, at which custom pad arcs are flattened for display,
+/// picking and display-only 3D layers.
+pub const PAD_ARC_TOLERANCE_MM: f64 = 0.002;
 
 fn push(out: &mut Vec<Point>, p: Point) {
     if out.last().is_none_or(|q| distance(*q, p) > 1e-12) {
@@ -34,33 +35,86 @@ fn close(mut ring: Vec<Point>) -> Vec<Point> {
     ring
 }
 
-/// A stadium of overall `size`, centred on the origin, counter-clockwise.
-fn stadium(size: Point, tol: f64) -> Vec<Point> {
-    let [w, h] = size;
-    let mut out = Vec::new();
-    if w >= h {
-        let (r, c) = (h / 2.0, (w - h) / 2.0);
-        for p in arc([c, 0.0], r, -90.0, 180.0, tol) {
-            push(&mut out, p);
-        }
-        for p in arc([-c, 0.0], r, 90.0, 180.0, tol) {
-            push(&mut out, p);
-        }
-    } else {
-        let (r, c) = (w / 2.0, (h - w) / 2.0);
-        for p in arc([0.0, c], r, 0.0, 180.0, tol) {
-            push(&mut out, p);
-        }
-        for p in arc([0.0, -c], r, 180.0, 180.0, tol) {
-            push(&mut out, p);
-        }
+/// A `size` box centred on the origin, grown by `by` on every side, with
+/// `radius` on the corners `rounded` selects (counter-clockwise from the
+/// bottom left). Growing is a mitred offset: sharp corners stay sharp and
+/// rounded ones grow with the sides (capped at half the short side), the
+/// rule the native mask openings follow too. `None` when it vanishes.
+fn rounded_box(size: Point, radius: f64, rounded: [bool; 4], by: f64) -> Option<Shape> {
+    let (w, h) = (size[0] + 2.0 * by, size[1] + 2.0 * by);
+    if !(w > 0.0 && h > 0.0) {
+        return None;
     }
-    close(out)
+    let cap = 0.5 * w.min(h);
+    let round = if radius > 0.0 {
+        (radius + by).clamp(0.0, cap)
+    } else {
+        0.0
+    };
+    let (x, y) = (w / 2.0, h / 2.0);
+    let radii = rounded.map(|on| if on { round } else { 0.0 });
+    Some(Shape::Polygon {
+        points: vec![[-x, -y], [x, -y], [x, y], [-x, y]],
+        radii: if radii.iter().all(|r| *r <= 0.0) {
+            vec![]
+        } else {
+            radii.to_vec()
+        },
+    })
 }
 
-fn rotate(p: Point, deg: f64) -> Point {
-    let (c, s) = cos_sin(deg);
-    [c * p[0] - s * p[1], s * p[0] + c * p[1]]
+/// A polygon offset by `by` (outward for positive), with mitred corners
+/// limited to four times the offset. `None` when it collapses.
+pub fn offset_polygon(points: &[Point], by: f64) -> Option<Vec<Point>> {
+    let n = points.len();
+    if n < 3 {
+        return None;
+    }
+    let area = signed_area2(points);
+    let ccw = if area >= 0.0 { 1.0 } else { -1.0 };
+    let normal = |a: Point, b: Point| {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let l = d[0].hypot(d[1]).max(1e-9);
+        // Outward is right of a counter-clockwise edge.
+        [ccw * d[1] / l, -ccw * d[0] / l]
+    };
+    let out: Vec<Point> = (0..n)
+        .map(|i| {
+            let p = points[i];
+            let n0 = normal(points[(i + n - 1) % n], p);
+            let n1 = normal(p, points[(i + 1) % n]);
+            let k = (1.0 + n0[0] * n1[0] + n0[1] * n1[1]).max(0.125);
+            [
+                p[0] + by * (n0[0] + n1[0]) / k,
+                p[1] + by * (n0[1] + n1[1]) / k,
+            ]
+        })
+        .collect();
+    (signed_area2(&out) * area > 1e-9).then_some(out)
+}
+
+/// The circular arc from `a` to `b` with `bulge = tan(sweep / 4)`
+/// (positive is counter-clockwise), or `None` for a straight or degenerate
+/// segment.
+pub fn bulge_arc(a: Point, b: Point, bulge: f64) -> Option<Shape> {
+    let chord = [b[0] - a[0], b[1] - a[1]];
+    let c = chord[0].hypot(chord[1]);
+    if c.is_nan() || c <= 1e-12 || !bulge.is_finite() || bulge.abs() <= 1e-12 {
+        return None;
+    }
+    // The centre sits left of the chord for a counter-clockwise arc below
+    // a half turn.
+    let k = (1.0 - bulge * bulge) / (4.0 * bulge);
+    let center = [
+        0.5 * (a[0] + b[0]) - chord[1] * k,
+        0.5 * (a[1] + b[1]) + chord[0] * k,
+    ];
+    Some(Shape::Arc {
+        center,
+        radius: c * (1.0 + bulge * bulge) / (4.0 * bulge.abs()),
+        start_deg: (a[1] - center[1]).atan2(a[0] - center[0]).to_degrees(),
+        sweep_deg: 4.0 * bulge.atan().to_degrees(),
+    })
 }
 
 impl PadShape {
@@ -74,7 +128,7 @@ impl PadShape {
                 max_radius,
                 ..
             } => {
-                let short = size[0].min(size[1]);
+                let short = size[0].min(size[1]).max(0.0);
                 let r = (radius_ratio * short).clamp(0.0, short / 2.0);
                 max_radius.map_or(r, |m| r.min(m.max(0.0)))
             }
@@ -82,46 +136,55 @@ impl PadShape {
         }
     }
 
+    /// The shape grown by `by` mm on every side (negative shrinks) as a core
+    /// shape in the pad frame, centred on the origin. Rounded corners stay
+    /// exact; a custom outline's arcs are flattened within `tol` and a grown
+    /// custom outline is a mitred polygon offset. `None` when it vanishes.
+    pub fn grown(&self, by: f64, tol: f64) -> Option<Shape> {
+        match self {
+            Self::Rect { size } => rounded_box(*size, 0.0, [false; 4], by),
+            Self::RoundRect { size, corners, .. } => rounded_box(
+                *size,
+                self.corner_radius(),
+                [
+                    corners.bottom_left,
+                    corners.bottom_right,
+                    corners.top_right,
+                    corners.top_left,
+                ],
+                by,
+            ),
+            Self::Circle { diameter } => {
+                let radius = diameter / 2.0 + by;
+                (radius > 0.0).then_some(Shape::Circle {
+                    center: [0.0, 0.0],
+                    radius,
+                })
+            }
+            Self::Oblong { size } => rounded_box(*size, size[0].min(size[1]) / 2.0, [true; 4], by),
+            Self::Custom { outline } => {
+                let ring = outline.flatten(tol);
+                let ring = if by == 0.0 {
+                    ring
+                } else {
+                    offset_polygon(&ring, by)?
+                };
+                (ring.len() >= 3).then(|| Shape::polygon(ring))
+            }
+        }
+    }
+
+    /// The land outline in the pad frame (custom arcs within `tol`). A
+    /// degenerate shape gives an empty polygon.
+    pub fn outline(&self, tol: f64) -> Shape {
+        self.grown(0.0, tol)
+            .unwrap_or_else(|| Shape::polygon(Vec::new()))
+    }
+
     /// The copper outline in the pad frame as a counter-clockwise ring
     /// within `tol` mm (curves are inscribed).
     pub fn flatten(&self, tol: f64) -> Vec<Point> {
-        match self {
-            Self::Rect { size } => {
-                let [hw, hh] = [size[0] / 2.0, size[1] / 2.0];
-                vec![[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
-            }
-            Self::RoundRect { size, corners, .. } => {
-                let r = self.corner_radius();
-                let [hw, hh] = [size[0] / 2.0, size[1] / 2.0];
-                let mut out = Vec::new();
-                for (rounded, corner, start) in [
-                    (corners.bottom_left, [-hw, -hh], 180.0),
-                    (corners.bottom_right, [hw, -hh], 270.0),
-                    (corners.top_right, [hw, hh], 0.0),
-                    (corners.top_left, [-hw, hh], 90.0),
-                ] {
-                    if rounded && r > 0.0 {
-                        let centre = [
-                            corner[0] - r * corner[0].signum(),
-                            corner[1] - r * corner[1].signum(),
-                        ];
-                        for p in arc(centre, r, start, 90.0, tol) {
-                            push(&mut out, p);
-                        }
-                    } else {
-                        push(&mut out, corner);
-                    }
-                }
-                close(out)
-            }
-            Self::Circle { diameter } => Shape::Circle {
-                center: [0.0, 0.0],
-                radius: diameter / 2.0,
-            }
-            .flatten(tol),
-            Self::Oblong { size } => stadium(*size, tol),
-            Self::Custom { outline } => outline.flatten(tol),
-        }
+        self.outline(tol).flatten(tol)
     }
 }
 
@@ -138,85 +201,163 @@ impl Outline {
         let mut out = vec![self.start];
         let mut from = self.start;
         for segment in &self.segments {
-            match *segment {
-                Segment::Line { to } => push(&mut out, to),
-                Segment::Arc { to, bulge } => {
-                    let c = distance(from, to);
-                    if bulge == 0.0 || c <= 1e-12 {
-                        push(&mut out, to);
-                    } else {
-                        let sweep = 4.0 * bulge.atan();
-                        let radius = c / (2.0 * (sweep / 2.0).sin().abs());
-                        let mid = [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0];
-                        let normal = [-(to[1] - from[1]) / c, (to[0] - from[0]) / c];
-                        let k = (c / 2.0) * (1.0 - bulge * bulge) / (2.0 * bulge);
-                        let centre = [mid[0] + normal[0] * k, mid[1] + normal[1] * k];
-                        let start = (from[1] - centre[1]).atan2(from[0] - centre[0]);
-                        for p in arc(centre, radius, start.to_degrees(), sweep.to_degrees(), tol)
-                            .into_iter()
-                            .skip(1)
-                        {
-                            push(&mut out, p);
-                        }
-                        // Land exactly on the stored end point.
-                        if let Some(last) = out.last_mut() {
-                            *last = to;
-                        }
-                    }
+            let to = segment.to();
+            if let Segment::Arc { bulge, .. } = *segment
+                && let Some(arc) = bulge_arc(from, to, bulge)
+            {
+                for p in arc.flatten(tol).into_iter().skip(1) {
+                    push(&mut out, p);
                 }
+                // Land exactly on the stored end point.
+                if let Some(last) = out.last_mut() {
+                    *last = to;
+                }
+            } else {
+                push(&mut out, to);
             }
-            from = segment.to();
+            from = to;
         }
         close(out)
     }
 }
 
 impl HoleShape {
-    /// The drill outline centred on the hole, counter-clockwise.
-    pub fn flatten(&self, tol: f64) -> Vec<Point> {
+    /// The drill outline centred on the hole: a circle, or a stadium of
+    /// `length` overall along `angle_deg` for a slot.
+    pub fn shape(&self) -> Shape {
         match *self {
             Self::Round { diameter } => Shape::Circle {
                 center: [0.0, 0.0],
                 radius: diameter / 2.0,
-            }
-            .flatten(tol),
+            },
             Self::Slot {
                 width,
                 length,
                 angle_deg,
-            } => stadium([length.max(width), width], tol)
-                .into_iter()
-                .map(|p| rotate(p, angle_deg))
-                .collect(),
+            } => rounded_box([length.max(width), width], width / 2.0, [true; 4], 0.0)
+                .unwrap_or_else(|| Shape::polygon(Vec::new()))
+                .transformed(&Transform2 {
+                    translate: [0.0, 0.0],
+                    rotation_deg: angle_deg,
+                    mirror: false,
+                }),
         }
+    }
+
+    /// The drill outline as a counter-clockwise ring within `tol`.
+    pub fn flatten(&self, tol: f64) -> Vec<Point> {
+        self.shape().flatten(tol)
     }
 }
 
 impl Hole {
     /// The drill outline in the pad frame.
+    pub fn shape(&self) -> Shape {
+        self.shape.shape().translated(self.offset)
+    }
+
+    /// The drill outline in the pad frame, as a ring within `tol`.
     pub fn ring(&self, tol: f64) -> Vec<Point> {
-        self.shape
-            .flatten(tol)
-            .into_iter()
-            .map(|p| [p[0] + self.offset[0], p[1] + self.offset[1]])
-            .collect()
+        self.shape().flatten(tol)
+    }
+}
+
+/// Whether a pad kind lands a package terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalRule {
+    Required,
+    Forbidden,
+    Optional,
+}
+
+impl PadKind {
+    /// Whether this kind must, must not or may land a terminal (what
+    /// `footprint.terminal_required` and `terminal_forbidden` enforce).
+    pub fn terminal_rule(self) -> TerminalRule {
+        match self {
+            Self::Smd | Self::PlatedThrough => TerminalRule::Required,
+            Self::NonPlatedHole | Self::Fiducial => TerminalRule::Forbidden,
+            Self::Mechanical => TerminalRule::Optional,
+        }
     }
 }
 
 impl Pad {
-    /// A pad-frame point in the footprint frame.
-    pub fn to_footprint(&self, p: Point) -> Point {
-        let q = rotate(p, self.rotation_deg);
-        [q[0] + self.position[0], q[1] + self.position[1]]
+    /// Pad frame to footprint frame: rotate about the pad origin, then move.
+    pub fn frame(&self) -> Transform2 {
+        Transform2 {
+            translate: self.position,
+            rotation_deg: self.rotation_deg,
+            mirror: false,
+        }
     }
 
-    /// The copper outline in the footprint frame, within `tol` mm.
+    /// A pad-frame point in the footprint frame.
+    pub fn to_footprint(&self, p: Point) -> Point {
+        self.frame().apply(p)
+    }
+
+    /// The copper outline in the footprint frame, as a ring within `tol`.
     pub fn outline(&self, tol: f64) -> Vec<Point> {
         self.shape
             .flatten(tol)
             .into_iter()
             .map(|p| self.to_footprint(p))
             .collect()
+    }
+
+    /// The land in the footprint frame (custom arcs within `tol`).
+    pub fn land(&self, tol: f64) -> Shape {
+        self.shape.outline(tol).transformed(&self.frame())
+    }
+
+    /// The drilled hole in the footprint frame.
+    pub fn hole_shape(&self) -> Option<Shape> {
+        Some(self.hole.as_ref()?.shape().transformed(&self.frame()))
+    }
+
+    /// How far the solder-mask opening grows past the land, or `None` when
+    /// the pad is tented.
+    pub fn mask_expansion(&self, defaults: &PadDefaults) -> Option<f64> {
+        match self.mask {
+            MaskRule::Inherit => Some(defaults.mask_expansion_mm),
+            MaskRule::Tented => None,
+            MaskRule::Expansion(e) => Some(e),
+        }
+    }
+
+    /// The solder-mask opening in the footprint frame; `None` when tented
+    /// or shrunk to nothing.
+    pub fn mask_opening(&self, defaults: &PadDefaults, tol: f64) -> Option<Shape> {
+        let by = self.mask_expansion(defaults)?;
+        Some(self.shape.grown(by, tol)?.transformed(&self.frame()))
+    }
+
+    /// The paste openings in the footprint frame. Inherited paste is none
+    /// for hole kinds and fiducials.
+    pub fn paste_openings(&self, defaults: &PadDefaults, tol: f64) -> Vec<Shape> {
+        let frame = self.frame();
+        let shrink = |by: f64| {
+            self.shape
+                .grown(-by, tol)
+                .map(|s| s.transformed(&frame))
+                .into_iter()
+                .collect()
+        };
+        match &self.paste {
+            PasteRule::Inherit => match self.kind {
+                PadKind::Smd | PadKind::Mechanical if self.hole.is_none() => {
+                    shrink(defaults.paste_reduction_mm)
+                }
+                _ => Vec::new(),
+            },
+            PasteRule::None => Vec::new(),
+            PasteRule::Reduction(r) => shrink(*r),
+            PasteRule::Windows(windows) => windows
+                .iter()
+                .map(|w| w.shape.transformed(&frame))
+                .collect(),
+        }
     }
 }
 

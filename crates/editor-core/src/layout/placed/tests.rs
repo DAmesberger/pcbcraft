@@ -1,7 +1,10 @@
 use super::*;
 use crate::geometry::distance;
 use crate::library::ApertureId;
-use crate::library::{CornerMask, FootprintGraphic, PadVia, designator_placeholder};
+use crate::library::{
+    CornerMask, FootprintGraphic, Hole, HoleShape, Outline, PadShape, PadVia, Segment,
+    designator_placeholder,
+};
 use crate::tests::support::by_designator;
 use crate::{Engine, Error, Result};
 
@@ -35,6 +38,11 @@ fn first_pad(project: &Project, instance: Id) -> Result<PlacedPad> {
         .into_iter()
         .find(|p| p.instance == instance)
         .ok_or_else(|| Error::NotFound("placed pad".into()))
+}
+
+/// A pad shape as the PCB view draws it, in its pad frame.
+fn pad_outline(shape: PadShape) -> Shape {
+    shape.outline(PAD_ARC_TOLERANCE_MM)
 }
 
 fn close(a: Point, b: Point) -> bool {
@@ -78,7 +86,7 @@ fn custom_outline_arcs_flatten_on_their_circle_and_bulge_the_right_way() -> Resu
             },
         ],
     };
-    let shape = pad_outline(&PadShape::Custom { outline });
+    let shape = pad_outline(PadShape::Custom { outline });
     let ring = shape.flatten(0.01);
     assert!(ring.len() > 8);
     for p in &ring {
@@ -94,7 +102,7 @@ fn custom_outline_arcs_flatten_on_their_circle_and_bulge_the_right_way() -> Resu
     assert_eq!(shape.distance([-0.5, 0.0], true), 0.0);
     assert!(shape.distance([0.5, 0.0], true) > 0.0);
     // A clockwise bulge puts the arc on the other side.
-    let cw = pad_outline(&PadShape::Custom {
+    let cw = pad_outline(PadShape::Custom {
         outline: Outline {
             start: [0.0, -1.0],
             segments: vec![
@@ -112,10 +120,10 @@ fn custom_outline_arcs_flatten_on_their_circle_and_bulge_the_right_way() -> Resu
 
 #[test]
 fn rounded_shapes_follow_their_corners_and_mask() {
-    let oblong = pad_outline(&PadShape::Oblong { size: [2.0, 1.0] });
+    let oblong = pad_outline(PadShape::Oblong { size: [2.0, 1.0] });
     assert_eq!(oblong.distance([0.9, 0.0], true), 0.0);
     assert!(oblong.distance([0.97, 0.47], true) > 0.0, "corner is round");
-    let d = pad_outline(&PadShape::RoundRect {
+    let d = pad_outline(PadShape::RoundRect {
         size: [2.0, 1.0],
         radius_ratio: 0.5,
         max_radius: None,
@@ -128,14 +136,14 @@ fn rounded_shapes_follow_their_corners_and_mask() {
     });
     assert!(d.distance([0.97, 0.47], true) > 0.0, "right corners round");
     assert_eq!(d.distance([-0.97, 0.47], true), 0.0, "left corners sharp");
-    let capped = pad_outline(&PadShape::RoundRect {
+    let capped = pad_outline(PadShape::RoundRect {
         size: [2.0, 1.0],
         radius_ratio: 0.5,
         max_radius: Some(0.1),
         corners: CornerMask::ALL,
     });
     assert_eq!(capped.distance([0.97, 0.47], true), 0.0, "radius capped");
-    let circle = pad_outline(&PadShape::Circle { diameter: 1.0 });
+    let circle = pad_outline(PadShape::Circle { diameter: 1.0 });
     assert!(circle.distance([0.36, 0.36], true) > 0.0);
 }
 

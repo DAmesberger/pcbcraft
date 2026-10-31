@@ -284,15 +284,13 @@ impl PartEditor {
         }
         if layers.mask {
             for pad in &set.footprint.pads {
-                if let Some(mask) = geo::mask_shape(pad, &defaults, chord) {
+                if let Some(mask) = pad.mask_opening(&defaults, chord) {
                     symbol_view::paint_shape(&painter, view, &mask, Some(ink.mask), None);
                 }
             }
         }
         for pad in &set.footprint.pads {
-            let Some(land) = geo::pad_shape(pad, chord) else {
-                continue;
-            };
+            let land = pad.land(chord);
             let copper = match pad.side {
                 PadSide::Top => colors.copper_top,
                 PadSide::Bottom => colors.copper_bottom,
@@ -316,17 +314,17 @@ impl PartEditor {
         }
         if layers.paste {
             for pad in &set.footprint.pads {
-                for paste in geo::paste_shapes(pad, &defaults, chord) {
+                for paste in pad.paste_openings(&defaults, chord) {
                     symbol_view::paint_shape(&painter, view, &paste, Some(ink.paste), None);
                 }
             }
         }
         for pad in &set.footprint.pads {
-            if let Some(hole) = geo::hole_shape(pad) {
+            if let Some(hole) = pad.hole_shape() {
                 symbol_view::paint_shape(&painter, view, &hole, Some(ink.hole), thin(t.text_dim));
             }
             for via in &pad.vias {
-                let at = geo::pad_frame(pad).apply(via.at);
+                let at = pad.to_footprint(via.at);
                 painter.circle_filled(
                     view.screen(at),
                     (via.drill as f32 * 0.5 * view.scale).max(1.0),

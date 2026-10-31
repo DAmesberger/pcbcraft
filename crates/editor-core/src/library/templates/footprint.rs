@@ -13,7 +13,7 @@ use crate::library::graphics::{
     DrawingLayer, FOOTPRINT_TEXT_HEIGHT_MM, Fill, FootprintGraphic, Item, SILK_STROKE_MM, Side,
     designator_placeholder,
 };
-use crate::library::{FootprintDefinition, MaskRule, PackageDefinition, Pad};
+use crate::library::{FootprintDefinition, PackageDefinition, Pad, PadDefaults};
 
 /// Courtyard margin around pads and envelope, in mm (estimated default).
 pub const COURTYARD_EXCESS_MM: f64 = 0.25;
@@ -75,12 +75,8 @@ pub fn courtyard_from(
 
 /// The silkscreen keep-out of a pad: its box grown by its mask expansion,
 /// the clearance and half the stroke.
-fn keep_out(pad: &Pad, mask_default: f64, stroke: f64) -> Bounds {
-    let grow = match pad.mask {
-        MaskRule::Tented => 0.0,
-        MaskRule::Inherit => mask_default,
-        MaskRule::Expansion(e) => e,
-    };
+fn keep_out(pad: &Pad, defaults: &PadDefaults, stroke: f64) -> Bounds {
+    let grow = pad.mask_expansion(defaults).unwrap_or(0.0);
     pad.bounds()
         .inflated(grow.max(0.0) + SILK_PAD_CLEARANCE_MM + stroke / 2.0)
 }
@@ -129,7 +125,7 @@ pub fn silk_outline(footprint: &FootprintDefinition, envelope: Bounds) -> Vec<Sh
     let boxes: Vec<Bounds> = footprint
         .pads
         .iter()
-        .map(|p| keep_out(p, footprint.defaults.mask_expansion_mm, SILK_STROKE_MM))
+        .map(|p| keep_out(p, &footprint.defaults, SILK_STROKE_MM))
         .collect();
     let [c0, c1, c2, c3] = envelope.inflated(SILK_OUTSET_MM).corners();
     [(c0, c1), (c1, c2), (c2, c3), (c3, c0)]

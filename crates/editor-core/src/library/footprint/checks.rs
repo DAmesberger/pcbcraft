@@ -1,6 +1,6 @@
 //! The footprint publish rules and the advisory footprint lint.
-use super::geometry::{CHECK_CHORD_MM, ring_gap, ring_within};
-use super::{FootprintDefinition, HoleShape, MaskRule, Pad, PadKind, PadShape, PadSide, PasteRule};
+use super::geometry::{CHECK_CHORD_MM, TerminalRule, ring_gap, ring_within};
+use super::{FootprintDefinition, HoleShape, Pad, PadKind, PadShape, PadSide, PasteRule};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{polygon_self_intersects, signed_area2, size_valid};
 use crate::ids::DefinitionId;
@@ -79,8 +79,8 @@ fn shape_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) -> bool {
 
 /// Kind, terminal, side and hole consistency.
 fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
-    match (pad.kind, pad.terminal) {
-        (PadKind::Smd | PadKind::PlatedThrough, None) => out.push(issue(
+    match (pad.kind.terminal_rule(), pad.terminal) {
+        (TerminalRule::Required, None) => out.push(issue(
             "footprint.terminal_required",
             format!(
                 "Pad {} ({:?}) lands no package terminal; choose one, or make it Mechanical explicitly.",
@@ -88,7 +88,7 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             ),
             pad_object(id, pad),
         )),
-        (PadKind::NonPlatedHole | PadKind::Fiducial, Some(terminal)) => out.push(issue(
+        (TerminalRule::Forbidden, Some(terminal)) => out.push(issue(
             "footprint.terminal_forbidden",
             format!(
                 "Pad {} ({:?}) has no copper connection and cannot land package terminal {terminal}.",
@@ -490,11 +490,7 @@ impl FootprintDefinition {
             .pads
             .iter()
             .filter_map(|pad| {
-                let grow = match pad.mask {
-                    MaskRule::Tented => return None,
-                    MaskRule::Inherit => self.defaults.mask_expansion_mm,
-                    MaskRule::Expansion(e) => e,
-                };
+                let grow = pad.mask_expansion(&self.defaults)?;
                 if !pad.shape.finite() || (!size_valid(&pad.shape.extent())) {
                     return None;
                 }

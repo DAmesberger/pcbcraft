@@ -642,6 +642,7 @@ fn empty_source() -> FootprintSource {
         keys: vec![],
         overrides: vec![],
         solve: SolveSummary::default(),
+        datum: None,
     }
 }
 

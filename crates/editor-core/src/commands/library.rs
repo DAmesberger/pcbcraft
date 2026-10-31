@@ -171,6 +171,15 @@ pub(crate) fn apply_library(
             Ok(Outcome::None)
         }
         LibraryCommand::Publish { drafts } => {
+            // The pure publish rules run first, so their findings are
+            // reported even without an evaluator; the candidate document
+            // is discarded if the freshness check below then refuses.
+            let project = Arc::make_mut(&mut document.project);
+            let revisions = library::publish(
+                &mut project.library,
+                Arc::make_mut(&mut document.drafts),
+                &drafts,
+            )?;
             for id in &drafts {
                 if let Some(library::Draft {
                     definition: Definition::Footprint(footprint),
@@ -182,12 +191,6 @@ pub(crate) fn apply_library(
                     footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
                 }
             }
-            let project = Arc::make_mut(&mut document.project);
-            let revisions = library::publish(
-                &mut project.library,
-                Arc::make_mut(&mut document.drafts),
-                &drafts,
-            )?;
             Ok(Outcome::Published { revisions })
         }
         LibraryCommand::GeneratePads { draft, script } => {

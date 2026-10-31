@@ -5,16 +5,18 @@
 //! explicit chord tolerance.
 use crate::{Error, Result};
 use pcbcraft_core::Point;
+use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::library::{
-    Hole, HoleShape, MaskRule, Outline, Pad, PadDefaults, PadKind, PadShape, Segment,
+    Hole, HoleShape, Outline, Pad, PadDefaults, PadKind, PadShape, Segment, offset_polygon,
 };
 
 /// Plated barrel wall: copper plated onto a drilled hole's wall (an
 /// estimated 25 µm prototype default; IPC-6012 class 2 asks for 20 µm
 /// average). A hole's diameter is the drill; the barrel fills it inward.
 pub const PLATING_MM: f64 = 0.025;
-/// Chord tolerance of flattened display outlines.
-pub const FLATTEN_TOLERANCE_MM: f64 = 0.002;
+/// Chord tolerance of flattened display outlines (the core's display
+/// tolerance for pad arcs).
+pub const FLATTEN_TOLERANCE_MM: f64 = pcbcraft_core::library::PAD_ARC_TOLERANCE_MM;
 /// Points of one flattened loop.
 pub const MAX_FLAT_POINTS: usize = 8192;
 /// Chords of one flattened arc.
@@ -129,28 +131,20 @@ pub struct Arc {
 impl Arc {
     /// `None` for a straight segment (zero bulge or zero chord).
     pub fn of(from: Point, to: Point, bulge: f64) -> Option<Self> {
-        let d = [to[0] - from[0], to[1] - from[1]];
-        let chord = d[0].hypot(d[1]);
-        if bulge.abs() < EPS || chord < EPS || !bulge.is_finite() {
-            return None;
+        match pcbcraft_core::library::bulge_arc(from, to, bulge)? {
+            Shape::Arc {
+                center,
+                radius,
+                start_deg,
+                sweep_deg,
+            } => Some(Self {
+                center,
+                radius,
+                start: start_deg.to_radians(),
+                sweep: sweep_deg.to_radians(),
+            }),
+            _ => None,
         }
-        let sweep = 4.0 * bulge.atan();
-        let half = sweep / 2.0;
-        let radius = (chord / (2.0 * half.sin())).abs();
-        // The centre sits left of the chord for a counter-clockwise minor arc.
-        let h = (chord / 2.0) / half.tan();
-        let left = [-d[1] / chord, d[0] / chord];
-        let center = [
-            (from[0] + to[0]) / 2.0 + left[0] * h,
-            (from[1] + to[1]) / 2.0 + left[1] * h,
-        ];
-        let start = (from[1] - center[1]).atan2(from[0] - center[0]);
-        Some(Self {
-            center,
-            radius,
-            start,
-            sweep,
-        })
     }
 }
 
@@ -186,17 +180,8 @@ fn distance(a: Point, b: Point) -> f64 {
 pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
     match shape {
         PadShape::Rect { size } => rounded(*size, grow, [0.0; 4]),
-        PadShape::RoundRect {
-            size,
-            radius_ratio,
-            max_radius,
-            corners,
-        } => {
-            let short = size[0].min(size[1]);
-            let mut r = (radius_ratio.clamp(0.0, 0.5) * short).max(0.0);
-            if let Some(max) = max_radius {
-                r = r.min(max.max(0.0));
-            }
+        PadShape::RoundRect { size, corners, .. } => {
+            let r = shape.corner_radius();
             let pick = |on: bool| if on { r } else { 0.0 };
             // Counter-clockwise from the bottom right.
             rounded(
@@ -315,47 +300,6 @@ fn rounded(size: Point, grow: f64, radii: [f64; 4]) -> Option<Contour> {
     }))
 }
 
-/// A polygon offset by `by` (outward for positive), with mitred corners
-/// limited to four times the offset. `None` when it collapses.
-pub fn offset_polygon(points: &[Point], by: f64) -> Option<Vec<Point>> {
-    let n = points.len();
-    if n < 3 {
-        return None;
-    }
-    let area: f64 = (0..n)
-        .map(|i| {
-            let (a, b) = (points[i], points[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum();
-    let ccw = if area >= 0.0 { 1.0 } else { -1.0 };
-    let normal = |a: Point, b: Point| {
-        let d = [b[0] - a[0], b[1] - a[1]];
-        let l = d[0].hypot(d[1]).max(EPS);
-        // Outward is right of a counter-clockwise edge.
-        [ccw * d[1] / l, -ccw * d[0] / l]
-    };
-    let out: Vec<Point> = (0..n)
-        .map(|i| {
-            let p = points[i];
-            let n0 = normal(points[(i + n - 1) % n], p);
-            let n1 = normal(p, points[(i + 1) % n]);
-            let k = (1.0 + n0[0] * n1[0] + n0[1] * n1[1]).max(0.125);
-            [
-                p[0] + by * (n0[0] + n1[0]) / k,
-                p[1] + by * (n0[1] + n1[1]) / k,
-            ]
-        })
-        .collect();
-    let grown: f64 = (0..n)
-        .map(|i| {
-            let (a, b) = (out[i], out[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum();
-    (grown * area > EPS).then_some(out)
-}
-
 /// A hole's contour in the pad frame, grown by `grow` (negative shrinks).
 pub fn hole_contour(hole: &Hole, grow: f64) -> Option<Contour> {
     let contour = match hole.shape {
@@ -408,12 +352,7 @@ pub fn copper(pad: &Pad) -> Copper {
 /// The solder-mask opening of a pad in the pad frame, or `None` when the
 /// pad is tented.
 pub fn mask_opening(pad: &Pad, defaults: &PadDefaults) -> Option<Contour> {
-    let grow = match pad.mask {
-        MaskRule::Inherit => defaults.mask_expansion_mm,
-        MaskRule::Tented => return None,
-        MaskRule::Expansion(e) => e,
-    };
-    shape_contour(&pad.shape, grow)
+    shape_contour(&pad.shape, pad.mask_expansion(defaults)?)
 }
 
 #[cfg(test)]

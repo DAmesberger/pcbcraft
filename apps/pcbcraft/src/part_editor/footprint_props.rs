@@ -5,14 +5,12 @@
 //! commits once the field loses focus, one undo step per edit. A pad's
 //! terminal is chosen explicitly, never inferred from its number.
 use super::PartEditor;
-use super::footprint_geometry::{
-    self as geo, KINDS, ShapeChoice, TerminalRule, kind_label, terminal_rule,
-};
+use super::footprint_geometry::{self as geo, KINDS, ShapeChoice, kind_label};
 use crate::kit;
 use egui::Ui;
 use pcbcraft_core::library::{
     BindingDefinition, CornerMask, FootprintDefinition, Hole, HoleShape, MaskRule,
-    PackageDefinition, Pad, PadKind, PadShape, PadSide, PasteRule,
+    PackageDefinition, Pad, PadKind, PadShape, PadSide, PasteRule, TerminalRule,
 };
 use pcbcraft_core::{PackageTerminalId, PadId};
 
@@ -239,7 +237,7 @@ fn pad_rows(
         .terminals
         .iter()
         .map(|t| (Some(t.id), t.designation.clone()));
-    match terminal_rule(pad.kind) {
+    match pad.kind.terminal_rule() {
         TerminalRule::Required => {
             let options: Vec<_> = terminals.collect();
             kit::choice_row(ui, "Terminal", &mut pad.terminal, &options);
@@ -305,7 +303,14 @@ fn shape_rows(ui: &mut Ui, pad: &mut Pad) {
             }
             let mut capped = max_radius.is_some();
             if kit::check_row(ui, "Cap the corner radius", &mut capped) {
-                *max_radius = capped.then(|| geo::corner_radius(*size, *radius_ratio, None));
+                let radius = PadShape::RoundRect {
+                    size: *size,
+                    radius_ratio: *radius_ratio,
+                    max_radius: None,
+                    corners: *corners,
+                }
+                .corner_radius();
+                *max_radius = capped.then_some(radius);
             }
             if let Some(cap) = max_radius {
                 kit::number_row(ui, "Radius cap", cap, "mm", 0.0..=1000.0);

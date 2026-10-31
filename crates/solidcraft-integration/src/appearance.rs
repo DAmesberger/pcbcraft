@@ -7,10 +7,10 @@
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
 use crate::material::{self, BodyKind};
-use crate::pad_outline::offset_polygon;
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
+use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::library::{
     FootprintDefinition, PackageBody, PackageDefinition, PadKind, PadSide,
 };

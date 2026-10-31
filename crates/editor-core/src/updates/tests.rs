@@ -1033,6 +1033,7 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
                 .collect(),
             overrides: vec![],
             solve: SolveSummary::default(),
+            datum: None,
         })),
         ..FootprintDefinition::default()
     };

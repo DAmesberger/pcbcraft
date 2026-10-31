@@ -95,6 +95,15 @@ The strip of solder mask between two neighbouring pad openings. A web below the 
 **Footprint source**:
 How a footprint's solved pads and drawings were derived: an opaque sketch, parameters, pad roles and arrays, interpreted only by a footprint evaluator outside the core. Consumers read only the solved data.
 
+**Footprint evaluator**:
+The host component that interprets a footprint source: it applies sketch edits and solves the source into typed pads, drawings and the datum. The core never interprets a sketch; the desktop, CLI and MCP pass Solidcraft's sketch evaluator.
+
+**Pad frame**:
+A pad's own coordinates: origin at the pad position, axes turned by the pad rotation. Shapes, holes, vias and paste windows are stored in it.
+
+**Mask opening**:
+The gap in the solder mask over a pad: the land grown by the pad's mask expansion as a mitred offset, or none when the pad is tented. Display-only in 3D, never saved in the native model.
+
 **Package value**:
 A typed value a package offers footprint expressions under the reserved `pkg_` prefix, such as `pkg_L` (a length) or `pkg_n` (a count). Footprint parameters may not use the prefix.
 
