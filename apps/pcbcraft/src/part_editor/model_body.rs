@@ -6,7 +6,7 @@
 //! working-set edits, sent with `library.edit`.
 use super::PartEditor;
 use super::model_place;
-use crate::kit::{self, Tone};
+use crate::kit;
 use egui::Ui;
 use pcbcraft_core::library::samples::{self, Preset};
 use pcbcraft_core::library::{
@@ -250,6 +250,24 @@ pub fn lands_from_form(
     Some(out)
 }
 
+/// Why Lands from body is unavailable.
+const LANDS_NEED: &str = "Needs a typed form with one lead per package terminal";
+
+/// The Body section's one line on what the 3D model is, with its hover.
+fn model_hint(model: &PackageModel) -> (&'static str, &'static str) {
+    match model {
+        PackageModel::Envelope { .. } => (
+            "Approximate envelope only",
+            "An approximate parametric envelope, not a verified supplier model",
+        ),
+        PackageModel::Generated { .. } => (
+            "Generated; check the datasheet",
+            "Generated from the typed outline values with physical materials; verify it against the datasheet",
+        ),
+        PackageModel::Imported(_) => ("Imported model (not supported yet)", ""),
+    }
+}
+
 impl PartEditor {
     /// The Body section of the 3D tab.
     pub(super) fn body_inspector(&mut self, ui: &mut Ui) -> Option<Operation> {
@@ -259,7 +277,6 @@ impl PartEditor {
         let mut operation = None;
         let package = &mut set.package;
         let footprint = &mut set.footprint;
-        let mut notice = None;
         kit::section(ui, "model-body", "Body", true, None, |ui| {
             let mut chosen = family(&package.form);
             let options: Vec<(Family, String)> = FAMILIES
@@ -292,27 +309,8 @@ impl PartEditor {
                     tab.form = Some(form);
                 }
             }
-            let shown = tab.form.as_ref().unwrap_or(&package.form);
-            let problems = shown.range_problems();
-            for problem in problems.iter().take(3) {
-                kit::status(ui, problem, Tone::Warning);
-            }
-            let leads = shown.terminal_counts();
-            let terminals = package.terminals.len() as u64;
-            if !leads.is_empty() && !leads.contains(&terminals) {
-                kit::status(
-                    ui,
-                    &format!(
-                        "The form has {} leads; the package has {terminals} terminals.",
-                        leads
-                            .iter()
-                            .map(u64::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" or ")
-                    ),
-                    Tone::Warning,
-                );
-            }
+            // Range and lead-count problems of the stored form are package
+            // findings: they show in Issues, not here.
             if package.form != PackageForm::Generic {
                 let mut is_generated = matches!(package.model, PackageModel::Generated { .. });
                 let options = [
@@ -330,38 +328,33 @@ impl PartEditor {
                     operation = Some(model_place::edit(draft, vec![PackageEdit::SetModel(model)]));
                 }
             }
-            match &package.model {
-                PackageModel::Envelope { .. } => kit::note(
-                    ui,
-                    "Approximate parametric envelope, not a verified supplier model.",
-                ),
-                PackageModel::Generated { .. } => kit::note(
-                    ui,
-                    "Generated from the typed outline values with physical materials; verify against the datasheet.",
-                ),
-                PackageModel::Imported(_) => kit::note(ui, "Imported model (not supported yet)."),
-            };
+            let (shown, tip) = model_hint(&package.model);
+            kit::hint(ui, shown, tip);
             let lands = lands_from_form(footprint, package);
             kit::actions(ui, |ui| {
-                let response = ui_kit::button(ui, "Lands from body", Button::Small).on_hover_text(
-                    "Replace the footprint's terminal lands with lands centred on the leads",
+                let response = ui_kit::button(
+                    ui,
+                    "Lands from body",
+                    if lands.is_some() {
+                        Button::Small
+                    } else {
+                        Button::Enabled(false)
+                    },
                 );
-                if response.clicked() {
-                    match &lands {
-                        Some(lands) => *footprint = lands.clone(),
-                        None => {
-                            notice = Some(
-                                "Lands from body needs a typed form with one lead per package terminal"
-                                    .to_owned(),
-                            );
-                        }
-                    }
+                let response = if lands.is_some() {
+                    response.on_hover_text(
+                        "Replace the footprint's terminal lands with lands centred on the leads",
+                    )
+                } else {
+                    response.on_disabled_hover_text(LANDS_NEED)
+                };
+                if response.clicked()
+                    && let Some(lands) = &lands
+                {
+                    *footprint = lands.clone();
                 }
             });
         });
-        if let Some(notice) = notice {
-            self.notice = notice;
-        }
         let focused = ui.ctx().memory(|m| m.focused().is_some());
         let set = self.draft.as_ref()?;
         // Leaving the field commits (or drops an unchanged) typed form.

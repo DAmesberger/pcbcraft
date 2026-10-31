@@ -260,8 +260,10 @@ fn typed_pad_edits_round_trip_through_the_engine() -> Result<(), Box<dyn std::er
         edited,
         "the working copy reloads what was stored"
     );
-    // The inspector shows the typed rows of the selected pad.
+    // The inspector shows the typed rows of the selected pad; Mask and
+    // paste opens on a click.
     editor.selected_pad = Some(edited[1].id);
+    click_text(&mut editor, &engine, &ctx, "MASK AND PASTE")?;
     let shown = inspector_frame(&mut editor, &engine, &ctx);
     for text in [
         "Kind",
@@ -500,11 +502,12 @@ fn a_finding_row_is_a_button_that_locates_its_pad() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// B-f: the Terminals list and the Pad section show one selection. An
-/// unmapped pad lights no terminal, a clicked terminal shows its own pad,
-/// and a terminal without a pad shows no other terminal's pad.
+/// B-f: the Terminals list and the Pad card show one selection. With no
+/// pad selected the card is the footprint's own; a terminal's row selects
+/// its pad (the Pad card follows), and a terminal without a pad selects
+/// only the terminal, never another terminal's pad.
 #[test]
-fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::error::Error>> {
+fn the_terminals_list_and_the_pad_card_agree() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = egui::Context::default();
     let mut engine = Engine::demo()?;
     let mut editor = footprint_editor(&ctx, &engine)?;
@@ -528,22 +531,20 @@ fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::err
     let [(one, one_name), (two, two_name)] = names.as_slice() else {
         return Err("two terminals".into());
     };
-    let lit = |editor: &PartEditor| {
-        let set = editor.draft.as_ref()?;
-        let pad = footprint_props::current_pad(
-            &set.footprint,
-            &set.binding,
-            editor.selected_pad,
-            editor.selected,
-        )?;
-        Some(pad)
-    };
-    // The unmapped pad selected on the canvas, terminal 1 still selected.
+    // The unmapped pad selected on the canvas: its own card.
     editor.selected = Some(*one);
     editor.selected_pad = Some(second);
+    assert_eq!(editor.inspected_pad(), Some(second));
     let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
-    assert_eq!(lit(&editor), Some(second));
-    // A terminal's row: its name under the Terminals caption.
+    assert!(!shown.iter().any(|(t, _)| t == "TERMINALS"), "the Pad card");
+    // Nothing selected: the footprint card and its Terminals list, each
+    // row with the pads that land it.
+    editor.selected_pad = None;
+    assert_eq!(editor.inspected_pad(), None, "no pad is inferred");
+    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
+    for text in ["FOOTPRINT", "TERMINALS", "no pad"] {
+        assert!(shown.iter().any(|(t, _)| t == text), "{text} in {shown:?}");
+    }
     let label = |shown: &[(String, Rect)], name: &str| {
         let below = shown.iter().find(|(t, _)| t == "TERMINALS")?.1.bottom();
         shown
@@ -552,7 +553,6 @@ fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::err
             .map(|(_, r)| r.center())
     };
     let at = label(&shown, one_name).ok_or("terminal 1's row")?;
-    // Clicking terminal 1 shows its pad, even though it was selected.
     for events in [
         vec![egui::Event::PointerMoved(at)],
         vec![button(at, true)],
@@ -561,8 +561,9 @@ fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::err
         inspector_input(&mut editor, &engine, &ctx, events);
     }
     assert_eq!(editor.selected, Some(*one));
-    assert_eq!(lit(&editor), Some(first));
-    // Terminal 2 has no pad: the Pad section shows none, not pad 1.
+    assert_eq!(editor.inspected_pad(), Some(first), "its pad's card");
+    // Terminal 2 has no pad: only the terminal is selected.
+    editor.selected_pad = None;
     let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
     let at = label(&shown, two_name).ok_or("terminal 2's row")?;
     for events in [
@@ -573,10 +574,11 @@ fn the_terminals_list_and_the_pad_section_agree() -> Result<(), Box<dyn std::err
         inspector_input(&mut editor, &engine, &ctx, events);
     }
     assert_eq!(editor.selected, Some(*two));
-    assert_eq!(lit(&editor), None);
-    let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
-    let note = format!("No pad lands terminal ‘{two_name}’. Click a pad on the canvas to show it.");
-    assert!(shown.iter().any(|(t, _)| *t == note), "{shown:?}");
+    assert_eq!(editor.inspected_pad(), None);
+    // Remove pad has nothing to take.
+    let before = pads(&editor);
+    editor.on_tool("remove-pad", &engine);
+    assert_eq!(pads(&editor), before);
     Ok(())
 }
 
@@ -626,11 +628,11 @@ fn the_mapping_canvas_draws_no_link_for_an_unmapped_row() -> Result<(), Box<dyn 
     Ok(())
 }
 
-/// The picker previews what Build makes, warns when its pad count
-/// differs from the package, and clears a sourced footprint completely.
+/// The picker previews what Build makes and warns when its pad count
+/// differs from the package.
 #[test]
-fn the_template_picker_previews_warns_and_clears() -> Result<(), Box<dyn std::error::Error>> {
-    use super::footprint_template_picker::{accepts, cleared, count_warning};
+fn the_template_picker_previews_and_warns() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_template_picker::count_warning;
     use pcbcraft_core::library::templates::footprint_family::TemplateKind;
     let ctx = egui::Context::default();
     let engine = Engine::demo()?;
@@ -649,22 +651,399 @@ fn the_template_picker_previews_warns_and_clears() -> Result<(), Box<dyn std::er
             .ghost()
             .is_some_and(|g| g.len() == pads.len())
     );
-    assert!(count_warning(&pads, &package).is_some_and(|w| w.contains("terminals")));
-    // A sourced footprint (the built QFN) clears to an empty explicit one.
-    let empty = pcbcraft_core::library::FootprintDefinition {
-        next_local: 1,
-        ..Default::default()
-    };
-    let template = editor.template_picker.form.clone().ok_or("form")?;
-    let (built, _) = pcbcraft_core::library::templates::footprint_family::build(
-        &empty,
-        &package,
-        &template,
+    let warning = count_warning(&pads, &package).ok_or("a count warning")?;
+    assert!(warning.contains("terminals"), "{warning}");
+    assert!(
+        pcbcraft_core::issues::style::check(&warning).is_empty(),
+        "{warning}"
+    );
+    Ok(())
+}
+
+/// One inspector frame of `editor` with a click on the drawn text `text`.
+fn click_text(
+    editor: &mut PartEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (shown, _) = inspector_input(editor, engine, ctx, vec![]);
+    let at = shown
+        .iter()
+        .find(|(t, _)| t == text)
+        .map(|(_, r)| r.center())
+        .ok_or_else(|| {
+            format!(
+                "{text} in {:?}",
+                shown.iter().map(|(t, _)| t).collect::<Vec<_>>()
+            )
+        })?;
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(at, true)],
+        vec![button(at, false)],
+    ] {
+        inspector_input(editor, engine, ctx, events);
+    }
+    Ok(())
+}
+
+/// One inspector frame; the operation it returned and the drawn texts.
+fn inspector_op(
+    editor: &mut PartEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> (Option<Operation>, Vec<(String, Rect)>) {
+    let mut operation = None;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(360.0, 1081.0))),
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            operation = editor.inspector(ui, engine);
+        },
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                Rect::from_min_size(text.pos, text.galley.size()),
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    (operation, out)
+}
+
+/// Click the button labelled `label` in the inspector; the operation the
+/// release frame returned.
+fn press(
+    editor: &mut PartEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    label: &str,
+) -> Result<Option<Operation>, Box<dyn std::error::Error>> {
+    let (_, shown) = inspector_op(editor, engine, ctx, vec![]);
+    let at = shown
+        .iter()
+        .find(|(t, _)| t == label)
+        .map(|(_, r)| r.center())
+        .ok_or_else(|| {
+            format!(
+                "{label} in {:?}",
+                shown.iter().map(|(t, _)| t).collect::<Vec<_>>()
+            )
+        })?;
+    inspector_op(editor, engine, ctx, vec![egui::Event::PointerMoved(at)]);
+    inspector_op(editor, engine, ctx, vec![button(at, true)]);
+    Ok(inspector_op(editor, engine, ctx, vec![button(at, false)]).0)
+}
+
+fn texts_of(shown: &[(String, Rect)]) -> Vec<&str> {
+    shown.iter().map(|(t, _)| t.as_str()).collect()
+}
+
+/// On a footprint that has pads, the template dialog's primary is
+/// "Replace footprint": one atomic `replace` command, one undo step. The
+/// dialog stays open until the engine answers, then closes with a toast
+/// offering Undo; the Pad card is not shown while it is open.
+#[test]
+fn the_template_dialog_replaces_a_footprint_in_one_undo_step()
+-> Result<(), Box<dyn std::error::Error>> {
+    use pcbcraft_core::library::templates::footprint_family::TemplateKind;
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let before = committed_pads(&engine, &editor).ok_or("pads")?;
+    let package = editor.draft.as_ref().ok_or("draft")?.package.clone();
+    editor.template_picker.open(TemplateKind::Chip, &package);
+    editor.selected_pad = before.first().map(|p| p.id);
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    for text in [
+        "Footprint from template",
+        "Replace footprint",
+        "Cancel",
+        "Builds 2 pads for 2 terminals",
+    ] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    assert!(
+        texts.contains(&"Replaces 2 pads and the sketch; one undo step"),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.contains(&"HOLE") && !texts.contains(&"TERMINALS"),
+        "{texts:?}"
+    );
+    let operation = press(&mut editor, &engine, &ctx, "Replace footprint")?.ok_or("sent")?;
+    assert!(
+        matches!(
+            &operation,
+            Operation::Library(LibraryCommand::FootprintFromTemplate { replace: true, .. })
+        ),
+        "{operation:?}"
+    );
+    let revision = engine.revision();
+    engine.apply_with(
+        revision,
+        operation,
         &pcbcraft_solidcraft::footprint::SketchEvaluator,
     )?;
-    assert!(!accepts(&built));
-    let reset = cleared(&built);
-    assert!(accepts(&reset), "a template builds into it again");
-    assert!(reset.source.is_none() && reset.pads.is_empty() && reset.polarity.is_none());
+    let _ = crate::kit::toast::take_posted(&ctx);
+    inspector_op(&mut editor, &engine, &ctx, vec![]);
+    assert!(!editor.template_picker.is_open(), "closed once applied");
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text == "Footprint built: 2 pads"
+            && p.actions.contains(&crate::kit::toast::ToastAction::Undo)),
+        "{posted:?}"
+    );
+    let built = committed_pads(&engine, &editor).ok_or("built")?;
+    assert_ne!(built, before);
+    engine.undo()?;
+    assert_eq!(
+        committed_pads(&engine, &editor),
+        Some(before),
+        "one undo step restores the old footprint"
+    );
+    Ok(())
+}
+
+/// A refusal of the dialog's command comes back to its refusal row on the
+/// next frame (no toast); the dialog stays open and usable.
+#[test]
+fn a_refused_template_shows_on_the_dialog() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_template_picker::TEMPLATE_DIALOG;
+    use crate::refusal::{Origin, Refused};
+    use pcbcraft_core::library::templates::footprint_family::TemplateKind;
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let package = editor.draft.as_ref().ok_or("draft")?.package.clone();
+    editor.template_picker.open(TemplateKind::Chip, &package);
+    press(&mut editor, &engine, &ctx, "Replace footprint")?.ok_or("sent")?;
+    assert!(editor.template_picker.is_waiting());
+    crate::refusal::hand_back(
+        &ctx,
+        Refused {
+            origin: Origin::Dialog(egui::Id::new(TEMPLATE_DIALOG)),
+            error: pcbcraft_core::Error::Conflict("The land is wider than the package".into()),
+        },
+        false,
+    );
+    inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    assert!(editor.template_picker.is_open());
+    assert!(!editor.template_picker.is_waiting(), "usable again");
+    assert!(
+        texts_of(&shown).contains(&"The land is wider than the package"),
+        "{:?}",
+        texts_of(&shown)
+    );
+    Ok(())
+}
+
+/// Pads a template built land no terminal yet: the footprint card offers
+/// Assign by number, whose dialog lists each pad's terminal and sends one
+/// confirmed `library.assign_terminals`, then closes with a toast.
+#[test]
+fn assign_by_number_is_a_dialog_with_one_command() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_template_picker::request;
+    use pcbcraft_core::library::templates::footprint_family::{FootprintTemplate, TemplateKind};
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let set = editor.draft.as_ref().ok_or("draft")?;
+    let template = FootprintTemplate::defaults(TemplateKind::Chip, &set.package);
+    engine.apply_with(
+        engine.revision(),
+        request(set.ids.footprint, template, true),
+        &pcbcraft_solidcraft::footprint::SketchEvaluator,
+    )?;
+    editor.commit(&ctx, &engine);
+    editor.selected_pad = None;
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    assert!(
+        texts_of(&shown).contains(&"2 pads unassigned"),
+        "{:?}",
+        texts_of(&shown)
+    );
+    assert!(press(&mut editor, &engine, &ctx, "Assign by number…")?.is_none());
+    assert!(editor.template_picker.is_assigning());
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    for text in [
+        "Assign pads by number",
+        "Pad 1",
+        "→ terminal 1",
+        "Assign 2 pads",
+    ] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    let operation = press(&mut editor, &engine, &ctx, "Assign 2 pads")?.ok_or("sent")?;
+    assert!(
+        matches!(
+            operation,
+            Operation::Library(LibraryCommand::AssignTerminals { confirm: true, .. })
+        ),
+        "{operation:?}"
+    );
+    engine.apply(engine.revision(), operation)?;
+    let _ = crate::kit::toast::take_posted(&ctx);
+    editor.commit(&ctx, &engine);
+    inspector_op(&mut editor, &engine, &ctx, vec![]);
+    assert!(
+        !editor.template_picker.is_assigning(),
+        "closed once applied"
+    );
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text == "Assigned 2 pads"),
+        "{posted:?}"
+    );
+    assert!(
+        committed_pads(&engine, &editor)
+            .ok_or("pads")?
+            .iter()
+            .all(|p| p.terminal.is_some())
+    );
+    Ok(())
+}
+
+/// A derived pad is one summary row with Edit sketch, not a stack of
+/// disabled fields; Edit sketch returns to the footprint card with the
+/// pad's sketch role selected.
+#[test]
+fn a_derived_pad_is_one_summary_row() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_template_picker::request;
+    use pcbcraft_core::library::templates::footprint_family::{FootprintTemplate, TemplateKind};
+    let ctx = egui::Context::default();
+    let mut engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let set = editor.draft.as_ref().ok_or("draft")?;
+    let template = FootprintTemplate::defaults(TemplateKind::Chip, &set.package);
+    engine.apply_with(
+        engine.revision(),
+        request(set.ids.footprint, template, true),
+        &pcbcraft_solidcraft::footprint::SketchEvaluator,
+    )?;
+    editor.commit(&ctx, &engine);
+    let pad = pads(&editor).first().ok_or("a pad")?.clone();
+    editor.selected_pad = Some(pad.id);
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    let shape = footprint_props::pad_shape_text(&pad);
+    assert!(shape.starts_with("Rounded "), "{shape}");
+    for text in [shape.as_str(), "Top · SMD", "From the sketch"] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    for absent in ["Number", "Position", "Corner ratio", "HOLE"] {
+        assert!(!texts.contains(&absent), "{absent} in {texts:?}");
+    }
+    press(&mut editor, &engine, &ctx, "Edit sketch \u{203a}")?;
+    assert_eq!(editor.inspected_pad(), None);
+    assert_eq!(
+        editor.footprint_tool.selection,
+        vec![super::footprint_tools::Pick::Pad(pad.id)]
+    );
+    Ok(())
+}
+
+/// An armed sketch tool replaces Properties with its tool card (name, key,
+/// its options and one hint); Done returns to Select and the card.
+#[test]
+fn an_armed_pad_tool_shows_its_tool_card() -> Result<(), Box<dyn std::error::Error>> {
+    use super::footprint_tools::FootprintTool;
+    use pcbcraft_core::library::footprint_source::PadTemplate;
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    if let Some(set) = &mut editor.draft {
+        set.footprint.pads.clear();
+    }
+    editor.footprint_arm(FootprintTool::Pad(PadTemplate::Rect));
+    assert_eq!(editor.footprint_subject(), crate::kit::card::Subject::Tool);
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    for text in ["Pad · rectangle", "N", "Done", "Kind", "Side", "Size"] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    assert!(!texts.contains(&"FOOTPRINT"), "{texts:?}");
+    press(&mut editor, &engine, &ctx, "Done")?;
+    assert_eq!(editor.footprint_tool.armed(), FootprintTool::Select);
+    assert_eq!(
+        editor.footprint_subject(),
+        crate::kit::card::Subject::Properties
+    );
+    Ok(())
+}
+
+/// The Mapping card is one table, designation and terminal, with no
+/// internal "Package n" labels; the canvas still names pads by number.
+#[test]
+fn the_mapping_card_is_one_table() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    editor.on_tab("mapping");
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    for text in ["PACKAGE TERMINALS", "DESIGNATION", "TERMINAL"] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    assert!(
+        !texts.iter().any(|t| t.starts_with("Package ")),
+        "{texts:?}"
+    );
+    Ok(())
+}
+
+/// Locate on the component's tabs: a pad shows the Footprint tab with it
+/// selected, a package terminal shows the Mapping tab with its terminal,
+/// the package itself the 3D tab; others are not this editor's.
+#[test]
+fn issues_locate_their_objects_on_the_component_tabs() -> Result<(), Box<dyn std::error::Error>> {
+    use pcbcraft_core::ObjectRef;
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let set = editor.draft.as_ref().ok_or("draft")?.clone();
+    let pad = set.footprint.pads.get(1).ok_or("pad 2")?;
+    let physical = set.package.terminals.get(1).ok_or("terminal 2")?;
+    editor.on_tab("symbol");
+    editor.selected_pad = None;
+    assert!(editor.locate_footprint(&[ObjectRef::LibraryObject {
+        definition: set.ids.footprint,
+        local: pad.id.0,
+    }]));
+    assert!(editor.view == View::Footprint);
+    assert_eq!(editor.selected_pad, Some(pad.id));
+    let package_terminal = ObjectRef::LibraryObject {
+        definition: set.ids.package,
+        local: physical.id.0,
+    };
+    assert!(!editor.locate_footprint(std::slice::from_ref(&package_terminal)));
+    editor.selected = None;
+    assert!(editor.locate_mapping(&[package_terminal]));
+    assert!(editor.view == View::Mapping);
+    assert_eq!(editor.selected, set.binding.terminal_of(physical.id));
+    assert!(editor.locate_model(&[ObjectRef::Definition {
+        id: set.ids.package
+    }]));
+    assert!(editor.view == View::Model);
+    let elsewhere = [ObjectRef::Net { id: 1 }];
+    assert!(!editor.locate_footprint(&elsewhere));
+    assert!(!editor.locate_mapping(&elsewhere));
+    assert!(!editor.locate_model(&elsewhere));
     Ok(())
 }

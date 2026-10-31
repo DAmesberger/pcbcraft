@@ -143,7 +143,6 @@ impl PartEditor {
             .as_ref()
             .and_then(|s| s.footprint.source.as_deref());
         self.footprint_tool.adopt(source);
-        self.notice.clear();
     }
 
     /// A Layer chooser button; false when `id` is not one.
@@ -215,7 +214,8 @@ impl PartEditor {
     /// drag or parameter edit) as the next `library.edit_footprint`.
     pub(super) fn queue_footprint_edits(&mut self, edits: Vec<FootprintEdit>) {
         if !self.footprint_tool.queue(edits) {
-            self.notice = footprint_tools::OUTBOX_BUSY.into();
+            let busy = footprint_tools::OUTBOX_BUSY;
+            self.footprint_tool.refuse(busy, busy);
         }
     }
 
@@ -232,7 +232,8 @@ impl PartEditor {
         if let Some(expected) = self.footprint_tool.held_for.take()
             && self.draft.as_ref().map(|s| &s.footprint) != Some(&expected)
         {
-            self.notice = "The sketch change was dropped: the edit before it was refused.".into();
+            let dropped = "Sketch change dropped: the edit before it was refused";
+            self.footprint_tool.refuse(dropped, dropped);
             return None;
         }
         if self.draft != self.baseline {
@@ -276,7 +277,6 @@ impl PartEditor {
             draft,
             footprint_tool: state,
             footprint_dims: dims,
-            notice,
             selected_pad,
             ..
         } = self;
@@ -319,18 +319,20 @@ impl PartEditor {
         if let Some(c) = &cursor {
             state.hover(c.at);
         }
-        let mut report = |result: pcbcraft_core::Result<Gesture>,
-                          state: &mut footprint_tools::ToolState| {
+        let report = |result: pcbcraft_core::Result<Gesture>,
+                      state: &mut footprint_tools::ToolState| {
             match result {
                 Ok(Gesture::Commit(edits)) if !edits.is_empty() => {
-                    if state.queue(edits) {
-                        notice.clear();
-                    } else {
-                        *notice = footprint_tools::OUTBOX_BUSY.into();
+                    if !state.queue(edits) {
+                        let busy = footprint_tools::OUTBOX_BUSY;
+                        state.refuse(busy, busy);
                     }
                 }
                 Ok(_) => {}
-                Err(e) => *notice = e.to_string(),
+                Err(e) => state.refuse(
+                    &crate::refusal::shown_error(&e),
+                    "That sketch change is not accepted",
+                ),
             }
         };
         if !panning && !self.space_held && !taken {
@@ -449,8 +451,8 @@ impl PartEditor {
         }
         let pressed = |modifiers, key| ui.input_mut(|i| i.consume_key(modifiers, key));
         // Shift chords first: a plain pattern also matches with Shift held.
-        if pressed(Modifiers::SHIFT, Key::R) && self.footprint_tool.repeat() {
-            self.notice.clear();
+        if pressed(Modifiers::SHIFT, Key::R) {
+            self.footprint_tool.repeat();
         }
         for tool in FootprintTool::ALL {
             if let Some(k) = tool.key().filter(|k| k.shift)
@@ -487,26 +489,55 @@ impl PartEditor {
         }
     }
 
-    /// The armed tool's options in Properties.
-    pub(super) fn footprint_tool_options(&mut self, ui: &mut Ui) {
-        if !self.footprint_sketching() {
-            return;
+    /// Post the gesture refusals collected since the last frame as error
+    /// toasts (the canvas and the card both drain them).
+    pub(super) fn post_footprint_refusals(&mut self, ctx: &egui::Context) {
+        for text in self.footprint_tool.refusals.drain(..) {
+            crate::kit::toast::post(ctx, crate::kit::severity::Level::Error, text, Vec::new());
         }
-        let state = &mut self.footprint_tool;
-        let tool = state.armed();
-        let title = match tool {
-            FootprintTool::Select | FootprintTool::Dimension | FootprintTool::Constrain(_) => {
-                return;
-            }
-            t => t.label(),
+    }
+
+    /// The armed sketch tool other than Select, if any: while one is armed
+    /// its tool card replaces the Properties card.
+    pub(super) fn footprint_tool_armed(&self) -> Option<FootprintTool> {
+        let tool = self.footprint_tool.armed();
+        (self.footprint_sketching() && tool != FootprintTool::Select).then_some(tool)
+    }
+
+    /// The armed tool's card: its header (name, key, Done), its options
+    /// and one hint line. Returns whether a tool card was drawn.
+    pub(super) fn footprint_tool_card(&mut self, ui: &mut Ui) -> bool {
+        let Some(tool) = self.footprint_tool_armed() else {
+            return false;
         };
+        let key = tool
+            .key()
+            .map(|k| {
+                let name = k.key.name();
+                if k.shift {
+                    format!("\u{21e7}{name}")
+                } else {
+                    name.to_owned()
+                }
+            })
+            .unwrap_or_default();
+        let (hint, tip) = tool_hint(tool);
+        let card = kit::ToolCard {
+            icon: tool.icon(),
+            name: tool_name(tool),
+            key: &key,
+            hint,
+            tip,
+            finish: None,
+        };
+        let state = &mut self.footprint_tool;
         let count = |ui: &mut Ui, label: &str, n: &mut u16| {
             let mut v = f64::from(*n);
             if kit::number_row(ui, label, &mut v, "", 1.0..=1024.0) {
                 *n = v.round().clamp(1.0, 1024.0) as u16;
             }
         };
-        kit::section(ui, "footprint-tool", title, true, None, |ui| {
+        let response = kit::tool_card(ui, &card, |ui| {
             let o = &mut state.options;
             if matches!(tool, FootprintTool::Array(_)) {
                 kit::choice_row(
@@ -521,46 +552,40 @@ impl PartEditor {
                     ],
                 );
             }
-            match tool {
-                FootprintTool::Pad(_) | FootprintTool::CustomPad | FootprintTool::Array(_) => {
-                    let template = match tool {
-                        FootprintTool::Pad(t) => t,
-                        FootprintTool::Array(_) => o.array.template,
-                        _ => PadTemplate::Rect,
-                    };
-                    if template == PadTemplate::Circle {
-                        kit::number_row(ui, "Diameter", &mut o.pad.diameter, "mm", 0.01..=100.0);
-                    } else {
-                        kit::pair_row(ui, "Size", &mut o.pad.size, "mm", 0.01..=100.0);
-                    }
-                    if template == PadTemplate::RoundRect {
-                        kit::number_row(ui, "Corner", &mut o.pad.radius_ratio, "", 0.0..=0.5);
-                    }
-                    kit::choice_row(
-                        ui,
-                        "Kind",
-                        &mut o.pad.kind,
-                        &[
-                            (PadKind::Smd, "SMD".into()),
-                            (PadKind::Mechanical, "Mechanical".into()),
-                            (PadKind::Fiducial, "Fiducial".into()),
-                        ],
-                    );
-                    kit::choice_row(
-                        ui,
-                        "Side",
-                        &mut o.pad.side,
-                        &[
-                            (PadSide::Top, "Top".into()),
-                            (PadSide::Bottom, "Bottom".into()),
-                        ],
-                    );
-                    kit::note(
-                        ui,
-                        "Space turns the next pad a quarter. Sizes become the pad_l, pad_w and pad_d parameters.",
-                    );
+            if let FootprintTool::Pad(_) | FootprintTool::CustomPad | FootprintTool::Array(_) = tool
+            {
+                let template = match tool {
+                    FootprintTool::Pad(t) => t,
+                    FootprintTool::Array(_) => o.array.template,
+                    _ => PadTemplate::Rect,
+                };
+                kit::choice_row(
+                    ui,
+                    "Kind",
+                    &mut o.pad.kind,
+                    &[
+                        (PadKind::Smd, "SMD".into()),
+                        (PadKind::Mechanical, "Mechanical".into()),
+                        (PadKind::Fiducial, "Fiducial".into()),
+                    ],
+                );
+                kit::choice_row(
+                    ui,
+                    "Side",
+                    &mut o.pad.side,
+                    &[
+                        (PadSide::Top, "Top".into()),
+                        (PadSide::Bottom, "Bottom".into()),
+                    ],
+                );
+                if template == PadTemplate::Circle {
+                    kit::number_row(ui, "Diameter", &mut o.pad.diameter, "mm", 0.01..=100.0);
+                } else {
+                    kit::pair_row(ui, "Size", &mut o.pad.size, "mm", 0.01..=100.0);
                 }
-                _ => {}
+                if template == PadTemplate::RoundRect {
+                    kit::number_row(ui, "Corner", &mut o.pad.radius_ratio, "", 0.0..=0.5);
+                }
             }
             if let FootprintTool::Array(kind) = tool {
                 let a = &mut o.array;
@@ -573,10 +598,6 @@ impl PartEditor {
                         count(ui, "Per row", &mut a.per_row);
                         kit::number_row(ui, "Pitch", &mut a.pitch, "mm", 0.01..=100.0);
                         kit::number_row(ui, "Row span", &mut a.row_span, "mm", 0.01..=200.0);
-                        kit::note(
-                            ui,
-                            "The second row faces the first, to the left of the row direction (counter-clockwise numbering).",
-                        );
                     }
                     ArrayTool::Quad => {
                         count(ui, "Bottom/top", &mut a.nx);
@@ -609,16 +630,11 @@ impl PartEditor {
                         if kit::number_row(ui, "Rings", &mut ring, "", 0.0..=1024.0) {
                             a.perimeter = ring.round().clamp(0.0, 1024.0) as u16;
                         }
-                        kit::note(ui, "Delete an instance with Select to skip it.");
                     }
                 }
             }
             if matches!(tool, FootprintTool::Drill | FootprintTool::Slot) {
                 kit::number_row(ui, "Drill", &mut o.drill, "mm", 0.05..=50.0);
-                kit::note(
-                    ui,
-                    "On a pad: a plated hole bound to the drill parameter. Elsewhere: a bare NPTH hole.",
-                );
             }
             if tool.draws() {
                 kit::choice_row(
@@ -629,6 +645,53 @@ impl PartEditor {
                 );
             }
         });
+        if response.done {
+            self.footprint_arm(FootprintTool::Select);
+        }
+        true
+    }
+}
+
+/// The tool card's name: the family, then the variant.
+fn tool_name(tool: FootprintTool) -> &'static str {
+    match tool {
+        FootprintTool::Pad(PadTemplate::Rect) => "Pad · rectangle",
+        FootprintTool::Pad(PadTemplate::RoundRect) => "Pad · rounded",
+        FootprintTool::Pad(PadTemplate::Circle) => "Pad · round",
+        FootprintTool::Pad(PadTemplate::Oblong) => "Pad · oblong",
+        FootprintTool::CustomPad => "Pad · custom",
+        FootprintTool::Array(ArrayTool::Linear) => "Pad row",
+        FootprintTool::Array(ArrayTool::DualRow) => "Dual row",
+        FootprintTool::Array(ArrayTool::Quad) => "Quad array",
+        FootprintTool::Array(ArrayTool::Grid) => "Grid array",
+        t => t.label(),
+    }
+}
+
+/// The tool card's one hint line and its hover text.
+fn tool_hint(tool: FootprintTool) -> (&'static str, &'static str) {
+    match tool {
+        FootprintTool::Pad(_) | FootprintTool::CustomPad => (
+            "Click to place; Space turns the next pad",
+            "Sizes become the pad_l, pad_w and pad_d parameters; Esc ends the tool",
+        ),
+        FootprintTool::Array(ArrayTool::DualRow) => (
+            "Pad 1, then the row direction",
+            "The second row faces the first, to the left of the row direction (counter-clockwise numbering)",
+        ),
+        FootprintTool::Array(ArrayTool::Grid) => (
+            "Click pad A1; Select and Delete skips one",
+            "Delete an instance with Select to skip it",
+        ),
+        FootprintTool::Drill | FootprintTool::Slot => (
+            "On a pad: a plated hole; elsewhere a bare hole",
+            "On a pad the hole is plated and bound to the drill parameter; elsewhere it is a non-plated (NPTH) hole",
+        ),
+        FootprintTool::Constrain(_) => (
+            "Pick the entities to constrain",
+            "Pick points or curves; the constraint applies once the picks are complete",
+        ),
+        t => (t.tip(), ""),
     }
 }
 

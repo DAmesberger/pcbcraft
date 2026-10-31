@@ -50,11 +50,10 @@ impl PartEditor {
         let draft = set.ids.package;
         let package = set.package.clone();
         let footprint = set.footprint.clone();
-        let footprint_id = set.ids.footprint;
         let revision = engine.revision();
         let mut operation = None;
         let tab = &mut self.model;
-        kit::section(ui, "model-placement", "Placement", true, None, |ui| {
+        kit::section(ui, "model-placement", "Model offset", true, None, |ui| {
             let mut values = tab.shown(&package);
             let mut changed = false;
             for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
@@ -66,9 +65,10 @@ impl PartEditor {
             if changed && tab.drag.is_none() {
                 tab.fields = Some(values);
             }
-            kit::note(
+            kit::hint(
                 ui,
-                "Model frame in the package datum: shift in mm, then turns about X, Y and Z.",
+                "Shift in mm, then turns about X, Y and Z",
+                "The model frame in the package datum: a shift in mm, then turns about X, Y and Z",
             );
         });
         let focused = ui.ctx().memory(|m| m.focused().is_some());
@@ -104,8 +104,9 @@ impl PartEditor {
                     PointToPoint::Source
                 };
             }
-            kit::note(
+            kit::hint(
                 ui,
+                "Drag the triad to move or turn the model",
                 &format!(
                     "Drag the triad to move or turn the model; Esc cancels a drag. Over the view, arrow keys nudge {} mm (Shift ×10), Page Up/Down lift.",
                     model_place::NUDGE_MM
@@ -172,27 +173,13 @@ impl PartEditor {
                     });
                 }
                 Err(error) => {
-                    kit::note(ui, &fit_message(&error.to_string()));
+                    let text = fit_message(&error.to_string());
+                    kit::hint(ui, &text, &text);
                 }
             }
         });
-        let findings = package_fit::placement_findings(&package, &footprint, footprint_id);
-        let count = (!findings.is_empty()).then_some(findings.len());
-        kit::section(
-            ui,
-            "model-findings",
-            "Placement checks",
-            true,
-            count,
-            |ui| {
-                if findings.is_empty() {
-                    kit::status(ui, "Leads on their lands; body above the board.", Tone::Dim);
-                }
-                for finding in &findings {
-                    kit::status(ui, &finding.message, Tone::Warning);
-                }
-            },
-        );
+        // Placement checks (leads off their lands, body below the board)
+        // are footprint findings: they show in Issues, not here.
         operation
     }
 }
