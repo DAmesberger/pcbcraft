@@ -130,7 +130,10 @@ fn the_dimension_tool_waits_for_a_complete_pick_set() {
 fn a_linear_dimension_takes_its_direction_from_where_it_is_placed() {
     let v = fixture();
     let ad = [p("a"), p("d")];
-    assert_eq!(linear_kind(&v, &ad, [1.0, 3.0]), DimKind::HorizontalDistance);
+    assert_eq!(
+        linear_kind(&v, &ad, [1.0, 3.0]),
+        DimKind::HorizontalDistance
+    );
     assert_eq!(linear_kind(&v, &ad, [-1.0, 0.5]), DimKind::VerticalDistance);
     assert_eq!(linear_kind(&v, &ad, [3.0, 2.0]), DimKind::Distance);
     // A flat span is always its own length.
@@ -141,7 +144,10 @@ fn a_linear_dimension_takes_its_direction_from_where_it_is_placed() {
 fn new_dimensions_start_from_the_measured_geometry() {
     let v = fixture();
     let near = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-12);
-    assert!(near(measure(&v, DimKind::Distance, &[p("a"), p("d")]), 5f64.sqrt()));
+    assert!(near(
+        measure(&v, DimKind::Distance, &[p("a"), p("d")]),
+        5f64.sqrt()
+    ));
     assert!(near(
         measure(&v, DimKind::HorizontalDistance, &[p("a"), p("d")]),
         2.0
@@ -152,7 +158,10 @@ fn new_dimensions_start_from_the_measured_geometry() {
     ));
     assert!(near(measure(&v, DimKind::Distance, &[c("ab")]), 2.0));
     // d is 1 above the line ab.
-    assert!(near(measure(&v, DimKind::Distance, &[p("d"), c("ab")]), 1.0));
+    assert!(near(
+        measure(&v, DimKind::Distance, &[p("d"), c("ab")]),
+        1.0
+    ));
     assert!(near(measure(&v, DimKind::Diameter, &[c("circle")]), 1.0));
     assert!(near(measure(&v, DimKind::Radius, &[c("arc")]), 1.0));
     assert!(near(
@@ -165,8 +174,14 @@ fn new_dimensions_start_from_the_measured_geometry() {
 fn constrain_tools_take_the_entities_the_evaluator_accepts() {
     use GeomConstraint as G;
     let v = fixture();
-    assert_eq!(constrain_picks(&v, G::Horizontal, &[c("ad")]), ConstrainPicks::Ready);
-    assert_eq!(constrain_picks(&v, G::Horizontal, &[p("a")]), ConstrainPicks::More);
+    assert_eq!(
+        constrain_picks(&v, G::Horizontal, &[c("ad")]),
+        ConstrainPicks::Ready
+    );
+    assert_eq!(
+        constrain_picks(&v, G::Horizontal, &[p("a")]),
+        ConstrainPicks::More
+    );
     assert_eq!(
         constrain_picks(&v, G::Vertical, &[p("a"), p("d")]),
         ConstrainPicks::Ready
@@ -187,7 +202,10 @@ fn constrain_tools_take_the_entities_the_evaluator_accepts() {
         constrain_picks(&v, G::Symmetric, &[p("a"), p("b"), c("ad")]),
         ConstrainPicks::Ready
     );
-    assert_eq!(constrain_picks(&v, G::Fixed, &[p("d")]), ConstrainPicks::Ready);
+    assert_eq!(
+        constrain_picks(&v, G::Fixed, &[p("d")]),
+        ConstrainPicks::Ready
+    );
     assert_eq!(
         constrain_picks(&v, G::Concentric, &[c("circle"), c("arc")]),
         ConstrainPicks::Ready
@@ -214,7 +232,10 @@ fn labels_show_the_parameter_the_value_and_its_kind() {
     assert_eq!(label(&k("DiameterDimension", 1.0, None, false)), "Ø1");
     assert_eq!(label(&k("AngularDimension", 30.0, None, false)), "30°");
     assert_eq!(label(&k("LinearDimension", 2.0, None, true)), "(2)");
-    assert_eq!(field_text(&k("LinearDimension", 1.27, Some("pitch"), false)), "pitch");
+    assert_eq!(
+        field_text(&k("LinearDimension", 1.27, Some("pitch"), false)),
+        "pitch"
+    );
     assert_eq!(field_text(&k("LinearDimension", 2.5, None, false)), "2.5");
 }
 
@@ -222,12 +243,14 @@ fn labels_show_the_parameter_the_value_and_its_kind() {
 fn an_expression_defines_the_bound_parameter_or_the_next_free_name() {
     let mut source = FootprintSource::default();
     for name in ["d1", "d3"] {
-        source.parameters.push(pcbcraft_core::library::footprint_source::FootprintParam {
-            name: ParamName(name.into()),
-            expr: Expr("1 mm".into()),
-            unit: ParamUnit::Mm,
-            comment: String::new(),
-        });
+        source
+            .parameters
+            .push(pcbcraft_core::library::footprint_source::FootprintParam {
+                name: ParamName(name.into()),
+                expr: Expr("1 mm".into()),
+                unit: ParamUnit::Mm,
+                comment: String::new(),
+            });
     }
     assert_eq!(fallback_name(&source, None).0, "d2");
     assert_eq!(fallback_name(&source, Some("pitch")).0, "pitch");
@@ -344,7 +367,11 @@ fn click(editor: &mut PartEditor, engine: &Engine, ctx: &egui::Context, at: Pos2
 
 /// Send what the editor queued through the engine with the evaluator;
 /// whether something was sent, and that it was sent once.
-fn send(editor: &mut PartEditor, engine: &mut Engine, ctx: &egui::Context) -> pcbcraft_core::Result<bool> {
+fn send(
+    editor: &mut PartEditor,
+    engine: &mut Engine,
+    ctx: &egui::Context,
+) -> pcbcraft_core::Result<bool> {
     let Some(operation) = editor.commit(ctx, engine) else {
         return Ok(false);
     };
@@ -367,9 +394,7 @@ type Sketched = (Engine, PartEditor, SketchCurveId, [SketchPointId; 2]);
 /// The demo component with its pads cleared and a sketch of one free line
 /// from (-1, 0) to (1, 0.5), drawn through `library.edit_footprint`; the
 /// editor on its Footprint tab, fitted to a ±3 mm view.
-fn sketched(
-    ctx: &egui::Context,
-) -> Result<Sketched, Box<dyn std::error::Error>> {
+fn sketched(ctx: &egui::Context) -> Result<Sketched, Box<dyn std::error::Error>> {
     fonts::setup_bundled_fonts(ctx);
     let mut engine = Engine::demo()?;
     let mut editor = PartEditor::default();
@@ -410,7 +435,10 @@ fn screen(editor: &PartEditor, at: Point) -> Result<Pos2, &'static str> {
     footprint_canvas::screen(editor, CANVAS, at).ok_or("not fitted")
 }
 
-fn ends(engine: &Engine, editor: &PartEditor) -> Result<(Point, Point), Box<dyn std::error::Error>> {
+fn ends(
+    engine: &Engine,
+    editor: &PartEditor,
+) -> Result<(Point, Point), Box<dyn std::error::Error>> {
     let source = engine_source(engine, editor).ok_or("no source")?;
     let view = pcbcraft_solidcraft::footprint::view::sketch_view(&source)?;
     match view.curves.first().map(|c| &c.geometry) {
@@ -445,7 +473,10 @@ fn a_dimension_typed_as_a_definition_binds_a_new_parameter() -> TestResult {
     }
     // The field takes the keyboard, then Enter commits it.
     canvas_frame(&mut editor, &engine, &ctx, vec![]);
-    assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing before Enter");
+    assert!(
+        !send(&mut editor, &mut engine, &ctx)?,
+        "nothing before Enter"
+    );
     canvas_frame(&mut editor, &engine, &ctx, vec![key(egui::Key::Enter)]);
     assert!(editor.footprint_dims.field.is_none(), "the field closed");
     assert!(send(&mut editor, &mut engine, &ctx)?);
@@ -506,7 +537,11 @@ fn a_refused_value_keeps_the_field_and_the_document_unchanged() -> TestResult {
     let horizontal = editor
         .footprint_dims
         .view()
-        .and_then(|v| v.constraints.iter().find(|k| k.kind == "LinearDimension" && k.points.len() == 2))
+        .and_then(|v| {
+            v.constraints
+                .iter()
+                .find(|k| k.kind == "LinearDimension" && k.points.len() == 2)
+        })
         .map(|k| k.id.clone())
         .ok_or("the horizontal dimension")?;
     let label = editor
@@ -536,8 +571,15 @@ fn a_refused_value_keeps_the_field_and_the_document_unchanged() -> TestResult {
     }
     canvas_frame(&mut editor, &engine, &ctx, vec![]);
     canvas_frame(&mut editor, &engine, &ctx, vec![key(egui::Key::Enter)]);
-    let error = editor.footprint_dims.field.as_ref().and_then(|f| f.error().map(str::to_owned));
-    assert!(error.is_some_and(|e| e.contains("footprint.")), "the field shows why");
+    let error = editor
+        .footprint_dims
+        .field
+        .as_ref()
+        .and_then(|f| f.error().map(str::to_owned));
+    assert!(
+        error.is_some_and(|e| e.contains("footprint.")),
+        "the field shows why"
+    );
     assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing sent");
     assert_eq!(engine_source(&engine, &editor), before);
     // Esc closes the field; nothing changes.
@@ -582,7 +624,10 @@ fn dragging_a_free_point_previews_and_commits_once() -> TestResult {
     canvas_frame(&mut editor, &engine, &ctx, vec![button(to, false)]);
     assert!(send(&mut editor, &mut engine, &ctx)?);
     let (_, end) = ends(&engine, &editor)?;
-    assert!((end[0] - target[0]).hypot(end[1] - target[1]) < 1e-6, "{end:?}");
+    assert!(
+        (end[0] - target[0]).hypot(end[1] - target[1]) < 1e-6,
+        "{end:?}"
+    );
     engine.undo()?;
     assert_eq!(engine_source(&engine, &editor), before, "one undo step");
     Ok(())
@@ -612,7 +657,10 @@ fn a_constrain_tool_commits_once_when_its_picks_are_complete() -> TestResult {
     // The canvas shows the glyph and the remaining freedom.
     let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(shown.iter().any(|t| t == "-"), "{shown:?}");
-    assert!(shown.iter().any(|t| t == "3 degrees of freedom"), "{shown:?}");
+    assert!(
+        shown.iter().any(|t| t == "3 degrees of freedom"),
+        "{shown:?}"
+    );
     Ok(())
 }
 
@@ -655,7 +703,10 @@ fn the_parameters_panel_shows_values_and_readers_and_edits_once() -> TestResult 
         shown.iter().any(|t| t == "= 1.25 mm · used by 1 dimension"),
         "{shown:?}"
     );
-    assert!(shown.iter().any(|t| t == "= 2.5 mm · used by 1 dimension"), "{shown:?}");
+    assert!(
+        shown.iter().any(|t| t == "= 2.5 mm · used by 1 dimension"),
+        "{shown:?}"
+    );
     let (a, b) = ends(&engine, &editor)?;
     assert!(((b[0] - a[0]).hypot(b[1] - a[1]) - 2.5).abs() < 1e-6);
     // A self-reference is refused; nothing is sent.

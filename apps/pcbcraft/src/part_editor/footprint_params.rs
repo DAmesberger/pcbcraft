@@ -4,8 +4,7 @@
 //! `library.edit_footprint` each (`SetParameter`, `RenameParameter`,
 //! `RemoveParameter`).
 //!
-//! Contract (docs/f45-contract.md): [`ParamRow`] and [`rows`] are final.
-//! Values and "used by" come from the evaluator
+//! See docs/component-model.md (F4/F5 as built). Values and "used by" come from the evaluator
 //! (`pcbcraft_solidcraft::footprint::view`); the panel itself is
 //! `footprint_params_ui`.
 use std::collections::BTreeMap;

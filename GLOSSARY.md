@@ -89,6 +89,12 @@ _Avoid_: Pin-1 dot (the marker, not the rule)
 **Courtyard**:
 The keep-out area a placed part and its assembly tools need, drawn as closed shapes on the courtyard layer. It is authored or explicitly generated, never inferred.
 
+**Derived courtyard**:
+A courtyard graphic a footprint source computes from its pad and body extents grown by a named excess (`CourtyardFromExtents`). It exists only because a template or the author added that role explicitly; nothing adds one automatically. An assembly outline from the package envelope is the same kind of explicit role.
+
+**Courtyard overlap**:
+The board check that two placements on the same side have courtyards sharing interior area. Touching edges is not overlap; a part without a courtyard is not checked.
+
 **Mask web**:
 The strip of solder mask between two neighbouring pad openings. A web below the estimated 0.1 mm default is an advisory lint.
 
@@ -97,6 +103,16 @@ How a footprint's solved pads and drawings were derived: an opaque sketch, param
 
 **Footprint evaluator**:
 The host component that interprets a footprint source: it applies sketch edits and solves the source into typed pads, drawings and the datum. The core never interprets a sketch; the desktop, CLI and MCP pass Solidcraft's sketch evaluator.
+
+**Footprint template**:
+A parametric footprint family (2-terminal chip, gull-wing SOIC/SOP, QFN/DFN, pin header/DIP) that builds into an empty footprint draft as ordinary sketch edits, with dimensions bound to named parameters, in one undo step. Its values are estimated defaults, not a standard's table.
+_Avoid_: Footprint wizard, generator (the Rhai generator is a different seam)
+
+**Driving dimension**:
+A sketch dimension whose value the solver must meet, set as a number or bound to a footprint parameter. A driven (reference) dimension only reports a measurement and is shown in parentheses.
+
+**Active layer**:
+The layer the Footprint tab's Line, Arc, Circle and Rectangle draw on: construction (reference geometry, never output), silkscreen, assembly or courtyard.
 
 **Pad frame**:
 A pad's own coordinates: origin at the pad position, axes turned by the pad rotation. Shapes, holes, vias and paste windows are stored in it.

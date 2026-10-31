@@ -42,7 +42,11 @@ impl Panel {
     }
 
     fn fill(&mut self, rows: &[ParamRow]) {
-        if !self.stale && rows.iter().all(|r| r.read_only || self.exprs.contains_key(&r.name)) {
+        if !self.stale
+            && rows
+                .iter()
+                .all(|r| r.read_only || self.exprs.contains_key(&r.name))
+        {
             return;
         }
         self.stale = false;
@@ -120,7 +124,10 @@ impl PartEditor {
                     }
                 }
                 if rows.iter().any(|r| r.read_only) {
-                    kit::note(ui, "Package values (pkg_…) come from the package and are read-only here.");
+                    kit::note(
+                        ui,
+                        "Package values (pkg_…) come from the package and are read-only here.",
+                    );
                     kit::rule(ui);
                 }
                 let panel = &mut self.footprint_dims.panel;
@@ -140,7 +147,13 @@ impl PartEditor {
                                 let r = ui
                                     .scope(|ui| {
                                         ui.set_max_width(name_w);
-                                        kit::text_field(ui, &format!("name-{}", row.name.0), name, "name", false)
+                                        kit::text_field(
+                                            ui,
+                                            &format!("name-{}", row.name.0),
+                                            name,
+                                            "name",
+                                            false,
+                                        )
                                     })
                                     .inner;
                                 if r.lost_focus() && name.trim() != row.name.0 {
@@ -162,7 +175,8 @@ impl PartEditor {
                                     })
                                     .inner;
                                 if r.lost_focus() && expr.trim() != row.expr.0 {
-                                    change = Some(Change::Set(row.name.clone(), expr.clone(), row.unit));
+                                    change =
+                                        Some(Change::Set(row.name.clone(), expr.clone(), row.unit));
                                 }
                             }
                             if ui_kit::button(ui, "×", Button::Small)
@@ -221,7 +235,8 @@ impl PartEditor {
                     kit::status(ui, why, kit::Tone::Error);
                 }
                 kit::actions(ui, |ui| {
-                    let ready = !panel.new_name.trim().is_empty() && !panel.new_expr.trim().is_empty();
+                    let ready =
+                        !panel.new_name.trim().is_empty() && !panel.new_expr.trim().is_empty();
                     if kit::primary(ui, "Add parameter", ready).clicked() {
                         change = Some(Change::Add);
                     }
@@ -274,8 +289,7 @@ impl PartEditor {
                 .as_ref()
                 .is_some_and(|l| l.rows.iter().any(|r| r.name == *name))
         {
-            self.footprint_dims.panel.error =
-                Some((None, format!("`{}` already exists", name.0)));
+            self.footprint_dims.panel.error = Some((None, format!("`{}` already exists", name.0)));
             return;
         }
         match self.try_footprint_edits(&edits) {

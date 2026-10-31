@@ -19,11 +19,11 @@ use super::footprint_dims::{
 use super::footprint_tools::FootprintTool;
 use crate::symbol_view::View;
 use egui::{Align2, Pos2, Rect, Response, Stroke, Ui, vec2};
+use pcbcraft_core::Point;
 use pcbcraft_core::library::footprint_edit;
 use pcbcraft_core::library::footprint_source::{
     FootprintEdit, SketchConstraintId, SketchEdit, SketchRef, SolveStatus, package_values,
 };
-use pcbcraft_core::Point;
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::ViewGeometry;
 use solidcraft_ui_egui::{fonts, icons, theme::Tokens};
@@ -107,9 +107,7 @@ fn polyline(geometry: &ViewGeometry) -> Vec<Point> {
     };
     match *geometry {
         ViewGeometry::Line { a, b } => vec![a, b],
-        ViewGeometry::Circle { center, radius } => {
-            arc(center, radius, 0.0, std::f64::consts::TAU)
-        }
+        ViewGeometry::Circle { center, radius } => arc(center, radius, 0.0, std::f64::consts::TAU),
         ViewGeometry::Arc { center, start, end } => {
             let r = (start[0] - center[0]).hypot(start[1] - center[1]);
             let a0 = (start[1] - center[1]).atan2(start[0] - center[0]);
@@ -235,9 +233,7 @@ impl PartEditor {
         let busy = self.footprint_dims.field.is_some()
             || self.footprint_dims.drag.is_some()
             || !self.footprint_dims.picks.is_empty();
-        if busy
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
+        if busy && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             self.footprint_dims.cancel();
             return true;
         }
@@ -353,7 +349,10 @@ impl PartEditor {
             }
             ConstrainPicks::Ready => {
                 let refs = std::mem::take(&mut state.picks);
-                let edits = vec![FootprintEdit::Sketch(SketchEdit::AddConstraint { kind, refs })];
+                let edits = vec![FootprintEdit::Sketch(SketchEdit::AddConstraint {
+                    kind,
+                    refs,
+                })];
                 match self.try_footprint_edits(&edits) {
                     Ok(()) => self.queue_footprint_edits(edits),
                     Err(e) => self.notice = e,
@@ -371,7 +370,9 @@ impl PartEditor {
             response.interact_pointer_pos()
         };
         let hit = |list: &[(SketchConstraintId, Rect)], p: Pos2| {
-            list.iter().find(|(_, r)| r.contains(p)).map(|(id, _)| id.clone())
+            list.iter()
+                .find(|(_, r)| r.contains(p))
+                .map(|(id, _)| id.clone())
         };
         if response.double_clicked()
             && let Some(p) = pressed_at
@@ -383,8 +384,8 @@ impl PartEditor {
         if response.clicked()
             && let Some(p) = pressed_at
         {
-            let picked = hit(&self.footprint_dims.labels, p)
-                .or_else(|| hit(&self.footprint_dims.glyphs, p));
+            let picked =
+                hit(&self.footprint_dims.labels, p).or_else(|| hit(&self.footprint_dims.glyphs, p));
             let took = picked.is_some();
             self.footprint_dims.selected = picked;
             if took {
@@ -396,8 +397,12 @@ impl PartEditor {
             && let Some(p) = pressed_at
             && let Some(loaded) = &self.footprint_dims.loaded
             && let Ok(live) = &loaded.live
-            && let Some(point) =
-                dims::pick_free_point(&loaded.view, loaded.report.as_ref(), view.world(p), tolerance)
+            && let Some(point) = dims::pick_free_point(
+                &loaded.view,
+                loaded.report.as_ref(),
+                view.world(p),
+                tolerance,
+            )
         {
             let at = loaded.view.point(&point).map_or(view.world(p), |q| q.at);
             self.footprint_dims.drag = Some(PointDrag {
@@ -628,7 +633,8 @@ impl PartEditor {
                     Stroke::NONE,
                 ));
             }
-            let editing = matches!(&state.field, Some(ValueField::Existing(e)) if e.constraint == layout.id);
+            let editing =
+                matches!(&state.field, Some(ValueField::Existing(e)) if e.constraint == layout.id);
             let text = labels
                 .iter()
                 .find(|(k, _)| *k == layout.id)
@@ -817,7 +823,13 @@ impl PartEditor {
         };
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
-                crate::kit::text_field(ui, "fp-dimension-value", &mut text, "value, name or name = expr", invalid)
+                crate::kit::text_field(
+                    ui,
+                    "fp-dimension-value",
+                    &mut text,
+                    "value, name or name = expr",
+                    invalid,
+                )
             })
             .inner;
         if let Some(f) = &mut self.footprint_dims.field {
@@ -834,12 +846,7 @@ impl PartEditor {
         }
         if let Some(error) = error {
             let painter = ui.painter();
-            let galley = painter.layout(
-                error,
-                fonts::medium(t.font_small),
-                t.error,
-                FIELD_W * 2.0,
-            );
+            let galley = painter.layout(error, fonts::medium(t.font_small), t.error, FIELD_W * 2.0);
             let at = Pos2::new(r.left(), r.bottom() + 2.0);
             painter.rect_filled(
                 Rect::from_min_size(at, galley.size() + vec2(6.0, 2.0)),

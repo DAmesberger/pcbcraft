@@ -585,6 +585,10 @@ fn the_ribbon_offers_sketch_pads_and_layer_groups() -> TestResult {
         "fp-drill",
         "fp-slot",
         "fp-on-silk",
+        // A template builds into an empty footprint, so it is offered here.
+        "footprint-template",
+        "fp-dimension",
+        "fp-horizontal",
     ] {
         assert!(ids.contains(&id), "{id} in {ids:?}");
     }

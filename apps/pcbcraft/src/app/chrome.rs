@@ -188,6 +188,11 @@ impl App {
             },
             Some(RibbonEvent::Tool(tool)) => {
                 let operation = match self.workspace {
+                    // The file service owns the native picker.
+                    Workspace::Part if tool == crate::part_editor::IMPORT_SVG => {
+                        self.part.import_svg(self.files.pick_svg());
+                        None
+                    }
                     Workspace::Part => self.part.on_tool(tool, &self.engine),
                     Workspace::Schematic => self.schematic.on_tool(tool, &self.engine),
                     Workspace::Pcb => self.pcb.on_tool(tool, &self.engine),

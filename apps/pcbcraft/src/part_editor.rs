@@ -25,6 +25,8 @@ mod footprint_tools_canvas;
 mod footprint_tools_tests;
 mod part_props;
 mod snap;
+mod svg_import;
+pub use svg_import::IMPORT_SVG;
 mod symbol_canvas;
 mod symbol_props;
 mod working_set;
@@ -377,6 +379,8 @@ pub struct PartEditor {
     body: Option<(UnitId, GraphicId)>,
     /// The component's manufacturer parts.
     parts: part_props::PartProps,
+    /// A running Import SVG….
+    svg: svg_import::SvgImport,
 }
 
 impl Default for PartEditor {
@@ -420,6 +424,7 @@ impl Default for PartEditor {
             drawn_cache: None,
             body: None,
             parts: Default::default(),
+            svg: Default::default(),
         }
     }
 }
@@ -619,12 +624,20 @@ impl PartEditor {
             // the toggles fold into the overflow first.
             let [pads, show] = self.footprint_groups(has_draft, selected_mapped);
             if self.footprint_sketching() {
-                groups.extend(self.footprint_sketch_groups());
+                let mut sketch = self.footprint_sketch_groups();
+                if let Some(group) = sketch.iter_mut().find(|g| g.label == "Pads") {
+                    group.tools.insert(0, self.template_tool(has_draft));
+                }
+                groups.extend(sketch);
                 groups.push(self.constrain_group());
             } else {
                 groups.push(pads);
             }
-            groups.extend([library, show]);
+            let artwork = Group {
+                label: "Artwork",
+                tools: vec![self.import_svg_tool()],
+            };
+            groups.extend([artwork, library, show]);
         } else {
             groups.push(library);
         }
@@ -677,13 +690,7 @@ impl PartEditor {
             })
             .collect();
         let mut pads = pads;
-        pads.insert(
-            0,
-            Tool::new(footprint_template_picker::TOOL, "component", "From template")
-                .enabled(has_draft)
-                .selected(self.template_picker.is_open())
-                .tip("Build the footprint from a family template (chip, SOIC, QFN/DFN, header) with named parameters"),
-        );
+        pads.insert(0, self.template_tool(has_draft));
         [
             Group {
                 label: "Pads",
@@ -694,6 +701,15 @@ impl PartEditor {
                 tools: layers,
             },
         ]
+    }
+
+    /// "From template", first in whichever Pads group the Footprint tab
+    /// shows (a template builds into an empty, sketched footprint).
+    fn template_tool(&self, has_draft: bool) -> crate::shell::Tool {
+        crate::shell::Tool::new(footprint_template_picker::TOOL, "component", "From template")
+            .enabled(has_draft)
+            .selected(self.template_picker.is_open())
+            .tip("Build the footprint from a family template (chip, SOIC, QFN/DFN, header) with named parameters")
     }
 
     /// The Symbol tab's drawing ribbon: Select; Draw; Pins; Arrange; Grid
@@ -742,6 +758,7 @@ impl PartEditor {
                         family(2),
                         tool(Draw::SINGLE),
                         family(3),
+                        self.import_svg_tool(),
                     ]
                 },
             },
@@ -1676,6 +1693,7 @@ impl PartEditor {
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        self.svg_frame(ui.ctx(), engine);
         if self.update.is_open() {
             ui.disable();
         }

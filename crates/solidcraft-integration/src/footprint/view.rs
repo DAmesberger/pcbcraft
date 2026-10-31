@@ -5,7 +5,7 @@
 //! sketch types. Nothing here mutates; every change is one
 //! `library.edit_footprint` commit.
 //!
-//! Contract (docs/f45-contract.md): [`sketch_view`] is final. The solver
+//! The solver
 //! report ([`solve_report`]), the live drag ([`drag_preview`]), "used by"
 //! ([`dimensions_using`]), parameter values ([`parameter_values`]) and the
 //! dimension layout share one loaded sketch, [`LiveSketch`], which the
@@ -21,8 +21,7 @@ use pcbcraft_core::library::footprint_source::{
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{
     Analysis, Budget, CurveKind, Hold, Sketch, chain_centres, default_text, dim_frame,
-    dim_layout_reaching, dim_reach, move_point_towards, solve_after_edit_with_analysis,
-    solve_with,
+    dim_layout_reaching, dim_reach, move_point_towards, solve_after_edit_with_analysis, solve_with,
 };
 
 use super::check::{self, MAX_COORD_MM};
@@ -188,13 +187,10 @@ fn view_of(sk: &Sketch) -> SketchView {
                 id: SketchConstraintId(k.id.clone()),
                 kind: k.kind.name(),
                 // Solidcraft keeps angles in radians.
-                value: k.kind.value().map(|v| {
-                    if k.kind.is_angle() {
-                        v.to_degrees()
-                    } else {
-                        v
-                    }
-                }),
+                value: k
+                    .kind
+                    .value()
+                    .map(|v| if k.kind.is_angle() { v.to_degrees() } else { v }),
                 param: k.param.clone(),
                 driven: k.driven,
                 points: ps.into_iter().filter_map(pid).collect(),
@@ -487,8 +483,14 @@ impl LiveSketch {
         // As close as the constraints allow.
         let mut follow = self.sketch.clone();
         let max_step = (target - from).len().max(1e-3);
-        if move_point_towards(&mut follow, p, target, max_step, Some(&mut budget), |_, _| true)
-            && in_range(&follow)
+        if move_point_towards(
+            &mut follow,
+            p,
+            target,
+            max_step,
+            Some(&mut budget),
+            |_, _| true,
+        ) && in_range(&follow)
         {
             let moved = follow.point(p).is_some_and(|v| (v - from).len() > 1e-9);
             return Ok(done(follow, moved, &budget));
@@ -693,7 +695,10 @@ mod tests {
             GeomConstraint::Coincident,
             vec![origin(), SketchRef::Point(a)],
         )?;
-        d.constrain(GeomConstraint::Horizontal, vec![SketchRef::Curve(line.clone())])?;
+        d.constrain(
+            GeomConstraint::Horizontal,
+            vec![SketchRef::Curve(line.clone())],
+        )?;
         let sliding = solve_report(&d.source, &[])?;
         assert_eq!(sliding.dof, 1);
         assert_eq!(sliding.free_points, vec![b]);
@@ -716,8 +721,14 @@ mod tests {
     fn conflicting_constraints_are_reported_over_constrained() -> Result<()> {
         let mut d = Draw::new()?;
         let (line, _) = d.line([0.0, 0.0], [2.0, 0.0])?;
-        d.constrain(GeomConstraint::Horizontal, vec![SketchRef::Curve(line.clone())])?;
-        d.constrain(GeomConstraint::Vertical, vec![SketchRef::Curve(line.clone())])?;
+        d.constrain(
+            GeomConstraint::Horizontal,
+            vec![SketchRef::Curve(line.clone())],
+        )?;
+        d.constrain(
+            GeomConstraint::Vertical,
+            vec![SketchRef::Curve(line.clone())],
+        )?;
         let length = d.dimension(
             DimKind::Distance,
             vec![SketchRef::Curve(line)],
@@ -745,7 +756,10 @@ mod tests {
     fn a_drag_frame_follows_the_pointer_within_the_constraints() -> Result<()> {
         let mut d = Draw::new()?;
         let (line, [a, b]) = d.line([0.0, 0.0], [2.0, 0.0])?;
-        d.constrain(GeomConstraint::Horizontal, vec![SketchRef::Curve(line.clone())])?;
+        d.constrain(
+            GeomConstraint::Horizontal,
+            vec![SketchRef::Curve(line.clone())],
+        )?;
         // Free horizontal line: b goes exactly to the pointer and a follows
         // it to the same height without moving along x.
         let view = drag_preview(&d.source, &[], &b, [3.0, 1.0])?;
@@ -818,7 +832,10 @@ mod tests {
             dimensions_using(&d.source, &name("pitch"))?,
             vec![by_pitch.clone(), by_span.clone()]
         );
-        assert_eq!(dimensions_using(&d.source, &name("span"))?, vec![by_span.clone()]);
+        assert_eq!(
+            dimensions_using(&d.source, &name("span"))?,
+            vec![by_span.clone()]
+        );
         assert_eq!(dimensions_using(&d.source, &name("pkg_L"))?, vec![by_span]);
         assert!(dimensions_using(&d.source, &name("turn"))?.is_empty());
         let package = [
@@ -894,9 +911,16 @@ mod tests {
         let mut tips: Vec<f64> = layout.arrows.iter().map(|(tip, _)| tip[0]).collect();
         tips.sort_by(f64::total_cmp);
         assert_eq!(tips.len(), 2);
-        assert!((tips[0] - 0.0).abs() < 1e-9 && (tips[1] - 2.0).abs() < 1e-9, "{tips:?}");
+        assert!(
+            (tips[0] - 0.0).abs() < 1e-9 && (tips[1] - 2.0).abs() < 1e-9,
+            "{tips:?}"
+        );
         assert!((layout.text[0] - 1.0).abs() < 1e-9);
-        assert!(layout.text[1].abs() > 1e-3, "text off the line: {:?}", layout.text);
+        assert!(
+            layout.text[1].abs() > 1e-3,
+            "text off the line: {:?}",
+            layout.text
+        );
         assert!(!layout.lines.is_empty());
         assert!(layouts.iter().any(|l| l.id == angle));
         Ok(())
@@ -985,7 +1009,12 @@ mod tests {
             live = next.sketch;
         }
         times.sort_by(f64::total_cmp);
-        let pct = |q: f64| times.get(((times.len() - 1) as f64 * q) as usize).copied().unwrap_or(f64::NAN);
+        let pct = |q: f64| {
+            times
+                .get(((times.len() - 1) as f64 * q) as usize)
+                .copied()
+                .unwrap_or(f64::NAN)
+        };
         println!(
             "drag frame, 100 dimensioned rectangles ({} points): p50 {:.3} ms, p95 {:.3} ms, max {:.3} ms (target 16 ms)",
             live.view().points.len(),
@@ -997,4 +1026,3 @@ mod tests {
         Ok(())
     }
 }
-

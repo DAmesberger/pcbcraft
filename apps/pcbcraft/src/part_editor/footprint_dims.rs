@@ -5,8 +5,7 @@
 //! `pcbcraft_solidcraft::footprint::view`; every change is one
 //! `library.edit_footprint` commit.
 //!
-//! Contract (docs/f45-contract.md): [`DimInput`] and its parser are final.
-//! This module holds the pure parts (picking, what a pick sequence
+//! See docs/component-model.md (F4/F5 as built). This module holds the pure parts (picking, what a pick sequence
 //! dimensions or constrains, labels, measurements and the loaded-sketch
 //! cache); `footprint_dims_ui` draws and drives them on the canvas.
 use pcbcraft_core::Point;
@@ -415,12 +414,10 @@ pub fn dimension_picks(view: &SketchView, picks: &[SketchRef]) -> DimPicks {
             refs: vec![P(p.clone()), Curve(c.clone())],
             linear: false,
         },
-        [Curve(a), Curve(b)] if is_line(view, a) && is_line(view, b) && a != b => {
-            DimPicks::Ready {
-                refs: picks.to_vec(),
-                linear: false,
-            }
-        }
+        [Curve(a), Curve(b)] if is_line(view, a) && is_line(view, b) && a != b => DimPicks::Ready {
+            refs: picks.to_vec(),
+            linear: false,
+        },
         _ => DimPicks::Wrong("Dimension two points, a point and a line, two lines or a curve"),
     }
 }
@@ -459,7 +456,12 @@ pub fn linear_kind(view: &SketchView, refs: &[SketchRef], place: Point) -> DimKi
 }
 
 /// The kind of a ready dimension placed at `place`.
-pub fn dimension_kind(view: &SketchView, refs: &[SketchRef], linear: bool, place: Point) -> DimKind {
+pub fn dimension_kind(
+    view: &SketchView,
+    refs: &[SketchRef],
+    linear: bool,
+    place: Point,
+) -> DimKind {
     if linear {
         return linear_kind(view, refs, place);
     }
@@ -519,7 +521,11 @@ pub fn measure(view: &SketchView, kind: DimKind, refs: &[SketchRef]) -> Option<f
                 ViewGeometry::Arc { center, start, .. } => dist(center, start),
                 _ => return None,
             };
-            Some(if kind == DimKind::Diameter { 2.0 * r } else { r })
+            Some(if kind == DimKind::Diameter {
+                2.0 * r
+            } else {
+                r
+            })
         }
         (DimKind::Angle, [Curve(a), Curve(b)]) => {
             let (u, v) = (direction(view, a)?, direction(view, b)?);
@@ -665,11 +671,13 @@ pub fn new_dimension_edits(
     } else {
         ParamUnit::Mm
     };
-    let add = |value| FootprintEdit::Sketch(SketchEdit::AddDimension {
-        kind,
-        refs: refs.clone(),
-        value,
-    });
+    let add = |value| {
+        FootprintEdit::Sketch(SketchEdit::AddDimension {
+            kind,
+            refs: refs.clone(),
+            value,
+        })
+    };
     match input {
         DimInput::Value(v) => vec![add(DimValue::Fixed(v))],
         DimInput::Param(name) => vec![add(DimValue::Param(name))],

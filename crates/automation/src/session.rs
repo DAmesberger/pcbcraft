@@ -3,8 +3,15 @@
 //! File effects never enter undo history.
 use crate::{Error, Result};
 use pcbcraft_core::{
-    Engine, Operation, Project, Query, QueryResult, erc, format::EditorFile, layout,
-    library::Drafts, updates,
+    DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult, erc,
+    format::EditorFile,
+    geometry::Point,
+    layout,
+    library::{
+        Drafts,
+        graphics::{GraphicTarget, SILK_STROKE_MM, SYMBOL_STROKE_MM},
+    },
+    updates,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,6 +42,37 @@ pub struct SaveParams {
     /// Destination `.pcbcraft` file; defaults to the path last opened or saved.
     #[serde(default)]
     pub path: Option<String>,
+}
+
+/// Import an SVG file's drawing into a symbol or footprint draft.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSvgParams {
+    /// The revision the import was prepared against.
+    pub expected_revision: u64,
+    /// A symbol or footprint draft.
+    pub draft: DefinitionId,
+    /// A symbol unit, or a footprint's silkscreen or assembly layer and side.
+    pub target: GraphicTarget,
+    /// The `.svg` file (at most 1 MiB).
+    pub path: String,
+    /// Where the artwork's bounding-box centre goes, in millimetres.
+    #[serde(default)]
+    pub at: Point,
+    /// Multiplies the size the SVG declares (its width and height over the
+    /// viewBox; 96 user units per inch without units), 0.001–1000.
+    #[serde(default = "unit_scale")]
+    pub scale: f64,
+    /// Chord tolerance for flattened Béziers and ellipses, 0.001–1 mm.
+    #[serde(default = "default_tolerance")]
+    pub tolerance_mm: f64,
+}
+
+fn unit_scale() -> f64 {
+    1.0
+}
+fn default_tolerance() -> f64 {
+    pcbcraft_solidcraft::svg::DEFAULT_TOLERANCE_MM
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -82,6 +120,10 @@ pub enum Request {
     /// Refuses existing files.
     #[serde(rename = "project.export_native")]
     ExportNative(PathParams),
+    /// Read an SVG file and add its drawing to a draft through
+    /// `library.edit_graphics`: one atomic undo step.
+    #[serde(rename = "library.import_svg")]
+    ImportSvg(ImportSvgParams),
 }
 
 impl Request {
@@ -130,6 +172,10 @@ impl Request {
             info::<PathParams>(
                 "project.export_native",
                 "Export the board as a native parametric .solidcraft model to a new file.",
+            ),
+            info::<ImportSvgParams>(
+                "library.import_svg",
+                "Read a .svg file (at most 1 MiB) and add its drawing to a symbol unit or a footprint's silkscreen or assembly layer as editable graphics, centred at `at` and scaled from the SVG's declared millimetre size: circles, circular arcs and axis-aligned rectangles stay exact, tangent arcs become corner radii, Béziers and ellipses flatten within tolerance_mm, filled closed shapes become solid fills and strokes keep their width. Filled regions with holes are imported as outlines; text, images and use references are skipped and listed in import.notes. Applied as one library.edit_graphics step at expected_revision: atomic and one undo step; the outcome lists the new graphic IDs.",
             ),
         ]
     }
@@ -228,8 +274,37 @@ impl Session {
                     "exported_path": params.path
                 }));
             }
+            Request::ImportSvg(params) => return self.import_svg(params),
         }
         Ok(self.snapshot())
+    }
+
+    /// Read, convert and add an SVG drawing as one graphic edit.
+    fn import_svg(&mut self, params: ImportSvgParams) -> Result<Value> {
+        use pcbcraft_solidcraft::svg;
+        let text = pcbcraft_io::artwork::read_svg(Path::new(&params.path))?;
+        let options = svg::Options {
+            scale: params.scale,
+            tolerance_mm: params.tolerance_mm,
+            fallback_stroke_mm: match params.target {
+                GraphicTarget::Unit(_) => SYMBOL_STROKE_MM,
+                GraphicTarget::Footprint { .. } => SILK_STROKE_MM,
+            },
+        };
+        let artwork = svg::convert(&text, &options)?;
+        let edits = artwork.edits(params.target, params.at)?;
+        let outcome = self.engine.apply_with(
+            params.expected_revision,
+            Operation::Library(LibraryCommand::EditGraphics {
+                draft: params.draft,
+                edits,
+            }),
+            &pcbcraft_solidcraft::footprint::SketchEvaluator,
+        )?;
+        let mut snapshot = self.snapshot();
+        snapshot["outcome"] = serde_json::to_value(outcome)?;
+        snapshot["import"] = json!({"size": artwork.size, "notes": artwork.notes});
+        Ok(snapshot)
     }
 
     /// The document state every mutation and inspection returns. Each draft
@@ -299,5 +374,7 @@ pub fn schemas() -> Value {
 
 #[cfg(test)]
 mod parts_tests;
+#[cfg(test)]
+mod svg_tests;
 #[cfg(test)]
 mod tests;

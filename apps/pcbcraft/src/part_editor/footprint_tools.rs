@@ -13,9 +13,9 @@
 //! deterministic, so the engine allocates the same ids when the one commit
 //! is applied.
 //!
-//! Contract (docs/f45-contract.md): the tool vocabulary, ids, the active
-//! layer and [`Gesture`] are fixed; dimension and constraint gestures
-//! belong to `footprint_dims`.
+//! Dimension and constraint gestures belong to `footprint_dims`, which
+//! queues its edits in the same outbox (docs/component-model.md, F4/F5 as
+//! built).
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::distance;
 use pcbcraft_core::ids::{GraphicId, PackageTerminalId};
