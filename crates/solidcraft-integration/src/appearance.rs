@@ -7,12 +7,19 @@
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
 use crate::material::{self, BodyKind};
+use crate::pad_outline::offset_polygon;
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::library::{FootprintDefinition, PackageBody, PackageDefinition};
+use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
+use pcbcraft_core::library::{
+    FootprintDefinition, PackageBody, PackageDefinition, PadKind, PadSide,
+};
 use pcbcraft_core::{Fabrication, Layer, Placement, Point, layout};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
+
+mod region;
+pub use region::{Region, slab};
 
 /// Soldermask over bare laminate (display thickness; see `docs/materials.md`).
 pub const MASK_THICKNESS_MM: f64 = 0.020;
@@ -23,8 +30,9 @@ pub const MASK_EDGE_INSET_MM: f64 = 0.03;
 pub const MASK_CAP_MM: f64 = 0.015;
 /// ENIG nickel (3–6 µm, IPC-4552); the immersion gold is negligible.
 pub const FINISH_THICKNESS_MM: f64 = 0.005;
-/// Mask opening beyond each land (a common 50 µm fabrication default).
-pub const MASK_EXPANSION_MM: f64 = 0.05;
+/// Soldermask tiles: the slab's faces are triangulated per square of this
+/// size, so a dense board stays local.
+const MASK_TILE_MM: f64 = 4.0;
 /// How far a track's mask cap overhangs its copper on each side.
 const CAP_MARGIN_MM: f64 = 0.01;
 /// Shorter cap pieces are left out.
@@ -86,57 +94,53 @@ impl Board {
     }
 }
 
-/// A land's copper rectangle in board coordinates.
-#[derive(Clone, Copy, Debug)]
+/// What one pad shows on one outer copper layer, in board coordinates:
+/// flattened loops of either orientation.
+#[derive(Clone, Debug)]
 pub struct Land {
-    pub pick: u64,
-    pub center: Point,
-    pub half: Point,
-    pub angle: f64,
+    /// The pad's pick identity; `None` for a pad without copper.
+    pub pick: Option<u64>,
     pub layer: Layer,
+    /// The copper outline (`None` for a bare hole).
+    pub copper: Option<Vec<Point>>,
+    /// The finished bore through the copper.
+    pub bore: Option<Vec<Point>>,
+    /// Soldermask openings: the pad's opening (unless tented) and any drill.
+    pub openings: Vec<Vec<Point>>,
 }
 
 impl Land {
-    fn local(&self, v: Point) -> Point {
-        let (s, c) = self.angle.sin_cos();
-        [c * v[0] + s * v[1], -s * v[0] + c * v[1]]
+    /// The parameter interval of the line `point + t·direction` inside this
+    /// land's mask openings (one interval spanning them all).
+    fn crossing(&self, point: Point, direction: Point) -> Option<(f64, f64)> {
+        self.openings
+            .iter()
+            .filter_map(|opening| line_through(opening, point, direction))
+            .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
     }
+}
 
-    /// The parameter interval of the line `point + t·direction` (unit
-    /// direction) inside this rectangle grown by `grow`.
-    fn crossing(&self, point: Point, direction: Point, grow: f64) -> Option<(f64, f64)> {
-        let q = self.local([point[0] - self.center[0], point[1] - self.center[1]]);
-        let v = self.local(direction);
-        let (mut enter, mut leave) = (f64::NEG_INFINITY, f64::INFINITY);
-        for i in 0..2 {
-            let half = self.half[i] + grow;
-            if v[i].abs() < 1e-12 {
-                if q[i].abs() > half {
-                    return None;
-                }
-                continue;
-            }
-            let a = (-half - q[i]) / v[i];
-            let b = (half - q[i]) / v[i];
-            enter = enter.max(a.min(b));
-            leave = leave.min(a.max(b));
+/// Where the line `point + t·direction` enters and last leaves a loop.
+fn line_through(points: &[Point], point: Point, direction: Point) -> Option<(f64, f64)> {
+    let n = points.len();
+    let mut hits: Vec<f64> = Vec::new();
+    for i in 0..n {
+        let (a, b) = (points[i], points[(i + 1) % n]);
+        let e = [b[0] - a[0], b[1] - a[1]];
+        let d = direction[0] * e[1] - direction[1] * e[0];
+        if d.abs() < 1e-12 {
+            continue;
         }
-        (enter < leave).then_some((enter, leave))
+        let w = [a[0] - point[0], a[1] - point[1]];
+        let t = (w[0] * e[1] - w[1] * e[0]) / d;
+        let s = (w[0] * direction[1] - w[1] * direction[0]) / d;
+        if (0.0..=1.0).contains(&s) {
+            hits.push(t);
+        }
     }
-
-    fn corners(&self, grow: f64) -> Vec<Point> {
-        let (s, c) = self.angle.sin_cos();
-        let [hx, hy] = [self.half[0] + grow, self.half[1] + grow];
-        [[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]]
-            .into_iter()
-            .map(|[x, y]| {
-                [
-                    self.center[0] + c * x - s * y,
-                    self.center[1] + s * x + c * y,
-                ]
-            })
-            .collect()
-    }
+    let lo = hits.iter().copied().reduce(f64::min)?;
+    let hi = hits.iter().copied().reduce(f64::max)?;
+    (hi > lo).then_some((lo, hi))
 }
 
 /// A track's centre line.
@@ -201,29 +205,50 @@ pub fn board(
     // The mask stops short of the routed edge, so its walls never meet the
     // laminate's at the silhouette.
     let (i, w, d) = (MASK_EDGE_INSET_MM, board.width, board.depth);
-    let outline = [[i, i], [w - i, i], [w - i, d - i], [i, d - i]];
+    let outline = vec![[i, i], [w - i, i], [w - i, d - i], [i, d - i]];
     for (kind, layer) in [
         (BodyKind::MaskTop, Layer::Top),
         (BodyKind::MaskBottom, Layer::Bottom),
     ] {
         let (z0, z1) = board.span(layer, 0.0, MASK_THICKNESS_MM);
+        let region = Region {
+            fills: vec![outline.clone()],
+            cuts: lands
+                .iter()
+                .filter(|land| land.layer == layer)
+                .flat_map(|land| land.openings.iter().cloned())
+                .collect(),
+        };
         push(
             &mut out,
             &board.fabrication,
             kind,
             None,
-            prism(&outline, z0, z1),
+            slab(&region, z0, z1, MASK_TILE_MM),
         )?;
     }
     for land in lands {
+        let Some(copper) = &land.copper else {
+            continue;
+        };
         let (z0, z1) = board.span(land.layer, 0.0, board.copper + FINISH_THICKNESS_MM);
-        let mesh = prism(&land.corners(FINISH_THICKNESS_MM), z0, z1);
+        // The finish plates the land's top, its sides and the bore's wall.
+        let region = Region {
+            fills: offset_polygon(copper, FINISH_THICKNESS_MM)
+                .into_iter()
+                .collect(),
+            cuts: land
+                .bore
+                .iter()
+                .filter_map(|bore| offset_polygon(bore, -FINISH_THICKNESS_MM))
+                .collect(),
+        };
         push(
             &mut out,
             &board.fabrication,
             BodyKind::PadFinish,
-            Some(land.pick),
-            mesh,
+            land.pick,
+            slab(&region, z0, z1, f64::MAX),
         )?;
     }
     for path in paths {
@@ -282,7 +307,7 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
             .filter_map(|land| {
                 [-band, 0.0, band]
                     .into_iter()
-                    .filter_map(|o| land.crossing(at(0.0, o), u, MASK_EXPANSION_MM))
+                    .filter_map(|o| land.crossing(at(0.0, o), u))
                     .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
             })
             .filter(|(a, b)| *b > -band && *a < length + band)
@@ -494,21 +519,20 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         return Ok(());
     };
     for pad in &footprint.pads {
-        let center = [
-            pad.position[0] - footprint.datum.offset[0],
-            pad.position[1] - footprint.datum.offset[1],
-        ];
+        let Some((center, extent)) = pad_box(footprint, pad) else {
+            continue;
+        };
         let sign = if center[axis] >= offset[axis] {
             1.0
         } else {
             -1.0
         };
         let face = if sign > 0.0 { hi[axis] } else { lo[axis] } + sign * g;
-        let toe = center[axis] + sign * pad.shape.extent()[axis] / 2.0;
-        let heel = center[axis] - sign * pad.shape.extent()[axis] / 2.0;
+        let toe = center[axis] + sign * extent[axis] / 2.0;
+        let heel = center[axis] - sign * extent[axis] / 2.0;
         let reach = sign * (toe - face);
-        let a = (center[across] - pad.shape.extent()[across] / 2.0).max(lo[across]);
-        let b = (center[across] + pad.shape.extent()[across] / 2.0).min(hi[across]);
+        let a = (center[across] - extent[across] / 2.0).max(lo[across]);
+        let b = (center[across] + extent[across] / 2.0).min(hi[across]);
         // Solder wets the land only: the end face must stand over it.
         if reach < FILLET_MIN_TOE_MM || sign * (face - heel) < 0.0 || b <= a {
             continue;
@@ -542,12 +566,12 @@ fn lead_band(
     let offset = package.model_offset;
     let body_min = [offset[0] - length / 2.0, offset[1] - width / 2.0];
     let body_max = [offset[0] + length / 2.0, offset[1] + width / 2.0];
+    let (center, extent) = pad_box(footprint, pad)?;
     let mut min = [0.0; 2];
     let mut max = [0.0; 2];
     for axis in 0..2 {
-        let center = pad.position[axis] - footprint.datum.offset[axis];
-        let lo = (center - pad.shape.extent()[axis] / 2.0).max(body_min[axis]);
-        let hi = (center + pad.shape.extent()[axis] / 2.0).min(body_max[axis]);
+        let lo = (center[axis] - extent[axis] / 2.0).max(body_min[axis]);
+        let hi = (center[axis] + extent[axis] / 2.0).min(body_max[axis]);
         if !positive(hi - lo - 1e-6) {
             return None;
         }
@@ -566,6 +590,33 @@ fn lead_band(
             };
     }
     Some((min, max))
+}
+
+/// A component-side land's centre and axis-aligned extent in the package
+/// frame (the datum's axes). `None` for pads without component-side copper
+/// and for pads not turned a whole number of quarter turns from the datum,
+/// whose terminations and fillets are not modelled.
+fn pad_box(
+    footprint: &FootprintDefinition,
+    pad: &pcbcraft_core::library::Pad,
+) -> Option<(Point, Point)> {
+    if pad.side != PadSide::Top || pad.kind == PadKind::NonPlatedHole {
+        return None;
+    }
+    let datum = footprint.datum;
+    let turn = pad.rotation_deg - datum.rotation_deg;
+    if !is_quarter_turn(turn) {
+        return None;
+    }
+    let (c, s) = cos_sin(-datum.rotation_deg);
+    let d = [
+        pad.position[0] - datum.offset[0],
+        pad.position[1] - datum.offset[1],
+    ];
+    let center = [c * d[0] - s * d[1], s * d[0] + c * d[1]];
+    let [w, h] = pad.shape.extent();
+    let odd = cos_sin(turn).0.abs() < 0.5;
+    Some((center, if odd { [h, w] } else { [w, h] }))
 }
 
 /// A concave solder meniscus from a termination's end face (`face` along

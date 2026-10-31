@@ -7,6 +7,7 @@
 pub mod appearance;
 pub mod material;
 pub mod native;
+pub mod pad_outline;
 pub mod project;
 pub mod scene;
 pub use solidcraft_engine::{geom, render};
