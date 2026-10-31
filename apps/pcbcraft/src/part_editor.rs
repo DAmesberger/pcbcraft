@@ -14,6 +14,11 @@ mod footprint_geometry;
 mod footprint_props;
 #[cfg(test)]
 mod footprint_tests;
+mod model_place;
+mod model_props;
+#[cfg(test)]
+mod model_tests;
+mod model_view;
 mod part_props;
 mod snap;
 mod symbol_canvas;
@@ -22,6 +27,7 @@ mod working_set;
 
 use crate::kit::{self, Tone};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
+pub use model_view::reset_model_view;
 pub use part_props::{meaning_label, spec_text};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
@@ -362,6 +368,8 @@ pub struct PartEditor {
     body: Option<(UnitId, GraphicId)>,
     /// The component's manufacturer parts.
     parts: part_props::PartProps,
+    /// The 3D tab's placement gestures.
+    model: model_place::ModelTab,
 }
 
 impl Default for PartEditor {
@@ -402,14 +410,22 @@ impl Default for PartEditor {
             drawn_cache: None,
             body: None,
             parts: Default::default(),
+            model: Default::default(),
         }
     }
 }
 
 impl PartEditor {
-    /// The package envelope the 3D preview shows.
-    pub fn preview_package(&self) -> Option<&pcbcraft_core::library::PackageDefinition> {
-        self.draft.as_ref().map(|set| &set.package)
+    /// The package the 3D preview builds, in its own model frame: the
+    /// placement is a display transform ([`Self::model_view_prepare`]), so
+    /// moving or turning the model never rebuilds it.
+    pub fn preview_package(&self) -> Option<pcbcraft_core::library::PackageDefinition> {
+        self.draft
+            .as_ref()
+            .map(|set| pcbcraft_core::library::PackageDefinition {
+                placement: Default::default(),
+                ..set.package.clone()
+            })
     }
     pub fn is_model_view(&self) -> bool {
         self.view == View::Model
@@ -1219,7 +1235,10 @@ impl PartEditor {
             View::Symbol => operation = self.symbol_inspector(ui, engine),
             View::Footprint => self.footprint_inspector(ui),
             View::Mapping => self.mapping_inspector(ui),
-            View::Model => self.model_inspector(ui),
+            View::Model => {
+                self.model_inspector(ui);
+                operation = self.placement_inspector(ui, engine);
+            }
         }
         self.fields_section(ui, engine);
         if let Some(set) = &self.draft {

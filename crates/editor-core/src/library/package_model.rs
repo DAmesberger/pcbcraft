@@ -180,9 +180,10 @@ pub enum PackageEdit {
     ApplyQuick(QuickAction),
 }
 
-/// Apply `edits` to a copy of `package`. Contract body: `ApplyQuick` is
-/// refused until the M3 placement task implements it. Validation of the
-/// result is the caller's (`PackageDefinition::findings`).
+/// Apply `edits` to a copy of `package`. `ApplyQuick` actions relative to
+/// pads (`CentreOnPads`, `Pin1ToPad1`) need the footprint and refuse here;
+/// `package_fit::edit_package_in` takes it. Validation of the result is the
+/// caller's (`PackageDefinition::findings`).
 pub fn edit_package(
     package: &PackageDefinition,
     edits: &[PackageEdit],
@@ -206,10 +207,10 @@ pub fn edit_package(
                 }
                 out.placement = *placement;
             }
+            // Without a footprint here, the pad-relative actions refuse;
+            // `package_fit::edit_package_in` supplies it.
             PackageEdit::ApplyQuick(action) => {
-                return Err(Error::Unsupported(format!(
-                    "package.quick_unsupported: quick action {action:?} is not implemented yet"
-                )));
+                out.placement = super::package_fit::apply_quick(&out, None, *action)?;
             }
         }
     }
