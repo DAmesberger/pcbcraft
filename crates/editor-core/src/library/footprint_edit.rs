@@ -582,6 +582,29 @@ fn blocking(evaluation: &Evaluation) -> Option<Error> {
         .map(|f| conflict(&f.code, &f.message))
 }
 
+/// Apply `edits` in order on a clone without evaluating or committing:
+/// the early steps of a multi-step build (a family template whose later
+/// edits name entities that earlier edits created). The caller finishes
+/// with [`edit`], which evaluates once and commits source and result.
+pub(crate) fn apply_unevaluated(
+    footprint: &FootprintDefinition,
+    package: &PackageDefinition,
+    edits: &[FootprintEdit],
+    evaluator: &dyn FootprintEvaluator,
+) -> Result<(FootprintDefinition, FootprintEditReport)> {
+    if edits.is_empty() || edits.len() > MAX_FOOTPRINT_EDITS {
+        return Err(Error::Invalid(
+            "edit a footprint with 1–256 edits at a time".into(),
+        ));
+    }
+    let mut next = footprint.clone();
+    let mut report = FootprintEditReport::default();
+    for edit in edits {
+        apply_one(&mut next, edit, package, evaluator, &mut report)?;
+    }
+    Ok((next, report))
+}
+
 /// `library.edit_footprint`: the edited footprint, or an error and nothing.
 pub fn edit(
     footprint: &FootprintDefinition,
