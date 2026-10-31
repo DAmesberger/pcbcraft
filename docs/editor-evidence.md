@@ -95,7 +95,7 @@ After slice 1 (30 October 2026) the app was launched and inspected: the PCB view
 - **Shadows, AA and background:** a soft ground shadow and per-package contact shadows; 2× supersampling once the view settles; a neutral gradient background that follows the theme.
 - **Selection and uploads:** highlight is recolour-only (cached flat blocks per pick identity in the highlight slot; blocks indexed by a hash map on the worker). The worker packs one PBR buffer, parts first and board after, which moves into the viewport's slot without a copy and is not kept twice. Hide substrate repacks on a background thread; shadows and selection change at once.
 - **Stale models:** while a newer model builds, the last model of the same kind stays up under an "Updating 3D model…" note, and clicks on it are ignored.
-- **Status messages:** errors now fade after 12 s and clear on a workspace change, as well as on the next successful action.
+- **Feedback:** command results and refusals show as toasts at the bottom centre of the canvas, above the navigation bar: up to three, 6 s each, repeats counted ×n, error toasts cleared by the next successful action or a workspace change. A toast shows the refusal's first sentence when it names no IDs or codes, and a plain wording chosen by error kind otherwise; File › Messages… and a click on a toast open the history with the full engine text. Severity is passed explicitly, never guessed from the text. A refusal of a field or dialog operation is handed back to its editor on the next frame and falls back to a toast if no editor claims it; the editors claim refusals from slices W1–W3.
 
 Measured on macOS arm64, `ci` profile, with the ignored `build_timings` test in `crates/solidcraft-integration/src/project/tests.rs`:
 

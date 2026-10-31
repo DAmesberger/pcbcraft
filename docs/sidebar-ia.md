@@ -159,7 +159,7 @@ Anything that blocks publishing is always Error and always counted.
 ## Feedback
 
 - **Toasts:** a severity glyph, at most 3 rows and 6 s each, with Undo / Show / Details. Up to 3 are stacked, and a repeat counts ×n. A click opens Messages.
-- **Messages window:** newest first, ×n folding, Copy all, Clear, Help › Messages…. It keeps 200 entries of up to 4000 characters, with the full engine text.
+- **Messages window:** newest first, ×n folding, Copy all, Clear, File › Messages… (the app has no Help menu yet). It keeps 200 entries of up to 4000 characters, with the full engine text.
 - **Explicit severity:** `App::say` takes a severity, which replaces guessing it from the text "fail".
 - **Pills:** routing, highlighted net, shown issue and layer focus, each with ×.
 - **`notice` retired:** each editor's `notice` call sites become a success toast, an error toast, or a disabled reason or canvas hint.
@@ -223,14 +223,14 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 | Inspector return type | `kit/card.rs` | `Inspector { header: shell::Header, subject: egui::Id, footer: bool, issues: Option<IssueSlot> }`; `card(ui, &Inspector, FnMut(&mut Ui, Region) -> Option<R>) -> CardResponse<R>`; `Region { Body, Footer }`; `column(rect, issues_expanded) -> Column { subject, issues }`; `Subject { Properties, Tool, Dialog, Review }`; `FOOTER_HEIGHT = 48` |
 | Severity | `kit/severity.rs` | `Level { Error, Warning, ToDo, Info, Ok }` (`From<Severity>`), `ink(level)`, `severity_glyph(painter, center, size, level)` |
 | Issues widgets | `kit/issues.rs` | `issue_row(ui, id, &IssueRowView) -> IssueRowResponse`, `issues_list(ui, id, &[IssueGroupView], row) -> Option<IssueListEvent>`, `issue_line(ui, &IssueCounts, label)`, `issues_bar(ui, &IssueCounts, expanded, elsewhere)`, `count_badge(ui, &IssueCounts, hide_to_do_with_errors)`, `detail(ui, &IssueDetail)`, `ISSUES_BAR_HEIGHT = 28` |
-| Toasts and pills | `kit/toast.rs` | `Toasts::{push(level, text, actions, now), expire(now), show(ctx, canvas, now) -> Option<ToastEvent>}`, `ToastAction { Undo, Show, Details }`, `pill(ui, level, text) -> PillResponse { clicked, closed }` |
-| Messages | `kit/messages.rs` | `Messages::{push(level, text, now), clear, entries, copy_all, window(ctx) -> MessagesResponse}`, `KEEP = 200`, `MAX_CHARS = 4000` |
+| Toasts and pills | `kit/toast.rs` | `Toasts::{push(level, text, actions, now), expire(now), show(ctx, canvas, now) -> Option<ToastEvent>}`, `ToastAction { Undo, Show, Details }`, `pill(ui, level, text) -> PillResponse { clicked, closed }`; K3 added `Toasts::{get, is_empty, withdraw(action), dismiss_errors}`, `toast_text` and, for editors without app access, `post(ctx, level, text, actions)` (the app drains it each frame into toasts and Messages) |
+| Messages | `kit/messages.rs` | `Messages::{push(level, text, now), clear, entries, copy_all, window(ctx) -> MessagesResponse}`, `KEEP = 200`, `MAX_CHARS = 4000`; K3 added `len`, `is_empty` |
 | Dialog | `kit/dialog.rs` | `DialogPanel { id, icon, title, kind, body_rows, primary, primary_kind, primary_disabled, refusal, reset_scroll }::show(ui, body) -> Option<DialogAction>`; `confirm(ctx, id, title, text, proceed) -> Option<bool>` |
 | Review | `kit/review.rs` | `ReviewPanel { id, icon, title, summary, stale, blockers: &[ReviewLine], groups: &[ReviewGroup], apply }::show(ui, acked) -> Option<ReviewAction>` |
 | Rows | `kit/rows.rs` | `tool_card(ui, &ToolCard, rows) -> ToolCardResponse { done }`, `hint(ui, text, tip)`, `list_frame(ui, len, max_rows, row) -> ListFrameResponse { show_all }`, `table(ui, &[TableColumn], rows, cell, add_row) -> TableResponse { add }`, `summary_row(ui, summary, action) -> bool`, `field_error(ui, &field, message, not_stored)`, `refusal(ui, message)`, `LIST_MAX_ROWS = 8` |
 | Locate | `issues.rs` | `trait Locate { fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool }`. It takes the engine so an editor can resolve tabs and frames; it changes selection and camera only. |
 | Fix launchers | `issues.rs` | `Fix { Apply { label, operation }, Open { label, dialog: FixDialog } }`, `fix(&IssueRow) -> Option<Fix>` |
-| Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String` |
+| Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String`; K3 added `mark(ctx, origin)` (an editor declares the origin of the operation it returns this frame; otherwise the call site's default applies: inspector and draft commits `Command`, canvas `Canvas`), `claim(ctx, origin) -> Option<String>` (on the next frame), `level(&Error) -> Level`, `presentable(text)` and `clip(text, max)` |
 
 The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance.
 
