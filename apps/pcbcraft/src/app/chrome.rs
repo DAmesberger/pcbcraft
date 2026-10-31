@@ -6,6 +6,8 @@ use crate::file_ui::Action;
 use crate::kit;
 use crate::shell::{self, RibbonEvent, Workspace};
 use egui::{FontId, Rect, pos2, vec2};
+use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueReport, IssueScope};
+use pcbcraft_core::{Query, QueryResult};
 use solidcraft_ui_egui::{
     fonts,
     theme::Tokens,
@@ -92,6 +94,111 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
         inspector,
         browser,
         overlay,
+    }
+}
+
+/// What the Issues bar shows: the active workspace's counts and the
+/// blockers elsewhere, or that the issues could not be counted.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum IssueSummary {
+    Counted {
+        counts: IssueCounts,
+        /// Areas outside the workspace that hold blockers ("Component: 2
+        /// blocking").
+        elsewhere: Option<String>,
+    },
+    /// The query refused: the bar says so rather than show no counts.
+    NotCounted,
+}
+
+impl IssueSummary {
+    fn from_report(report: &IssueReport) -> Self {
+        let elsewhere: Vec<String> = report
+            .elsewhere
+            .iter()
+            .filter(|a| a.blocking > 0)
+            .map(|a| format!("{}: {} blocking", area_label(a.area), a.blocking))
+            .collect();
+        Self::Counted {
+            counts: report.counts,
+            elsewhere: (!elsewhere.is_empty()).then(|| elsewhere.join(" · ")),
+        }
+    }
+}
+
+/// The issue area a workspace shows by default.
+fn area(workspace: Workspace) -> IssueArea {
+    match workspace {
+        Workspace::Part => IssueArea::Component,
+        Workspace::Schematic => IssueArea::Schematic,
+        Workspace::Pcb => IssueArea::Board,
+    }
+}
+
+/// An area by its workspace's name.
+fn area_label(area: IssueArea) -> &'static str {
+    match area {
+        IssueArea::Component => Workspace::Part.label(),
+        IssueArea::Schematic => Workspace::Schematic.label(),
+        IssueArea::Board => Workspace::Pcb.label(),
+    }
+}
+
+/// Shown while the issues cannot be counted, in place of counts.
+const NOT_COUNTED: &str = "Not counted yet";
+const NOT_COUNTED_TIP: &str = "Checks still show in each Properties card";
+
+/// The Issues card: the always-visible bar and, expanded, its body. Returns
+/// whether the bar was clicked (expand or collapse).
+fn issues_card(ui: &mut egui::Ui, summary: &IssueSummary, expanded: bool) -> bool {
+    let zero = IssueCounts::default();
+    let (counts, elsewhere, tip) = match summary {
+        IssueSummary::Counted { counts, elsewhere } => (counts, elsewhere.as_deref(), None),
+        IssueSummary::NotCounted => (&zero, Some(NOT_COUNTED), Some(NOT_COUNTED_TIP)),
+    };
+    let mut bar = kit::issues_bar(ui, counts, expanded, elsewhere);
+    if let Some(tip) = tip {
+        bar = bar.on_hover_text(tip);
+    }
+    if expanded {
+        kit::rule(ui);
+        egui::ScrollArea::vertical()
+            .id_salt("issues-body")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(Tokens::get().space_8 as i8, 0))
+                    .show(ui, |ui| {
+                        kit::form(ui, |ui| match summary {
+                            IssueSummary::NotCounted => {
+                                kit::hint(ui, NOT_COUNTED_TIP, "");
+                            }
+                            IssueSummary::Counted { counts, .. } => {
+                                kit::hint(ui, &counts_line(counts), NOT_COUNTED_TIP);
+                            }
+                        });
+                    });
+            });
+    }
+    bar.clicked()
+}
+
+/// The counts in words, for the body until the list lands (slice A1).
+fn counts_line(counts: &IssueCounts) -> String {
+    let parts: Vec<String> = [
+        (counts.error, "error", "errors"),
+        (counts.warning, "warning", "warnings"),
+        (counts.to_do, "to do", "to do"),
+        (counts.info, "info", "info"),
+    ]
+    .into_iter()
+    .filter(|(n, ..)| *n > 0)
+    .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+    .collect();
+    if parts.is_empty() {
+        "No issues".into()
+    } else {
+        parts.join(", ")
     }
 }
 
@@ -319,19 +426,90 @@ impl App {
                         self.sources.open_card();
                     }
                 }
-                let header = match self.workspace {
-                    Workspace::Part => self.part.header(&self.engine),
-                    Workspace::Schematic => self.schematic.header(&self.engine),
-                    Workspace::Pcb => self.pcb.header(&self.engine),
-                };
-                shell::card(
-                    &ctx,
-                    "properties",
-                    layout.inspector,
-                    |ui| kit::inspector_header(ui, header.icon, &header.title, header.kind),
-                    |ui| self.inspector(ui),
-                );
+                self.column(&ctx, layout.inspector);
             });
+    }
+
+    /// The right column: the subject card above the always-visible Issues
+    /// card (docs/sidebar-ia.md, "Layout").
+    fn column(&mut self, ctx: &egui::Context, rect: Rect) {
+        let expanded_id = egui::Id::new("issues-expanded");
+        let expanded = ctx
+            .data(|d| d.get_temp::<bool>(expanded_id))
+            .unwrap_or(false);
+        let column = kit::card::column(rect, expanded);
+        let header = match self.workspace {
+            Workspace::Part => self.part.header(&self.engine),
+            Workspace::Schematic => self.schematic.header(&self.engine),
+            Workspace::Pcb => self.pcb.header(&self.engine),
+        };
+        // Until the W slices name their subjects, a new workspace or kind
+        // of selection is a new subject.
+        let inspector = kit::card::Inspector {
+            subject: egui::Id::new(("properties", self.workspace, header.kind)),
+            header,
+            footer: false,
+            issues: None,
+        };
+        let card = shell::column_card(
+            ctx,
+            "properties",
+            column.subject,
+            shell::COLUMN_CARD_INSET,
+            |ui| {
+                kit::card::card(ui, &inspector, |ui, region| {
+                    if region == kit::card::Region::Body {
+                        self.inspector(ui);
+                    }
+                    None::<pcbcraft_core::Operation>
+                })
+            },
+        );
+        let mut open_issues = false;
+        if let Some(card) = card {
+            open_issues = card.show_issues;
+            self.apply(card.output);
+        }
+        let summary = self.issue_summary(ctx);
+        let toggle = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
+            issues_card(ui, &summary, expanded)
+        });
+        if toggle == Some(true) {
+            ctx.data_mut(|d| d.insert_temp(expanded_id, !expanded));
+        } else if open_issues {
+            ctx.data_mut(|d| d.insert_temp(expanded_id, true));
+        }
+    }
+
+    /// The Issues bar's counts for the active workspace, from the one
+    /// `project.issues` query, computed once per document revision.
+    fn issue_summary(&self, ctx: &egui::Context) -> IssueSummary {
+        let key = egui::Id::new((
+            "issue-summary",
+            self.engine.revision(),
+            std::sync::Arc::as_ptr(self.engine.project_arc()) as usize,
+            self.workspace,
+        ));
+        if let Some(summary) = ctx.data(|d| d.get_temp::<IssueSummary>(key)) {
+            return summary;
+        }
+        let scope = IssueScope::Area {
+            area: area(self.workspace),
+        };
+        let summary = match self.engine.query(Query::Issues { scope }) {
+            Ok(QueryResult::Issues(report)) => IssueSummary::from_report(&report),
+            _ => IssueSummary::NotCounted,
+        };
+        // One entry: the previous revision's summary is dropped.
+        let last = egui::Id::new("issue-summary-key");
+        ctx.data_mut(|d| {
+            if let Some(old) = d.get_temp::<egui::Id>(last) {
+                d.remove::<IssueSummary>(old);
+            }
+            d.insert_temp(last, key);
+            d.insert_temp(key, summary.clone());
+        });
+        summary
     }
 
     /// The selection the Browser marks, from the active workspace.
@@ -569,5 +747,82 @@ mod tests {
         assert!(!layout(wide, BrowserMode::Shown).overlay);
         assert_eq!(BrowserMode::Auto.toggled(false), BrowserMode::Shown);
         assert_eq!(BrowserMode::Shown.toggled(true), BrowserMode::Hidden);
+    }
+
+    /// The Issues bar sits under Properties, inside the column, at every
+    /// window size the layout supports, so blockers stay counted on screen.
+    #[test]
+    fn the_issues_bar_stays_in_the_column_at_every_window_size() {
+        for (w, h) in [
+            (1600.0, 900.0),
+            (860.0, 1081.0),
+            (600.0, 500.0),
+            (320.0, 120.0),
+        ] {
+            let l = layout(
+                Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h)),
+                BrowserMode::Auto,
+            );
+            for expanded in [false, true] {
+                let c = kit::card::column(l.inspector, expanded);
+                assert!(
+                    c.issues.height() >= kit::issues::ISSUES_BAR_HEIGHT,
+                    "{w}x{h}"
+                );
+                assert_eq!(c.issues.bottom(), l.inspector.bottom());
+                assert!(c.subject.bottom() < c.issues.top());
+                assert_eq!(c.issues.x_range(), l.inspector.x_range());
+            }
+        }
+    }
+
+    /// Until core counts issues, the bar says so instead of showing none.
+    #[test]
+    fn a_refused_issue_query_is_shown_as_not_counted() -> pcbcraft_core::Result<()> {
+        let engine = pcbcraft_core::Engine::default();
+        let scope = IssueScope::Area {
+            area: area(Workspace::Pcb),
+        };
+        let summary = match engine.query(Query::Issues { scope }) {
+            Ok(QueryResult::Issues(report)) => IssueSummary::from_report(&report),
+            _ => IssueSummary::NotCounted,
+        };
+        assert_eq!(summary, IssueSummary::NotCounted);
+        Ok(())
+    }
+
+    #[test]
+    fn a_report_shows_its_counts_and_the_blockers_elsewhere() {
+        use pcbcraft_core::issues::AreaCount;
+        let counts = IssueCounts {
+            error: 1,
+            to_do: 3,
+            ..Default::default()
+        };
+        let report = IssueReport {
+            counts,
+            elsewhere: vec![
+                AreaCount {
+                    area: IssueArea::Component,
+                    counts,
+                    blocking: 2,
+                },
+                AreaCount {
+                    area: IssueArea::Schematic,
+                    counts,
+                    blocking: 0,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            IssueSummary::from_report(&report),
+            IssueSummary::Counted {
+                counts,
+                elsewhere: Some("Component: 2 blocking".into()),
+            }
+        );
+        assert_eq!(counts_line(&counts), "1 error, 3 to do");
+        assert_eq!(counts_line(&IssueCounts::default()), "No issues");
     }
 }
