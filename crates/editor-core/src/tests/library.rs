@@ -434,7 +434,7 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     let f = draft(&mut engine, &two("Contradictory"))?;
     with(&mut engine, f.footprint, footprint_body, |fp| {
         fp.pads.push(fp.pads[0].clone()); // duplicate local ID
-        fp.pads[0].size = [-1.0, 0.0];
+        fp.pads[0].shape = crate::library::PadShape::Rect { size: [-1.0, 0.0] };
     })?;
     let bytes = format::encode(&engine.to_file())?;
     let reopened = Engine::from_file(format::decode(&bytes)?)?;
@@ -446,7 +446,7 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     let before = engine.document().clone();
     let revision = engine.revision();
     let nan = with(&mut engine, f.footprint, footprint_body, |fp| {
-        fp.datum_offset = [f64::NAN, 0.0]
+        fp.datum.offset = [f64::NAN, 0.0]
     });
     assert_eq!(nan.err().map(|e| e.code()), Some("invalid_input"));
     let oversize = with(&mut engine, f.component, component_body, |c| {
@@ -533,7 +533,10 @@ fn new_library_commands_fail_atomically() -> Result<()> {
         LibraryCommand::NewDraft {
             meta: meta("NaN"),
             definition: Definition::Footprint(crate::library::FootprintDefinition {
-                datum_offset: [f64::NAN, 0.0],
+                datum: crate::library::Datum {
+                    offset: [f64::NAN, 0.0],
+                    rotation_deg: 0.0,
+                },
                 ..Default::default()
             }),
         },

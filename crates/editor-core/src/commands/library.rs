@@ -52,7 +52,13 @@ pub enum LibraryCommand {
     },
 }
 
-pub(crate) fn apply_library(document: &mut Document, command: LibraryCommand) -> Result<Outcome> {
+/// `evaluator` is the host's footprint evaluator (`Engine::apply_with`);
+/// footprint-source edits refuse without one.
+pub(crate) fn apply_library(
+    document: &mut Document,
+    command: LibraryCommand,
+    _evaluator: Option<&dyn library::FootprintEvaluator>,
+) -> Result<Outcome> {
     match command {
         LibraryCommand::NewDraft { meta, definition } => {
             library::check_bounds(&meta, &definition)?;

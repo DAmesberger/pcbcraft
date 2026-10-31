@@ -253,10 +253,9 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
                     layout::MAX_PLACED_PADS
                 )));
             }
-            let net = physical
-                .binding
-                .definition
-                .terminal_of(pad.terminal)
+            let net = pad
+                .terminal
+                .and_then(|t| physical.binding.definition.terminal_of(t))
                 .and_then(|terminal| {
                     net_by_terminal.get(&Endpoint {
                         instance: instance.id,
@@ -270,7 +269,7 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
                 pad,
                 footprint,
                 net,
-                center: layout::placed_point(placement, pad.position, footprint.datum_offset),
+                center: layout::placed_point(placement, pad.position, footprint.datum.offset),
                 rotation_deg: placement.rotation_deg,
                 layer: placement.layer,
             });
@@ -385,11 +384,11 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let pp = format!("pad_{}_{}", pad.instance, pad.pad.id);
         let local = pad.pad;
         let footprint = pad.footprint;
-        let dx = local.position[0] - footprint.datum_offset[0];
-        let dy = (local.position[1] - footprint.datum_offset[1])
+        let dx = local.position[0] - footprint.datum.offset[0];
+        let dy = (local.position[1] - footprint.datum.offset[1])
             * if pad.layer == Layer::Top { 1.0 } else { -1.0 };
-        b.param(&format!("{pp}_length"), local.size[0], "mm")?;
-        b.param(&format!("{pp}_width"), local.size[1], "mm")?;
+        b.param(&format!("{pp}_length"), local.shape.extent()[0], "mm")?;
+        b.param(&format!("{pp}_width"), local.shape.extent()[1], "mm")?;
         let created = b.native.component(&pp, false)?;
         b.body(
             BodyKind::PadCopper,
@@ -423,7 +422,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         lands.push(Land {
             pick,
             center: pad.center,
-            half: [local.size[0] / 2.0, local.size[1] / 2.0],
+            half: [local.shape.extent()[0] / 2.0, local.shape.extent()[1] / 2.0],
             angle: pad.rotation_deg.to_radians(),
             layer: pad.layer,
         });

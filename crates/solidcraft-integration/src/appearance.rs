@@ -495,8 +495,8 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     };
     for pad in &footprint.pads {
         let center = [
-            pad.position[0] - footprint.datum_offset[0],
-            pad.position[1] - footprint.datum_offset[1],
+            pad.position[0] - footprint.datum.offset[0],
+            pad.position[1] - footprint.datum.offset[1],
         ];
         let sign = if center[axis] >= offset[axis] {
             1.0
@@ -504,11 +504,11 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             -1.0
         };
         let face = if sign > 0.0 { hi[axis] } else { lo[axis] } + sign * g;
-        let toe = center[axis] + sign * pad.size[axis] / 2.0;
-        let heel = center[axis] - sign * pad.size[axis] / 2.0;
+        let toe = center[axis] + sign * pad.shape.extent()[axis] / 2.0;
+        let heel = center[axis] - sign * pad.shape.extent()[axis] / 2.0;
         let reach = sign * (toe - face);
-        let a = (center[across] - pad.size[across] / 2.0).max(lo[across]);
-        let b = (center[across] + pad.size[across] / 2.0).min(hi[across]);
+        let a = (center[across] - pad.shape.extent()[across] / 2.0).max(lo[across]);
+        let b = (center[across] + pad.shape.extent()[across] / 2.0).min(hi[across]);
         // Solder wets the land only: the end face must stand over it.
         if reach < FILLET_MIN_TOE_MM || sign * (face - heel) < 0.0 || b <= a {
             continue;
@@ -545,9 +545,9 @@ fn lead_band(
     let mut min = [0.0; 2];
     let mut max = [0.0; 2];
     for axis in 0..2 {
-        let center = pad.position[axis] - footprint.datum_offset[axis];
-        let lo = (center - pad.size[axis] / 2.0).max(body_min[axis]);
-        let hi = (center + pad.size[axis] / 2.0).min(body_max[axis]);
+        let center = pad.position[axis] - footprint.datum.offset[axis];
+        let lo = (center - pad.shape.extent()[axis] / 2.0).max(body_min[axis]);
+        let hi = (center + pad.shape.extent()[axis] / 2.0).min(body_max[axis]);
         if !positive(hi - lo - 1e-6) {
             return None;
         }

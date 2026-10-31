@@ -16,6 +16,12 @@ const EPS: f64 = 1e-8;
 const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
+
+mod placed;
+pub use placed::{
+    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedItem, PlacedPad,
+    placed_graphics, placed_pads, placement_transform,
+};
 const MAX_CHECK_PAIRS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -119,6 +125,8 @@ pub fn placed_point(placement: &Placement, point: Point, datum: Point) -> Point 
     ]
 }
 
+/// Connected copper pads as rotated rectangles of each pad's extent: the
+/// checking approximation until shape-aware checks use [`placed_pads`].
 pub fn pads(project: &Project) -> Vec<WorldPad> {
     let net_by_terminal: BTreeMap<Endpoint, Id> = project
         .nets
@@ -141,8 +149,12 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
             continue;
         };
         let footprint = &physical.footprint.definition;
+        let datum = &footprint.datum;
         for pad in &footprint.pads {
-            let Some(electrical) = physical.binding.definition.terminal_of(pad.terminal) else {
+            let Some(electrical) = pad
+                .terminal
+                .and_then(|t| physical.binding.definition.terminal_of(t))
+            else {
                 continue;
             };
             let terminal = Endpoint {
@@ -152,14 +164,25 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
             let Some(net) = net_by_terminal.get(&terminal) else {
                 continue;
             };
+            // Pad rotation relative to the datum, reflected on the bottom.
+            let local = pad.rotation_deg - datum.rotation_deg;
+            let local = if placement.layer == Layer::Bottom {
+                -local
+            } else {
+                local
+            };
             result.push(WorldPad {
                 instance: instance.id,
                 pad: pad.id,
                 terminal,
                 net: *net,
-                position: placed_point(placement, pad.position, footprint.datum_offset),
-                size: pad.size,
-                rotation_deg: placement.rotation_deg,
+                position: placed_point(
+                    placement,
+                    placed::undo_datum_rotation(pad.position, datum),
+                    datum.offset,
+                ),
+                size: pad.shape.extent(),
+                rotation_deg: placement.rotation_deg + local,
                 layer: placement.layer,
             });
         }

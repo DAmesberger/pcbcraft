@@ -27,8 +27,9 @@ use pcbcraft_core::library::graphics::{
     TextContent, VAlign,
 };
 use pcbcraft_core::library::{
-    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad, Pin,
-    PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid,
+    ComponentDefinition, Drafts, FieldView, Item, Library, PackageBody, PackageTerminal, Pad,
+    PadShape, Pin, PinDirection, Published, Terminal, TerminalClass, TerminalMap, Unit,
+    designator_prefix_valid,
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FieldRef, FunctionId, GraphicId, Id, LibraryCommand,
@@ -877,15 +878,16 @@ impl PartEditor {
                 Direction::Passive,
             )),
         });
+        set.footprint.pads.push(Pad::smd_rect(
+            PadId(pad),
+            physical,
+            number.clone(),
+            [0.0, row * 2.0],
+            [1.0, 1.4],
+        ));
         set.package.terminals.push(PackageTerminal {
             id: physical,
             designation: number,
-        });
-        set.footprint.pads.push(Pad {
-            id: PadId(pad),
-            terminal: physical,
-            position: [0.0, row * 2.0],
-            size: [1.0, 1.4],
         });
         set.binding.mappings.push(TerminalMap {
             package_terminal: physical,
@@ -918,7 +920,7 @@ impl PartEditor {
         set.package.terminals.retain(|t| !physical.contains(&t.id));
         set.footprint
             .pads
-            .retain(|p| !physical.contains(&p.terminal));
+            .retain(|p| p.terminal.is_none_or(|t| !physical.contains(&t)));
         self.selected = set.component.terminals.first().map(|t| t.id);
     }
 
@@ -948,12 +950,20 @@ impl PartEditor {
             return;
         };
         set.footprint.next_local = next;
-        set.footprint.pads.push(Pad {
-            id: PadId(id),
+        let number = set
+            .package
+            .terminals
+            .iter()
+            .find(|t| t.id == terminal)
+            .map(|t| t.designation.clone())
+            .unwrap_or_default();
+        set.footprint.pads.push(Pad::smd_rect(
+            PadId(id),
             terminal,
-            position: [0.0, 0.0],
-            size: [1.0, 1.4],
-        });
+            number,
+            [0.0, 0.0],
+            [1.0, 1.4],
+        ));
     }
 
     /// Blocking publish findings of the committed drafts, from the engine.
@@ -1328,7 +1338,7 @@ impl PartEditor {
                 kit::pair_row(
                     ui,
                     "Offset",
-                    &mut set.footprint.datum_offset,
+                    &mut set.footprint.datum.offset,
                     "mm",
                     -10000.0..=10000.0,
                 );
@@ -1349,13 +1359,13 @@ impl PartEditor {
             .package
             .terminals
             .iter()
-            .map(|t| (t.id, t.designation.clone()))
+            .map(|t| (Some(t.id), t.designation.clone()))
             .collect();
         let mut pads: Vec<_> = set
             .footprint
             .pads
             .iter_mut()
-            .filter(|p| physical.contains(&p.terminal))
+            .filter(|p| p.terminal.is_some_and(|t| physical.contains(&t)))
             .collect();
         let count = pads.len();
         kit::section(ui, "pads", "Pads", true, Some(count), |ui| {
@@ -1369,7 +1379,12 @@ impl PartEditor {
                 ui.push_id(("pad", pad.id.0), |ui| {
                     kit::choice_row(ui, "Terminal", &mut pad.terminal, &options);
                     kit::pair_row(ui, "Position", &mut pad.position, "mm", -10000.0..=10000.0);
-                    kit::pair_row(ui, "Land size", &mut pad.size, "mm", 0.01..=10000.0);
+                    if let PadShape::Rect { size }
+                    | PadShape::RoundRect { size, .. }
+                    | PadShape::Oblong { size } = &mut pad.shape
+                    {
+                        kit::pair_row(ui, "Land size", size, "mm", 0.01..=10000.0);
+                    }
                 });
             }
             kit::note(
@@ -1525,8 +1540,8 @@ impl PartEditor {
             ),
             |(x, y), p| {
                 (
-                    x.max(p.position[0].abs() + p.size[0] / 2.0),
-                    y.max(p.position[1].abs() + p.size[1] / 2.0),
+                    x.max(p.position[0].abs() + p.shape.extent()[0] / 2.0),
+                    y.max(p.position[1].abs() + p.shape.extent()[1] / 2.0),
                 )
             },
         );
@@ -1563,7 +1578,7 @@ impl PartEditor {
         );
         let mut selected = self.selected;
         let mut drag_scale = self.drag_scale;
-        let body_origin = transform(set.footprint.datum_offset);
+        let body_origin = transform(set.footprint.datum.offset);
         let body = Rect::from_center_size(
             body_origin,
             egui::vec2(
@@ -1578,9 +1593,10 @@ impl PartEditor {
             StrokeKind::Inside,
         );
         for pad in &mut set.footprint.pads {
-            let electrical = set.binding.terminal_of(pad.terminal);
+            let electrical = pad.terminal.and_then(|t| set.binding.terminal_of(t));
             let at = transform(pad.position);
-            let size = egui::vec2(pad.size[0] as f32, pad.size[1] as f32) * scale;
+            let size =
+                egui::vec2(pad.shape.extent()[0] as f32, pad.shape.extent()[1] as f32) * scale;
             let land = Rect::from_center_size(at, size);
             let ink = if electrical.is_some() && electrical == selected {
                 t.body_selected
@@ -1588,9 +1604,9 @@ impl PartEditor {
                 t.accent
             };
             painter.rect_filled(land, 0, ink);
-            let number = set
-                .package
-                .terminal(pad.terminal)
+            let number = pad
+                .terminal
+                .and_then(|t| set.package.terminal(t))
                 .map(|p| p.designation.as_str())
                 .unwrap_or("?");
             painter.text(
@@ -1668,7 +1684,7 @@ impl PartEditor {
                 .footprint
                 .pads
                 .iter()
-                .filter(|p| p.terminal == physical.id)
+                .filter(|p| p.terminal == Some(physical.id))
                 .map(|p| p.id.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");

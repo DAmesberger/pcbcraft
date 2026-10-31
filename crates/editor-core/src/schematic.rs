@@ -6,9 +6,8 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
-use crate::library::graphics::{
-    SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING, TextLine, TextSize, text_lines, upright,
-};
+pub use crate::library::graphics::PlacedText;
+use crate::library::graphics::{SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit, VAlign,
@@ -340,63 +339,6 @@ pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
         .occurrences_of(instance.id)
         .find(|o| o.unit == unit.id)?;
     Some(occurrence_transform(occurrence).apply(pin.position))
-}
-
-/// Resolved text placed on the sheet.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct PlacedText {
-    /// The text graphic drawn; `None` for pin names and numbers and for
-    /// stacked field values.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graphic: Option<GraphicId>,
-    pub text: String,
-    pub at: Point,
-    pub height: f64,
-    pub rotation_deg: f64,
-    pub justify: Justify,
-    /// Drawn reflected (an occurrence or board side mirror).
-    pub mirrored: bool,
-    /// Distance between lines in cap heights; `text` breaks at `\n`.
-    pub line_spacing: f64,
-}
-
-impl PlacedText {
-    /// The approximate box of the resolved text under the core metric.
-    pub fn bounds(&self, m: TextMetric) -> Bounds {
-        m.bounds(
-            self.at,
-            self.height,
-            self.rotation_deg,
-            self.justify,
-            TextSize::of(&self.text, self.line_spacing),
-        )
-    }
-
-    /// The lines to draw, laid out after the upright rule: each reads left
-    /// to right or bottom to top and sits where the core metric puts it.
-    pub fn lines(&self) -> (f64, Vec<TextLine<'_>>) {
-        let (rotation_deg, justify) = upright(self.rotation_deg, self.justify);
-        (
-            rotation_deg,
-            text_lines(
-                &self.text,
-                self.at,
-                self.height,
-                rotation_deg,
-                justify,
-                self.line_spacing,
-            ),
-        )
-    }
-
-    /// The upright horizontal justification every line uses.
-    pub fn line_justify(&self) -> Justify {
-        let (_, justify) = upright(self.rotation_deg, self.justify);
-        Justify {
-            h: justify.h,
-            v: VAlign::Middle,
-        }
-    }
 }
 
 /// One drawn shape of a placed unit.

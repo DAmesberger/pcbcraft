@@ -71,15 +71,18 @@ fn draft() -> FootprintDefinition {
     FootprintDefinition {
         package: PackageRef::default(),
         next_local: 14,
-        datum_offset: [0.0; 2],
         pads: (0..4)
-            .map(|i| Pad {
-                id: PadId(10 + i),
-                terminal: PackageTerminalId(200 + i),
-                position: [0.0, i as f64 * 2.0],
-                size: [1.0, 1.0],
+            .map(|i| {
+                Pad::smd_rect(
+                    PadId(10 + i),
+                    PackageTerminalId(200 + i),
+                    (i + 1).to_string(),
+                    [0.0, i as f64 * 2.0],
+                    [1.0, 1.0],
+                )
             })
             .collect(),
+        ..FootprintDefinition::default()
     }
 }
 
@@ -213,11 +216,11 @@ fn generated_array_preserves_mapping_and_commits_as_one_undo_step() {
         (12, 202, 5.08),
         (13, 203, 7.62),
     ]) {
-        assert_eq!((pad.id.0, pad.terminal.0), (id, terminal));
+        assert_eq!((pad.id.0, pad.terminal.map(|t| t.0)), (id, Some(terminal)));
         assert!((pad.position[0] - x).abs() < 1e-12);
         assert_eq!(pad.position[1], 0.0);
-        assert!((pad.size[0] - 1.2).abs() < 1e-12);
-        assert!((pad.size[1] - 1.8).abs() < 1e-12);
+        assert!((pad.shape.extent()[0] - 1.2).abs() < 1e-12);
+        assert!((pad.shape.extent()[1] - 1.8).abs() < 1e-12);
     }
     let after = engine.document().clone();
     let saved = serde_json::to_string(&engine.to_file()).unwrap();

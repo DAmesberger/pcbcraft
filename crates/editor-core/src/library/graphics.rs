@@ -64,6 +64,82 @@ pub struct Graphic {
     pub item: Item,
 }
 
+/// Polarity markers one footprint may list.
+pub const MAX_POLARITY_MARKERS: usize = 8;
+/// Default footprint text cap height, in millimetres.
+pub const FOOTPRINT_TEXT_HEIGHT_MM: f64 = 1.0;
+/// Default silkscreen stroke width, in millimetres.
+pub const SILK_STROKE_MM: f64 = 0.15;
+
+/// A footprint drawing on one non-copper layer, footprint-local. With a
+/// footprint source, shape graphics are derived from `GraphicRole`s and
+/// keep the role's `GraphicId`; text is always authored.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FootprintGraphic {
+    pub id: GraphicId,
+    pub layer: DrawingLayer,
+    pub side: Side,
+    pub item: Item,
+}
+
+/// The non-copper layer a footprint graphic is drawn on. Mask and paste
+/// openings come from pads, never from graphics.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DrawingLayer {
+    /// Printed legend.
+    #[default]
+    Silkscreen,
+    /// The keep-out area the part and its tools need (never inferred).
+    Courtyard,
+    /// The assembly-drawing outline and reference.
+    Assembly,
+}
+
+/// Which board side a footprint graphic is on, relative to the placed
+/// component: `Component` maps to the placement's layer.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Side {
+    #[default]
+    Component,
+    Opposite,
+}
+
+/// The authored pin-1 pad. Graphics in `markers` only illustrate it; the
+/// pad is the authority.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Polarity {
+    pub pad: crate::ids::PadId,
+    /// At most [`MAX_POLARITY_MARKERS`] footprint graphics.
+    pub markers: Vec<GraphicId>,
+}
+
+/// The designator placeholder: `Text { Designator }`, centred at `at` on
+/// the component-side silkscreen. Placed, it shows the instance designator;
+/// in the editor, the component's designator prefix and `?`.
+pub fn designator_placeholder(id: GraphicId, at: Point, layer: DrawingLayer) -> FootprintGraphic {
+    FootprintGraphic {
+        id,
+        layer,
+        side: Side::Component,
+        item: Item::Text(Text {
+            content: TextContent::Designator,
+            at,
+            height: FOOTPRINT_TEXT_HEIGHT_MM,
+            rotation: Rotation::default(),
+            justify: Justify {
+                h: HAlign::Center,
+                v: VAlign::Middle,
+            },
+            visible: true,
+            line_spacing: TEXT_LINE_SPACING,
+        }),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Item {
@@ -909,4 +985,61 @@ pub fn lint(draft: &Draft, _library: &Library, grid: &Grid) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// Resolved text placed on the sheet or the board.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlacedText {
+    /// The text graphic drawn; `None` for pin names and numbers and for
+    /// stacked field values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphic: Option<GraphicId>,
+    pub text: String,
+    pub at: Point,
+    pub height: f64,
+    pub rotation_deg: f64,
+    pub justify: Justify,
+    /// Drawn reflected (an occurrence or board side mirror).
+    pub mirrored: bool,
+    /// Distance between lines in cap heights; `text` breaks at `\n`.
+    pub line_spacing: f64,
+}
+
+impl PlacedText {
+    /// The approximate box of the resolved text under the core metric.
+    pub fn bounds(&self, m: TextMetric) -> Bounds {
+        m.bounds(
+            self.at,
+            self.height,
+            self.rotation_deg,
+            self.justify,
+            TextSize::of(&self.text, self.line_spacing),
+        )
+    }
+
+    /// The lines to draw, laid out after the upright rule: each reads left
+    /// to right or bottom to top and sits where the core metric puts it.
+    pub fn lines(&self) -> (f64, Vec<TextLine<'_>>) {
+        let (rotation_deg, justify) = upright(self.rotation_deg, self.justify);
+        (
+            rotation_deg,
+            text_lines(
+                &self.text,
+                self.at,
+                self.height,
+                rotation_deg,
+                justify,
+                self.line_spacing,
+            ),
+        )
+    }
+
+    /// The upright horizontal justification every line uses.
+    pub fn line_justify(&self) -> Justify {
+        let (_, justify) = upright(self.rotation_deg, self.justify);
+        Justify {
+            h: justify.h,
+            v: VAlign::Middle,
+        }
+    }
 }

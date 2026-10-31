@@ -134,14 +134,17 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
                     .iter()
                     .zip(layout.pads)
                     .enumerate()
-                    .map(|(i, (terminal, position))| Pad {
-                        id: PadId(if i == 0 { 1 } else { 2 }),
-                        terminal: *terminal,
-                        position,
-                        size: layout.land,
+                    .map(|(i, (terminal, position))| {
+                        Pad::smd_rect(
+                            PadId(if i == 0 { 1 } else { 2 }),
+                            *terminal,
+                            (i + 1).to_string(),
+                            position,
+                            layout.land,
+                        )
                     })
                     .collect(),
-                datum_offset: [0.0, 0.0],
+                ..FootprintDefinition::default()
             }),
         },
         DraftEdit {

@@ -255,7 +255,7 @@ fn shared_package(
                 if small {
                     for (pad, position) in footprint.pads.iter_mut().zip(SMALL.1) {
                         pad.position = position;
-                        pad.size = SMALL.2;
+                        pad.shape.set_size(SMALL.2);
                     }
                 }
                 edit.meta = meta(&format!("{label} lands"), "Synthetic two-land footprint");

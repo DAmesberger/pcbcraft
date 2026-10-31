@@ -304,6 +304,28 @@ impl Engine {
     /// Apply one operation at an expected revision as one undo step. A
     /// failure leaves document, revision and history unchanged.
     pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Outcome> {
+        self.apply_inner(expected_revision, operation, None)
+    }
+
+    /// [`apply`](Self::apply) with the host's footprint evaluator, which
+    /// footprint-source edits need (the core never interprets a sketch).
+    /// The evaluator runs on the candidate only; undo and redo restore
+    /// snapshots and never call it.
+    pub fn apply_with(
+        &mut self,
+        expected_revision: u64,
+        operation: Operation,
+        evaluator: &dyn library::FootprintEvaluator,
+    ) -> Result<Outcome> {
+        self.apply_inner(expected_revision, operation, Some(evaluator))
+    }
+
+    fn apply_inner(
+        &mut self,
+        expected_revision: u64,
+        operation: Operation,
+        evaluator: Option<&dyn library::FootprintEvaluator>,
+    ) -> Result<Outcome> {
         if expected_revision != self.revision {
             return Err(Error::Stale {
                 expected: expected_revision,
@@ -313,7 +335,9 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let outcome = match operation {
-            Operation::Library(command) => commands::apply_library(&mut candidate, command)?,
+            Operation::Library(command) => {
+                commands::apply_library(&mut candidate, command, evaluator)?
+            }
             Operation::Instance(command) => {
                 commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
             }

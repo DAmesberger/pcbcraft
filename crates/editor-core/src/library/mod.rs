@@ -7,6 +7,7 @@ mod binding;
 mod component;
 pub mod drafts;
 mod footprint;
+pub mod footprint_source;
 pub mod graphics;
 mod package;
 mod publish;
@@ -18,10 +19,16 @@ pub use component::{
     ComponentDefinition, MAX_DESIGNATOR_PREFIX, Terminal, TerminalClass, designator_prefix_valid,
 };
 pub use drafts::{Draft, DraftEdit, Drafts};
-pub use footprint::{FootprintDefinition, Pad};
+pub use footprint::{
+    ApertureId, CornerMask, Datum, FootprintDefinition, Hole, HoleShape, MASK_EXPANSION_MM,
+    MAX_OUTLINE_SEGMENTS, MAX_PAD_VIAS, MAX_PASTE_WINDOWS, MaskRule, Outline, Pad, PadDefaults,
+    PadKind, PadShape, PadSide, PadVia, PasteRule, PasteWindow, Segment,
+};
+pub use footprint_source::{FootprintEvaluator, FootprintSource};
 pub use graphics::{
-    Decorations, Fill, Graphic, Grid, HAlign, Item, Justify, Pin, PinDirection, PinText, Rotation,
-    SymbolHit, Text, TextContent, TextLine, TextMetric, TextSize, VAlign, lint,
+    Decorations, DrawingLayer, Fill, FootprintGraphic, Graphic, Grid, HAlign, Item, Justify, Pin,
+    PinDirection, PinText, PlacedText, Polarity, Rotation, Side, SymbolHit, Text, TextContent,
+    TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint,
 };
 pub use package::{PackageBody, PackageDefinition, PackageTerminal};
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};

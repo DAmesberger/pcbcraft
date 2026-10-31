@@ -213,7 +213,10 @@ fn local_pad(pad: Option<&Pad>) -> String {
     pad.map(|p| {
         format!(
             "at {:?} mm, size {:?} mm, package terminal {}",
-            p.position, p.size, p.terminal
+            p.position,
+            p.shape.extent(),
+            p.terminal
+                .map_or_else(|| "none".to_string(), |t| t.to_string())
         )
     })
     .unwrap_or_else(|| "removed".into())
@@ -677,14 +680,14 @@ fn definition_details(
     for pad in a_pads {
         let replacement = b_pads.iter().find(|p| p.id == pad.id);
         if replacement.is_none_or(|p| p.terminal != pad.terminal) {
-            if let Some(terminal) = am.get(&pad.terminal) {
+            if let Some(terminal) = pad.terminal.and_then(|t| am.get(&t)) {
                 mapping_endpoints.insert(Endpoint {
                     instance,
                     terminal: *terminal,
                 });
             }
             if let Some(replacement) = replacement
-                && let Some(terminal) = bm.get(&replacement.terminal)
+                && let Some(terminal) = replacement.terminal.and_then(|t| bm.get(&t))
             {
                 mapping_endpoints.insert(Endpoint {
                     instance,
@@ -710,7 +713,7 @@ fn definition_details(
             ));
         }
     }
-    let datum = |f: Option<&FootprintDefinition>| f.map(|f| f.datum_offset);
+    let datum = |f: Option<&FootprintDefinition>| f.map(|f| f.datum);
     if datum(a.footprint) != datum(b.footprint) {
         plan.detail(format!(
             "{designator}: footprint datum {:?} → {:?} mm.",

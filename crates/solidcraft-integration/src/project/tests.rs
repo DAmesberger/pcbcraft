@@ -27,7 +27,7 @@ fn fixture() -> Result<Project> {
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
     project.library.packages[0].definition.model_offset = [0.25, -0.4, 0.2];
-    project.library.footprints[0].definition.datum_offset = [0.3, -0.4];
+    project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
         .iter_mut()
@@ -770,12 +770,13 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
         });
     package.next_local = 91;
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.pads.push(pcbcraft_core::library::Pad {
-        id: PadId(90),
-        terminal: unmapped,
-        position: [0.0, 3.0],
-        size: [0.8, 0.8],
-    });
+    footprint.pads.push(pcbcraft_core::library::Pad::smd_rect(
+        PadId(90),
+        unmapped,
+        "MP",
+        [0.0, 3.0],
+        [0.8, 0.8],
+    ));
     footprint.next_local = 91;
     // Library validation refuses such a definition today, so the
     // enumeration is checked directly; the core's pad list is unchanged.
@@ -788,7 +789,7 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
             .iter()
             .find(|p| p.instance == pad.instance && p.pad == pad.pad.id)
             .map(|p| (p.net, p.position));
-        assert_eq!(pad.net.is_none(), pad.pad.terminal == unmapped);
+        assert_eq!(pad.net.is_none(), pad.pad.terminal == Some(unmapped));
         if let Some((net, position)) = expected {
             assert_eq!(pad.net, Some(net));
             assert_eq!(pad.center, position);
