@@ -78,11 +78,19 @@ pub enum LibraryCommand {
     /// courtyard and assembly roles) go through the same path as
     /// `library.edit_footprint`, evaluated once, as one undo step; any
     /// failure leaves the draft unchanged. Terminals stay unassigned.
-    /// Needs the host's footprint evaluator.
+    /// A draft that already has pads or parametric content is refused
+    /// (`footprint.template_not_empty`) unless `replace` is true: then its
+    /// source, pads, polarity and role-solved graphics are dropped and the
+    /// template built in their place, still one atomic undo step (authored
+    /// graphics and mask/paste defaults stay). Needs the host's
+    /// footprint evaluator.
     #[serde(rename = "library.footprint_from_template")]
     FootprintFromTemplate {
         draft: DefinitionId,
         template: Box<FootprintTemplate>,
+        /// Replace the draft's current content instead of refusing it.
+        #[serde(default)]
+        replace: bool,
     },
     /// Land package terminals on footprint pads by an explicit rule. With
     /// `confirm: false` it only reports the changes; nothing is ever
@@ -494,11 +502,19 @@ pub(crate) fn apply_library(
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
             Ok(Outcome::GraphicsEdited { added })
         }
-        LibraryCommand::FootprintFromTemplate { draft, template } => {
+        LibraryCommand::FootprintFromTemplate {
+            draft,
+            template,
+            replace,
+        } => {
             let (current, footprint) = footprint_draft(document, draft)?;
             let package = package_of(document, footprint)?;
-            let (definition, report) =
-                footprint_family::build(footprint, package, &template, need(evaluator)?)?;
+            let build = if replace {
+                footprint_family::rebuild
+            } else {
+                footprint_family::build
+            };
+            let (definition, report) = build(footprint, package, &template, need(evaluator)?)?;
             let edit = DraftEdit {
                 id: draft,
                 meta: current.meta.clone(),

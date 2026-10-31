@@ -701,3 +701,130 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
     assert!(f.pads.iter().all(|p| p.terminal.is_none()));
     Ok(())
 }
+
+/// `library.footprint_from_template` with `replace` and `layout.track_set`
+/// reach the core through JSON: `replace` defaults to false (a used draft
+/// is refused), `replace: true` rebuilds in one undo step, and a track's
+/// width changes by ID in one undo step.
+#[test]
+fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult {
+    use pcbcraft_core::layout::{LayoutCommand, RouteRequest};
+    use pcbcraft_core::library::templates::footprint_family::{FootprintTemplate, TemplateKind};
+    use pcbcraft_core::library::{
+        Definition, DefinitionMeta, FootprintDefinition, PackageDefinition, PackageTerminal,
+    };
+    use pcbcraft_core::{LibraryCommand, PackageRef, PackageTerminalId, Revision};
+    let mut session = Session::default();
+    let meta = |name: &str| DefinitionMeta {
+        name: name.into(),
+        description: String::new(),
+        provenance: "original test fixture".into(),
+    };
+    let package = PackageDefinition {
+        next_local: 3,
+        terminals: (1..=2)
+            .map(|n| PackageTerminal {
+                id: PackageTerminalId(n),
+                designation: n.to_string(),
+            })
+            .collect(),
+        envelope: [2.0, 1.2, 0.5],
+        ..PackageDefinition::default()
+    };
+    let mut created = |definition, name: &str| -> std::result::Result<u64, String> {
+        let reply = session.dispatch(apply(
+            &Operation::Library(LibraryCommand::NewDraft {
+                meta: meta(name),
+                definition,
+            }),
+            session.engine().revision(),
+        ));
+        reply["result"]["outcome"]["id"]
+            .as_u64()
+            .ok_or_else(|| format!("no draft id in {reply}"))
+    };
+    let package_id = created(Definition::Package(package.clone()), "chip")?;
+    let draft = created(
+        Definition::Footprint(FootprintDefinition {
+            package: PackageRef::new(pcbcraft_core::DefinitionId(package_id), Revision::FIRST),
+            next_local: 1,
+            ..FootprintDefinition::default()
+        }),
+        "chip-fp",
+    )?;
+    let template = serde_json::to_value(FootprintTemplate::defaults(TemplateKind::Chip, &package))?;
+    let build = |replace: Option<bool>, revision: u64| {
+        let mut params = json!({"draft": draft, "template": template});
+        if let Some(replace) = replace {
+            params["replace"] = json!(replace);
+        }
+        json!({"command": "project.apply", "params": {"expected_revision": revision,
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.footprint_from_template", "params": params}}}})
+    };
+    let reply = session.dispatch(build(None, session.engine().revision()));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let built = session.engine().drafts().clone();
+    let revision = session.engine().revision();
+    let refused = session.dispatch(build(Some(false), revision));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(session.engine().revision(), revision);
+    let replaced = session.dispatch(build(Some(true), revision));
+    assert_eq!(replaced["ok"], true, "{replaced}");
+    assert_eq!(session.engine().revision(), revision + 1);
+    session.dispatch(json!({"command": "project.undo", "params": {}}));
+    assert_eq!(
+        session.engine().drafts(),
+        &built,
+        "replace is one undo step"
+    );
+    assert!(schemas().to_string().contains("replace"));
+
+    // A routed track on the demo board, then its width by ID.
+    let mut session = Session::new(Engine::demo()?);
+    let r2 = session
+        .engine()
+        .project()
+        .instance_by_designator("R2")
+        .map_or(0, |i| i.id);
+    let mut ops = vec![Operation::Layout(LayoutCommand::Sync)];
+    for (instance, x) in [(r1(session.engine()), 10.0), (r2, 25.0)] {
+        ops.push(Operation::Layout(LayoutCommand::Move {
+            instance,
+            position: [x, 10.0],
+            rotation_deg: 0.0,
+            layer: pcbcraft_core::Layer::Top,
+        }));
+    }
+    ops.push(Operation::Layout(LayoutCommand::Route {
+        request: RouteRequest {
+            net: 2,
+            start: [11.2, 10.0],
+            end: [23.8, 10.0],
+            width: 0.3,
+            layer: pcbcraft_core::Layer::Top,
+        },
+    }));
+    for op in &ops {
+        let reply = session.dispatch(apply(op, session.engine().revision()));
+        assert_eq!(reply["ok"], true, "{reply}");
+    }
+    let before = session.engine().project().clone();
+    let id = before.tracks.first().map_or(0, |t| t.id);
+    let set = |width: f64, revision: u64| {
+        json!({"command": "project.apply", "params": {"expected_revision": revision,
+            "operation": {"editor": "Layout", "operation": {
+                "command": "layout.track_set", "params": {"id": id, "width": width}}}}})
+    };
+    let revision = session.engine().revision();
+    let wide = session.dispatch(set(9.0, revision));
+    assert_eq!(wide["ok"], false, "{wide}");
+    assert_eq!(session.engine().project(), &before);
+    let reply = session.dispatch(set(0.5, revision));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["project"]["tracks"][0]["width"], 0.5);
+    session.dispatch(json!({"command": "project.undo", "params": {}}));
+    assert_eq!(session.engine().project(), &before);
+    assert!(schemas().to_string().contains("layout.track_set"));
+    Ok(())
+}

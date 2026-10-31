@@ -569,6 +569,7 @@ fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
         Operation::Library(LibraryCommand::FootprintFromTemplate {
             draft: footprint,
             template: Box::new(template),
+            replace: false,
         })
     };
     // Without the host evaluator, and with a bad form, nothing changes.
@@ -619,6 +620,142 @@ fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
     assert_eq!(engine.drafts(), &built);
     engine.undo()?;
     assert_eq!(engine.drafts(), &before, "the template is one undo step");
+    Ok(())
+}
+
+/// `replace: true` clears the draft and builds in its place as one
+/// revision and one undo step: fresh pad identities, terminals unassigned,
+/// authored graphics and pad defaults kept. A refused replace
+/// changes nothing; on an empty draft it equals a plain build.
+#[test]
+fn footprint_from_template_replace_is_one_atomic_undo_step() -> Result<()> {
+    use pcbcraft_core::ids::GraphicId;
+    use pcbcraft_core::library::{Definition, DefinitionMeta, designator_placeholder};
+    use pcbcraft_core::{
+        DefinitionId, Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision,
+    };
+    let mut engine = Engine::default();
+    let meta = |name: &str| DefinitionMeta {
+        name: name.into(),
+        description: String::new(),
+        provenance: "original test fixture".into(),
+    };
+    let new_draft = |engine: &mut Engine, definition, name: &str| -> Result<DefinitionId> {
+        match engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: meta(name),
+                definition,
+            }),
+        )? {
+            Outcome::DraftCreated { id } => Ok(id),
+            other => Err(Error::Invalid(format!("{other:?}"))),
+        }
+    };
+    let pkg = package(8, [4.9, 3.9, 1.5]);
+    let package_id = new_draft(&mut engine, Definition::Package(pkg.clone()), "soic")?;
+    let mut start = FootprintDefinition {
+        package: PackageRef::new(package_id, Revision::FIRST),
+        next_local: 2,
+        ..FootprintDefinition::default()
+    };
+    start.defaults.mask_expansion_mm = 0.07;
+    start.graphics.push(designator_placeholder(
+        GraphicId(1),
+        [0.0, 3.0],
+        DrawingLayer::Silkscreen,
+    ));
+    let footprint = new_draft(&mut engine, Definition::Footprint(start.clone()), "soic-fp")?;
+    let op = |template: &FootprintTemplate, replace| {
+        Operation::Library(LibraryCommand::FootprintFromTemplate {
+            draft: footprint,
+            template: Box::new(template.clone()),
+            replace,
+        })
+    };
+    let fp = |engine: &Engine| -> Result<FootprintDefinition> {
+        match engine.drafts().get(footprint).map(|d| &d.definition) {
+            Some(Definition::Footprint(f)) => Ok(f.clone()),
+            _ => Err(Error::NotFound("footprint draft".into())),
+        }
+    };
+
+    // On an empty draft, replace is exactly a build.
+    let gull = FootprintTemplate::defaults(TemplateKind::GullWing, &pkg);
+    let (plain, _) = footprint_family::build(&start, &pkg, &gull, &EV)?;
+    let (rebuilt, _) = footprint_family::rebuild(&start, &pkg, &gull, &EV)?;
+    assert_eq!(plain, rebuilt);
+    engine.apply_with(engine.revision(), op(&gull, true), &EV)?;
+    assert_eq!(fp(&engine)?, plain);
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::AssignTerminals {
+            draft: footprint,
+            rule: AssignRule::ByPackageDesignation,
+            confirm: true,
+        }),
+    )?;
+    let assigned = engine.drafts().clone();
+    let old = fp(&engine)?;
+    assert!(old.pads.iter().all(|p| p.terminal.is_some()));
+
+    // Without replace a used draft is refused; a bad form with replace
+    // and a missing evaluator change nothing either.
+    let qfn = FootprintTemplate::defaults(TemplateKind::Qfn, &pkg);
+    let revision = engine.revision();
+    let refused = engine.apply_with(revision, op(&qfn, false), &EV);
+    assert!(
+        matches!(&refused, Err(Error::Conflict(m)) if m.starts_with("footprint.template_not_empty")),
+        "{refused:?}"
+    );
+    let FootprintTemplate::Qfn(mut bad) = qfn.clone() else {
+        return Err(Error::Invalid("qfn defaults".into()));
+    };
+    bad.pad_w = Expr("0".into());
+    assert!(
+        engine
+            .apply_with(revision, op(&FootprintTemplate::Qfn(bad), true), &EV)
+            .is_err()
+    );
+    assert!(engine.apply(revision, op(&qfn, true)).is_err());
+    assert_eq!(engine.revision(), revision);
+    assert_eq!(engine.drafts(), &assigned);
+
+    // Replace: one revision, the QFN's pads with fresh identities and no
+    // terminals, the authored designator and the footprint settings kept.
+    engine.apply_with(revision, op(&qfn, true), &EV)?;
+    assert_eq!(engine.revision(), revision + 1, "one revision");
+    let new = fp(&engine)?;
+    let (expected, _) = footprint_family::build(&footprint_family::cleared(&old), &pkg, &qfn, &EV)?;
+    assert_eq!(new, expected);
+    assert!(!new.pads.is_empty());
+    assert!(new.pads.iter().all(|p| p.terminal.is_none()));
+    let old_ids: std::collections::BTreeSet<PadId> = old.pads.iter().map(|p| p.id).collect();
+    assert!(
+        new.pads.iter().all(|p| !old_ids.contains(&p.id)),
+        "fresh pads"
+    );
+    assert!(new.next_local > old.next_local);
+    assert!(new.graphics.iter().any(|g| g.id == GraphicId(1)));
+    assert_eq!(new.defaults, start.defaults);
+    let polarity = new.polarity.as_ref().map(|p| p.pad);
+    assert!(polarity.is_some_and(|pad| new.pads.iter().any(|p| p.id == pad)));
+    // Only the new roles' graphics remain besides the authored one.
+    let roles: Vec<_> = new
+        .source
+        .as_deref()
+        .map(|s| s.graphics.iter().map(|g| g.id).collect())
+        .unwrap_or_default();
+    assert!(
+        new.graphics
+            .iter()
+            .all(|g| g.id == GraphicId(1) || roles.contains(&g.id))
+    );
+
+    engine.undo()?;
+    assert_eq!(engine.drafts(), &assigned, "replace is one undo step");
+    engine.redo()?;
+    assert_eq!(fp(&engine)?, new);
     Ok(())
 }
 
