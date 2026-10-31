@@ -9,6 +9,7 @@ mod arrange;
 mod drawing;
 #[cfg(test)]
 mod drawing_tests;
+mod part_props;
 mod snap;
 mod symbol_canvas;
 mod symbol_props;
@@ -16,6 +17,7 @@ mod working_set;
 
 use crate::kit::{self, Tone};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui};
+pub use part_props::{meaning_label, spec_text};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::functions::{
@@ -348,6 +350,8 @@ pub struct PartEditor {
     /// template or first unit laid out, tracked by ID so a rectangle the
     /// author drew is never stretched. `None` once it is gone.
     body: Option<(UnitId, GraphicId)>,
+    /// The component's manufacturer parts.
+    parts: part_props::PartProps,
 }
 
 impl Default for PartEditor {
@@ -384,6 +388,7 @@ impl Default for PartEditor {
             space_held: false,
             drawn_cache: None,
             body: None,
+            parts: Default::default(),
         }
     }
 }
@@ -457,15 +462,32 @@ impl PartEditor {
     /// after the editor's widgets ran.
     pub fn commit(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
-        if let Some(publish) = self.publish_pending() {
+        if let Some(publish) = self.publish_pending(engine) {
             return Some(publish);
         }
         let interacting =
             ctx.memory(|m| m.focused().is_some()) || ctx.input(|i| i.pointer.any_down());
-        if interacting || self.draft == self.baseline {
+        if let Some(lineage) = self.lineage
+            && let Some(publish) = self.parts.publish_pending(engine, lineage)
+        {
+            return Some(publish);
+        }
+        if interacting {
             return None;
         }
-        self.send(engine)
+        // A finished Part edit travels with the working set's, so neither
+        // reload discards the other's uncommitted work.
+        let part = self
+            .lineage
+            .and_then(|lineage| self.parts.take_edit(engine, lineage));
+        if self.draft == self.baseline {
+            return part.map(|edit| Operation::Library(LibraryCommand::Edit { edits: vec![edit] }));
+        }
+        let mut operation = self.send(engine);
+        if let Some(Operation::Library(LibraryCommand::Edit { edits })) = &mut operation {
+            edits.extend(part);
+        }
+        operation
     }
 
     /// Send the working copy with sibling references at their pending
@@ -480,15 +502,15 @@ impl PartEditor {
     }
 
     /// Send a deferred publish once the edit before it was applied.
-    fn publish_pending(&mut self) -> Option<Operation> {
+    fn publish_pending(&mut self, engine: &Engine) -> Option<Operation> {
         if self.publish_next && !self.awaiting {
             self.publish_next = false;
             if self.draft == self.baseline
-                && let Some(set) = &self.draft
+                && let Some(publish) = self.publish_set(engine)
             {
                 self.publishing = true;
                 self.awaiting = true;
-                return Some(set.publish());
+                return Some(publish);
             }
         }
         None
@@ -740,13 +762,33 @@ impl PartEditor {
         let set = self.draft.as_ref()?;
         let committed = engine.drafts();
         let pending_refs = set.retargeted(committed) != *set;
-        if self.draft != self.baseline || pending_refs {
+        // Part drafts publish with the cascade, pinning the pending revisions.
+        let parts = match part_props::Pins::pending(set, committed) {
+            Some(pins) => self.parts.retarget_edits(engine, set.ids.component, &pins),
+            None => Vec::new(),
+        };
+        if self.draft != self.baseline || pending_refs || !parts.is_empty() {
             self.publish_next = true;
-            return self.send(engine);
+            let mut operation = self.send(engine);
+            if let Some(Operation::Library(LibraryCommand::Edit { edits })) = &mut operation {
+                edits.extend(parts);
+            }
+            return operation;
         }
+        let publish = self.publish_set(engine)?;
         self.publishing = true;
         self.awaiting = true;
-        Some(set.publish())
+        Some(publish)
+    }
+
+    /// The working set's five drafts and its Part drafts, as one publish set.
+    fn publish_set(&self, engine: &Engine) -> Option<Operation> {
+        let set = self.draft.as_ref()?;
+        let mut publish = set.publish();
+        if let Operation::Library(LibraryCommand::Publish { drafts }) = &mut publish {
+            drafts.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
+        }
+        Some(publish)
     }
 
     /// Replace the working copy with a template; the next commit makes it
@@ -967,7 +1009,8 @@ impl PartEditor {
         if let Some(set) = &self.draft
             && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
         {
-            let ids = set.ids.all();
+            let mut ids = set.ids.all();
+            ids.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
             messages.extend(
                 reports
                     .into_iter()
@@ -1035,6 +1078,15 @@ impl PartEditor {
             View::Model => self.model_inspector(ui),
         }
         self.fields_section(ui, engine);
+        if let Some(set) = &self.draft {
+            match self.parts.section(ui, engine, set) {
+                Some(part_props::PartsAction::Apply(op)) => operation = operation.or(Some(*op)),
+                Some(part_props::PartsAction::PublishCascade) => {
+                    operation = operation.or_else(|| self.publish(engine));
+                }
+                None => {}
+            }
+        }
         if let Some(set) = &mut self.draft {
             kit::section(ui, "provenance", "Provenance", false, None, |ui| {
                 kit::text_row(ui, "Source", &mut set.metas.component.provenance);

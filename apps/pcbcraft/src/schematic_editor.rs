@@ -2,7 +2,8 @@
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 use crate::kit::{self, Tone};
-use crate::place_palette::{PaletteAction, PlacePalette};
+use crate::place_palette::{Mode as PaletteMode, PaletteAction, PlacePalette};
+use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
 use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2};
 use pcbcraft_core::completeness::InstanceReport;
@@ -90,6 +91,8 @@ pub struct SchematicEditor {
     update: crate::update_preview::UpdatePreview,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
+    /// The Resolve parts card.
+    resolve: ResolveParts,
 }
 
 impl Default for SchematicEditor {
@@ -123,6 +126,7 @@ impl Default for SchematicEditor {
             ghost: None,
             update: Default::default(),
             palette: PlacePalette::default(),
+            resolve: ResolveParts::default(),
         }
     }
 }
@@ -270,6 +274,10 @@ impl SchematicEditor {
                         Button::new("check", "inspect", "Check")
                             .selected(self.show_checks)
                             .tip("Show the electrical rule checks"),
+                        Button::new("resolve", "component", "Resolve")
+                            .enabled(!reviewing)
+                            .selected(self.resolve.is_open())
+                            .tip("Resolve parts: choose one manufacturer part per group of instances"),
                     ],
                 },
             ],
@@ -284,6 +292,17 @@ impl SchematicEditor {
             "wire" => Tool::Wire,
             "check" => {
                 self.show_checks = !self.show_checks;
+                return None;
+            }
+            "resolve" => {
+                if self.resolve.is_open() {
+                    self.resolve.close();
+                } else {
+                    self.select(None, None, engine.project());
+                    self.palette.close();
+                    self.tool = Tool::Select;
+                    self.resolve.open();
+                }
                 return None;
             }
             _ => return None,
@@ -309,7 +328,13 @@ impl SchematicEditor {
             return Header::new("component", "Review change", "Review");
         }
         if self.palette.is_open() {
+            if matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
+                return Header::new("component", "Choose part", "Library");
+            }
             return Header::new("component", "Place part", "Library");
+        }
+        if self.resolve.is_open() {
+            return Header::new("component", "Resolve parts", "Purchasing");
         }
         if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
             return Header::new("component", instance.designator.clone(), "Instance");
@@ -431,6 +456,23 @@ impl SchematicEditor {
             self.select(None, None, project);
         }
         let mut output = None;
+        if self.palette.is_open() && matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
+            self.palette.preview(ui, engine);
+            return None;
+        }
+        if self.resolve.is_open() {
+            match self.resolve.show(ui, engine) {
+                Some(ResolveAction::Choose { query, instances }) => {
+                    self.palette.open_assign(query, instances);
+                }
+                Some(ResolveAction::Select(id)) => {
+                    self.resolve.close();
+                    self.select(Some(id), None, project);
+                }
+                Some(ResolveAction::Close) | None => {}
+            }
+            return None;
+        }
         if self.tool == Tool::Place {
             if self.palette.is_open() {
                 self.palette.preview(ui, engine);
@@ -692,6 +734,7 @@ impl SchematicEditor {
                 self.select(self.selected, self.selected_occurrence, project);
             }
         });
+        output = output.or(self.part_section(ui, engine, instance));
         // Function choices apply at once; Apply covers the rows above.
         output = output.or(self.function_section(ui, project, instance, &functions));
         kit::rule(ui);
@@ -712,6 +755,63 @@ impl SchematicEditor {
                 );
             }
         });
+        output
+    }
+
+    /// The instance's manufacturer part: Choose… opens the palette in
+    /// assign mode, Clear sends `instance.assign_part` without a Part.
+    fn part_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        engine: &Engine,
+        instance: &pcbcraft_core::ComponentInstance,
+    ) -> Option<Operation> {
+        let purchasing = self.report(engine).map(|r| r.purchasing.clone());
+        let mut output = None;
+        let mut choose = false;
+        kit::section(ui, "part", "Part", true, None, |ui| {
+            let shown = match (&purchasing, instance.part) {
+                (Some(p), Some(r)) => match (&p.manufacturer, &p.mpn) {
+                    (Some(m), Some(mpn)) => format!("{m} {mpn} · {}", r.revision),
+                    _ => r.to_string(),
+                },
+                (None, Some(r)) => r.to_string(),
+                (_, None) => "None · generic".to_owned(),
+            };
+            kit::value_row(ui, "Part", &shown);
+            if let Some(p) = &purchasing {
+                kit::value_row(
+                    ui,
+                    "Purchasing",
+                    match p.state {
+                        pcbcraft_core::completeness::PurchasingState::NoPart => "no part chosen",
+                        pcbcraft_core::completeness::PurchasingState::Unresolved => "unresolved",
+                        pcbcraft_core::completeness::PurchasingState::Resolved => "resolved",
+                    },
+                );
+                for finding in p.findings.iter().take(4) {
+                    kit::status(ui, &finding.message, Tone::Warning);
+                }
+            }
+            kit::actions(ui, |ui| {
+                choose = ui_kit::button(ui, "Choose…", Button::Normal)
+                    .on_hover_text("Find a manufacturer part that meets this instance's values")
+                    .clicked();
+                if instance.part.is_some()
+                    && ui_kit::button(ui, "Clear", Button::Normal)
+                        .on_hover_text("Return the instance to a generic component")
+                        .clicked()
+                {
+                    output = Some(resolve_parts::assign(vec![instance.id], None));
+                }
+            });
+        });
+        if choose {
+            self.palette.open_assign(
+                resolve_parts::query_for(engine, instance.id),
+                vec![instance.id],
+            );
+        }
         output
     }
 
@@ -923,6 +1023,9 @@ impl SchematicEditor {
                 self.component = Some(component);
                 self.tool = Tool::Place;
             }
+            Some(PaletteAction::Assign { instances, part }) => {
+                output = Some(resolve_parts::assign(instances, Some(part)));
+            }
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
@@ -1129,6 +1232,8 @@ impl SchematicEditor {
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
                 .map(|(e, _)| *e);
             match self.tool {
+                // A click beside the open assign palette dismisses it.
+                Tool::Select | Tool::Wire if self.palette.is_open() => self.palette.close(),
                 // A click beside the open palette dismisses it.
                 Tool::Place if self.palette.is_open() => {
                     self.palette.close();
@@ -1377,6 +1482,8 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + delta * t)
 }
 
+#[cfg(test)]
+mod part_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
