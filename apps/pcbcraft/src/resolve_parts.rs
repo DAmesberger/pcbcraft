@@ -8,7 +8,7 @@ use egui::Ui;
 use pcbcraft_core::completeness::{BomReport, PurchasingState, ResolveGroup, ResolveReport};
 use pcbcraft_core::fields;
 use pcbcraft_core::library::Library;
-use pcbcraft_core::{Engine, Error, Id, InstanceCommand, Operation, PartRef, Query, QueryResult};
+use pcbcraft_core::{Engine, Id, InstanceCommand, Operation, PartRef, Query, QueryResult};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// Designators a group title lists before summarising the rest.
@@ -30,9 +30,8 @@ pub enum ResolveAction {
     Close,
 }
 
-/// A query result at one document revision; the error keeps whether the
-/// query is not available yet.
-type Cached<T> = Option<(u64, Result<T, (bool, String)>)>;
+/// A query result at one document revision; an error keeps its message.
+type Cached<T> = Option<(u64, Result<T, String>)>;
 
 #[derive(Default)]
 pub struct ResolveParts {
@@ -41,16 +40,12 @@ pub struct ResolveParts {
     bom: Cached<BomReport>,
 }
 
-fn failure(error: Error) -> (bool, String) {
-    (matches!(error, Error::Unsupported(_)), error.to_string())
-}
-
 /// `library.resolve_groups`.
-fn groups(engine: &Engine) -> Result<ResolveReport, (bool, String)> {
+fn groups(engine: &Engine) -> Result<ResolveReport, String> {
     match engine.query(Query::ResolveGroups {}) {
         Ok(QueryResult::ResolveGroups(report)) => Ok(report),
-        Ok(_) => Err((false, "unexpected report".into())),
-        Err(error) => Err(failure(error)),
+        Ok(_) => Err("unexpected report".into()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -117,8 +112,8 @@ impl ResolveParts {
         if self.bom.as_ref().is_none_or(|(r, _)| *r != revision) {
             let bom = match engine.query(Query::Bom {}) {
                 Ok(QueryResult::Bom(report)) => Ok(report),
-                Ok(_) => Err((false, "unexpected report".into())),
-                Err(error) => Err(failure(error)),
+                Ok(_) => Err("unexpected report".into()),
+                Err(error) => Err(error.to_string()),
             };
             self.bom = Some((revision, bom));
         }
@@ -154,19 +149,9 @@ impl ResolveParts {
                     }
                 }
             }
-            Some(Err((unavailable, message))) => {
+            Some(Err(message)) => {
                 kit::section(ui, "resolve-groups", "Groups", true, None, |ui| {
-                    if *unavailable {
-                        kit::status(
-                            ui,
-                            "Grouping instances for Resolve parts is not available in this \
-                             build yet.",
-                            Tone::Warning,
-                        );
-                        kit::note(ui, message);
-                    } else {
-                        kit::status(ui, message, Tone::Error);
-                    }
+                    kit::status(ui, message, Tone::Error);
                 });
             }
             None => {}
@@ -256,7 +241,7 @@ fn group_section(
 }
 
 /// The BOM lines, unresolved ones marked.
-fn bom_section(ui: &mut Ui, bom: &Result<BomReport, (bool, String)>) {
+fn bom_section(ui: &mut Ui, bom: &Result<BomReport, String>) {
     let count = bom.as_ref().ok().map(|b| b.lines.len());
     kit::section(ui, "resolve-bom", "BOM", false, count, |ui| match bom {
         Ok(report) => {
@@ -289,15 +274,7 @@ fn bom_section(ui: &mut Ui, bom: &Result<BomReport, (bool, String)>) {
                 kit::value_row(ui, &designator_summary(&line.designators), &shown);
             }
         }
-        Err((true, message)) => {
-            kit::status(
-                ui,
-                "The BOM is not available in this build yet.",
-                Tone::Warning,
-            );
-            kit::note(ui, message);
-        }
-        Err((false, message)) => {
+        Err(message) => {
             kit::status(ui, message, Tone::Error);
         }
     });
@@ -307,7 +284,7 @@ fn bom_section(ui: &mut Ui, bom: &Result<BomReport, (bool, String)>) {
 #[cfg(test)]
 pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRef> {
     use pcbcraft_core::library::{Definition, DefinitionMeta, PartDefinition};
-    use pcbcraft_core::{LibraryCommand, Outcome};
+    use pcbcraft_core::{Error, LibraryCommand, Outcome};
     let instance = engine
         .project()
         .instances
@@ -349,13 +326,13 @@ pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pcbcraft_core::Error;
 
-    /// Without a Part, the card names what is unavailable instead of
-    /// claiming that every instance is resolved; with the stub queries it
-    /// returns no Choose… action.
+    /// Without a Part, the card lists the demo's group with Choose… and
+    /// does not claim that every instance is resolved; drawing it returns
+    /// no action.
     #[test]
-    fn the_card_states_an_unavailable_query_without_claiming_resolution()
-    -> pcbcraft_core::Result<()> {
+    fn the_card_lists_unresolved_groups_without_claiming_resolution() -> pcbcraft_core::Result<()> {
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
@@ -378,21 +355,13 @@ mod tests {
             collect(&shape.shape, &mut texts);
         }
         assert_eq!(action, None);
-        match engine.query(Query::ResolveGroups {}) {
-            Err(Error::Unsupported(_)) => {
-                assert!(
-                    texts.iter().any(|t| t.contains("not available")),
-                    "{texts:?}"
-                );
-                assert!(!texts.iter().any(|t| t.contains("Every instance has")));
-            }
-            Ok(QueryResult::ResolveGroups(report)) => {
-                // The demo's instances have no Part: one group, one Choose….
-                assert!(!report.groups.is_empty());
-                assert!(texts.iter().any(|t| t == "Choose…"), "{texts:?}");
-            }
-            other => return Err(Error::Invalid(format!("{other:?}"))),
-        }
+        let Ok(QueryResult::ResolveGroups(report)) = engine.query(Query::ResolveGroups {}) else {
+            return Err(Error::Invalid("library.resolve_groups".into()));
+        };
+        // The demo's instances have no Part: one group, one Choose….
+        assert!(!report.groups.is_empty());
+        assert!(texts.iter().any(|t| t == "Choose…"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t.contains("Every instance has")));
         Ok(())
     }
 

@@ -246,45 +246,24 @@ fn assign(instances: &[Value], part: Option<PartRef>) -> Fallible<Value> {
     }}))
 }
 
-fn assert_unsupported(reply: &Value) {
-    assert_eq!(reply["ok"], false, "{reply}");
-    assert_eq!(reply["error"]["code"], "unsupported", "{reply}");
-    let message = reply["error"]["message"].as_str().unwrap_or_default();
-    assert!(message.contains("(S2 task 1)"), "{reply}");
-}
-
-/// Against the S2 contract stubs: authoring and publishing a Part, and
-/// clearing one, already work through JSON; the parts that S2 task 1
-/// implements report `unsupported` without changing anything.
-///
-/// When task 1 merges this test fails by design. Delete it then and remove
-/// the `ignore` from `parts_resolve_assign_and_bom_through_json_match_the_engine`.
+/// Clearing a Part is one undoable step; an empty instance set and an
+/// unknown Part are refused without changes.
 #[test]
-fn parts_through_json_report_unsupported_until_the_core_rules_land() -> TestResult {
+fn assign_part_clears_and_refuses_bad_input_through_json() -> TestResult {
     let mut pair = Pair::demo()?;
     let part = publish_part(&mut pair)?;
     let instances: Vec<Value> = resistors(&mut pair)?
         .iter()
         .map(|i| i["id"].clone())
         .collect();
-
-    assert_unsupported(&pair.query("library.resolve_groups", json!({}))?);
-    let refused = pair.refuse(assign(&instances, Some(part))?, "unsupported")?;
-    assert!(
-        refused["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("(S2 task 1)"))
-    );
     let report = pair.inspect(&instances[0])?;
     assert_eq!(report["purchasing"]["state"], "no_part", "{report}");
     assert_eq!(report["purchasing"]["part"], Value::Null);
-    assert_unsupported(&pair.query("project.bom", json!({}))?);
 
-    // Clearing is implemented and is one undoable step; an empty set and
-    // an unknown Part are refused without changes.
     pair.apply(assign(&instances, None)?)?;
     pair.refuse(assign(&[], None)?, "invalid_input")?;
     let unknown = PartRef::new(pcbcraft_core::DefinitionId(9999), part.revision);
+    let before = pair.session.engine().document().clone();
     let refused = pair
         .session
         .dispatch(json!({"command": "project.apply", "params": {
@@ -292,6 +271,7 @@ fn parts_through_json_report_unsupported_until_the_core_rules_land() -> TestResu
             "operation": assign(&instances, Some(unknown))?,
         }}));
     assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(pair.session.engine().document(), &before);
     let undo = pair
         .session
         .dispatch(json!({"command": "project.undo", "params": {}}));
@@ -307,7 +287,6 @@ fn parts_through_json_report_unsupported_until_the_core_rules_land() -> TestResu
 /// of two and no unresolved lines, and no group is left to resolve. Every
 /// report equals the engine's own query.
 #[test]
-#[ignore = "needs the S2 core rules (S2 task 1); enable it when they merge"]
 fn parts_resolve_assign_and_bom_through_json_match_the_engine() -> TestResult {
     let mut pair = Pair::demo()?;
     let part = publish_part(&mut pair)?;

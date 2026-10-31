@@ -2,8 +2,8 @@
 //! the Resolve parts card, driven through the engine.
 use super::*;
 use crate::resolve_parts::demo_part;
+use pcbcraft_core::PartRef;
 use pcbcraft_core::format::{EditorFile, FILE_VERSION};
-use pcbcraft_core::{Error, PartRef};
 use solidcraft_ui_egui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -140,8 +140,8 @@ fn the_part_row_chooses_in_assign_mode_and_clears_through_the_engine() -> TestRe
     Ok(())
 }
 
-/// One group assignment is one command: every instance gets the Part, or
-/// (while the engine does not compare Parts yet) none does.
+/// One group assignment is one command and one undo step: every instance
+/// gets the Part.
 #[test]
 fn a_group_assignment_is_one_atomic_command() -> TestResult {
     let (mut engine, part, r1, r2) = engine_with_part()?;
@@ -149,33 +149,22 @@ fn a_group_assignment_is_one_atomic_command() -> TestResult {
         engine.revision(),
         crate::resolve_parts::assign(vec![r1], None),
     )?;
-    let before = engine.document().project.clone();
-    let revision = engine.revision();
-    let result = engine.apply(
+    engine.apply(
         engine.revision(),
         crate::resolve_parts::assign(vec![r1, r2], Some(part)),
-    );
+    )?;
     let pinned = |engine: &Engine, id| engine.project().instance(id).and_then(|i| i.part);
-    match result {
-        // The contract stub (S2 task 1 not merged): nothing changes.
-        Err(Error::Unsupported(_)) => {
-            assert_eq!(*engine.document().project, *before);
-            assert_eq!(engine.revision(), revision);
-        }
-        Ok(_) => {
-            assert_eq!(pinned(&engine, r1), Some(part));
-            assert_eq!(pinned(&engine, r2), Some(part));
-            engine.undo()?;
-            assert_eq!(pinned(&engine, r1), None);
-            assert_eq!(pinned(&engine, r2), None);
-        }
-        Err(error) => return Err(error.into()),
-    }
+    assert_eq!(pinned(&engine, r1), Some(part));
+    assert_eq!(pinned(&engine, r2), Some(part));
+    engine.undo()?;
+    assert_eq!(pinned(&engine, r1), None);
+    assert_eq!(pinned(&engine, r2), None);
     Ok(())
 }
 
 /// The ribbon's Resolve opens the card in Properties; it shows the
-/// groups or what is unavailable, and Close returns to the sheet.
+/// groups, Choose… opens the palette in assign mode for the first group,
+/// and Close returns to the sheet.
 #[test]
 fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
     let ctx = egui::Context::default();
@@ -193,24 +182,20 @@ fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
     editor.on_tool("resolve", &engine);
     assert_eq!(editor.header(&engine).title, "Resolve parts");
     let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
-    match engine.query(Query::ResolveGroups {}) {
-        Err(Error::Unsupported(_)) => {
-            assert!(shown.iter().any(|(t, _)| t.contains("not available")));
+    let Ok(QueryResult::ResolveGroups(report)) = engine.query(Query::ResolveGroups {}) else {
+        return Err("library.resolve_groups".into());
+    };
+    let first = report.groups.first().ok_or("the demo has a group")?;
+    assert!(shown.iter().any(|(t, _)| t == "Choose…"), "{shown:?}");
+    click(&mut editor, &engine, &ctx, "Choose…")?;
+    assert_eq!(
+        editor.palette.mode(),
+        &PaletteMode::Assign {
+            instances: first.instances.clone()
         }
-        Ok(QueryResult::ResolveGroups(report)) => {
-            let first = report.groups.first().ok_or("the demo has a group")?;
-            click(&mut editor, &engine, &ctx, "Choose…")?;
-            assert_eq!(
-                editor.palette.mode(),
-                &PaletteMode::Assign {
-                    instances: first.instances.clone()
-                }
-            );
-            assert_eq!(editor.palette.query(), first.query);
-            editor.palette.close();
-        }
-        other => return Err(format!("{other:?}").into()),
-    }
+    );
+    assert_eq!(editor.palette.query(), first.query);
+    editor.palette.close();
     click(&mut editor, &engine, &ctx, "Close")?;
     assert!(!editor.resolve.is_open());
     assert_eq!(editor.header(&engine).title, "Sheet");
