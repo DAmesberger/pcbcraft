@@ -5,6 +5,11 @@
 //! infrastructure that may use egui directly; every other module of the
 //! desktop app is feature content and is checked. Rust is parsed; code
 //! inside macro invocations is not.
+//!
+//! Feature modules also show error and warning text only through
+//! `kit::field_error` and `kit::refusal` (docs/sidebar-ia.md, "Enforcement"):
+//! `Tone::Error` and `Tone::Warning` messages are counted per file and may
+//! not exceed [`LEGACY_MESSAGES`], the sites the sidebar slices still migrate.
 use crate::{Result, root};
 use std::path::Path;
 use syn::visit::{self, Visit};
@@ -47,9 +52,35 @@ const METHODS: &[&str] = &[
     "radio_value",
 ];
 
+/// Error and warning text sites that predate the sidebar redesign, per file
+/// relative to `apps/pcbcraft/src`. Each slice that migrates a file lowers or
+/// removes its entry; no file may gain one.
+const LEGACY_MESSAGES: &[(&str, usize)] = &[
+    ("library_sources.rs", 5),
+    ("part_editor.rs", 2),
+    ("part_editor/details_card.rs", 2),
+    ("part_editor/footprint_params_ui.rs", 3),
+    ("part_editor/footprint_template_picker.rs", 3),
+    ("part_editor/model_body.rs", 2),
+    ("part_editor/model_props.rs", 3),
+    ("part_editor/part_props.rs", 5),
+    ("part_editor/symbol_props.rs", 1),
+    ("pcb_editor/board_card.rs", 1),
+    ("place_palette.rs", 4),
+    ("resolve_parts.rs", 5),
+    ("schematic_editor/instance_card.rs", 5),
+    ("schematic_editor/sheet_card.rs", 2),
+    ("update_preview.rs", 3),
+];
+
+/// Message tones that only `kit::field_error` and `kit::refusal` may show.
+const PROBLEM_TONES: &[&str] = &["Error", "Warning"];
+
 #[derive(Default)]
 struct Guard {
     found: Vec<String>,
+    /// Lines of `Tone::Error` and `Tone::Warning` paths.
+    problems: Vec<usize>,
 }
 
 impl<'ast> Visit<'ast> for Guard {
@@ -60,6 +91,13 @@ impl<'ast> Visit<'ast> for Guard {
         {
             let line = syn::spanned::Spanned::span(path).start().line;
             self.found.push(format!("line {line}: egui::{name}"));
+        }
+        if let [.., tone, level] = names.as_slice()
+            && tone == "Tone"
+            && PROBLEM_TONES.contains(&level.as_str())
+        {
+            self.problems
+                .push(syn::spanned::Spanned::span(path).start().line);
         }
         visit::visit_path(self, path);
     }
@@ -94,11 +132,29 @@ fn feature_files(directory: &Path, base: &Path, out: &mut Vec<std::path::PathBuf
     Ok(())
 }
 
+#[cfg(test)]
 fn scan(source: &str) -> std::result::Result<Vec<String>, syn::Error> {
+    Ok(guard(source)?.found)
+}
+
+fn guard(source: &str) -> std::result::Result<Guard, syn::Error> {
     let syntax = syn::parse_file(source)?;
     let mut guard = Guard::default();
     guard.visit_file(&syntax);
-    Ok(guard.found)
+    Ok(guard)
+}
+
+/// The message-rule violation for `file` with problem-tone sites on
+/// `lines`, given its `allowed` legacy count.
+fn message_violation(file: &str, lines: &[usize], allowed: usize) -> Option<String> {
+    (lines.len() > allowed).then(|| {
+        let at: Vec<String> = lines.iter().map(usize::to_string).collect();
+        format!(
+            "{file}: {} error or warning messages (lines {}), {allowed} allowed; show them with kit::field_error or kit::refusal",
+            lines.len(),
+            at.join(", ")
+        )
+    })
 }
 
 pub fn check() -> Result<()> {
@@ -106,17 +162,33 @@ pub fn check() -> Result<()> {
     let mut files = Vec::new();
     feature_files(&base, &base, &mut files)?;
     let mut violations = Vec::new();
+    let mut legacy = 0;
     for file in &files {
         let source = std::fs::read_to_string(file)?;
-        let found = scan(&source).map_err(|e| format!("{}: cannot parse: {e}", file.display()))?;
+        let found = guard(&source).map_err(|e| format!("{}: cannot parse: {e}", file.display()))?;
         violations.extend(
             found
+                .found
                 .into_iter()
                 .map(|f| format!("{}: {f}; build forms with crate::kit", file.display())),
         );
+        let relative = file
+            .strip_prefix(&base)
+            .unwrap_or(file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let allowed = LEGACY_MESSAGES
+            .iter()
+            .find(|(name, _)| *name == relative)
+            .map_or(0, |(_, n)| *n);
+        legacy += found.problems.len().min(allowed);
+        violations.extend(message_violation(&relative, &found.problems, allowed));
     }
     if violations.is_empty() {
-        eprintln!("UI forms: {} feature modules use the card kit", files.len());
+        eprintln!(
+            "UI forms: {} feature modules use the card kit; {legacy} legacy error or warning messages remain",
+            files.len()
+        );
         Ok(())
     } else {
         Err(violations.join("\n").into())
@@ -147,6 +219,21 @@ mod tests {
             )?,
             Vec::<String>::new()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn error_and_warning_text_is_counted_against_the_legacy_sites() -> Result<(), syn::Error> {
+        let source = "fn f(ui: &mut egui::Ui){ kit::status(ui, \"x\", kit::Tone::Error); kit::finding_row(ui, \"y\", Tone::Warning, None); kit::status(ui, \"z\", Tone::Dim); }";
+        let found = super::guard(source)?;
+        assert_eq!(found.problems, vec![1, 1]);
+        assert!(super::message_violation("a.rs", &found.problems, 2).is_none());
+        let over = super::message_violation("a.rs", &found.problems, 1);
+        assert!(over.is_some_and(|m| m.contains("kit::field_error")));
+        let kit = super::guard(
+            "fn f(ui: &mut egui::Ui){ kit::field_error(ui, &r, \"m\", true); kit::refusal(ui, \"m\"); }",
+        )?;
+        assert!(kit.problems.is_empty());
         Ok(())
     }
 }
