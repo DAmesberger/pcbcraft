@@ -5,7 +5,7 @@ use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
 use crate::library::package_fit::{self, FitRotation, LeadPair};
-use crate::library::package_model::{self, PackageEdit};
+use crate::library::package_model::PackageEdit;
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
 use crate::scripting;
@@ -82,8 +82,10 @@ pub enum LibraryCommand {
         edits: Vec<PackageEdit>,
     },
     /// Fit the package draft's model leads onto footprint pads. The host
-    /// (app or automation, through the integration crate) supplies the
-    /// lead/pad pairs; with `confirm: false` it only reports the fit.
+    /// (app or automation, through the integration crate) may supply the
+    /// lead/pad pairs; empty `pairs` derives them from the typed package
+    /// form and the one footprint draft landing the package. With
+    /// `confirm: false` it only reports the fit.
     #[serde(rename = "library.fit_leads")]
     FitLeads {
         draft: DefinitionId,
@@ -104,6 +106,30 @@ fn package_draft(
     match &current.definition {
         Definition::Package(package) => Ok((current, package)),
         _ => Err(Error::Invalid(format!("draft {draft} is not a package"))),
+    }
+}
+
+/// The one footprint draft whose pads land the package draft `draft`.
+fn landing_footprint(
+    document: &Document,
+    draft: DefinitionId,
+) -> Result<&library::FootprintDefinition> {
+    let mut found = document
+        .drafts
+        .items
+        .iter()
+        .filter_map(|d| match &d.definition {
+            Definition::Footprint(f) if f.package.id == draft => Some(f),
+            _ => None,
+        });
+    match (found.next(), found.next()) {
+        (Some(footprint), None) => Ok(footprint),
+        (None, _) => Err(Error::NotFound(format!(
+            "package.no_footprint: no footprint draft lands package {draft}"
+        ))),
+        (Some(_), Some(_)) => Err(Error::Invalid(format!(
+            "package.footprint_ambiguous: several footprint drafts land package {draft}; pass lead pairs"
+        ))),
     }
 }
 
@@ -349,7 +375,8 @@ pub(crate) fn apply_library(
         }
         LibraryCommand::EditPackage { draft, edits } => {
             let (current, package) = package_draft(document, draft)?;
-            let edited = package_model::edit_package(package, &edits)?;
+            let footprint = landing_footprint(document, draft).ok();
+            let edited = package_fit::edit_package_in(package, footprint, &edits)?;
             let meta = current.meta.clone();
             store_package(document, draft, meta, edited)?;
             Ok(Outcome::None)
@@ -361,6 +388,11 @@ pub(crate) fn apply_library(
             confirm,
         } => {
             let (current, package) = package_draft(document, draft)?;
+            let pairs = if pairs.is_empty() {
+                package_fit::form_pairs(package, landing_footprint(document, draft)?)?
+            } else {
+                pairs
+            };
             let fit = package_fit::fit_leads(&package.placement, &pairs, rotation)?;
             if confirm {
                 let mut edited = package.clone();

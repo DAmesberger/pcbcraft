@@ -619,5 +619,11 @@ impl FootprintDefinition {
                 vec![this, object(self.package.id, terminal.0)],
             ));
         }
+        // Advisory: where the package's 3D model sits on these lands.
+        out.extend(super::package_fit::placement_findings(
+            &package.definition,
+            self,
+            id,
+        ));
     }
 }
