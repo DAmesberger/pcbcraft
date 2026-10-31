@@ -183,6 +183,7 @@ impl PartDefinition {
     /// this Part's references.
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
+        let named = |r: crate::ids::DefinitionRef| super::names::capitalised(&library.describe(r));
         if !printable(&self.manufacturer) || !printable(&self.mpn) {
             out.push(issue(
                 "part.identity",
@@ -195,8 +196,8 @@ impl PartDefinition {
             out.push(issue(
                 "reference.missing",
                 format!(
-                    "Component {} is not in the project library.",
-                    self.component
+                    "{} is missing from the project library.",
+                    named(self.component.erased())
                 ),
                 vec![
                     this,
@@ -209,7 +210,10 @@ impl PartDefinition {
         if library.binding(self.binding).is_none() {
             out.push(issue(
                 "reference.missing",
-                format!("Binding {} is not in the project library.", self.binding),
+                format!(
+                    "{} is missing from the project library.",
+                    named(self.binding.erased())
+                ),
                 vec![
                     this,
                     ObjectRef::Definition {
@@ -224,8 +228,9 @@ impl PartDefinition {
                 out.push(issue(
                     "part.binding_unlisted",
                     format!(
-                        "Component {} does not list binding {}.",
-                        self.component, self.binding
+                        "{} does not list {}.",
+                        named(self.component.erased()),
+                        library.describe(self.binding.erased())
                     ),
                     vec![
                         this,
@@ -256,7 +261,10 @@ impl PartDefinition {
             if !lineages.insert(spec.field.id) {
                 out.push(issue(
                     "part.spec_duplicate",
-                    format!("Field {} has more than one rated value.", spec.field.id),
+                    format!(
+                        "{} has more than one rated value.",
+                        super::names::capitalised(&library.describe(spec.field.erased()))
+                    ),
                     objects.clone(),
                 ));
             }
@@ -264,8 +272,9 @@ impl PartDefinition {
                 out.push(issue(
                     "part.spec_field",
                     format!(
-                        "Component {} does not select field {}.",
-                        self.component, spec.field
+                        "{} does not select {}.",
+                        super::names::capitalised(&library.describe(self.component.erased())),
+                        library.describe(spec.field.erased())
                     ),
                     objects,
                 ));
@@ -275,8 +284,8 @@ impl PartDefinition {
                 out.push(issue(
                     "reference.missing",
                     format!(
-                        "Field {} or its quantity kind is not in the project library.",
-                        spec.field
+                        "{} or its quantity kind is missing from the project library.",
+                        super::names::capitalised(&library.describe(spec.field.erased()))
                     ),
                     objects,
                 ));
@@ -313,10 +322,7 @@ impl PartDefinition {
             {
                 out.push(issue(
                     "part.reference_text",
-                    format!(
-                        "Reference {} needs a printable title, revision and licence.",
-                        reference.id
-                    ),
+                    "A reference needs a printable title, revision and licence.".into(),
                     local(reference.id),
                 ));
             }
@@ -324,8 +330,8 @@ impl PartDefinition {
                 out.push(issue(
                     "part.link",
                     format!(
-                        "Reference {} needs an http(s) link without spaces.",
-                        reference.id
+                        "Reference ‘{}’ needs an http(s) link without spaces.",
+                        reference.title
                     ),
                     local(reference.id),
                 ));
@@ -336,8 +342,8 @@ impl PartDefinition {
                 out.push(issue(
                     "part.hash",
                     format!(
-                        "Reference {} names a hash that is not 64 lower-case hex digits.",
-                        reference.id
+                        "Reference ‘{}’ names a hash that is not 64 lower-case hex digits.",
+                        reference.title
                     ),
                     local(reference.id),
                 ));
@@ -350,17 +356,17 @@ impl PartDefinition {
             {
                 out.push(issue(
                     "part.offer_text",
-                    format!(
-                        "Offer {} needs a printable distributor, SKU and packaging.",
-                        offer.id
-                    ),
+                    "An offer needs a printable distributor, SKU and packaging.".into(),
                     local(offer.id),
                 ));
             }
             if !offer.url.as_deref().is_none_or(link) {
                 out.push(issue(
                     "part.link",
-                    format!("Offer {} needs an http(s) link without spaces.", offer.id),
+                    format!(
+                        "The offer of ‘{}’ needs an http(s) link without spaces.",
+                        offer.distributor
+                    ),
                     local(offer.id),
                 ));
             }
@@ -382,7 +388,7 @@ impl PartDefinition {
             {
                 out.push(issue(
                     "part.provenance_basis",
-                    format!("The provenance names reference {r}, which this Part does not list."),
+                    "The provenance names a reference this Part does not list.".into(),
                     this.clone(),
                 ));
             }

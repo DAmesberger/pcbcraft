@@ -29,12 +29,14 @@ impl Error {
             Self::File(error) => error.diagnostic(),
             Self::Native(error) => pcbcraft_core::Diagnostic {
                 code: error.code().into(),
+                rule: None,
                 message: error.to_string(),
                 expected_revision: None,
                 actual_revision: None,
             },
             Self::Request(_) => pcbcraft_core::Diagnostic {
                 code: "malformed_request".into(),
+                rule: None,
                 message: self.to_string(),
                 expected_revision: None,
                 actual_revision: None,

@@ -648,7 +648,8 @@ fn a_refused_value_keeps_the_field_and_the_document_unchanged() -> TestResult {
         .as_ref()
         .and_then(|f| f.error().map(str::to_owned));
     assert!(
-        error.is_some_and(|e| e.contains("footprint.")),
+        // The solver's reason, without the rule code the refusal carries.
+        error.is_some_and(|e| e.contains("cannot be satisfied") && !e.contains("footprint.")),
         "the field shows why"
     );
     assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing sent");

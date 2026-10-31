@@ -57,6 +57,7 @@ impl BindingDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
+        let named = |r: crate::ids::DefinitionRef| super::names::capitalised(&library.describe(r));
         // The owner is a component lineage that is published, or staged in
         // the same publish set; never unset, unknown or this lineage itself.
         if !matches!(
@@ -66,10 +67,7 @@ impl BindingDefinition {
         {
             out.push(issue(
                 "reference.owner_mismatch",
-                format!(
-                    "Owner {} is not a published or co-published component lineage.",
-                    self.component
-                ),
+                "The owner is not a component that is published or published with it.".into(),
                 vec![this],
             ));
         }
@@ -99,14 +97,16 @@ impl BindingDefinition {
             match library.footprint(*r) {
                 None => out.push(issue(
                     "reference.missing",
-                    format!("Footprint {r} is not in the project library."),
+                    format!("{} is missing from the project library.", named(r.erased())),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 )),
                 Some(footprint) if footprint.definition.package != self.package => out.push(issue(
                     "binding.footprint_package",
                     format!(
-                        "Footprint {r} lands package {}, not this binding's {}.",
-                        footprint.definition.package, self.package
+                        "{} lands {}, not this binding's {}.",
+                        named(r.erased()),
+                        library.describe(footprint.definition.package.erased()),
+                        library.describe(self.package.erased())
                     ),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 )),
@@ -116,7 +116,10 @@ impl BindingDefinition {
         let Some(package) = library.package(self.package) else {
             out.push(issue(
                 "reference.missing",
-                format!("Package {} is not in the project library.", self.package),
+                format!(
+                    "{} is missing from the project library.",
+                    named(self.package.erased())
+                ),
                 vec![
                     this,
                     ObjectRef::Definition {
@@ -135,10 +138,7 @@ impl BindingDefinition {
             {
                 out.push(issue(
                     "binding.mapping_unknown",
-                    format!(
-                        "Mapping names unknown package terminal {}.",
-                        mapping.package_terminal
-                    ),
+                    "A mapping names a package terminal the package does not have.".into(),
                     vec![this],
                 ));
             }
@@ -150,8 +150,8 @@ impl BindingDefinition {
                 out.push(issue(
                     "binding.mapping_missing",
                     format!(
-                        "Package terminal {} ‘{}’ needs exactly one electrical terminal ({count} mapped).",
-                        terminal.id, terminal.designation
+                        "Package terminal ‘{}’ needs exactly one electrical terminal ({count} mapped).",
+                        terminal.designation
                     ),
                     vec![this, object(self.package.id, terminal.id.0)],
                 ));

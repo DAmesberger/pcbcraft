@@ -59,8 +59,8 @@ pub enum GraphicEdit {
     SetPolarity { polarity: Option<Polarity> },
 }
 
-fn missing(id: GraphicId) -> Error {
-    Error::NotFound(format!("graphic {id} is not in this symbol"))
+fn missing(_id: GraphicId) -> Error {
+    Error::NotFound("That graphic is no longer in this symbol".into())
 }
 
 fn graphic_mut(symbol: &mut SymbolDefinition, id: GraphicId) -> Result<&mut super::Graphic> {
@@ -224,15 +224,15 @@ fn footprint_graphic_mut(
         .as_ref()
         .is_some_and(|s| s.graphics.iter().any(|r| r.id == id));
     if derived {
-        return Err(Error::Conflict(format!(
-            "graphic {id} is derived from the footprint source; edit its role instead"
-        )));
+        return Err(Error::Conflict(
+            "That graphic is derived from the footprint source; edit its role instead".into(),
+        ));
     }
     footprint
         .graphics
         .iter_mut()
         .find(|g| g.id == id)
-        .ok_or_else(|| Error::NotFound(format!("graphic {id} is not in this footprint")))
+        .ok_or_else(|| Error::NotFound("That graphic is no longer in this footprint".into()))
 }
 
 fn apply_footprint(

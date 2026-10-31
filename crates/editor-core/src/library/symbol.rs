@@ -138,10 +138,7 @@ impl SymbolDefinition {
         {
             out.push(issue(
                 "reference.owner_mismatch",
-                format!(
-                    "Owner {} is not a published or co-published component lineage.",
-                    self.component
-                ),
+                "The owner is not a component that is published or published with it.".into(),
                 vec![this],
             ));
         }
@@ -159,14 +156,14 @@ impl SymbolDefinition {
             if !printable(&unit.label) || !labels.insert(unit.label.to_lowercase()) {
                 out.push(issue(
                     "symbol.unit_label",
-                    format!("Unit {} needs a unique printable label.", unit.id),
+                    "A unit needs a unique printable label.".into(),
                     vec![unit_object],
                 ));
             }
             if unit.graphics.is_empty() && unit.pins.is_empty() {
                 out.push(issue(
                     "symbol.unit_empty",
-                    format!("Unit {} draws nothing and has no pins.", unit.id),
+                    format!("Unit ‘{}’ draws nothing and has no pins.", unit.label),
                     vec![unit_object],
                 ));
             }
@@ -175,8 +172,8 @@ impl SymbolDefinition {
                     out.push(issue(
                         "symbol.pin_duplicate",
                         format!(
-                            "Terminal {} has more than one pin or has ID zero.",
-                            pin.terminal
+                            "Unit ‘{}’ has a pin with no terminal, or a terminal with several pins.",
+                            unit.label
                         ),
                         vec![unit_object],
                     ));

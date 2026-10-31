@@ -15,6 +15,16 @@ pub(super) fn issue(code: &str, message: String, objects: Vec<ObjectRef>) -> Fin
     Finding::blocking(code, message, objects, Stage::Publish)
 }
 
+/// A draft for a message: its kind and name, such as "symbol ‘Resistor’".
+fn draft_name(draft: &Draft) -> String {
+    let kind = super::names::noun(draft.definition.kind());
+    if draft.meta.name.trim().is_empty() {
+        format!("of a {kind}")
+    } else {
+        format!("{kind} ‘{}’", draft.meta.name)
+    }
+}
+
 pub(super) fn object(definition: DefinitionId, local: u32) -> ObjectRef {
     ObjectRef::LibraryObject { definition, local }
 }
@@ -50,14 +60,14 @@ fn local_id_findings(
         if *local == 0 || !seen.insert(*local) {
             out.push(issue(
                 "definition.local_id_invalid",
-                format!("Local ID {local} is zero or used more than once."),
+                "An object identity is zero or used more than once.".into(),
                 vec![object(id, *local)],
             ));
         }
         if *local >= next_local {
             out.push(issue(
                 "definition.local_id_unallocated",
-                format!("Local ID {local} is not below this revision's next_local {next_local}."),
+                "An object identity was never allocated by this revision.".into(),
                 vec![object(id, *local)],
             ));
         }
@@ -68,7 +78,7 @@ fn local_id_findings(
     if next_local < base_next {
         out.push(issue(
             "definition.next_local_decreased",
-            format!("next_local {next_local} is below the base revision's {base_next}."),
+            "The identity counter is below the base revision's.".into(),
             vec![this],
         ));
     }
@@ -77,7 +87,7 @@ fn local_id_findings(
         if *local < base_next {
             out.push(issue(
                 "definition.local_id_reused",
-                format!("Local ID {local} was retired before this revision and cannot be reused."),
+                "An object reuses an identity retired before this revision.".into(),
                 vec![object(id, *local)],
             ));
         }
@@ -92,8 +102,8 @@ pub fn publish_findings(library: &Library, r: DefinitionRef) -> Vec<Finding> {
         return vec![issue(
             "reference.missing",
             format!(
-                "{:?} {} {} is not in the project library.",
-                r.kind, r.id, r.revision
+                "{} is missing from the project library.",
+                super::names::capitalised(&library.describe(r))
             ),
             vec![this],
         )];
@@ -131,7 +141,10 @@ pub fn publish_findings(library: &Library, r: DefinitionRef) -> Vec<Finding> {
             if let Some((k, None)) = kind {
                 out.push(issue(
                     "reference.missing",
-                    format!("Quantity kind {k} is not in the project library."),
+                    format!(
+                        "{} is missing from the project library.",
+                        super::names::capitalised(&library.describe(k.erased()))
+                    ),
                     vec![this, ObjectRef::Definition { id: k.id }],
                 ));
             }
@@ -150,22 +163,32 @@ pub fn pending_revision(library: &Library, draft: &Draft) -> Result<DefinitionRe
     let kind = draft.definition.kind();
     let revision = match (library.latest(id), draft.base) {
         (None, None) => Revision::FIRST,
-        (Some((stored, latest)), Some(base)) if stored == kind && latest == base => base
-            .next()
-            .ok_or_else(|| Error::Limit(format!("revisions of {id} are exhausted")))?,
+        (Some((stored, latest)), Some(base)) if stored == kind && latest == base => {
+            base.next().ok_or_else(|| {
+                Error::Limit(format!(
+                    "The revisions of {} are exhausted.",
+                    draft_name(draft)
+                ))
+            })?
+        }
         (Some((stored, _)), _) if stored != kind => {
             return Err(Error::Conflict(format!(
-                "draft {id} is a {kind:?} but the lineage is published as {stored:?}"
+                "The draft {} is a {} but its lineage is published as a {}.",
+                draft_name(draft),
+                super::names::noun(kind),
+                super::names::noun(stored)
             )));
         }
         (Some((_, latest)), _) => {
             return Err(Error::Conflict(format!(
-                "{id} has a newer revision ({latest}); load it before publishing"
+                "{} has a newer revision ({latest}); load it before publishing.",
+                super::names::capitalised(&library.describe_lineage(kind, id))
             )));
         }
         (None, Some(_)) => {
             return Err(Error::Invalid(format!(
-                "draft {id} names a base revision that does not exist"
+                "The draft {} names a base revision that does not exist.",
+                draft_name(draft)
             )));
         }
     };
@@ -204,11 +227,12 @@ pub fn candidate(
     let mut set = Vec::with_capacity(ids.len());
     for id in ids {
         if !unique.insert(*id) {
-            return Err(Error::Invalid(format!("draft {id} is listed twice")));
+            let name = drafts.get(*id).map(draft_name).unwrap_or_default();
+            return Err(Error::Invalid(format!("The draft {name} is listed twice.")));
         }
-        let draft = drafts
-            .get(*id)
-            .ok_or_else(|| Error::NotFound(format!("there is no draft of {id}")))?;
+        let draft = drafts.get(*id).ok_or_else(|| {
+            Error::NotFound("One of the drafts to publish no longer exists.".into())
+        })?;
         check_bounds(&draft.meta, &draft.definition)?;
         set.push((pending_revision(library, draft)?, draft));
     }
@@ -217,8 +241,8 @@ pub fn candidate(
     for (r, draft) in &set {
         if staged.count(r.kind) >= super::MAX_REVISIONS_PER_KIND {
             return Err(Error::Limit(format!(
-                "the project library holds at most 4096 {:?} revisions",
-                r.kind
+                "The project library holds at most 4096 {} revisions.",
+                super::names::noun(r.kind)
             )));
         }
         staged.append(
@@ -250,7 +274,11 @@ pub fn publish(
     for r in &set {
         for finding in publish_findings(&staged, *r) {
             if finding.blocks_stage(Stage::Publish) {
-                blocking.push(format!("{} {}: {}", r.id, r.revision, finding.message));
+                blocking.push(format!(
+                    "{}: {}",
+                    super::names::capitalised(&staged.describe(*r)),
+                    finding.message
+                ));
             }
         }
     }

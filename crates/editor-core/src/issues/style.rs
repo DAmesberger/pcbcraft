@@ -57,6 +57,22 @@ pub fn check(text: &str) -> Vec<Problem> {
     found
 }
 
+/// The naming problems of `text` only: internal IDs, ID lists, net
+/// numbers, definition IDs, rule-code prefixes and debug output. Raw
+/// finding messages and refusal texts are sentences of any length, but
+/// they too name objects by their user names.
+pub fn naming(text: &str) -> Vec<Problem> {
+    check(text)
+        .into_iter()
+        .filter(|p| {
+            !matches!(
+                p,
+                Problem::Empty | Problem::TooLong | Problem::MultiLine | Problem::FullStop
+            )
+        })
+        .collect()
+}
+
 fn starts_word(text: &str, at: usize) -> bool {
     text[..at]
         .chars()

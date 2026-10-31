@@ -242,7 +242,7 @@ impl BoardCopper {
                     .cloned()
                     .unwrap_or_else(|| pad.to_string())
             ),
-            ObjectRef::Track { id } => format!("track {id}"),
+            ObjectRef::Track { .. } => format!("a track on {}", project.net_name(shape.net)),
             _ => String::new(),
         };
         let track_rings: Vec<CopperRing> =

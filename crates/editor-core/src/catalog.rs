@@ -297,7 +297,10 @@ pub fn updates_available(
 /// Advisory findings of [`updates_available`]: `library.update_available`
 /// for a newer source revision and `library.source_modified` for a source
 /// record that no longer hashes to what the project copied.
-pub fn update_findings(updates: &[UpdateAvailable]) -> Vec<crate::diagnostics::Finding> {
+pub fn update_findings(
+    library: &Library,
+    updates: &[UpdateAvailable],
+) -> Vec<crate::diagnostics::Finding> {
     use crate::diagnostics::{Finding, ObjectRef};
     let mut out = Vec::new();
     for update in updates {
@@ -309,7 +312,10 @@ pub fn update_findings(updates: &[UpdateAvailable]) -> Vec<crate::diagnostics::F
                 "library.update_available",
                 format!(
                     "‘{}’ holds {} of {}; the project copied {}.",
-                    update.source, update.latest, update.local.id, update.origin.revision
+                    update.source,
+                    update.latest,
+                    library.describe_lineage(update.local.kind, update.local.id),
+                    update.origin.revision
                 ),
                 objects.clone(),
             ));
@@ -321,7 +327,7 @@ pub fn update_findings(updates: &[UpdateAvailable]) -> Vec<crate::diagnostics::F
                 format!(
                     "{} of {} in ‘{}’ changed after the project copied it; the project keeps its copy.",
                     revisions.join(", "),
-                    update.local.id,
+                    library.describe_lineage(update.local.kind, update.local.id),
                     update.source
                 ),
                 objects,
@@ -1494,12 +1500,19 @@ pub fn inspect(
     let latest = revisions
         .last()
         .map(|c| c.revision)
-        .ok_or_else(|| Error::NotFound(format!("{lineage} has no published component revision")))?;
+        .ok_or_else(|| Error::NotFound("That component has no published revision".into()))?;
     let wanted = revision.unwrap_or(latest);
     let published = revisions
         .iter()
         .find(|c| c.revision == wanted)
-        .ok_or_else(|| Error::NotFound(format!("{lineage} has no revision {wanted}")))?;
+        .ok_or_else(|| {
+            Error::NotFound(format!(
+                "{} has no revision {wanted}",
+                crate::library::names::capitalised(
+                    &library.describe_lineage(DefinitionKind::Component, lineage)
+                )
+            ))
+        })?;
     let definition = &published.definition;
     let mut entry = entry_of(library, lineage, Some(wanted), &published.meta, definition);
     entry.draft = drafts.get(lineage).is_some();

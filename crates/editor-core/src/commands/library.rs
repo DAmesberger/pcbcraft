@@ -162,11 +162,23 @@ fn package_draft(
     let current = document
         .drafts
         .get(draft)
-        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+        .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
     match &current.definition {
         Definition::Package(package) => Ok((current, package)),
-        _ => Err(Error::Invalid(format!("draft {draft} is not a package"))),
+        _ => Err(Error::Invalid(format!(
+            "The draft ‘{}’ is not a package",
+            current.meta.name
+        ))),
     }
+}
+
+/// The name of a draft, for a message.
+fn draft_name(document: &Document, draft: DefinitionId) -> String {
+    document
+        .drafts
+        .get(draft)
+        .map(|d| d.meta.name.clone())
+        .unwrap_or_default()
 }
 
 /// The one footprint draft whose pads land the package draft `draft`.
@@ -185,10 +197,12 @@ fn landing_footprint(
     match (found.next(), found.next()) {
         (Some(footprint), None) => Ok(footprint),
         (None, _) => Err(Error::NotFound(format!(
-            "package.no_footprint: no footprint draft lands package {draft}"
+            "package.no_footprint: no footprint draft lands the package ‘{}’",
+            draft_name(document, draft)
         ))),
         (Some(_), Some(_)) => Err(Error::Invalid(format!(
-            "package.footprint_ambiguous: several footprint drafts land package {draft}; pass lead pairs"
+            "package.footprint_ambiguous: several footprint drafts land the package ‘{}’; pass lead pairs",
+            draft_name(document, draft)
         ))),
     }
 }
@@ -214,10 +228,13 @@ fn footprint_draft(
     let current = document
         .drafts
         .get(draft)
-        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+        .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
     match &current.definition {
         Definition::Footprint(footprint) => Ok((current, footprint)),
-        _ => Err(Error::Invalid(format!("draft {draft} is not a footprint"))),
+        _ => Err(Error::Invalid(format!(
+            "The draft ‘{}’ is not a footprint",
+            current.meta.name
+        ))),
     }
 }
 
@@ -232,8 +249,11 @@ fn package_of<'a>(
     )
     .ok_or_else(|| {
         Error::NotFound(format!(
-            "package {} {} is not in the library or the drafts",
-            footprint.package.id, footprint.package.revision
+            "The footprint's {} is not in the library or the drafts",
+            document
+                .project
+                .library
+                .describe(footprint.package.erased())
         ))
     })
 }
@@ -286,7 +306,8 @@ fn place_request(
         }
         kind => {
             return Err(Error::Invalid(format!(
-                "library.place_from places a component or a Part, not a {kind:?}"
+                "library.place_from: only a component or a Part can be placed, not a {}",
+                crate::library::names::noun(kind)
             )));
         }
     };
@@ -406,7 +427,7 @@ pub(crate) fn apply_library(
             let current = document
                 .drafts
                 .get(draft)
-                .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
             let Definition::Footprint(footprint) = &current.definition else {
                 return Err(Error::Invalid(
                     "pad generation requires a footprint draft".into(),
@@ -454,7 +475,7 @@ pub(crate) fn apply_library(
             let current = document
                 .drafts
                 .get(draft)
-                .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
             let terminals = match &current.definition {
                 Definition::Symbol(symbol) => library::graphics::owner_terminals(
                     &document.drafts,

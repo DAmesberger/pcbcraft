@@ -7,7 +7,7 @@ use crate::fields::{self, FieldSelection, MAX_FIELDS};
 use crate::functions::{
     self, FunctionConstraint, Resource, TerminalDeclaration, TerminalFunctions,
 };
-use crate::ids::{BindingRef, DefinitionId, SymbolRef, TerminalId};
+use crate::ids::{BindingRef, DefinitionId, DefinitionRef, SymbolRef, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -85,6 +85,7 @@ impl ComponentDefinition {
             .iter()
             .map(|t| TerminalDeclaration {
                 terminal: t.id,
+                name: &t.name,
                 functions: t.functions(),
             })
             .collect()
@@ -143,6 +144,7 @@ impl ComponentDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
+        let named = |r: DefinitionRef| super::names::capitalised(&library.describe(r));
         if !designator_prefix_valid(&self.designator_prefix) {
             out.push(issue(
                 "component.designator_prefix",
@@ -162,7 +164,7 @@ impl ComponentDefinition {
             if !printable(&terminal.name) {
                 out.push(issue(
                     "component.terminal_name",
-                    format!("Terminal {} needs a printable name.", terminal.id),
+                    "A terminal needs a printable name.".into(),
                     vec![object(id, terminal.id.0)],
                 ));
             }
@@ -193,7 +195,7 @@ impl ComponentDefinition {
             let Some(symbol) = library.symbol(*r) else {
                 out.push(issue(
                     "reference.missing",
-                    format!("Symbol {r} is not in the project library."),
+                    format!("{} is missing from the project library.", named(r.erased())),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
                 continue;
@@ -201,7 +203,7 @@ impl ComponentDefinition {
             if symbol.definition.component != id {
                 out.push(issue(
                     "reference.owner_mismatch",
-                    format!("Symbol {r} belongs to another component lineage."),
+                    format!("{} belongs to another component.", named(r.erased())),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
@@ -216,8 +218,9 @@ impl ComponentDefinition {
                     out.push(issue(
                         "component.pin_missing",
                         format!(
-                            "Symbol {r} has no pin for terminal {} ‘{}’.",
-                            terminal.id, terminal.name
+                            "{} has no pin for terminal ‘{}’.",
+                            named(r.erased()),
+                            terminal.name
                         ),
                         vec![
                             object(id, terminal.id.0),
@@ -226,10 +229,13 @@ impl ComponentDefinition {
                     ));
                 }
             }
-            for terminal in pinned.difference(&terminals) {
+            if pinned.difference(&terminals).next().is_some() {
                 out.push(issue(
                     "component.pin_unknown",
-                    format!("Symbol {r} has a pin for unknown terminal {terminal}."),
+                    format!(
+                        "{} has a pin for a terminal this component does not have.",
+                        named(r.erased())
+                    ),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
@@ -238,7 +244,9 @@ impl ComponentDefinition {
                     out.push(issue(
                         "component.text_field_unknown",
                         format!(
-                            "Symbol {r} shows field {field}, which this component does not select."
+                            "{} shows {}, which this component does not select.",
+                            named(r.erased()),
+                            library.describe_lineage(crate::ids::DefinitionKind::Field, field)
                         ),
                         vec![this, ObjectRef::Definition { id: field }],
                     ));
@@ -256,7 +264,7 @@ impl ComponentDefinition {
             let Some(binding) = library.binding(*r) else {
                 out.push(issue(
                     "reference.missing",
-                    format!("Binding {r} is not in the project library."),
+                    format!("{} is missing from the project library.", named(r.erased())),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
                 continue;
@@ -264,7 +272,7 @@ impl ComponentDefinition {
             if binding.definition.component != id {
                 out.push(issue(
                     "reference.owner_mismatch",
-                    format!("Binding {r} belongs to another component lineage."),
+                    format!("{} belongs to another component.", named(r.erased())),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
@@ -279,8 +287,9 @@ impl ComponentDefinition {
                     out.push(issue(
                         "component.mapping_missing",
                         format!(
-                            "Binding {r} maps no package terminal to terminal {} ‘{}’.",
-                            terminal.id, terminal.name
+                            "{} maps no package terminal to terminal ‘{}’.",
+                            named(r.erased()),
+                            terminal.name
                         ),
                         vec![
                             object(id, terminal.id.0),
@@ -289,10 +298,13 @@ impl ComponentDefinition {
                     ));
                 }
             }
-            for terminal in mapped.difference(&terminals) {
+            if mapped.difference(&terminals).next().is_some() {
                 out.push(issue(
                     "component.mapping_unknown",
-                    format!("Binding {r} maps unknown terminal {terminal}."),
+                    format!(
+                        "{} maps a terminal this component does not have.",
+                        named(r.erased())
+                    ),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
             }
@@ -319,6 +331,7 @@ impl ComponentDefinition {
     /// Selections are unique per field lineage, resolve in the snapshot and
     /// have defaults that satisfy their field.
     fn field_findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
+        let named = |r: DefinitionRef| super::names::capitalised(&library.describe(r));
         let this = ObjectRef::Definition { id };
         if !unique_lineages(self.fields.iter().map(|f| f.field.id)) {
             out.push(issue(
@@ -332,7 +345,10 @@ impl ComponentDefinition {
             let Some(view) = library.field_view(r) else {
                 out.push(issue(
                     "reference.missing",
-                    format!("Field {r} or its quantity kind is not in the project library."),
+                    format!(
+                        "{} or its quantity kind is missing from the project library.",
+                        named(r.erased())
+                    ),
                     vec![this, ObjectRef::Definition { id: r.id }],
                 ));
                 continue;

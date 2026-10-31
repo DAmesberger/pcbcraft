@@ -77,7 +77,10 @@ pub fn create(
         return Err(Error::Limit("a project holds at most 64 drafts".into()));
     }
     if drafts.get(id).is_some() {
-        return Err(Error::Conflict(format!("{id} already has a draft")));
+        return Err(Error::Conflict(format!(
+            "{} already has a draft",
+            super::names::capitalised(&library.describe_lineage(definition.kind(), id))
+        )));
     }
     check_lineage(library, id, base, definition.kind())?;
     drafts.items.push(Draft {
@@ -98,14 +101,19 @@ fn check_lineage(
     match (library.latest(id), base) {
         (None, None) => Ok(()),
         (Some((stored, _)), _) if stored != kind => Err(Error::Invalid(format!(
-            "{id} is a {stored:?} lineage, not a {kind:?}"
+            "{} is a {}, not a {}",
+            super::names::capitalised(&library.describe_lineage(stored, id)),
+            super::names::noun(stored),
+            super::names::noun(kind)
         ))),
         (Some((_, latest)), Some(base)) if base.0 >= 1 && base <= latest => Ok(()),
         (Some(_), None) => Err(Error::Invalid(format!(
-            "a draft of published lineage {id} needs its base revision"
+            "A draft of the published {} needs its base revision",
+            library.describe_lineage(kind, id)
         ))),
         _ => Err(Error::Invalid(format!(
-            "draft of {id} names a base revision that does not exist"
+            "The draft of {} names a base revision that does not exist",
+            library.describe_lineage(kind, id)
         ))),
     }
 }
@@ -120,16 +128,19 @@ pub fn edit(drafts: &mut Drafts, edits: Vec<DraftEdit>) -> Result<()> {
     let mut seen = BTreeSet::new();
     for edit in &edits {
         if !seen.insert(edit.id) {
-            return Err(Error::Invalid(format!("draft {} is edited twice", edit.id)));
+            return Err(Error::Invalid(format!(
+                "The draft ‘{}’ is edited twice",
+                edit.meta.name
+            )));
         }
-        let draft = drafts
-            .get(edit.id)
-            .ok_or_else(|| Error::NotFound(format!("there is no draft of {}", edit.id)))?;
+        let draft = drafts.get(edit.id).ok_or_else(|| {
+            Error::NotFound(format!("The draft ‘{}’ no longer exists", edit.meta.name))
+        })?;
         if draft.definition.kind() != edit.definition.kind() {
             return Err(Error::Invalid(format!(
-                "draft {} is a {:?}; its kind cannot change",
-                edit.id,
-                draft.definition.kind()
+                "The draft ‘{}’ is a {}; its kind cannot change",
+                draft.meta.name,
+                super::names::noun(draft.definition.kind())
             )));
         }
         check_bounds(&edit.meta, &edit.definition)?;
@@ -159,7 +170,7 @@ pub fn discard(drafts: &mut Drafts, id: DefinitionId) -> Result<()> {
     let before = drafts.items.len();
     drafts.items.retain(|d| d.id != id);
     if drafts.items.len() == before {
-        return Err(Error::NotFound(format!("there is no draft of {id}")));
+        return Err(Error::NotFound("That draft no longer exists".into()));
     }
     Ok(())
 }

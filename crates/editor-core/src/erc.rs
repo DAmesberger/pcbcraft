@@ -19,11 +19,21 @@ enum Behavior<'a> {
     Unresolved,
 }
 
-fn designator(project: &Project, endpoint: Endpoint) -> &str {
-    project
-        .instance(endpoint.instance)
-        .map(|i| i.designator.as_str())
-        .unwrap_or("?")
+/// A terminal for a message: "R1 terminal ‘VCC’", by designator and the
+/// terminal's name in the instance's component revision.
+fn terminal(project: &Project, endpoint: Endpoint) -> String {
+    let Some(instance) = project.instance(endpoint.instance) else {
+        return format!("terminal {}", endpoint.terminal);
+    };
+    let name = project
+        .library
+        .component(instance.component)
+        .and_then(|c| c.definition.terminal(endpoint.terminal))
+        .map_or_else(
+            || endpoint.terminal.to_string(),
+            |t| format!("‘{}’", t.name),
+        );
+    format!("{} terminal {name}", instance.designator)
 }
 
 fn behavior<'a>(
@@ -62,10 +72,9 @@ fn net_checks(
             out.push(Finding::new(
                 "erc.unchecked_terminal",
                 format!(
-                    "{}: {} terminal {} has no active function and is not checked.",
+                    "{}: {} has no active function and is not checked.",
                     net.name,
-                    designator(project, *endpoint),
-                    endpoint.terminal
+                    terminal(project, *endpoint)
                 ),
                 vec![
                     this,
@@ -132,9 +141,8 @@ fn net_checks(
             out.push(Finding::new(
                 "erc.undriven_power_input",
                 format!(
-                    "{} terminal {} has no power-output driver on its net.",
-                    designator(project, *endpoint),
-                    endpoint.terminal
+                    "{} has no power-output driver on its net.",
+                    terminal(project, *endpoint)
                 ),
                 vec![ObjectRef::Terminal {
                     endpoint: *endpoint,

@@ -530,7 +530,7 @@ fn closures_are_dependency_first_and_refuse_dangling_references() -> Result<()> 
     broken.bindings.clear();
     let error = bundle::closure(&broken, root).err();
     assert!(
-        matches!(&error, Some(Error::NotFound(m)) if m.contains("names Binding")),
+        matches!(&error, Some(Error::NotFound(m)) if m.contains("names binding")),
         "{error:?}"
     );
     Ok(())
@@ -924,7 +924,7 @@ fn place_from_a_folder_then_update_only_r1_and_reopen_offline() -> Result<()> {
     assert_eq!(found[0].local, copy.erased());
     assert_eq!(found[0].latest, Revision(2));
     assert!(found[0].modified.is_empty());
-    let codes: Vec<String> = catalog::update_findings(&found)
+    let codes: Vec<String> = catalog::update_findings(&design.project().library, &found)
         .into_iter()
         .map(|f| f.code)
         .collect();
@@ -1071,7 +1071,7 @@ fn a_modified_folder_record_is_detected_by_hash_and_never_trusted() -> Result<()
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].modified, vec![Revision(1)], "the changed revision");
     assert_eq!(found[0].latest, Revision(1));
-    let codes: Vec<String> = catalog::update_findings(&found)
+    let codes: Vec<String> = catalog::update_findings(&design.project().library, &found)
         .into_iter()
         .map(|f| f.code)
         .collect();
@@ -1559,7 +1559,7 @@ fn a_modified_older_record_is_named_by_its_revision() -> Result<()> {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].origin.revision, Revision(2), "the newest copy");
     assert_eq!(found[0].modified, vec![Revision(1)], "the edited record");
-    let finding = catalog::update_findings(&found);
+    let finding = catalog::update_findings(&design.project().library, &found);
     assert!(
         finding
             .iter()
