@@ -16,6 +16,10 @@ Pcbcraft directly depends on `solidcraft-engine`, `solidcraft-ui-egui` and the g
 
 Original Pcbcraft code is licensed MIT OR Apache-2.0, like Solidcraft; see [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Every workspace crate declares this license, and `cargo xtask licences --check` enforces it together with the dependency license policy.
 
+## SVG import
+
+SVG artwork import (`crates/solidcraft-integration/src/svg.rs`) calls Solidcraft's public SVG reader, `solidcraft_engine::io::read_svg` (`crates/io/src/svg.rs` of the pinned fork revision above, unchanged from upstream `4f3ac07`; MIT OR Apache-2.0), for all path, shape, transform and unit handling. The element walk uses [quick-xml](https://github.com/tafia/quick-xml) 0.41 (MIT), the version that reader already depends on. The conversion to Pcbcraft graphics and the test fixture `crates/solidcraft-integration/src/svg/mark.svg` are original.
+
 ## Embedded scripting dependency
 
 The scripting feasibility slice embeds [Rhai](https://github.com/rhaiscript/rhai) 1.27.0 (MIT OR Apache-2.0) as a Cargo dependency. Cargo retains upstream notices; the dependency is pinned in the manifest and lockfile. Pcbcraft's quantity operations, pad-generation interface and test fixtures are original. The integration uses the documented [custom type](https://rhai.rs/book/rust/custom-types.html), [expression-only](https://rhai.rs/book/engine/expressions.html), [execution limit](https://rhai.rs/book/safety/max-operations.html) and [wasm](https://rhai.rs/book/start/builds/wasm.html) APIs. `wasm-bindgen-test` and its separately installed matching runner provide the optional Node-hosted wasm test execution.

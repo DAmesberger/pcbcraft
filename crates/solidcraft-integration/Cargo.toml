@@ -15,6 +15,8 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 thiserror.workspace = true
+# Element structure of SVG artwork (MIT); the same version Solidcraft's reader uses.
+quick-xml = "0.41"
 
 [dev-dependencies]
 tempfile = "3"
