@@ -458,8 +458,10 @@ impl FootprintDefinition {
     }
 
     /// Advisory footprint lint: missing courtyard, missing pin-1 polarity
-    /// on more than two pads, and solder-mask webs below
-    /// [`MIN_MASK_WEB_MM`].
+    /// on more than two pads, solder-mask webs below [`MIN_MASK_WEB_MM`],
+    /// pads outside the courtyard, silkscreen over pads, and silkscreen
+    /// strokes and text below [`MIN_SILK_WIDTH_MM`] and
+    /// [`MIN_SILK_TEXT_HEIGHT_MM`].
     pub fn lint(&self, id: DefinitionId) -> Vec<Finding> {
         let this = ObjectRef::Definition { id };
         let mut out = Vec::new();
@@ -488,7 +490,56 @@ impl FootprintDefinition {
         self.mask_web_lint(id, &mut out);
         self.courtyard_lint(id, &mut out);
         self.silk_lint(id, &mut out);
+        self.silk_size_lint(id, &mut out);
         out
+    }
+
+    /// Silkscreen strokes thinner than [`MIN_SILK_WIDTH_MM`]
+    /// (`footprint.silk_width`; a filled shape prints its area, so only
+    /// unfilled strokes count) and visible text shorter than
+    /// [`MIN_SILK_TEXT_HEIGHT_MM`] (`footprint.text_height`).
+    fn silk_size_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+        let mut reported = 0usize;
+        for graphic in self
+            .graphics
+            .iter()
+            .filter(|g| g.layer == DrawingLayer::Silkscreen)
+        {
+            if reported >= 64 {
+                return;
+            }
+            let finding = match &graphic.item {
+                Item::Shape { width, fill, .. }
+                    if *fill == Fill::None && width.is_finite() && *width < MIN_SILK_WIDTH_MM =>
+                {
+                    Finding::new(
+                        "footprint.silk_width",
+                        format!(
+                            "Silkscreen graphic {} is {width:.3} mm wide, below {MIN_SILK_WIDTH_MM} mm (estimated default); it may not print.",
+                            graphic.id
+                        ),
+                        vec![object(id, graphic.id.0)],
+                    )
+                }
+                Item::Text(text)
+                    if text.visible
+                        && text.height.is_finite()
+                        && text.height < MIN_SILK_TEXT_HEIGHT_MM =>
+                {
+                    Finding::new(
+                        "footprint.text_height",
+                        format!(
+                            "Silkscreen text {} is {:.3} mm high, below {MIN_SILK_TEXT_HEIGHT_MM} mm (estimated default); it may not be legible.",
+                            graphic.id, text.height
+                        ),
+                        vec![object(id, graphic.id.0)],
+                    )
+                }
+                _ => continue,
+            };
+            reported += 1;
+            out.push(finding);
+        }
     }
 
     /// Copper pads not inside any closed courtyard shape

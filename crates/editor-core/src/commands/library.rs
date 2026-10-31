@@ -64,10 +64,12 @@ pub enum LibraryCommand {
         edits: Vec<FootprintEdit>,
     },
     /// Build a family template (chip, gull-wing, QFN/DFN, pin header) into
-    /// a footprint draft: the template's edits (named parameters, template
-    /// pads, arrays and explicit derived courtyard and assembly roles) go
-    /// through the same path as `library.edit_footprint`, as one undo
-    /// step. Needs the host's footprint evaluator.
+    /// an empty footprint draft: the template's edits (named parameters,
+    /// template pads, arrays, the pin-1 polarity and explicit derived
+    /// courtyard and assembly roles) go through the same path as
+    /// `library.edit_footprint`, evaluated once, as one undo step; any
+    /// failure leaves the draft unchanged. Terminals stay unassigned.
+    /// Needs the host's footprint evaluator.
     #[serde(rename = "library.footprint_from_template")]
     FootprintFromTemplate {
         draft: DefinitionId,
@@ -276,14 +278,17 @@ pub(crate) fn apply_library(
             Ok(Outcome::GraphicsEdited { added })
         }
         LibraryCommand::FootprintFromTemplate { draft, template } => {
-            let (_, footprint) = footprint_draft(document, draft)?;
+            let (current, footprint) = footprint_draft(document, draft)?;
             let package = package_of(document, footprint)?;
-            let edits = footprint_family::edits(&template, package)?;
-            apply_library(
-                document,
-                LibraryCommand::EditFootprint { draft, edits },
-                evaluator,
-            )
+            let (definition, report) =
+                footprint_family::build(footprint, package, &template, need(evaluator)?)?;
+            let edit = DraftEdit {
+                id: draft,
+                meta: current.meta.clone(),
+                definition: Definition::Footprint(definition),
+            };
+            drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            Ok(Outcome::FootprintEdited { report })
         }
         LibraryCommand::EditFootprint { draft, edits } => {
             let (current, footprint) = footprint_draft(document, draft)?;

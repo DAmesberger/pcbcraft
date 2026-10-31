@@ -342,4 +342,70 @@ mod tests {
         assert_eq!(full, before, "unchanged on error");
         Ok(())
     }
+
+    #[test]
+    fn lint_flags_thin_silk_strokes_and_small_text_only() -> Result<()> {
+        use crate::library::graphics::{Fill, Item};
+        let (mut footprint, package) = chip();
+        add_standard_graphics(&mut footprint, &package)?;
+        let codes = |f: &FootprintDefinition| -> Vec<String> {
+            f.lint(crate::ids::DefinitionId(1))
+                .into_iter()
+                .map(|f| f.code)
+                .collect()
+        };
+        assert!(codes(&footprint).is_empty());
+        let mut thin = footprint.clone();
+        for g in &mut thin.graphics {
+            match &mut g.item {
+                Item::Shape { width, .. } => *width = 0.05,
+                Item::Text(text) => text.height = 0.5,
+            }
+        }
+        let found = codes(&thin);
+        assert!(
+            found.iter().any(|c| c == "footprint.silk_width"),
+            "{found:?}"
+        );
+        assert!(
+            found.iter().any(|c| c == "footprint.text_height"),
+            "{found:?}"
+        );
+        // The courtyard and assembly strokes are not silkscreen, a filled
+        // silkscreen shape prints its area, and the limits themselves pass.
+        let silk = |f: &FootprintDefinition| {
+            f.graphics
+                .iter()
+                .filter(|g| {
+                    g.layer == DrawingLayer::Silkscreen && matches!(g.item, Item::Shape { .. })
+                })
+                .count()
+        };
+        assert_eq!(
+            found
+                .iter()
+                .filter(|c| *c == "footprint.silk_width")
+                .count(),
+            silk(&thin)
+        );
+        let mut edge = footprint.clone();
+        for g in &mut edge.graphics {
+            match &mut g.item {
+                Item::Shape { width, fill, .. } if g.layer == DrawingLayer::Silkscreen => {
+                    *width = 0.0;
+                    *fill = Fill::Solid;
+                }
+                Item::Shape { width, .. } => *width = 0.01,
+                Item::Text(text) => text.height = crate::library::MIN_SILK_TEXT_HEIGHT_MM,
+            }
+        }
+        let found = codes(&edge);
+        assert!(
+            !found
+                .iter()
+                .any(|c| c == "footprint.silk_width" || c == "footprint.text_height"),
+            "{found:?}"
+        );
+        Ok(())
+    }
 }

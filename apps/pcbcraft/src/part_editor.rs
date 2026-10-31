@@ -332,6 +332,8 @@ pub struct PartEditor {
     footprint_layers: footprint_canvas::Layers,
     /// The armed Footprint sketch tool and its pending points.
     footprint_tool: footprint_tools::ToolState,
+    /// The open "New from template" form.
+    template_picker: footprint_template_picker::TemplatePicker,
     findings: Option<(u64, Vec<String>)>,
     update: crate::update_preview::UpdatePreview,
     update_instances: std::collections::BTreeSet<Id>,
@@ -389,6 +391,7 @@ impl Default for PartEditor {
             pad_drag: None,
             footprint_layers: Default::default(),
             footprint_tool: Default::default(),
+            template_picker: Default::default(),
             findings: None,
             update: Default::default(),
             update_instances: Default::default(),
@@ -656,6 +659,14 @@ impl PartEditor {
                     .tip(tip)
             })
             .collect();
+        let mut pads = pads;
+        pads.insert(
+            0,
+            Tool::new(footprint_template_picker::TOOL, "component", "From template")
+                .enabled(has_draft)
+                .selected(self.template_picker.is_open())
+                .tip("Build the footprint from a family template (chip, SOIC, QFN/DFN, header) with named parameters"),
+        );
         [
             Group {
                 label: "Pads",
@@ -796,6 +807,7 @@ impl PartEditor {
             "pad-fiducial" => self.add_pad(footprint_geometry::NewPad::Fiducial),
             "remove-pad" => self.remove_pad(),
             "remove-terminal" => self.remove_selected(),
+            footprint_template_picker::TOOL => self.open_template_picker(),
             "publish" => return self.publish(engine),
             _ => {}
         }
@@ -1228,7 +1240,10 @@ impl PartEditor {
         });
         match self.view {
             View::Symbol => operation = self.symbol_inspector(ui, engine),
-            View::Footprint => self.footprint_inspector(ui),
+            View::Footprint => {
+                operation = self.template_section(ui);
+                self.footprint_inspector(ui);
+            }
             View::Mapping => self.mapping_inspector(ui),
             View::Model => self.model_inspector(ui),
         }
