@@ -8,7 +8,7 @@ use super::publish::{issue, object};
 use super::{ComponentDefinition, Library, printable};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::fields::{self, MAX_RATED_SPECS, RatedSpec};
-use crate::ids::{BindingRef, ComponentRef, DefinitionId, MAX_LABEL, Revision};
+use crate::ids::{BindingRef, ComponentRef, DefinitionId, MAX_LABEL};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -111,17 +111,7 @@ pub struct Provenance {
     pub licence: Option<String>,
 }
 
-/// The library item an imported copy was made from (D1).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Origin {
-    /// The source library's identity, as text until S3 defines `LibraryId`.
-    pub library: String,
-    pub lineage: DefinitionId,
-    pub revision: Revision,
-    /// SHA-256 of the source revision's canonical content, lower-case hex.
-    pub content_hash: String,
-}
+pub use super::bundle::Origin;
 
 /// How the content was obtained.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -143,10 +133,6 @@ fn text_ok(text: &Option<String>, max: usize) -> bool {
 impl Provenance {
     fn within_bounds(&self) -> bool {
         text_ok(&self.licence, MAX_LABEL)
-            && self
-                .origin
-                .as_ref()
-                .is_none_or(|o| o.library.len() <= MAX_LABEL && o.content_hash.len() <= 64)
     }
 }
 
@@ -427,9 +413,9 @@ fn sha256_hex(text: &str) -> bool {
 }
 
 impl Provenance {
+    /// Origins are typed (`LibraryId`, `ContentHash`), so any decoded one
+    /// is well formed.
     fn well_formed(&self) -> bool {
-        self.origin
-            .as_ref()
-            .is_none_or(|o| printable(&o.library) && sha256_hex(&o.content_hash))
+        true
     }
 }

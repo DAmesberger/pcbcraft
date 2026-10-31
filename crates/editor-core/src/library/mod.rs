@@ -4,12 +4,14 @@
 //! are aggregated by [`publish_findings`], the one function `library.publish`,
 //! document decode and `component.check` use.
 mod binding;
+pub mod bundle;
 mod component;
 pub mod drafts;
 mod footprint;
 pub mod footprint_edit;
 pub mod footprint_source;
 pub mod graphics;
+pub mod import;
 mod package;
 mod part;
 mod publish;
@@ -18,6 +20,7 @@ mod symbol;
 pub mod templates;
 
 pub use binding::{BindingDefinition, TerminalMap};
+pub use bundle::{Bundle, OriginRecord, PackedAsset, RevisionRecord, SourceRevision};
 pub use component::{
     ComponentDefinition, MAX_DESIGNATOR_PREFIX, Terminal, TerminalClass, designator_prefix_valid,
 };
@@ -147,6 +150,14 @@ pub struct Library {
     /// Manufacturer parts (S2), published after the components they pin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<Published<PartDefinition>>,
+    /// Where imported or promoted revisions came from or went to (S3, D1).
+    /// Outside revision bodies: recording an origin is not a new revision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<OriginRecord>,
+    /// Asset bytes packed by content hash (S3, D7), so the project reopens
+    /// offline with attached copies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<PackedAsset>,
 }
 
 /// A field revision with the quantity kind its value type names, if any.
@@ -535,7 +546,7 @@ pub fn validate(library: &Library) -> Result<()> {
             )));
         }
     }
-    Ok(())
+    bundle::validate_snapshot(library)
 }
 
 /// Text that publication accepts as a name or label.

@@ -314,6 +314,12 @@ pub struct FileUi {
     effects: Vec<Effect>,
     status: Option<String>,
     recoveries: Vec<RecoveryEntry>,
+    /// The recovery the dialog would restore or discard.
+    recovery_selected: usize,
+    /// A restored session file, removed once this session has saved its
+    /// own recovery snapshot of the restored document (so the work is never
+    /// in no file at all).
+    restored_source: Option<PathBuf>,
     recovery_choice_pending: bool,
     changed_at: f64,
     recovery_retry_at: f64,
@@ -336,6 +342,8 @@ impl FileUi {
             effects: vec![],
             status: None,
             recoveries: vec![],
+            recovery_selected: 0,
+            restored_source: None,
             recovery_choice_pending: false,
             changed_at: 0.0,
             recovery_retry_at: 0.0,
@@ -661,6 +669,15 @@ impl FileUi {
                 });
             }
             Event::Recovered(ticket, removed, close, result) => {
+                // This session now holds the restored work in its own
+                // snapshot: the restored session file is no longer needed.
+                if result.is_ok()
+                    && !removed
+                    && ticket.stamp == self.controller.current
+                    && let Some(source) = self.restored_source.take()
+                {
+                    self.send(Job::DiscardRecovery(source));
+                }
                 self.controller
                     .finish_recovery(&ticket, result.is_ok(), removed);
                 if close {
@@ -686,6 +703,8 @@ impl FileUi {
                 match result {
                     Ok(document) => {
                         self.recoveries.retain(|e| e.path != path);
+                        self.recovery_selected = 0;
+                        self.restored_source = Some(path);
                         self.effects.push(Effect::Replace {
                             document: Box::new(document),
                             path: None,
@@ -753,45 +772,62 @@ impl FileUi {
             }
             return;
         }
-        let Some(entry) = self.recoveries.first().cloned() else {
+        if self.recoveries.is_empty() {
+            return;
+        }
+        self.recovery_selected = self.recovery_selected.min(self.recoveries.len() - 1);
+        let Some(entry) = self.recoveries.get(self.recovery_selected).cloned() else {
             return;
         };
         let busy = self.busy();
         let mut choice = None;
-        ui_kit::Window::new(
-            egui::Id::new("startup-recovery"),
-            "status_warning",
-            "Recover an earlier session?",
-        )
-        .required()
-        .show_body(ctx, |ui| {
-            dialog_body(ui, |ui| {
-                crate::kit::value_row(ui, "Project", &entry.project_name);
-                if let Some(path) = &entry.original_path {
-                    crate::kit::value_row(ui, "File", &path.display().to_string());
-                }
-                if let Some(error) = &entry.error {
-                    crate::kit::status(ui, error, crate::kit::Tone::Error);
-                }
-                crate::kit::note(
-                    ui,
-                    "Restore opens an unsaved copy. The original file is unchanged.",
-                );
-                ui.add_enabled_ui(!busy, |ui| {
-                    crate::kit::actions(ui, |ui| {
-                        if crate::kit::primary(ui, "Restore", entry.error.is_none()).clicked() {
-                            choice = Some(Choice::Save);
+        let mut selected = self.recovery_selected;
+        let count = self.recoveries.len();
+        let title = if count == 1 {
+            "Recover an earlier session?".to_owned()
+        } else {
+            format!("Recover one of {count} earlier sessions?")
+        };
+        ui_kit::Window::new(egui::Id::new("startup-recovery"), "status_warning", &title)
+            .required()
+            .show_body(ctx, |ui| {
+                dialog_body(ui, |ui| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+                    for (at, candidate) in self.recoveries.iter().enumerate() {
+                        let mut on = at == selected;
+                        let label = recovery_label(candidate, now);
+                        if crate::kit::check_row(ui, &label, &mut on) && on {
+                            selected = at;
                         }
-                        if ui_kit::button(ui, "Keep for later", Button::Normal).clicked() {
-                            choice = Some(Choice::Cancel);
-                        }
-                        if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
-                            choice = Some(Choice::Discard);
-                        }
+                    }
+                    if let Some(path) = &entry.original_path {
+                        crate::kit::value_row(ui, "File", &path.display().to_string());
+                    }
+                    if let Some(error) = &entry.error {
+                        crate::kit::status(ui, error, crate::kit::Tone::Error);
+                    }
+                    crate::kit::note(
+                        ui,
+                        "Restore opens an unsaved copy of the checked session; once it is safe in this session, its old snapshot is removed. The original file is unchanged.",
+                    );
+                    ui.add_enabled_ui(!busy, |ui| {
+                        crate::kit::actions(ui, |ui| {
+                            if crate::kit::primary(ui, "Restore", entry.error.is_none()).clicked() {
+                                choice = Some(Choice::Save);
+                            }
+                            if ui_kit::button(ui, "Keep for later", Button::Normal).clicked() {
+                                choice = Some(Choice::Cancel);
+                            }
+                            if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
+                                choice = Some(Choice::Discard);
+                            }
+                        });
                     });
                 });
             });
-        });
+        self.recovery_selected = selected;
         match choice {
             Some(Choice::Save) => {
                 if let Some(ticket) = self.begin(Kind::Restore, None) {
@@ -800,7 +836,9 @@ impl FileUi {
                 }
             }
             Some(Choice::Cancel) => {
-                self.recoveries.remove(0);
+                // Kept on disk for the next launch; none is asked again now.
+                self.recoveries.clear();
+                self.recovery_selected = 0;
             }
             Some(Choice::Discard) => {
                 self.recovery_choice_pending = true;
@@ -809,6 +847,25 @@ impl FileUi {
             None => {}
         }
     }
+}
+
+/// One recovery as the dialog lists it: name, age and size.
+fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
+    if entry.error.is_some() {
+        return entry.project_name.clone();
+    }
+    let minutes = now_ms.saturating_sub(entry.saved_unix_ms) / 60_000;
+    let age = match minutes {
+        0 => "just now".to_owned(),
+        1..=59 => format!("{minutes} min ago"),
+        60..=1439 => format!("{} h ago", minutes / 60),
+        _ => format!("{} days ago", minutes / 1440),
+    };
+    let instances = match entry.instances {
+        1 => "1 instance".to_owned(),
+        n => format!("{n} instances"),
+    };
+    format!("{} · {age} · {instances}", entry.project_name)
 }
 
 #[derive(Clone, Copy)]
@@ -867,6 +924,31 @@ fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Recoveries are told apart by age and size, not only by name.
+    #[test]
+    fn recovery_rows_name_age_and_instances() {
+        let entry = RecoveryEntry {
+            path: "/r/session-1.json".into(),
+            original_path: None,
+            saved_unix_ms: 1_000_000,
+            project_name: "Untitled".into(),
+            instances: 4,
+            error: None,
+        };
+        assert_eq!(
+            recovery_label(&entry, 1_000_000 + 5 * 60_000),
+            "Untitled · 5 min ago · 4 instances"
+        );
+        assert_eq!(
+            recovery_label(&entry, 1_000_000 + 3 * 3_600_000),
+            "Untitled · 3 h ago · 4 instances"
+        );
+        assert_eq!(
+            recovery_label(&entry, 0),
+            "Untitled · just now · 4 instances"
+        );
+    }
 
     #[test]
     fn a_save_marks_only_its_captured_revision_saved() -> Outcome<()> {

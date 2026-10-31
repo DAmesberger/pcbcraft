@@ -1255,7 +1255,11 @@ impl PartEditor {
             && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
         {
             let mut ids = set.ids.all();
-            ids.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
+            // A blank new Part's findings wait in the Parts section.
+            ids.extend(part_props::PartProps::typed_draft_ids(
+                engine,
+                set.ids.component,
+            ));
             listed.extend(
                 reports
                     .into_iter()
@@ -1415,6 +1419,18 @@ impl PartEditor {
         }
         if !unpublished {
             self.update_section(ui, engine);
+        }
+        // Library folders (S3): Promote to library… and Duplicate of the
+        // published revision; the app runs them.
+        if let Some(set) = &self.draft
+            && let Some(component) = set.published(engine)
+        {
+            crate::library_sources::component_section(
+                ui,
+                engine,
+                component,
+                &set.metas.component.name,
+            );
         }
         operation
     }

@@ -576,7 +576,13 @@ fn resolve_key<'a>(
         .iter()
         .filter(|f| fold(f.name.trim()).starts_with(&folded))
         .collect();
-    if prefixed.len() == 1 {
+    // One name, possibly held by several sources' fields, is one key.
+    let one_name = prefixed.first().is_some_and(|first| {
+        prefixed
+            .iter()
+            .all(|f| fold(f.name.trim()) == fold(first.name.trim()))
+    });
+    if one_name {
         return Ok((prefixed, false));
     }
     let names = |fields: &[&VocabularyField]| {

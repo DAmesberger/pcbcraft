@@ -414,10 +414,7 @@ fn ranking_is_deterministic_and_follows_the_tiers() -> TestResult {
     assert_eq!(found.results[0].tier, MatchTier::Substring);
     // Boosts: used in the project, then favourite, then recent.
     let header = |n: usize| found_lineage(&forward, &format!("EX-HDR-1X2-{n:03}"));
-    let context = CatalogContext {
-        favourites: [header(5)?].into(),
-        recent: vec![header(7)?, header(6)?],
-    };
+    let context = CatalogContext::of_project(&[header(5)?], &[header(7)?, header(6)?]);
     let query = forward.parse("EX-HDR")?;
     let ranked = forward.search(&query, &context, SearchOptions::default());
     assert_eq!(

@@ -114,6 +114,22 @@ pub enum Query {
         draft: DefinitionId,
         edits: Vec<library::footprint_source::FootprintEdit>,
     },
+    /// Project lineages copied from a library source that now holds a newer
+    /// revision, or whose recorded revision changed on disk. Needs the
+    /// host's source catalogs (`CatalogContext::sources`).
+    #[serde(rename = "library.updates_available")]
+    UpdatesAvailable {},
+    /// What `library.promote` would write to the library `library` and
+    /// record in the project: the export bundle of `root` and its closure.
+    /// New lineages take ids from `fresh`, in order (io draws them).
+    #[serde(rename = "library.promote_preview")]
+    PromotePreview {
+        root: DefinitionRef,
+        library: LibraryId,
+        /// The library's display name, carried in the bundle.
+        name: String,
+        fresh: Vec<SourceLineageId>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -128,6 +144,8 @@ pub enum QueryResult {
     Bom(completeness::BomReport),
     ResolveGroups(completeness::ResolveReport),
     FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
+    UpdatesAvailable(Vec<catalog::UpdateAvailable>),
+    Promote(Box<library::import::PromotePlan>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -435,7 +453,13 @@ impl Engine {
         context: &catalog::CatalogContext,
         evaluator: Option<&dyn library::FootprintEvaluator>,
     ) -> Result<QueryResult> {
-        let index = || catalog::Index::of_project(&self.document.project, &self.document.drafts);
+        let index = || {
+            catalog::Index::with_sources(
+                &self.document.project,
+                &self.document.drafts,
+                &context.sources,
+            )
+        };
         match query {
             Query::Search {
                 query,
@@ -488,6 +512,21 @@ impl Engine {
                     commands::preview_footprint(&self.document, draft, &edits, evaluator)?,
                 )))
             }
+            Query::UpdatesAvailable {} => Ok(QueryResult::UpdatesAvailable(
+                catalog::updates_available(&self.document.project.library, &context.sources)?,
+            )),
+            Query::PromotePreview {
+                root,
+                library,
+                name,
+                fresh,
+            } => Ok(QueryResult::Promote(Box::new(library::import::export(
+                &self.document.project.library,
+                root,
+                library,
+                &name,
+                &fresh,
+            )?))),
         }
     }
 

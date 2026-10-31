@@ -64,6 +64,26 @@ pub enum Outcome {
         changes: Vec<crate::library::footprint_edit::TerminalChange>,
         applied: bool,
     },
+    /// What `library.import` appended or reused.
+    Imported {
+        report: crate::library::import::ImportReport,
+    },
+    /// `library.place_from`: the import (absent for a project revision) and
+    /// the placed instance, as `InstancePlaced` reports it.
+    PlacedFrom {
+        import: Option<crate::library::import::ImportReport>,
+        instance: Id,
+        occurrence: Id,
+        designator: String,
+    },
+    /// The origins `library.promote` recorded.
+    Promoted {
+        origins: Vec<crate::library::OriginRecord>,
+    },
+    /// New draft lineages of `library.duplicate`, component first.
+    Duplicated {
+        lineages: Vec<DefinitionId>,
+    },
 }
 
 /// A symbol draft's pin, by its terminal, that lies off the authoring grid.

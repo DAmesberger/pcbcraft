@@ -28,6 +28,9 @@ pub struct RecoveryEntry {
     pub original_path: Option<PathBuf>,
     pub saved_unix_ms: u64,
     pub project_name: String,
+    /// Component instances the recovered project holds, so sessions of one
+    /// unnamed project can be told apart.
+    pub instances: usize,
     pub error: Option<String>,
 }
 
@@ -159,6 +162,7 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
                 path,
                 original_path: record.original_path,
                 saved_unix_ms: record.saved_unix_ms,
+                instances: record.document.project.instances.len(),
                 project_name: record.document.project.name,
                 error: None,
             }),
@@ -167,6 +171,7 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
                 original_path: None,
                 saved_unix_ms: 0,
                 project_name: "Unreadable recovery".into(),
+                instances: 0,
                 error: Some(error.to_string()),
             }),
         }

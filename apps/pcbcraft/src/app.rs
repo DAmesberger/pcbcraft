@@ -8,6 +8,8 @@ mod browser;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};
+use crate::library_sources::{self, BundlePurpose, LibrarySources};
+use crate::place_palette::PaletteEvent;
 use crate::scene::{Display, ModelKey, SceneController};
 use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
@@ -15,6 +17,14 @@ use pcbcraft_core::{Engine, Operation, format::EditorFile};
 use solidcraft_ui_egui::{fonts, theme};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// An import made for an update review that is still open.
+struct PendingImport {
+    /// The engine revision right after the import.
+    revision: u64,
+    name: String,
+    target: pcbcraft_core::Revision,
+}
 
 pub struct App {
     engine: Engine,
@@ -24,8 +34,16 @@ pub struct App {
     pcb: pcb_editor::PcbEditor,
     scene: SceneController,
     files: FileUi,
+    /// Library folders, favourites and recents (S3).
+    sources: LibrarySources,
     status: Option<chrome::Status>,
-    show_browser: bool,
+    /// Browser shown by width, or as the user toggled it (⌘B).
+    browser: chrome::BrowserMode,
+    /// Whether the last layout showed the Browser.
+    browser_visible: bool,
+    /// "Update project copy" imported a revision at this engine revision;
+    /// cancelling its review undoes that import (see `review_closed`).
+    pending_import: Option<PendingImport>,
     closing: bool,
     /// Input time of the current frame, for status messages.
     now: f64,
@@ -54,13 +72,16 @@ impl App {
                 viewport::Viewport::new(render_state, &cc.egui_ctx),
             ),
             files,
+            sources: LibrarySources::from_env(&cc.egui_ctx),
             engine,
             workspace: Workspace::Pcb,
             part: Default::default(),
             schematic: Default::default(),
             pcb: Default::default(),
             status: None,
-            show_browser: true,
+            browser: chrome::BrowserMode::Auto,
+            browser_visible: false,
+            pending_import: None,
             closing: false,
             now: 0.0,
         })
@@ -119,6 +140,220 @@ impl App {
         }
     }
 
+    /// Library sources before the editors draw: finished background work,
+    /// and the palette's context when it changed.
+    fn library_sources(&mut self, ctx: &egui::Context) {
+        let busy = self.files.busy();
+        self.sources.tick(ctx, &mut self.engine, busy);
+        for notice in self.sources.take_notices() {
+            self.say(notice.text, notice.error);
+        }
+        let updates = self.sources.updates(&self.engine);
+        self.schematic.set_updates(updates);
+        let sources = &self.sources;
+        self.schematic
+            .palette_mut()
+            .set_context(sources.generation(), || sources.context());
+    }
+
+    /// What the palette, the Schematic instance properties and the
+    /// Component workspace asked of the library sources this frame. Folder
+    /// bundles are read on a worker; the engine work happens when they
+    /// arrive (see `library_bundles`).
+    fn library_requests(&mut self, ctx: &egui::Context) {
+        let events = self.schematic.palette_mut().take_events();
+        let action = library_sources::take_component_action(ctx);
+        let instance_update = self.schematic.take_library_update();
+        let mutating = events.iter().any(|e| {
+            matches!(
+                e,
+                PaletteEvent::PlaceFrom { .. } | PaletteEvent::UpdateProjectCopy(_)
+            )
+        }) || instance_update.is_some()
+            || matches!(
+                action,
+                Some(library_sources::ComponentAction::Duplicate { .. })
+            );
+        if mutating && self.files.busy() {
+            self.say("Wait for the file operation to finish", false);
+            return;
+        }
+        for event in events {
+            match event {
+                PaletteEvent::Used(key) => self.sources.used(key),
+                PaletteEvent::ToggleFavourite(key) => self.sources.toggle_favourite(key),
+                PaletteEvent::PlaceFrom {
+                    pick,
+                    other_revision,
+                } => self
+                    .sources
+                    .read_bundle(pick, BundlePurpose::Place(other_revision)),
+                PaletteEvent::UpdateProjectCopy(pick) => {
+                    self.sources.read_bundle(pick, BundlePurpose::Update(None));
+                }
+                PaletteEvent::ManageSources => self.sources.open_card(),
+            }
+        }
+        if let Some((instance, pick)) = instance_update {
+            self.sources
+                .read_bundle(pick, BundlePurpose::Update(Some(vec![instance])));
+        }
+        match action {
+            Some(library_sources::ComponentAction::Promote { component, name }) => {
+                self.sources.begin_promote(component, name);
+            }
+            Some(library_sources::ComponentAction::Duplicate { component, name }) => {
+                match library_sources::duplicate(&mut self.engine, component, &name) {
+                    Ok(lineage) => {
+                        self.part.open(lineage, &self.engine);
+                        self.say(format!("Duplicated as {name}"), false);
+                    }
+                    Err(error) => self.say(error, true),
+                }
+            }
+            None => {}
+        }
+        self.library_bundles();
+        self.review_closed();
+    }
+
+    /// Folder bundles that finished reading: place or import them now.
+    fn library_bundles(&mut self) {
+        if self.files.busy() {
+            // The file operation owns the document; they wait for it.
+            return;
+        }
+        for read in self.sources.take_bundles() {
+            let bundle = match read.result {
+                Ok(bundle) => bundle,
+                Err(error) => {
+                    match read.purpose {
+                        BundlePurpose::Place(_) => self.schematic.palette_mut().refuse(error),
+                        BundlePurpose::Update(_) => self.say(error, true),
+                    }
+                    continue;
+                }
+            };
+            match read.purpose {
+                BundlePurpose::Place(other_revision) => {
+                    self.place_from(read.pick, bundle, other_revision);
+                }
+                BundlePurpose::Update(only) => {
+                    self.update_project_copy(read.pick, bundle, only.as_deref());
+                }
+            }
+        }
+    }
+
+    /// `library.place_from` of a folder bundle; another project revision
+    /// reopens the palette on the Update project copy… / Keep both / Cancel
+    /// choice. A placed instance is selected and brought into view.
+    fn place_from(
+        &mut self,
+        pick: library_sources::FolderPick,
+        bundle: pcbcraft_core::library::Bundle,
+        other_revision: pcbcraft_core::library::import::OtherRevision,
+    ) {
+        let position = self.schematic.place_point();
+        match library_sources::place(&mut self.engine, bundle, position, other_revision) {
+            Ok(library_sources::Placed::Placed {
+                designator,
+                instance,
+                position,
+            }) => {
+                self.workspace = Workspace::Schematic;
+                self.schematic
+                    .reveal_placed(instance, position, self.engine.project());
+                self.say(format!("Placed {designator} from the library"), false);
+            }
+            Ok(library_sources::Placed::OtherRevision { message }) => {
+                self.schematic.palette_mut().offer_choice(pick, message);
+            }
+            Err(error) => self.schematic.palette_mut().refuse(error),
+        }
+    }
+
+    /// "Update project copy": `library.import`, then the update review with
+    /// a checkbox per instance. Cancelling the review undoes the import.
+    fn update_project_copy(
+        &mut self,
+        pick: library_sources::FolderPick,
+        bundle: pcbcraft_core::library::Bundle,
+        only: Option<&[pcbcraft_core::Id]>,
+    ) {
+        match library_sources::import_for_update(&mut self.engine, bundle, only) {
+            Ok(import) => {
+                let copied = import.imported.is_some();
+                self.pending_import = import.imported.map(|revision| PendingImport {
+                    revision,
+                    name: pick.name.clone(),
+                    target: import.target.revision,
+                });
+                match import.change {
+                    Some(change) => {
+                        let note = copied.then(|| {
+                            format!(
+                                "{} {} was copied into the project as {}. Cancel removes it again.",
+                                pick.name, pick.revision, import.target.revision
+                            )
+                        });
+                        self.workspace = Workspace::Schematic;
+                        self.schematic.review_update(&self.engine, change, note);
+                    }
+                    None => {
+                        self.pending_import = None;
+                        self.say(
+                            format!(
+                                "{} {} is in the project as {}; nothing placed uses an older revision",
+                                pick.name, pick.revision, import.target.revision
+                            ),
+                            false,
+                        );
+                    }
+                }
+            }
+            Err(error) => self.say(error, true),
+        }
+    }
+
+    /// The update review closed: an import made for it stays when it was
+    /// applied, and is undone when it was cancelled (while it is still the
+    /// last step).
+    fn review_closed(&mut self) {
+        let Some(closed) = self.schematic.take_review_closed() else {
+            return;
+        };
+        let Some(pending) = self.pending_import.take() else {
+            return;
+        };
+        if closed != crate::update_preview::Closed::Cancelled {
+            return;
+        }
+        if self.engine.revision() == pending.revision && self.engine.undo().is_ok() {
+            self.say(
+                format!(
+                    "Cancelled: {} {} was removed from the project again",
+                    pending.name, pending.target
+                ),
+                false,
+            );
+        } else {
+            self.say(
+                format!(
+                    "{} {} stays in the project; no instance changed. Undo removes it.",
+                    pending.name, pending.target
+                ),
+                false,
+            );
+        }
+    }
+
+    /// Show or hide the Browser (⌘B, the app bar's Browser button and the
+    /// File menu). In a narrow window it shows over the canvas.
+    fn toggle_browser(&mut self) {
+        self.browser = self.browser.toggled(self.browser_visible);
+    }
+
     fn history(&mut self, redo: bool) {
         let result = if redo {
             self.engine.redo()
@@ -140,6 +375,8 @@ impl App {
             self.say(format!("Open failed: {error}"), true);
             return;
         }
+        self.sources.forget_project();
+        self.pending_import = None;
         self.pcb.set_selection(None, None, None);
         match self.files.adopt(&self.engine, path, recovered) {
             Ok(()) if recovered => self.say(format!("Recovered {name}; save it to keep it"), false),
@@ -274,6 +511,9 @@ impl App {
         if pressed(Modifiers::COMMAND, Key::N) {
             self.files.request(file_ui::Action::New);
         }
+        if !ctx.egui_wants_keyboard_input() && pressed(Modifiers::COMMAND, Key::B) {
+            self.toggle_browser();
+        }
         if let Some(redo) = history_shortcut(ctx) {
             self.history(redo);
         }
@@ -296,17 +536,20 @@ impl eframe::App for App {
         follow_system_theme(&ctx, false);
         self.scene.receive();
         self.file_effects(&ctx);
+        self.library_sources(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
         // Draft edits commit once their gesture ends, as one undo step.
         self.part_requests();
+        self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(draft);
         self.shortcuts(&ctx);
         self.guard_close(&ctx);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
+        self.sources.dialogs(&ctx);
         self.request_model();
     }
 }

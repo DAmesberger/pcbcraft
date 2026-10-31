@@ -15,6 +15,7 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
   mcp [FILE.pcbcraft]              Model Context Protocol server on stdio
   demo NEW_FILE.pcbcraft           write the two-component demo project
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
+  sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
                                    export a project as a native Solidcraft model";
 
@@ -47,9 +48,22 @@ fn execute(session: &mut Session, request: Value) -> Result<Value> {
     }
 }
 
+/// A session over the user's library sources (`PCBCRAFT_CONFIG_DIR` and
+/// `PCBCRAFT_CACHE_DIR` when set). Without user directories the session
+/// still runs, with sources kept in memory only.
+fn user_session(engine: Engine) -> Session {
+    match session::sources::Sources::from_env() {
+        Ok(sources) => Session::with_sources(engine, sources),
+        Err(error) => {
+            eprintln!("library sources unavailable: {error}");
+            Session::new(engine)
+        }
+    }
+}
+
 /// A session, optionally starting from a project file.
 fn open(path: Option<&String>) -> Result<Session> {
-    let mut session = Session::default();
+    let mut session = user_session(Engine::default());
     if let Some(path) = path {
         execute(
             &mut session,
@@ -88,6 +102,9 @@ fn run() -> Result<()> {
             )?;
             print(&json!({"saved": saved, "document": session.snapshot()}))
         }
+        [command, path, rest @ ..] if command == "sample-library" && rest.len() <= 1 => {
+            sample_library(path, rest.first().map_or("Example library", String::as_str))
+        }
         [command, source, target] if command == "export" => {
             let mut session = open(Some(source))?;
             print(&execute(
@@ -97,6 +114,22 @@ fn run() -> Result<()> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Write the synthetic catalog (24 components plus generic components and
+/// `ExampleCo` Parts) to a new library folder through the same requests the
+/// JSON transports use. The user's settings are not changed.
+fn sample_library(path: &str, name: &str) -> Result<()> {
+    if std::path::Path::new(path).try_exists()? {
+        return Err("output exists; choose a new folder".into());
+    }
+    let engine = Engine::from_file(pcbcraft_core::format::EditorFile {
+        version: pcbcraft_core::format::FILE_VERSION,
+        project: pcbcraft_core::catalog::synthetic::project_with_parts(24)?,
+        drafts: Default::default(),
+    })?;
+    let mut session = Session::new(engine);
+    print(&session::publish_library(&mut session, path, name)?)
 }
 
 fn stdio(mut session: Session) -> Result<()> {

@@ -2,8 +2,11 @@
 //! recovery. Document meaning, versions and migrations stay in
 //! `pcbcraft_core::format`; this crate only moves bytes safely.
 pub mod artwork;
+pub mod library_folder;
+pub mod library_folder_index;
 pub mod persistence;
 pub mod recovery;
+pub mod settings;
 
 pub use persistence::{read_project, write_project};
 

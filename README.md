@@ -37,6 +37,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 ```sh
 cargo run --locked --profile ci -p pcbcraft-cli -- demo example.pcbcraft
 cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
+cargo run --locked --profile ci -p pcbcraft-cli -- sample-library NEW_DIR [NAME]   # the same catalog as a library folder
 cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
@@ -52,6 +53,8 @@ cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
 ```
 
 Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
+
+Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder.
 
 ## Scripting integration proof
 
