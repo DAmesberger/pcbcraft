@@ -1,7 +1,10 @@
 use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
-use crate::ids::{ComponentRef, DefinitionId, DefinitionRef, LibraryId, SourceLineageId};
+use crate::ids::{
+    ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, LibraryId, PartRef, SourceLineageId,
+};
+use crate::instances::{self, NewInstance};
 use crate::library::Bundle;
 use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
@@ -9,6 +12,7 @@ use crate::library::graphics::GraphicEdit;
 use crate::library::import::{self, OtherRevision, PlaceSource};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
+use crate::model::PhysicalChoice;
 use crate::scripting;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -81,7 +85,13 @@ pub enum LibraryCommand {
     #[serde(rename = "library.import")]
     Import { bundle: Box<Bundle> },
     /// Import if needed, then place the component, as one transaction and
-    /// one undo step.
+    /// one undo step. A bundle whose root is a Part places its component
+    /// with the Part's binding and assigns the Part. The placement takes
+    /// the first symbol and unit and the first implementation and
+    /// footprint, as the Place palette does. With `other_revision: refuse`
+    /// (the default), a project that holds another revision of the root's
+    /// lineage is a `conflict` whose message starts with
+    /// `library.other_revision`.
     #[serde(rename = "library.place_from")]
     PlaceFrom {
         source: PlaceSource,
@@ -161,6 +171,81 @@ pub(crate) fn preview_footprint(
     let (_, footprint) = footprint_draft(document, draft)?;
     let package = package_of(document, footprint)?;
     footprint_edit::preview(footprint, package, edits, need(evaluator)?)
+}
+
+/// The placement `library.place_from` makes of a component or Part
+/// revision: its first symbol and unit and, when it has one, its first
+/// implementation (a Part's own binding) with that binding's first
+/// footprint, as the Place palette chooses them. A Part is assigned after
+/// placing.
+fn place_request(
+    library: &library::Library,
+    root: DefinitionRef,
+    position: Point,
+    designator: Option<String>,
+) -> Result<(NewInstance, Option<PartRef>)> {
+    let (component, binding, part) = match root.kind {
+        DefinitionKind::Component => (ComponentRef::new(root.id, root.revision), None, None),
+        DefinitionKind::Part => {
+            let part = PartRef::new(root.id, root.revision);
+            let body = library
+                .part(part)
+                .ok_or_else(|| Error::NotFound(format!("Part {part} is not in the project")))?;
+            (
+                body.definition.component,
+                Some(body.definition.binding.id),
+                Some(part),
+            )
+        }
+        kind => {
+            return Err(Error::Invalid(format!(
+                "library.place_from places a component or a Part, not a {kind:?}"
+            )));
+        }
+    };
+    let published = library
+        .component(component)
+        .ok_or_else(|| Error::NotFound(format!("component {component} is not in the project")))?;
+    let symbol = published
+        .definition
+        .representations
+        .first()
+        .and_then(|r| library.symbol(*r))
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "component ‘{}’ has no symbol to place",
+                published.meta.name
+            ))
+        })?;
+    let unit = symbol.definition.units.first().ok_or_else(|| {
+        Error::Invalid(format!(
+            "symbol ‘{}’ has no unit to place",
+            symbol.meta.name
+        ))
+    })?;
+    let implementation = match binding {
+        Some(lineage) => published.definition.implementation(lineage),
+        None => published.definition.implementations.first().copied(),
+    };
+    let physical = implementation.and_then(|b| {
+        let footprint = library.binding(b)?.definition.footprints.first()?;
+        Some(PhysicalChoice {
+            binding: b.id,
+            footprint: footprint.id,
+        })
+    });
+    Ok((
+        NewInstance {
+            component,
+            designator,
+            properties: Vec::new(),
+            representation: symbol.id,
+            unit: unit.id,
+            position,
+            physical,
+        },
+        part,
+    ))
 }
 
 /// `evaluator` is the host's footprint evaluator (`Engine::apply_with`);
@@ -347,9 +432,45 @@ pub(crate) fn apply_library(
             project.library = library;
             Ok(Outcome::Imported { report: report? })
         }
-        LibraryCommand::PlaceFrom { .. } => Err(Error::Unsupported(
-            "library.place_from: placing from a library source is not implemented yet".into(),
-        )),
+        LibraryCommand::PlaceFrom {
+            source,
+            position,
+            designator,
+            other_revision,
+        } => {
+            let project = Arc::make_mut(&mut document.project);
+            let (report, root) = match source {
+                PlaceSource::Project { component } => (None, component.erased()),
+                PlaceSource::Bundle { bundle } => {
+                    library::bundle::validate_bundle(&bundle)?;
+                    if other_revision == OtherRevision::Refuse {
+                        import::check_other_revision(&project.library, &bundle)?;
+                    }
+                    let mut library = std::mem::take(&mut project.library);
+                    let mut allocate = || project.allocate().map(DefinitionId);
+                    let report = import::import(&mut library, &bundle, &mut allocate);
+                    project.library = library;
+                    let report = report?;
+                    let root = report.root;
+                    (Some(report), root)
+                }
+            };
+            let (request, part) = place_request(&project.library, root, position, designator)?;
+            let (instance, occurrence) = instances::place(project, request)?;
+            if let Some(part) = part {
+                instances::assign_part(project, &[instance], Some(part))?;
+            }
+            let designator = project
+                .instance(instance)
+                .map(|i| i.designator.clone())
+                .unwrap_or_default();
+            Ok(Outcome::PlacedFrom {
+                import: report,
+                instance,
+                occurrence,
+                designator,
+            })
+        }
         LibraryCommand::Promote {
             root,
             library,
@@ -357,8 +478,12 @@ pub(crate) fn apply_library(
             fresh,
         } => {
             let plan = import::export(&document.project.library, root, library, &name, &fresh)?;
-            let project = Arc::make_mut(&mut document.project);
-            project.library.origins.extend(plan.origins.iter().copied());
+            // Promoting what the library already holds records nothing and
+            // takes no undo step.
+            if !plan.origins.is_empty() {
+                let project = Arc::make_mut(&mut document.project);
+                project.library.origins.extend(plan.origins.iter().copied());
+            }
             Ok(Outcome::Promoted {
                 origins: plan.origins,
             })

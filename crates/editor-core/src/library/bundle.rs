@@ -9,16 +9,24 @@
 //! [`content_hash`] does not depend on any project's numbering. Import maps
 //! `(source lineage, source revision)` to fresh project lineages and
 //! revisions and records an [`OriginRecord`] for every copy.
-use super::{Definition, DefinitionMeta, Library};
-use crate::diagnostics::{Error, Result};
+use super::graphics::{FootprintGraphic, Item, TextContent};
+use super::{
+    BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, FootprintDefinition,
+    Library, PackageDefinition, PartDefinition, SymbolDefinition, Unit,
+};
+use crate::diagnostics::{Error, Finding, ObjectRef, Result};
+use crate::fields::{
+    FieldDefinition, FieldSelection, QuantityKind, RatedSpec, ToleranceBasis, ValueType,
+};
 use crate::ids::{
-    ContentHash, DefinitionId, DefinitionKind, DefinitionRef, LibraryId, MAX_LABEL, Revision,
-    SourceLineageId,
+    BindingRef, ComponentRef, ContentHash, DefinitionId, DefinitionKind, DefinitionRef, FieldRef,
+    FootprintRef, LibraryId, MAX_LABEL, PackageRef, QuantityKindRef, Revision, SourceLineageId,
+    SymbolRef,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Revision records one bundle carries (a root and its closure).
 pub const MAX_BUNDLE_RECORDS: usize = 1024;
@@ -180,12 +188,205 @@ pub trait RefMap {
 /// Rewrite every lineage reference in `definition`, of every kind, in a
 /// fixed order. Local IDs (terminals, pads, units, …) are untouched. A
 /// missed reference would corrupt an imported closure, so the round-trip
-/// property test covers every kind.
+/// property test covers every kind, and every body is destructured without
+/// `..`: a new field does not compile until this visitor decides on it.
+///
+/// Order: component representations, implementations, field selections;
+/// symbol owner, then unit text fields; footprint package, then text
+/// fields; binding owner, package, footprints; field quantity kind; Part
+/// component, binding, rated-spec fields. Packages and quantity kinds name
+/// no other lineage.
 pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result<()> {
-    let _ = (definition, map);
-    Err(Error::Unsupported(
-        "library.rewrite: the reference-rewrite visitor is not implemented yet".into(),
-    ))
+    match definition {
+        Definition::Component(component) => {
+            let ComponentDefinition {
+                next_local: _,
+                designator_prefix: _,
+                terminals: _,
+                resources: _,
+                constraints: _,
+                representations,
+                implementations,
+                fields,
+            } = component;
+            for r in representations {
+                let (id, revision) = exact(map, DefinitionKind::Symbol, r.id, r.revision)?;
+                *r = SymbolRef::new(id, revision);
+            }
+            for r in implementations {
+                let (id, revision) = exact(map, DefinitionKind::Binding, r.id, r.revision)?;
+                *r = BindingRef::new(id, revision);
+            }
+            for selection in fields {
+                let FieldSelection {
+                    field,
+                    default: _,
+                    show_on_symbol: _,
+                } = selection;
+                let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
+                *field = FieldRef::new(id, revision);
+            }
+        }
+        Definition::Symbol(symbol) => {
+            let SymbolDefinition {
+                component,
+                next_local: _,
+                pin_text_height: _,
+                units,
+            } = symbol;
+            *component = map.lineage(DefinitionKind::Component, *component)?;
+            for unit in units {
+                let Unit {
+                    id: _,
+                    label: _,
+                    graphics,
+                    pins: _,
+                } = unit;
+                for graphic in graphics {
+                    item_refs(&mut graphic.item, map)?;
+                }
+            }
+        }
+        Definition::Package(package) => {
+            let PackageDefinition {
+                next_local: _,
+                terminals: _,
+                body_size: _,
+                model_offset: _,
+                body: _,
+            } = package;
+        }
+        Definition::Footprint(footprint) => {
+            let FootprintDefinition {
+                package,
+                next_local: _,
+                source: _,
+                pads: _,
+                graphics,
+                polarity: _,
+                datum: _,
+                defaults: _,
+            } = footprint;
+            let (id, revision) = exact(map, DefinitionKind::Package, package.id, package.revision)?;
+            *package = PackageRef::new(id, revision);
+            for graphic in graphics {
+                let FootprintGraphic {
+                    id: _,
+                    layer: _,
+                    side: _,
+                    item,
+                } = graphic;
+                item_refs(item, map)?;
+            }
+        }
+        Definition::Binding(binding) => {
+            let BindingDefinition {
+                component,
+                package,
+                mappings: _,
+                footprints,
+                unavailable: _,
+            } = binding;
+            *component = map.lineage(DefinitionKind::Component, *component)?;
+            let (id, revision) = exact(map, DefinitionKind::Package, package.id, package.revision)?;
+            *package = PackageRef::new(id, revision);
+            for r in footprints {
+                let (id, revision) = exact(map, DefinitionKind::Footprint, r.id, r.revision)?;
+                *r = FootprintRef::new(id, revision);
+            }
+        }
+        Definition::QuantityKind(kind) => {
+            let QuantityKind {
+                units: _,
+                default_unit: _,
+            } = kind;
+        }
+        Definition::Field(field) => {
+            let FieldDefinition {
+                next_local: _,
+                value_type,
+                default: _,
+                required_at: _,
+            } = field;
+            match value_type {
+                ValueType::Quantity { kind, .. }
+                | ValueType::Range { kind }
+                | ValueType::Tolerance {
+                    basis: ToleranceBasis::Absolute { kind },
+                } => {
+                    let (id, revision) =
+                        exact(map, DefinitionKind::QuantityKind, kind.id, kind.revision)?;
+                    *kind = QuantityKindRef::new(id, revision);
+                }
+                ValueType::Integer { .. }
+                | ValueType::Boolean
+                | ValueType::Enum { .. }
+                | ValueType::Text { .. }
+                | ValueType::Tolerance {
+                    basis: ToleranceBasis::Relative,
+                } => {}
+            }
+        }
+        Definition::Part(part) => {
+            let PartDefinition {
+                next_local: _,
+                manufacturer: _,
+                mpn: _,
+                component,
+                binding,
+                specs,
+                references: _,
+                offers: _,
+                provenance: _,
+            } = part.as_mut();
+            let (id, revision) = exact(
+                map,
+                DefinitionKind::Component,
+                component.id,
+                component.revision,
+            )?;
+            *component = ComponentRef::new(id, revision);
+            let (id, revision) = exact(map, DefinitionKind::Binding, binding.id, binding.revision)?;
+            *binding = BindingRef::new(id, revision);
+            for spec in specs {
+                let RatedSpec {
+                    field,
+                    value: _,
+                    meaning: _,
+                } = spec;
+                let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
+                *field = FieldRef::new(id, revision);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One exact reference through `map`, which must keep its kind.
+fn exact(
+    map: &mut dyn RefMap,
+    kind: DefinitionKind,
+    id: DefinitionId,
+    revision: Revision,
+) -> Result<(DefinitionId, Revision)> {
+    let mapped = map.exact(DefinitionRef { kind, id, revision })?;
+    if mapped.kind != kind {
+        return Err(Error::Invalid(format!(
+            "a {kind:?} reference cannot become a {:?} reference",
+            mapped.kind
+        )));
+    }
+    Ok((mapped.id, mapped.revision))
+}
+
+/// The field lineage a drawn text shows, if any.
+fn item_refs(item: &mut Item, map: &mut dyn RefMap) -> Result<()> {
+    if let Item::Text(text) = item
+        && let TextContent::Field(field) = &mut text.content
+    {
+        *field = map.lineage(DefinitionKind::Field, *field)?;
+    }
+    Ok(())
 }
 
 /// Every reference `definition` makes, in [`rewrite_refs`] order.
@@ -208,12 +409,323 @@ pub fn references(definition: &Definition) -> Result<Vec<RefSite>> {
 }
 
 /// The exact revisions `root` reaches in `library`, dependencies first and
-/// `root` last. A dangling reference is an error naming it.
+/// `root` last: sorted by publication rank (an exact reference always names
+/// a lower rank), then lineage and revision, so equal libraries give equal
+/// closures. Exact references are followed; a text that shows a field
+/// lineage the closure does not otherwise hold brings in that field's
+/// latest published revision, so the copy can resolve it. An owner
+/// reference (a symbol's or binding's component) is not followed;
+/// [`export`] maps it to a closure member or a lineage the target holds, or
+/// refuses. A dangling reference is an error naming it.
+///
+/// [`export`]: super::import::export
 pub fn closure(library: &Library, root: DefinitionRef) -> Result<Vec<DefinitionRef>> {
-    let _ = (library, root);
-    Err(Error::Unsupported(
-        "library.closure: dependency closures are not implemented yet".into(),
-    ))
+    let mut seen = BTreeSet::new();
+    let mut shown: Vec<(DefinitionId, DefinitionRef)> = Vec::new();
+    let mut stack = vec![(root, None::<DefinitionRef>)];
+    loop {
+        closure_step(library, &mut stack, &mut seen, &mut shown)?;
+        // Shown fields the closure lacks, at their latest revision.
+        let mut more = false;
+        while let Some((id, from)) = shown.pop() {
+            if seen.iter().any(|m| m.id == id) {
+                continue;
+            }
+            let Some((DefinitionKind::Field, revision)) = library.latest(id) else {
+                return Err(Error::NotFound(format!(
+                    "{:?} {} {} shows field {id}, which is not in the project library",
+                    from.kind, from.id, from.revision
+                )));
+            };
+            stack.push((
+                DefinitionRef {
+                    kind: DefinitionKind::Field,
+                    id,
+                    revision,
+                },
+                Some(from),
+            ));
+            more = true;
+            break;
+        }
+        if !more {
+            break;
+        }
+    }
+    let mut out: Vec<DefinitionRef> = seen.into_iter().collect();
+    out.sort_by_key(|r| (super::publish_rank(r.kind), r.id, r.revision));
+    Ok(out)
+}
+
+/// Follow exact references from `stack` until it is empty, noting shown
+/// field lineages.
+fn closure_step(
+    library: &Library,
+    stack: &mut Vec<(DefinitionRef, Option<DefinitionRef>)>,
+    seen: &mut BTreeSet<DefinitionRef>,
+    shown: &mut Vec<(DefinitionId, DefinitionRef)>,
+) -> Result<()> {
+    while let Some((r, from)) = stack.pop() {
+        if seen.contains(&r) {
+            continue;
+        }
+        let Some((_, body)) = library.definition(r) else {
+            return Err(Error::NotFound(match from {
+                Some(from) => format!(
+                    "{:?} {} {} names {:?} {} {}, which is not in the project library",
+                    from.kind, from.id, from.revision, r.kind, r.id, r.revision
+                ),
+                None => format!(
+                    "{:?} {} {} is not in the project library",
+                    r.kind, r.id, r.revision
+                ),
+            }));
+        };
+        seen.insert(r);
+        if seen.len() > MAX_BUNDLE_RECORDS {
+            return Err(Error::Limit(format!(
+                "a closure holds at most {MAX_BUNDLE_RECORDS} revisions"
+            )));
+        }
+        for site in references(&body)? {
+            match site {
+                RefSite::Exact { target } if !seen.contains(&target) => {
+                    stack.push((target, Some(r)));
+                }
+                RefSite::Lineage {
+                    kind: DefinitionKind::Field,
+                    id,
+                } => shown.push((id, r)),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Content hashes a body names: the attached copies of a Part's references,
+/// sorted and without repeats. A hash that is not 64 lower-case hex digits
+/// is `invalid_input`.
+pub fn named_assets(definition: &Definition) -> Result<Vec<ContentHash>> {
+    let Definition::Part(part) = definition else {
+        return Ok(Vec::new());
+    };
+    let mut out = BTreeSet::new();
+    for reference in &part.references {
+        if let Some(text) = &reference.asset {
+            let hash = ContentHash::parse(text).ok_or_else(|| {
+                Error::Invalid(format!(
+                    "reference {} names asset ‘{text}’, which is not a lower-case SHA-256",
+                    reference.id
+                ))
+            })?;
+            out.insert(hash);
+        }
+    }
+    Ok(out.into_iter().collect())
+}
+
+/// Build the canonical record of one revision. `exact` maps each exact
+/// reference to the source revision it becomes, `lineage` each lineage
+/// reference to its source lineage; record-local ids are then numbered 1,
+/// 2, … in first-use order of [`references`], one per source lineage.
+pub fn to_record(
+    lineage: SourceLineageId,
+    revision: Revision,
+    meta: DefinitionMeta,
+    mut definition: Definition,
+    exact: &mut dyn FnMut(DefinitionRef) -> Result<SourceRevision>,
+    lineage_of: &mut dyn FnMut(DefinitionKind, DefinitionId) -> Result<SourceLineageId>,
+) -> Result<RevisionRecord> {
+    struct Localize<'a> {
+        links: Vec<Link>,
+        exact: &'a mut dyn FnMut(DefinitionRef) -> Result<SourceRevision>,
+        lineage: &'a mut dyn FnMut(DefinitionKind, DefinitionId) -> Result<SourceLineageId>,
+    }
+    impl Localize<'_> {
+        fn local(&mut self, lineage: SourceLineageId) -> Result<DefinitionId> {
+            if let Some(link) = self.links.iter().find(|l| l.lineage == lineage) {
+                return Ok(link.local);
+            }
+            if self.links.len() >= MAX_LINKS {
+                return Err(Error::Limit(format!(
+                    "a revision record lists at most {MAX_LINKS} links"
+                )));
+            }
+            let local = DefinitionId(u64::try_from(self.links.len() + 1).unwrap_or(u64::MAX));
+            self.links.push(Link { local, lineage });
+            Ok(local)
+        }
+    }
+    impl RefMap for Localize<'_> {
+        fn exact(&mut self, target: DefinitionRef) -> Result<DefinitionRef> {
+            let source = (self.exact)(target)?;
+            Ok(DefinitionRef {
+                kind: target.kind,
+                id: self.local(source.lineage)?,
+                revision: source.revision,
+            })
+        }
+        fn lineage(&mut self, kind: DefinitionKind, id: DefinitionId) -> Result<DefinitionId> {
+            let source = (self.lineage)(kind, id)?;
+            self.local(source)
+        }
+    }
+    let mut map = Localize {
+        links: Vec::new(),
+        exact,
+        lineage: lineage_of,
+    };
+    rewrite_refs(&mut definition, &mut map)?;
+    Ok(RevisionRecord {
+        lineage,
+        revision,
+        kind: definition.kind(),
+        meta,
+        assets: named_assets(&definition)?,
+        definition,
+        links: map.links,
+    })
+}
+
+/// A record's body with every record-local id resolved: `exact` maps a
+/// source revision of a kind to the target's exact revision, `lineage` a
+/// source lineage to the target's lineage. A local id the links do not list
+/// is `invalid_input`.
+pub fn from_record(
+    record: &RevisionRecord,
+    exact: &mut dyn FnMut(DefinitionKind, SourceRevision) -> Result<DefinitionRef>,
+    lineage: &mut dyn FnMut(DefinitionKind, SourceLineageId) -> Result<DefinitionId>,
+) -> Result<Definition> {
+    struct Resolve<'a> {
+        record: &'a RevisionRecord,
+        exact: &'a mut dyn FnMut(DefinitionKind, SourceRevision) -> Result<DefinitionRef>,
+        lineage: &'a mut dyn FnMut(DefinitionKind, SourceLineageId) -> Result<DefinitionId>,
+    }
+    impl Resolve<'_> {
+        fn source(&self, local: DefinitionId) -> Result<SourceLineageId> {
+            self.record
+                .links
+                .iter()
+                .find(|l| l.local == local)
+                .map(|l| l.lineage)
+                .ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "record {} {} uses {local}, which its links do not list",
+                        self.record.lineage, self.record.revision
+                    ))
+                })
+        }
+    }
+    impl RefMap for Resolve<'_> {
+        fn exact(&mut self, target: DefinitionRef) -> Result<DefinitionRef> {
+            let lineage = self.source(target.id)?;
+            (self.exact)(
+                target.kind,
+                SourceRevision {
+                    lineage,
+                    revision: target.revision,
+                },
+            )
+        }
+        fn lineage(&mut self, kind: DefinitionKind, id: DefinitionId) -> Result<DefinitionId> {
+            let lineage = self.source(id)?;
+            (self.lineage)(kind, lineage)
+        }
+    }
+    let mut definition = record.definition.clone();
+    rewrite_refs(
+        &mut definition,
+        &mut Resolve {
+            record,
+            exact,
+            lineage,
+        },
+    )?;
+    Ok(definition)
+}
+
+/// What [`local_library`] built: a library in catalog-local ids.
+pub struct LocalLibrary {
+    pub library: Library,
+    /// Catalog-local ids and the source lineages they stand for, sorted by
+    /// local id (source lineages are numbered 1, 2, … in id order).
+    pub lineages: Vec<Link>,
+    /// Records left out: repeats of a revision, a lineage of two kinds or
+    /// links to lineages the records do not hold.
+    pub skipped: Vec<SourceRevision>,
+}
+
+/// Every record of one source as a library in catalog-local ids, so the
+/// catalog can read it like a project snapshot. Deterministic: the same
+/// records in any order give the same library.
+pub fn local_library(records: &[RevisionRecord]) -> Result<LocalLibrary> {
+    let mut order: Vec<&RevisionRecord> = records.iter().collect();
+    order.sort_by_key(|r| (r.lineage, r.revision));
+    let mut kinds: BTreeMap<SourceLineageId, DefinitionKind> = BTreeMap::new();
+    let mut skipped = Vec::new();
+    let mut kept = Vec::new();
+    let mut seen = BTreeSet::new();
+    for record in order {
+        let at = SourceRevision {
+            lineage: record.lineage,
+            revision: record.revision,
+        };
+        let kind_ok = *kinds.entry(record.lineage).or_insert(record.kind) == record.kind;
+        if !kind_ok
+            || record.definition.kind() != record.kind
+            || record.revision.0 == 0
+            || !seen.insert(at)
+        {
+            skipped.push(at);
+        } else {
+            kept.push(record);
+        }
+    }
+    let mut ids: BTreeMap<SourceLineageId, DefinitionId> = BTreeMap::new();
+    for (index, lineage) in kinds.keys().enumerate() {
+        let id = u64::try_from(index + 1)
+            .map_err(|_| Error::Limit("too many source lineages".into()))?;
+        ids.insert(*lineage, DefinitionId(id));
+    }
+    let mut library = Library::default();
+    for record in kept {
+        let body = from_record(
+            record,
+            &mut |kind, source| {
+                let id = ids.get(&source.lineage).copied().ok_or_else(|| {
+                    Error::NotFound(format!("lineage {} is not in the source", source.lineage))
+                })?;
+                Ok(DefinitionRef {
+                    kind,
+                    id,
+                    revision: source.revision,
+                })
+            },
+            &mut |_, lineage| {
+                ids.get(&lineage).copied().ok_or_else(|| {
+                    Error::NotFound(format!("lineage {lineage} is not in the source"))
+                })
+            },
+        );
+        match (body, ids.get(&record.lineage)) {
+            (Ok(body), Some(id)) => {
+                library.append(*id, record.revision, record.meta.clone(), body);
+            }
+            _ => skipped.push(SourceRevision {
+                lineage: record.lineage,
+                revision: record.revision,
+            }),
+        }
+    }
+    Ok(LocalLibrary {
+        library,
+        lineages: ids
+            .into_iter()
+            .map(|(lineage, local)| Link { local, lineage })
+            .collect(),
+        skipped,
+    })
 }
 
 /// SHA-256 of a record's canonical JSON (its serde encoding, which has a
@@ -229,9 +741,14 @@ pub fn asset_hash(bytes: &[u8]) -> ContentHash {
     ContentHash(Sha256::digest(bytes).into())
 }
 
-/// Structural checks of a bundle before anything is imported: bounds, every
-/// record's links resolve inside the bundle, the root is present, assets
-/// hash to their names. Publish rules run again on the project candidate.
+/// Structural checks of a bundle before anything is imported: bounds, one
+/// record per revision and one kind per lineage, canonical links (locals 1,
+/// 2, … in first-use order, one per source lineage), every exact reference
+/// naming a record of the bundle with its kind and every lineage reference a
+/// lineage of the bundle, the root present, each record's `assets` exactly
+/// the hashes its body names and packed once, nothing else packed, and
+/// assets hashing to their names. Publish rules run again on the project
+/// candidate.
 pub fn validate_bundle(bundle: &Bundle) -> Result<()> {
     if bundle.name.len() > MAX_LABEL {
         return Err(Error::Limit("library name is too long".into()));
@@ -241,15 +758,8 @@ pub fn validate_bundle(bundle: &Bundle) -> Result<()> {
             "a bundle carries 1–{MAX_BUNDLE_RECORDS} revision records"
         )));
     }
-    if !bundle
-        .records
-        .iter()
-        .any(|r| r.lineage == bundle.root.lineage && r.revision == bundle.root.revision)
-    {
-        return Err(Error::Invalid(
-            "the bundle does not contain its root revision".into(),
-        ));
-    }
+    let mut revisions: BTreeMap<SourceRevision, DefinitionKind> = BTreeMap::new();
+    let mut kinds: BTreeMap<SourceLineageId, DefinitionKind> = BTreeMap::new();
     for record in &bundle.records {
         if record.links.len() > MAX_LINKS {
             return Err(Error::Limit(format!(
@@ -265,8 +775,141 @@ pub fn validate_bundle(bundle: &Bundle) -> Result<()> {
                 record.definition.kind()
             )));
         }
+        if record.revision.0 == 0 {
+            return Err(Error::Invalid(format!(
+                "record {} has revision 0; revisions start at r1",
+                record.lineage
+            )));
+        }
+        let at = SourceRevision {
+            lineage: record.lineage,
+            revision: record.revision,
+        };
+        if revisions.insert(at, record.kind).is_some() {
+            return Err(Error::Invalid(format!(
+                "the bundle carries {} {} twice",
+                record.lineage, record.revision
+            )));
+        }
+        if *kinds.entry(record.lineage).or_insert(record.kind) != record.kind {
+            return Err(Error::Invalid(format!(
+                "lineage {} is carried as more than one kind",
+                record.lineage
+            )));
+        }
     }
-    validate_assets(&bundle.assets)
+    if !revisions.contains_key(&bundle.root) {
+        return Err(Error::Invalid(
+            "the bundle does not contain its root revision".into(),
+        ));
+    }
+    validate_assets(&bundle.assets)?;
+    let packed: BTreeSet<ContentHash> = bundle.assets.iter().map(|a| a.hash).collect();
+    let mut named = BTreeSet::new();
+    for record in &bundle.records {
+        check_links(record, &revisions, &kinds)?;
+        let assets = named_assets(&record.definition)?;
+        if assets != record.assets {
+            return Err(Error::Invalid(format!(
+                "record {} {} lists assets other than the ones its body names",
+                record.lineage, record.revision
+            )));
+        }
+        for hash in assets {
+            if !packed.contains(&hash) {
+                return Err(Error::Invalid(format!(
+                    "record {} {} names asset {hash}, which the bundle does not pack",
+                    record.lineage, record.revision
+                )));
+            }
+            named.insert(hash);
+        }
+    }
+    if let Some(extra) = packed.difference(&named).next() {
+        return Err(Error::Invalid(format!(
+            "the bundle packs asset {extra}, which no record names"
+        )));
+    }
+    Ok(())
+}
+
+/// A record's links are canonical and resolve inside the bundle.
+fn check_links(
+    record: &RevisionRecord,
+    revisions: &BTreeMap<SourceRevision, DefinitionKind>,
+    kinds: &BTreeMap<SourceLineageId, DefinitionKind>,
+) -> Result<()> {
+    let at = || format!("record {} {}", record.lineage, record.revision);
+    let mut order: Vec<DefinitionId> = Vec::new();
+    for site in references(&record.definition)? {
+        let (kind, local, revision) = match site {
+            RefSite::Exact { target } => (target.kind, target.id, Some(target.revision)),
+            RefSite::Lineage { kind, id } => (kind, id, None),
+        };
+        if !order.contains(&local) {
+            order.push(local);
+        }
+        let link = record
+            .links
+            .iter()
+            .find(|l| l.local == local)
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "{} uses {local}, which its links do not list",
+                    at()
+                ))
+            })?;
+        let found = match revision {
+            Some(revision) => revisions
+                .get(&SourceRevision {
+                    lineage: link.lineage,
+                    revision,
+                })
+                .copied(),
+            None => kinds.get(&link.lineage).copied(),
+        };
+        match found {
+            Some(found) if found == kind => {}
+            Some(found) => {
+                return Err(Error::Invalid(format!(
+                    "{} names {} as a {kind:?}, but the bundle carries a {found:?}",
+                    at(),
+                    link.lineage
+                )));
+            }
+            None => {
+                return Err(Error::Invalid(format!(
+                    "{} names {}{}, which the bundle does not carry",
+                    at(),
+                    link.lineage,
+                    revision.map(|r| format!(" {r}")).unwrap_or_default()
+                )));
+            }
+        }
+    }
+    let canonical = order
+        .iter()
+        .enumerate()
+        .all(|(i, local)| u64::try_from(i + 1).is_ok_and(|n| local.0 == n));
+    let lineages: BTreeSet<SourceLineageId> = record.links.iter().map(|l| l.lineage).collect();
+    if !canonical || record.links.len() != order.len() || lineages.len() != order.len() {
+        return Err(Error::Invalid(format!(
+            "{} is not canonical: links must number each named lineage once, 1, 2, … in first-use order",
+            at()
+        )));
+    }
+    if record
+        .links
+        .iter()
+        .enumerate()
+        .any(|(i, l)| u64::try_from(i + 1).is_ok_and(|n| l.local.0 != n))
+    {
+        return Err(Error::Invalid(format!(
+            "{} lists its links out of order",
+            at()
+        )));
+    }
+    Ok(())
 }
 
 /// Bounds, media types and hashes of packed assets.
@@ -307,25 +950,104 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
     Ok(())
 }
 
-/// Snapshot checks of `Library::origins` and `Library::assets`: each origin
-/// names a published revision once, and assets are well formed.
+/// Snapshot checks of `Library::origins` and `Library::assets`. Each origin
+/// names a published revision of its own kind; per library a project
+/// revision has at most one origin, a source revision is copied at most
+/// once, and project and source lineages correspond one to one (so import
+/// and promote always agree on where a lineage lives). A revision may have
+/// origins in several libraries (imported from one, promoted to another).
+/// Assets are well formed.
 pub fn validate_snapshot(library: &Library) -> Result<()> {
-    let mut seen = BTreeSet::new();
+    let mut locals = BTreeSet::new();
+    let mut sources = BTreeSet::new();
+    let mut forward: BTreeMap<(LibraryId, DefinitionId), SourceLineageId> = BTreeMap::new();
+    let mut backward: BTreeMap<(LibraryId, SourceLineageId), DefinitionId> = BTreeMap::new();
     for record in &library.origins {
-        if library.definition(record.local).is_none() {
+        let OriginRecord { local, origin } = record;
+        if library.definition(*local).is_none() {
             return Err(Error::Invalid(format!(
                 "origin of {} {} names a revision the project does not hold",
-                record.local.id, record.local.revision
+                local.id, local.revision
             )));
         }
-        if !seen.insert(record.local) {
+        if !locals.insert((origin.library, *local)) {
             return Err(Error::Invalid(format!(
-                "{} {} has more than one origin",
-                record.local.id, record.local.revision
+                "{} {} has more than one origin in library {}",
+                local.id, local.revision, origin.library
+            )));
+        }
+        if !sources.insert((origin.library, origin.lineage, origin.revision)) {
+            return Err(Error::Invalid(format!(
+                "{} {} of library {} is copied more than once",
+                origin.lineage, origin.revision, origin.library
+            )));
+        }
+        let one_to_one = *forward
+            .entry((origin.library, local.id))
+            .or_insert(origin.lineage)
+            == origin.lineage
+            && *backward
+                .entry((origin.library, origin.lineage))
+                .or_insert(local.id)
+                == local.id;
+        if !one_to_one {
+            return Err(Error::Invalid(format!(
+                "lineage {} and source lineage {} of library {} do not correspond one to one",
+                local.id, origin.lineage, origin.library
             )));
         }
     }
     validate_assets(&library.assets)
+}
+
+/// Advisory findings of the asset store (D7): `asset.missing` for each Part
+/// reference whose attached copy is not packed in `library.assets`, so the
+/// project would not reopen offline with it.
+pub fn asset_findings(library: &Library) -> Vec<Finding> {
+    let packed: BTreeSet<ContentHash> = library.assets.iter().map(|a| a.hash).collect();
+    let mut out = Vec::new();
+    for part in &library.parts {
+        for reference in &part.definition.references {
+            let Some(text) = &reference.asset else {
+                continue;
+            };
+            if ContentHash::parse(text).is_some_and(|h| packed.contains(&h)) {
+                continue;
+            }
+            out.push(Finding::new(
+                "asset.missing",
+                format!(
+                    "Reference ‘{}’ of {} {} names attached copy {text}, which the project does not pack.",
+                    reference.title, part.id, part.revision
+                ),
+                vec![ObjectRef::LibraryObject {
+                    definition: part.id,
+                    local: reference.id,
+                }],
+            ));
+        }
+    }
+    out
+}
+
+/// The packed assets `hashes` name, in hash order. A hash the project does
+/// not pack is `not_found`.
+pub fn packed(library: &Library, hashes: &BTreeSet<ContentHash>) -> Result<Vec<PackedAsset>> {
+    hashes
+        .iter()
+        .map(|hash| {
+            library
+                .assets
+                .iter()
+                .find(|a| a.hash == *hash)
+                .cloned()
+                .ok_or_else(|| {
+                    Error::NotFound(format!(
+                        "asset {hash} is not packed in the project; attach the file again"
+                    ))
+                })
+        })
+        .collect()
 }
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

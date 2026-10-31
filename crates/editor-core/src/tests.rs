@@ -8,6 +8,7 @@ mod engine;
 mod fields;
 mod graphics;
 mod library;
+mod library_folders;
 mod orientation;
 mod parts;
 mod staged;

@@ -4,8 +4,8 @@
 //! Entries are derived, never stored. There is one entry per component
 //! lineage and one per manufacturer Part lineage, each at its latest
 //! published revision (plus, on request, lineages that exist only as
-//! drafts). The project snapshot is the only source until
-//! library folders exist; the [`Source`] tag keeps room for them. Nothing
+//! drafts), from the project snapshot and from each library folder the host
+//! loaded ([`SourceCatalog`], tagged by [`Source`]). Nothing
 //! here branches on a component category, field name or unit: filters come
 //! from the field definitions and quantity kinds the data carries.
 mod query;
@@ -25,7 +25,7 @@ use crate::ids::{
     BindingRef, ComponentRef, ContentHash, DefinitionId, DefinitionKind, DefinitionRef,
     FootprintRef, LibraryId, PackageRef, PartRef, Revision, SourceLineageId, SymbolRef,
 };
-use crate::library::bundle::{Link, Origin, RevisionRecord};
+use crate::library::bundle::{Link, Origin, RevisionRecord, content_hash, local_library};
 use crate::library::{ComponentDefinition, DefinitionMeta, Drafts, Library, PartDefinition};
 use crate::model::Project;
 use schemars::JsonSchema;
@@ -93,6 +93,22 @@ pub struct SourceCatalog {
     /// Every record the folder holds, with its content hash: what
     /// update-available and modified-record findings compare against.
     pub revisions: Vec<SourceRecordInfo>,
+    /// The Part entries' rated readings. [`EntryField::rated`] is never on
+    /// the wire, so the catalog keeps them here (and its entries without
+    /// them) to survive io's cache; [`Index::with_sources`] puts them back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ratings: Vec<EntryRating>,
+}
+
+/// One rated reading of a [`SourceCatalog`] entry field.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EntryRating {
+    /// Index into `entries`.
+    pub entry: usize,
+    /// Index into that entry's `fields`.
+    pub field: usize,
+    pub reading: RatedReading,
 }
 
 /// One record a source holds.
@@ -108,16 +124,90 @@ pub struct SourceRecordInfo {
 }
 
 /// Build a source's catalog from its revision records (pure; io calls it
-/// off the UI thread and caches the result).
+/// off the UI thread and caches the result). Deterministic: the same
+/// records in any order give an equal catalog, so a deleted index rebuilds
+/// identically. Source lineages get catalog-local ids 1, 2, … in id order.
+/// A record that does not resolve inside the source (a link to a lineage it
+/// lacks, a repeated revision) gives no entry but is still listed in
+/// `revisions` with its hash.
 pub fn source_catalog(
     library: LibraryId,
     name: &str,
     records: &[RevisionRecord],
 ) -> Result<SourceCatalog> {
-    let _ = (library, name, records);
-    Err(Error::Unsupported(
-        "library.sources: building a folder catalog is not implemented yet".into(),
-    ))
+    if records.len() > MAX_INDEX_ENTRIES {
+        return Err(Error::Limit(format!(
+            "a library source holds at most {MAX_INDEX_ENTRIES} revision records"
+        )));
+    }
+    let mut revisions = records
+        .iter()
+        .map(|r| {
+            Ok(SourceRecordInfo {
+                lineage: r.lineage,
+                revision: r.revision,
+                kind: r.kind,
+                content_hash: content_hash(r)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    revisions.sort();
+    let local = local_library(records)?;
+    let source_of = |id: DefinitionId| {
+        local
+            .lineages
+            .iter()
+            .find(|l| l.local == id)
+            .map(|l| l.lineage)
+    };
+    let held = &local.library;
+    let implemented: BTreeSet<DefinitionId> = held
+        .latest_parts()
+        .iter()
+        .map(|p| p.definition.component.id)
+        .collect();
+    let mut entries: Vec<CatalogEntry> = held
+        .latest_components()
+        .into_iter()
+        .map(|c| {
+            let mut entry = entry_of(held, c.id, Some(c.revision), &c.meta, &c.definition);
+            entry.badges.mpn = implemented.contains(&c.id);
+            entry
+        })
+        .collect();
+    entries.extend(
+        held.latest_parts()
+            .into_iter()
+            .map(|p| part_entry(held, p.id, Some(p.revision), &p.meta, &p.definition)),
+    );
+    let mut ratings = Vec::new();
+    for (index, entry) in entries.iter_mut().enumerate() {
+        entry.source = Source::Library(library);
+        entry.source_lineage = source_of(entry.lineage);
+        for (field, value) in entry.fields.iter_mut().enumerate() {
+            if let Some(reading) = value.rated.take() {
+                ratings.push(EntryRating {
+                    entry: index,
+                    field,
+                    reading,
+                });
+            }
+        }
+    }
+    let fields = Library {
+        quantity_kinds: held.quantity_kinds.clone(),
+        fields: held.fields.clone(),
+        ..Library::default()
+    };
+    Ok(SourceCatalog {
+        library,
+        name: name.to_owned(),
+        lineages: local.lineages,
+        entries,
+        fields,
+        revisions,
+        ratings,
+    })
 }
 
 /// A project lineage copied from a source that now holds a newer revision,
@@ -138,7 +228,11 @@ pub struct UpdateAvailable {
 }
 
 /// `library.updates_available`: every project lineage whose origin source
-/// holds a newer revision or a modified record, in project lineage order.
+/// holds a newer revision or a modified record, in project lineage order
+/// (then source order). A lineage's newest recorded origin in a library is
+/// compared with the newest revision that source holds of its source
+/// lineage; every recorded origin of the lineage is checked for a modified
+/// record. A source the host did not load reports nothing.
 pub fn updates_available(
     library: &Library,
     sources: &[Arc<SourceCatalog>],
@@ -146,9 +240,110 @@ pub fn updates_available(
     if sources.is_empty() || library.origins.is_empty() {
         return Ok(Vec::new());
     }
-    Err(Error::Unsupported(
-        "library.updates_available: comparing with library sources is not implemented yet".into(),
-    ))
+    let mut by_lineage: BTreeMap<(DefinitionId, LibraryId), Vec<&Origin>> = BTreeMap::new();
+    for record in &library.origins {
+        by_lineage
+            .entry((record.local.id, record.origin.library))
+            .or_default()
+            .push(&record.origin);
+    }
+    let mut out = Vec::new();
+    for ((lineage, source_id), origins) in by_lineage {
+        let Some((kind, latest_local)) = library.latest(lineage) else {
+            continue;
+        };
+        let Some(newest) = origins.iter().max_by_key(|o| o.revision).copied() else {
+            continue;
+        };
+        for source in sources.iter().filter(|s| s.library == source_id) {
+            let held: Vec<&SourceRecordInfo> = source
+                .revisions
+                .iter()
+                .filter(|r| r.lineage == newest.lineage)
+                .collect();
+            let Some(latest) = held.iter().map(|r| r.revision).max() else {
+                continue;
+            };
+            let modified = origins.iter().any(|o| {
+                held.iter()
+                    .any(|r| r.revision == o.revision && r.content_hash != o.content_hash)
+            });
+            if latest > newest.revision || modified {
+                out.push(UpdateAvailable {
+                    local: DefinitionRef {
+                        kind,
+                        id: lineage,
+                        revision: latest_local,
+                    },
+                    origin: *newest,
+                    source: source.name.clone(),
+                    latest,
+                    modified,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Advisory findings of [`updates_available`]: `library.update_available`
+/// for a newer source revision and `library.source_modified` for a source
+/// record that no longer hashes to what the project copied.
+pub fn update_findings(updates: &[UpdateAvailable]) -> Vec<crate::diagnostics::Finding> {
+    use crate::diagnostics::{Finding, ObjectRef};
+    let mut out = Vec::new();
+    for update in updates {
+        let objects = vec![ObjectRef::Definition {
+            id: update.local.id,
+        }];
+        if update.latest > update.origin.revision {
+            out.push(Finding::new(
+                "library.update_available",
+                format!(
+                    "‘{}’ holds {} of {}; the project copied {}.",
+                    update.source, update.latest, update.local.id, update.origin.revision
+                ),
+                objects.clone(),
+            ));
+        }
+        if update.modified {
+            out.push(Finding::new(
+                "library.source_modified",
+                format!(
+                    "A revision of {} in ‘{}’ changed after the project copied it; the project keeps its copy.",
+                    update.local.id, update.source
+                ),
+                objects,
+            ));
+        }
+    }
+    out
+}
+
+/// Where a folder field's catalog-local id lands in a merged index: the
+/// project lineage that copied it, else an index-local id above every
+/// project id (`SOURCE_FIELD_BASE` + source index × 2³² + local id).
+const SOURCE_FIELD_BASE: u64 = 1 << 62;
+
+fn merged_field_id(
+    project: &Library,
+    source: &SourceCatalog,
+    index: usize,
+    local: DefinitionId,
+) -> Option<DefinitionId> {
+    let lineage = source
+        .lineages
+        .iter()
+        .find(|l| l.local == local)
+        .map(|l| l.lineage)?;
+    if let Some(id) = crate::library::import::project_lineage(project, source.library, lineage) {
+        return Some(id);
+    }
+    let index = u64::try_from(index).ok()?;
+    let id = SOURCE_FIELD_BASE
+        .checked_add(index.checked_mul(1 << 32)?)?
+        .checked_add(local.0)?;
+    Some(DefinitionId(id))
 }
 
 /// Separate completeness badges. There is no single "complete" flag.
@@ -201,7 +396,7 @@ pub struct EntryField {
 }
 
 /// A Part's rated value as `fields::satisfies` reads it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct RatedReading {
     pub spec: RatedSpec,
     /// The value type of the spec's own field revision.
@@ -618,7 +813,10 @@ impl Folded {
             name,
             mpn: entry.mpn.as_deref().map(|m| fold(m.trim())),
             words,
-            lineage: fold(&entry.lineage.to_string()),
+            lineage: fold(&match entry.source_lineage {
+                Some(lineage) => lineage.to_string(),
+                None => entry.lineage.to_string(),
+            }),
             other,
             fields,
         }
@@ -872,20 +1070,61 @@ impl Index {
         Self::new(entries(project, drafts), Vocabulary::of(&project.library))
     }
 
-    /// The project's entries followed by each source's, in `sources` order.
-    /// Contract body (S3): the vocabulary is still the project's only, so a
-    /// field predicate does not yet reach a folder-only field, and project
-    /// entries carry no `update` mark yet.
+    /// The project's entries followed by each source's, in `sources` order,
+    /// with one merged vocabulary: a folder field the project copied is the
+    /// project's field; any other folder field joins under an index-local id
+    /// (see `merged_field_id`), so field predicates reach folder entries and
+    /// a key that names one field in two sources names both. Project
+    /// entries copied from a source with a newer or modified revision carry
+    /// its `update` mark.
     pub fn with_sources(
         project: &Project,
         drafts: &Drafts,
         sources: &[Arc<SourceCatalog>],
     ) -> Result<Self> {
+        let library = &project.library;
         let mut all = entries(project, drafts);
-        for source in sources {
-            all.extend(source.entries.iter().cloned());
+        let updates = updates_available(library, sources)?;
+        for entry in &mut all {
+            entry.update = updates
+                .iter()
+                .find(|u| u.local.id == entry.lineage && entry.source == Source::Project)
+                .cloned();
         }
-        Self::new(all, Vocabulary::of(&project.library))
+        let mut vocabulary = Vocabulary::of(library);
+        for (index, source) in sources.iter().enumerate() {
+            for field in Vocabulary::of(&source.fields).fields {
+                let Some(id) = merged_field_id(library, source, index, field.field) else {
+                    continue;
+                };
+                if vocabulary.field(id).is_none() {
+                    vocabulary
+                        .fields
+                        .push(VocabularyField { field: id, ..field });
+                }
+            }
+            let mut entries = source.entries.clone();
+            for rating in &source.ratings {
+                if let Some(field) = entries
+                    .get_mut(rating.entry)
+                    .and_then(|e| e.fields.get_mut(rating.field))
+                {
+                    field.rated = Some(rating.reading.clone());
+                }
+            }
+            for mut entry in entries {
+                for field in &mut entry.fields {
+                    if let Some(id) = merged_field_id(library, source, index, field.field) {
+                        field.field = id;
+                        if let Some(rated) = &mut field.rated {
+                            rated.spec.field.id = id;
+                        }
+                    }
+                }
+                all.push(entry);
+            }
+        }
+        Self::new(all, vocabulary)
     }
 
     pub fn entries(&self) -> &[CatalogEntry] {
@@ -980,7 +1219,7 @@ impl Index {
                 .cmp(&key(b))
                 .then_with(|| self.folded[a.0].name.cmp(&self.folded[b.0].name))
                 .then_with(|| self.entries[a.0].source.cmp(&self.entries[b.0].source))
-                .then_with(|| self.entries[a.0].lineage.cmp(&self.entries[b.0].lineage))
+                .then_with(|| self.entries[a.0].key().cmp(&self.entries[b.0].key()))
         };
         let limit = options.limit.clamp(1, MAX_RESULTS);
         if matched.len() > limit {
