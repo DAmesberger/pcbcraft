@@ -171,11 +171,7 @@ pub fn model_points(package: &PackageDefinition, placement: &ModelPlacement) -> 
         }
     }
     let t = placement.transform();
-    out.extend(
-        package_fit::lead_contacts(&package.form)
-            .into_iter()
-            .map(|p| t.apply(p)),
-    );
+    out.extend(package.form.lead_points().into_iter().map(|p| t.apply(p)));
     out
 }
 
@@ -371,7 +367,7 @@ mod tests {
                 lead_thickness: 0.2,
                 foot_length: 0.6,
             })),
-            body_size: [4.9, 6.0, 1.6],
+            envelope: [4.9, 6.0, 1.6],
             ..PackageDefinition::default()
         }
     }
@@ -440,7 +436,7 @@ mod tests {
         let pad = board_points(&fp)[1];
         let moved = point_to_point(&placement, lead, pad);
         let t = moved.map(|p| p.transform());
-        let landed = t.map(|t| t.apply(package_fit::lead_contacts(&package.form)[7]));
+        let landed = t.map(|t| t.apply(package.form.lead_points()[7]));
         assert!(landed.is_some_and(|q| q.iter().zip(pad).all(|(a, b)| (a - b).abs() < 1e-9)));
         // The datum origin is the first board point; 26 model points.
         assert_eq!(board_points(&fp)[0], [0.0; 3]);

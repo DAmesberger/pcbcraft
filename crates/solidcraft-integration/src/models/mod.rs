@@ -20,7 +20,7 @@
 //! (pattern count and pitch) and set lead width; a lead's bent side profile
 //! is a sketch drawn from the form when the model is built.
 //!
-//! M1-M3 contract: `docs/m13-contract.md`.
+//! As built: `docs/component-model.md` (M1–M3).
 mod chip;
 mod gull_wing;
 mod header;

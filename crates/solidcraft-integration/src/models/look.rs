@@ -3,14 +3,11 @@
 //! product look (clear coat, procedural pattern) the 3D view draws per
 //! triangle. Display-only parts of the look are never saved.
 //!
-//! Values come from the core's cited table (`materials::builtin`). Until the
-//! M1 core task fills it, [`definition`] falls back to [`provisional`]: the
-//! values of `docs/materials.md` where they exist, every other value marked
-//! **est.**; the fallback goes when `builtin` stops refusing.
+//! Values come from the core's cited table (`materials::builtin`), the one
+//! source of package material values.
 use crate::material::{Coat, Detail, Material, Pattern, linear_to_srgb8};
 use crate::native::Look;
 use crate::{Error, Result};
-use pcbcraft_core::Error as CoreError;
 use pcbcraft_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
 use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
@@ -19,16 +16,9 @@ use solidcraft_engine::render::surface::OpaqueSurface;
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
 
-/// The definition of `id`: the core's built-in table, or the provisional
-/// values while the table refuses (`material.unsupported`).
+/// The definition of `id` from the core's built-in table.
 pub fn definition(id: MaterialId) -> Result<MaterialDef> {
-    match materials::builtin(id) {
-        Ok(def) => Ok(def),
-        Err(CoreError::Unsupported(message)) if message.starts_with("material.unsupported") => {
-            Ok(provisional(id))
-        }
-        Err(error) => Err(Error::Invalid(error.to_string())),
-    }
+    materials::builtin(id).map_err(|error| Error::Invalid(error.to_string()))
 }
 
 /// The opaque projection a native look stores. Glass and clear silicone
@@ -97,135 +87,6 @@ pub fn material(def: &MaterialDef) -> Material {
             ior: c.ior,
         }),
         detail: detail(def),
-    }
-}
-
-/// Provisional values: linear-sRGB base (F0 for metals), metallic,
-/// perceptual roughness, IOR. Cited ones repeat `docs/materials.md` and
-/// `material.rs`; the rest are **est.**
-pub fn provisional(id: MaterialId) -> MaterialDef {
-    use MaterialId::*;
-    let (name, base, metallic, roughness, ior, estimated): (&str, [f64; 3], f64, f64, f64, bool) =
-        match id {
-            // docs/materials.md: black epoxy mould compound.
-            EpoxyMould => (
-                "Epoxy mould compound",
-                [0.022, 0.022, 0.024],
-                0.0,
-                0.45,
-                1.55,
-                true,
-            ),
-            EpoxyLaserMarked => (
-                "Laser-marked epoxy",
-                [0.075, 0.075, 0.078],
-                0.0,
-                0.65,
-                1.55,
-                true,
-            ),
-            MarkingInkWhite => (
-                "White marking ink",
-                [0.70, 0.70, 0.67],
-                0.0,
-                0.55,
-                1.5,
-                true,
-            ),
-            ResistorOvercoat => (
-                "Resistor overcoat",
-                [0.025, 0.025, 0.027],
-                0.0,
-                0.30,
-                1.55,
-                true,
-            ),
-            Alumina96 => ("96 % alumina", [0.78, 0.77, 0.73], 0.0, 0.55, 1.77, true),
-            BariumTitanate => ("MLCC ceramic", [0.32, 0.25, 0.15], 0.0, 0.55, 2.4, true),
-            Ferrite => ("Ferrite", [0.045, 0.045, 0.048], 0.0, 0.60, 2.3, true),
-            TinMatte => ("Matte tin", [0.64, 0.64, 0.66], 1.0, 0.28, METAL_IOR, true),
-            TinBright => ("Bright tin", [0.64, 0.64, 0.66], 1.0, 0.14, METAL_IOR, true),
-            SolderSac => ("SAC solder", [0.64, 0.64, 0.66], 1.0, 0.14, METAL_IOR, true),
-            // Au F0 (J&C/Hoffman, as the ENIG blend in docs/materials.md);
-            // hard gold over nickel is satin-bright (est. roughness).
-            Gold => (
-                "Gold plating",
-                [1.000, 0.782, 0.344],
-                1.0,
-                0.22,
-                METAL_IOR,
-                true,
-            ),
-            // Ni F0 (Rakić 1998, as in docs/materials.md).
-            Nickel => ("Nickel", [0.660, 0.609, 0.526], 1.0, 0.30, METAL_IOR, true),
-            // Copper F0 (J&C via Hoffman); C194 is ≥ 97 % Cu.
-            CopperAlloy => (
-                "Copper alloy",
-                [0.955, 0.638, 0.538],
-                1.0,
-                0.30,
-                METAL_IOR,
-                true,
-            ),
-            PhosphorBronze => (
-                "Phosphor bronze",
-                [0.90, 0.68, 0.48],
-                1.0,
-                0.30,
-                METAL_IOR,
-                true,
-            ),
-            Brass => ("Brass", [0.91, 0.78, 0.42], 1.0, 0.30, METAL_IOR, true),
-            Aluminium => (
-                "Aluminium",
-                [0.913, 0.922, 0.924],
-                1.0,
-                0.35,
-                METAL_IOR,
-                true,
-            ),
-            PvcSleeve => ("PVC sleeve", [0.10, 0.10, 0.12], 0.0, 0.40, 1.54, true),
-            BorosilicateGlass => (
-                "Borosilicate glass",
-                [0.55, 0.60, 0.55],
-                0.0,
-                0.05,
-                1.47,
-                true,
-            ),
-            Pbt => ("PBT", [0.030, 0.030, 0.032], 0.0, 0.50, 1.57, true),
-            Lcp => ("LCP", [0.035, 0.035, 0.036], 0.0, 0.45, 1.60, true),
-            Pa9t => ("PA9T", [0.040, 0.040, 0.040], 0.0, 0.50, 1.55, true),
-            SiliconeClear => ("Clear silicone", [0.80, 0.80, 0.80], 0.0, 0.10, 1.41, true),
-            SiliconeDiffuse => (
-                "Diffuse silicone",
-                [0.85, 0.85, 0.83],
-                0.0,
-                0.40,
-                1.41,
-                true,
-            ),
-            Polyimide => ("Polyimide", [0.55, 0.28, 0.05], 0.0, 0.25, 1.70, true),
-        };
-    let pattern =
-        matches!(id, EpoxyMould | Pbt | Lcp | Pa9t).then_some(materials::SurfacePattern {
-            kind: PatternKind::EdmTexture,
-            strength: 0.35,
-        });
-    MaterialDef {
-        id,
-        name: name.into(),
-        category: id.category(),
-        base_linear: base,
-        metallic,
-        roughness,
-        ior,
-        coat: None,
-        transmission: None,
-        pattern,
-        density_kg_m3: None,
-        source: Vec::new(),
-        estimated,
     }
 }
 

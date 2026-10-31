@@ -169,7 +169,14 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
         ("Select", vec!["Select"]),
         (
             "Draw",
-            vec!["Line", "Rectangle", "Circle", "Polygon", "Text"],
+            vec![
+                "Line",
+                "Rectangle",
+                "Circle",
+                "Polygon",
+                "Text",
+                "Import SVG…",
+            ],
         ),
         ("Pins", vec!["Pin"]),
         ("Arrange", vec!["Rotate", "Mirror", "Duplicate", "Delete"]),
@@ -199,6 +206,7 @@ fn the_symbol_ribbon_shows_every_drawing_tool() -> TestResult {
             vec!["Circle", "Arc"],
             vec![],
             vec!["Text", "Field"],
+            vec![],
         ]
     );
     // Every drawing tool is reachable: a button or a split-button variant.

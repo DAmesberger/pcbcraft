@@ -236,12 +236,31 @@ fn shadows(geometry: &[Geometry], bounds: &Aabb3) -> Shadows {
     ) else {
         return out;
     };
-    for body in geometry.iter().filter(|g| g.kind.is_envelope()) {
+    for body in package_bodies(geometry) {
         let corners = footprint(body);
         if body.min[2] >= top - 1e-6 {
             contact(&mut out.top, &corners, top + CONTACT_LIFT);
         } else if body.max[2] <= bottom + 1e-6 {
             contact(&mut out.bottom, &corners, bottom - CONTACT_LIFT);
+        }
+    }
+    out
+}
+
+/// One body per package for its contact shadow: an envelope, or the
+/// lowest body of a generated model (its moulding or ceramic, not an
+/// overcoat or marking that sits on it). Bodies without a pick identity
+/// stand alone.
+fn package_bodies(geometry: &[Geometry]) -> Vec<&Geometry> {
+    let mut out: Vec<&Geometry> = Vec::new();
+    for body in geometry.iter().filter(|g| g.kind.is_envelope()) {
+        let same = body
+            .item
+            .and_then(|item| out.iter().position(|b| b.item == Some(item)));
+        match same {
+            Some(k) if body.min[2] < out[k].min[2] => out[k] = body,
+            Some(_) => {}
+            None => out.push(body),
         }
     }
     out
@@ -537,11 +556,8 @@ pub(crate) mod tests {
             let ring = 4 * (CORNER_STEPS + 1);
             3 * ring + 2 * 6 * ring
         };
-        let packages = scene
-            .geometry
-            .iter()
-            .filter(|g| g.kind.is_envelope())
-            .count();
+        // One shadow per package, however many bodies its model has.
+        let packages = package_bodies(&scene.geometry).len();
         assert_eq!(packages, 2);
         assert_eq!(
             scene.shadows.top.len() + scene.shadows.bottom.len(),

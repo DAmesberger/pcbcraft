@@ -4,7 +4,7 @@
 use super::*;
 use crate::ids::{DefinitionId, PadId};
 use crate::library::footprint::Pad;
-use crate::library::package_form::{ChipForm, ChipKind, GullWingForm};
+use crate::library::package_form::{ChipForm, ChipKind, GullWingForm, LeadSides};
 use crate::library::{PackageTerminal, footprint::FootprintDefinition};
 
 fn soic_form() -> PackageForm {
@@ -75,8 +75,8 @@ fn soic_pairs(fp: &FootprintDefinition) -> Result<Vec<LeadPair>> {
 }
 
 #[test]
-fn lead_contacts_count_counter_clockwise_from_pin_one() {
-    let leads = lead_contacts(&soic_form());
+fn lead_points_count_counter_clockwise_from_pin_one() {
+    let leads = soic_form().lead_points();
     assert_eq!(leads.len(), 8);
     assert_eq!(leads[0], [-1.905, -2.7, 0.0]);
     assert_eq!(leads[3], [1.905, -2.7, 0.0]);
@@ -90,10 +90,10 @@ fn lead_contacts_count_counter_clockwise_from_pin_one() {
         termination: 0.3,
     }));
     assert_eq!(
-        lead_contacts(&chip),
+        chip.lead_points(),
         vec![[-0.65, 0.0, 0.0], [0.65, 0.0, 0.0]]
     );
-    assert!(lead_contacts(&PackageForm::Generic).is_empty());
+    assert!(PackageForm::Generic.lead_points().is_empty());
 }
 
 #[test]
@@ -159,7 +159,8 @@ fn a_flipped_model_keeps_its_tilt_and_is_lifted_onto_the_plane() -> Result<()> {
     // tilt is kept and the leads sit on the seating plane.
     let frame = fit.placement.transform();
     assert!(close(frame.apply_vector([0.0, 0.0, 1.0])[2], -1.0));
-    let lowest = lead_contacts(&soic_form())
+    let lowest = soic_form()
+        .lead_points()
         .into_iter()
         .map(|p| frame.apply(p)[2])
         .fold(f64::INFINITY, f64::min);
@@ -280,7 +281,9 @@ fn seat_and_stand_up_put_the_leads_on_the_plane() -> Result<()> {
     // The source's +y now points up.
     let up = stood.transform().apply_vector([0.0, 1.0, 0.0]);
     assert_eq!(up, [0.0, 0.0, 1.0]);
-    let lowest = lead_contacts(&p.form)
+    let lowest = p
+        .form
+        .lead_points()
         .into_iter()
         .map(|q| stood.transform().apply(q)[2])
         .fold(f64::INFINITY, f64::min);

@@ -12,6 +12,7 @@ pub mod native;
 pub mod pad_outline;
 pub mod project;
 pub mod scene;
+pub mod svg;
 pub use solidcraft_engine::{geom, render};
 
 /// Native foundation fixtures (parametric probe and copper sample). They are

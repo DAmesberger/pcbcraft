@@ -1,24 +1,14 @@
 //! "Fit leads to pads": a pure rigid fit of tagged lead-contact points onto
 //! pad centres, the one-click placement actions, and the advisory placement
 //! findings. The core never reads geometry files: lead contacts come from
-//! the typed [`PackageForm`] ([`lead_contacts`]) or from the host (the
-//! integration crate, for imported models) as [`LeadPair`]s.
+//! the typed [`PackageForm`] ([`PackageForm::lead_points`]) or from the host
+//! (the integration crate, for imported models) as [`LeadPair`]s.
 //!
-//! Lead order convention (shared with the M2 builders): lead `k` of
-//! [`lead_contacts`] belongs to `package.terminals[k]`. Leads count
-//! counter-clockwise seen from above, starting at pin 1:
-//! - two-sided gull-wing and no-lead: the −y row from −x to +x, then the +y
-//!   row from +x to −x (pin 1 at −x, −y);
-//! - four-sided: the −x side from +y to −y, the −y side from −x to +x, the
-//!   +x side from −y to +y, the +y side from +x to −x (pin 1 at the +y end of
-//!   the −x side); a no-lead exposed pad comes last;
-//! - chip: the −x termination, then +x;
-//! - pin header: column by column from −x, each column from +y to −y
-//!   (pin 1 at −x, +y; on a two-row header odd pins on the +y row).
-//!
-//! M1-M3 contract (`docs/m13-contract.md`): owned by the M3 placement task.
+//! Lead `k` of [`PackageForm::lead_points`] belongs to
+//! `package.terminals[k]`; the lead order (shared with the generated
+//! models) is documented in [`super::package_form`].
 use super::footprint::{FootprintDefinition, PAD_ARC_TOLERANCE_MM, PadKind};
-use super::package_form::{LeadSides, MAX_FORM_LEADS, PackageForm};
+use super::package_form::{MAX_FORM_LEADS, PackageForm};
 use super::package_model::{self, Axis, ModelPlacement, PackageEdit, QuickAction, model_frame};
 use super::publish::object;
 use super::{Datum, PackageDefinition};
@@ -307,82 +297,13 @@ pub fn turn_about(axis: Axis, deg: f64, pivot: Point3) -> Transform3 {
         .then(&Transform3::translation(pivot.map(|v| -v)))
 }
 
-fn side_positions(count: u32, pitch: f64) -> impl DoubleEndedIterator<Item = f64> {
-    let count = count.min(MAX_FORM_LEADS);
-    let middle = f64::from(count.saturating_sub(1)) / 2.0;
-    (0..count).map(move |i| (f64::from(i) - middle) * pitch)
-}
-
-/// Counter-clockwise lead points of a rectangular two- or four-sided
-/// package: rows at `±row` (y), columns at `±column` (x).
-fn perimeter(sides: LeadSides, counts: [u32; 2], pitch: f64, row: f64, column: f64) -> Vec<Point3> {
-    let mut out = Vec::new();
-    let four = sides == LeadSides::Four;
-    if four {
-        out.extend(
-            side_positions(counts[1], pitch)
-                .rev()
-                .map(|y| [-column, y, 0.0]),
-        );
-    }
-    out.extend(side_positions(counts[0], pitch).map(|x| [x, -row, 0.0]));
-    if four {
-        out.extend(side_positions(counts[1], pitch).map(|y| [column, y, 0.0]));
-    }
-    out.extend(
-        side_positions(counts[0], pitch)
-            .rev()
-            .map(|x| [x, row, 0.0]),
-    );
-    out
-}
-
-/// Nominal lead-contact centroids of a typed form in the model frame, on
-/// the seating plane, in terminal order (see the module docs). Empty for
-/// `Generic`, which has no leads.
-pub fn lead_contacts(form: &PackageForm) -> Vec<Point3> {
-    match form {
-        PackageForm::Generic => Vec::new(),
-        PackageForm::Chip(c) => {
-            let x = c.length / 2.0 - c.termination / 2.0;
-            vec![[-x, 0.0, 0.0], [x, 0.0, 0.0]]
-        }
-        PackageForm::GullWing(g) => perimeter(
-            g.sides,
-            g.leads_per_side,
-            g.pitch,
-            g.span[0] / 2.0 - g.foot_length / 2.0,
-            g.span[1] / 2.0 - g.foot_length / 2.0,
-        ),
-        PackageForm::NoLead(n) => {
-            let mut out = perimeter(
-                n.sides,
-                n.terminals_per_side,
-                n.pitch,
-                n.body_width / 2.0 - n.terminal_length / 2.0,
-                n.body_length / 2.0 - n.terminal_length / 2.0,
-            );
-            if n.exposed_pad.is_some() {
-                out.push([0.0; 3]);
-            }
-            out
-        }
-        PackageForm::Header(h) => {
-            let rows: Vec<f64> = side_positions(h.rows, h.row_pitch).rev().collect();
-            side_positions(h.pins_per_row, h.pitch)
-                .flat_map(|x| rows.iter().map(move |y| [x, *y, 0.0]))
-                .collect()
-        }
-    }
-}
-
 /// The body's box in the model frame (min, max), leads excluded.
 fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
     let centred =
         |l: f64, w: f64, z0: f64, z1: f64| ([-l / 2.0, -w / 2.0, z0], [l / 2.0, w / 2.0, z1]);
     match &package.form {
         PackageForm::Generic => {
-            let s = package.body_size;
+            let s = package.envelope;
             centred(s[0], s[1], 0.0, s[2])
         }
         PackageForm::Chip(c) => centred(c.length, c.width, 0.0, c.height),
@@ -440,14 +361,14 @@ fn copper(kind: PadKind) -> bool {
 }
 
 /// The lead/pad pairs of a typed form on `footprint`: lead `k` of
-/// [`lead_contacts`] with the centroid of the copper pads landing
+/// [`PackageForm::lead_points`] with the centroid of the copper pads landing
 /// `package.terminals[k]`, in the datum frame. Terminals without a pad are
 /// left out; never inferred from numbers or names.
 pub fn form_pairs(
     package: &PackageDefinition,
     footprint: &FootprintDefinition,
 ) -> Result<Vec<LeadPair>> {
-    let contacts = lead_contacts(&package.form);
+    let contacts = package.form.lead_points();
     if contacts.is_empty() {
         return Err(Error::Invalid(format!(
             "package.fit_no_leads: a {} package has no typed lead contacts; pass lead pairs",
@@ -502,7 +423,7 @@ fn needs_footprint(action: QuickAction) -> Error {
 /// onto the seating plane.
 fn seat(package: &PackageDefinition, placement: &ModelPlacement) -> Result<ModelPlacement> {
     let t = placement.transform();
-    let contacts = lead_contacts(&package.form);
+    let contacts = package.form.lead_points();
     let lowest = if contacts.is_empty() {
         body_corners(package, placement)
             .iter()
@@ -682,7 +603,7 @@ pub fn lead_states(
     footprint: &FootprintDefinition,
     placement: &ModelPlacement,
 ) -> Vec<LeadState> {
-    let contacts = lead_contacts(&package.form);
+    let contacts = package.form.lead_points();
     if contacts.len() != package.terminals.len() || !placement.finite() {
         return Vec::new();
     }

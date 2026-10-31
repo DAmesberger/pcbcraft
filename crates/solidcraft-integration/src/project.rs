@@ -666,6 +666,24 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         if models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
             let created = b.model(&stem, package)?;
+            let frame = model_frame(&footprint.datum, &package.placement);
+            let pick = next_pick(&sources);
+            // Display-only solder fillets of a chip, while its model frame
+            // is the package frame the appearance layers draw in (no datum
+            // shift or turn).
+            if package.chip_kind().is_some()
+                && frame.rotation == Transform3::IDENTITY.rotation
+                && frame.translation == package.placement.translation
+            {
+                parts.push(Part {
+                    pick: Some(pick),
+                    package,
+                    footprint: Some(footprint),
+                    body: Body::of(package),
+                    placement: Some(placement),
+                    generated: true,
+                });
+            }
             shared_joints.push((
                 BoardJoint {
                     board,
@@ -675,10 +693,10 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                     angle: format!("{prefix}_angle").into(),
                     layer: placement.layer,
                 },
-                holding_frame(&model_frame(&footprint.datum, &package.placement)),
+                holding_frame(&frame),
             ));
             sources.push(Source {
-                pick_id: next_pick(&sources),
+                pick_id: pick,
                 instance: Some(instance.id),
                 pad: None,
                 track: None,
@@ -731,6 +749,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             footprint: Some(footprint),
             body,
             placement: Some(placement),
+            generated: false,
         });
         sources.push(Source {
             pick_id: pick,
@@ -1003,6 +1022,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
         footprint: None,
         body,
         placement: None,
+        generated: false,
     })?);
     Ok(model)
 }

@@ -1,7 +1,7 @@
 //! A package's 3D model source, the materials of its bodies, and where the
 //! model sits relative to the footprint (`model_frame`).
 //!
-//! M1-M3 contract (`docs/m13-contract.md`). Frames: footprint origin F →
+//! See `docs/component-model.md` (M1–M3 as built). Frames: footprint origin F →
 //! datum D = F ∘ `Datum { offset, rotation }` → model frame M = D ∘
 //! [`ModelPlacement`]. z = 0 is the seating plane (top of land copper).
 use super::package_form::PackageForm;
@@ -201,7 +201,7 @@ pub enum PackageEdit {
     SetForm(PackageForm),
     SetModel(PackageModel),
     SetPlacement(ModelPlacement),
-    /// Computed into a [`ModelPlacement`]; owned by the M3 placement task.
+    /// Computed into a [`ModelPlacement`] (`package_fit::apply_quick`).
     ApplyQuick(QuickAction),
 }
 

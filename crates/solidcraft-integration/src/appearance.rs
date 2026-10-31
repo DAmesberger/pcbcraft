@@ -169,8 +169,8 @@ impl Body {
         match package.chip_kind() {
             None => Self::Moulded,
             Some(ChipKind::Resistor) => Self::Resistor,
-            // Until the generated chip model (M2) draws ferrite, an inductor
-            // shows the ceramic chip's wrapped terminations.
+            // An inductor's envelope shows the ceramic chip's wrapped
+            // terminations; its generated model is ferrite.
             Some(ChipKind::Capacitor | ChipKind::Inductor) => Self::Ceramic,
         }
     }
@@ -192,6 +192,10 @@ pub struct Part<'a> {
     pub body: Body,
     /// Board placement; `None` draws in the package frame on z = 0.
     pub placement: Option<&'a Placement>,
+    /// The package has a generated model whose real bodies carry its
+    /// terminations and overcoat: only the solder fillets are drawn here,
+    /// against the chip's own end faces.
+    pub generated: bool,
 }
 
 /// Every appearance layer of a board.
@@ -479,8 +483,16 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     let across = 1 - axis;
     let long = package.envelope[axis];
     let band = (BAND_SHARE * long).min(BAND_MAX_MM);
-    let g = TERMINATION_GROWTH_MM;
+    // A generated chip's terminations are real bodies flush with its ends.
+    let g = if part.generated {
+        0.0
+    } else {
+        TERMINATION_GROWTH_MM
+    };
     for sign in [-1.0, 1.0] {
+        if part.generated {
+            break;
+        }
         let edge = if sign > 0.0 { hi[axis] } else { lo[axis] };
         let (mut min, mut max) = ([0.0; 3], [0.0; 3]);
         min[axis] = if sign > 0.0 { edge - band } else { edge - g };
@@ -497,7 +509,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             frame.cuboid(min, max),
         )?;
     }
-    if part.body == Body::Resistor {
+    if part.body == Body::Resistor && !part.generated {
         let (mut min, mut max) = ([0.0; 3], [0.0; 3]);
         min[axis] = lo[axis] + band - 2.0 * g;
         max[axis] = hi[axis] - band + 2.0 * g;

@@ -102,9 +102,14 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
             },
             None => PackageModel::default(),
         },
-        placement: ModelPlacement {
-            translation: layout.offset,
-            rotation_deg: [0.0; 3],
+        // A generated model is seated on the lands (z = 0, the seating
+        // plane); only an envelope keeps the layout's lift.
+        placement: match kind.chip {
+            Some(_) => ModelPlacement::default(),
+            None => ModelPlacement {
+                translation: layout.offset,
+                rotation_deg: [0.0; 3],
+            },
         },
     };
     vec![

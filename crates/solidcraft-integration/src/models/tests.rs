@@ -331,6 +331,37 @@ fn leads_count(definition: &ModelDefinition) -> usize {
         .count()
 }
 
+/// The builders and the core's placement fit share one lead order: lead
+/// `k`'s body stands over `PackageForm::lead_points()[k]` in every family.
+#[test]
+fn every_lead_body_stands_over_the_core_s_lead_point() -> Result<()> {
+    for (form, terminals) in [
+        (chip(), 2),
+        (soic8(), 8),
+        (tqfp32(), 32),
+        (qfn16(), 17),
+        (dfn8(), 8),
+        (header2x5(), 10),
+    ] {
+        let points = form.lead_points();
+        let (native, definition) = built(form, terminals)?;
+        let leads = leads(&definition);
+        assert_eq!(leads.len(), points.len());
+        for (lead, point) in leads.iter().zip(&points) {
+            let (lo, hi) = bounds(&native, &lead.name)?;
+            for axis in 0..2 {
+                assert!(
+                    lo[axis] - 1e-6 <= point[axis] && point[axis] <= hi[axis] + 1e-6,
+                    "{}: lead point {point:?} outside {lo:?}..{hi:?}",
+                    lead.name
+                );
+            }
+            assert!(lo[2] <= 1e-6, "{} reaches the seating plane", lead.name);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn header_pins_are_gold_through_a_pbt_base_numbered_across_rows() -> Result<()> {
     let (mut native, definition) = built(header2x5(), 10)?;
@@ -634,7 +665,8 @@ fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<(
         let bodies: Vec<_> = model
             .geometry
             .iter()
-            .filter(|g| g.item == Some(source.pick_id))
+            // Its model's bodies; display-only solder fillets share the pick.
+            .filter(|g| g.item == Some(source.pick_id) && g.kind.is_generated())
             .collect();
         assert_eq!(bodies.len(), definition.bodies.len(), "{}", source.label);
         let low = bodies.iter().map(|g| g.min[2]).fold(f64::MAX, f64::min);

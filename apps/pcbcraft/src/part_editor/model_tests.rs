@@ -387,7 +387,9 @@ fn package_fit_lead(
     package: &pcbcraft_core::library::PackageDefinition,
     k: usize,
 ) -> Result<[f64; 3], Box<dyn std::error::Error>> {
-    pcbcraft_core::library::package_fit::lead_contacts(&package.form)
+    package
+        .form
+        .lead_points()
         .get(k)
         .copied()
         .ok_or_else(|| "no lead".into())

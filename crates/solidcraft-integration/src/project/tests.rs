@@ -3,14 +3,27 @@ use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
 /// Give `package` a chip form of `kind` over its envelope, or a generic
-/// (moulded) one with an envelope model.
+/// (moulded) one, with an envelope model: these tests exercise the
+/// envelope path (generated models are `models::tests`).
 fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
     package.form = kind.map_or(PackageForm::Generic, |kind| {
         PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
     });
-    if kind.is_none() {
-        package.model = PackageModel::default();
+    package.model = PackageModel::default();
+}
+
+/// The demo with envelope models instead of its generated chip models,
+/// lifted 0.05 mm off the lands as the samples lift an envelope.
+fn envelope_demo() -> Result<Project> {
+    let mut project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    for package in &mut project.library.packages {
+        package.definition.model = PackageModel::default();
+        package.definition.placement.translation = [0.0, 0.0, 0.05];
     }
+    Ok(project)
 }
 use pcbcraft_core::library::PadShape;
 use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
@@ -32,10 +45,7 @@ fn near(actual: f64, expected: f64) {
 }
 
 fn fixture() -> Result<Project> {
-    let mut project = Engine::demo()
-        .map_err(|error| Error::Verification(error.to_string()))?
-        .project()
-        .clone();
+    let mut project = envelope_demo()?;
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
@@ -822,15 +832,52 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
 fn chip_terminations_wrap_the_ends_and_solder_wets_the_lands_on_both_sides() -> Result<()> {
     // The demo's centred chips get a fillet at every land; the fixture's
     // offset bodies leave one end hanging off its land, which gets none.
+    let demo = build(&envelope_demo()?)?;
+    assert_eq!(count(&demo, BodyKind::Solder), 4);
+    assert!(count(&build(&fixture()?)?, BodyKind::Solder) >= 1);
+    check_chip_parts(&demo)?;
+    check_chip_parts(&build(&fixture()?)?)?;
+    Ok(())
+}
+
+/// The demo's generated chips: a display-only fillet at every land, each
+/// on its land and against the end face of a real termination body.
+#[test]
+fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()> {
     let demo = build(
         Engine::demo()
             .map_err(|error| Error::Verification(error.to_string()))?
             .project(),
     )?;
-    assert_eq!(count(&demo, BodyKind::Solder), 4);
-    assert!(count(&build(&fixture()?)?, BodyKind::Solder) >= 1);
-    check_chip_parts(&demo)?;
-    check_chip_parts(&build(&fixture()?)?)?;
+    assert!(!demo.models.is_empty(), "the demo chips are generated");
+    let fillets = kind(&demo, BodyKind::Solder);
+    assert_eq!(fillets.len(), 4);
+    for solder in fillets {
+        let land = demo.sources.iter().filter(|s| s.pad.is_some()).any(|s| {
+            source_geometry(&demo, BodyKind::PadCopper, |x| x.pick_id == s.pick_id).is_ok_and(
+                |pad| {
+                    (0..2).all(|a| {
+                        solder.min[a] >= pad.min[a] - 1e-6 && solder.max[a] <= pad.max[a] + 1e-6
+                    })
+                },
+            )
+        });
+        assert!(land, "fillet off its land");
+        let ends: Vec<&Geometry> = demo
+            .geometry
+            .iter()
+            .filter(|g| g.item == solder.item && g.kind == BodyKind::ModelLead)
+            .collect();
+        assert_eq!(ends.len(), 2, "the model's two terminations");
+        let touches = ends.iter().any(|end| {
+            (0..2).any(|a| {
+                (solder.min[a] - end.max[a]).abs() < 1e-6
+                    || (solder.max[a] - end.min[a]).abs() < 1e-6
+            })
+        });
+        assert!(touches, "fillet does not meet its termination");
+        assert!(solder.volume > 0.0);
+    }
     Ok(())
 }
 
