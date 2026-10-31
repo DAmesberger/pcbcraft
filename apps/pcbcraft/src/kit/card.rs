@@ -24,7 +24,7 @@ pub const SUBJECT_ROWS: f32 = 10.0;
 /// What the subject slot holds. Exactly one at a time.
 #[allow(
     dead_code,
-    reason = "Properties is the only subject until K4 and the W slices add the others"
+    reason = "Properties is the only subject until the R and W slices add the others"
 )]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Subject {

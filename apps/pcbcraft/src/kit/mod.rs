@@ -25,14 +25,18 @@ pub mod toast;
 mod tree;
 
 pub use form::*;
+pub use issues::issues_bar;
+pub use rows::*;
 pub use search::*;
 pub use tree::*;
-#[allow(unused_imports, reason = "S0 contract; slices K1–K4 and A1 use it")]
+#[allow(
+    unused_imports,
+    reason = "S0 contract; slices A1, R1 and the W slices use it"
+)]
 pub use {
     dialog::{DialogPanel, confirm},
-    issues::{count_badge, detail, issue_line, issue_row, issues_bar, issues_list},
+    issues::{count_badge, detail, issue_line, issue_row, issues_list},
     review::ReviewPanel,
-    rows::*,
     severity::severity_glyph,
     toast::pill,
 };

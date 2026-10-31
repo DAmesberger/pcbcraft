@@ -107,6 +107,15 @@ pub(super) enum IssueSummary {
 }
 
 impl IssueSummary {
+    /// The bar's summary from the `project.issues` answer; a refusal (or
+    /// any other answer) is shown as not counted, never as no issues.
+    fn from_query(result: pcbcraft_core::Result<QueryResult>) -> Self {
+        match result {
+            Ok(QueryResult::Issues(report)) => Self::from_report(&report),
+            _ => Self::NotCounted,
+        }
+    }
+
     fn from_report(report: &IssueReport) -> Self {
         let elsewhere: Vec<String> = report
             .elsewhere
@@ -140,7 +149,7 @@ fn area_label(area: IssueArea) -> &'static str {
 }
 
 /// Shown while the issues cannot be counted, in place of counts.
-const NOT_COUNTED: &str = "Not counted yet";
+const NOT_COUNTED: &str = "Not counted";
 const NOT_COUNTED_TIP: &str = "Checks still show in each Properties card";
 
 /// The Issues card: the always-visible bar and, expanded, its body. Returns
@@ -169,32 +178,17 @@ fn issues_card(ui: &mut egui::Ui, summary: &IssueSummary, expanded: bool) -> boo
                                 kit::hint(ui, NOT_COUNTED_TIP, "");
                             }
                             IssueSummary::Counted { counts, .. } => {
-                                kit::hint(ui, &counts_line(counts), NOT_COUNTED_TIP);
+                                kit::hint(
+                                    ui,
+                                    &kit::issues::counts_words(counts, true, true),
+                                    NOT_COUNTED_TIP,
+                                );
                             }
                         });
                     });
             });
     }
     bar.clicked()
-}
-
-/// The counts in words, for the body until the list lands (slice A1).
-fn counts_line(counts: &IssueCounts) -> String {
-    let parts: Vec<String> = [
-        (counts.error, "error", "errors"),
-        (counts.warning, "warning", "warnings"),
-        (counts.to_do, "to do", "to do"),
-        (counts.info, "info", "info"),
-    ]
-    .into_iter()
-    .filter(|(n, ..)| *n > 0)
-    .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
-    .collect();
-    if parts.is_empty() {
-        "No issues".into()
-    } else {
-        parts.join(", ")
-    }
 }
 
 impl App {
@@ -465,7 +459,7 @@ impl App {
         let mut open_issues = false;
         if let Some(card) = card {
             open_issues = card.show_issues;
-            self.apply(card.output);
+            self.apply(ctx, crate::refusal::Origin::Command, card.output);
         }
         let summary = self.issue_summary(ctx);
         let toggle = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
@@ -493,10 +487,7 @@ impl App {
         let scope = IssueScope::Area {
             area: area(self.workspace),
         };
-        let summary = match self.engine.query(Query::Issues { scope }) {
-            Ok(QueryResult::Issues(report)) => IssueSummary::from_report(&report),
-            _ => IssueSummary::NotCounted,
-        };
+        let summary = IssueSummary::from_query(self.engine.query(Query::Issues { scope }));
         // One entry: the previous revision's summary is dropped.
         let last = egui::Id::new("issue-summary-key");
         ctx.data_mut(|d| {
@@ -758,19 +749,22 @@ mod tests {
         }
     }
 
-    /// Until core counts issues, the bar says so instead of showing none.
+    /// The bar counts the active workspace's issues through `project.issues`;
+    /// a refused query is shown as not counted instead of as no issues.
     #[test]
-    fn a_refused_issue_query_is_shown_as_not_counted() -> pcbcraft_core::Result<()> {
+    fn the_bar_counts_through_project_issues_and_marks_a_refusal() {
         let engine = pcbcraft_core::Engine::default();
         let scope = IssueScope::Area {
             area: area(Workspace::Pcb),
         };
-        let summary = match engine.query(Query::Issues { scope }) {
-            Ok(QueryResult::Issues(report)) => IssueSummary::from_report(&report),
-            _ => IssueSummary::NotCounted,
-        };
-        assert_eq!(summary, IssueSummary::NotCounted);
-        Ok(())
+        let summary = IssueSummary::from_query(engine.query(Query::Issues { scope }));
+        assert!(
+            matches!(summary, IssueSummary::Counted { .. }),
+            "{summary:?}"
+        );
+        let refused =
+            IssueSummary::from_query(Err(pcbcraft_core::Error::Unsupported("issues".into())));
+        assert_eq!(refused, IssueSummary::NotCounted);
     }
 
     #[test]
@@ -804,7 +798,9 @@ mod tests {
                 elsewhere: Some("Component: 2 blocking".into()),
             }
         );
-        assert_eq!(counts_line(&counts), "1 error, 3 to do");
-        assert_eq!(counts_line(&IssueCounts::default()), "No issues");
+        assert_eq!(
+            kit::issues::counts_words(&counts, true, true),
+            "1 error, 3 to do"
+        );
     }
 }

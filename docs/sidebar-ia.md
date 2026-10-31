@@ -122,7 +122,7 @@ Dialogs are docked in the subject slot.
 
 | Dialog | Opened from | Primary |
 | --- | --- | --- |
-| New footprint from template | Footprint ribbon | Build; on a non-empty footprint "Replace footprint" with a Warning row. It needs C3's atomic `replace`; until then Clear stays a secondary footer action behind `kit::confirm`. Findings are not suppressed while it is open. |
+| New footprint from template | Footprint ribbon | Build; on a non-empty footprint "Replace footprint" with a Warning row. W1b builds it on C3's atomic `replace` (clear and build in one undo step); until then Clear stays a secondary footer action behind `kit::confirm`. Findings are not suppressed while it is open. |
 | Assign pads by number | Issue Fix / "…" | "Assign 2 pads" (`LibraryCommand::AssignTerminals`) |
 | Part (new or edit) | Details › Parts; schematic "New Part for these values…" | Publish Part, or "Publish with component" (`PartsAction::PublishCascade`). Disabled hover: "3 issues block publishing · Show". After publish: "Back to R1 ›". |
 | Choose part | Instance PART | Choose |
@@ -213,7 +213,7 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 - `IssueRow { severity, area, group, title, detail, finding }`, where `finding` is the unchanged `Finding` (code, raw message, every `ObjectRef`, `blocks`);
 - `IssueCounts`, `AreaCount`, and `IssueReport { rows, counts, elsewhere, coverage }`;
 - `MAX_TITLE = 80`;
-- `report(&Project, &Drafts, &IssueScope) -> Result<IssueReport>`, served as `Query::Issues { scope }` (`project.issues`) → `QueryResult::Issues`. **Until C1 it refuses with `Error::Unsupported`**, so no transport mistakes an empty list for "no issues".
+- `report(&Project, &Drafts, &IssueScope) -> Result<IssueReport>`, served as `Query::Issues { scope }` (`project.issues`) → `QueryResult::Issues`. Since C1 it returns the real report on desktop, CLI and MCP; a failure or an oversized scope (`Error::Limit`) refuses rather than return an empty list, so no transport mistakes it for "no issues".
 - `style::{check, Problem}`.
 
 **Desktop** (`apps/pcbcraft/src`):
@@ -232,7 +232,7 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 | Fix launchers | `issues.rs` | `Fix { Apply { label, operation }, Open { label, dialog: FixDialog } }`, `fix(&IssueRow) -> Option<Fix>` |
 | Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String`; K3 added `mark(ctx, origin)` (an editor declares the origin of the operation it returns this frame; otherwise the call site's default applies: inspector and draft commits `Command`, canvas `Canvas`), `claim(ctx, origin) -> Option<String>` (on the next frame), `level(&Error) -> Level`, `presentable(text)` and `clip(text, max)` |
 
-The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance.
+The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance. After wave 3, `kit/card.rs` keeps one only on `Subject` (Properties is the only subject until R1 and the W slices), and the kit re-exports other than `issues_bar` and `rows` stay allowed until A1, R1 and the W slices use them.
 
 ## Slices and file ownership
 
@@ -243,13 +243,13 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | **B0** Bugs (done) | B-a…B-j | the three editors | — |
 | **S0** Contract (this page) | IA, types, signatures, style checker, skill rules, planned attribution | `docs/sidebar-ia.md`, `crates/editor-core/src/issues*`, the new kit and app files above | — |
 | **S1** Split (done) | Mechanical, no behaviour change: `part_editor::inspector()` per-view bodies → `part_editor/{details,symbol,footprint,mapping,model}_card.rs`; the Part section → `part_props.rs`; the same for the schematic and PCB `inspector()` dispatch (see [the card files](#card-files-after-s1)) | the three editors | B0 |
-| **K1** Card + column | `kit::card`; the `chrome.rs` column stack with the always-visible Issues bar slot | `kit/card.rs`, `shell.rs`, `app/chrome.rs` (column) | S0 |
-| **K2** Issues kit | severity, rows, list, line, bar, badge, detail | `kit/severity.rs`, `kit/issues.rs` | S0 |
-| **K3** Feedback kit + routing | toast, Messages, pill; `App::say(severity)`; `Refused` from `App::apply`; `status_chip` removed | `kit/toast.rs`, `kit/messages.rs`, `refusal.rs`, `app.rs`, `app/chrome.rs` (status only; rebased after K1) | S0 |
-| **K4** Dialog kit | DialogPanel, ReviewPanel, tool_card, hint, list_frame, table, summary_row, field_error, refusal, confirm; the `ui-forms` message rule | `kit/dialog.rs`, `kit/review.rs`, `kit/rows.rs`, `xtask/src/ui_forms.rs` | S0 |
-| **C1** Core issues and messages | `project.issues` (also on CLI/MCP) with severity, group and title; same-cause merging in the rules; names-not-IDs pass over `Finding.message` and `Error` display (not `updates.rs`); CLI/MCP golden tests; core message-style tests over fixtures | `crates/editor-core` except `updates.rs`; `crates/automation` | S0 |
-| **C2** Core review data | Structured update plan (changes by kind, area and refs; line + detail); findings diff (new/resolved) replacing the "Candidate … check" lines; conflicting tracks with net, layer and length; wording of the `updates.rs` blockers | `crates/editor-core/src/updates.rs`, `updates/` | S0 |
-| **C3** Core commands | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
+| **K1** Card + column (done) | `kit::card`; the `chrome.rs` column stack with the always-visible Issues bar slot | `kit/card.rs`, `shell.rs`, `app/chrome.rs` (column) | S0 |
+| **K2** Issues kit (done) | severity, rows, list, line, bar, badge, detail | `kit/severity.rs`, `kit/issues.rs` | S0 |
+| **K3** Feedback kit + routing (done) | toast, Messages, pill; `App::say(severity)`; `Refused` from `App::apply`; `status_chip` removed | `kit/toast.rs`, `kit/messages.rs`, `refusal.rs`, `app.rs`, `app/chrome.rs` (status only; rebased after K1) | S0 |
+| **K4** Dialog kit (done) | DialogPanel, ReviewPanel, tool_card, hint, list_frame, table, summary_row, field_error, refusal, confirm; the `ui-forms` message rule | `kit/dialog.rs`, `kit/review.rs`, `kit/rows.rs`, `xtask/src/ui_forms.rs` | S0 |
+| **C1** Core issues and messages (done) | `project.issues` (also on CLI/MCP) with severity, group and title; same-cause merging in the rules; names-not-IDs pass over `Finding.message` and `Error` display (not `updates.rs`); CLI/MCP golden tests; core message-style tests over fixtures | `crates/editor-core` except `updates.rs`; `crates/automation` | S0 |
+| **C2** Core review data (done) | Structured update plan (changes by kind, area and refs; line + detail); findings diff (new/resolved) replacing the "Candidate … check" lines; conflicting tracks with net, layer and length; wording of the `updates.rs` blockers | `crates/editor-core/src/updates.rs`, `updates/` | S0 |
+| **C3** Core commands (done) | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
 | **A1** Issues surface | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
 | **R1** Review panel | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview | `update_preview.rs` | K4, C2 |
 | **W1a** Component Details + Symbol | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
