@@ -624,7 +624,8 @@ pub fn retarget(engine: &mut Engine, f: &Fixture) -> Result<()> {
             Definition::Symbol(_)
             | Definition::Package(_)
             | Definition::QuantityKind(_)
-            | Definition::Field(_) => {}
+            | Definition::Field(_)
+            | Definition::Part(_) => {}
         }
         edits.push(DraftEdit {
             id,

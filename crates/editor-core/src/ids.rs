@@ -80,6 +80,9 @@ pub enum DefinitionKind {
     QuantityKind,
     /// A reusable typed field.
     Field,
+    /// A manufacturer part: one exact orderable item pinning a component and
+    /// a binding revision (S2).
+    Part,
 }
 
 /// Any exact revision, tagged with its kind.
@@ -159,6 +162,11 @@ exact_ref!(
     /// An exact field revision.
     FieldRef,
     Field
+);
+exact_ref!(
+    /// An exact manufacturer-part revision.
+    PartRef,
+    Part
 );
 
 macro_rules! local_id {

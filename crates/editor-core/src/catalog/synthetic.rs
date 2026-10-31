@@ -95,6 +95,7 @@ fn push(library: &mut Library, edit: DraftEdit) {
         Definition::Binding(d) => library.bindings.push(first(id, meta, d)),
         Definition::QuantityKind(d) => library.quantity_kinds.push(first(id, meta, d)),
         Definition::Field(d) => library.fields.push(first(id, meta, d)),
+        Definition::Part(d) => library.parts.push(first(id, meta, *d)),
     }
 }
 

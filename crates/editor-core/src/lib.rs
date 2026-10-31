@@ -96,6 +96,16 @@ pub enum Query {
         #[serde(default)]
         revision: Option<Revision>,
     },
+    /// The project BOM: resolved instances grouped by Part, unresolved ones
+    /// by component revision, footprint and identical requirements, each
+    /// line marked when it is unresolved.
+    #[serde(rename = "project.bom")]
+    Bom {},
+    /// Groups of instances without a Part (or with an unresolved one) that
+    /// share requirements and footprint, each with the `library.search`
+    /// query that finds Parts for it.
+    #[serde(rename = "library.resolve_groups")]
+    ResolveGroups {},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -107,6 +117,8 @@ pub enum QueryResult {
     Search(catalog::SearchReport),
     Facets(catalog::FacetReport),
     Lineage(Box<catalog::ItemReport>),
+    Bom(completeness::BomReport),
+    ResolveGroups(completeness::ResolveReport),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -413,6 +425,10 @@ impl Engine {
                     revision,
                 )?)))
             }
+            Query::Bom {} => Ok(QueryResult::Bom(completeness::bom(&self.document.project)?)),
+            Query::ResolveGroups {} => Ok(QueryResult::ResolveGroups(
+                completeness::resolve_groups(&self.document.project)?,
+            )),
             Query::InspectInstance { instance } => Ok(QueryResult::Instance(Box::new(
                 completeness::instance(&self.document.project, instance)?,
             ))),

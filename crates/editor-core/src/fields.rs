@@ -13,6 +13,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod spec;
+pub use spec::{MAX_RATED_SPECS, RatedSpec, Requirement, SpecMeaning, satisfies};
+
 /// Fields one component revision selects; overrides one instance holds.
 pub const MAX_FIELDS: usize = 64;
 /// Edits one `instance.set_properties` applies.

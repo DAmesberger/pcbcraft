@@ -23,6 +23,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod part;
+pub use part::{MAX_ASSIGN_INSTANCES, assign_part, part_findings, requirements};
+
 pub const MAX_INSTANCES: usize = 4096;
 /// Symbol occurrences in one project; [`add_occurrence`] enforces it.
 pub const MAX_OCCURRENCES: usize = 16384;
@@ -245,6 +248,7 @@ fn check_with<'a>(
     let symbol = &resolved.symbol.definition;
     let name = &instance.designator;
     check_properties(&project.library, component, instance)?;
+    part::check_part(&project.library, instance)?;
     let mut placed = BTreeSet::new();
     for occurrence in occurrences {
         if symbol.unit(occurrence.unit).is_none() {
@@ -599,6 +603,7 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         unused_units: BTreeSet::new(),
         no_connect: BTreeSet::new(),
         functions: FunctionSelections::new(),
+        part: None,
     });
     let occurrence = add_occurrence(project, id, request.unit, request.position)?;
     apply_properties(project, id, &request.properties)?;

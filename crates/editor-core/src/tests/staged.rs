@@ -43,7 +43,10 @@ fn a_component_without_implementations_is_placeable_but_not_board_placeable() ->
         )]
     );
     assert_eq!(report.physical, None);
-    assert!(report.purchasing.starts_with("not computed"));
+    assert_eq!(
+        report.purchasing.state,
+        crate::completeness::PurchasingState::NoPart
+    );
     let place = engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::Place {
