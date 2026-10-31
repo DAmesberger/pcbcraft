@@ -6,15 +6,23 @@
 //! launchers, locate) belongs to the host; it never changes a count, drops
 //! an [`ObjectRef`] or loses the raw finding text.
 //!
-//! Slice S0 fixes the types and signatures only. [`report`] is not
-//! implemented yet and refuses, so no transport can mistake an empty list for
-//! "no issues". Slice C1 fills it from the existing rule owners
-//! (`completeness`, `layout`, `erc`, the footprint and publish checks).
+//! [`report`] collects from the existing rule owners (`completeness` for
+//! drafts and instances, `erc`, `layout`), merges same-cause findings into
+//! one row ([`IssueRow::also`]) and gives each row its severity, group and
+//! title ([`rules`]).
+mod merge;
+mod names;
+mod rules;
 pub mod style;
 #[cfg(test)]
 mod tests;
 
+pub use rules::KNOWN_CODES;
+
+use crate::completeness;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
+use crate::erc;
+use crate::layout;
 use crate::library::Drafts;
 use crate::model::Project;
 use schemars::JsonSchema;
@@ -114,13 +122,33 @@ pub struct IssueRow {
     /// object it refers to (both sides of a same-cause pair) and the stage
     /// it blocks. Copy report and Messages show this text.
     pub finding: Finding,
+    /// Findings of the same cause merged into this row, unchanged: the
+    /// other side of a pair (a package terminal without a pad beside the
+    /// pad without a terminal), the other pads of one clearance pair or one
+    /// net, or the other instances of one shared Part. Nothing is dropped:
+    /// Copy report lists these too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<Finding>,
 }
 
 impl IssueRow {
     /// The stage this issue blocks, if any. An issue that blocks a stage is
     /// always [`Severity::Error`].
     pub fn blocks(&self) -> Option<Stage> {
-        self.finding.blocks
+        self.finding
+            .blocks
+            .or_else(|| self.also.iter().find_map(|f| f.blocks))
+    }
+    /// Every object the row refers to: the primary finding's, then the
+    /// merged findings'.
+    pub fn objects(&self) -> impl Iterator<Item = &ObjectRef> {
+        std::iter::once(&self.finding)
+            .chain(&self.also)
+            .flat_map(|f| f.objects.iter())
+    }
+    /// The number of findings in this row.
+    pub fn findings(&self) -> usize {
+        1 + self.also.len()
     }
 }
 
@@ -159,13 +187,198 @@ pub struct IssueReport {
     pub coverage: String,
 }
 
-/// Every issue of the project and its drafts in `scope`.
-///
-/// Not implemented yet (slice C1): it refuses rather than report an empty,
-/// and therefore wrong, list.
+/// Every issue of the project and its drafts in `scope`: the publish
+/// findings and drawing lint of every draft (Component), the completeness,
+/// purchasing and electrical findings of every instance (Schematic) and the
+/// board checks (Board). Rows are uncapped and sorted most severe first,
+/// grouped by [`IssueGroup`].
 pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<IssueReport> {
-    let _ = (project, drafts, scope);
-    Err(Error::Unsupported(
-        "The issue list is not available in this build yet".into(),
-    ))
+    if let IssueScope::Selection { objects } = scope
+        && objects.len() > MAX_SCOPE_OBJECTS
+    {
+        return Err(Error::Limit(format!(
+            "An issue selection names at most {MAX_SCOPE_OBJECTS} objects."
+        )));
+    }
+    let names = names::Names::new(project, drafts);
+    let mut all = Vec::new();
+    for (area, merged) in collect(project, drafts)? {
+        all.push(row(&names, area, merged));
+    }
+    all.sort_by(|a, b| {
+        (a.severity, a.area, &a.group.code, &a.group.key).cmp(&(
+            b.severity,
+            b.area,
+            &b.group.code,
+            &b.group.key,
+        ))
+    });
+    let (rows, rest): (Vec<IssueRow>, Vec<IssueRow>) =
+        all.into_iter().partition(|r| in_scope(r, scope));
+    let mut elsewhere = Vec::new();
+    if matches!(scope, IssueScope::Area { .. }) {
+        for area in [IssueArea::Component, IssueArea::Schematic, IssueArea::Board] {
+            let outside: Vec<&IssueRow> = rest.iter().filter(|r| r.area == area).collect();
+            if !outside.is_empty() {
+                elsewhere.push(AreaCount {
+                    area,
+                    counts: counts(outside.iter().copied()),
+                    blocking: outside.iter().filter(|r| r.blocks().is_some()).count(),
+                });
+            }
+        }
+    }
+    Ok(IssueReport {
+        counts: counts(rows.iter()),
+        rows,
+        elsewhere,
+        coverage: coverage(scope).into(),
+    })
+}
+
+/// What the checks of a scope cover, for the footer.
+fn coverage(scope: &IssueScope) -> &'static str {
+    match scope {
+        IssueScope::Area {
+            area: IssueArea::Component,
+        } => "Publish checks and drawing lint of every draft",
+        IssueScope::Area {
+            area: IssueArea::Schematic,
+        } => "Completeness, purchasing and electrical rules",
+        IssueScope::Area {
+            area: IssueArea::Board,
+        } => "Connectivity, outline, 0.2 mm clearance and courtyards",
+        IssueScope::All | IssueScope::Selection { .. } => {
+            "Publish checks, completeness, electrical rules and board checks"
+        }
+    }
+}
+
+fn counts<'a>(rows: impl Iterator<Item = &'a IssueRow>) -> IssueCounts {
+    let mut counts = IssueCounts::default();
+    for row in rows {
+        let slot = match row.severity {
+            Severity::Error => &mut counts.error,
+            Severity::Warning => &mut counts.warning,
+            Severity::ToDo => &mut counts.to_do,
+            Severity::Info => &mut counts.info,
+        };
+        *slot = slot.saturating_add(1);
+    }
+    counts
+}
+
+/// Whether a row is in scope. A selected instance also selects its pads,
+/// terminals, units, properties and symbols; a selected definition its
+/// local objects.
+fn in_scope(row: &IssueRow, scope: &IssueScope) -> bool {
+    match scope {
+        IssueScope::All => true,
+        IssueScope::Area { area } => row.area == *area,
+        IssueScope::Selection { objects } => row
+            .objects()
+            .any(|object| objects.iter().any(|selected| covers(selected, object))),
+    }
+}
+
+fn covers(selected: &ObjectRef, object: &ObjectRef) -> bool {
+    if selected == object {
+        return true;
+    }
+    match (*selected, *object) {
+        (ObjectRef::Instance { id }, ObjectRef::Pad { instance, .. })
+        | (ObjectRef::Instance { id }, ObjectRef::Unit { instance, .. })
+        | (ObjectRef::Instance { id }, ObjectRef::Property { instance, .. }) => id == instance,
+        (ObjectRef::Instance { id }, ObjectRef::Terminal { endpoint }) => id == endpoint.instance,
+        (ObjectRef::Definition { id }, ObjectRef::LibraryObject { definition, .. }) => {
+            id == definition
+        }
+        _ => false,
+    }
+}
+
+/// One row from its findings, the first being the primary one.
+fn row(names: &names::Names<'_>, area: IssueArea, merged: Vec<Finding>) -> IssueRow {
+    let refs: Vec<&Finding> = merged.iter().collect();
+    let title = rules::title(names, &refs);
+    let mut findings = merged.into_iter();
+    let finding = findings.next().unwrap_or_else(|| {
+        Finding::new(
+            rules::CHECK_FAILED,
+            "An issue lost its finding".into(),
+            Vec::new(),
+        )
+    });
+    let also: Vec<Finding> = findings.collect();
+    let severity = std::iter::once(&finding)
+        .chain(&also)
+        .map(rules::severity)
+        .min()
+        .unwrap_or(Severity::Info);
+    let cause = rules::line_full(&finding.message);
+    IssueRow {
+        severity,
+        area,
+        group: IssueGroup {
+            code: finding.code.clone(),
+            key: String::new(),
+            title: rules::group_title(&finding.code),
+        },
+        detail: IssueDetail {
+            // A merged row's first message speaks for one finding only.
+            cause: (also.is_empty() && cause != title).then_some(cause),
+            fix: rules::fix(&finding.code).map(str::to_owned),
+        },
+        title,
+        finding,
+        also,
+    }
+}
+
+/// Every finding of the project, by area, with same-cause findings merged
+/// into one entry (primary first).
+fn collect(project: &Project, drafts: &Drafts) -> Result<Vec<(IssueArea, Vec<Finding>)>> {
+    let mut out = Vec::new();
+    let mut component = Vec::new();
+    for report in completeness::drafts(project, drafts)? {
+        component.extend(report.findings);
+    }
+    out.extend(
+        merge::component(&names::Names::new(project, drafts), component)
+            .into_iter()
+            .map(|m| (IssueArea::Component, m)),
+    );
+    let mut schematic = Vec::new();
+    for instance in &project.instances {
+        match completeness::instance(project, instance.id) {
+            Ok(report) => {
+                schematic.extend(report.findings);
+                if report.purchasing.state == completeness::PurchasingState::NoPart {
+                    schematic.push(Finding::new(
+                        rules::NO_PART,
+                        format!("{} has no Part chosen.", instance.designator),
+                        vec![ObjectRef::Instance { id: instance.id }],
+                    ));
+                }
+                schematic.extend(report.purchasing.findings);
+            }
+            Err(error) => schematic.push(Finding::new(
+                rules::CHECK_FAILED,
+                format!("{} cannot be checked: {error}", instance.designator),
+                vec![ObjectRef::Instance { id: instance.id }],
+            )),
+        }
+    }
+    schematic.extend(erc::checks(project));
+    out.extend(
+        merge::schematic(schematic)
+            .into_iter()
+            .map(|m| (IssueArea::Schematic, m)),
+    );
+    out.extend(
+        merge::board(layout::checks(project))
+            .into_iter()
+            .map(|m| (IssueArea::Board, m)),
+    );
+    Ok(out)
 }

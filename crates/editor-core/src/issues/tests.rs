@@ -1,10 +1,11 @@
-//! Message-style skeleton. These tests pin the style rules on the wording
-//! examples of docs/sidebar-ia.md. Slice C1 adds the tests that run
-//! [`style::check`] over every finding code's fixtures through
-//! `project.issues` and over every `Error` display.
-use super::style::{Problem, check};
+//! The message style on the wording examples of docs/sidebar-ia.md, and
+//! `project.issues` over fixtures: every title follows the style, every raw
+//! message and refusal names objects by their user names, nothing is
+//! dropped by merging, and every finding code is classified.
+use super::style::{Problem, check, naming};
 use super::*;
-use crate::Engine;
+
+mod fixtures;
 
 /// The rewritten titles of the design's wording table follow the style.
 #[test]
@@ -83,18 +84,6 @@ fn names_that_resemble_ids_pass() {
     ] {
         assert_eq!(check(text), Vec::<Problem>::new(), "{text}");
     }
-}
-
-/// Until slice C1, `project.issues` refuses instead of answering with an
-/// empty list that would hide every issue.
-#[test]
-fn issues_query_refuses_until_implemented() -> crate::Result<()> {
-    let engine = Engine::demo()?;
-    let result = engine.query(crate::Query::Issues {
-        scope: IssueScope::All,
-    });
-    assert!(matches!(result, Err(Error::Unsupported(_))));
-    Ok(())
 }
 
 /// Severity order is most severe first, so sorting rows puts errors on top.

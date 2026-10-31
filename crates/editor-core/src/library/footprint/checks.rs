@@ -24,11 +24,11 @@ fn pad_object(id: DefinitionId, pad: &Pad) -> Vec<ObjectRef> {
     vec![object(id, pad.id.0)]
 }
 
-/// The user's name for a pad in a message: its number, or its id when
-/// the number is empty (as `layout::pad_labels`).
-fn pad_label(pad: &Pad) -> String {
-    if pad.number.is_empty() {
-        pad.id.to_string()
+/// The user's name for a pad in a message: its number, or "(no number)"
+/// when it has none.
+pub(super) fn pad_label(pad: &Pad) -> String {
+    if pad.number.trim().is_empty() {
+        "(no number)".into()
     } else {
         pad.number.clone()
     }
@@ -99,16 +99,17 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
         (TerminalRule::Required, None) => out.push(issue(
             "footprint.terminal_required",
             format!(
-                "Pad {} ({:?}) lands no package terminal; choose one, or make it Mechanical explicitly.",
-                pad_label(pad), pad.kind
+                "Pad {} lands no package terminal; choose one, or make it mechanical.",
+                pad_label(pad)
             ),
             pad_object(id, pad),
         )),
-        (TerminalRule::Forbidden, Some(terminal)) => out.push(issue(
+        (TerminalRule::Forbidden, Some(_)) => out.push(issue(
             "footprint.terminal_forbidden",
             format!(
-                "Pad {} ({:?}) has no copper connection and cannot land package terminal {terminal}.",
-                pad_label(pad), pad.kind
+                "Pad {} is a {} pad and cannot land a package terminal.",
+                pad_label(pad),
+                pad.kind.label()
             ),
             pad_object(id, pad),
         )),
@@ -135,7 +136,11 @@ fn kind_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
     if let Some(need) = hole {
         out.push(issue(
             "footprint.hole_kind",
-            format!("Pad {} ({:?}) needs {need}.", pad_label(pad), pad.kind),
+            format!(
+                "Pad {} is a {} pad and needs {need}.",
+                pad_label(pad),
+                pad.kind.label()
+            ),
             pad_object(id, pad),
         ));
     }
@@ -174,11 +179,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
         if !apertures.insert(via.id) {
             out.push(issue(
                 "footprint.aperture_duplicate",
-                format!(
-                    "Pad {} uses aperture {} more than once.",
-                    pad_label(pad),
-                    via.id.0
-                ),
+                format!("Pad {} uses one aperture more than once.", pad_label(pad)),
                 pad_object(id, pad),
             ));
         }
@@ -193,8 +194,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             out.push(issue(
                 "footprint.hole_outside_land",
                 format!(
-                    "Via {} of pad {} needs a positive drill inside the land.",
-                    via.id.0,
+                    "A via of pad {} needs a positive drill inside the land.",
                     pad_label(pad)
                 ),
                 pad_object(id, pad),
@@ -206,11 +206,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
             if !apertures.insert(window.id) {
                 out.push(issue(
                     "footprint.aperture_duplicate",
-                    format!(
-                        "Pad {} uses aperture {} more than once.",
-                        pad_label(pad),
-                        window.id.0
-                    ),
+                    format!("Pad {} uses one aperture more than once.", pad_label(pad)),
                     pad_object(id, pad),
                 ));
             }
@@ -219,8 +215,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                 out.push(issue(
                     "footprint.paste_window_shape",
                     format!(
-                        "Paste window {} of pad {} needs a closed shape with area.",
-                        window.id.0,
+                        "A paste window of pad {} needs a closed shape with area.",
                         pad_label(pad)
                     ),
                     pad_object(id, pad),
@@ -229,8 +224,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                 out.push(issue(
                     "footprint.paste_window_outside_pad",
                     format!(
-                        "Paste window {} of pad {} is not inside the pad.",
-                        window.id.0,
+                        "A paste window of pad {} is not inside the pad.",
                         pad_label(pad)
                     ),
                     pad_object(id, pad),
@@ -250,17 +244,14 @@ fn graphic_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut
                 if *fill == Fill::Body {
                     out.push(issue(
                         "graphic.fill_body",
-                        format!(
-                            "Footprint graphic {} uses the symbol body fill; use none or solid.",
-                            graphic.id
-                        ),
+                        "A footprint graphic uses the symbol body fill; use none or solid.".into(),
                         this.clone(),
                     ));
                 }
                 if graphic.layer == DrawingLayer::Courtyard && !shape.is_closed() {
                     out.push(issue(
                         "footprint.courtyard_open",
-                        format!("Courtyard graphic {} is not a closed shape.", graphic.id),
+                        "A courtyard graphic is not a closed shape.".into(),
                         this,
                     ));
                 }
@@ -272,20 +263,14 @@ fn graphic_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut
                 ) {
                     out.push(issue(
                         "text.content_kind",
-                        format!(
-                            "Footprint text {} shows a symbol-only value; use the designator, a field or literal text.",
-                            graphic.id
-                        ),
+                        "A footprint text shows a symbol-only value; use the designator, a field or literal text.".into(),
                         this.clone(),
                     ));
                 }
                 if graphic.layer == DrawingLayer::Courtyard {
                     out.push(issue(
                         "footprint.courtyard_open",
-                        format!(
-                            "Courtyard graphic {} is text, not a closed shape.",
-                            graphic.id
-                        ),
+                        "A courtyard graphic is text, not a closed shape.".into(),
                         this,
                     ));
                 }
@@ -298,7 +283,7 @@ fn graphic_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut
     if footprint.pad(polarity.pad).is_none() {
         out.push(issue(
             "footprint.polarity_pad_unknown",
-            format!("Polarity pad {} is not in this footprint.", polarity.pad),
+            "The pin-1 polarity pad is not in this footprint.".into(),
             vec![ObjectRef::Definition { id }],
         ));
     }
@@ -310,9 +295,7 @@ fn graphic_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut
         if !ok || !seen.insert(*marker) {
             out.push(issue(
                 "footprint.polarity_marker_unknown",
-                format!(
-                    "Polarity marker {marker} is not a silkscreen or assembly graphic of this footprint, or is listed twice."
-                ),
+                "A polarity marker is not a silkscreen or assembly graphic of this footprint, or is listed twice.".into(),
                 vec![object(id, marker.0)],
             ));
         }
@@ -367,10 +350,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !expr.valid() {
             out.push(issue(
                 "footprint.param_expr",
-                format!(
-                    "Expression ‘{}’ must be non-empty printable text of at most 256 bytes.",
-                    expr.0.escape_debug()
-                ),
+                "An expression must be non-empty printable text of at most 256 bytes.".into(),
                 this.clone(),
             ));
         }
@@ -394,10 +374,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !pads.contains(&role.pad) || !owned.insert(role.pad) {
             out.push(issue(
                 "footprint.source_pad_unknown",
-                format!(
-                    "Pad role {} names no stored pad, or a pad another role or key owns.",
-                    role.pad
-                ),
+                "A pad role names no stored pad, or a pad another role or key owns.".into(),
                 vec![object(id, role.pad.0)],
             ));
         }
@@ -407,10 +384,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !pads.contains(&keyed.pad) || !owned.insert(keyed.pad) || !keys.insert(keyed.key) {
             out.push(issue(
                 "footprint.source_pad_unknown",
-                format!(
-                    "Array key {:?} names no stored pad, or a pad another role or key owns.",
-                    keyed.key
-                ),
+                "An array pad names no stored pad, or a pad another role or key owns.".into(),
                 vec![object(id, keyed.pad.0)],
             ));
         }
@@ -420,10 +394,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !source.pads.iter().any(|r| r.pad == array.seed) {
             out.push(issue(
                 "footprint.source_pad_unknown",
-                format!(
-                    "Array {} copies seed pad {}, which has no pad role.",
-                    array.id.0, array.seed
-                ),
+                "An array copies a seed pad that has no pad role.".into(),
                 vec![object(id, array.id.0)],
             ));
         }
@@ -433,7 +404,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !arrays.contains(&array) {
             out.push(issue(
                 "footprint.source_pad_unknown",
-                format!("Array key {:?} names no array.", keyed.key),
+                "An array pad names an array that does not exist.".into(),
                 vec![object(id, keyed.pad.0)],
             ));
         }
@@ -443,10 +414,7 @@ fn source_findings(footprint: &FootprintDefinition, id: DefinitionId, out: &mut 
         if !keys.contains(&o.key) || !overridden.insert(o.key) {
             out.push(issue(
                 "footprint.override_orphaned",
-                format!(
-                    "The override of {:?} has no generated instance, or is listed twice.",
-                    o.key
-                ),
+                "An array pad override has no generated pad, or is listed twice.".into(),
                 this.clone(),
             ));
         }
@@ -461,7 +429,7 @@ impl FootprintDefinition {
             if pad.number.len() > crate::ids::MAX_LABEL {
                 out.push(issue(
                     "footprint.pad_number",
-                    format!("Pad {} has a number longer than 256 bytes.", pad.id),
+                    "A pad has a number longer than 256 bytes.".into(),
                     pad_object(id, pad),
                 ));
             }
@@ -533,8 +501,7 @@ impl FootprintDefinition {
                     Finding::new(
                         "footprint.silk_width",
                         format!(
-                            "Silkscreen graphic {} is {width:.3} mm wide, below {MIN_SILK_WIDTH_MM} mm (estimated default); it may not print.",
-                            graphic.id
+                            "A silkscreen line is {width:.3} mm wide, below {MIN_SILK_WIDTH_MM} mm (estimated default); it may not print."
                         ),
                         vec![object(id, graphic.id.0)],
                     )
@@ -547,8 +514,8 @@ impl FootprintDefinition {
                     Finding::new(
                         "footprint.text_height",
                         format!(
-                            "Silkscreen text {} is {:.3} mm high, below {MIN_SILK_TEXT_HEIGHT_MM} mm (estimated default); it may not be legible.",
-                            graphic.id, text.height
+                            "A silkscreen text is {:.3} mm high, below {MIN_SILK_TEXT_HEIGHT_MM} mm (estimated default); it may not be legible.",
+                            text.height
                         ),
                         vec![object(id, graphic.id.0)],
                     )
@@ -700,8 +667,8 @@ impl FootprintDefinition {
                         "footprint.mask_web",
                         format!(
                             "The solder-mask web between pads {} and {} is {:.3} mm, below {MIN_MASK_WEB_MM} mm (estimated default).",
-                            a.id,
-                            b.id,
+                            pad_label(a),
+                            pad_label(b),
                             web.max(0.0)
                         ),
                         vec![object(id, a.id.0), object(id, b.id.0)],

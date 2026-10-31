@@ -134,7 +134,8 @@ pub enum Query {
     },
     /// Every issue of the project and its drafts in `scope`, with the
     /// severity, group and one-line title core gives each finding
-    /// (docs/sidebar-ia.md). Not implemented yet: it refuses.
+    /// (docs/sidebar-ia.md): uncapped, most severe first, with same-cause
+    /// findings merged into one row and every finding kept.
     #[serde(rename = "project.issues")]
     Issues { scope: issues::IssueScope },
 }

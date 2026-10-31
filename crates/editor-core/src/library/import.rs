@@ -206,8 +206,10 @@ pub fn import(
             None => Revision::FIRST,
             Some((kind, _)) if kind != record.kind => {
                 return Err(Error::Invalid(format!(
-                    "source lineage {} is a {:?}, but the project holds it as {id}, a {kind:?}",
-                    record.lineage, record.kind
+                    "‘{}’ is a {} in the library, but the project holds it as a {}",
+                    record.meta.name,
+                    super::names::noun(record.kind),
+                    super::names::noun(kind)
                 )));
             }
             Some((_, latest)) => latest
@@ -445,14 +447,13 @@ pub fn export(
     for member in &members {
         let (meta, body) = library.definition(*member).ok_or_else(|| {
             Error::NotFound(format!(
-                "{} {} is not in the project",
-                member.id, member.revision
+                "{} is missing from the project",
+                library.describe(*member)
             ))
         })?;
-        let at = sources
-            .get(member)
-            .copied()
-            .ok_or_else(|| Error::Invalid(format!("{} was not mapped", member.id)))?;
+        let at = sources.get(member).copied().ok_or_else(|| {
+            Error::Invalid(format!("{} was not mapped", library.describe(*member)))
+        })?;
         let record = bundle::to_record(
             at.lineage,
             at.revision,
@@ -461,16 +462,18 @@ pub fn export(
             &mut |r| {
                 sources.get(&r).copied().ok_or_else(|| {
                     Error::Invalid(format!(
-                        "{} {} names {} {}, which is not in its closure",
-                        member.id, member.revision, r.id, r.revision
+                        "{} names {}, which is not in its closure",
+                        library.describe(*member),
+                        library.describe(r)
                     ))
                 })
             },
             &mut |kind, id| {
                 lineages.get(&id).copied().ok_or_else(|| {
                     Error::Invalid(format!(
-                        "{} {} names {kind:?} lineage {id}, which is neither in its closure nor in library {target}; promote the item that owns it",
-                        member.id, member.revision
+                        "{} names {}, which is neither in its closure nor in the target library; promote the item that owns it",
+                        library.describe(*member),
+                        library.describe_lineage(kind, id)
                     ))
                 })
             },
@@ -548,9 +551,12 @@ pub fn duplicate(
     let mut created: Vec<(DefinitionId, DefinitionMeta, Definition)> = Vec::new();
     let mut body = source.definition.clone();
     for r in &mut body.representations {
-        let symbol = library
-            .symbol(*r)
-            .ok_or_else(|| Error::NotFound(format!("symbol {r} is not in the project library")))?;
+        let symbol = library.symbol(*r).ok_or_else(|| {
+            Error::NotFound(format!(
+                "{} is missing from the project library",
+                super::names::capitalised(&library.describe(r.erased()))
+            ))
+        })?;
         let id = allocate()?;
         let mut definition = symbol.definition.clone();
         definition.component = copy;
@@ -562,9 +568,12 @@ pub fn duplicate(
         *r = SymbolRef::new(id, Revision::FIRST);
     }
     for r in &mut body.implementations {
-        let binding = library
-            .binding(*r)
-            .ok_or_else(|| Error::NotFound(format!("binding {r} is not in the project library")))?;
+        let binding = library.binding(*r).ok_or_else(|| {
+            Error::NotFound(format!(
+                "{} is missing from the project library",
+                super::names::capitalised(&library.describe(r.erased()))
+            ))
+        })?;
         let id = allocate()?;
         let mut definition = binding.definition.clone();
         definition.component = copy;

@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 /// revision, never its definition id alone.
 pub fn binding_name(library: &Library, b: BindingRef) -> String {
     let Some(binding) = library.binding(b) else {
-        return format!("binding {b}");
+        return library.describe(b.erased());
     };
     let package = library
         .package(binding.definition.package)
@@ -47,8 +47,8 @@ pub const MAX_ASSIGN_INSTANCES: usize = 256;
 pub(super) fn check_part(library: &Library, instance: &ComponentInstance) -> Result<()> {
     match instance.part {
         Some(r) if library.part(r).is_none() => Err(invalid(format!(
-            "{} pins Part {r}, which is not in the project library.",
-            instance.designator
+            "{} pins a Part ({}) that is missing from the project library.",
+            instance.designator, r.revision
         ))),
         _ => Ok(()),
     }
@@ -149,8 +149,8 @@ pub fn part_findings(library: &Library, instance: &ComponentInstance) -> Vec<Fin
         return vec![Finding::new(
             "reference.missing",
             format!(
-                "{}: Part {r} is not in the project library.",
-                instance.designator
+                "{}: its Part ({}) is missing from the project library.",
+                instance.designator, r.revision
             ),
             vec![ObjectRef::Instance { id: instance.id }],
         )];
@@ -175,7 +175,7 @@ fn findings_with(
     let pinned = instance.component;
     let component = |c: ComponentRef| {
         library.component(c).map_or_else(
-            || c.to_string(),
+            || library.describe(c.erased()),
             |p| format!("{} {}", p.meta.name, c.revision),
         )
     };
@@ -224,7 +224,10 @@ fn findings_with(
         let chosen = match (instance.physical, listed) {
             (None, _) => "no physical implementation".to_owned(),
             (Some(_), Some(b)) => binding(b),
-            (Some(p), None) => format!("an unlisted implementation ({})", p.binding),
+            (Some(p), None) => format!(
+                "an unlisted implementation ({})",
+                library.describe_lineage(crate::ids::DefinitionKind::Binding, p.binding)
+            ),
         };
         out.push(Finding::new(
             "part.binding_mismatch",
@@ -331,7 +334,12 @@ pub fn assign_part(project: &mut Project, instances: &[Id], part: Option<PartRef
             .library
             .part(r)
             .map(|p| &p.definition)
-            .ok_or_else(|| Error::NotFound(format!("Part {r} is not in the project library.")))?;
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "{} is missing from the project library.",
+                    crate::library::names::capitalised(&project.library.describe(r.erased()))
+                ))
+            })?;
         let mut conflicts = Vec::new();
         for id in instances {
             let instance = project

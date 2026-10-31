@@ -7,32 +7,63 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Malformed or out-of-range input.
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     Invalid(String),
     /// A referenced object, terminal or net does not exist.
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     NotFound(String),
     /// Valid input that the current document state does not permit
     /// (locked objects, routed copper, duplicates, newer revisions).
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     Conflict(String),
     /// A supported size, count or identity limit would be exceeded.
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     Limit(String),
     /// The request was made against an older document revision.
     #[error("stale revision: expected {expected}, current {actual}")]
     Stale { expected: u64, actual: u64 },
     /// A file or feature version this build cannot represent.
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     Unsupported(String),
     /// Undo or redo with an empty history.
-    #[error("{0}")]
+    #[error("{}", shown(.0))]
     History(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// A refusal text split into its leading rule code and the sentence for
+/// people: `"footprint.explicit: this footprint has explicit pads"` gives
+/// `(Some("footprint.explicit"), "this footprint has explicit pads")`. A
+/// rule code is two or more lower-case words joined by dots.
+pub fn split_rule(text: &str) -> (Option<&str>, &str) {
+    let Some((head, rest)) = text.split_once(": ") else {
+        return (None, text);
+    };
+    let word =
+        |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+    if head.split('.').count() > 1 && head.split('.').all(word) {
+        (Some(head), rest)
+    } else {
+        (None, text)
+    }
+}
+
+/// The text people see: the sentence without its rule code. A sentence
+/// that followed a code starts with a capital letter.
+fn shown(text: &str) -> String {
+    let (rule, sentence) = split_rule(text);
+    if rule.is_none() {
+        return sentence.to_owned();
+    }
+    let mut chars = sentence.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
 
 impl Error {
     pub fn code(&self) -> &'static str {
@@ -47,6 +78,19 @@ impl Error {
             Self::Json(_) => "malformed_request",
         }
     }
+    /// The rule code a refusal names, such as `footprint.explicit`, for
+    /// hosts that choose wording or a follow-up by code rather than by text.
+    pub fn rule(&self) -> Option<&str> {
+        match self {
+            Self::Invalid(text)
+            | Self::NotFound(text)
+            | Self::Conflict(text)
+            | Self::Limit(text)
+            | Self::Unsupported(text)
+            | Self::History(text) => split_rule(text).0,
+            Self::Stale { .. } | Self::Json(_) => None,
+        }
+    }
     pub fn diagnostic(&self) -> Diagnostic {
         let (expected_revision, actual_revision) = match self {
             Self::Stale { expected, actual } => (Some(*expected), Some(*actual)),
@@ -54,6 +98,7 @@ impl Error {
         };
         Diagnostic {
             code: self.code().into(),
+            rule: self.rule().map(str::to_owned),
             message: self.to_string(),
             expected_revision,
             actual_revision,
@@ -65,6 +110,10 @@ impl Error {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Diagnostic {
     pub code: String,
+    /// The rule a refusal names, such as `footprint.explicit`, when it
+    /// names one. The message never repeats it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,

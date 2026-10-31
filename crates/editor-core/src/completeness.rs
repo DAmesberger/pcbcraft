@@ -124,8 +124,8 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             findings.push(Finding::blocking(
                 "instance.terminal_unaccounted",
                 format!(
-                    "{} terminal {} ‘{}’ is neither connected nor marked no-connect.",
-                    item.designator, terminal.id, terminal.name
+                    "{} terminal ‘{}’ is neither connected nor marked no-connect.",
+                    item.designator, terminal.name
                 ),
                 object,
                 Stage::ElectricallyResolved,
@@ -138,8 +138,8 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             findings.push(Finding::blocking(
                 "instance.required_terminal_no_connect",
                 format!(
-                    "{} terminal {} ‘{}’ is a required power input; no-connect cannot satisfy it.",
-                    item.designator, terminal.id, terminal.name
+                    "{} terminal ‘{}’ is a required power input; no-connect cannot satisfy it.",
+                    item.designator, terminal.name
                 ),
                 object,
                 Stage::ElectricallyResolved,
@@ -151,12 +151,12 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             .component
             .definition
             .terminal(*terminal)
-            .map(|t| t.name.as_str())
-            .unwrap_or("?");
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| terminal.to_string());
         findings.push(Finding::blocking(
             "config.function_unresolved",
             format!(
-                "{} terminal {terminal} ‘{name}’ has no selected function and no default.",
+                "{} terminal ‘{name}’ has no selected function and no default.",
                 item.designator
             ),
             vec![ObjectRef::Terminal {
@@ -249,8 +249,8 @@ pub fn definition(
         CheckTarget::Revision(r) => {
             if project.library.definition(r).is_none() {
                 return Err(Error::NotFound(format!(
-                    "{:?} {} {} is not in the project library.",
-                    r.kind, r.id, r.revision
+                    "{} is missing from the project library.",
+                    library::names::capitalised(&project.library.describe(r))
                 )));
             }
             let findings = library::publish_findings(&project.library, r);
@@ -259,7 +259,7 @@ pub fn definition(
         CheckTarget::Draft(id) => {
             let draft = drafts
                 .get(id)
-                .ok_or_else(|| Error::NotFound(format!("there is no draft of {id}")))?;
+                .ok_or_else(|| Error::NotFound("That draft no longer exists.".into()))?;
             let staged = Staged::new(&project.library, drafts)?;
             Ok(staged.report(draft, &drafts.grid))
         }

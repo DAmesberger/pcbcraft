@@ -559,7 +559,7 @@ fn host_pairs_name_real_terminals_and_pads_and_ambiguity_is_reported() -> Result
     assert!(
         error
             .as_ref()
-            .is_some_and(|e| e.to_string().contains("package.footprint_ambiguous")),
+            .is_some_and(|e| e.rule() == Some("package.footprint_ambiguous")),
         "{error:?}"
     );
     // Edits that need no pads still apply.

@@ -144,6 +144,8 @@ pub struct FunctionEdit {
 #[derive(Clone, Copy, Debug)]
 pub struct TerminalDeclaration<'a> {
     pub terminal: TerminalId,
+    /// The terminal's name, for messages.
+    pub name: &'a str,
     /// `None` for device-NC and reserved terminals, which have no functions.
     pub functions: Option<&'a TerminalFunctions>,
 }
@@ -282,6 +284,28 @@ impl Direction {
     }
 }
 
+impl SignalKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Digital => "digital",
+            Self::Analog => "analog",
+            Self::Power => "power",
+            Self::Unspecified => "unspecified",
+        }
+    }
+}
+
+impl Drive {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "no",
+            Self::PushPull => "push-pull",
+            Self::OpenDrain => "open-drain",
+            Self::OpenSource => "open-source",
+        }
+    }
+}
+
 impl Function {
     /// Direction, signal and drive form a valid combination: only outputs and
     /// bidirectional functions drive, and only power directions carry power.
@@ -398,6 +422,28 @@ fn names_own_function(terminals: &[TerminalDeclaration<'_>], key: FunctionKey) -
         .is_some_and(|f| f.function(key.function).is_some())
 }
 
+/// A terminal for a message: its quoted name, or its number when it has
+/// none or is not declared.
+fn terminal_name(terminals: &[TerminalDeclaration<'_>], terminal: TerminalId) -> String {
+    terminals
+        .iter()
+        .find(|t| t.terminal == terminal)
+        .map(|t| t.name.trim())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| terminal.to_string(), |name| format!("‘{name}’"))
+}
+
+/// A function for a message: its quoted label, or "a function" when the
+/// terminal does not declare it.
+fn function_name(terminals: &[TerminalDeclaration<'_>], key: FunctionKey) -> String {
+    terminals
+        .iter()
+        .find(|t| t.terminal == key.terminal)
+        .and_then(|t| t.functions)
+        .and_then(|f| f.function(key.function))
+        .map_or_else(|| "a function".into(), |f| format!("‘{}’", f.label))
+}
+
 fn unique_label(seen: &mut BTreeSet<String>, label: &str) -> bool {
     printable(label) && seen.insert(label.trim().to_lowercase())
 }
@@ -420,10 +466,11 @@ pub fn declaration_findings(
             continue;
         };
         let terminal = declaration.terminal;
+        let name = terminal_name(terminals, terminal);
         if !(1..=MAX_FUNCTIONS).contains(&declared.functions.len()) {
             out.push(publish_issue(
                 "function.count",
-                format!("Electrical terminal {terminal} needs 1–32 functions."),
+                format!("Electrical terminal {name} needs 1–32 functions."),
                 vec![local(component, terminal.0)],
             ));
         }
@@ -433,10 +480,7 @@ pub fn declaration_findings(
             if !unique_label(&mut labels, &function.label) {
                 out.push(publish_issue(
                     "function.label",
-                    format!(
-                        "Function {} of terminal {terminal} needs a unique printable label.",
-                        function.id
-                    ),
+                    format!("A function of terminal {name} needs a unique printable label."),
                     at.clone(),
                 ));
             }
@@ -444,8 +488,11 @@ pub fn declaration_findings(
                 out.push(publish_issue(
                     "function.combination",
                     format!(
-                        "Function ‘{}’ of terminal {terminal}: {:?} with {:?} signal and {:?} drive is not a valid combination.",
-                        function.label, function.direction, function.signal, function.drive
+                        "Function ‘{}’ of terminal {name}: {} with {} signal and {} drive is not a valid combination.",
+                        function.label,
+                        function.direction.label(),
+                        function.signal.label(),
+                        function.drive.label()
                     ),
                     at.clone(),
                 ));
@@ -459,8 +506,8 @@ pub fn declaration_findings(
                     out.push(publish_issue(
                         "function.resource_unknown",
                         format!(
-                            "Function ‘{}’ of terminal {terminal} takes role {} of resource {}, which is not declared.",
-                            function.label, rr.role, rr.resource
+                            "Function ‘{}’ of terminal {name} takes a resource role that is not declared.",
+                            function.label
                         ),
                         at,
                     ));
@@ -472,9 +519,7 @@ pub fn declaration_findings(
         {
             out.push(publish_issue(
                 "function.design_default",
-                format!(
-                    "The design default {default} of terminal {terminal} is not one of its functions."
-                ),
+                format!("The design default of terminal {name} is not one of its functions."),
                 vec![local(component, terminal.0)],
             ));
         }
@@ -485,7 +530,7 @@ pub fn declaration_findings(
         if !unique_label(&mut resource_labels, &resource.label) {
             out.push(publish_issue(
                 "resource.label",
-                format!("Resource {} needs a unique printable label.", resource.id),
+                "A resource needs a unique printable label.".into(),
                 at.clone(),
             ));
         }
@@ -503,8 +548,8 @@ pub fn declaration_findings(
                 out.push(publish_issue(
                     "resource.role_label",
                     format!(
-                        "Role {} of resource ‘{}’ needs a unique printable label.",
-                        role.id, resource.label
+                        "A role of resource ‘{}’ needs a unique printable label.",
+                        resource.label
                     ),
                     at.clone(),
                 ));
@@ -531,8 +576,8 @@ pub fn declaration_findings(
                 out.push(publish_issue(
                     "function.constraint_key",
                     format!(
-                        "A constraint names function {} of terminal {}, which is not a function of that terminal.",
-                        key.function, key.terminal
+                        "A constraint names a function that terminal {} does not have.",
+                        terminal_name(terminals, key.terminal)
                     ),
                     vec![this],
                 ));
@@ -586,8 +631,8 @@ pub fn binding_findings(
             out.push(publish_issue(
                 "binding.unavailable_unknown",
                 format!(
-                    "Binding {binding} marks function {} of terminal {} unavailable, which is not a function of that terminal.",
-                    key.function, key.terminal
+                    "A binding marks a function unavailable that terminal {} does not have.",
+                    terminal_name(terminals, key.terminal)
                 ),
                 objects.clone(),
             ));
@@ -600,8 +645,9 @@ pub fn binding_findings(
             out.push(publish_issue(
                 "binding.unavailable_required",
                 format!(
-                    "Binding {binding} marks the fixed function or design default {} of terminal {} unavailable.",
-                    key.function, key.terminal
+                    "A binding marks the fixed function or design default {} of terminal {} unavailable.",
+                    function_name(terminals, *key),
+                    terminal_name(terminals, key.terminal)
                 ),
                 objects.clone(),
             ));
@@ -627,7 +673,7 @@ pub fn apply_edits(
     for edit in edits {
         if !seen.insert(edit.terminal) {
             return Err(Error::Invalid(format!(
-                "Terminal {} is edited twice in one batch.",
+                "Terminal number {} is edited twice in one batch.",
                 edit.terminal
             )));
         }
@@ -658,16 +704,20 @@ pub fn resolve(
             .iter()
             .find(|t| t.terminal == *terminal)
             .ok_or_else(|| {
-                Error::Invalid(format!("A selection names unknown terminal {terminal}."))
+                Error::Invalid(format!(
+                    "A selection names an unknown terminal ({terminal})."
+                ))
             })?;
         let declared = declaration.functions.ok_or_else(|| {
             Error::Invalid(format!(
-                "Terminal {terminal} is not electrical and takes no function."
+                "Terminal {} is not electrical and takes no function.",
+                terminal_name(terminals, *terminal)
             ))
         })?;
         if declared.function(*function).is_none() {
             return Err(Error::Invalid(format!(
-                "Function {function} is not a function of terminal {terminal}."
+                "Terminal {} has no such function.",
+                terminal_name(terminals, *terminal)
             )));
         }
     }
@@ -731,7 +781,13 @@ pub fn resolve(
             if holders.len() > usize::from(role.capacity) {
                 let names: Vec<String> = holders
                     .iter()
-                    .map(|k| format!("‘{}’ on terminal {}", label(*k), k.terminal))
+                    .map(|k| {
+                        format!(
+                            "‘{}’ on terminal {}",
+                            label(*k),
+                            terminal_name(terminals, k.terminal)
+                        )
+                    })
                     .collect();
                 conflicts.push(Conflict::Capacity {
                     resource: resource.id,
@@ -770,9 +826,9 @@ pub fn resolve(
                     message: format!(
                         "‘{}’ on terminal {} and ‘{}’ on terminal {} cannot be active together.",
                         label(*a),
-                        a.terminal,
+                        terminal_name(terminals, a.terminal),
                         label(*b),
-                        b.terminal
+                        terminal_name(terminals, b.terminal)
                     ),
                 });
             }
@@ -783,11 +839,11 @@ pub fn resolve(
                     selected: *selected,
                     requires: *requires,
                     message: format!(
-                        "‘{}’ on terminal {} requires function {} on terminal {}.",
+                        "‘{}’ on terminal {} requires {} on terminal {}.",
                         label(*selected),
-                        selected.terminal,
-                        requires.function,
-                        requires.terminal
+                        terminal_name(terminals, selected.terminal),
+                        function_name(terminals, *requires),
+                        terminal_name(terminals, requires.terminal)
                     ),
                 });
             }
@@ -801,7 +857,7 @@ pub fn resolve(
                 message: format!(
                     "‘{}’ on terminal {} is not available in the chosen implementation.",
                     label(*key),
-                    key.terminal
+                    terminal_name(terminals, key.terminal)
                 ),
             });
         }
