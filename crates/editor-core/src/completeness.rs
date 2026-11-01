@@ -2,7 +2,8 @@
 //! state holds when no current finding blocks it.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::fields::{self, EffectiveField};
-use crate::functions::{Direction, Resolution};
+use crate::functions::rules::RuleFailureKind;
+use crate::functions::{Direction, Requirement, Resolution};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, FootprintRef,
     Id, PackageRef, Revision, SymbolRef, UnitId,
@@ -181,10 +182,32 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
                     },
                 }),
         );
+        // A pin rule's `require` verdict is its own code (C1).
+        let code = match requirement {
+            Requirement::Rule { .. } => "config.rule_unmet",
+            _ => "config.requirement_unmet",
+        };
         findings.push(Finding::blocking(
-            "config.requirement_unmet",
+            code,
             format!("{}: {}", item.designator, requirement.message()),
             objects,
+            Stage::ElectricallyResolved,
+        ));
+    }
+    // A rule that gave no verdict leaves the assignment unchecked.
+    for failure in &functions.rule_failures {
+        let code = match failure.kind {
+            RuleFailureKind::Compile => "rule.script",
+            RuleFailureKind::Budget => "rule.budget",
+            RuleFailureKind::Runtime => "rule.runtime",
+        };
+        findings.push(Finding::blocking(
+            code,
+            format!(
+                "{}: {} The pin assignment is not checked against this rule.",
+                item.designator, failure.message
+            ),
+            vec![ObjectRef::Instance { id }],
             Stage::ElectricallyResolved,
         ));
     }

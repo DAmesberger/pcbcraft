@@ -170,6 +170,7 @@ pub fn function_resolution(library: &Library, instance: &ComponentInstance) -> R
         &resolved.component.definition,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -177,13 +178,16 @@ fn resolve_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<Resolution> {
-    functions::resolve(
+    functions::resolve_with_rules(
         &component.declarations(),
         &component.resources,
         &component.constraints,
         physical.map(|p| p.binding.definition.unavailable.as_slice()),
         selections,
+        &component.pin_rules,
+        config,
     )
 }
 
@@ -337,6 +341,7 @@ fn check_with<'a>(
         component,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -348,13 +353,14 @@ fn check_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<()> {
     if selections.len() > component.terminals.len() {
         return Err(invalid(format!(
             "{name}: more function selections than terminals."
         )));
     }
-    let resolution = resolve_functions(component, physical, selections)
+    let resolution = resolve_functions(component, physical, selections, config)
         .map_err(|e| invalid(format!("{name}: {e}")))?;
     if resolution.conflicts.is_empty() {
         return Ok(());

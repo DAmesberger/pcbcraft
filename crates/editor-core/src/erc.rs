@@ -5,12 +5,14 @@
 //!
 //! Findings describe circuit state and never block a component stage. A
 //! terminal alone on its net is not an ERC condition: completeness reports it
-//! once as `instance.terminal_unaccounted`.
+//! once as `instance.terminal_unaccounted`. Pin rule `warn` verdicts are ERC
+//! notes (`config.rule_note`); `require` verdicts and rule failures block
+//! electrical resolution and are completeness findings.
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::functions::{ActiveFunction, Direction, Drive, Resolution};
 use crate::ids::{Endpoint, Id};
 use crate::instances;
-use crate::model::{Net, Project};
+use crate::model::{ComponentInstance, Net, Project};
 use std::collections::BTreeMap;
 
 /// What one net terminal contributes to the net rules.
@@ -167,5 +169,28 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     for net in &project.nets {
         net_checks(project, net, &resolutions, &mut out);
     }
+    for instance in &project.instances {
+        if let Some(resolution) = resolutions.get(&instance.id) {
+            rule_notes(instance, resolution, &mut out);
+        }
+    }
     out
+}
+
+/// Pin rule `warn` verdicts (C1): advisory, never blocking.
+fn rule_notes(instance: &ComponentInstance, resolution: &Resolution, out: &mut Vec<Finding>) {
+    for note in &resolution.notes {
+        let mut objects = vec![ObjectRef::Instance { id: instance.id }];
+        objects.extend(note.terminals.iter().map(|terminal| ObjectRef::Terminal {
+            endpoint: Endpoint {
+                instance: instance.id,
+                terminal: *terminal,
+            },
+        }));
+        out.push(Finding::new(
+            "config.rule_note",
+            format!("{}: {}", instance.designator, note.message),
+            objects,
+        ));
+    }
 }
