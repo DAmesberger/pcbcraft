@@ -12,7 +12,7 @@
 use super::FunctionEdit;
 use super::rules::{
     self, MAX_RESOLUTION_OPERATIONS, MAX_RULE_OPERATIONS, MAX_SUGGEST_OPERATIONS, RuleBudget,
-    RuleFailureKind, RuleVerdict, RuleView, ViewFunction, ViewResource, ViewTerminal,
+    RuleFailureKind, RuleVerdict, RuleView,
 };
 use crate::diagnostics::{Error, Result};
 use crate::ids::{FunctionId, ResourceId, RoleId, RuleId, TerminalId};
@@ -432,69 +432,9 @@ fn slots(
     out
 }
 
-/// The rule view of one resolution (C1's `RuleView`).
+/// The rule view of one resolution, built as the resolution builds it.
 fn view(input: &SuggestInput<'_>, resolution: &super::Resolution) -> RuleView {
-    let resource_label = |rr: super::ResourceRole| {
-        let resource = input.resources.iter().find(|r| r.id == rr.resource);
-        (
-            resource.map(|r| r.label.clone()),
-            resource
-                .and_then(|r| r.role(rr.role))
-                .map(|r| r.label.clone()),
-        )
-    };
-    let mut taken: BTreeSet<(ResourceId, RoleId)> = BTreeSet::new();
-    let terminals = input
-        .terminals
-        .iter()
-        .map(|declaration| {
-            let declared = declaration.functions;
-            let active = resolution.active(declaration.terminal).and_then(|a| {
-                let function = declared.and_then(|d| d.function(a.function))?;
-                let (peripheral, role) = match function.resource_role {
-                    Some(rr) => {
-                        taken.insert((rr.resource, rr.role));
-                        resource_label(rr)
-                    }
-                    None => (None, None),
-                };
-                Some(ViewFunction {
-                    function: function.id,
-                    label: function.label.clone(),
-                    peripheral,
-                    role,
-                })
-            });
-            ViewTerminal {
-                terminal: declaration.terminal,
-                name: declaration.name.to_owned(),
-                active,
-                functions: declared
-                    .map(|d| d.functions.iter().map(|f| f.label.clone()).collect())
-                    .unwrap_or_default(),
-                config: input.configs.get(&declaration.terminal).cloned(),
-            }
-        })
-        .collect();
-    let resources = input
-        .resources
-        .iter()
-        .map(|r| ViewResource {
-            resource: r.id,
-            label: r.label.clone(),
-            kind: r.kind.clone(),
-            active_roles: r
-                .roles
-                .iter()
-                .filter(|role| taken.contains(&(r.id, role.id)))
-                .map(|role| role.label.clone())
-                .collect(),
-        })
-        .collect();
-    RuleView {
-        terminals,
-        resources,
-    }
+    rules::view(input.terminals, input.resources, resolution, input.configs)
 }
 
 /// The problems of one resolution, rules included. `None` when the rule

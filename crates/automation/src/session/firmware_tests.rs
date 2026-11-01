@@ -2,15 +2,14 @@
 //! only: suggest → assign peripherals (explicit and solver-placed) → a
 //! rule-forbidden assignment refused → pin configuration → wire a net →
 //! the MCU-to-peripheral pin report → the firmware pin-configuration IR
-//! (C4) and its emitters → export to a file. Staged as `pinout_tests`
-//! explains: a C0 stub ends the reachable scenario until slice I sets
-//! `REQUIRE_COMPLETE`.
+//! (C4) and its emitters → export to a file. Every step is required, as
+//! `pinout_tests` explains.
+use super::firmware::{FirmwareParams, export};
 use super::pinout_tests::{
     Fallible, Placed, Scenario, Stub, finish, import_reviewed, instance_op, publish_and_place,
     schematic_op,
 };
 use super::*;
-use super::firmware::{FirmwareParams, export};
 use pcbcraft_core::firmware::PinConfigReport;
 use pcbcraft_firmware::{Emitter, template_hash};
 
@@ -305,7 +304,10 @@ fn assign_report_export(s: &mut Scenario, placed: &Placed) -> Fallible<()> {
         (scl && sda && !alt_scl && !alt_sda) || (alt_scl && alt_sda && !scl && !sda),
         "I2C1 on one complete pin pair: {report}"
     );
-    assert!(pin(&report, "PA12")?["net"].is_null());
+    // An unwired pin sits alone on its own unnamed net.
+    let pa12 = pin(&report, "PA12")?;
+    assert_ne!(pa12["net"], net, "{pa12}");
+    assert_eq!(pa12["endpoints"], json!([]), "{pa12}");
 
     // 16. The firmware IR: format 1, the enabled peripherals, names from
     // the net or the override.

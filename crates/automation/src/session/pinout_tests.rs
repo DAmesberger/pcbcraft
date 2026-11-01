@@ -9,12 +9,9 @@
 //! is fictitious, and its pins, peripherals, mux codes, pages and rules are
 //! invented for this test.
 //!
-//! **Staging.** The slices that implement these requests (C1–C4) land in
-//! parallel with this one. Every step is asserted strictly; a step that
-//! still answers with a C0 contract stub (`mcp::scenario::STUBS`) ends the scenario
-//! early, after checking that the refusal left the document and its
-//! revision unchanged. Slice I sets `mcp::scenario::REQUIRE_COMPLETE` once C1–C4 are
-//! merged, and from then on a stub refusal fails the test.
+//! Every step is asserted strictly. The pins track (C1–C4) is merged, so
+//! no step of this scenario may end on a contract stub
+//! (`mcp::scenario::STUBS` now lists only the template and model stubs).
 use super::*;
 use std::collections::BTreeMap;
 
@@ -186,6 +183,8 @@ pub(super) struct Imported {
     pub terminals: BTreeMap<String, u64>,
     /// Peripheral ID and its role IDs by label.
     pub peripherals: BTreeMap<String, (u64, BTreeMap<String, u64>)>,
+    /// The block symbol the import drew for the component.
+    pub symbol: u64,
 }
 
 impl Imported {
@@ -212,12 +211,16 @@ impl Imported {
                 (id(&r["id"])?, roles),
             );
         }
+        let symbol = body["representations"][0]["id"]
+            .as_u64()
+            .ok_or("the imported symbol")?;
         Ok(Self {
             component: id(&draft["draft"]["id"])?,
             meta: draft["draft"]["meta"].clone(),
             body,
             terminals,
             peripherals,
+            symbol,
         })
     }
 
@@ -328,13 +331,19 @@ pub(super) fn import_reviewed(s: &mut Scenario) -> Fallible<Imported> {
         "the three rule scripts compile and resolve: {plan}"
     );
 
-    // 3. A plan whose base no longer matches is refused; nothing changes.
+    // 3. A plan whose base no longer matches is refused as a conflict that
+    // names the stale-plan rule (the base is a content token, not the
+    // document revision); nothing changes.
     let stale = json!(plan["base"].as_u64().ok_or("base")? + 1);
-    s.refuse_apply(
+    let refusal = s.refuse_apply(
         "pinout_apply stale",
         apply_op(target.clone(), &document, &stale, json!({"accept": "all"})),
-        "stale_revision",
+        "conflict",
     )?;
+    assert!(
+        refusal.to_string().contains("pinout.stale_base"),
+        "{refusal}"
+    );
 
     // 4. Apply after the person saw the review: one undo step, a draft whose
     // every imported row is unreviewed.
@@ -345,11 +354,16 @@ pub(super) fn import_reviewed(s: &mut Scenario) -> Fallible<Imported> {
     let outcome = &applied["outcome"];
     assert_eq!(outcome["outcome"], "pinout_applied", "{outcome}");
     let report = &outcome["report"];
-    let drafts = report["drafts"].as_array().ok_or("drafts")?;
-    let component = drafts
-        .first()
-        .and_then(Value::as_u64)
-        .ok_or("component first")?;
+    let drafts: Vec<u64> = report["drafts"]
+        .as_array()
+        .ok_or("drafts")?
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect();
+    let component = drafts.first().copied().ok_or("component first")?;
+    // The component, its block symbol, and the package and binding of its
+    // one variant (their pads come in the footprint step, `templates_tests`).
+    assert_eq!(drafts.len(), 4, "{report}");
     let mut unreviewed: Vec<String> = report["unreviewed"]
         .as_array()
         .into_iter()
@@ -470,71 +484,26 @@ pub(super) struct Placed {
     pub designator: String,
 }
 
-/// Step 8: a one-unit symbol for the 49 terminals (the agent draws it;
-/// nothing is derived from the pinout), publish both and place U1.
+/// Step 8: publish the component with the block symbol the import drew
+/// and place U1.
 pub(super) fn publish_and_place(s: &mut Scenario, imported: Imported) -> Fallible<Placed> {
-    use pcbcraft_core::library::graphics::{Pin, PinDirection};
-    use pcbcraft_core::library::{SymbolDefinition, Unit};
-    use pcbcraft_core::{TerminalId, UnitId};
-
-    let created = s.apply(
-        "symbol draft",
-        library_op(
-            "library.new_draft",
-            json!({"meta": {"name": "EXM-48 symbol", "description": "",
-                    "provenance": "original test fixture"},
-                "definition": {"kind": "symbol", "body":
-                    serde_json::to_value(SymbolDefinition::default())?}}),
-        ),
-    )?;
-    let symbol = created["outcome"]["id"].as_u64().ok_or("symbol id")?;
-    let mut ids: Vec<u64> = imported.terminals.values().copied().collect();
-    ids.sort_unstable();
-    let pins = ids
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let (x, direction, row) = if i < 25 {
-                (-12.5, PinDirection::Right, i)
-            } else {
-                (12.5, PinDirection::Left, i - 25)
-            };
-            let terminal = u32::try_from(*t).unwrap_or(u32::MAX);
-            Pin::new(
-                TerminalId(terminal),
-                [x, 30.0 - 2.5 * row as f64],
-                direction,
-                2.5,
-            )
-        })
-        .collect();
-    let body = SymbolDefinition {
-        component: DefinitionId(imported.component),
-        next_local: 2,
-        pin_text_height: 1.25,
-        units: vec![Unit {
-            id: UnitId(1),
-            label: String::new(),
-            graphics: vec![],
-            pins,
-        }],
-    };
+    let symbol = imported.symbol;
     let mut component = imported.body.clone();
-    component["representations"] = json!([{"id": symbol, "revision": 1}]);
     if component["designator_prefix"]
         .as_str()
         .is_none_or(str::is_empty)
     {
         component["designator_prefix"] = json!("U");
     }
+    // The pins workflow publishes the logical component; the imported
+    // package and binding drafts wait for their footprint, so this
+    // revision lists no binding and is placed without a physical side.
+    component["implementations"] = json!([]);
     s.apply(
-        "symbol and representation",
+        "logical component",
         library_op(
             "library.edit",
             json!({"edits": [
-                {"id": symbol, "meta": {"name": "EXM-48 symbol", "description": "",
-                    "provenance": "original test fixture"},
-                 "definition": {"kind": "symbol", "body": serde_json::to_value(body)?}},
                 {"id": imported.component, "meta": imported.meta,
                  "definition": {"kind": "component", "body": component}},
             ]}),

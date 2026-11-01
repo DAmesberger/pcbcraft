@@ -318,15 +318,18 @@ pub type PinoutDrafts = Vec<(DefinitionMeta, super::Definition)>;
 /// (`rule:uart0_pins`). Row keys never start with it.
 pub const RULE_ROW_PREFIX: &str = "rule:";
 
-/// EXM-48, an original invented 48-pin controller (QFN-48 with an exposed
-/// pad, and LQFP-48), with alternate functions, peripherals and Rhai pin
-/// rules: the fixture of the import, review and firmware workflows. It
-/// describes no real device.
-pub const EXM48: &str = include_str!("pinout/exm48.json");
+/// EXL-48, an original invented 48-pin controller in two packages (QFN-48
+/// with an exposed pad, and LQFP-48), with alternate functions,
+/// peripherals and Rhai pin rules: the core fixture of import and review.
+/// It describes no real device; the automation scenario uses its own
+/// single-package EXM-48.
+#[cfg(test)]
+pub(crate) const EXL48: &str = include_str!("pinout/exl48.json");
 
 /// The F8 gate over a component's review state: each terminal flagged
 /// uncertain blocks publishing (`pinout.uncertain`); unreviewed imported
-/// terminals are one warning (`pinout.unreviewed`). A person clears both
+/// terminals are one warning (`pinout.unreviewed`). A re-import whose row
+/// is no longer flagged clears its uncertainty; a person clears both
 /// by editing the draft's `review`.
 pub fn review_findings(component: DefinitionId, review: &ImportReview) -> Vec<Finding> {
     let at = |t: &TerminalId| ObjectRef::LibraryObject {

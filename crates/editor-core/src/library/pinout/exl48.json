@@ -1,9 +1,9 @@
 {
  "format": 1,
  "device": {
-  "name": "EXM-48 controller",
+  "name": "EXL-48 controller",
   "reference": {
-   "title": "EXM-48 controller datasheet (invented fixture)",
+   "title": "EXL-48 controller datasheet (invented fixture)",
    "document_revision": "C"
   }
  },

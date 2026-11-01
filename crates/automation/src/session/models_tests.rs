@@ -1,6 +1,6 @@
-//! Slice C7: the 3D model library (D1) over JSON. Staged as `pinout_tests`
-//! explains: the D1 stub's explicit refusal (nothing changed) ends the
-//! step until slice I sets `REQUIRE_COMPLETE`.
+//! Slice C7: the 3D model library (D1) over JSON. Staged as
+//! `mcp::scenario` explains: the D1 stub's explicit refusal (nothing
+//! changed) ends the step until D1 is merged and `REQUIRE_COMPLETE` is set.
 use super::pinout_tests::{Fallible, Scenario, finish};
 use super::*;
 

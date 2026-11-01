@@ -506,7 +506,6 @@ pub const KNOWN_CODES: &[&str] = &[
     "rule.reference",
     "rule.runtime",
     "rule.script",
-    "rule.unsupported",
     "symbol.field_missing",
     "symbol.grid_sheet",
     "symbol.pin_duplicate",

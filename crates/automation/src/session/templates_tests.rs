@@ -1,8 +1,8 @@
 //! Slice C7: the footprint step of the EXM-48 scenario over JSON. After
 //! importing the pinout, the agent reads the package drawing and looks for
-//! a package row with `library.templates` (B1). Staged as `pinout_tests`
-//! explains: the B1 stub's explicit refusal (nothing changed) ends the step
-//! until slice I sets `REQUIRE_COMPLETE`.
+//! a package row with `library.templates` (B1). Staged as
+//! `mcp::scenario` explains: the B1 stub's explicit refusal (nothing
+//! changed) ends the step until B1 is merged and `REQUIRE_COMPLETE` is set.
 use super::pinout_tests::{Fallible, Scenario, finish};
 use super::*;
 

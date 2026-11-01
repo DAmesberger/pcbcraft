@@ -1,5 +1,5 @@
 //! Slice C3 behaviour: typed pinout preview and apply over the original
-//! EXM-48 fixture, the stale-base refusal, matching by number on
+//! EXL-48 fixture, the stale-base refusal, matching by number on
 //! re-import, partial acceptance and the F8 review gate.
 use crate::commands::Outcome;
 use crate::completeness::CheckTarget;
@@ -7,7 +7,7 @@ use crate::diagnostics::{Error, Stage};
 use crate::functions::MuxCode;
 use crate::ids::{DefinitionId, TerminalId};
 use crate::library::pinout::{
-    ChangeKind, EXM48, ImportReview, PinoutAccept, PinoutApplied, PinoutApply, PinoutDocument,
+    ChangeKind, EXL48, ImportReview, PinoutAccept, PinoutApplied, PinoutApply, PinoutDocument,
     PinoutPlan, PinoutTarget, ReviewReason,
 };
 use crate::library::{ComponentDefinition, Definition, DraftEdit, TerminalClass};
@@ -16,13 +16,13 @@ use crate::{Engine, LibraryCommand, Operation, Query, QueryResult};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn exm48() -> Fallible<PinoutDocument> {
-    Ok(serde_json::from_str(EXM48)?)
+fn exl48() -> Fallible<PinoutDocument> {
+    Ok(serde_json::from_str(EXL48)?)
 }
 
 fn new_target() -> PinoutTarget {
     PinoutTarget::New {
-        name: "EXM-48".into(),
+        name: "EXL-48".into(),
         row: None,
     }
 }
@@ -95,10 +95,10 @@ fn count(plan: &PinoutPlan, object: &str, kind: ChangeKind) -> usize {
 }
 
 #[test]
-fn the_exm48_fixture_previews_as_a_new_component_without_changing_anything() -> Fallible<()> {
+fn the_exl48_fixture_previews_as_a_new_component_without_changing_anything() -> Fallible<()> {
     let engine = Engine::default();
     let before = Snapshot::of(&engine);
-    let document = exm48()?;
+    let document = exl48()?;
     let plan = preview(&engine, &new_target(), &document)?;
     before.assert_kept(&engine, "a preview is read-only");
     assert_eq!(count(&plan, "terminal", ChangeKind::Added), 49);
@@ -156,7 +156,7 @@ fn the_exm48_fixture_previews_as_a_new_component_without_changing_anything() -> 
 fn apply_writes_the_drafts_as_one_undo_step_with_every_row_unreviewed() -> Fallible<()> {
     let mut engine = Engine::default();
     let start = engine.document().clone();
-    let document = exm48()?;
+    let document = exl48()?;
     let applied = import_new(&mut engine, &document)?;
     // Component, symbol, then a package and a binding per variant.
     assert_eq!(applied.drafts.len(), 6);
@@ -205,7 +205,7 @@ fn apply_writes_the_drafts_as_one_undo_step_with_every_row_unreviewed() -> Falli
         draft
             .meta
             .provenance
-            .contains("EXM-48 controller datasheet")
+            .contains("EXL-48 controller datasheet")
     );
     engine.undo()?;
     assert_eq!(engine.document(), &start);
@@ -216,7 +216,7 @@ fn apply_writes_the_drafts_as_one_undo_step_with_every_row_unreviewed() -> Falli
 #[test]
 fn uncertain_rows_block_publishing_until_a_person_clears_them() -> Fallible<()> {
     let mut engine = Engine::default();
-    let applied = import_new(&mut engine, &exm48()?)?;
+    let applied = import_new(&mut engine, &exl48()?)?;
     let id = *applied.drafts.first().ok_or("no component")?;
     let report = check(&engine, CheckTarget::Draft(id))?;
     assert!(!report.publishable);
@@ -264,7 +264,7 @@ fn uncertain_rows_block_publishing_until_a_person_clears_them() -> Fallible<()> 
 #[test]
 fn reimporting_into_the_draft_keeps_terminals_by_number() -> Fallible<()> {
     let mut engine = Engine::default();
-    let mut document = exm48()?;
+    let mut document = exl48()?;
     let applied = import_new(&mut engine, &document)?;
     let id = *applied.drafts.first().ok_or("no component")?;
     let first = component(&engine, id)?;
@@ -328,7 +328,7 @@ fn reimporting_into_the_draft_keeps_terminals_by_number() -> Fallible<()> {
 #[test]
 fn a_stale_plan_is_refused_and_changes_nothing() -> Fallible<()> {
     let mut engine = Engine::default();
-    let document = exm48()?;
+    let document = exl48()?;
     let applied = import_new(&mut engine, &document)?;
     let id = *applied.drafts.first().ok_or("no component")?;
     let target = PinoutTarget::Draft { id };
@@ -375,7 +375,7 @@ fn a_stale_plan_is_refused_and_changes_nothing() -> Fallible<()> {
 #[test]
 fn excluded_rows_and_rules_are_not_imported() -> Fallible<()> {
     let mut engine = Engine::default();
-    let document = exm48()?;
+    let document = exl48()?;
     let plan = preview(&engine, &new_target(), &document)?;
     let accept = PinoutAccept::Except(vec!["r47".into(), "rule:swd_as_gpio".into()]);
     let applied = apply(&mut engine, &new_target(), &document, plan.base, accept)?;
@@ -395,7 +395,7 @@ fn excluded_rows_and_rules_are_not_imported() -> Fallible<()> {
 fn document_problems_are_findings_and_unreadable_documents_refuse() -> Fallible<()> {
     let engine = Engine::default();
     let before = Snapshot::of(&engine);
-    let mut document = exm48()?;
+    let mut document = exl48()?;
     // Findings: an undeclared peripheral, a default that is not a
     // function, a number used twice and a stated count that disagrees.
     let pins = &mut document.pins;
@@ -423,7 +423,7 @@ fn document_problems_are_findings_and_unreadable_documents_refuse() -> Fallible<
     }
     // Refusals: format, duplicate rows, undeclared variants, unknown
     // excepted rows.
-    let base = exm48()?;
+    let base = exl48()?;
     let mut wrong_format = base.clone();
     wrong_format.format = 2;
     assert!(matches!(
@@ -462,7 +462,7 @@ fn document_problems_are_findings_and_unreadable_documents_refuse() -> Fallible<
 
 #[test]
 fn the_fixture_is_its_own_schema_and_a_round_trip() -> Fallible<()> {
-    let document = exm48()?;
+    let document = exl48()?;
     let text = serde_json::to_string(&document)?;
     let back: PinoutDocument = serde_json::from_str(&text)?;
     assert_eq!(back, document);

@@ -2,12 +2,12 @@
 //! `pinout_tests`, `firmware_tests`, `templates_tests`, `models_tests`
 //! and the MCP tests): the EXM-48 fixture and the stub staging.
 //!
-//! The slices that implement the scenario's requests (B1, C1–C4, D1) land
-//! in parallel with C7. Every step is asserted strictly; a step answered
-//! by a C0 contract stub ([`STUBS`]) ends the scenario early, after the
-//! caller proved the refusal changed nothing. Slice I sets
-//! [`REQUIRE_COMPLETE`] once those slices are merged; from then on a stub
-//! answer fails the test.
+//! The pins track (C1–C4) is merged, so its requests answer for real and
+//! any refusal of theirs fails the scenario. The footprint and model steps
+//! still meet the contract stubs of their tracks (B1, D1) in [`STUBS`]: a
+//! step answered by one of those ends that scenario early, after the
+//! caller proved the refusal changed nothing. The integration of those
+//! tracks sets [`REQUIRE_COMPLETE`]; from then on a stub answer fails.
 use serde_json::Value;
 
 pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -15,23 +15,14 @@ pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>
 /// The EXM-48 pinout document, exactly as an agent would send it.
 pub(crate) const EXM48: &str = include_str!("exm48.pinout.json");
 
-/// Set by slice I once C1–C4 are merged: then a contract stub refusal is a
+/// Set once B1 and D1 are merged: then a contract stub refusal is a
 /// failure, not the end of the reachable scenario.
 pub(crate) const REQUIRE_COMPLETE: bool = false;
 
-/// The rule names of the C0 contract stubs, which slice I removes once no
-/// slice emits them. A refusal or finding carrying one means "not built
-/// yet", never a behaviour this test accepts.
-pub(crate) const STUBS: &[&str] = &[
-    "pinout.unsupported",
-    "rule.unsupported",
-    "pin_config.unsupported",
-    "pins.unsupported",
-    "functions.suggest_unsupported",
-    "firmware.unsupported",
-    "template.unsupported",
-    "model.unsupported",
-];
+/// The rule names of the contract stubs still in the tree (templates and
+/// models). A refusal or finding carrying one means "not built yet",
+/// never a behaviour this test accepts.
+pub(crate) const STUBS: &[&str] = &["template.unsupported", "model.unsupported"];
 
 /// A scenario step answered by a C0 stub.
 #[derive(Debug)]

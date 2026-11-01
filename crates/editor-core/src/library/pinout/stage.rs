@@ -702,8 +702,12 @@ fn build_component(
             review.unreviewed.insert(terminal.id);
             out.written.push(pin.row.clone());
         }
+        // An accepted row states the row's certainty afresh: a corrected
+        // re-import that no longer flags it clears the flag (F8).
         if pin.uncertain {
             review.uncertain.insert(terminal.id);
+        } else {
+            review.uncertain.remove(&terminal.id);
         }
         terminals.push(terminal);
     }

@@ -155,9 +155,15 @@ pub fn from_pin_report(project: &Project, report: &PinReport) -> Result<PinConfi
             active.entry(resource).or_default().insert(role);
         }
         let config = pin.config.as_ref();
+        // A net's name counts only when someone named it: every placed
+        // terminal sits on a net, and an unnamed one is called `N<id>`.
+        let net_name = pin
+            .net_name
+            .as_deref()
+            .filter(|name| pin.net.is_none_or(|net| *name != crate::nets::default_name(net)));
         let source = config
             .and_then(|c| c.name.as_deref())
-            .or(pin.net_name.as_deref())
+            .or(net_name)
             .unwrap_or(&pin.name);
         pins.push(FirmwarePin {
             terminal: pin.terminal,
@@ -405,6 +411,26 @@ mod tests {
         assert_eq!(usart.kind.as_deref(), Some("uart"));
         assert_eq!(usart.roles, ["rx", "tx"]);
         assert!(ir.name_conflicts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn an_unnamed_net_leaves_the_pin_name() -> Fallible<()> {
+        let (project, instance) = project()?;
+        let mut alone = pin(4, "PA4", Some(function("gpio_in")));
+        alone.net = Some(33);
+        alone.net_name = Some(crate::nets::default_name(33));
+        let mut named = pin(5, "PA5", Some(function("gpio_out")));
+        named.net = Some(34);
+        named.net_name = Some("STATUS_LED".into());
+        let report = PinReport {
+            instance,
+            designator: "U1".into(),
+            pins: vec![alone, named],
+        };
+        let ir = from_pin_report(&project, &report)?;
+        let names: Vec<_> = ir.pins.iter().map(|p| p.firmware_name.as_str()).collect();
+        assert_eq!(names, ["PA4", "STATUS_LED"]);
         Ok(())
     }
 
