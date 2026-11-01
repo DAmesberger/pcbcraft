@@ -6,12 +6,16 @@
 //!
 //! The routing is on top and bottom with through vias, tented and open; a
 //! layer change is routed with `layout.route_layer_change`. Ground runs as
-//! wide bottom traces (there are no zones yet) and an inner-layer strap,
-//! the supply on an inner layer between its vias.
+//! wide bottom traces under a bottom ground pour, an inner ground plane and
+//! an inner-layer strap, tied together by stitching vias on the ground
+//! traces; the supply runs on an inner layer between its vias.
+use super::fill::FillCommand;
 use super::{LayerChangeRequest, LayoutCommand, RouteRequest, ViaRequest};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, TerminalId};
+use crate::library::{Outline, Segment};
+use crate::model::fill::{FillSettings, FillSpec};
 use crate::model::{CopperLayer, Layer, Project, Stackup};
 
 /// The showcase board outline, in mm.
@@ -195,6 +199,29 @@ const VIAS: &[(&str, Point, bool)] = &[
     ("VCC", [15.6, 21.14], true),
     ("VCC", [34.6, 18.0], true),
     ("SCL", [9.5, 15.0], false),
+    // Ground stitching on the ground traces: they tie the bottom pour,
+    // the inner ground plane and the top together.
+    ("GND", [2.2, 12.0], true),
+    ("GND", [2.2, 15.0], true),
+    ("GND", [2.2, 18.0], true),
+    ("GND", [7.0, 4.0], true),
+    ("GND", [15.5, 4.0], true),
+    ("GND", [20.0, 8.2], true),
+    ("GND", [26.0, 8.2], true),
+    ("GND", [33.0, 8.2], true),
+    ("GND", [22.7, 10.0], true),
+    ("GND", [30.2, 10.0], true),
+];
+
+/// How far the pours stand in from the board edge, mm, and the radius of
+/// their rounded corners.
+const POUR_INSET_MM: f64 = 0.5;
+const POUR_CORNER_MM: f64 = 1.5;
+
+/// The pours: (name, net, layer, priority).
+const POURS: &[(&str, &str, CopperLayer, u32)] = &[
+    ("GND bottom pour", "GND", BOTTOM, 0),
+    ("GND plane", "GND", GND_PLANE, 0),
 ];
 
 /// Layer changes: (net, first layer, start, via, tented, second layer,
@@ -307,6 +334,57 @@ pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
         });
     }
     Ok(commands)
+}
+
+/// The board outline inset by [`POUR_INSET_MM`], with quarter-circle
+/// corners of [`POUR_CORNER_MM`], counter-clockwise from the bottom edge.
+pub fn pour_outline() -> Outline {
+    let (i, r) = (POUR_INSET_MM, POUR_CORNER_MM);
+    let [w, h] = BOARD_MM;
+    // A quarter turn counter-clockwise: tan(90° / 4).
+    let quarter = std::f64::consts::FRAC_PI_8.tan();
+    let line = |to: Point| Segment::Line { to };
+    let arc = |to: Point| Segment::Arc { to, bulge: quarter };
+    Outline {
+        start: [i + r, i],
+        segments: vec![
+            line([w - i - r, i]),
+            arc([w - i, i + r]),
+            line([w - i, h - i - r]),
+            arc([w - i - r, h - i]),
+            line([i + r, h - i]),
+            arc([i, h - i - r]),
+            line([i, i + r]),
+            arc([i + r, i]),
+        ],
+    }
+}
+
+/// The fill commands that add the showcase pours over `project` (a
+/// bottom ground pour and the inner ground plane). Their copper is
+/// computed by a `fill.refill` after them.
+pub fn fill_commands(project: &Project) -> Result<Vec<FillCommand>> {
+    POURS
+        .iter()
+        .map(|(name, net, layer, priority)| {
+            let net = project
+                .nets
+                .iter()
+                .find(|n| n.name == *net)
+                .map(|n| n.id)
+                .ok_or_else(|| Error::NotFound(format!("showcase net {net}")))?;
+            Ok(FillCommand::Add {
+                fill: Box::new(FillSpec {
+                    name: (*name).into(),
+                    net: Some(net),
+                    layer: *layer,
+                    outline: pour_outline(),
+                    priority: *priority,
+                    settings: FillSettings::default(),
+                }),
+            })
+        })
+        .collect()
 }
 
 /// A showcase terminal, `designator.terminal`, as an endpoint of `project`.

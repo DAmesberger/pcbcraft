@@ -241,6 +241,12 @@ impl Native {
         })
     }
 
+    /// Make `component` (an id) the active component.
+    pub fn activate(&mut self, component: u64) -> Result<()> {
+        self.call("component.activate", json!({"component": component}))?;
+        Ok(())
+    }
+
     pub fn activate_root(&mut self) -> Result<()> {
         self.call("component.activate", json!({"component": "root"}))?;
         Ok(())
@@ -267,6 +273,80 @@ impl Native {
                 "name": body.name, "body_name": body.name}),
         )?;
         Ok(())
+    }
+
+    /// [`Self::profile_body`] for many closed polylines at once (a copper
+    /// fill's regions): they go into the sketch in one `sketch.insert_dxf`
+    /// (closed LWPOLYLINEs in millimetres) instead of one command per
+    /// loop, whose cost grows with the sketch. Nesting is even-odd.
+    pub fn polyline_body(
+        &mut self,
+        name: &str,
+        offset: Expr,
+        loops: &[&[[f64; 2]]],
+        height: Expr,
+    ) -> Result<()> {
+        let sketch = self.polyline_sketch(name, offset, loops)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": height.0, "operation": "new",
+                "name": name, "body_name": name}),
+        )?;
+        Ok(())
+    }
+
+    /// [`Self::profile_cut`] of many closed polylines inserted at once, as
+    /// [`Self::polyline_body`] inserts them.
+    pub fn polyline_cut(
+        &mut self,
+        name: &str,
+        offset: Expr,
+        loops: &[&[[f64; 2]]],
+        depth: Expr,
+        targets: &[&str],
+    ) -> Result<()> {
+        let sketch = self.polyline_sketch(name, offset, loops)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": depth.0, "operation": "cut",
+                "name": name, "targets": targets}),
+        )?;
+        Ok(())
+    }
+
+    /// A finished XY sketch of closed polylines, inserted as one DXF;
+    /// returns its feature id. Refuses non-finite points and a sketch of
+    /// no loop of three points or more (shorter loops are skipped).
+    fn polyline_sketch(&mut self, name: &str, offset: Expr, loops: &[&[[f64; 2]]]) -> Result<u64> {
+        use std::fmt::Write as _;
+        let mut dxf = String::from(
+            "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n",
+        );
+        let mut any = false;
+        for points in loops.iter().filter(|l| l.len() >= 3) {
+            if points.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(Error::Invalid(format!(
+                    "{name}: a loop point is not finite"
+                )));
+            }
+            any = true;
+            let _ = write!(dxf, "0\nLWPOLYLINE\n90\n{}\n70\n1\n", points.len());
+            for [x, y] in points.iter() {
+                let _ = write!(dxf, "10\n{x}\n20\n{y}\n");
+            }
+        }
+        if !any {
+            return Err(Error::Invalid(format!("{name}: no loop to sketch")));
+        }
+        dxf.push_str("0\nENDSEC\n0\nEOF\n");
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": Plane::Xy.name(), "offset": offset.0, "name": format!("{name} sketch")}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        self.call("sketch.insert_dxf", json!({"text": dxf}))?;
+        self.call("sketch.finish", json!({}))?;
+        Ok(sketch)
     }
 
     /// Extrude closed contours drawn on an origin `plane` of the active

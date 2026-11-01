@@ -69,10 +69,13 @@ pub enum BodyKind {
     /// never saved, never in fabrication output). Its look is the
     /// marking finish's, set where the decal is made.
     Marking,
+    /// A copper fill's computed copper on one layer (saved copper, under
+    /// the mask).
+    FillCopper,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 22] = [
+    pub const ALL: [BodyKind; 23] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -95,6 +98,7 @@ impl BodyKind {
         BodyKind::EdgeCopper,
         BodyKind::ViaBore,
         BodyKind::Marking,
+        BodyKind::FillCopper,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -427,6 +431,7 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         BodyKind::CopperTrack
         | BodyKind::PadCopper
         | BodyKind::ViaCopper
+        | BodyKind::FillCopper
         | BodyKind::EdgeCopper => metal("Copper", COPPER, 0.30),
         // The routed edge of the laminate; its weave is the detail.
         BodyKind::EdgeDielectric => dielectric("FR-4 laminate edge", FR4, 0.60, EPOXY_IOR),
