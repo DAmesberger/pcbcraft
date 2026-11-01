@@ -922,3 +922,6 @@ fn show_layers(
 
 /// Pictures of the 3D layer toggles.
 mod layers;
+
+/// Vias drawn instanced: the look, uploads and timings.
+mod instanced;

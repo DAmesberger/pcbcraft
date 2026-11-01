@@ -550,8 +550,7 @@ fn first_hit(model: &NativeModel, at: [f64; 2], down: bool) -> Option<&Geometry>
                 )
         })
         .filter_map(|g| {
-            g.mesh
-                .raycast(Vec3::new(at[0], at[1], z), Vec3::new(0.0, 0.0, dz))
+            g.raycast(Vec3::new(at[0], at[1], z), Vec3::new(0.0, 0.0, dz))
                 .map(|(t, _)| (t, g))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -689,7 +688,7 @@ fn pieces(model: &NativeModel, track: Id, kind: BodyKind) -> Vec<&Geometry> {
 
 fn no_cap_over_a_pad(model: &NativeModel, caps: &[&Geometry]) {
     for cap in caps {
-        for p in &cap.mesh.positions {
+        for p in &cap.world_mesh().positions {
             for f in pad_finishes(model) {
                 let over = p.x > f.min[0] + 1e-6
                     && p.x < f.max[0] - 1e-6
@@ -1140,7 +1139,7 @@ fn copper_z(layer: Layer) -> f64 {
 fn inside(geometry: &[&Geometry], p: Point, z: f64) -> bool {
     geometry
         .iter()
-        .any(|g| g.mesh.contains(Vec3::new(p[0], p[1], z)))
+        .any(|g| g.world_mesh().contains(Vec3::new(p[0], p[1], z)))
 }
 
 fn pad_bodies(model: &NativeModel, instance: Id, pad: PadId) -> Vec<&Geometry> {

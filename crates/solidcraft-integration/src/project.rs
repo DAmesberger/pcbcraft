@@ -12,7 +12,7 @@ use crate::material::{self, BodyKind};
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
-use crate::scene::{Geometry, Volume};
+use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
@@ -571,7 +571,11 @@ fn finish_with(
             && t[2] == [0.0, 0.0, 1.0, 0.0]
             && moved[3] == 1.0;
         let key = (body.component, name.to_owned());
-        let mesh = body.mesh();
+        // A placement of a definition (every via of a size) shares its definition's mesh and
+        // says where it lies, instead of holding a moved copy of it.
+        let (mesh, placed) = body.mesh_in_place();
+        let place =
+            (placed != solidcraft_engine::doc::IDENTITY).then(|| Place::from_columns(&placed));
         let (volume, min, max) = match measured.get(&key).filter(|_| translation) {
             Some((volume, min, max, at)) => {
                 let shift = |p: &[f64; 3]| std::array::from_fn(|i| p[i] + moved[i] - at[i]);
@@ -581,7 +585,7 @@ fn finish_with(
             // has exactly; its volume (measuring thousands of drilled
             // holes) is measured only if asked for.
             None if kind == BodyKind::Substrate => {
-                let b = mesh.bounds();
+                let b = body.mesh_bounds();
                 let body = body.clone();
                 (
                     Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
@@ -619,10 +623,24 @@ fn finish_with(
             surface,
             detail,
             mesh,
+            place,
             volume,
             min,
             max,
         });
+    }
+    // A definition's own body (the first via of a size, where its placements
+    // are copied from) shares its mesh with them: place it too, so it is
+    // drawn with them.
+    let shared: std::collections::HashSet<usize> = geometry
+        .iter()
+        .filter(|g| g.place.is_some())
+        .map(|g| std::sync::Arc::as_ptr(&g.mesh) as usize)
+        .collect();
+    for g in &mut geometry {
+        if g.place.is_none() && shared.contains(&(std::sync::Arc::as_ptr(&g.mesh) as usize)) {
+            g.place = Some(Place::IDENTITY);
+        }
     }
     Ok(NativeModel {
         native,
