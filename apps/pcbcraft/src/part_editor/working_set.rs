@@ -89,17 +89,24 @@ impl Template {
 }
 
 impl WorkingSet {
-    /// The first complete set of drafts, preferring one component lineage.
-    pub fn find(drafts: &Drafts, preferred: Option<DefinitionId>) -> Option<Self> {
-        let mut components: Vec<_> = drafts
-            .items
-            .iter()
-            .filter(|d| d.definition.kind() == DefinitionKind::Component)
-            .collect();
-        components.sort_by_key(|d| Some(d.id) != preferred);
-        components
-            .into_iter()
-            .find_map(|component| Self::around(drafts, component.id))
+    /// The complete set of drafts around exactly the component lineage
+    /// `lineage`; never another one. `None` takes the first complete set,
+    /// which only listings and tests ask for: the Component workspace
+    /// always opens one lineage explicitly ([`Self::of`]).
+    pub fn find(drafts: &Drafts, lineage: Option<DefinitionId>) -> Option<Self> {
+        match lineage {
+            Some(lineage) => Self::of(drafts, lineage),
+            None => drafts
+                .items
+                .iter()
+                .filter(|d| d.definition.kind() == DefinitionKind::Component)
+                .find_map(|component| Self::around(drafts, component.id)),
+        }
+    }
+
+    /// The complete set of drafts around the component lineage `lineage`.
+    pub fn of(drafts: &Drafts, lineage: DefinitionId) -> Option<Self> {
+        Self::around(drafts, lineage)
     }
 
     fn around(drafts: &Drafts, component: DefinitionId) -> Option<Self> {
@@ -158,6 +165,7 @@ impl WorkingSet {
     }
 
     /// The working set the given edits describe, if they are one complete set.
+    #[cfg(test)]
     pub fn from_edits(edits: Vec<DraftEdit>) -> Option<Self> {
         let mut drafts = Drafts::default();
         for edit in edits {
@@ -289,6 +297,7 @@ impl WorkingSet {
 
     /// Replace the bodies with a template, keeping lineages and never lowering
     /// a local-ID counter.
+    #[cfg(test)]
     pub fn load_template(&mut self, template: Template) {
         let first = Revision::FIRST;
         let refs = SampleRefs {
@@ -318,7 +327,7 @@ impl WorkingSet {
 
 /// Start a new component from a template in a project without a working
 /// set: five `library.new_draft` reservations, then one `library.edit`.
-pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
+pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
     let mut ids = Vec::new();
     for kind in [
         DefinitionKind::Component,
@@ -353,7 +362,7 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
             engine.revision(),
             Operation::Library(LibraryCommand::Edit { edits }),
         )
-        .map(|_| ())
+        .map(|_| component)
 }
 
 /// Draft every lineage of a published component revision's first symbol and

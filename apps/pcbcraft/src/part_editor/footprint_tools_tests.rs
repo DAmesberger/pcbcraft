@@ -538,6 +538,7 @@ fn empty_footprint(
 ) -> Result<PartEditor, Box<dyn std::error::Error>> {
     fonts::setup_bundled_fonts(ctx);
     let mut editor = PartEditor::default();
+    editor.open_first(engine);
     editor.commit(ctx, engine);
     editor.on_tab("footprint");
     if let Some(set) = &mut editor.draft {
@@ -570,6 +571,7 @@ fn the_ribbon_offers_sketch_pads_and_layer_groups() -> TestResult {
     let ctx = egui::Context::default();
     let mut engine = Engine::demo()?;
     let mut editor = PartEditor::default();
+    editor.open_first(&engine);
     editor.commit(&ctx, &engine);
     editor.on_tab("footprint");
     let labels = |r: &crate::shell::Ribbon| r.groups.iter().map(|g| g.label).collect::<Vec<_>>();

@@ -23,6 +23,7 @@ impl Harness {
         fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let mut h = Self {

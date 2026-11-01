@@ -515,6 +515,7 @@ fn sketched(ctx: &egui::Context) -> Result<Sketched, Box<dyn std::error::Error>>
     fonts::setup_bundled_fonts(ctx);
     let mut engine = Engine::demo()?;
     let mut editor = PartEditor::default();
+    editor.open_first(&engine);
     editor.commit(ctx, &engine);
     if let Some(set) = &mut editor.draft {
         set.footprint.pads.clear();

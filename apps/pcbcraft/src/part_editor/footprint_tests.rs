@@ -83,6 +83,7 @@ fn footprint_editor(
 ) -> Result<PartEditor, Box<dyn std::error::Error>> {
     fonts::setup_bundled_fonts(ctx);
     let mut editor = PartEditor::default();
+    editor.open_first(engine);
     editor.commit(ctx, engine);
     editor.on_tab("footprint");
     canvas_frame(&mut editor, engine, ctx, vec![]);

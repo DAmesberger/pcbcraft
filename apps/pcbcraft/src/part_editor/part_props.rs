@@ -1598,6 +1598,7 @@ mod tests {
         let ctx = egui::Context::default();
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         Ok((ctx, engine, editor))
     }

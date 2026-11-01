@@ -64,6 +64,99 @@ pub struct App {
     closing: bool,
     /// Input time of the current frame, for status messages.
     now: f64,
+    /// Several engine steps that undo and redo as one (Edit a copy, and
+    /// drafting a published component).
+    groups: StepGroups,
+}
+
+/// The most step groups kept for each direction.
+const MAX_STEP_GROUPS: usize = 64;
+
+/// Runs of engine steps that undo and redo as one, each keyed by the
+/// document snapshot it ends at (undo and redo restore snapshots, so the
+/// same `Arc`s come back) and holding its step count.
+#[derive(Default)]
+struct StepGroups {
+    undo: Vec<(Snapshot, usize)>,
+    redo: Vec<(Snapshot, usize)>,
+    /// The engine revision this last saw; any other change since then
+    /// cleared the engine's redo steps, so the redo groups go too.
+    seen: u64,
+}
+
+/// A document snapshot's identity.
+#[derive(Clone)]
+struct Snapshot(
+    Arc<pcbcraft_core::Project>,
+    Arc<pcbcraft_core::library::Drafts>,
+);
+
+impl Snapshot {
+    fn of(engine: &Engine) -> Self {
+        Self(
+            Arc::clone(engine.project_arc()),
+            Arc::clone(&engine.document().drafts),
+        )
+    }
+
+    fn is(&self, engine: &Engine) -> bool {
+        Arc::ptr_eq(&self.0, engine.project_arc())
+            && Arc::ptr_eq(&self.1, &engine.document().drafts)
+    }
+}
+
+impl StepGroups {
+    /// Record the steps applied since engine revision `before` as one
+    /// when there are several.
+    fn record(&mut self, engine: &Engine, before: u64) {
+        let steps = usize::try_from(engine.revision().saturating_sub(before)).unwrap_or(0);
+        if steps > 1 {
+            push_group(&mut self.undo, (Snapshot::of(engine), steps));
+        }
+        self.redo.clear();
+        self.seen = engine.revision();
+    }
+
+    /// Undo (or redo) one step, or the whole group that ends at the
+    /// current snapshot.
+    fn step(&mut self, engine: &mut Engine, redo: bool) -> pcbcraft_core::Result<()> {
+        if engine.revision() != self.seen {
+            self.redo.clear();
+        }
+        let result = self.step_seen(engine, redo);
+        self.seen = engine.revision();
+        result
+    }
+
+    fn step_seen(&mut self, engine: &mut Engine, redo: bool) -> pcbcraft_core::Result<()> {
+        let (from, to) = if redo {
+            (&mut self.redo, &mut self.undo)
+        } else {
+            (&mut self.undo, &mut self.redo)
+        };
+        let steps = from
+            .iter()
+            .rposition(|(at, _)| at.is(engine))
+            .map_or(1, |i| from.remove(i).1);
+        for _ in 0..steps {
+            if redo {
+                engine.redo()?;
+            } else {
+                engine.undo()?;
+            }
+        }
+        if steps > 1 {
+            push_group(to, (Snapshot::of(engine), steps));
+        }
+        Ok(())
+    }
+}
+
+fn push_group(groups: &mut Vec<(Snapshot, usize)>, group: (Snapshot, usize)) {
+    groups.push(group);
+    if groups.len() > MAX_STEP_GROUPS {
+        groups.remove(0);
+    }
 }
 
 impl App {
@@ -105,6 +198,7 @@ impl App {
             pending_import: None,
             closing: false,
             now: 0.0,
+            groups: StepGroups::default(),
         })
     }
 
@@ -266,7 +360,10 @@ impl App {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
-        match part_editor::run(&mut self.engine, request) {
+        let before = self.engine.revision();
+        let result = part_editor::run(&mut self.engine, request);
+        self.groups.record(&self.engine, before);
+        match result {
             Ok(None) => self.clear_error(),
             Ok(Some(created)) => self.say(Level::Ok, created),
             Err(error) => self.command_refused(error, true),
@@ -502,15 +599,102 @@ impl App {
         self.browser = self.browser.toggled(self.browser_visible);
     }
 
+    /// Undo or redo one step; a recorded group of steps goes as one.
     fn history(&mut self, redo: bool) {
-        let result = if redo {
-            self.engine.redo()
-        } else {
-            self.engine.undo()
-        };
-        match result {
-            Ok(_) => self.clear_error(),
+        match self.groups.step(&mut self.engine, redo) {
+            Ok(()) => self.clear_error(),
             Err(error) => self.command_refused(error, true),
+        }
+    }
+
+    /// The Component workspace's subject requests: open requests from
+    /// other surfaces, and folder previews, Edit a copy and Place.
+    fn component_subject(&mut self, ctx: &egui::Context) {
+        if let Some(subject) = part_editor::take_open_request(ctx) {
+            self.workspace = Workspace::Part;
+            self.part.open_subject(subject, &self.engine);
+        }
+        let names = self
+            .sources
+            .sources()
+            .iter()
+            .filter_map(|s| {
+                s.library()
+                    .map(|library| (library, s.name.clone(), s.setting.writable))
+            })
+            .collect();
+        let sources = &self.sources;
+        self.part
+            .set_sources(names, sources.generation(), || sources.context());
+        for action in self.part.take_folder_actions() {
+            match action {
+                part_editor::FolderAction::Preview(pick) => {
+                    let folder = self.sources.sources().iter().find_map(|s| match &s.status {
+                        library_sources::Status::Ready { folder, .. }
+                            if folder.manifest.library == pick.library =>
+                        {
+                            Some(folder.clone())
+                        }
+                        _ => None,
+                    });
+                    match folder {
+                        Some(folder) => {
+                            self.sources
+                                .used(pcbcraft_core::catalog::EntryKey::Library {
+                                    library: pick.library,
+                                    lineage: pick.lineage,
+                                });
+                            let receiver =
+                                part_editor::spawn_preview(folder, pick.clone(), ctx.clone());
+                            self.part.preview_loading(&pick, receiver);
+                        }
+                        None => self.part.preview_failed(
+                            &pick,
+                            format!("{} is not in a ready library source", pick.name),
+                        ),
+                    }
+                }
+                part_editor::FolderAction::EditCopy => self.edit_copy(),
+                part_editor::FolderAction::Place(pick) => self
+                    .sources
+                    .read_bundle(pick, BundlePurpose::Place(Default::default())),
+            }
+        }
+        self.part.tick();
+    }
+
+    /// "Edit a copy in this project": import the previewed folder item and
+    /// draft it, as one undo step, then author the copy.
+    fn edit_copy(&mut self) {
+        if self.files.busy() {
+            self.say(Level::Info, "Wait for the file operation to finish");
+            return;
+        }
+        let (Some(bundle), Some(pick)) =
+            (self.part.preview_bundle(), self.part.previewing().cloned())
+        else {
+            return;
+        };
+        let before = self.engine.revision();
+        match part_editor::edit_copy(&mut self.engine, bundle) {
+            Ok(copied) => {
+                self.groups.record(&self.engine, before);
+                self.part.open(copied.lineage, &self.engine);
+                let source = self.part.library_name(pick.library);
+                let text = format!(
+                    "Copied {} {} from {source} into the project",
+                    pick.name, pick.revision
+                );
+                if copied.steps > 0 {
+                    self.say_with(Level::Ok, text, vec![ToastAction::Undo]);
+                } else {
+                    self.say(
+                        Level::Info,
+                        format!("{} {} is already in the project", pick.name, pick.revision),
+                    );
+                }
+            }
+            Err(error) => self.say(Level::Error, error),
         }
     }
 
@@ -608,6 +792,10 @@ impl App {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
+        if self.workspace == Workspace::Part {
+            // Which component is open, above every view of it.
+            self.part.identity_strip(ui, &self.engine);
+        }
         let Some(key) = self.model_key() else {
             let operation = match self.workspace {
                 Workspace::Part => self.part.canvas(ui, &self.engine),
@@ -632,11 +820,21 @@ impl App {
             // Component 3D shows every layer of its package.
             self.scene.viewport.set_layers(Default::default());
             self.scene.highlight(None, None, None);
+            // A read-only library item builds from its scratch engine and
+            // never sends an operation to the project.
+            let preview = self.part.lend_preview();
+            let engine = preview.as_ref().map_or(&self.engine, |p| &p.engine);
             self.part
-                .model_view_prepare(&mut self.scene.viewport, &self.engine);
+                .model_view_prepare(&mut self.scene.viewport, engine);
             self.scene.viewport.show(ui, viewport::NavCaps::PLACEMENT);
-            let operation = self.part.model_view(ui, &self.scene.viewport, &self.engine);
-            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
+            let operation = self.part.model_view(ui, &self.scene.viewport, engine);
+            let read_only = preview.is_some();
+            self.part.restore_preview(preview);
+            self.apply(
+                &ui.ctx().clone(),
+                Origin::Canvas,
+                operation.filter(|_| !read_only),
+            );
             None
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
@@ -731,6 +929,7 @@ impl eframe::App for App {
         self.scene.receive();
         self.file_effects(&ctx);
         self.library_sources(&ctx);
+        self.component_subject(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -826,5 +1025,71 @@ mod tests {
             shortcut = history_shortcut(ui.ctx());
         });
         assert_eq!(shortcut, Some(false));
+    }
+}
+
+#[cfg(test)]
+mod step_group_tests {
+    use super::StepGroups;
+    use pcbcraft_core::{Engine, LibraryCommand, Operation};
+
+    /// Several steps recorded as a group undo and redo as one; single
+    /// steps stay single.
+    #[test]
+    fn a_group_of_steps_undoes_and_redoes_as_one() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::default();
+        let mut groups = StepGroups::default();
+        let empty = (engine.project().clone(), engine.drafts().clone());
+        let reserve = |engine: &mut Engine| {
+            engine.apply(
+                engine.revision(),
+                Operation::Library(LibraryCommand::NewDraft {
+                    meta: Default::default(),
+                    definition: pcbcraft_core::library::Definition::empty(
+                        pcbcraft_core::DefinitionKind::Symbol,
+                    ),
+                }),
+            )
+        };
+        let before = engine.revision();
+        for _ in 0..3 {
+            reserve(&mut engine)?;
+        }
+        groups.record(&engine, before);
+        let grouped = engine.drafts().clone();
+        reserve(&mut engine)?;
+        groups.step(&mut engine, false)?;
+        assert_eq!(engine.drafts(), &grouped, "a single step undoes alone");
+        groups.step(&mut engine, false)?;
+        assert_eq!(
+            (engine.project().clone(), engine.drafts().clone()),
+            empty,
+            "the group undoes as one"
+        );
+        groups.step(&mut engine, true)?;
+        assert_eq!(engine.drafts(), &grouped, "and redoes as one");
+        groups.step(&mut engine, false)?;
+        assert_eq!(engine.drafts(), &empty.1);
+        Ok(())
+    }
+
+    /// Edit a copy is several engine steps; recorded as a group, one Undo
+    /// takes them all back and one Redo brings them back.
+    #[test]
+    fn edit_a_copy_is_one_undo_step() -> Result<(), Box<dyn std::error::Error>> {
+        let (_, bundle) = crate::part_editor::sample_item()?;
+        let mut engine = Engine::default();
+        let mut groups = StepGroups::default();
+        let kept = (engine.project().clone(), engine.drafts().clone());
+        let before = engine.revision();
+        let copied = crate::part_editor::edit_copy(&mut engine, bundle)?;
+        groups.record(&engine, before);
+        assert!(copied.steps > 1);
+        let copy = (engine.project().clone(), engine.drafts().clone());
+        groups.step(&mut engine, false)?;
+        assert_eq!((engine.project().clone(), engine.drafts().clone()), kept);
+        groups.step(&mut engine, true)?;
+        assert_eq!((engine.project().clone(), engine.drafts().clone()), copy);
+        Ok(())
     }
 }

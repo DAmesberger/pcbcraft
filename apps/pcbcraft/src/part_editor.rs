@@ -13,6 +13,7 @@ mod drawing;
 #[cfg(test)]
 mod drawing_tests;
 mod family_rows;
+mod folder_preview;
 mod footprint_canvas;
 mod footprint_card;
 mod footprint_dims;
@@ -29,6 +30,8 @@ mod footprint_tools_canvas;
 #[cfg(test)]
 mod footprint_tools_tests;
 mod identity;
+#[cfg(test)]
+mod identity_tests;
 mod mapping_card;
 mod marking_props;
 mod model_body;
@@ -54,6 +57,15 @@ mod working_set;
 
 use crate::kit::{self, severity::Level};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
+#[cfg(test)]
+pub use folder_preview::sample_item;
+pub use folder_preview::{edit_copy, spawn as spawn_preview};
+pub use identity::{FolderAction, take_open_request};
+#[allow(
+    unused_imports,
+    reason = "the catalog Browser (slice A2) opens subjects with these"
+)]
+pub use identity::{Subject, request_open};
 pub use model_view::reset_model_view;
 pub use part_props::{PartReturn, meaning_label, spec_text};
 use pcbcraft_core::functions::{Direction, TerminalFunctions};
@@ -62,7 +74,6 @@ use pcbcraft_core::library::graphics::{
     self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM,
     TextContent, VAlign,
 };
-use pcbcraft_core::library::samples::Preset;
 use pcbcraft_core::library::{
     Drafts, Item, PackageTerminal, Pad, Pin, PinDirection, Terminal, TerminalClass, TerminalMap,
     Unit,
@@ -142,8 +153,11 @@ pub struct PartEditor {
     /// The engine drafts last loaded, compared by identity to notice undo,
     /// redo, open and publish.
     source: Option<Arc<Drafts>>,
-    /// The component lineage being authored.
+    /// The component lineage being authored: the workspace's subject,
+    /// always chosen explicitly (or the start page when unset).
     lineage: Option<DefinitionId>,
+    /// The lineage whose working set the views were last reset for.
+    shown: Option<DefinitionId>,
     /// A commit was sent; resync from the engine whatever its outcome.
     awaiting: bool,
     publishing: bool,
@@ -222,6 +236,8 @@ pub struct PartEditor {
     svg: svg_import::SvgImport,
     /// A1: the identity bar's history and recents.
     identity: identity::Identity,
+    /// A1: the start page's search.
+    start: start::StartPage,
     /// C5: the Pins tab.
     pins: pins_tab::PinsTab,
     /// B4: the New-from-template gallery sheet.
@@ -240,6 +256,7 @@ impl Default for PartEditor {
             baseline: None,
             source: None,
             lineage: None,
+            shown: None,
             awaiting: false,
             publishing: false,
             publish_next: false,
@@ -281,6 +298,7 @@ impl Default for PartEditor {
             model: Default::default(),
             svg: Default::default(),
             identity: Default::default(),
+            start: Default::default(),
             pins: Default::default(),
             gallery: Default::default(),
             model_chooser: Default::default(),
@@ -327,9 +345,13 @@ impl PartEditor {
             return;
         }
         self.awaiting = false;
-        let set = WorkingSet::find(&current, self.lineage);
-        let lineage = set.as_ref().map(|s| s.ids.component);
-        if lineage != self.lineage {
+        self.open_created(engine);
+        // Only the lineage opened explicitly; never another draft.
+        let set = self
+            .lineage
+            .and_then(|lineage| WorkingSet::of(&current, lineage));
+        let shown = set.as_ref().map(|s| s.ids.component);
+        if shown != self.shown {
             self.symbol_view = None;
             self.footprint_view = None;
             self.selected_pad = None;
@@ -338,7 +360,7 @@ impl PartEditor {
             self.drawing.arm(drawing::Tool::Select);
             self.body = set.as_ref().and_then(layout_body);
         }
-        self.lineage = lineage;
+        self.shown = shown;
         self.gesture = None;
         if let Some(set) = &set
             && self
@@ -389,7 +411,7 @@ impl PartEditor {
 
     /// The operation committing a finished edit, if any. Call once per frame
     /// after the editor's widgets ran.
-    pub fn commit(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
+    fn commit_inner(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
         self.flush(ctx);
         if let Some(publish) = self.publish_pending(engine) {
@@ -450,7 +472,7 @@ impl PartEditor {
     }
 
     /// Ribbon tabs are the four views of one component; groups are commands.
-    pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
+    fn ribbon_inner(&mut self, engine: &Engine) -> crate::shell::Ribbon {
         use crate::shell::{Group, Ribbon, Tab, Tool};
         self.sync(engine);
         let tabs = [
@@ -483,22 +505,16 @@ impl PartEditor {
                 .iter()
                 .any(|m| Some(m.terminal) == self.selected)
         });
-        let library = Group {
-            label: "Component",
-            tools: vec![
-                Tool::new("passive", "component", "Passive").tip("Two-terminal passive template"),
-                Tool::new("connector", "component", "Connector").tip("Two-pin header template"),
-                Tool::new("template-soic8", "component", "SOIC-8")
-                    .tip("8-lead gull-wing IC with a generated model"),
-                Tool::new("template-qfn16", "component", "QFN-16")
-                    .tip("16-terminal no-lead IC with an exposed pad and a generated model"),
-                Tool::new("template-header2x5", "component", "Header 2×5")
-                    .tip("2 × 5 pin header with gold pins and a generated model"),
-                Tool::new("publish", "save", "Publish")
-                    .enabled(self.unpublished(engine))
-                    .tip("Publish the five drafts as new immutable revisions"),
-            ],
-        };
+        let library = self.component_group(engine);
+        if self.is_read_only() {
+            // A library item is shown, never edited: only the subject's
+            // commands.
+            return Ribbon {
+                tabs,
+                groups: vec![library],
+                notice: None,
+            };
+        }
         if self.view == View::Symbol {
             return Ribbon {
                 tabs,
@@ -564,6 +580,33 @@ impl PartEditor {
             tabs,
             groups,
             notice: None,
+        }
+    }
+
+    /// The Component group: New and Open lead to the start page (template
+    /// gallery, catalog search and recents); Publish publishes the five
+    /// drafts. A read-only library item offers Edit a copy instead.
+    fn component_group(&self, engine: &Engine) -> crate::shell::Group {
+        use crate::shell::{Group, Tool};
+        let mut tools = vec![
+            Tool::new("component-new", "new", "New").tip("Start a new component from a template"),
+            Tool::new("component-open", "open", "Open")
+                .tip("Open a component of this project or a library source"),
+        ];
+        if self.is_read_only() {
+            tools.push(
+                Tool::new("component-edit-copy", "copy", "Edit a copy")
+                    .tip("Import this library revision into the project and draft it"),
+            );
+        }
+        tools.push(
+            Tool::new("publish", "save", "Publish")
+                .enabled(!self.is_read_only() && self.unpublished(engine))
+                .tip("Publish the five drafts as new immutable revisions"),
+        );
+        Group {
+            label: "Component",
+            tools,
         }
     }
 
@@ -755,6 +798,28 @@ impl PartEditor {
     }
 
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
+        match tool {
+            "component-new" | "component-open" => {
+                self.show_start();
+                return None;
+            }
+            "component-edit-copy" => {
+                if self.is_read_only() {
+                    self.identity_edit_copy();
+                }
+                return None;
+            }
+            _ => {}
+        }
+        if self.is_read_only() {
+            // The read-only ribbon offers nothing else; a stray command
+            // never edits a library item.
+            return None;
+        }
+        self.on_tool_inner(tool, engine)
+    }
+
+    fn on_tool_inner(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
         if let Some(t) = drawing::Tool::from_id(tool) {
             self.arm_tool(t);
@@ -785,11 +850,6 @@ impl PartEditor {
         match tool {
             "grid" => self.show_grid = !self.show_grid,
             "snap" => self.snap = !self.snap,
-            "passive" => self.load_template(Template::TwoTerminal),
-            "connector" => self.load_template(Template::Header),
-            "template-soic8" => self.load_template(Template::Package(Preset::Soic8)),
-            "template-qfn16" => self.load_template(Template::Package(Preset::Qfn16)),
-            "template-header2x5" => self.load_template(Template::Package(Preset::Header2x5)),
             "terminal" => self.add_terminal(),
             "pad" => self.add_pad(footprint_geometry::NewPad::Smd),
             "pad-pth" => self.add_pad(footprint_geometry::NewPad::PlatedThrough),
@@ -939,13 +999,25 @@ impl PartEditor {
         (tab, selected)
     }
 
+    /// The project component lineage being authored; `None` on the start
+    /// page and while a library-folder item is shown read-only (its
+    /// lineage lives in a scratch engine, not the project).
     pub fn lineage(&self) -> Option<DefinitionId> {
+        if self.is_read_only() {
+            return None;
+        }
         self.lineage
     }
 
     /// Author a component lineage, drafting it from its latest revision when
-    /// it has no draft yet.
+    /// it has no draft yet. The lineage becomes the workspace's subject and
+    /// the newest entry of its open history.
     pub fn open(&mut self, id: DefinitionId, engine: &Engine) {
+        let same = self.lineage == Some(id) && !self.is_read_only();
+        self.identity.visit(identity::Subject::Project(id));
+        if !same {
+            self.leave_subject();
+        }
         if engine.drafts().get(id).is_none()
             && let Some(published) = engine
                 .project()
@@ -1014,6 +1086,8 @@ impl PartEditor {
 
     /// Replace the working copy with a template; the next commit makes it
     /// one undoable step. Without a working set the app creates the lineages.
+    /// The ribbon no longer offers this; tests drive templates with it.
+    #[cfg(test)]
     fn load_template(&mut self, template: Template) {
         match &mut self.draft {
             Some(set) => {
@@ -1021,7 +1095,7 @@ impl PartEditor {
                 self.selected = set.component.terminals.first().map(|t| t.id);
                 self.body = layout_body(set);
             }
-            None => self.request = Some(Request::Create(template)),
+            None => self.create_new(template),
         }
         self.footprint_view = None;
         self.selected_pad = None;
@@ -1286,7 +1360,7 @@ impl PartEditor {
     /// footer, and its issue slot (docs/sidebar-ia.md, "Contract"). The
     /// app's column draws it with [`kit::card::card`] and asks
     /// [`Self::inspector_region`] for the body and footer.
-    pub fn inspector_card(&mut self, engine: &Engine) -> kit::card::Inspector {
+    fn inspector_card_inner(&mut self, engine: &Engine) -> kit::card::Inspector {
         self.sync(engine);
         let inspected = self.inspected();
         kit::card::Inspector {
@@ -1299,7 +1373,7 @@ impl PartEditor {
 
     /// One region of the Properties card. The body is the only scroll;
     /// the footer holds object actions (Remove pin), never Apply.
-    pub fn inspector_region(
+    fn inspector_region_inner(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
@@ -1319,7 +1393,7 @@ impl PartEditor {
     /// template or Assign dialog, the armed tool's card
     /// ([`kit::tool_card`]), or the Properties card with its issue slot and
     /// pinned footer (docs/sidebar-ia.md, "Layout").
-    pub fn subject_slot(
+    fn subject_slot_inner(
         &mut self,
         ui: &mut Ui,
         engine: &Engine,
@@ -1436,8 +1510,8 @@ impl PartEditor {
             Inspected::Empty => {
                 kit::hint(
                     ui,
-                    "Start from a Component template, or open one in the Browser",
-                    "Passive, Connector, SOIC-8, QFN-16 and Header 2×5 are on the ribbon",
+                    "Open a component, or start a new one, on the start page",
+                    "Search finds this project's components and every library source",
                 );
                 None
             }
@@ -1673,7 +1747,7 @@ impl PartEditor {
         Some(slot)
     }
 
-    pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    fn canvas_inner(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.svg_frame(ui.ctx(), engine);
         if self.update.is_open() {
             ui.disable();
@@ -1684,9 +1758,14 @@ impl PartEditor {
         if sheet.is_some() || chooser.is_some() {
             return sheet.or(chooser);
         }
-        self.identity_bar(ui, engine);
+        // The identity bar is drawn above every view by the app
+        // ([`Self::identity_strip`]), the 3D view included.
         if self.draft.is_none() && self.start_page(ui, engine) {
             return None;
+        }
+        if self.is_read_only() {
+            // A library item: its views show, nothing on them edits.
+            ui.disable();
         }
         if self.view == View::Model {
             ui.label("Native Solidcraft package preview");
@@ -1821,7 +1900,7 @@ impl PartEditor {
 /// project, so the project becomes modified and says why.
 pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<Option<String>> {
     match request {
-        Request::Create(template) => working_set::create(engine, template).map(|()| None),
+        Request::Create(template) => working_set::create(engine, template).map(|_| None),
         Request::Draft(component) => {
             let created = working_set::draft_closure(engine, component)?;
             let name = engine
@@ -2277,6 +2356,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         assert!(
             editor.commit(&ctx, &engine).is_none(),
             "loading is not an edit"
@@ -2304,6 +2384,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         if let Some(set) = &mut editor.draft {
             set.component.terminals.clear();
@@ -2369,6 +2450,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         editor.load_template(Template::Header);
         if let Some(operation) = editor.commit(&ctx, &engine) {
@@ -2393,6 +2475,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         assert!(
             !editor.unpublished(&engine),
@@ -2439,6 +2522,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let set = editor.draft.as_ref().ok_or("no working set")?;
         let component = set.ids.component;
@@ -2476,6 +2560,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::default();
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         assert!(editor.draft.is_none());
         editor.load_template(Template::TwoTerminal);
@@ -2511,6 +2596,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let lineage = resistance(&editor).ok_or(pcbcraft_core::Error::Limit("no field".into()))?;
         let original = editor.draft.clone();
@@ -2559,6 +2645,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let lineage = resistance(&editor).ok_or(pcbcraft_core::Error::Limit("no field".into()))?;
         let original = editor.draft.clone();
@@ -2581,6 +2668,7 @@ mod draft_tests {
         let ctx = egui::Context::default();
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let terminal = editor
             .selected
@@ -2706,6 +2794,7 @@ mod draft_tests {
         fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
@@ -2815,6 +2904,7 @@ mod draft_tests {
         fonts::setup_bundled_fonts(&ctx);
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let lineage = resistance(&editor).ok_or("no field")?;
         type_into(&mut editor, &engine, &ctx, "No default", "10k")?;
@@ -2842,6 +2932,7 @@ mod draft_tests {
         fonts::setup_bundled_fonts(&ctx);
         let mut engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let prefix = |editor: &PartEditor| {
             editor
@@ -2897,6 +2988,7 @@ mod draft_tests {
         fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         let original = editor.draft.clone();
         type_into(&mut editor, &engine, &ctx, "No default", "ten volts")?;
