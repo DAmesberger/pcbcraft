@@ -10,18 +10,17 @@ use pcbcraft_core::functions::{
 };
 use pcbcraft_core::library::{ComponentDefinition, Terminal, TerminalClass};
 use pcbcraft_core::{Engine, FunctionId, Operation, TerminalId};
-use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// A terminal's class as the inspector offers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ClassChoice {
+pub(super) enum ClassChoice {
     Electrical,
     DeviceNc,
     Reserved,
 }
 
 impl ClassChoice {
-    fn of(terminal: &Terminal) -> Self {
+    pub(super) fn of(terminal: &Terminal) -> Self {
         match terminal.class {
             TerminalClass::Electrical(_) => Self::Electrical,
             TerminalClass::DeviceNc => Self::DeviceNc,
@@ -30,13 +29,13 @@ impl ClassChoice {
     }
 }
 
-const CLASS_CHOICES: [(ClassChoice, &str); 3] = [
+pub(super) const CLASS_CHOICES: [(ClassChoice, &str); 3] = [
     (ClassChoice::Electrical, "Electrical"),
     (ClassChoice::DeviceNc, "Device NC"),
     (ClassChoice::Reserved, "Reserved"),
 ];
 
-const DIRECTIONS: [Direction; 6] = [
+pub(super) const DIRECTIONS: [Direction; 6] = [
     Direction::Passive,
     Direction::Input,
     Direction::Output,
@@ -45,14 +44,14 @@ const DIRECTIONS: [Direction; 6] = [
     Direction::PowerOutput,
 ];
 
-const SIGNALS: [(SignalKind, &str); 4] = [
+pub(super) const SIGNALS: [(SignalKind, &str); 4] = [
     (SignalKind::Unspecified, "Unspecified"),
     (SignalKind::Digital, "Digital"),
     (SignalKind::Analog, "Analog"),
     (SignalKind::Power, "Power"),
 ];
 
-const DRIVES: [(Drive, &str); 4] = [
+pub(super) const DRIVES: [(Drive, &str); 4] = [
     (Drive::None, "None"),
     (Drive::PushPull, "Push-pull"),
     (Drive::OpenDrain, "Open drain"),
@@ -140,6 +139,7 @@ impl PartEditor {
         let set = self.draft.as_mut()?;
         let component = &mut set.component;
         let mut refused = None;
+        let mut hand_off = false;
         kit::section(ui, id, title, true, None, |ui| {
             if let Some(t) = component.terminals.iter_mut().find(|t| t.id == terminal) {
                 kit::text_row(ui, "Name", &mut t.name)
@@ -156,10 +156,12 @@ impl PartEditor {
                     refused = Some(message);
                 }
             }
-            if let Err(message) = function_rows(ui, component, terminal) {
-                refused = Some(message);
-            }
+            hand_off = function_summary(ui, component, terminal);
         });
+        if hand_off {
+            self.on_tab("pins");
+            self.pins.show_terminal(terminal);
+        }
         refused
     }
 
@@ -235,7 +237,7 @@ fn pin_summary(terminal: &Terminal) -> String {
 /// Change a terminal's class. Becoming electrical gives it one passive
 /// function with a freshly allocated ID; staying electrical keeps its
 /// functions.
-fn set_class(
+pub(super) fn set_class(
     component: &mut ComponentDefinition,
     id: TerminalId,
     choice: ClassChoice,
@@ -307,96 +309,39 @@ pub(super) fn add_function(
     Ok(function)
 }
 
-/// The functions of an electrical terminal, inside its section: one
-/// function's direction, signal and drive inline; several as a table with
-/// the design default. The core checks the declaration (Issues shows its
-/// findings). Returns a refused Add function's message.
-fn function_rows(
-    ui: &mut Ui,
-    component: &mut ComponentDefinition,
-    id: TerminalId,
-) -> Result<(), &'static str> {
-    if component
-        .terminal(id)
-        .and_then(Terminal::functions)
-        .is_none()
-    {
-        return Ok(());
-    }
-    let directions: Vec<_> = DIRECTIONS
-        .iter()
-        .map(|d| (*d, sentence(d.label())))
-        .collect();
-    let signals: Vec<_> = SIGNALS.iter().map(|(s, l)| (*s, (*l).to_owned())).collect();
-    let drives: Vec<_> = DRIVES.iter().map(|(d, l)| (*d, (*l).to_owned())).collect();
-    let mut add = false;
-    if let Some(TerminalClass::Electrical(table)) = component
+/// The functions of an electrical terminal, inside its section: a single
+/// function's direction, signal and drive inline, then the function count
+/// with "Edit in Pins tab", where chips, peripherals and rules are edited
+/// (slice C5's terminal card hand-off). Returns whether it was clicked.
+fn function_summary(ui: &mut Ui, component: &mut ComponentDefinition, id: TerminalId) -> bool {
+    let Some(TerminalClass::Electrical(table)) = component
         .terminals
         .iter_mut()
         .find(|t| t.id == id)
         .map(|t| &mut t.class)
-    {
-        let only = table.functions.len() <= 1;
-        let mut remove = None;
-        for (index, function) in table.functions.iter_mut().enumerate() {
-            ui.push_id(("function", function.id.0), |ui| {
-                if !only {
-                    kit::rule(ui);
-                    kit::row(ui, &format!("Function {}", index + 1), |ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui_kit::button(ui, "Remove", Button::Small).clicked() {
-                                remove = Some(index);
-                            }
-                            ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
-                            kit::text_field(ui, "label", &mut function.label, "Label", false)
-                                .on_hover_text("Function label, unique on this terminal");
-                        });
-                    });
-                }
-                kit::choice_row(ui, "Direction", &mut function.direction, &directions);
-                kit::choice_row(ui, "Signal", &mut function.signal, &signals);
-                kit::choice_row(ui, "Drive", &mut function.drive, &drives);
-            });
-        }
-        if let Some(index) = remove
-            && table.functions.len() > 1
-            && index < table.functions.len()
-        {
-            let removed = table.functions.remove(index);
-            if table.design_default == Some(removed.id) {
-                table.design_default = None;
-            }
-        }
-        if table.functions.len() > 1 {
-            kit::rule(ui);
-            let options: Vec<_> = std::iter::once((None, "None".to_owned()))
-                .chain(
-                    table
-                        .functions
-                        .iter()
-                        .map(|f| (Some(f.id), f.label.clone())),
-                )
-                .collect();
-            kit::choice_row(ui, "Default", &mut table.design_default, &options);
-        }
-        kit::actions(ui, |ui| {
-            add = ui_kit::button(
-                ui,
-                "Add function",
-                Button::Enabled(table.functions.len() < MAX_FUNCTIONS),
-            )
-            .on_hover_text("Another way this terminal can be used, such as a GPIO's UART")
-            .clicked();
-        });
+    else {
+        return false;
+    };
+    if let [only] = table.functions.as_mut_slice() {
+        let directions: Vec<_> = DIRECTIONS
+            .iter()
+            .map(|d| (*d, sentence(d.label())))
+            .collect();
+        let signals: Vec<_> = SIGNALS.iter().map(|(s, l)| (*s, (*l).to_owned())).collect();
+        let drives: Vec<_> = DRIVES.iter().map(|(d, l)| (*d, (*l).to_owned())).collect();
+        kit::choice_row(ui, "Direction", &mut only.direction, &directions);
+        kit::choice_row(ui, "Signal", &mut only.signal, &signals);
+        kit::choice_row(ui, "Drive", &mut only.drive, &drives);
     }
-    if add {
-        add_function(component, id)?;
-    }
-    Ok(())
+    let summary = match table.functions.as_slice() {
+        [only] => format!("1 function · {}", only.label),
+        many => format!("{} functions", many.len()),
+    };
+    kit::summary_row(ui, &summary, Some("Edit in Pins tab"))
 }
 
 /// Take the next local ID of a component, with checked arithmetic.
-fn allocate_local(component: &mut ComponentDefinition) -> Option<u32> {
+pub(super) fn allocate_local(component: &mut ComponentDefinition) -> Option<u32> {
     let id = component.next_local;
     component.next_local = id.checked_add(1)?;
     Some(id)
