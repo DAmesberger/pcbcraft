@@ -3,7 +3,7 @@
 //! mid-height, bend down and end in a flat foot on the seating plane. The
 //! body is cut around the lead roots, so leads and moulding stay disjoint.
 use super::profile::bent_strip;
-use super::{Build, check_count, check_positive, mm, require};
+use super::{Build, check_count, check_positive, mm, require, top_edges, upright_edges};
 use crate::Result;
 use crate::native::{Expr, Pattern, Plane, ProfileBody};
 use pcbcraft_core::library::{BodyRole, GullWingForm, LeadSides};
@@ -13,6 +13,11 @@ use pcbcraft_core::library::{BodyRole, GullWingForm, LeadSides};
 const ROOT_MM: f64 = 0.25;
 /// Share of the room between body and foot the straight shoulder takes.
 const SHOULDER_SHARE: f64 = 0.3;
+/// Round of the moulding's upright corners and of its top edges (est.:
+/// transfer-moulded bodies leave the mould with 0.1–0.3 mm corner radii and
+/// rounded parting edges), each also capped by the form below.
+const CORNER_MM: f64 = 0.2;
+const TOP_EDGE_MM: f64 = 0.12;
 /// Pin-1 dimple depth (est.).
 const DIMPLE_DEPTH_MM: f64 = 0.05;
 
@@ -217,8 +222,27 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     b.native.cut_keeping(&b.name("lead roots"), &body, &tools)?;
     b.number(&leads);
 
-    // A pin-1 dimple in the top, at the corner of lead 1.
+    // Rounded upright corners clear of the end leads, then rounded top
+    // edges clear of the lead exit, so the moulding catches highlights.
+    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * g.pitch + g.lead_width;
+    let mut corner_room = g.body_length - row_length(g.leads_per_side[0]);
+    if four {
+        corner_room = corner_room.min(g.body_width - row_length(g.leads_per_side[1]));
+    }
     let short = g.body_length.min(g.body_width);
+    let corner = CORNER_MM.min(0.06 * short).min(corner_room / 4.0);
+    let top = g.standoff + g.body_height;
+    let edge = TOP_EDGE_MM
+        .min(0.1 * g.body_height)
+        .min((top - exit - t / 2.0) / 2.0)
+        // Where the rounds meet, the top one may not outgrow the corner.
+        .min(corner);
+    let lo = [-g.body_length / 2.0, -g.body_width / 2.0, g.standoff];
+    let hi = [g.body_length / 2.0, g.body_width / 2.0, top];
+    b.round("corner_round", &body, &upright_edges(lo, hi), corner)?;
+    b.round("edge_round", &body, &top_edges(lo, hi), edge)?;
+
+    // A pin-1 dimple in the top, at the corner of lead 1.
     let radius = (0.12 * short).clamp(0.15, 0.5);
     if 5.0 * radius < short && DIMPLE_DEPTH_MM < g.body_height / 4.0 {
         let at = 2.0 * radius;

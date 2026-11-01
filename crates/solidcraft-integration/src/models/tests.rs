@@ -777,3 +777,61 @@ fn every_form_the_core_accepts_is_built() -> Result<()> {
     assert_eq!((accepted, refused), (4, 4), "built and refused");
     Ok(())
 }
+
+/// Moulded bodies, chip bodies and terminations have rounded edges (so
+/// they catch highlights) held by named radius parameters: growing a
+/// radius takes off the material a round of that size takes off the edges
+/// it names, and the bodies stay disjoint.
+#[test]
+fn generated_bodies_have_rounded_edges_driven_by_named_radii() -> Result<()> {
+    // (form, terminals, body, radius parameter, its radius as built,
+    // rounded edge length).
+    let soic_top = 2.0 * (4.9 + 3.9);
+    for (form, terminals, body, param, radius, edge_length) in [
+        (soic8(), 8, "pkgt body", "pkgt_edge_round", 0.12, soic_top),
+        (
+            soic8(),
+            8,
+            "pkgt body",
+            "pkgt_corner_round",
+            0.17,
+            4.0 * 1.45,
+        ),
+        (qfn16(), 17, "pkgt body", "pkgt_edge_round", 0.06, 4.0 * 3.0),
+        (
+            header2x5(),
+            10,
+            "pkgt body",
+            "pkgt_edge_round",
+            0.2,
+            2.0 * (12.7 + 5.08),
+        ),
+        (chip(), 2, "pkgt body", "pkgt_body_round", 0.04, 4.0 * 1.0),
+        (
+            chip(),
+            2,
+            "pkgt termination 1",
+            "pkgt_end_round",
+            0.0675,
+            2.0 * (0.8 + 0.45),
+        ),
+    ] {
+        let (mut native, definition) = built(form.clone(), terminals)?;
+        let (mut joined, _) = built(form, terminals)?;
+        disjoint(&mut joined, &definition)?;
+        let before = volume(&native, body)?;
+        native.change_parameters(serde_json::json!({ param: format!("{} mm", 1.3 * radius) }))?;
+        assert_eq!(native.evaluation_error(), None, "{param}");
+        let after = volume(&native, body)?;
+        // A round of radius r takes (1 − π/4) r² off each unit of edge;
+        // the corners where rounds meet take a little less.
+        let k = 1.0 - std::f64::consts::FRAC_PI_4;
+        let expected = k * (1.69 - 1.0) * radius * radius * edge_length;
+        let removed = before - after;
+        assert!(
+            removed > 0.7 * expected && removed < 1.05 * expected,
+            "{param}: growing the round took off {removed} mm³, expected about {expected}"
+        );
+    }
+    Ok(())
+}

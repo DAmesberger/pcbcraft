@@ -2,10 +2,14 @@
 //! and square gold-plated pins through it, standing above the base and
 //! reaching below the seating plane into the board. The base is cut around
 //! the pins, so pins and plastic stay disjoint.
-use super::{Build, check_count, check_positive, require};
+use super::{Build, check_count, check_positive, require, top_edges, upright_edges};
 use crate::Result;
 use crate::native::{BoxBody, Expr, Pattern};
 use pcbcraft_core::library::{BodyRole, HeaderForm};
+
+/// Rounds of the moulded base's upright corners and top edges (est.).
+const CORNER_MM: f64 = 0.3;
+const TOP_EDGE_MM: f64 = 0.2;
 
 pub(super) fn check(h: &HeaderForm) -> Result<()> {
     check_positive(&[
@@ -111,5 +115,18 @@ pub(super) fn build(b: &mut Build<'_>, h: &HeaderForm) -> Result<()> {
     let tools: Vec<&str> = ordered.iter().map(String::as_str).collect();
     b.native.cut_keeping(&b.name("pin holes"), &body, &tools)?;
     b.number(&ordered);
+    // Rounds kept clear of the outermost pins.
+    let half = [
+        f64::from(h.pins_per_row) * h.pitch / 2.0,
+        f64::from(h.rows) * h.row_pitch / 2.0,
+    ];
+    let clear = ((h.pitch - h.pin_side) / 2.0).min((h.row_pitch - h.pin_side) / 2.0);
+    let lo = [-half[0], -half[1], 0.0];
+    let hi = [half[0], half[1], h.body_height];
+    let corner = CORNER_MM.min(clear / 2.0);
+    b.round("corner_round", &body, &upright_edges(lo, hi), corner)?;
+    // Where the rounds meet, the top one may not outgrow the corner.
+    let edge = TOP_EDGE_MM.min(0.1 * h.body_height).min(corner);
+    b.round("edge_round", &body, &top_edges(lo, hi), edge)?;
     Ok(())
 }
