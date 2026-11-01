@@ -10,8 +10,11 @@
 //!
 //! Rules arrive as Rhai pin-rule scripts (F2, slice C1), shown in the
 //! review like any other row.
-use super::DefinitionMeta;
-use crate::diagnostics::{Error, Finding};
+mod stage;
+pub use stage::{StagedDraft, StagedImport, check_document, stage};
+
+use super::{DefinitionMeta, Drafts, Library};
+use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::functions::{Direction, Drive, GpioRef, Pull, SignalKind, SourceSpan};
 use crate::ids::{DefinitionId, PackageRowRef, TerminalId};
 use schemars::JsonSchema;
@@ -179,13 +182,24 @@ pub struct PinoutDocument {
     pub rules: Vec<PinoutRule>,
 }
 
-/// What the import targets.
+/// What the import targets. Rows match the terminals of an existing
+/// draft by package number, through the bindings of that component (the
+/// first variant in document order that numbers the row and resolves);
+/// a component without any binding matches by exact terminal name. Every
+/// other row is a new terminal, and draft terminals no row matches are
+/// removed; the plan lists each of these changes.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "target", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PinoutTarget {
     /// An existing component draft; terminals are kept by number.
     Draft { id: DefinitionId },
-    /// New drafts, optionally with a package from a template row.
+    /// New drafts: the component (designator prefix `U`), a block symbol
+    /// with a pin per terminal, and per variant a package (terminals by
+    /// the variant's numbers; the form of the variant's row, else of
+    /// `row` for the first variant, else generic) and a binding mapping
+    /// them by number. No footprint: lands come from a template
+    /// (`library.footprint_from_template`) and are mapped through
+    /// `library.assign_terminals`.
     New {
         name: String,
         #[serde(default)]
@@ -246,7 +260,9 @@ pub struct PinoutPlan {
     pub review: Vec<ReviewItem>,
 }
 
-/// Which rows `pinout_apply` takes.
+/// Which rows `pinout_apply` takes. `Except` lists pin row keys and
+/// rule keys (`rule:<label>`); an excluded row of an existing draft keeps
+/// what the draft had, and on a new component it is not imported.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "accept", content = "rows", rename_all = "snake_case")]
 pub enum PinoutAccept {
@@ -298,9 +314,87 @@ pub struct PinoutApply {
 /// The planned drafts of an import.
 pub type PinoutDrafts = Vec<(DefinitionMeta, super::Definition)>;
 
-/// Contract stub until C3.
-pub fn unsupported() -> Error {
-    Error::Unsupported("pinout.unsupported: pinout import is not available yet (slice C3)".into())
+/// The `accept` key of a rule: this prefix and the rule's label
+/// (`rule:uart0_pins`). Row keys never start with it.
+pub const RULE_ROW_PREFIX: &str = "rule:";
+
+/// EXM-48, an original invented 48-pin controller (QFN-48 with an exposed
+/// pad, and LQFP-48), with alternate functions, peripherals and Rhai pin
+/// rules: the fixture of the import, review and firmware workflows. It
+/// describes no real device.
+pub const EXM48: &str = include_str!("pinout/exm48.json");
+
+/// The F8 gate over a component's review state: each terminal flagged
+/// uncertain blocks publishing (`pinout.uncertain`); unreviewed imported
+/// terminals are one warning (`pinout.unreviewed`). A person clears both
+/// by editing the draft's `review`.
+pub fn review_findings(component: DefinitionId, review: &ImportReview) -> Vec<Finding> {
+    let at = |t: &TerminalId| ObjectRef::LibraryObject {
+        definition: component,
+        local: t.0,
+    };
+    let mut out: Vec<Finding> = review
+        .uncertain
+        .iter()
+        .map(|t| {
+            Finding::blocking(
+                "pinout.uncertain",
+                format!(
+                    "Imported terminal {t} is flagged uncertain; check it against the datasheet and clear the flag before publishing."
+                ),
+                vec![at(t)],
+                Stage::Publish,
+            )
+        })
+        .collect();
+    if !review.unreviewed.is_empty() {
+        let count = review.unreviewed.len();
+        out.push(Finding::new(
+            "pinout.unreviewed",
+            format!(
+                "{count} imported terminal{} not been reviewed yet.",
+                if count == 1 { " has" } else { "s have" }
+            ),
+            review.unreviewed.iter().map(at).collect(),
+        ));
+    }
+    out
+}
+
+/// The token a plan is made against (`PinoutPlan::base`): a digest of the
+/// target draft and every binding draft of it (they decide how rows match
+/// terminals by number), or, for a new component, of the package rows it
+/// names. `pinout_apply` refuses when the token changed.
+pub fn base_token(library: &Library, drafts: &Drafts, target: &PinoutTarget) -> Result<u64> {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    match target {
+        PinoutTarget::Draft { id } => {
+            let draft = drafts
+                .get(*id)
+                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
+            hasher.update(serde_json::to_vec(draft)?);
+            for other in &drafts.items {
+                if let super::Definition::Binding(b) = &other.definition
+                    && b.component == *id
+                {
+                    hasher.update(serde_json::to_vec(other)?);
+                }
+            }
+        }
+        PinoutTarget::New { name, row } => {
+            hasher.update(name.as_bytes());
+            if let Some(r) = row {
+                hasher.update(serde_json::to_vec(&library.package_row(*r))?);
+            }
+        }
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    for (b, d) in bytes.iter_mut().zip(digest.iter()) {
+        *b = *d;
+    }
+    Ok(u64::from_le_bytes(bytes))
 }
 
 /// JSON schema of [`PinoutDocument`] (`pinout.schema`).
