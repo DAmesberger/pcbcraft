@@ -1,24 +1,34 @@
 //! Single-sheet content for the shared shell. Control metrics and input ownership
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
+//!
+//! The Properties card follows docs/sidebar-ia.md: one subject (the sheet,
+//! an instance, a wire's net or the Place preview), fields that commit live
+//! one typed command at a time, a reserved issue slot and a pinned footer.
+//! Findings live in Issues; a refused field edit shows under its field.
+use crate::kit;
+use crate::kit::card::{Inspector, IssueSlot, Region};
 use crate::place_palette::{Mode as PaletteMode, PaletteAction, PlacePalette};
+use crate::refusal::{self, Origin};
 use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
 use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2};
-use pcbcraft_core::completeness::InstanceReport;
+use pcbcraft_core::completeness::{InstanceReport, PurchasingState};
 use pcbcraft_core::geometry::{Bounds, Transform2};
 use pcbcraft_core::instances::{self, NewInstance};
+use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueScope, Severity};
 use pcbcraft_core::library::graphics::SHEET_GRID_MM;
 use pcbcraft_core::library::{Rotation, TextMetric, Unit};
 use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, Operation,
-    PhysicalChoice, Point, Project, Query, QueryResult, erc,
+    ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, ObjectRef, Operation,
+    PhysicalChoice, Point, Project, Query, QueryResult,
     schematic::{self, SchematicCommand},
-    updates::Change,
+    updates::{Change, InstanceChange},
 };
 use solidcraft_ui_egui::theme::Tokens;
-use std::collections::{BTreeMap, VecDeque};
+use solidcraft_ui_egui::ui_kit::{self, Button};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod instance_card;
@@ -51,6 +61,26 @@ const PLACE_HALF: [f64; 2] = [15.0, 10.0];
 /// The search pitch of a library placement, in mm (sheet-grid multiples).
 const PLACE_PITCH: [f64; 2] = [15.0, 10.0];
 
+/// What the Properties card shows: exactly one subject at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Subject {
+    /// A docked update review.
+    Review,
+    /// The palette choosing a Part for instances.
+    Assign,
+    /// Resolve parts.
+    Resolve,
+    /// The Place tool: the COMPONENT preview.
+    Place,
+    Instance(Id),
+    /// A picked wire and its net.
+    Wire(Id),
+    /// The Wire tool with nothing picked.
+    Wiring,
+    /// Nothing selected: the sheet.
+    Sheet,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Tool {
     #[default]
@@ -81,15 +111,25 @@ pub struct SchematicEditor {
     drag: Option<(Id, Point)>,
     /// Occurrence being dragged and its previewed position.
     preview: Option<(Id, Point)>,
-    /// Further edits of one Apply, sent one per frame after the first.
-    queued: VecDeque<Operation>,
     report: Option<(u64, Id, InstanceReport)>,
-    show_checks: bool,
     fit_requested: bool,
     observed_revision: Option<u64>,
     nets_revision: Option<u64>,
     nets: Vec<Net>,
-    issues: Vec<pcbcraft_core::Finding>,
+    /// A refusal handed back to one card field: the field's id and the
+    /// words shown under it until the field is edited again.
+    refused: Option<(egui::Id, String)>,
+    /// A property commit on this instance while its purchasing was in this
+    /// state: the next frame says so when the commit left it unresolved.
+    purchasing_watch: Option<(Id, PurchasingState)>,
+    /// The subject's issue slot at one document (revision and project).
+    slot: Option<(u64, usize, Subject, Option<IssueSlot>)>,
+    /// Sheet bounds a locate asked the canvas to bring into view.
+    frame_request: Option<Bounds>,
+    /// The net card lists every member instead of the first eight.
+    all_members: bool,
+    /// The issue slot was clicked: the app shows Issues for the subject.
+    show_issues: bool,
     /// What each occurrence draws, resolved by core once per revision so
     /// selection and hover never re-resolve.
     /// Shared so a frame can hold it while selection mutates the editor.
@@ -136,14 +176,17 @@ impl Default for SchematicEditor {
             scale: 12.0,
             drag: None,
             preview: None,
-            queued: VecDeque::new(),
             report: None,
-            show_checks: false,
             fit_requested: false,
             observed_revision: None,
             nets_revision: None,
             nets: Vec::new(),
-            issues: Vec::new(),
+            refused: None,
+            purchasing_watch: None,
+            slot: None,
+            frame_request: None,
+            all_members: false,
+            show_issues: false,
             placed: Arc::default(),
             placed_bounds: BTreeMap::new(),
             view: Vec2::ZERO,
@@ -349,7 +392,6 @@ impl SchematicEditor {
     fn refresh_connectivity(&mut self, engine: &Engine) {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
-            self.issues = erc::checks(engine.project());
             self.placed = Arc::new(
                 engine
                     .project()
@@ -466,32 +508,155 @@ impl SchematicEditor {
         None
     }
 
+    /// What the Properties card shows now.
+    fn subject(&self, project: &Project) -> Subject {
+        if self.update.is_open() {
+            return Subject::Review;
+        }
+        if self.palette.is_open() {
+            return if matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
+                Subject::Assign
+            } else {
+                Subject::Place
+            };
+        }
+        if self.resolve.is_open() {
+            return Subject::Resolve;
+        }
+        if let Some(id) = self.selected.filter(|id| project.instance(*id).is_some()) {
+            return Subject::Instance(id);
+        }
+        if let Some(id) = self
+            .selected_wire
+            .filter(|id| project.wires.iter().any(|w| w.id == *id))
+        {
+            return Subject::Wire(id);
+        }
+        match self.tool {
+            Tool::Place => Subject::Place,
+            Tool::Wire => Subject::Wiring,
+            Tool::Select => Subject::Sheet,
+        }
+    }
+
     pub fn header(&self, engine: &Engine) -> crate::shell::Header {
         use crate::shell::Header;
         let project = engine.project();
-        if self.update.is_open() {
-            return Header::new("component", "Review change", "Review");
-        }
-        if self.palette.is_open() {
-            if matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
-                return Header::new("component", "Choose part", "Library");
+        match self.subject(project) {
+            Subject::Review => Header::new("component", "Review change", "Review"),
+            Subject::Assign => Header::new("component", "Choose part", "Library"),
+            Subject::Resolve => Header::new("component", "Resolve parts", "Purchasing"),
+            Subject::Place => Header::new("component", "Place component", "Library"),
+            Subject::Instance(id) => {
+                let title = project.instance(id).map_or_else(String::new, |instance| {
+                    // "R1 · 10 kΩ": the first value the symbol shows.
+                    let value = instances::effective_fields(&project.library, instance)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|f| f.show_on_symbol)
+                        .and_then(|f| f.text);
+                    match value {
+                        Some(value) => format!("{} · {value}", instance.designator),
+                        None => instance.designator.clone(),
+                    }
+                });
+                Header::new("component", title, "Instance")
             }
-            return Header::new("component", "Place part", "Library");
+            Subject::Wire(_) => {
+                let name = self
+                    .selected_net(engine)
+                    .and_then(|id| project.net(id))
+                    .map_or_else(|| "Wire".to_owned(), |n| n.name.clone());
+                Header::new("line", name, "Net")
+            }
+            Subject::Wiring => Header::new("line", "Wire", "Tool"),
+            Subject::Sheet => Header::new("sketch", "Sheet", "Schematic"),
         }
-        if self.resolve.is_open() {
-            return Header::new("component", "Resolve parts", "Purchasing");
+    }
+
+    /// The Properties card of the current subject: header, the subject's
+    /// identity (the body scroll resets when it changes), whether it has a
+    /// pinned footer and its issue slot.
+    pub fn inspector_card(&mut self, engine: &Engine) -> Inspector {
+        let subject = self.subject(engine.project());
+        Inspector {
+            header: self.header(engine),
+            subject: egui::Id::new(("schematic-card", subject)),
+            footer: matches!(subject, Subject::Instance(_) | Subject::Wire(_)),
+            issues: self.issue_slot(engine, subject),
         }
-        if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
-            return Header::new("component", instance.designator.clone(), "Instance");
+    }
+
+    /// The issue slot of `subject`: what `project.issues` counts on it in
+    /// the Schematic area ("on R1", "on N3", "on this sheet"), once per
+    /// document revision. Subjects that are commands have no slot.
+    fn issue_slot(&mut self, engine: &Engine, subject: Subject) -> Option<IssueSlot> {
+        let document = Arc::as_ptr(engine.project_arc()) as usize;
+        if let Some((revision, at, cached, slot)) = &self.slot
+            && *revision == engine.revision()
+            && *at == document
+            && *cached == subject
+        {
+            return slot.clone();
         }
-        if let Some(net) = self.selected_net(engine).and_then(|id| project.net(id)) {
-            return Header::new("line", net.name.clone(), "Net");
-        }
-        match self.tool {
-            Tool::Place => Header::new("component", "Place component", "Tool"),
-            Tool::Wire => Header::new("line", "Wire", "Tool"),
-            Tool::Select => Header::new("sketch", "Sheet", "Schematic"),
-        }
+        let project = engine.project();
+        let (scope, label) = match subject {
+            Subject::Instance(id) => (
+                IssueScope::Selection {
+                    objects: vec![ObjectRef::Instance { id }],
+                },
+                project.instance(id).map(|i| format!("on {}", i.designator)),
+            ),
+            Subject::Wire(_) => {
+                let net = self.selected_net(engine).and_then(|id| project.net(id));
+                (
+                    IssueScope::Selection {
+                        objects: net
+                            .map(|n| ObjectRef::Net { id: n.id })
+                            .into_iter()
+                            .collect(),
+                    },
+                    net.map(|n| format!("on {}", n.name)),
+                )
+            }
+            Subject::Sheet => (
+                IssueScope::Area {
+                    area: IssueArea::Schematic,
+                },
+                Some("on this sheet".to_owned()),
+            ),
+            _ => (IssueScope::All, None),
+        };
+        let slot = label.and_then(|label| {
+            let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues { scope }) else {
+                return None;
+            };
+            // The slot counts what the Schematic's Issues show for it.
+            let mut counts = IssueCounts::default();
+            for row in report
+                .rows
+                .iter()
+                .filter(|r| r.area == IssueArea::Schematic)
+            {
+                let count = match row.severity {
+                    Severity::Error => &mut counts.error,
+                    Severity::Warning => &mut counts.warning,
+                    Severity::ToDo => &mut counts.to_do,
+                    Severity::Info => &mut counts.info,
+                };
+                *count = count.saturating_add(1);
+            }
+            Some(IssueSlot { counts, label })
+        });
+        self.slot = Some((engine.revision(), document, subject, slot.clone()));
+        slot
+    }
+
+    /// The issue slot was clicked since the last call: show Issues for the
+    /// card's subject.
+    #[allow(dead_code, reason = "the column's Issues card (slice A1) asks for it")]
+    pub fn take_show_issues(&mut self) -> bool {
+        std::mem::take(&mut self.show_issues)
     }
 
     /// Turn or mirror the selected occurrence on the sheet about its origin:
@@ -551,6 +716,10 @@ impl SchematicEditor {
 
     /// Select an instance, through one of its occurrences when given.
     fn select(&mut self, id: Option<Id>, occurrence: Option<Id>, project: &Project) {
+        if self.selected != id {
+            self.refused = None;
+            self.all_members = false;
+        }
         self.selected = id;
         self.selected_occurrence = occurrence
             .or_else(|| id.and_then(|id| project.occurrences_of(id).next().map(|o| o.id)));
@@ -585,16 +754,49 @@ impl SchematicEditor {
         self.report.as_ref().map(|(_, _, report)| report)
     }
 
+    /// The Properties card's content as the column draws it today: the
+    /// body, then the issue slot and the footer actions at its end. The
+    /// column can instead draw [`Self::inspector_card`] itself and ask
+    /// [`Self::card_region`] for each region, which pins the footer.
     pub fn inspector(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
+        let card = self.inspector_card(engine);
+        let mut output = self.card_region(ui, engine, Region::Body);
+        let slot = card.issues.unwrap_or_default();
+        if kit::issue_line(ui, &slot.counts, &slot.label).clicked() && !slot.is_empty() {
+            self.show_issues = true;
+        }
+        if card.footer {
+            kit::rule(ui);
+            kit::actions(ui, |ui| {
+                output = output
+                    .take()
+                    .or(self.card_region(ui, engine, Region::Footer));
+            });
+        }
+        output
+    }
+
+    /// One region of the Properties card: the scrolling body or the pinned
+    /// footer (object actions; never Apply).
+    pub fn card_region(
+        &mut self,
+        ui: &mut egui::Ui,
+        engine: &Engine,
+        region: Region,
+    ) -> Option<Operation> {
+        match region {
+            Region::Body => self.body(ui, engine),
+            Region::Footer => self.footer(ui, engine),
+        }
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         self.refresh_connectivity(engine);
         if let Some(operation) = self.update.show(ui, engine) {
             return Some(operation);
         }
         if self.update.is_open() {
             return None;
-        }
-        if let Some(queued) = self.queued.pop_front() {
-            return Some(queued);
         }
         let project = engine.project();
         if self.observed_revision != Some(engine.revision()) {
@@ -607,6 +809,7 @@ impl SchematicEditor {
             }
             self.observed_revision = Some(engine.revision());
         }
+        self.say_purchasing(ui.ctx(), project);
         if self
             .component
             .is_none_or(|c| project.library.component(c).is_none())
@@ -623,49 +826,101 @@ impl SchematicEditor {
         {
             self.select(None, None, project);
         }
-        let mut output = None;
-        if self.palette.is_open() && matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
-            if let Some(request) = self.palette.preview(ui, engine) {
-                self.palette.close();
-                self.new_part = Some(request);
-            }
-            return None;
-        }
-        if self.resolve.is_open() {
-            match self.resolve.show(ui, engine) {
-                Some(ResolveAction::Choose { query, instances }) => {
-                    self.palette.open_assign(query, instances);
+        match self.subject(project) {
+            Subject::Review => None,
+            Subject::Assign => {
+                if let Some(request) = self.palette.preview(ui, engine) {
+                    self.palette.close();
+                    self.new_part = Some(request);
                 }
-                Some(ResolveAction::Select(id)) => {
-                    self.resolve.close();
-                    self.select(Some(id), None, project);
-                }
-                Some(ResolveAction::NewPart { component, values }) => {
-                    self.new_part = Some((component.id, values));
-                }
-                Some(ResolveAction::Close) | None => {}
+                None
             }
-            return None;
-        }
-        if self.tool == Tool::Place {
-            if self.palette.is_open() {
-                let _ = self.palette.preview(ui, engine);
-            } else {
-                self.place_section(ui, project);
+            Subject::Resolve => {
+                match self.resolve.show(ui, engine) {
+                    Some(ResolveAction::Choose { query, instances }) => {
+                        self.palette.open_assign(query, instances);
+                    }
+                    Some(ResolveAction::Select(id)) => {
+                        self.resolve.close();
+                        self.select(Some(id), None, project);
+                    }
+                    Some(ResolveAction::NewPart { component, values }) => {
+                        self.new_part = Some((component.id, values));
+                    }
+                    Some(ResolveAction::Close) | None => {}
+                }
+                None
+            }
+            Subject::Place => {
+                if self.palette.is_open() {
+                    let _ = self.palette.preview(ui, engine);
+                } else {
+                    self.place_section(ui, engine);
+                }
+                None
+            }
+            Subject::Instance(id) => {
+                let instance = project.instance(id)?;
+                self.instance_sections(ui, engine, instance)
+            }
+            Subject::Wire(id) => {
+                let wire = project.wires.iter().find(|w| w.id == id)?;
+                self.net_section(ui, engine, wire)
+            }
+            Subject::Wiring => {
+                self.wiring_section(ui, project);
+                None
+            }
+            Subject::Sheet => {
+                self.sheet_section(ui, project);
+                None
             }
         }
-        if let Some(instance) = self.selected.and_then(|id| project.instance(id)) {
-            output = output.or(self.instance_sections(ui, engine, instance));
-        } else if let Some(wire) = self
-            .selected_wire
-            .and_then(|id| project.wires.iter().find(|w| w.id == id))
+    }
+
+    /// The pinned footer's object actions: Remove… for an instance,
+    /// Disconnect wire… for a wire. Both open the update review.
+    fn footer(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
+        let change = match self.subject(engine.project()) {
+            Subject::Instance(instance) => ui_kit::button(ui, "Remove…", Button::Normal)
+                .on_hover_text(
+                    "Review what removing it changes on the schematic, the PCB and its tracks",
+                )
+                .clicked()
+                .then_some(Change::Instance {
+                    edit: InstanceChange::Remove { instance },
+                }),
+            Subject::Wire(wire) => ui_kit::button(ui, "Disconnect wire…", Button::Normal)
+                .on_hover_text("Review what disconnecting it changes before it applies")
+                .clicked()
+                .then_some(Change::Schematic {
+                    command: SchematicCommand::Disconnect { wire },
+                }),
+            _ => None,
+        }?;
+        self.stage_update(engine, change)
+    }
+
+    /// After a property commit: a To do toast when it left the instance's
+    /// purchasing unresolved, with Undo.
+    fn say_purchasing(&mut self, ctx: &egui::Context, project: &Project) {
+        let Some((id, before)) = self.purchasing_watch.take() else {
+            return;
+        };
+        if before != PurchasingState::Resolved {
+            return;
+        }
+        if let Some(instance) = project.instance(id)
+            && pcbcraft_core::completeness::purchasing(project, instance).state
+                == PurchasingState::Unresolved
         {
-            output = output.or(self.net_section(ui, engine, wire));
-        } else if self.tool != Tool::Place {
-            self.sheet_section(ui, project);
+            crate::kit::toast::post(
+                ctx,
+                crate::kit::severity::Level::ToDo,
+                format!("Purchasing unresolved for {}", instance.designator),
+                vec![crate::kit::toast::ToastAction::Undo],
+            );
         }
-        self.checks_section(ui, project);
-        output
     }
 
     pub fn canvas(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
@@ -699,6 +954,9 @@ impl SchematicEditor {
                 self.scale = 12.0;
             }
             self.fit_requested = false;
+        }
+        if let Some(bounds) = self.frame_request.take() {
+            self.frame_bounds(bounds, rect);
         }
         let mut output = None;
         if response.hovered() {
@@ -1061,6 +1319,9 @@ impl SchematicEditor {
                 position,
             });
         }
+        if let Some(hint) = canvas_hint(self, project) {
+            paint_canvas_hint(&painter, rect, &hint);
+        }
         output
     }
 
@@ -1224,33 +1485,244 @@ fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     p.distance(a + delta * t)
 }
 
-/// The object a check row selects on the sheet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Locate {
-    Instance(Id),
-    Net(Id),
+/// The one-line canvas hint for the current tool and selection, if any.
+/// The card never repeats it.
+fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
+    if editor.update.is_open() || editor.palette.is_open() || editor.resolve.is_open() {
+        return None;
+    }
+    Some(match editor.tool {
+        Tool::Wire if editor.wire_from.is_some() => {
+            "Click a second terminal · Esc cancels".to_owned()
+        }
+        Tool::Wire => "Click a terminal to start a wire".to_owned(),
+        Tool::Place => match editor.component.and_then(|c| project.library.component(c)) {
+            Some(component) => format!("Click to place {} · Esc ends", component.meta.name),
+            None => "Publish a component to place it".to_owned(),
+        },
+        Tool::Select if editor.selected.is_some() => {
+            "Drag to move · Cmd+R rotates · Shift+X mirrors".to_owned()
+        }
+        Tool::Select => "Click to select · drag to move · P places".to_owned(),
+    })
 }
 
-/// The first instance (directly, or through a terminal, unit, pad or
-/// property) a finding names, else its first net.
-fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Locate> {
-    use pcbcraft_core::diagnostics::ObjectRef;
-    objects
-        .iter()
-        .find_map(|o| match o {
-            ObjectRef::Instance { id }
-            | ObjectRef::Pad { instance: id, .. }
-            | ObjectRef::Unit { instance: id, .. }
-            | ObjectRef::Property { instance: id, .. } => Some(Locate::Instance(*id)),
-            ObjectRef::Terminal { endpoint } => Some(Locate::Instance(endpoint.instance)),
-            _ => None,
+/// Paint `text` as one dim line at the canvas's bottom-left corner, cut
+/// short of the centred fit button.
+fn paint_canvas_hint(painter: &egui::Painter, rect: Rect, text: &str) {
+    let t = Tokens::get();
+    let mut clip = rect;
+    clip.max.x = (rect.center().x - 3.0 * t.space_12).max(rect.left());
+    painter.with_clip_rect(clip).text(
+        rect.left_bottom() + Vec2::new(t.space_12, -t.space_12),
+        egui::Align2::LEFT_BOTTOM,
+        text,
+        egui::FontId::proportional(t.font_small),
+        t.text_dim,
+    );
+}
+
+impl crate::issues::Locate for SchematicEditor {
+    /// Select what `refs` name on the sheet and bring it into view: the
+    /// first instance (directly, or through a pad, unit, property, terminal
+    /// or symbol occurrence), else the first net. The view frames every
+    /// named symbol, terminal and net pin. Selection and view only; the
+    /// document is never touched.
+    fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
+        self.refresh_connectivity(engine);
+        let project = engine.project();
+        let mut first: Option<(Id, Option<Id>)> = None;
+        let mut net = None;
+        let mut occurrences: Vec<Id> = Vec::new();
+        let mut points: Vec<Point> = Vec::new();
+        for object in refs {
+            let (instance, unit) = match *object {
+                ObjectRef::Instance { id }
+                | ObjectRef::Pad { instance: id, .. }
+                | ObjectRef::Property { instance: id, .. } => (Some(id), None),
+                ObjectRef::Unit { instance, unit } => (Some(instance), Some(unit)),
+                ObjectRef::Terminal { endpoint } => {
+                    points.extend(schematic::pin_position(project, endpoint));
+                    (Some(endpoint.instance), None)
+                }
+                ObjectRef::Occurrence { id } => {
+                    if let Some(o) = project.occurrence(id) {
+                        first = first.or(Some((o.instance, Some(o.id))));
+                        occurrences.push(o.id);
+                    }
+                    (None, None)
+                }
+                ObjectRef::Net { id } => {
+                    net = net.or(project.net(id).map(|n| n.id));
+                    (None, None)
+                }
+                _ => (None, None),
+            };
+            if let Some(id) = instance.filter(|id| project.instance(*id).is_some()) {
+                let of: Vec<Id> = project
+                    .occurrences_of(id)
+                    .filter(|o| unit.is_none_or(|u| o.unit == u))
+                    .map(|o| o.id)
+                    .collect();
+                first = first.or(Some((id, of.first().copied())));
+                occurrences.extend(of);
+            }
+        }
+        if let Some(n) = net.and_then(|id| project.net(id)) {
+            points.extend(
+                n.terminals
+                    .iter()
+                    .filter_map(|e| schematic::pin_position(project, *e)),
+            );
+        }
+        if first.is_none() && net.is_none() {
+            return false;
+        }
+        let bounds = occurrences
+            .iter()
+            .filter_map(|o| self.placed_bounds.get(o).copied())
+            .chain(points.into_iter().map(Bounds::point))
+            .reduce(Bounds::union);
+        self.palette.close();
+        self.resolve.close();
+        self.wire_from = None;
+        match (first, net) {
+            (Some((id, occurrence)), _) => {
+                self.select(Some(id), occurrence, project);
+                self.tool = Tool::Select;
+            }
+            (None, Some(net)) => self.select_net(net, project),
+            (None, None) => {}
+        }
+        self.frame_request = bounds;
+        true
+    }
+}
+
+impl SchematicEditor {
+    /// Bring a located object's sheet `bounds` into view: centred, and
+    /// zoomed out only as far as it needs to fit.
+    fn frame_bounds(&mut self, bounds: Bounds, rect: Rect) {
+        const MARGIN_MM: f64 = 5.0;
+        let b = bounds.inflated(MARGIN_MM);
+        let width = (b.max[0] - b.min[0]).max(f64::EPSILON) as f32;
+        let height = (b.max[1] - b.min[1]).max(f64::EPSILON) as f32;
+        let fit = (rect.width() / width).min(rect.height() / height);
+        if fit < self.scale {
+            self.scale = fit.clamp(2.0, 60.0);
+        }
+        let [x, y] = b.center();
+        // Sheet y is up, screen y down.
+        self.pan = -Vec2::new(x as f32, -(y as f32)) * self.scale;
+    }
+
+    /// The Wire tool's card: where the wire starts, and one hint line.
+    fn wiring_section(&mut self, ui: &mut egui::Ui, project: &Project) {
+        kit::section(ui, "wiring", "Wire", true, None, |ui| {
+            let start = self
+                .wire_from
+                .map_or_else(|| "Not started".to_owned(), |e| endpoint_label(project, e));
+            kit::value_row(ui, "Start", &start);
+            kit::hint(
+                ui,
+                "Crossing wires are not joined",
+                "A wire joins exactly the two terminals it was drawn between.",
+            );
+        });
+    }
+}
+
+/// What a live card field did this frame (docs/sidebar-ia.md, principle
+/// 13): nothing, a commit of its text, or Esc back to the stored value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Live {
+    Idle,
+    Commit,
+    Revert,
+}
+
+/// One live text field after its row: Enter or focus loss commits text
+/// that `changed`, Esc reverts it, and `invalid` text is marked under the
+/// field and never commits. A refusal handed back for the field (its
+/// operation was marked with [`Origin::Field`]) shows under it until the
+/// field is edited again.
+fn live(
+    ui: &mut egui::Ui,
+    response: &egui::Response,
+    refused: &mut Option<(egui::Id, String)>,
+    changed: bool,
+    invalid: Option<&str>,
+) -> Live {
+    if let Some(message) = refusal::claim(ui.ctx(), Origin::Field(response.id)) {
+        *refused = Some((response.id, message));
+    }
+    let own = |r: &Option<(egui::Id, String)>| r.as_ref().is_some_and(|(id, _)| *id == response.id);
+    let state = if left_focus(ui, response) {
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            Live::Revert
+        } else if changed && invalid.is_none() {
+            Live::Commit
+        } else {
+            Live::Idle
+        }
+    } else {
+        Live::Idle
+    };
+    if (response.changed() || state != Live::Idle) && own(refused) {
+        *refused = None;
+    }
+    if let Some(message) = invalid.filter(|_| state != Live::Revert) {
+        kit::field_error(ui, response, message, true);
+    } else if let Some((_, message)) = refused.as_ref().filter(|_| own(refused)) {
+        kit::field_error(ui, response, message, true);
+    }
+    state
+}
+
+/// Whether the field gave up keyboard focus this frame. egui reports a
+/// focus surrendered by Enter or Esc on that frame and again on the next,
+/// so the repeat is ignored: one edit commits once.
+fn left_focus(ui: &egui::Ui, response: &egui::Response) -> bool {
+    let key = response.id.with("live-left");
+    let frame = ui.ctx().cumulative_frame_nr();
+    let last = ui.data(|d| d.get_temp::<u64>(key));
+    if !response.lost_focus() {
+        return false;
+    }
+    ui.data_mut(|d| d.insert_temp(key, frame));
+    last.is_none_or(|last| last.saturating_add(1) != frame)
+}
+
+/// Whether keyboard focus left the controls inside `rect` this frame, and
+/// whether it left by Esc: `Some(true)` reverts, `Some(false)` commits.
+/// Moving between controls of the row keeps it, so a pair commits together.
+fn focus_left(ui: &egui::Ui, key: egui::Id, rect: Rect) -> Option<bool> {
+    let ctx = ui.ctx();
+    let inside = ctx
+        .memory(|m| m.focused())
+        .and_then(|id| ctx.read_response(id))
+        .is_some_and(|r| rect.contains(r.rect.center()));
+    let was = ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+    ui.data_mut(|d| d.insert_temp(key, inside));
+    (was && !inside).then(|| ui.input(|i| i.key_pressed(egui::Key::Escape)))
+}
+
+/// A terminal as people name it: the instance's designator and the
+/// terminal's name ("R1.2", "U3.VOUT").
+fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
+    let Some(instance) = project.instance(endpoint.instance) else {
+        return format!("?.{}", endpoint.terminal);
+    };
+    let name = instances::resolve(&project.library, instance)
+        .ok()
+        .and_then(|r| {
+            r.component
+                .definition
+                .terminal(endpoint.terminal)
+                .map(|t| t.name.clone())
         })
-        .or_else(|| {
-            objects.iter().find_map(|o| match o {
-                ObjectRef::Net { id } => Some(Locate::Net(*id)),
-                _ => None,
-            })
-        })
+        .unwrap_or_else(|| endpoint.terminal.to_string());
+    format!("{}.{name}", instance.designator)
 }
 
 #[cfg(test)]
@@ -1361,7 +1833,10 @@ mod tests {
             .into_iter()
             .find(|(text, _)| text == label)
             .map(|(_, p)| p)
-            .ok_or_else(|| format!("missing button {label}"))?;
+            .ok_or_else(|| {
+                let all: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+                format!("missing button {label} in {all:?}")
+            })?;
         let press = |pressed| egui::Event::PointerButton {
             pos: point,
             button: egui::PointerButton::Primary,
@@ -1431,8 +1906,41 @@ mod tests {
         Ok(())
     }
 
+    fn press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// Click the field showing `shown` and replace its text with `text`
+    /// (nothing is sent while typing); returns the frame's output.
+    fn type_into(
+        editor: &mut SchematicEditor,
+        engine: &Engine,
+        ctx: &egui::Context,
+        shown: &str,
+        text: &str,
+    ) -> Result<(egui::FullOutput, Option<Operation>), Box<dyn std::error::Error>> {
+        assert!(click(editor, engine, ctx, shown)?.is_none());
+        let mut events = vec![press(egui::Key::A, egui::Modifiers::COMMAND)];
+        if text.is_empty() {
+            events.push(press(egui::Key::Backspace, egui::Modifiers::NONE));
+        } else {
+            events.push(egui::Event::Text(text.into()));
+        }
+        Ok(frame(editor, engine, ctx, events))
+    }
+
+    /// Principle 13: a property commits live on Enter as one
+    /// `instance.set_properties` edit; text the core parser rejects is
+    /// marked under its field and never sent; Esc reverts; an empty box
+    /// returns the field to its default. There is no Apply.
     #[test]
-    fn typed_fields_are_edited_through_set_properties_with_core_diagnostics()
+    fn typed_fields_commit_live_through_set_properties_with_core_diagnostics()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = Engine::demo()?;
         let ctx = egui::Context::default();
@@ -1444,56 +1952,222 @@ mod tests {
         let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
         assert!(labels.iter().any(|t| t == "Resistance"), "{labels:?}");
         assert!(labels.iter().any(|t| t == "10 kΩ"), "{labels:?}");
-        assert_eq!(editor.draft_fields[0].text, "10 kΩ");
+        for gone in ["Apply", "Revert", "CHECKS"] {
+            assert!(!labels.iter().any(|t| t == gone), "{gone} in {labels:?}");
+        }
         assert_eq!(symbol_values(&editor, &engine, r1), vec!["10 kΩ"]);
-        // Nothing changed yet: Apply is disabled and sends nothing.
-        assert!(click(&mut editor, &engine, &ctx, "Apply")?.is_none());
 
-        // Text of another kind shows the core diagnostic before sending,
-        // and the engine rejects it without changing the document.
-        editor.draft_fields[0].text = "10 µF".into();
-        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        // Text of another kind is marked under the field with the core
+        // diagnostic; neither typing nor Enter sends it.
+        let (output, sent) = type_into(&mut editor, &engine, &ctx, "10 kΩ", "10 µF")?;
+        assert!(sent.is_none());
         assert!(
             shown(&output)
                 .iter()
                 .any(|(t, _)| t.contains("µF") && t.contains("not a unit")),
             "no inline diagnostic"
         );
-        let rejected =
-            click(&mut editor, &engine, &ctx, "Apply")?.ok_or("no operation for invalid text")?;
-        let before = engine.document().clone();
         let revision = engine.revision();
-        assert!(engine.apply(revision, rejected).is_err());
-        assert_eq!(engine.document(), &before);
+        let (output, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert!(sent.is_none(), "invalid text never commits: {sent:?}");
         assert_eq!(engine.revision(), revision);
+        assert!(
+            shown(&output).iter().any(|(t, _)| t.contains("not a unit")),
+            "still marked after Enter"
+        );
+        // Esc puts the stored value back.
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(sent.is_none());
+        let (_, sent) = type_into(&mut editor, &engine, &ctx, "10 µF", "1k")?;
+        assert!(sent.is_none());
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(sent.is_none(), "Esc sends nothing");
+        assert_eq!(editor.draft_fields[0].text, "10 kΩ");
 
-        editor.draft_fields[0].text = "4.7k".into();
-        let operation = click(&mut editor, &engine, &ctx, "Apply")?.ok_or("no operation")?;
+        type_into(&mut editor, &engine, &ctx, "10 kΩ", "4.7k")?;
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let operation = sent.ok_or("Enter sent nothing")?;
         let Operation::Instance(InstanceCommand::SetProperties { instance, edits }) = &operation
         else {
             return Err("properties bypassed instance.set_properties".into());
         };
         assert_eq!(*instance, r1);
         assert_eq!(
-            edits[0].input,
-            PropertyInput::Text("4.7k".into()),
-            "text is parsed in core"
+            edits,
+            &[pcbcraft_core::fields::PropertyEdit {
+                field: editor.draft_fields[0].field,
+                input: PropertyInput::Text("4.7k".into()),
+            }],
+            "one field, parsed in core"
         );
+        let before = engine.project().clone();
         engine.apply(engine.revision(), operation)?;
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         assert!(shown(&output).iter().any(|(t, _)| t == "4.7 kΩ"));
         assert_eq!(symbol_values(&editor, &engine, r1), vec!["4.7 kΩ"]);
         assert_eq!(editor.draft_fields[0].text, "4.7 kΩ");
+        engine.undo()?;
+        assert_eq!(engine.project(), &before, "one commit is one undo step");
+        engine.redo()?;
+        frame(&mut editor, &engine, &ctx, vec![]);
         // Clearing the box returns the field to its default.
-        editor.draft_fields[0].text.clear();
-        let operation = click(&mut editor, &engine, &ctx, "Apply")?.ok_or("no operation")?;
-        engine.apply(engine.revision(), operation)?;
+        type_into(&mut editor, &engine, &ctx, "4.7 kΩ", "")?;
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        engine.apply(engine.revision(), sent.ok_or("clearing sent nothing")?)?;
         assert!(
             engine
                 .project()
                 .instance(r1)
                 .is_some_and(|i| i.properties.is_empty())
         );
+        Ok(())
+    }
+
+    /// The designator commits on Enter; a refusal (a designator in use)
+    /// comes back to the field and shows under it, the typed text is kept
+    /// and the document is unchanged; editing the field clears it.
+    #[test]
+    fn a_refused_designator_shows_under_its_field() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let r1 = engine.project().instances[0].id;
+        let mut editor = SchematicEditor::default();
+        editor.select(Some(r1), None, engine.project());
+        type_into(&mut editor, &engine, &ctx, "R1", "R2")?;
+        // As the app does: the operation and the origin marked with it.
+        let (mut sent, mut origin) = (None, None);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(700.0, 1400.0))),
+                events: vec![press(egui::Key::Enter, egui::Modifiers::NONE)],
+                ..Default::default()
+            },
+            |ui| {
+                sent = kit::form(ui, |ui| editor.inspector(ui, &engine));
+                origin = crate::refusal::take_mark(ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        let operation = sent.ok_or("Enter sent nothing")?;
+        assert!(matches!(
+            &operation,
+            Operation::Instance(InstanceCommand::SetDesignator { designator, .. }) if designator == "R2"
+        ));
+        let origin = origin.ok_or("the field marked no origin")?;
+        assert!(matches!(origin, Origin::Field(_)), "{origin:?}");
+        let before = engine.project().clone();
+        let error = engine
+            .apply(engine.revision(), operation)
+            .err()
+            .ok_or("a designator in use was accepted")?;
+        assert_eq!(engine.project(), &before);
+        let message = crate::refusal::shown_error(&error);
+        // The app hands it back during the frame that applied it.
+        let mut error = Some(error);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            if let Some(error) = error.take() {
+                crate::refusal::hand_back(
+                    ui.ctx(),
+                    crate::refusal::Refused { origin, error },
+                    false,
+                );
+            }
+        });
+        output.textures_delta.clear();
+        let (output, again) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            again.is_none(),
+            "a refused edit is not sent again: {again:?}"
+        );
+        let texts: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        assert!(texts.contains(&message), "{message} in {texts:?}");
+        assert_eq!(editor.draft_reference, "R2", "the typed text is kept");
+        // Unclaimed refusals would toast; this one was claimed.
+        assert!(crate::refusal::unclaimed(&ctx).is_empty());
+        let (output, _) = type_into(&mut editor, &engine, &ctx, "R2", "R9")?;
+        assert!(
+            !shown(&output).iter().any(|(t, _)| *t == message),
+            "editing clears the refusal"
+        );
+        Ok(())
+    }
+
+    /// The position pair commits together: moving from X to Y sends
+    /// nothing, leaving the pair sends one `symbol.move_unit` with both.
+    #[test]
+    fn the_position_pair_commits_together_when_focus_leaves_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let r1 = engine.project().instances[0].id;
+        let occurrence = engine.project().occurrences_of(r1).next().ok_or("R1")?.id;
+        let mut editor = SchematicEditor::default();
+        editor.select(Some(r1), None, engine.project());
+        let (_, sent) = type_into(&mut editor, &engine, &ctx, "-12 mm", "-10")?;
+        assert!(sent.is_none());
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Tab, egui::Modifiers::NONE)],
+        );
+        assert!(sent.is_none(), "X to Y stays in the pair: {sent:?}");
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![
+                press(egui::Key::A, egui::Modifiers::COMMAND),
+                egui::Event::Text("5".into()),
+            ],
+        );
+        assert!(sent.is_none(), "typing sends nothing: {sent:?}");
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        let mut sent: Vec<Operation> = sent.into_iter().collect();
+        sent.extend(frame(&mut editor, &engine, &ctx, vec![]).1);
+        let [
+            Operation::Schematic(SchematicCommand::MoveUnit {
+                occurrence: o,
+                position,
+            }),
+        ] = &sent[..]
+        else {
+            return Err(format!("expected one move, got {sent:?}").into());
+        };
+        assert_eq!(*o, occurrence);
+        assert_eq!(*position, [-10.0, 5.0]);
         Ok(())
     }
 
@@ -1620,8 +2294,16 @@ mod tests {
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
         assert!(labels.iter().any(|t| t == "PIN FUNCTIONS"), "{labels:?}");
+        // Folded by default; its header opens it.
+        assert!(
+            !labels.iter().any(|t| t == "Default (passive)"),
+            "{labels:?}"
+        );
+        assert!(click(&mut editor, &engine, &ctx, "PIN FUNCTIONS")?.is_none());
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
         // Terminal 2 stays fixed and is listed read-only.
-        assert!(labels.iter().any(|t| t == "Fixed functions"), "{labels:?}");
+        assert!(labels.iter().any(|t| t == "passive · fixed"), "{labels:?}");
 
         // Open the dropdown, then pick the alternative function.
         assert!(click(&mut editor, &engine, &ctx, "Default (passive)")?.is_none());
@@ -1779,9 +2461,12 @@ mod tests {
             labels.iter().any(|t| t == "IN THIS PROJECT  3"),
             "{labels:?}"
         );
-        // The preview follows the highlighted (first) row.
-        assert_eq!(editor.header(&engine).title, "Place part");
-        assert!(labels.iter().any(|t| t == "r1 (latest)"), "{labels:?}");
+        // The COMPONENT preview follows the highlighted (first) row.
+        assert_eq!(editor.header(&engine).title, "Place component");
+        assert!(
+            labels.iter().any(|t| t == "EX-R0603-10K0-F · r1 (latest)"),
+            "{labels:?}"
+        );
 
         let (output, _) = workspace_frame(
             &mut editor,
@@ -1796,8 +2481,15 @@ mod tests {
             .component(second)
             .map(|c| c.meta.name.clone());
         assert_eq!(name.as_deref(), Some("EX-R0603-1M00-J"));
-        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
-        assert!(labels.iter().any(|t| t == "1 MΩ"), "preview {labels:?}");
+        let preview: Vec<String> = shown(&output)
+            .into_iter()
+            .filter(|(_, p)| p.x > 820.0)
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            preview.iter().any(|t| t.starts_with("1 MΩ")),
+            "preview {preview:?}"
+        );
 
         let (_, operations) = workspace_frame(
             &mut editor,
@@ -2282,6 +2974,282 @@ mod tests {
             labels.iter().any(|t| t == "↑↓ move   Esc close"),
             "{labels:?}"
         );
+        Ok(())
+    }
+
+    /// One card, one subject: the sheet, an instance and a wire each name
+    /// their own subject; an instance and a wire have a footer (Remove…,
+    /// Disconnect wire…), the sheet none; the issue slot counts what
+    /// `project.issues` reports on the subject in the Schematic area.
+    #[test]
+    fn each_subject_has_its_own_card_footer_and_issue_slot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::issues::{IssueArea, IssueScope};
+        let (engine, r3) = with_unwired()?;
+        let mut editor = SchematicEditor::default();
+        let sheet = editor.inspector_card(&engine);
+        assert_eq!(sheet.header.title, "Sheet");
+        assert!(!sheet.footer);
+        let QueryResult::Issues(report) = engine.query(Query::Issues {
+            scope: IssueScope::Area {
+                area: IssueArea::Schematic,
+            },
+        })?
+        else {
+            return Err("not an issue report".into());
+        };
+        let slot = sheet.issues.ok_or("the sheet has a slot")?;
+        assert_eq!(slot.counts, report.counts);
+        assert_eq!(slot.label, "on this sheet");
+        assert!(!slot.is_empty(), "the unwired R3 has issues");
+
+        editor.select_instance(Some(r3), engine.project());
+        let card = editor.inspector_card(&engine);
+        assert_eq!(card.header.kind, "Instance");
+        assert!(card.header.title.starts_with("R3"), "{}", card.header.title);
+        assert!(card.footer);
+        assert_ne!(card.subject, sheet.subject);
+        let slot = card.issues.ok_or("an instance has a slot")?;
+        assert_eq!(slot.label, "on R3");
+        let on_r3 = report
+            .rows
+            .iter()
+            .filter(|r| {
+                r.objects().any(|o| match o {
+                    ObjectRef::Instance { id }
+                    | ObjectRef::Pad { instance: id, .. }
+                    | ObjectRef::Unit { instance: id, .. }
+                    | ObjectRef::Property { instance: id, .. } => *id == r3,
+                    ObjectRef::Terminal { endpoint } => endpoint.instance == r3,
+                    _ => false,
+                })
+            })
+            .count();
+        let c = slot.counts;
+        assert_eq!(c.error + c.warning + c.to_do + c.info, on_r3);
+        assert!(on_r3 > 0);
+
+        let wire = engine.project().wires[0].id;
+        let net = engine
+            .project()
+            .net_of(engine.project().wires[0].from)
+            .ok_or("net")?;
+        editor.select(None, None, engine.project());
+        editor.selected_wire = Some(wire);
+        let card = editor.inspector_card(&engine);
+        assert_eq!(card.header.kind, "Net");
+        assert_eq!(card.header.title, net.name);
+        assert!(card.footer);
+        assert_eq!(
+            card.issues.ok_or("a net has a slot")?.label,
+            format!("on {}", net.name)
+        );
+
+        editor.on_tool("place", &engine);
+        let card = editor.inspector_card(&engine);
+        assert_eq!(card.header.title, "Place component");
+        assert!(!card.footer);
+        assert!(card.issues.is_none(), "a command has no slot");
+        Ok(())
+    }
+
+    /// The footer's Remove… and Disconnect wire… open the update review;
+    /// nothing changes until it is applied.
+    #[test]
+    fn footer_actions_open_the_review() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let before = engine.project().clone();
+        let mut editor = SchematicEditor::default();
+        editor.select_instance(Some(engine.project().instances[0].id), engine.project());
+        assert!(click(&mut editor, &engine, &ctx, "Remove…")?.is_none());
+        assert!(editor.update.is_open());
+        assert_eq!(editor.header(&engine).title, "Review change");
+        let mut editor = SchematicEditor {
+            selected_wire: Some(engine.project().wires[0].id),
+            ..Default::default()
+        };
+        assert!(click(&mut editor, &engine, &ctx, "Disconnect wire…")?.is_none());
+        assert!(editor.update.is_open());
+        assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    /// The Net card names its members by designator and terminal; a member
+    /// selects its instance. The WIRE section names both ends.
+    #[test]
+    fn the_net_card_lists_members_that_select_their_instance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let wire = engine.project().wires[0].clone();
+        let mut editor = SchematicEditor {
+            selected_wire: Some(wire.id),
+            ..Default::default()
+        };
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
+        let from = endpoint_label(engine.project(), wire.from);
+        let to = endpoint_label(engine.project(), wire.to);
+        for text in [
+            "NET",
+            "Members",
+            "WIRE",
+            "From",
+            "To",
+            from.as_str(),
+            to.as_str(),
+        ] {
+            assert!(labels.iter().any(|t| t == text), "{text} in {labels:?}");
+        }
+        assert!(!from.contains('?'), "{from}");
+        // The member row (the second copy of the label; the first is From).
+        let rows: Vec<Pos2> = shown(&output)
+            .into_iter()
+            .filter(|(t, _)| *t == to)
+            .map(|(_, p)| p)
+            .collect();
+        let at = *rows.first().ok_or("no member row")?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), press(true)],
+        );
+        frame(&mut editor, &engine, &ctx, vec![press(false)]);
+        assert_eq!(editor.selected_instance(), Some(wire.to.instance));
+        Ok(())
+    }
+
+    /// The sheet card counts unresolved parts and opens Resolve parts; the
+    /// Checks section and the ribbon's Check are gone (findings are in
+    /// Issues); help is the canvas hint, not card text.
+    #[test]
+    fn the_sheet_card_counts_unresolved_parts_and_has_no_checks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let texts = shown(&output);
+        let panel: Vec<&str> = texts
+            .iter()
+            .filter(|(_, p)| p.x > 820.0)
+            .map(|(t, _)| t.as_str())
+            .collect();
+        let unresolved = sheet_card::unresolved_parts(engine.project());
+        assert_eq!(
+            unresolved,
+            engine.project().instances.len(),
+            "demo has no Parts"
+        );
+        assert!(panel.contains(&"Parts"), "{panel:?}");
+        let count = format!("{unresolved} unresolved");
+        assert!(panel.contains(&count.as_str()), "{panel:?}");
+        assert!(!panel.contains(&"CHECKS"), "{panel:?}");
+        assert!(
+            texts
+                .iter()
+                .any(|(t, p)| p.x < 800.0 && t == "Click to select · drag to move · P places"),
+            "no canvas hint"
+        );
+        let ribbon = editor.ribbon(&engine);
+        assert!(
+            ribbon
+                .groups
+                .iter()
+                .flat_map(|g| &g.tools)
+                .all(|t| t.id != "check"),
+            "Check moved to Issues"
+        );
+        assert!(click(&mut editor, &engine, &ctx, "Resolve parts…")?.is_none());
+        assert!(editor.resolve.is_open());
+        Ok(())
+    }
+
+    /// A located instance is brought into view: the canvas centres it.
+    #[test]
+    fn a_located_instance_is_framed_on_the_canvas() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::issues::Locate;
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let r2 = engine
+            .project()
+            .instance_by_designator("R2")
+            .ok_or("R2")?
+            .id;
+        let occurrence = engine.project().occurrences_of(r2).next().ok_or("R2")?.id;
+        let bounds = *editor.placed_bounds.get(&occurrence).ok_or("bounds")?;
+        assert!(editor.locate(&engine, &[ObjectRef::Instance { id: r2 }]));
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let [x, y] = bounds.center();
+        let screen = Vec2::new(x as f32, -(y as f32)) * editor.scale + editor.pan;
+        assert!(screen.length() < 1.0, "R2 is {screen:?} from the centre");
+        assert_eq!(editor.selected_instance(), Some(r2));
+        Ok(())
+    }
+
+    /// With the palette closed, the Place tool's card previews the armed
+    /// COMPONENT and offers Find component…, which reopens the palette; the
+    /// canvas hint names what a click places.
+    #[test]
+    fn the_armed_place_card_previews_the_component() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        editor.on_tool("place", &engine);
+        editor.palette.close();
+        // The card arms the latest component on its first frame.
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let texts = shown(&output);
+        let panel: Vec<&str> = texts
+            .iter()
+            .filter(|(_, p)| p.x > 820.0)
+            .map(|(t, _)| t.as_str())
+            .collect();
+        for text in ["COMPONENT", "Resistor · r1 (latest)", "Find component…"] {
+            assert!(panel.contains(&text), "{text} in {panel:?}");
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|(t, p)| p.x < 800.0 && t == "Click to place Resistor · Esc ends"),
+            "no canvas hint"
+        );
+        assert_eq!(editor.header(&engine).title, "Place component");
+        let at = texts
+            .iter()
+            .find(|(t, _)| t == "Find component…")
+            .map(|(_, p)| *p)
+            .ok_or("no button")?;
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::PointerMoved(at), press(true)],
+        );
+        workspace_frame(&mut editor, &engine, &ctx, vec![press(false)]);
+        assert!(editor.palette.is_open());
         Ok(())
     }
 }

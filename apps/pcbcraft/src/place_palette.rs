@@ -779,9 +779,10 @@ impl PlacePalette {
             .collect()
     }
 
-    /// The highlighted result in the properties card, from `library.inspect`.
-    /// In assign mode with no matching Part it offers New Part…, returned
-    /// as the component lineage and the values to rate.
+    /// The COMPONENT preview of the highlighted result in the properties
+    /// card, from `library.inspect`. In assign mode with no matching Part
+    /// it offers New Part…, returned as the component lineage and the
+    /// values to rate.
     pub fn preview(
         &mut self,
         ui: &mut Ui,
@@ -807,20 +808,39 @@ impl PlacePalette {
                 .group_names()
                 .get(self.group(&hit.entry).wrapping_sub(1))
                 .cloned();
-            folder_sections(ui, &hit.entry, source.as_deref().unwrap_or("Library"));
+            folder_preview(ui, &hit.entry, source.as_deref().unwrap_or("Library"));
             return None;
         }
         let Some(component) = self.highlighted() else {
-            kit::section(ui, "palette-preview", "Part", true, None, |ui| {
-                kit::note(
+            kit::section(ui, "palette-component", "Component", true, None, |ui| {
+                kit::hint(
                     ui,
-                    "Type to find a published component. Field values filter by \
-                     meaning: res>=10k, tol<=1%, C:1n..100n. pkg: matches package \
-                     names only.",
+                    "Type to find a component: 10k 0603, res>=10k, tol<=1%",
+                    "Field values filter by meaning: res>=10k, tol<=1%, C:1n..100n. \
+                     pkg: matches package names only.",
                 );
             });
             return None;
         };
+        let update = self
+            .hits()
+            .get(self.highlighted)
+            .and_then(|h| h.entry.update.clone().map(|u| (u, h.entry.name.clone())));
+        self.component_preview(ui, engine, component, update);
+        None
+    }
+
+    /// The COMPONENT preview of one published revision: the highlighted
+    /// row, or the one the Place tool holds while the palette is closed.
+    /// `update` is the Library row of a project copy whose source moved on;
+    /// its Update… asks the app for the import-then-review.
+    pub fn component_preview(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+        component: ComponentRef,
+        update: Option<(UpdateAvailable, String)>,
+    ) {
         let fresh = self
             .preview
             .as_ref()
@@ -832,30 +852,27 @@ impl PlacePalette {
             }) {
                 Ok(QueryResult::Lineage(report)) => Ok(*report),
                 Ok(_) => Err("unexpected report".into()),
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(crate::refusal::shown_error(&error)),
             };
             self.preview = Some((engine.revision(), component, report));
         }
-        let update = self
-            .hits()
-            .get(self.highlighted)
-            .and_then(|h| h.entry.update.clone().map(|u| (u, h.entry.name.clone())));
         let Some((_, _, report)) = &self.preview else {
-            return None;
+            return;
         };
         match report {
-            Ok(report) => item_sections(ui, report),
+            Ok(report) => component_section(ui, report),
             Err(error) => {
-                kit::status(ui, error, Tone::Error);
+                kit::section(ui, "palette-component", "Component", true, None, |ui| {
+                    kit::refusal(ui, error);
+                });
             }
         }
         if let Some((update, name)) = update
-            && let Some(pick) = update_section(ui, &update, &name)
+            && let Some(pick) = library_row(ui, &update, &name)
         {
             self.events.push(PaletteEvent::UpdateProjectCopy(pick));
             self.close();
         }
-        None
     }
 }
 
@@ -991,46 +1008,75 @@ fn choice(ui: &mut Ui, pick: &FolderPick, message: &str) -> Option<Choice> {
     chosen
 }
 
-/// The preview of a folder entry, from its catalog entry: nothing of it is
-/// in the project until it is placed.
-fn folder_sections(ui: &mut Ui, entry: &CatalogEntry, source: &str) {
-    kit::section(ui, "palette-part", "Part", true, None, |ui| {
-        kit::value_row(ui, "Name", &entry.name);
-        if let Some(revision) = entry.revision {
-            kit::value_row(ui, "Revision", &format!("{revision} (latest)"));
-        }
+/// The present badges, then the missing ones: "sym · fp · 3D · no MPN".
+fn has_line(badges: &catalog::Badges) -> String {
+    let present = catalog::Badge::ALL
+        .iter()
+        .filter(|b| badges.get(**b))
+        .map(|b| b.label().to_owned());
+    let missing = catalog::Badge::ALL
+        .iter()
+        .filter(|b| !badges.get(**b))
+        .map(|b| format!("no {}", b.label()));
+    present.chain(missing).collect::<Vec<_>>().join(" · ")
+}
+
+/// The field values a row shows, shown fields first: "10 kΩ · ±1%".
+fn values_line(entry: &CatalogEntry) -> String {
+    let shown = entry.fields.iter().filter(|f| f.shown);
+    let rest = entry.fields.iter().filter(|f| !f.shown);
+    shown
+        .chain(rest)
+        .map(|f| f.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The description as one hint line, its full text (and the provenance)
+/// on hover.
+fn description_hint(ui: &mut Ui, description: &str, provenance: &str) {
+    let line = if description.is_empty() {
+        provenance
+    } else {
+        description
+    };
+    if line.is_empty() {
+        return;
+    }
+    let tip = [description, provenance]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    kit::hint(ui, line, &tip);
+}
+
+/// The COMPONENT preview of a folder entry, from its catalog entry:
+/// nothing of it is in the project until it is placed.
+fn folder_preview(ui: &mut Ui, entry: &CatalogEntry, source: &str) {
+    kit::section(ui, "palette-component", "Component", true, None, |ui| {
+        let name = match entry.revision {
+            Some(revision) => format!("{} · {revision} (latest)", entry.name),
+            None => entry.name.clone(),
+        };
+        kit::value_row(ui, "Component", &name);
         kit::value_row(ui, "Source", &format!("Library · {source}"));
-        let present: Vec<&str> = catalog::Badge::ALL
-            .iter()
-            .filter(|b| entry.badges.get(**b))
-            .map(|b| b.label())
-            .collect();
-        kit::value_row(ui, "Has", &present.join(" · "));
+        let values = values_line(entry);
+        if !values.is_empty() {
+            kit::value_row(ui, "Values", &values);
+        }
         if !entry.packages.is_empty() {
             kit::value_row(ui, "Package", &entry.packages.join(", "));
         }
-        if !entry.description.is_empty() {
-            kit::note(ui, &entry.description);
-        }
-        kit::note(
+        kit::value_row(ui, "Has", &has_line(&entry.badges));
+        kit::hint(
             ui,
-            "Placing copies this revision and what it needs into the project, which then opens without the folder.",
+            "Placing copies it into the project",
+            "Placing copies this revision and what it needs into the project, \
+             which then opens without the folder.",
         );
+        description_hint(ui, &entry.description, "");
     });
-    if !entry.fields.is_empty() {
-        kit::section(
-            ui,
-            "palette-fields",
-            "Fields",
-            true,
-            Some(entry.fields.len()),
-            |ui| {
-                for field in &entry.fields {
-                    kit::value_row(ui, &field.label, &field.text);
-                }
-            },
-        );
-    }
 }
 
 /// The revision a Part entry's component is newer than every one of
@@ -1252,57 +1298,47 @@ fn row(
     }
 }
 
-/// The Library section of a project entry whose source moved on: the
-/// revision the project has, the newer one, and Update… (the same
-/// import-then-review as the other-revision choice).
-fn update_section(ui: &mut Ui, update: &UpdateAvailable, name: &str) -> Option<FolderPick> {
+/// The LIBRARY row of a project entry whose source moved on: the newer
+/// revision with Update… (the same import-then-review as the
+/// other-revision choice), and a hint when copied revisions changed there.
+fn library_row(ui: &mut Ui, update: &UpdateAvailable, name: &str) -> Option<FolderPick> {
     let mut pick = None;
     kit::section(ui, "palette-library", "Library", true, None, |ui| {
-        kit::value_row(ui, "Source", &update.source);
         if update.latest > update.origin.revision {
-            kit::value_row(
-                ui,
-                "Revision",
-                &format!(
-                    "{} · {} available in {}",
-                    update.local.revision, update.latest, update.source
-                ),
-            );
-            kit::actions(ui, |ui| {
-                if kit::primary(ui, "Update…", true)
-                    .on_hover_text("Copy the newer revision into the project, then review which instances move to it")
-                    .clicked()
-                {
-                    pick = Some(FolderPick {
-                        library: update.origin.library,
-                        lineage: update.origin.lineage,
-                        revision: update.latest,
-                        name: name.to_owned(),
-                    });
-                }
-            });
+            let summary = format!("{} available from {}", update.latest, update.source);
+            if kit::summary_row(ui, &summary, Some("Update…")) {
+                pick = Some(FolderPick {
+                    library: update.origin.library,
+                    lineage: update.origin.lineage,
+                    revision: update.latest,
+                    name: name.to_owned(),
+                });
+            }
+        } else {
+            kit::value_row(ui, "Source", &update.source);
         }
         if !update.modified.is_empty() {
             let revisions: Vec<String> = update.modified.iter().map(Revision::to_string).collect();
-            kit::status(
+            let revisions = revisions.join(", ");
+            kit::hint(
                 ui,
+                &format!("{revisions} changed in {} since copied", update.source),
                 &format!(
-                    "{} changed in {} after the project copied it. The project keeps its copy.",
-                    revisions.join(", "),
+                    "{revisions} changed in {} after the project copied it. The project keeps its copy.",
                     update.source
                 ),
-                Tone::Warning,
             );
         }
     });
     pick
 }
 
-/// The preview sections of one inspected revision.
-fn item_sections(ui: &mut Ui, report: &ItemReport) {
+/// The COMPONENT preview of one inspected revision: name and revision,
+/// key values, package and footprint, what it has, and an Info line for
+/// unpublished draft changes.
+fn component_section(ui: &mut Ui, report: &ItemReport) {
     let entry = &report.entry;
-    kit::section(ui, "palette-part", "Part", true, None, |ui| {
-        kit::value_row(ui, "Name", &entry.name);
+    kit::section(ui, "palette-component", "Component", true, None, |ui| {
         let revision = entry.revision.map_or_else(
             || "draft".into(),
             |r| {
@@ -1313,69 +1349,10 @@ fn item_sections(ui: &mut Ui, report: &ItemReport) {
                 }
             },
         );
-        kit::value_row(ui, "Revision", &revision);
-        kit::value_row(ui, "Source", "This project");
-        kit::value_row(
-            ui,
-            "Used",
-            &match entry.used {
-                0 => "Not placed yet".to_owned(),
-                1 => "1 instance".to_owned(),
-                n => format!("{n} instances"),
-            },
-        );
-        let present: Vec<&str> = catalog::Badge::ALL
-            .iter()
-            .filter(|b| entry.badges.get(**b))
-            .map(|b| b.label())
-            .collect();
-        let missing: Vec<&str> = catalog::Badge::ALL
-            .iter()
-            .filter(|b| !entry.badges.get(**b))
-            .map(|b| b.label())
-            .collect();
-        kit::value_row(ui, "Has", &present.join(" · "));
-        if !missing.is_empty() {
-            kit::value_row(ui, "Missing", &missing.join(" · "));
-        }
-        if entry.draft {
-            kit::status(
-                ui,
-                "This lineage has unpublished draft changes; the published revision is placed.",
-                Tone::Note,
-            );
-        }
-        if !entry.description.is_empty() {
-            kit::note(ui, &entry.description);
-        }
-    });
-    if !entry.fields.is_empty() {
-        kit::section(
-            ui,
-            "palette-fields",
-            "Fields",
-            true,
-            Some(entry.fields.len()),
-            |ui| {
-                for field in &entry.fields {
-                    kit::value_row(ui, &field.label, &field.text);
-                }
-            },
-        );
-    }
-    kit::section(ui, "palette-physical", "Physical", true, None, |ui| {
-        for symbol in &report.symbols {
-            kit::value_row(
-                ui,
-                "Symbol",
-                &format!(
-                    "{} · {} · {} unit{}",
-                    symbol.name,
-                    symbol.symbol.revision,
-                    symbol.units.len(),
-                    if symbol.units.len() == 1 { "" } else { "s" }
-                ),
-            );
+        kit::value_row(ui, "Component", &format!("{} · {revision}", entry.name));
+        let values = values_line(entry);
+        if !values.is_empty() {
+            kit::value_row(ui, "Values", &values);
         }
         for implementation in &report.implementations {
             let [l, w, h] = implementation.envelope;
@@ -1399,13 +1376,18 @@ fn item_sections(ui: &mut Ui, report: &ItemReport) {
             }
         }
         if report.implementations.is_empty() {
-            kit::note(ui, "Schematic only: no physical implementation.");
+            kit::value_row(ui, "Package", "None · schematic only");
         }
-        kit::value_row(ui, "Terminals", &report.terminals.to_string());
+        kit::value_row(ui, "Has", &has_line(&entry.badges));
+        if entry.draft {
+            kit::hint(
+                ui,
+                "Unpublished draft changes are not placed",
+                "This lineage has unpublished draft changes; the published revision is placed.",
+            );
+        }
+        description_hint(ui, &entry.description, &report.provenance);
     });
-    if !report.provenance.is_empty() {
-        kit::note(ui, &report.provenance);
-    }
 }
 
 #[cfg(test)]

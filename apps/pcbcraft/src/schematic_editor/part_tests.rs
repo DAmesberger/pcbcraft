@@ -215,7 +215,7 @@ fn place_closes_resolve_parts() -> TestResult {
     editor.on_tool("place", &engine);
     assert!(!editor.resolve.is_open());
     assert!(editor.palette.is_open());
-    assert_eq!(editor.header(&engine).title, "Place part");
+    assert_eq!(editor.header(&engine).title, "Place component");
     let ribbon = editor.ribbon(&engine);
     let active: Vec<&str> = ribbon
         .groups
@@ -275,12 +275,15 @@ fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestRes
     Ok(())
 }
 
-/// B-b: a Checks row is a button that selects the instance it names. R1's
-/// pinned Part does not meet a changed value, an advisory purchasing row.
+/// R1's pinned Part does not meet a changed value: `project.issues`
+/// reports it, and locating that issue selects R1 (from another selection
+/// and with the palette open) and frames it. Locate never touches the
+/// document, and refs the sheet does not show locate nothing.
 #[test]
-fn a_check_row_click_selects_the_named_instance() -> TestResult {
-    let ctx = egui::Context::default();
-    fonts::setup_bundled_fonts(&ctx);
+fn an_issue_locates_its_instance_and_frames_it() -> TestResult {
+    use crate::issues::Locate;
+    use pcbcraft_core::diagnostics::ObjectRef;
+    use pcbcraft_core::issues::{IssueArea, IssueScope};
     let (mut engine, _, r1, r2) = engine_with_part()?;
     let field = engine
         .project()
@@ -298,39 +301,132 @@ fn a_check_row_click_selects_the_named_instance() -> TestResult {
             }],
         }),
     )?;
-    let message = engine
-        .project()
-        .instance(r1)
-        .and_then(|i| {
-            instances::part_findings(&engine.project().library, i)
-                .into_iter()
-                .next()
-        })
-        .map(|f| f.message)
-        .ok_or("R1 has no purchasing finding")?;
-    let mut editor = SchematicEditor {
-        show_checks: true,
-        ..Default::default()
+    let QueryResult::Issues(report) = engine.query(Query::Issues {
+        scope: IssueScope::Area {
+            area: IssueArea::Schematic,
+        },
+    })?
+    else {
+        return Err("not an issue report".into());
     };
+    let row = report
+        .rows
+        .iter()
+        .find(|r| {
+            r.finding.code.starts_with("part.")
+                && r.objects().any(|o| {
+                    matches!(o, ObjectRef::Instance { id } | ObjectRef::Property { instance: id, .. } if *id == r1)
+                })
+        })
+        .ok_or("no purchasing issue on R1")?;
+    let before = engine.project().clone();
+    let mut editor = SchematicEditor::default();
     editor.select(Some(r2), None, engine.project());
-    assert!(click(&mut editor, &engine, &ctx, &message)?.is_none());
+    editor.palette.open();
+    let refs: Vec<ObjectRef> = row.objects().copied().collect();
+    assert!(editor.locate(&engine, &refs));
+    assert_eq!(editor.selected, Some(r1));
+    assert!(!editor.palette.is_open());
+    assert_eq!(editor.tool, Tool::Select);
+    assert!(editor.frame_request.is_some(), "R1 is framed");
+    assert_eq!(engine.project(), &before);
+    assert!(!editor.locate(&engine, &[ObjectRef::Track { id: 1 }]));
+    assert!(!editor.locate(&engine, &[]));
     assert_eq!(editor.selected, Some(r1));
     Ok(())
 }
 
+/// Locate prefers an instance (here through a terminal) to a net, and a
+/// net alone selects the net through its first wire.
 #[test]
-fn a_check_row_locates_instances_through_terminals_then_nets() {
+fn locate_selects_instances_through_terminals_then_nets() -> TestResult {
+    use crate::issues::Locate;
     use pcbcraft_core::diagnostics::ObjectRef;
-    let terminal = ObjectRef::Terminal {
-        endpoint: Endpoint {
-            instance: 7,
-            terminal: pcbcraft_core::TerminalId(1),
-        },
-    };
-    assert_eq!(
-        locate(&[ObjectRef::Net { id: 3 }, terminal]),
-        Some(Locate::Instance(7))
+    let engine = Engine::demo()?;
+    let net = engine
+        .project()
+        .nets
+        .iter()
+        .find(|n| n.terminals.len() >= 2)
+        .ok_or("no wired net")?;
+    let endpoint = *net.terminals.last().ok_or("no terminal")?;
+    let mut editor = SchematicEditor::default();
+    assert!(editor.locate(
+        &engine,
+        &[
+            ObjectRef::Net { id: net.id },
+            ObjectRef::Terminal { endpoint }
+        ],
+    ));
+    assert_eq!(editor.selected, Some(endpoint.instance));
+    let mut editor = SchematicEditor::default();
+    assert!(editor.locate(&engine, &[ObjectRef::Net { id: net.id }]));
+    assert_eq!(editor.selected, None);
+    assert_eq!(editor.selected_net(&engine), Some(net.id));
+    assert_eq!(editor.header(&engine).kind, "Net");
+    Ok(())
+}
+
+/// A property commit that leaves R1's purchasing unresolved says so once,
+/// as a To do toast with Undo.
+#[test]
+fn a_commit_that_unresolves_purchasing_posts_an_undo_toast() -> TestResult {
+    use crate::kit::severity::Level;
+    use crate::kit::toast::{ToastAction, take_posted};
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let (mut engine, _, r1, _) = engine_with_part()?;
+    let mut editor = SchematicEditor::default();
+    editor.select_instance(Some(r1), engine.project());
+    let operation =
+        edit_field(&mut editor, &engine, &ctx, "10 kΩ", "22k")?.ok_or("the edit sent nothing")?;
+    assert!(
+        take_posted(&ctx).is_empty(),
+        "nothing is said before it applies"
     );
-    assert_eq!(locate(&[ObjectRef::Net { id: 3 }]), Some(Locate::Net(3)));
-    assert_eq!(locate(&[]), None);
+    engine.apply(engine.revision(), operation)?;
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let posted = take_posted(&ctx);
+    let [toast] = &posted[..] else {
+        return Err(format!("expected one toast, got {posted:?}").into());
+    };
+    assert_eq!(toast.level, Level::ToDo);
+    assert_eq!(toast.text, "Purchasing unresolved for R1");
+    assert_eq!(toast.actions, [ToastAction::Undo]);
+    frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(take_posted(&ctx).is_empty(), "said once");
+    Ok(())
+}
+
+/// Focus the field showing `shown`, replace its text with `text` and press
+/// Enter; returns the operation of that frame.
+fn edit_field(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    shown: &str,
+    text: &str,
+) -> Result<Option<Operation>, Box<dyn std::error::Error>> {
+    click(editor, engine, ctx, shown)?;
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    frame(
+        editor,
+        engine,
+        ctx,
+        vec![select_all, egui::Event::Text(text.into())],
+    );
+    Ok(frame(editor, engine, ctx, vec![key(egui::Key::Enter)]).1)
 }
