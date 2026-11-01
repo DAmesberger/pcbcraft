@@ -8,6 +8,14 @@
 //! blocks are flat copies keyed by pick identity and view layer, so
 //! selection only recolours and hidden layers drop their blocks.
 //!
+//!
+//! Placements of a shared definition (every via of a size, each component
+//! body) are not copied into the stream: each definition mesh is one
+//! [`Instanced`] mesh drawn at every placement through the same PBR
+//! material path ([`InstanceLook::Pbr`]), with coarser levels for
+//! placements small on screen, and highlighted by drawing the selected
+//! placements again ([`Instanced::highlight`]).
+//!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! upstream revision 4f3ac07, unchanged in the pinned fork; see
 //! ATTRIBUTION.md), adapted to a Z-up board.
@@ -16,13 +24,15 @@ use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     material::{BodyKind, Pattern},
     render::surface::unit_direction,
-    scene::Geometry,
+    scene::{Geometry, Place},
 };
 use solidcraft_ui_egui::gpu::{
-    BlockBuilder, GpuScene, PBR_DETAILED_SIZE, PaletteIndex, SceneBlock, SurfacePattern, TriClass,
+    BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PBR_DETAILED_SIZE, PaletteIndex,
+    PbrInstanceLook, SceneBlock, SharedTris, SurfacePattern, TriClass,
 };
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upper bound on PBR vertex bytes per model: about 480 000 triangles of
@@ -73,17 +83,333 @@ pub struct ModelScene {
     /// One flat block per pick identity and view layer, drawn over the model
     /// in the selection colour.
     pub highlight: Vec<(u64, ViewLayer, SceneBlock)>,
+    /// The placed bodies, one instanced mesh per definition mesh, look and view layer.
+    pub instanced: Vec<Instanced>,
     pub bounds: Aabb3,
+}
+
+/// One definition mesh drawn at each of its placements: its shared
+/// triangles (and coarser levels) and every placement of it in one view
+/// layer and material.
+pub struct Instanced {
+    pub layer: ViewLayer,
+    /// [`InstanceLook::Pbr`]; a placement each, in `bodies` order.
+    pub mesh: InstancedMesh,
+    /// The index in [`ModelScene::geometry`] of each placement.
+    pub bodies: Vec<usize>,
+}
+
+/// Fewest triangles a definition mesh is simplified from for coarser
+/// levels, and fewest a level keeps.
+const LOD_FROM: usize = 96;
+const LOD_MIN: usize = 16;
+
+impl Instanced {
+    /// The placements `keep` keeps, moved by `display`, as a mesh of the
+    /// same triangles (their GPU buffers are kept).
+    pub fn placed(
+        &self,
+        geometry: &[Geometry],
+        display: Option<&Place>,
+        look: InstanceLook,
+        color: PaletteIndex,
+        keep: impl Fn(&Geometry) -> bool,
+    ) -> InstancedMesh {
+        let mut out = InstancedMesh {
+            key: self.mesh.key,
+            tris: self.mesh.tris.clone(),
+            instances: Vec::new(),
+            look,
+            levels: if look == self.mesh.look {
+                self.mesh.levels.clone()
+            } else {
+                Vec::new()
+            },
+        };
+        for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
+            if !keep(g) {
+                continue;
+            }
+            // A large unplaced body is drawn where it is.
+            let place = g.place.unwrap_or(Place::IDENTITY);
+            let place = display.map_or(place, |d| d.then(&place));
+            out.place(place.rows_f32(), color);
+        }
+        out
+    }
+
+    /// The highlighted placements, drawn again flat in the selection colour
+    /// (palette entry 0 of the highlight scene). A large unplaced body
+    /// highlights from its own block instead ([`ModelScene::highlight`]).
+    pub fn highlight(
+        &self,
+        geometry: &[Geometry],
+        display: Option<&Place>,
+        highlighted: &std::collections::HashSet<u64>,
+    ) -> Option<InstancedMesh> {
+        let mesh = self.placed(
+            geometry,
+            display,
+            InstanceLook::Opaque,
+            PaletteIndex(0),
+            |g| g.place.is_some() && g.item.is_some_and(|i| highlighted.contains(&i)),
+        );
+        (mesh.count() > 0).then_some(mesh)
+    }
+}
+
+/// A mesh's coarser levels, finest first, each with its error (mm).
+type Levels = Vec<(Arc<SharedTris>, f32)>;
+
+/// Fewest triangles of an unplaced body drawn as an indexed mesh (at one
+/// placement) instead of in the vertex stream: a board's laminate and mask
+/// with thousands of drill holes and openings. Indexed, each vertex is
+/// stored once and the stream stays small whatever the board.
+pub const LARGE_BODY: usize = 32_768;
+
+/// Most bytes the instanced meshes may hold on the GPU (their vertices,
+/// indices, levels and placements).
+pub const MAX_INSTANCED_BYTES: usize = 768 << 20;
+
+/// Whether a body goes into the vertex stream ([`pack`]): unplaced and not
+/// large. Everything else is drawn as an instanced mesh ([`Instanced`]).
+pub fn streamed(g: &Geometry) -> bool {
+    g.place.is_none() && g.mesh.triangles.len() < LARGE_BODY
+}
+
+/// The placed and the large bodies of `geometry` grouped by definition
+/// mesh, material and view layer, with coarser levels of each mesh placed
+/// more than once.
+fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
+    let mut out: Vec<Instanced> = Vec::new();
+    let mut by: HashMap<(usize, PbrInstanceLook, ViewLayer), usize> = HashMap::new();
+    let mut tris: HashMap<usize, (Arc<SharedTris>, Levels)> = HashMap::new();
+    let uses = {
+        let mut uses: HashMap<usize, usize> = HashMap::new();
+        for g in geometry.iter().filter(|g| g.place.is_some()) {
+            *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1;
+        }
+        uses
+    };
+    let mut bytes = 0usize;
+    for (index, g) in geometry.iter().enumerate() {
+        if streamed(g) {
+            continue;
+        }
+        let place = g.place.unwrap_or(Place::IDENTITY);
+        let layer = ViewLayer::of(g.kind, g.layer);
+        let address = Arc::as_ptr(&g.mesh) as usize;
+        let look = PbrInstanceLook::new(
+            g.surface,
+            surface_pattern(g.detail.pattern),
+            g.detail.strength as f32,
+        );
+        let at = *by.entry((address, look, layer)).or_insert_with(|| {
+            let (shared, levels) = tris
+                .entry(address)
+                .or_insert_with(|| {
+                    let several = uses.get(&address).is_some_and(|n| *n > 1);
+                    let shared = Arc::new(indexed(&g.mesh));
+                    (shared, if several { levels(&g.mesh) } else { Vec::new() })
+                })
+                .clone();
+            bytes = bytes.saturating_add(
+                std::iter::once(&shared)
+                    .chain(levels.iter().map(|(t, _)| t))
+                    .map(|t| gpu_bytes(t))
+                    .sum(),
+            );
+            out.push(Instanced {
+                layer,
+                mesh: InstancedMesh {
+                    key: address as u64,
+                    tris: shared,
+                    instances: Vec::new(),
+                    look: InstanceLook::Pbr(look),
+                    levels,
+                },
+                bodies: Vec::new(),
+            });
+            out.len() - 1
+        });
+        if let Some(group) = out.get_mut(at) {
+            group.mesh.place(place.rows_f32(), PaletteIndex(0));
+            group.bodies.push(index);
+            bytes = bytes.saturating_add(solidcraft_ui_egui::gpu::INSTANCE_SIZE);
+        }
+        if bytes > MAX_INSTANCED_BYTES {
+            return Err("model too large for the 3D view".into());
+        }
+    }
+    Ok(out)
+}
+
+/// Bytes a mesh's triangles take on the GPU drawn through the PBR path: a
+/// detailed vertex each, and the indices.
+pub fn gpu_bytes(tris: &SharedTris) -> usize {
+    tris.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE * PBR_DETAILED_SIZE
+        + tris.indices.len() * 4
+}
+
+/// `mesh`'s triangles with each vertex stored once per position and
+/// normal, lit by those normals (also where every triangle is flat, which
+/// Solidcraft's own sharing would light by its facets alone).
+fn indexed(mesh: &pcbcraft_solidcraft::geom::Mesh) -> SharedTris {
+    let mut out = SharedTris::default();
+    out.indices.reserve_exact(mesh.triangles.len() * 3);
+    let mut seen: HashMap<[u32; 6], u32> = HashMap::with_capacity(mesh.positions.len());
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for t in &mesh.triangles {
+        let corners = t.map(|i| {
+            let i = usize::try_from(i).ok()?;
+            Some((
+                mesh.positions.get(i)?.to_f32(),
+                mesh.normals.get(i)?.to_f32(),
+            ))
+        });
+        let [Some(a), Some(b), Some(c)] = corners else {
+            continue;
+        };
+        for (p, n) in [a, b, c] {
+            let bits = [p[0], p[1], p[2], n[0], n[1], n[2]].map(|x| (x + 0.0).to_bits());
+            let next = u32::try_from(out.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE)
+                .unwrap_or(u32::MAX);
+            let index = *seen.entry(bits).or_insert_with(|| {
+                for x in p.iter().chain(&n) {
+                    out.vertices.extend_from_slice(&x.to_le_bytes());
+                }
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+                next
+            });
+            out.indices.push(index);
+        }
+    }
+    out.vertices.shrink_to_fit();
+    out.bounds = [lo, hi];
+    out
+}
+
+/// Coarser copies of a definition mesh, finest first, each with the error
+/// (mm) the renderer weighs against [`LOD_PX`]: display only, never picked
+/// or measured.
+///
+/// A level's outline may stray by less than a pixel long before its
+/// shading does (a shallow tent dome's glossy highlight follows its
+/// normals, not its outline), so a level is also held back until the whole
+/// body is small on screen: [`LOD_SPAN_PX`] pixels across for a quarter of
+/// the triangles, fewer the coarser it is.
+fn levels(mesh: &pcbcraft_solidcraft::geom::Mesh) -> Vec<(Arc<SharedTris>, f32)> {
+    let n = mesh.triangles.len();
+    if n < LOD_FROM {
+        return Vec::new();
+    }
+    let targets: Vec<usize> = [4, 16, 64]
+        .into_iter()
+        .map(|d| n / d)
+        .filter(|t| *t >= LOD_MIN)
+        .collect();
+    let span = mesh.bounds().diagonal();
+    pcbcraft_solidcraft::geom::simplify::levels(&mesh.positions, &mesh.triangles, &targets)
+        .iter()
+        .filter(|l| !l.triangles.is_empty())
+        .map(|l| {
+            let kept = l.triangles.len() as f64 / n as f64;
+            // 4× fewer triangles: LOD_SPAN_PX; each further 4× halves it.
+            let pixels = LOD_SPAN_PX * (4.0 * kept).sqrt();
+            let error = l.error.max(span * f64::from(LOD_PX) / pixels);
+            (Arc::new(smooth(l)), error as f32)
+        })
+        .collect()
+}
+
+/// How many pixels across a placed body is drawn from a quarter of its
+/// triangles at most.
+const LOD_SPAN_PX: f64 = 48.0;
+
+/// Corners whose faces turn by more than this (cosine, about 40°) are lit
+/// apart, as a crease.
+const CREASE_COS: f64 = 0.766;
+
+/// A simplified level lit smooth, as the full mesh is (a level lit flat
+/// shows its facets in a glossy reflection long before its outline
+/// strays): each corner's normal is the area-weighted mean of the faces
+/// meeting at its vertex that turn from its own by less than a crease.
+fn smooth(level: &pcbcraft_solidcraft::geom::simplify::Level) -> SharedTris {
+    let p = &level.positions;
+    let corner = |t: &[u32; 3]| -> Option<[Vec3; 3]> {
+        Some([
+            *p.get(usize::try_from(t[0]).ok()?)?,
+            *p.get(usize::try_from(t[1]).ok()?)?,
+            *p.get(usize::try_from(t[2]).ok()?)?,
+        ])
+    };
+    let triangles: Vec<([u32; 3], Vec3)> = level
+        .triangles
+        .iter()
+        .filter_map(|t| {
+            let [a, b, c] = corner(t)?;
+            Some((*t, (b - a).cross(c - a)))
+        })
+        .collect();
+    let mut around: Vec<Vec<usize>> = vec![Vec::new(); p.len()];
+    for (k, (t, _)) in triangles.iter().enumerate() {
+        for i in t {
+            if let Some(list) = around.get_mut(*i as usize) {
+                list.push(k);
+            }
+        }
+    }
+    let mut out = SharedTris::default();
+    let mut seen: HashMap<(u32, [u32; 3]), u32> = HashMap::new();
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for (t, area) in &triangles {
+        let own = unit_direction(*area).unwrap_or(Vec3::Z);
+        for i in t {
+            let mut sum = Vec3::new(0.0, 0.0, 0.0);
+            for k in around.get(*i as usize).into_iter().flatten() {
+                let Some((_, other)) = triangles.get(*k) else {
+                    continue;
+                };
+                if unit_direction(*other).is_ok_and(|n| n.dot(own) >= CREASE_COS) {
+                    sum += *other;
+                }
+            }
+            let n = unit_direction(sum).unwrap_or(own).to_f32();
+            let position = p.get(*i as usize).map_or([0.0; 3], |v| v.to_f32());
+            let next = u32::try_from(out.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE)
+                .unwrap_or(u32::MAX);
+            let index = *seen.entry((*i, n.map(f32::to_bits))).or_insert_with(|| {
+                for x in position.iter().chain(&n) {
+                    out.vertices.extend_from_slice(&x.to_le_bytes());
+                }
+                for k in 0..3 {
+                    lo[k] = lo[k].min(position[k]);
+                    hi[k] = hi[k].max(position[k]);
+                }
+                next
+            });
+            out.indices.push(index);
+        }
+    }
+    out.bounds = [lo, hi];
+    out
 }
 
 /// Each view layer's run of bytes in a PBR buffer, in buffer order.
 pub type Runs = Vec<(ViewLayer, Range<usize>)>;
 
 /// The bodies of `geometry` in buffer order: grouped by view layer, in
-/// model order within a layer.
+/// model order within a layer. Placed and large bodies are drawn instanced
+/// instead ([`streamed`]).
 fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
     let mut out: Vec<(ViewLayer, &Geometry)> = geometry
         .iter()
+        .filter(|g| streamed(g))
         .map(|g| (ViewLayer::of(g.kind, g.layer), g))
         .collect();
     // A stable sort keeps model order inside each layer.
@@ -91,8 +417,9 @@ fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
     out
 }
 
-/// Detailed PBR vertex bytes of the bodies of `geometry` that `view` shows,
-/// grouped by view layer, and each layer's run of bytes.
+/// Detailed PBR vertex bytes of the streamed bodies of `geometry` that
+/// `view` shows ([`streamed`]), grouped by view layer, and each layer's run
+/// of bytes.
 pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
@@ -178,7 +505,8 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
     for g in &geometry {
         bounds.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
         bounds.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
-        let Some(item) = g.item else {
+        // A placed body highlights from its instanced mesh.
+        let Some(item) = g.item.filter(|_| g.place.is_none()) else {
             continue;
         };
         let segment = ViewLayer::of(g.kind, g.layer);
@@ -203,7 +531,9 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
         builder.end_body();
     }
     let shadows = shadows(&geometry, &bounds);
+    let instanced = instance(&geometry)?;
     Ok(ModelScene {
+        instanced,
         geometry,
         pbr,
         runs,
@@ -313,7 +643,8 @@ fn ground(out: &mut Vec<ShadowVertex>, b: &Aabb3) {
 /// their own four corners; anything else falls back to its plan bounds.
 fn footprint(body: &Geometry) -> Vec<[f64; 2]> {
     let mut corners: Vec<[f64; 2]> = Vec::new();
-    for p in &body.mesh.positions {
+    let at = |p: &Vec3| body.place.map_or(*p, |place| place.point(*p));
+    for p in body.mesh.positions.iter().map(at) {
         if !corners
             .iter()
             .any(|c| (c[0] - p.x).abs() < 1e-6 && (c[1] - p.y).abs() < 1e-6)
@@ -432,6 +763,237 @@ pub(crate) mod tests {
         Ok(project)
     }
 
+    /// The demo board with `count` through vias on a 1.27 mm grid in a strip
+    /// added below it, every other one tented.
+    pub(crate) fn via_project(
+        count: usize,
+    ) -> Result<pcbcraft_core::Project, Box<dyn std::error::Error>> {
+        let mut project = demo_project()?;
+        let net = project
+            .nets
+            .first()
+            .map(|n| n.id)
+            .ok_or("demo has no net")?;
+        let columns = 32usize;
+        let rows = count.div_ceil(columns);
+        let [width, depth] = project.board_size;
+        project.board_size = [
+            width.max(columns as f64 * 1.27 + 6.0),
+            depth + rows as f64 * 1.27 + 4.0,
+        ];
+        for k in 0..count {
+            let id = project.allocate()?;
+            project.vias.push(pcbcraft_core::Via {
+                id,
+                net,
+                position: [
+                    3.0 + (k % columns) as f64 * 1.27,
+                    depth + 2.0 + (k / columns) as f64 * 1.27,
+                ],
+                drill: 0.3,
+                diameter: 0.6,
+                span: pcbcraft_core::ViaSpan::Through,
+                tented: k % 2 == 0,
+                locked: false,
+            });
+        }
+        Ok(project)
+    }
+
+    /// Bytes the GPU holds for an instanced mesh: its triangles, their
+    /// levels and its placements.
+    fn resident(mesh: &InstancedMesh) -> usize {
+        std::iter::once(&mesh.tris)
+            .chain(mesh.levels.iter().map(|(t, _)| t))
+            .map(|t| gpu_bytes(t))
+            .sum::<usize>()
+            + mesh.instances.len()
+    }
+
+    fn is_via(kind: BodyKind) -> bool {
+        matches!(kind, BodyKind::ViaCopper | BodyKind::ViaBore)
+    }
+
+    /// Every via body is a placement of a shared definition mesh: none is
+    /// copied into the PBR stream or the highlight blocks, each definition
+    /// is one instanced mesh in the copper material path drawn at every
+    /// placement, and highlighting a via draws exactly its placements.
+    #[test]
+    fn vias_draw_as_placements_of_one_mesh_per_definition() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let count = 40;
+        let project = via_project(count)?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let scene = build(model.geometry)?;
+        let vias: Vec<&Geometry> = scene.geometry.iter().filter(|g| is_via(g.kind)).collect();
+        assert!(vias.len() >= count, "{} via bodies", vias.len());
+        assert!(
+            vias.iter().all(|g| g.place.is_some()),
+            "every via body is placed"
+        );
+        let meshes: std::collections::HashSet<usize> =
+            vias.iter().map(|g| Arc::as_ptr(&g.mesh) as usize).collect();
+        assert!(
+            meshes.len() * 8 <= vias.len(),
+            "{} meshes for {} via bodies",
+            meshes.len(),
+            vias.len()
+        );
+        // Every placed body is drawn exactly once, by its definition's mesh.
+        let placed = scene.geometry.iter().filter(|g| !streamed(g)).count();
+        let drawn: usize = scene.instanced.iter().map(|i| i.mesh.count()).sum();
+        assert_eq!(drawn, placed);
+        for group in &scene.instanced {
+            assert_eq!(group.mesh.count(), group.bodies.len());
+            assert!(matches!(group.mesh.look, InstanceLook::Pbr(_)));
+            for (k, at) in group.bodies.iter().enumerate() {
+                let g = &scene.geometry[*at];
+                assert_eq!(Arc::as_ptr(&g.mesh) as usize as u64, group.mesh.key);
+                assert_eq!(ViewLayer::of(g.kind, g.layer), group.layer);
+                let rows = g.place.unwrap_or(Place::IDENTITY).rows_f32();
+                let bytes: Vec<u8> = rows
+                    .iter()
+                    .flatten()
+                    .flat_map(|x| x.to_le_bytes())
+                    .collect();
+                let at = k * solidcraft_ui_egui::gpu::INSTANCE_SIZE;
+                assert_eq!(group.mesh.instances.get(at..at + 48), Some(&bytes[..]));
+            }
+        }
+        // The vias' copper draws with the copper look the stream would carry.
+        let copper = vias
+            .iter()
+            .find(|g| g.kind == BodyKind::ViaCopper)
+            .ok_or("no via copper")?;
+        let look = PbrInstanceLook::new(
+            copper.surface,
+            surface_pattern(copper.detail.pattern),
+            copper.detail.strength as f32,
+        );
+        assert!(
+            scene
+                .instanced
+                .iter()
+                .any(|i| i.mesh.look == InstanceLook::Pbr(look) && i.layer == ViewLayer::Vias)
+        );
+        let unplaced: usize = scene
+            .geometry
+            .iter()
+            .filter(|g| streamed(g))
+            .map(|g| g.mesh.triangles.len())
+            .sum();
+        assert_eq!(scene.pbr.len(), unplaced * 3 * PBR_DETAILED_SIZE);
+        let via = vias[7].item.ok_or("via has no pick id")?;
+        assert!(scene.highlight.iter().all(|(item, _, _)| *item != via));
+        let highlighted = std::collections::HashSet::from([via]);
+        let shown: usize = scene
+            .instanced
+            .iter()
+            .filter_map(|i| i.highlight(&scene.geometry, None, &highlighted))
+            .map(|m| m.count())
+            .sum();
+        let bodies = scene
+            .geometry
+            .iter()
+            .filter(|g| g.item == Some(via) && g.place.is_some())
+            .count();
+        assert!(bodies >= 2, "a via has its barrel and bore at least");
+        assert_eq!(shown, bodies);
+        Ok(())
+    }
+
+    /// A 10,000-via board in the 3D view: its vias are placements of the few
+    /// definition meshes of the real via bodies, so the GPU holds a few
+    /// hundred kilobytes of via triangles and one 52-byte placement per via
+    /// body, where copying each into the PBR stream would exceed the view's
+    /// cap many times over.
+    #[test]
+    fn ten_thousand_vias_hold_one_mesh_per_definition() -> Result<(), Box<dyn std::error::Error>> {
+        let model = pcbcraft_solidcraft::project::build(&via_project(2)?)?;
+        let mut geometry = model.geometry;
+        // The first via's bodies (one tented, one open via are built): copied
+        // to 10,000 places, as a real board's placements are.
+        let via = geometry
+            .iter()
+            .find(|g| is_via(g.kind))
+            .and_then(|g| g.item)
+            .ok_or("no via")?;
+        let bodies: Vec<Geometry> = geometry
+            .iter()
+            .filter(|g| g.item == Some(via) && g.place.is_some())
+            .cloned()
+            .collect();
+        geometry.retain(|g| g.item != Some(via) || g.place.is_none());
+        geometry.retain(|g| !is_via(g.kind));
+        let base: usize = geometry
+            .iter()
+            .filter(|g| streamed(g))
+            .map(|g| g.mesh.triangles.len())
+            .sum();
+        let others = geometry.iter().filter(|g| !streamed(g)).count();
+        let vias = 10_000usize;
+        for k in 0..vias {
+            let shift = Place([
+                [1.0, 0.0, 0.0, (k % 100) as f64 * 1.27],
+                [0.0, 1.0, 0.0, (k / 100) as f64 * 1.27],
+                [0.0, 0.0, 1.0, 0.0],
+            ]);
+            for b in &bodies {
+                let place = b.place.ok_or("unplaced")?;
+                let moved = |p: [f64; 3]| [p[0] + shift.0[0][3], p[1] + shift.0[1][3], p[2]];
+                geometry.push(Geometry {
+                    item: Some(1_000_000 + k as u64),
+                    place: Some(shift.then(&place)),
+                    min: moved(b.min),
+                    max: moved(b.max),
+                    ..b.clone()
+                });
+            }
+        }
+        let started = std::time::Instant::now();
+        let scene = build(geometry)?;
+        let built = started.elapsed();
+        let placed = vias * bodies.len();
+        assert_eq!(
+            scene
+                .instanced
+                .iter()
+                .map(|i| i.mesh.count())
+                .sum::<usize>(),
+            placed + others
+        );
+        // One mesh per definition body, shared by every placement.
+        let tris: std::collections::HashSet<usize> = scene
+            .instanced
+            .iter()
+            .filter(|i| i.bodies.iter().any(|b| is_via(scene.geometry[*b].kind)))
+            .map(|i| Arc::as_ptr(&i.mesh.tris) as usize)
+            .collect();
+        assert_eq!(tris.len(), bodies.iter().filter(|b| is_via(b.kind)).count());
+        assert_eq!(
+            scene.pbr.len(),
+            base * 3 * PBR_DETAILED_SIZE,
+            "no via in the stream"
+        );
+        let triangles: usize = bodies.iter().map(|b| b.mesh.triangles.len()).sum();
+        let copied = vias * triangles * 3 * PBR_DETAILED_SIZE;
+        let held: usize = scene.instanced.iter().map(|i| resident(&i.mesh)).sum();
+        let placements: usize = scene.instanced.iter().map(|i| i.mesh.instances.len()).sum();
+        assert_eq!(
+            placements,
+            (placed + others) * solidcraft_ui_egui::gpu::INSTANCE_SIZE
+        );
+        let meshes = held - placements;
+        eprintln!(
+            "10,000 vias: {} bodies, {triangles} triangles a via; instanced {meshes} B of meshes + {placements} B of placements; copied {copied} B; scene built in {built:?}",
+            placed
+        );
+        assert!(copied > 10 * MAX_PBR_BYTES, "copied: {copied}");
+        assert!(meshes < 1 << 20, "via meshes: {meshes} B");
+        assert!(held < 8 << 20, "on the GPU: {held} B");
+        Ok(())
+    }
+
     fn demo_scene() -> Result<ModelScene, Box<dyn std::error::Error>> {
         let model = pcbcraft_solidcraft::project::build(&demo_project()?)?;
         Ok(build(model.geometry)?)
@@ -446,7 +1008,7 @@ pub(crate) mod tests {
                 * scene
                     .geometry
                     .iter()
-                    .filter(|g| ViewLayer::of(g.kind, g.layer) == layer)
+                    .filter(|g| streamed(g) && ViewLayer::of(g.kind, g.layer) == layer)
                     .map(|g| g.mesh.triangles.len())
                     .sum::<usize>()
         };
@@ -595,7 +1157,11 @@ pub(crate) mod tests {
     fn oversized_models_are_refused() -> Result<(), Box<dyn std::error::Error>> {
         let model = pcbcraft_solidcraft::project::build(Engine::demo()?.project())?;
         let mut geometry = model.geometry;
-        let one = geometry.first().cloned().ok_or("no geometry")?;
+        let one = geometry
+            .iter()
+            .find(|g| streamed(g))
+            .cloned()
+            .ok_or("no geometry")?;
         let per_copy = one.mesh.triangles.len() * 3 * PBR_DETAILED_SIZE;
         let copies = MAX_PBR_BYTES / per_copy.max(1) + 1;
         geometry.extend(std::iter::repeat_n(one, copies));

@@ -316,17 +316,44 @@ laminate (0.7 s) and the native finish (1.1 s: world bodies for 50,000 placement
 copied meshes, `appearance.assign` frames); before them the generated package models
 (0.7 s, fillets, the same for every board) and the parts and vias (about 0.4 s).
 
-Plan to reach thousands of vias in a few seconds and an instant 3D view:
+### The 3D view at scale (measured)
 
-1. Draw vias instanced: one mesh per via definition body (Solidcraft already keeps it,
-   `ModelBody::mesh_in_place`), drawn once per placement with a per-placement pick id. This
-   needs a PBR instanced pipeline in the fork's GPU crate (its `InstancedMesh` is
-   palette-lit only), with its coarser levels for small placements.
-2. Mesh repeated faces once (done in phase 2: rims divided once per shape, prisms meshed
-   from their rims, extrusions oriented from their start cap).
-3. One evaluation per build (done in phase 2: `Session::defer_evaluation`).
-4. Incremental rebuilds: done for edits that change values (below); adding or removing a
-   part, pad, track or via still builds the board anew.
+Vias are drawn instanced. A body that places a shared definition (every via of a size: its
+barrel, rings and finish; Pcbcraft's display-only tent domes and bore shadows, now made once
+per via shape and placed) keeps its definition's mesh, `Geometry::mesh` with a `place`,
+instead of a moved copy. The 3D view draws each definition mesh once per placement through
+Solidcraft's PBR product-look path (`InstanceLook::Pbr` in the fork: the same material,
+clear coat, pattern, studio and ambient occlusion as the vertex stream, from indexed
+vertices), with coarser levels for placements small on screen (lit smooth, and held back
+until a body is about 48 pixels across, so a glossy tent's highlight does not facet). Bodies
+of 32,768 triangles or more (the laminate and mask with thousands of holes) are drawn the
+same way at one placement, so each vertex is stored once and the vertex stream stays small.
+Picking transforms the pointer ray into the definition's frame and returns the placement's
+own identity; selection draws the selected placements again from the shared triangles; a
+layer toggle publishes the same shared meshes (their GPU buffers are kept) with or without
+their placements.
+
+`via_display_timings` (`cargo test --profile ci -p pcbcraft via_display_timings -- --ignored
+--nocapture`; showcase on 4 layers plus a grid of through vias, 1280 × 800, a frame read back
+to the CPU each time, best of three for the first frame and of five for orbiting, load
+average about 20):
+
+| Vias | Scene (worker) | First frame | Orbit frame | Stream | Instanced (GPU) | Triangles drawn |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1,000 | 93 ms | 29 ms | 8.8 ms | 27 MiB | 24 MiB | 0.71 M |
+| 4,096 | 285 ms | 63 ms | 6.8 ms | 6.9 MiB | 105 MiB | 2.5 M |
+| 10,000 | 577 ms | 102 ms | 9.6 ms | 6.9 MiB | 249 MiB | 5.9 M |
+
+"First frame" is opening the view on a finished build: the scene handed to the view, its
+upload, culling and the first frame. Copied into the stream, the 10,000 vias alone would
+have been 11 GB of vertices (`ten_thousand_vias_hold_one_mesh_per_definition`); their
+definition meshes and levels take 0.7 MB and their placements 52 bytes each. Most of the
+instanced bytes at 10,000 vias are the drilled laminate and the mask openings, each hole
+meshed in place (item 2 below).
+
+Plan items of phase 1, all done in phase 2: vias drawn instanced (above), repeated faces
+meshed once, one evaluation per build, and in-place updates for edits that change values
+(below). Adding or removing a part, pad, track or via still builds the board anew.
 
 The 3D model is prepared in the background while the board is edited in 2D (debounced
 350 ms after the last change), a build that a newer board replaces stops at its next
@@ -426,11 +453,8 @@ purpose:
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
 - The GUI could not be checked live: the screen was locked during both runs, so windows drew
   nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- 10,000 vias build in about 3 s (an edit that changes only values updates the model in
-  place, see Build cost), and the 3D view cannot show
-  1,000 vias yet: every via body is meshed at its own scale (about 700 triangles a body),
-  far over the view's 88 MiB vertex cap. See Build cost for where the time goes and the
-  plan.
+- 10,000 vias build in about 3 s; the 3D view then shows them in about 0.1 s and orbits at
+  interactive rates (see Build cost and The 3D view at scale).
 - Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
   whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
   its moiré at overview distance are in Solidcraft's shader. Seen from below, the key

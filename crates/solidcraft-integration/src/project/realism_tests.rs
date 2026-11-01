@@ -285,8 +285,7 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
             .iter()
             .filter(|g| !matches!(g.kind, BodyKind::Silkscreen))
             .filter_map(|g| {
-                g.mesh
-                    .raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
+                g.raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
                     .map(|(d, _)| (d, g.kind))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -389,7 +388,10 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
         let c = pad.center();
         let z = 1.6 + appearance::MASK_THICKNESS_MM;
         for film in &films {
-            assert!(!film.mesh.contains(Vec3::new(c[0], c[1], z)), "{c:?}");
+            assert!(
+                !film.world_mesh().contains(Vec3::new(c[0], c[1], z)),
+                "{c:?}"
+            );
         }
     }
     // White ink by default; the colour follows the fabrication.

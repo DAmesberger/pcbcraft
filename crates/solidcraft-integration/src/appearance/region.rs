@@ -24,6 +24,35 @@ pub struct Region {
     pub cuts: Vec<Vec<Point>>,
 }
 
+impl Region {
+    /// The region moved by `by`.
+    pub fn shifted(&self, by: Point) -> Region {
+        let shift = |loops: &[Vec<Point>]| -> Vec<Vec<Point>> {
+            loops
+                .iter()
+                .map(|l| l.iter().map(|p| [p[0] + by[0], p[1] + by[1]]).collect())
+                .collect()
+        };
+        Region {
+            fills: shift(&self.fills),
+            cuts: shift(&self.cuts),
+        }
+    }
+
+    /// Names the region's shape to a nanometre: equal keys, equal slabs.
+    pub fn key(&self) -> Vec<u64> {
+        let mut out = vec![self.fills.len() as u64, self.cuts.len() as u64];
+        for l in self.fills.iter().chain(&self.cuts) {
+            out.push(l.len() as u64);
+            for p in l {
+                // Two's-complement bits of the nanometre count.
+                out.extend(p.map(|x| (x * 1e6).round() as i64 as u64));
+            }
+        }
+        out
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Edge {
     lo: Point,

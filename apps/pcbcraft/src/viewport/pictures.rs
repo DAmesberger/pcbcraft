@@ -1007,3 +1007,6 @@ fn opening_3d_timings() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Vias drawn instanced: the look, uploads and timings.
+mod instanced;

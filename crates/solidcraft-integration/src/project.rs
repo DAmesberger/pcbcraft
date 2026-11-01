@@ -12,7 +12,7 @@ use crate::material::{self, BodyKind};
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
-use crate::scene::{Geometry, Volume};
+use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
@@ -418,11 +418,25 @@ fn finish_with(
     // each definition body is measured once, at its first placement.
     let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
-    // Every body's display mesh at once, on all cores (each the mesh it
-    // makes alone); an update reuses most meshes and makes the few others.
-    if previous.is_none() {
-        native.session().world_state().warm_meshes(|| true);
-    }
+    // Every display mesh not taken from `previous` at once, on all cores
+    // (each the mesh it makes alone). A placement of a definition shares
+    // the definition's mesh, so only that is made, never a moved copy.
+    let bodies = &native.session().world_state().bodies;
+    let kept = |key: Option<u64>, name: &str| {
+        previous.as_ref().is_some_and(|p| {
+            key.is_some_and(|k| p.by_key.contains_key(&k))
+                || slabs
+                    .get(name)
+                    .is_some_and(|d| p.slabs.get(name).is_some_and(|(at, _)| at == d))
+        })
+    };
+    let cold: Vec<_> = bodies
+        .iter()
+        .filter(|b| !kept(b.geometry_key(), b.definition_name()))
+        .collect();
+    on_threads(&cold, |body| {
+        body.mesh_in_place();
+    });
     let mut reuse = Reused::default();
     for (index, body) in native.session().world_state().bodies.iter().enumerate() {
         let name = body.definition_name();
@@ -495,14 +509,19 @@ fn finish_with(
             && t[2] == [0.0, 0.0, 1.0, 0.0]
             && moved[3] == 1.0;
         let key = (body.component, name.to_owned());
-        let mesh = body.mesh();
+        // A placement of a definition (every via of a size) shares its definition's mesh and
+        // says where it lies, instead of holding a moved copy of it.
+        let (mesh, placed) = body.mesh_in_place();
+        let place =
+            (placed != solidcraft_engine::doc::IDENTITY).then(|| Place::from_columns(&placed));
         let (volume, min, max) = match measured.get(&key).filter(|_| translation) {
             Some((volume, min, max, at)) => {
                 let shift = |p: &[f64; 3]| std::array::from_fn(|i| p[i] + moved[i] - at[i]);
                 (volume.clone(), shift(min), shift(max))
             }
             None => {
-                let b = mesh.bounds();
+                // A placement's box without making its moved mesh.
+                let b = body.mesh_bounds();
                 let outline = body.body.outline_bounds();
                 let span = b.min.dist(b.max).max(1.0);
                 let near = |p: solidcraft_engine::geom::Vec3, q: solidcraft_engine::geom::Vec3| {
@@ -548,10 +567,24 @@ fn finish_with(
             surface,
             detail,
             mesh,
+            place,
             volume,
             min,
             max,
         });
+    }
+    // A definition's own body (the first via of a size, where its placements
+    // are copied from) shares its mesh with them: place it too, so it is
+    // drawn with them.
+    let shared: std::collections::HashSet<usize> = geometry
+        .iter()
+        .filter(|g| g.place.is_some())
+        .map(|g| std::sync::Arc::as_ptr(&g.mesh) as usize)
+        .collect();
+    for g in &mut geometry {
+        if g.place.is_none() && shared.contains(&(std::sync::Arc::as_ptr(&g.mesh) as usize)) {
+            g.place = Some(Place::IDENTITY);
+        }
     }
     Ok(NativeModel {
         native,
@@ -562,6 +595,28 @@ fn finish_with(
         updated: None,
         display: appearance::Memo::default(),
     })
+}
+
+/// `work` on each item, on every core (one by one on the web).
+fn on_threads<T: Sync>(items: &[T], work: impl Fn(&T) + Sync) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let threads = std::thread::available_parallelism().map_or(1, usize::from);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..threads.min(items.len()) {
+                scope.spawn(|| {
+                    while let Some(item) =
+                        items.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    {
+                        work(item);
+                    }
+                });
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    items.iter().for_each(work);
 }
 
 /// The copper layer of one body of a source on `layer`: a through-hole
