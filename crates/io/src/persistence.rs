@@ -65,13 +65,23 @@ fn write_via_temporary(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(Error::TooLarge("file exceeds 16 MiB".into()));
     }
-    atomic_write_with(path, |file| Ok(file.write_all(bytes)?))
+    write_with(path, replace, |file| Ok(file.write_all(bytes)?))
 }
 
 /// Let `fill` write a sibling temporary file, sync it, then rename it over
 /// `path`. When `fill` fails, the temporary file is removed and `path` is
 /// untouched. `fill` bounds what it writes.
 pub fn atomic_write_with(path: &Path, fill: impl FnOnce(&mut File) -> Result<()>) -> Result<()> {
+    write_with(path, true, fill)
+}
+
+/// [`atomic_write_with`], replacing `path` only when `replace` is set;
+/// otherwise an existing `path` is an `AlreadyExists` error.
+fn write_with(
+    path: &Path,
+    replace: bool,
+    fill: impl FnOnce(&mut File) -> Result<()>,
+) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
