@@ -152,9 +152,15 @@ impl PcbEditor {
         kit::form(ui, |ui| {
             ui.set_width(Tokens::get().form_label_width * 3.2);
             kit::section(ui, "pcb-view-layers", "Layers", true, None, |ui| {
+                // Every copper layer of the stackup, top to bottom, then
+                // the vias through them.
+                for layer in self.stack.clone() {
+                    if let Some(shown) = self.layers.copper_layer_mut(layer) {
+                        kit::check_row(ui, &format!("{} copper", layer.name()), shown);
+                    }
+                }
                 let l = &mut self.layers;
-                kit::check_row(ui, "Top copper", &mut l.copper_top);
-                kit::check_row(ui, "Bottom copper", &mut l.copper_bottom);
+                kit::check_row(ui, "Vias", &mut l.vias);
                 kit::check_row(ui, "Top silkscreen", &mut l.silk_top);
                 kit::check_row(ui, "Bottom silkscreen", &mut l.silk_bottom);
                 kit::check_row(ui, "Courtyard", &mut l.courtyard);

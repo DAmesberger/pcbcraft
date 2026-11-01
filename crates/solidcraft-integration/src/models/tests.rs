@@ -248,7 +248,8 @@ fn soic_leads_are_numbered_counter_clockwise_and_stand_on_the_seating_plane() ->
     for lead in &leads {
         let (lo, hi) = bounds(&native, &lead.name)?;
         near(lo[2], 0.0, "foot on the seating plane");
-        assert_eq!(lead.material, MaterialId::TinMatte);
+        // Formed leads are satin bright tin (the family default).
+        assert_eq!(lead.material, MaterialId::TinBright);
         let tip = if hi[1] > 0.0 { hi[1] } else { -lo[1] };
         near(tip, 3.0, "tip at half the span");
         near(hi[0] - lo[0], 0.41, "lead width");

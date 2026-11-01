@@ -81,20 +81,24 @@ impl ViewLayer {
     }
 
     /// The toggle a body belongs to. Films and copper read their side or
-    /// layer from `layer`; a mask cap or copper without one belongs to the
-    /// top.
+    /// layer from `layer`; a mask cap without one belongs to the top.
+    /// Copper on no single layer (a via's or a through-hole pad's plated
+    /// barrel, a via's finished ring) is the Vias toggle's: Vias shows
+    /// every plated hole. The foils' lines at the routed edge are part of
+    /// the edge's stackup bands, with the substrate.
     pub fn of(kind: BodyKind, layer: Option<CopperLayer>) -> Self {
         let side = layer.and_then(CopperLayer::side).unwrap_or(Layer::Top);
         match kind {
-            BodyKind::Substrate | BodyKind::EdgeDielectric => Self::Substrate,
+            BodyKind::Substrate | BodyKind::EdgeDielectric | BodyKind::EdgeCopper => {
+                Self::Substrate
+            }
             BodyKind::MaskTop => Self::Mask(Layer::Top),
             BodyKind::MaskBottom => Self::Mask(Layer::Bottom),
             BodyKind::MaskCap => Self::Mask(side),
             BodyKind::Silkscreen => Self::Silkscreen(side),
-            BodyKind::CopperTrack
-            | BodyKind::PadCopper
-            | BodyKind::PadFinish
-            | BodyKind::EdgeCopper => Self::Copper(layer.unwrap_or(CopperLayer::Top)),
+            BodyKind::CopperTrack | BodyKind::PadCopper | BodyKind::PadFinish => {
+                layer.map_or(Self::Vias, Self::Copper)
+            }
             BodyKind::ViaCopper | BodyKind::ViaBore => Self::Vias,
             BodyKind::PackageBody
             | BodyKind::ChipResistor
@@ -127,6 +131,29 @@ impl LayerView {
             ViewLayer::Mask(Layer::Bottom),
         ] {
             view.set(layer, !hidden);
+        }
+        view
+    }
+
+    /// X-ray: only the copper and vias, every film, the laminate and the
+    /// components hidden, so the stackup's copper shows layer over layer.
+    pub fn x_ray() -> Self {
+        let mut view = Self::default();
+        for side in [Layer::Top, Layer::Bottom] {
+            view.set(ViewLayer::Mask(side), false);
+            view.set(ViewLayer::Silkscreen(side), false);
+        }
+        view.set(ViewLayer::Substrate, false);
+        view.set(ViewLayer::Bodies, false);
+        view
+    }
+
+    /// Only one copper layer (and nothing else) shows.
+    #[cfg(test)]
+    pub fn only(copper: CopperLayer, stack: &[CopperLayer]) -> Self {
+        let mut view = Self::default();
+        for layer in ViewLayer::stack(stack) {
+            view.set(layer, layer == ViewLayer::Copper(copper));
         }
         view
     }
@@ -201,11 +228,20 @@ fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
             changed = true;
         }
     }
-    let all = ui_kit::button(ui, "Show all", Button::Enabled(view.hides_any()));
-    if all.clicked() && view.hides_any() {
-        *view = LayerView::default();
-        changed = true;
-    }
+    ui.horizontal(|ui| {
+        let x_ray = LayerView::x_ray();
+        let preset = ui_kit::button(ui, "X-ray", Button::Enabled(*view != x_ray))
+            .on_hover_text("Show only the copper layers and vias, through the board");
+        if preset.clicked() && *view != x_ray {
+            *view = x_ray;
+            changed = true;
+        }
+        let all = ui_kit::button(ui, "Show all", Button::Enabled(view.hides_any()));
+        if all.clicked() && view.hides_any() {
+            *view = LayerView::default();
+            changed = true;
+        }
+    });
     changed
 }
 
@@ -221,7 +257,9 @@ mod tests {
                 let shown = view.visible(ViewLayer::of(kind, layer));
                 assert_eq!(
                     shown,
-                    !(kind.is_board() || kind == BodyKind::EdgeDielectric),
+                    !(kind.is_board()
+                        || kind == BodyKind::EdgeDielectric
+                        || kind == BodyKind::EdgeCopper),
                     "{kind:?}"
                 );
             }
@@ -310,6 +348,42 @@ mod tests {
             changed |= frame(view, events).1;
         }
         Ok(changed)
+    }
+
+    /// Copper on no single layer is the Vias toggle's; X-ray shows only
+    /// copper and vias; `only` one copper layer.
+    #[test]
+    fn plated_barrels_follow_vias_and_x_ray_shows_only_copper() {
+        for kind in [
+            BodyKind::PadCopper,
+            BodyKind::PadFinish,
+            BodyKind::CopperTrack,
+        ] {
+            assert_eq!(ViewLayer::of(kind, None), ViewLayer::Vias);
+            assert_eq!(
+                ViewLayer::of(kind, Some(CopperLayer::Bottom)),
+                ViewLayer::Copper(CopperLayer::Bottom)
+            );
+        }
+        let four = [
+            CopperLayer::Top,
+            CopperLayer::Inner(1),
+            CopperLayer::Inner(2),
+            CopperLayer::Bottom,
+        ];
+        let x_ray = LayerView::x_ray();
+        for layer in ViewLayer::stack(&four) {
+            let copper = matches!(layer, ViewLayer::Copper(_) | ViewLayer::Vias);
+            assert_eq!(x_ray.visible(layer), copper, "{layer:?}");
+        }
+        let inner = LayerView::only(CopperLayer::Inner(2), &four);
+        for layer in ViewLayer::stack(&four) {
+            assert_eq!(
+                inner.visible(layer),
+                layer == ViewLayer::Copper(CopperLayer::Inner(2)),
+                "{layer:?}"
+            );
+        }
     }
 
     #[test]

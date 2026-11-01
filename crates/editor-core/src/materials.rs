@@ -303,21 +303,21 @@ fn values(id: MaterialId) -> Values {
         Ferrite => dielectric("Ferrite", [0.045, 0.045, 0.047], 0.60, 2.0)
             .density(4800.0)
             .cite("est", "dark grey sintered Mn-Zn/Ni-Zn ferrite; n and density estimated"),
-        TinMatte => metal("Matte tin", TIN, 0.28)
+        TinMatte => metal("Matte tin", TIN, 0.32)
             .density(7265.0)
             .cite("palik-crc", "density of beta tin; Palik's Sn n, k to confirm the F0")
-            .cite("est", "F0 below polished tin for its oxide film; electroplated matte tin is rough"),
-        TinBright => metal("Bright tin", TIN, 0.15)
+            .cite("est", "F0 below polished tin for its oxide film; electroplated matte tin is rough (0.32: between the 0.40 that went flat grey and the 0.28 that mirrored the studio on chip terminations)"),
+        TinBright => metal("Bright tin", TIN, 0.24)
             .density(7265.0)
             .cite("palik-crc", "density of beta tin")
-            .cite("est", "same F0 as matte tin, a smoother brightened deposit"),
+            .cite("est", "same F0 as matte tin, a smoother brightened deposit: satin, not a mirror"),
         SolderSac => metal("SAC solder", TIN, 0.38)
             .density(7400.0)
             .cite("est", "SAC alloys are about 96 % Sn, so the Sn F0; lead-free joints freeze satin, not mirror-bright"),
-        Gold => metal("Gold plating", GOLD, 0.22)
+        Gold => metal("Gold plating", GOLD, 0.30)
             .density(19300.0)
             .cite("johnson-christy-1972", "Au F0 via Hoffman's table")
-            .cite("est", "roughness of hard gold over nickel"),
+            .cite("est", "roughness of hard gold flash over nickel on drawn pins; 0.30 so a pin gathers the studio strips into a visible gradient instead of mirroring its dark walls"),
         Nickel => metal("Nickel", NICKEL, 0.30)
             .density(8908.0)
             .cite("rakic-1998", "Ni F0")
@@ -506,7 +506,7 @@ mod tests {
         let mlcc = builtin(MaterialId::BariumTitanate)?;
         assert_eq!((mlcc.base_linear, mlcc.ior), ([0.32, 0.25, 0.15], 2.4));
         let tin = builtin(MaterialId::TinMatte)?;
-        assert_eq!((tin.base_linear, tin.roughness), ([0.78, 0.78, 0.80], 0.28));
+        assert_eq!((tin.base_linear, tin.roughness), ([0.78, 0.78, 0.80], 0.32));
         assert_eq!(builtin(MaterialId::SolderSac)?.roughness, 0.38);
         // n = 1.55 gives F0 ≈ 0.047 (docs/materials.md conventions).
         assert!((epoxy.dielectric_f0() - 0.0465).abs() < 5e-4);

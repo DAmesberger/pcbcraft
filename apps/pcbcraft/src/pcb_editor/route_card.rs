@@ -2,7 +2,7 @@
 //! uses, while Route is armed in Layout (docs/sidebar-ia.md, "Tool card").
 //! The route in progress shows as a canvas pill; view toggles live in the
 //! view popover.
-use super::{PcbEditor, layer_options};
+use super::{PcbEditor, copper_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
 use pcbcraft_core::{Operation, Project, schematic};
@@ -21,12 +21,15 @@ impl PcbEditor {
             name: "Route",
             key: "",
             hint: if routing {
-                "Click a point or pad; Esc ends the route"
+                "Click a point or pad; V changes layer through a via; Esc ends"
             } else {
-                "Click a pad, then points or a pad; Esc ends"
+                "Click a pad, then points or a pad; V changes layer; Esc ends"
             },
-            tip: "Routes run on the chosen copper layer at the chosen width. A route the \
-                  clearance rules refuse is not added, and the route stays in progress.",
+            tip: "Routes run on the chosen copper layer at the chosen width. While routing, \
+                  V (Shift+V backwards) places a via at the pointer and continues on the next \
+                  layer of the stackup; the next click routes to the via, places it and routes \
+                  on, as one step. A route the clearance rules refuse is not added, and the \
+                  route stays in progress.",
             finish: None,
         };
         let t = solidcraft_ui_egui::theme::Tokens::get();
@@ -37,9 +40,12 @@ impl PcbEditor {
             .show(ui, |ui| {
                 kit::tool_card(ui, &card, |ui| {
                     kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);
-                    if kit::choice_row(ui, "Layer", &mut self.layer, &layer_options()) {
+                    let options = copper_options(&self.stack);
+                    if kit::choice_row(ui, "Layer", &mut self.layer, &options) {
                         self.route_start = None;
+                        self.pending_via = None;
                     }
+                    kit::check_row(ui, "Tent vias", &mut self.via_tented);
                     let mut nets = vec![(None, "From the first pad".to_owned())];
                     nets.extend(
                         schematic::nets(project)

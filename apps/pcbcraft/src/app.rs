@@ -661,6 +661,12 @@ impl App {
         }
         if let Some(pick) = pick {
             match pick.and_then(|id| self.scene.source(id)) {
+                // A via body selects the via (and lights its net).
+                Some(source) if source.via.is_some() && source.instance.is_none() => {
+                    if let Some(via) = source.via {
+                        self.pcb.select_via(via, source.net);
+                    }
+                }
                 Some(source) => {
                     let (instance, track, net) = (source.instance, source.track, source.net);
                     self.pcb.set_selection(instance, track, net);

@@ -15,7 +15,8 @@ use crate::refusal::{self, Origin};
 use crate::symbol_view::{self, View};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Id, Layer, ObjectRef, Operation, Placement, Point, Project, Query, QueryResult,
+    CopperLayer, Engine, Id, Layer, ObjectRef, Operation, Placement, Point, Project, Query,
+    QueryResult, Via,
     geometry::{Shape as CoreShape, Transform2},
     instances,
     issues::{IssueArea, IssueScope},
@@ -36,6 +37,9 @@ mod board_card;
 mod placement_card;
 mod route_card;
 mod track_card;
+mod via_card;
+#[cfg(test)]
+mod via_tests;
 
 /// Scroll and pinch zoom limits, relative to the board fitting the canvas.
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.2..=12.0;
@@ -45,13 +49,22 @@ enum Tool {
     #[default]
     Select,
     Route,
+    /// Place a through via on a net.
+    Via,
 }
+
+/// Most inner copper layers a stackup has (six-layer boards).
+const MAX_INNER: usize = 4;
 
 /// Which board layers Layout draws and picks. Hidden layers do not pick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Layers {
     copper_top: bool,
     copper_bottom: bool,
+    /// Inner copper layers 1 to [`MAX_INNER`].
+    inner: [bool; MAX_INNER],
+    /// Board vias (their rings and drills).
+    vias: bool,
     silk_top: bool,
     silk_bottom: bool,
     courtyard: bool,
@@ -64,6 +77,8 @@ impl Default for Layers {
         Self {
             copper_top: true,
             copper_bottom: true,
+            inner: [true; MAX_INNER],
+            vias: true,
             silk_top: true,
             silk_bottom: true,
             courtyard: true,
@@ -79,6 +94,36 @@ impl Layers {
             Layer::Top => self.copper_top,
             Layer::Bottom => self.copper_bottom,
         }
+    }
+    /// Whether a copper layer of the stackup shows.
+    fn copper_layer(&self, layer: CopperLayer) -> bool {
+        match layer {
+            CopperLayer::Top => self.copper_top,
+            CopperLayer::Bottom => self.copper_bottom,
+            CopperLayer::Inner(n) => usize::from(n)
+                .checked_sub(1)
+                .and_then(|i| self.inner.get(i))
+                .copied()
+                .unwrap_or(true),
+        }
+    }
+    /// The toggle of a copper layer, for the view popover; `None` past
+    /// [`MAX_INNER`].
+    fn copper_layer_mut(&mut self, layer: CopperLayer) -> Option<&mut bool> {
+        match layer {
+            CopperLayer::Top => Some(&mut self.copper_top),
+            CopperLayer::Bottom => Some(&mut self.copper_bottom),
+            CopperLayer::Inner(n) => usize::from(n)
+                .checked_sub(1)
+                .and_then(|i| self.inner.get_mut(i)),
+        }
+    }
+    /// A via shows with the via layer while a copper layer it joins does.
+    fn via(&self, via: &Via, stack: &[CopperLayer]) -> bool {
+        self.vias
+            && stack
+                .iter()
+                .any(|l| self.copper_layer(*l) && via.on(*l, stack))
     }
     /// A through-hole pad shows while either copper layer does; a bare
     /// hole with the hole layer.
@@ -211,6 +256,7 @@ enum Inspected {
     Placement(Id),
     Unplaced(Id),
     Track(Id),
+    Via(Id),
     Review,
 }
 
@@ -227,14 +273,25 @@ pub struct PcbEditor {
     /// clearance issue); cleared by any other selection.
     also: Vec<Id>,
     track: Option<Id>,
+    /// The selected board via.
+    via: Option<Id>,
     net: Option<Id>,
     highlighted: Option<Id>,
     /// The net the Route tool highlighted, so ending the route turns off a
     /// highlight it made (and leaves one the user turned on).
     route_lit: Option<Id>,
-    layer: Layer,
+    /// The copper layer Route draws on.
+    layer: CopperLayer,
+    /// The board's copper layers, top to bottom, per revision.
+    stack: Vec<CopperLayer>,
     width: f64,
     route_start: Option<Point>,
+    /// A layer change pressed (V) during a route: the via's position and
+    /// the layer the route reaches it on. The next click routes there,
+    /// places the via and routes on on `layer` (`layout.route_layer_change`).
+    pending_via: Option<(Point, CopperLayer)>,
+    /// Whether vias the Via tool and layer changes place are tented.
+    via_tented: bool,
     property_key: Option<(u64, Option<Id>)>,
     position: Point,
     rotation: f64,
@@ -254,6 +311,9 @@ pub struct PcbEditor {
     issues: Vec<pcbcraft_core::Finding>,
     board_pads: Vec<BoardPad>,
     graphics: Vec<PlacedGraphic>,
+    /// Both ends of every track with its net and layer, per revision, for
+    /// snapping layer changes and vias to track ends.
+    track_ends: Vec<(Point, Id, CopperLayer)>,
     /// Instances whose footprint draws an assembly or courtyard outline;
     /// the others get the package envelope as their outline.
     outlined: BTreeSet<Id>,
@@ -292,12 +352,16 @@ impl Default for PcbEditor {
             instance: None,
             also: Vec::new(),
             track: None,
+            via: None,
             net: None,
             highlighted: None,
             route_lit: None,
-            layer: Layer::Top,
+            layer: CopperLayer::Top,
+            stack: vec![CopperLayer::Top, CopperLayer::Bottom],
             width: 0.3,
             route_start: None,
+            pending_via: None,
+            via_tented: true,
             property_key: None,
             position: [0.0; 2],
             rotation: 0.0,
@@ -315,6 +379,7 @@ impl Default for PcbEditor {
             issues: vec![],
             board_pads: vec![],
             graphics: vec![],
+            track_ends: vec![],
             outlined: BTreeSet::new(),
             labelled: BTreeSet::new(),
             layers: Layers::default(),
@@ -347,30 +412,39 @@ impl PcbEditor {
     /// Set the layers PCB 3D shows; the shared toggles change in 2D too.
     pub fn set_layer_view(&mut self, view: crate::layer_view::LayerView) {
         use crate::layer_view::ViewLayer;
-        let l = &mut self.layers;
-        for (layer, flag) in [
-            (ViewLayer::Copper(Layer::Top.into()), &mut l.copper_top),
-            (
-                ViewLayer::Copper(Layer::Bottom.into()),
-                &mut l.copper_bottom,
-            ),
-            (ViewLayer::Silkscreen(Layer::Top), &mut l.silk_top),
-            (ViewLayer::Silkscreen(Layer::Bottom), &mut l.silk_bottom),
-        ] {
-            *flag = view.visible(layer);
+        for (layer, _) in self.shared_layers() {
+            let visible = view.visible(layer);
+            let l = &mut self.layers;
+            let flag = match layer {
+                ViewLayer::Copper(copper) => l.copper_layer_mut(copper),
+                ViewLayer::Silkscreen(Layer::Top) => Some(&mut l.silk_top),
+                ViewLayer::Silkscreen(Layer::Bottom) => Some(&mut l.silk_bottom),
+                ViewLayer::Vias => Some(&mut l.vias),
+                _ => None,
+            };
+            if let Some(flag) = flag {
+                *flag = visible;
+            }
         }
         self.view_layers = view;
     }
 
-    fn shared_layers(&self) -> [(crate::layer_view::ViewLayer, bool); 4] {
+    /// The toggles PCB 2D and 3D share: every copper layer, the vias and
+    /// both silkscreens.
+    fn shared_layers(&self) -> Vec<(crate::layer_view::ViewLayer, bool)> {
         use crate::layer_view::ViewLayer;
         let l = &self.layers;
-        [
-            (ViewLayer::Copper(Layer::Top.into()), l.copper_top),
-            (ViewLayer::Copper(Layer::Bottom.into()), l.copper_bottom),
-            (ViewLayer::Silkscreen(Layer::Top), l.silk_top),
-            (ViewLayer::Silkscreen(Layer::Bottom), l.silk_bottom),
-        ]
+        let inner = (1..=MAX_INNER).filter_map(|n| u8::try_from(n).ok());
+        [CopperLayer::Top, CopperLayer::Bottom]
+            .into_iter()
+            .chain(inner.map(CopperLayer::Inner))
+            .map(|c| (ViewLayer::Copper(c), l.copper_layer(c)))
+            .chain([
+                (ViewLayer::Vias, l.vias),
+                (ViewLayer::Silkscreen(Layer::Top), l.silk_top),
+                (ViewLayer::Silkscreen(Layer::Bottom), l.silk_bottom),
+            ])
+            .collect()
     }
 
     pub fn is_3d(&self) -> bool {
@@ -404,7 +478,14 @@ impl PcbEditor {
         self.instance = instance;
         self.also.clear();
         self.track = track;
+        self.via = None;
         self.discard_staged();
+    }
+
+    /// Select a board via and light its net, as a 2D or 3D pick does.
+    pub fn select_via(&mut self, via: Id, net: Option<Id>) {
+        self.set_selection(None, None, net);
+        self.via = Some(via);
     }
 
     /// Leave the Route tool for Select: the route in progress ends and the
@@ -412,6 +493,7 @@ impl PcbEditor {
     fn end_route(&mut self) {
         self.tool = Tool::Select;
         self.route_start = None;
+        self.pending_via = None;
         if let Some(net) = self.route_lit.take()
             && self.highlighted == Some(net)
         {
@@ -464,6 +546,17 @@ impl PcbEditor {
         if self.cached_revision != Some(engine.revision()) {
             self.cancel_drag();
             self.route_start = None;
+            self.pending_via = None;
+            self.stack = engine.project().stackup.layers();
+            if !self.stack.contains(&self.layer) {
+                self.layer = CopperLayer::Top;
+            }
+            if self
+                .via
+                .is_some_and(|id| !engine.project().vias.iter().any(|v| v.id == id))
+            {
+                self.via = None;
+            }
             self.copper = BoardCopper::of(engine.project());
             self.airwires = self.copper.airwires(&engine.project().tracks);
             self.issues = self.copper.checks(engine.project());
@@ -492,7 +585,7 @@ impl PcbEditor {
                 self.route_start = None;
             }
         }
-        let key = (engine.revision(), self.instance.or(self.track));
+        let key = (engine.revision(), self.instance.or(self.track).or(self.via));
         if self.property_key != Some(key) {
             // A new revision or subject: the fields show the document again.
             self.sent.clear();
@@ -530,6 +623,11 @@ impl PcbEditor {
             })
             .collect();
         self.graphics = layout::placed_graphics(project);
+        self.track_ends = project
+            .tracks
+            .iter()
+            .flat_map(|t| [(t.start, t.net, t.layer), (t.end, t.net, t.layer)])
+            .collect();
         self.outlined = self
             .graphics
             .iter()
@@ -650,6 +748,10 @@ impl PcbEditor {
                             .enabled(!self.view_3d)
                             .selected(self.tool == Tool::Route)
                             .tip("Route copper from a pad; switch to Layout to route"),
+                        Button::new("via", "circle", "Via")
+                            .enabled(!self.view_3d)
+                            .selected(self.tool == Tool::Via)
+                            .tip("Place a through via on a net; switch to Layout to place"),
                     ],
                 },
             ],
@@ -671,7 +773,14 @@ impl PcbEditor {
                 self.cancel_drag();
             }
             "select" => self.end_route(),
-            "route" => self.tool = Tool::Route,
+            "route" => {
+                self.pending_via = None;
+                self.tool = Tool::Route;
+            }
+            "via" => {
+                self.end_route();
+                self.tool = Tool::Via;
+            }
             _ => {}
         }
         None
@@ -688,6 +797,12 @@ impl PcbEditor {
             } else {
                 Inspected::Unplaced(id)
             };
+        }
+        if let Some(id) = self
+            .via
+            .filter(|id| project.vias.iter().any(|v| v.id == *id))
+        {
+            return Inspected::Via(id);
         }
         match self
             .track
@@ -737,6 +852,14 @@ impl PcbEditor {
                     .map_or("", |t| project.net_name(t.net));
                 Header::new("trace", format!("Track · {net}"), "Track")
             }
+            Inspected::Via(id) => {
+                let net = project
+                    .vias
+                    .iter()
+                    .find(|v| v.id == id)
+                    .map_or("", |v| project.net_name(v.net));
+                Header::new("circle", format!("Via · {net}"), "Via")
+            }
             Inspected::Board => Header::new("plane", "Board", "Board"),
         }
     }
@@ -749,7 +872,7 @@ impl PcbEditor {
             Subject::Review
         } else if self.setup.is_some() {
             Subject::Dialog
-        } else if self.tool == Tool::Route && !self.view_3d {
+        } else if matches!(self.tool, Tool::Route | Tool::Via) && !self.view_3d {
             Subject::Tool
         } else {
             Subject::Properties
@@ -763,7 +886,10 @@ impl PcbEditor {
         Inspector {
             header: self.header(engine),
             subject: egui::Id::new(("pcb-card", inspected)),
-            footer: matches!(inspected, Inspected::Placement(_) | Inspected::Track(_)),
+            footer: matches!(
+                inspected,
+                Inspected::Placement(_) | Inspected::Track(_) | Inspected::Via(_)
+            ),
             issues: self.issue_slot(engine, inspected),
         }
     }
@@ -776,6 +902,9 @@ impl PcbEditor {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
         match self.subject() {
+            Subject::Tool if self.tool == Tool::Via => {
+                CardResponse::output(self.via_tool_card(ui, engine.project()))
+            }
             Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
             Subject::Dialog => CardResponse::output(self.board_setup(ui, engine)),
             // The review docks with its own header and pinned footer
@@ -849,6 +978,10 @@ impl PcbEditor {
                 let track = project.tracks.iter().find(|t| t.id == id)?;
                 self.track_section(ui, project, track)
             }
+            Inspected::Via(id) => {
+                let via = project.vias.iter().find(|v| v.id == id)?;
+                self.via_section(ui, project, via)
+            }
             Inspected::Board | Inspected::Review => {
                 self.board_section(ui, project);
                 None
@@ -868,6 +1001,10 @@ impl PcbEditor {
             Inspected::Track(id) => {
                 let track = project.tracks.iter().find(|t| t.id == id)?;
                 track_card::track_footer(ui, track)
+            }
+            Inspected::Via(id) => {
+                let via = project.vias.iter().find(|v| v.id == id)?;
+                via_card::via_footer(ui, via)
             }
             _ => None,
         }
@@ -939,6 +1076,16 @@ impl PcbEditor {
             self.cancel_drag();
             self.discard_staged();
         }
+        // V changes the routing layer; during a route it also places a
+        // via at the pointer, which the next click routes through.
+        if self.tool == Tool::Route
+            && response.hovered()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && ui.input(|i| i.key_pressed(egui::Key::V))
+        {
+            let reverse = ui.input(|i| i.modifiers.shift);
+            self.change_layer(cursor.map(|at| self.route_point(at, scale)), reverse);
+        }
         if self.tool == Tool::Select
             && !self.update.is_open()
             && response.drag_started_by(PointerButton::Primary)
@@ -979,18 +1126,36 @@ impl PcbEditor {
         if response.clicked_by(PointerButton::Primary)
             && let Some(at) = cursor
         {
-            if self.tool == Tool::Route {
+            if self.tool == Tool::Via {
+                operation = self.place_via(project, at, scale);
+            } else if self.tool == Tool::Route {
                 let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
-                let destination = snapped.map(|(c, _)| c).unwrap_or_else(|| snap(at));
+                let destination = snapped
+                    .map(|(c, _)| c)
+                    .unwrap_or_else(|| self.route_point(at, scale));
                 if let Some(start) = self.route_start {
                     if let Some(net) = self.net {
-                        operation = Some(Operation::Layout(LayoutCommand::Route {
-                            request: RouteRequest {
-                                net,
-                                start,
-                                end: destination,
-                                width: self.width,
-                                layer: self.layer.into(),
+                        let request = |start, end, layer| RouteRequest {
+                            net,
+                            start,
+                            end,
+                            width: self.width,
+                            layer,
+                        };
+                        operation = Some(Operation::Layout(match self.pending_via {
+                            Some((via, from)) => LayoutCommand::RouteLayerChange {
+                                request: layout::LayerChangeRequest {
+                                    request: request(start, via, from),
+                                    via: layout::ViaRequest {
+                                        tented: self.via_tented,
+                                        ..layout::ViaRequest::through(net, via)
+                                    },
+                                    to_layer: self.layer,
+                                    end: destination,
+                                },
+                            },
+                            None => LayoutCommand::Route {
+                                request: request(start, destination, self.layer),
                             },
                         }));
                         // The route stays in progress until the engine takes
@@ -1031,12 +1196,47 @@ impl PcbEditor {
             let end = self
                 .route_snap(at, scale)
                 .map(PlacedPad::center)
-                .unwrap_or_else(|| snap(at));
-            painter.line_segment(
-                [screen(start), screen(end)],
-                Stroke::new((self.width as f32 * scale).max(1.0), t.body_selected),
-            );
+                .unwrap_or_else(|| self.route_point(at, scale));
+            let width = (self.width as f32 * scale).max(1.0);
+            let leg = |from: Point, to: Point, layer: CopperLayer| {
+                let color = crate::palette::board().copper_layer(layer);
+                painter.line_segment([screen(from), screen(to)], Stroke::new(width, color));
+                painter.line_segment(
+                    [screen(from), screen(to)],
+                    Stroke::new(1.0, t.body_selected),
+                );
+            };
+            match self.pending_via {
+                Some((via, from)) => {
+                    leg(start, via, from);
+                    leg(via, end, self.layer);
+                    let radius = (layout::DEFAULT_VIA_DIAMETER_MM as f32 * scale / 2.0).max(4.0);
+                    painter.circle(
+                        screen(via),
+                        radius,
+                        t.body_selected,
+                        Stroke::new(1.0, t.on_accent),
+                    );
+                    painter.circle_filled(
+                        screen(via),
+                        (layout::DEFAULT_VIA_DRILL_MM as f32 * scale / 2.0).max(2.0),
+                        BoardInk::get().drill,
+                    );
+                }
+                None => leg(start, end, self.layer),
+            }
             painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+        }
+        if self.tool == Tool::Via
+            && let Some(at) = cursor
+            && response.hovered()
+        {
+            let at = self.via_point(at, scale);
+            painter.circle_stroke(
+                screen(at),
+                (layout::DEFAULT_VIA_DIAMETER_MM as f32 * scale / 2.0).max(4.0),
+                Stroke::new(1.5, t.body_selected),
+            );
         }
         kit::canvas_hint(
             &painter,
@@ -1044,12 +1244,12 @@ impl PcbEditor {
             t.space_16,
             &format!(
                 "{} · {} copper · grid 0.5 mm · {} airwires{}",
-                if self.tool == Tool::Route {
-                    "Route"
-                } else {
-                    "Select / move"
+                match self.tool {
+                    Tool::Route => "Route (V changes layer)",
+                    Tool::Via => "Via",
+                    Tool::Select => "Select / move",
                 },
-                layer_name(self.layer),
+                self.layer.name(),
                 self.visible_airwires().len(),
                 if self.from_bottom {
                     " · viewed from bottom"
@@ -1109,7 +1309,7 @@ impl PcbEditor {
             .iter()
             .filter(|b| {
                 let p = &b.placed;
-                p.net.is_some() && p.on_copper(self.layer) && self.layers.pad(p)
+                p.net.is_some() && pad_on(p, self.layer) && self.layers.pad(p)
             })
             .map(|b| {
                 (
@@ -1121,6 +1321,108 @@ impl PcbEditor {
             .filter(|(_, edge, _)| *edge < reach)
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.2.total_cmp(&b.2)))
             .map(|(b, _, _)| &b.placed)
+    }
+
+    /// Where a route click or V at `at` lands: the end of a track of the
+    /// routed net within 8 pixels, else the 0.5 mm grid. A layer change
+    /// at a track end continues that track through a via.
+    fn route_point(&self, at: Point, scale: f32) -> Point {
+        self.track_end(at, scale, self.net)
+            .unwrap_or_else(|| snap(at))
+    }
+
+    /// The nearest end of a visible track (of `net`, if given) within 8
+    /// pixels of `at`.
+    fn track_end(&self, at: Point, scale: f32, net: Option<Id>) -> Option<Point> {
+        let reach = f64::from(8.0 / scale);
+        self.track_ends
+            .iter()
+            .filter(|(end, track_net, layer)| {
+                net.is_none_or(|n| n == *track_net)
+                    && self.layers.copper_layer(*layer)
+                    && pcbcraft_core::geometry::distance(*end, at) < reach
+            })
+            .min_by(|a, b| {
+                let d = |p: Point| pcbcraft_core::geometry::distance(p, at);
+                d(a.0).total_cmp(&d(b.0))
+            })
+            .map(|(end, _, _)| *end)
+    }
+
+    /// Where the Via tool places a via for a click at `at`: a track end
+    /// within 8 pixels, else the 0.5 mm grid.
+    fn via_point(&self, at: Point, scale: f32) -> Point {
+        self.track_end(at, scale, None).unwrap_or_else(|| snap(at))
+    }
+
+    /// V: the next copper layer of the stackup (Shift: the previous one).
+    /// During a route the via goes at `at`, unless that is where the route
+    /// starts or a via is already pending (then only the layer changes).
+    fn change_layer(&mut self, at: Option<Point>, reverse: bool) {
+        let Some(index) = self.stack.iter().position(|l| *l == self.layer) else {
+            self.layer = CopperLayer::Top;
+            return;
+        };
+        let count = self.stack.len().max(1);
+        let next = if reverse {
+            (index + count - 1) % count
+        } else {
+            (index + 1) % count
+        };
+        let Some(&layer) = self.stack.get(next) else {
+            return;
+        };
+        if let (Some(start), Some(at), None) = (self.route_start, at, self.pending_via)
+            && start != at
+        {
+            self.pending_via = Some((at, self.layer));
+        }
+        if self.pending_via.is_some_and(|(_, from)| from == layer) {
+            // Back on the layer the route reached the via on: no via.
+            self.pending_via = None;
+        }
+        self.layer = layer;
+    }
+
+    /// The via the Via tool places for a click at `at`: on the net of the
+    /// pad, via or track under the pointer, else the chosen net. `None`
+    /// without a net.
+    fn place_via(&mut self, project: &Project, at: Point, scale: f32) -> Option<Operation> {
+        let layers = self.layers;
+        let position = self.via_point(at, scale);
+        let under = self
+            .pick_pad(at, |p| layers.pad(p))
+            .and_then(|p| p.net)
+            .or_else(|| {
+                project
+                    .tracks
+                    .iter()
+                    .rev()
+                    .find(|t| {
+                        layers.copper_layer(t.layer)
+                            && (layout::point_in_polygon(at, &layout::track_polygon(t))
+                                || t.start == position
+                                || t.end == position)
+                    })
+                    .map(|t| t.net)
+            });
+        let net = under.or(self.net)?;
+        self.net = Some(net);
+        self.route_highlight(Some(net));
+        Some(Operation::Layout(LayoutCommand::AddVia {
+            via: layout::ViaRequest {
+                tented: self.via_tented,
+                ..layout::ViaRequest::through(net, position)
+            },
+        }))
+    }
+
+    /// The topmost visible via whose pad is under `at`.
+    fn pick_via<'a>(&self, project: &'a Project, at: Point) -> Option<&'a Via> {
+        project.vias.iter().rev().find(|via| {
+            self.layers.via(via, &self.stack)
+                && pcbcraft_core::geometry::distance(via.position, at) <= via.diameter / 2.0
+        })
     }
 
     /// The topmost (last drawn) visible pad under `at`, against the cached
@@ -1141,8 +1443,11 @@ impl PcbEditor {
         if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
             let (instance, net) = (pad.instance, pad.net);
             self.set_selection(Some(instance), None, net);
+        } else if let Some(via) = self.pick_via(project, at) {
+            let (id, net) = (via.id, via.net);
+            self.select_via(id, Some(net));
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
-            track.layer.side().is_some_and(|side| layers.copper(side))
+            layers.copper_layer(track.layer)
                 && layout::point_in_polygon(at, &layout::track_polygon(track))
         }) {
             self.set_selection(None, Some(track.id), Some(track.net));
@@ -1242,10 +1547,30 @@ impl PcbEditor {
         // silkscreen and courtyard (graphics spec §6 order).
         self.paint_drawings(painter, view, &ink, far, true, |_| true);
         self.paint_copper(painter, view, project, Some(far), true);
+        // Inner layers between the sides, far to near, dimmed unless Route
+        // draws on one; that one is drawn again over the near copper.
+        let mut inner: Vec<CopperLayer> = self
+            .stack
+            .iter()
+            .copied()
+            .filter(|l| l.side().is_none())
+            .collect();
+        if !self.from_bottom {
+            inner.reverse();
+        }
+        let routing_inner =
+            (self.tool == Tool::Route && self.layer.side().is_none()).then_some(self.layer);
+        for layer in &inner {
+            self.paint_tracks(painter, view, project, *layer, 0.6);
+        }
         let assembly = |l: BoardDrawing| matches!(l, BoardDrawing::Assembly(_));
         self.paint_drawings(painter, view, &ink, near, false, assembly);
         self.paint_copper(painter, view, project, None, false);
         self.paint_copper(painter, view, project, Some(near), false);
+        if let Some(layer) = routing_inner {
+            self.paint_tracks(painter, view, project, layer, 1.0);
+        }
+        self.paint_vias(painter, view, project, near);
         if self.layers.holes {
             for pad in &self.board_pads {
                 let delta = self.drag_delta(pad.placed.instance);
@@ -1358,16 +1683,8 @@ impl PcbEditor {
             if !self.layers.copper(layer) {
                 return;
             }
-            for track in project.tracks.iter().filter(|t| t.layer == layer) {
-                let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
-                painter.add(Shape::convex_polygon(
-                    layout::track_polygon(track)
-                        .map(|p| view.screen(p))
-                        .to_vec(),
-                    shade(copper_color(layer, selected)),
-                    Stroke::NONE,
-                ));
-            }
+            let factor = if dim { 0.45 } else { 1.0 };
+            self.paint_tracks(painter, view, project, layer.into(), factor);
         }
         let ink = BoardInk::get();
         for pad in &self.board_pads {
@@ -1412,6 +1729,76 @@ impl PcbEditor {
                 Some(shade(copper_color(layer, selected))),
                 None,
             );
+        }
+    }
+
+    /// The tracks on one copper layer in its colour, times `shade`; the
+    /// selected track and the highlighted net in the selection colour.
+    fn paint_tracks(
+        &self,
+        painter: &egui::Painter,
+        view: BoardView,
+        project: &Project,
+        layer: CopperLayer,
+        shade: f32,
+    ) {
+        if !self.layers.copper_layer(layer) {
+            return;
+        }
+        let colors = crate::palette::board();
+        for track in project.tracks.iter().filter(|t| t.layer == layer) {
+            let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
+            let color = if selected {
+                colors.selected
+            } else {
+                colors.copper_layer(layer)
+            };
+            painter.add(Shape::convex_polygon(
+                layout::track_polygon(track)
+                    .map(|p| view.screen(p))
+                    .to_vec(),
+                if shade < 1.0 {
+                    color.gamma_multiply(shade)
+                } else {
+                    color
+                },
+                Stroke::NONE,
+            ));
+        }
+    }
+
+    /// Board vias: the pad ring in the near copper colour and the drill.
+    /// A tented via's ring shows under a mask tint with an outline; an
+    /// open via's ring is solid with a bright finished edge.
+    fn paint_vias(&self, painter: &egui::Painter, view: BoardView, project: &Project, near: Layer) {
+        let colors = crate::palette::board();
+        let ink = BoardInk::get();
+        let scale = view.view.scale;
+        for via in &project.vias {
+            if !self.layers.via(via, &self.stack) {
+                continue;
+            }
+            let selected = self.via == Some(via.id) || self.highlighted == Some(via.net);
+            let ring = if selected {
+                colors.selected
+            } else {
+                // The near layer's colour when its copper shows, else the
+                // first shown layer the via joins.
+                let shown = std::iter::once(CopperLayer::from(near))
+                    .chain(self.stack.iter().copied())
+                    .find(|l| self.layers.copper_layer(*l) && via.on(*l, &self.stack))
+                    .unwrap_or(CopperLayer::from(near));
+                colors.copper_layer(shown)
+            };
+            let at = view.screen(via.position);
+            let outer = (via.diameter as f32 * scale / 2.0).max(2.5);
+            let drill = (via.drill as f32 * scale / 2.0).max(1.0).min(outer - 0.5);
+            if via.tented {
+                painter.circle(at, outer, ring.gamma_multiply(0.55), Stroke::new(1.0, ring));
+            } else {
+                painter.circle(at, outer, ring, Stroke::new(1.0, ink.unplated));
+            }
+            painter.circle(at, drill, ink.drill, Stroke::new(0.75, ink.plated));
         }
     }
 
@@ -1560,6 +1947,11 @@ fn copper_color(layer: Layer, selected: bool) -> Color32 {
         colors.copper(layer)
     }
 }
+/// Whether a pad has copper on `layer`: a through-hole pad on every
+/// layer, a surface pad on its side's outer layer.
+fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
+    pad.pad.kind.through_hole() || CopperLayer::from(pad.layer) == layer
+}
 fn opposite(layer: Layer) -> Layer {
     if layer == Layer::Top {
         Layer::Bottom
@@ -1567,14 +1959,13 @@ fn opposite(layer: Layer) -> Layer {
         Layer::Top
     }
 }
-fn layer_name(layer: Layer) -> &'static str {
-    match layer {
-        Layer::Top => "Top",
-        Layer::Bottom => "Bottom",
-    }
-}
+/// The board sides by their names.
 fn layer_options() -> [(Layer, String); 2] {
-    [Layer::Top, Layer::Bottom].map(|layer| (layer, layer_name(layer).to_owned()))
+    [(Layer::Top, "Top"), (Layer::Bottom, "Bottom")].map(|(layer, name)| (layer, name.to_owned()))
+}
+/// The copper layers of `stack` (top to bottom) by their names.
+fn copper_options(stack: &[CopperLayer]) -> Vec<(CopperLayer, String)> {
+    stack.iter().map(|layer| (*layer, layer.name())).collect()
 }
 /// Board millimetres to the canvas `rect`: the board fitted with a 50 px
 /// margin and centred, times `zoom`, moved by `pan`.
@@ -1677,6 +2068,12 @@ fn issue_slot_of(engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
             },
             "on this track".to_owned(),
         ),
+        Inspected::Via(id) => (
+            IssueScope::Selection {
+                objects: vec![ObjectRef::Via { id }],
+            },
+            "on this via".to_owned(),
+        ),
     };
     let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues { scope }) else {
         return None;
@@ -1741,6 +2138,13 @@ fn bounds_of(editor: &PcbEditor, project: &Project, refs: &[ObjectRef]) -> Optio
                     points.extend(layout::track_polygon(track));
                 }
             }
+            ObjectRef::Via { id } => {
+                for via in project.vias.iter().filter(|v| v.id == id) {
+                    let r = via.diameter / 2.0;
+                    let [x, y] = via.position;
+                    points.extend([[x - r, y - r], [x + r, y + r]]);
+                }
+            }
             _ => {}
         }
     }
@@ -1787,6 +2191,21 @@ impl crate::issues::Locate for PcbEditor {
     fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
         self.sync(engine);
         let project = engine.project();
+        // A finding on a via (and no part or track) selects the via and
+        // its net and frames it.
+        let via = refs.iter().find_map(|o| match o {
+            ObjectRef::Via { id } => project.vias.iter().find(|v| v.id == *id),
+            _ => None,
+        });
+        let track = refs.iter().any(|o| matches!(o, ObjectRef::Track { .. }));
+        if let Some(via) = via
+            && located_parts(refs).next().is_none()
+            && !track
+        {
+            self.select_via(via.id, Some(via.net));
+            self.frame_request = bounds_of(self, project, refs);
+            return true;
+        }
         let Some((instance, track, net)) = locate(refs) else {
             if refs.contains(&ObjectRef::Board) {
                 self.set_selection(None, None, None);

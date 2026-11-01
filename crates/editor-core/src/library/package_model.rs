@@ -127,8 +127,9 @@ impl GeneratedMaterials {
 }
 
 /// The family default material of each body role, from the form's typed
-/// family and chip kind (never from names). Gull-wing leads are matte tin
-/// over a copper-alloy frame, header pins gold-plated, header housings PBT.
+/// family and chip kind (never from names). Gull-wing leads are satin
+/// bright tin over a copper-alloy frame, terminations matte tin, header
+/// pins gold-plated, header housings PBT.
 pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
     use super::package_form::ChipKind;
     match (form, role) {
@@ -139,6 +140,8 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
         },
         (PackageForm::Header(_), BodyRole::Body) => MaterialId::Pbt,
         (PackageForm::Header(_), BodyRole::Lead) => MaterialId::Gold,
+        // Formed leads are bright (satin) tin; chip terminations matte.
+        (PackageForm::GullWing(_), BodyRole::Lead) => MaterialId::TinBright,
         (_, BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => MaterialId::TinMatte,
         (_, BodyRole::Marking) => MaterialId::EpoxyLaserMarked,
         (_, BodyRole::Lens) => MaterialId::SiliconeClear,

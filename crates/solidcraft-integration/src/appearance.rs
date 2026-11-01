@@ -72,9 +72,12 @@ const SMOOTH_TURN: f64 = 0.55;
 /// Soldermask pull-back around an open via's ring (est.; fabricators open
 /// the mask 0.05 mm beyond a pad by default).
 pub const VIA_MASK_EXPANSION_MM: f64 = 0.05;
-/// A tented via's mask sags this far into the drill it bridges (est.; dry
-/// film and LPI tents dip a few micrometres over a 0.3 mm hole).
-const TENT_SAG_MM: f64 = 0.008;
+/// A tented via's mask sags this far into the drill it bridges (est.; LPI
+/// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
+/// no dimple in the look review; the dimple stays within the cap's 15 µm
+/// over the copper (`MASK_CAP_MM`), so a track ending at the via never
+/// shows through it.
+const TENT_SAG_MM: f64 = 0.012;
 /// How far past the ring the tent's dome slopes down into the mask.
 const TENT_SKIRT_MM: f64 = 0.08;
 /// Segments around a via and rings across its dome.
@@ -366,17 +369,20 @@ pub fn board(
                 .filter_map(|bore| offset_polygon(bore, -FINISH_THICKNESS_MM))
                 .collect(),
         };
+        // A via's finished ring belongs to the via, not to its side's
+        // copper: no layer, as its barrel has none.
+        let via = land.pick.is_some() && vias.iter().any(|v| Some(v.pick) == land.pick);
         push(
             &mut out,
             &board.fabrication,
             BodyKind::PadFinish,
             land.pick,
-            Some(land.layer.into()),
+            (!via).then_some(land.layer.into()),
             slab(&region, z0, z1, f64::MAX),
         )?;
     }
     for path in paths {
-        track(&mut out, board, lands, path)?;
+        track(&mut out, board, lands, vias, path)?;
     }
     for via in vias {
         via_layers(&mut out, board, via)?;
@@ -411,7 +417,13 @@ fn merged(mut intervals: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 /// A track's mask cap, interrupted wherever the track crosses a same-layer
 /// mask opening, and finish over its copper inside each opening: all copper
 /// a mask opening exposes is plated, as fabricated.
-fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) -> Result<()> {
+fn track(
+    out: &mut Vec<Geometry>,
+    board: &Board,
+    lands: &[Land],
+    vias: &[ViaMark],
+    path: &Path,
+) -> Result<()> {
     let delta = [path.end[0] - path.start[0], path.end[1] - path.start[1]];
     let length = delta[0].hypot(delta[1]);
     if !positive(length) {
@@ -443,12 +455,31 @@ fn track(out: &mut Vec<Geometry>, board: &Board, lands: &[Land], path: &Path) ->
             .chain(bare.then_some((-band, length + band)))
             .collect(),
     );
+    // Where a tented via's dome covers the cap's whole width, the dome is
+    // the mask there: the cap stops at it, so the dome's drill dimple
+    // shows instead of lying under a track end's rounded cap.
+    let domes = vias
+        .iter()
+        .filter(|via| via.covered(board, path.layer))
+        .filter_map(|via| {
+            let w = [via.at[0] - path.start[0], via.at[1] - path.start[1]];
+            let along = w[0] * u[0] + w[1] * u[1];
+            let across = (w[0] * normal[0] + w[1] * normal[1]).abs();
+            let r = via.diameter / 2.0;
+            let reach = r * r - (across + band) * (across + band);
+            (reach > 0.0).then(|| {
+                let half = reach.sqrt();
+                (along - half, along + half)
+            })
+        })
+        .filter(|(a, b)| *b > 0.0 && *a < length);
+    let capped = merged(openings.iter().copied().chain(domes).collect());
     let layer = Some(CopperLayer::from(path.layer));
     let copper = board.copper(path.layer);
     let (c0, c1) = board.span(path.layer, 0.0, copper + MASK_CAP_MM);
     let mut from = (0.0, true);
     let mut pieces = Vec::new();
-    for &(a, b) in &openings {
+    for &(a, b) in &capped {
         pieces.push((from, (a, false)));
         from = (b, false);
     }

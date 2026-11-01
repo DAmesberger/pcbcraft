@@ -203,7 +203,6 @@ pub struct UpdatePlan {
     /// Vias on nets the update changes, or too close to a changed pad of
     /// another net. Removed together with the conflicting tracks
     /// (`ApplyUpdate::remove_conflicting_tracks`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conflicting_vias: Vec<Id>,
     /// The full wording of each blocker; `blocker_lines` carries them with a
     /// one-line title and their objects. Any blocker refuses the apply.

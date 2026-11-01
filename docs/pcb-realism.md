@@ -101,7 +101,9 @@ as "via on GND".
 ### The showcase
 
 `Engine::showcase()`, and the CLI command `pcbcraft-cli showcase FILE`, build a
-44 × 28 mm 4-layer board with:
+44 × 28 mm 4-layer board. The app has no menu entry for it yet: write it with
+`cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft` and open
+the file. It has:
 
 - an SOIC-8, a QFN-16 and a 2×5 header;
 - 0603 and 0805 passives;
@@ -139,7 +141,13 @@ These are never saved:
 - The board edge shows stackup bands (`EdgeDielectric`, `EdgeCopper`): a band for each
   dielectric, with the weave of its glass style, a line for each foil and a mask lip.
 - Every display body carries its copper layer or side (`Geometry.layer`), which the 3D
-  layer toggles use.
+  layer toggles use. The layer is per body, not per pick: a through-hole pad's opposite
+  land is on the other side, and copper on no single layer (plated barrels, a via's
+  finished rings) has none.
+- A tented via's dome replaces a track's mask cap where it covers the cap's whole width,
+  so its drill dimple (12 µm, within the cap's 15 µm over copper) shows at a track end.
+  An open via's bore is closed by a dark shadow disc at the face of its finished ring, so
+  a track ending at the via centre does not show as a bright floor in the hole.
 
 ## Look
 
@@ -152,23 +160,40 @@ These are never saved:
   These are fillets rather than rounded sketch profiles for two reasons. A profile drawn
   from numbers would lose the body's parameters. The engine also refuses to intersect two
   rounded profile extrusions.
-- The studio turn is 0° and the exposure 1.1, so the overview shows a lacquer sheen on the
-  mask instead of a flat board. A GPU test measures the sheen and checks that nothing clips
-  to white.
+- The studio is turned 145° and the exposure is 1.1: one strip light's mirror image is a
+  crisp-edged lacquer band at the overview's far end. Unturned, it washed a third of the
+  board pale with a blurred edge. A GPU test measures the sheen (95th-percentile mask
+  luminance 3.8× the median) and checks that nothing clips to white.
+- The rim light grazes at 12° instead of 35°, so its widened lobe no longer glows across
+  close-ups.
+- Metals: gull-wing leads are satin bright tin (roughness 0.24), not charcoal; header pins
+  are gold at 0.30, with a visible specular gradient instead of olive brass; chip
+  terminations are matte tin at 0.32, not a mirror. Silkscreen grain is at half strength.
+  Values and reasons are in [materials](materials.md).
 - `write_showcase_pictures` writes a picture set of the showcase board:
   - the overview;
   - close-ups of the SOIC, QFN, header and passives;
-  - the vias;
+  - an unobstructed tented via and an unobstructed open via (the test checks that the frame's
+    centre picks the via);
+  - a tented and an open via side by side;
+  - an open via's barrel through the four layers in X-ray;
   - the edge stackup;
   - the bottom side.
 
-  `write_layer_pictures` writes the layer toggles. Both are ignored tests that write to
-  `PCBCRAFT_PICTURES`.
+  `write_layer_pictures` writes the layer toggles on the showcase: every layer, no top
+  mask, X-ray, copper only, Inner 1 only, Inner 2 only, and no top copper or mask. Both are
+  ignored tests that write to `PCBCRAFT_PICTURES` (`PCBCRAFT_PICTURES_ONLY` limits the
+  showcase set to a name prefix).
 
 ## 3D layer toggles (`apps/pcbcraft`)
 
 - `ViewLayer` lists the toggles: components, silkscreen and mask for each side, copper for
   each stackup layer, substrate and vias. `LayerView` holds the visibility of each one.
+  Vias covers every plated hole (via and through-hole barrels, a via's finished rings and
+  bore); a tented via's dome is its side's mask. The edge's foil lines go with the
+  substrate.
+- X-ray, next to Show all, shows only copper and vias, so the stackup's copper shows layer
+  over layer.
 - A Layers popover (eye icon) on the floating navigation bar holds the toggles. It lists
   the layers in board order and has Show all. The icon is outlined in the accent colour
   while any layer is hidden. PCB 2D keeps its own Layers and view popover.
@@ -177,14 +202,82 @@ These are never saved:
   - Toggling repacks the shown bodies from the cached meshes, off the UI thread.
   - Shadows, highlight and picking follow at once.
   - No geometry is rebuilt.
-- PCB 2D and 3D share one state for outer copper and silkscreen. Component 3D always shows
-  every layer.
+- PCB 2D and 3D share one state for every copper layer, the vias and silkscreen.
+  Component 3D always shows every layer.
+
+## PCB 2D (`apps/pcbcraft`)
+
+- Layout draws every copper layer of the stackup in its own colour: the far side and the
+  inner layers dimmed under the near side, and the inner layer Route draws on at full
+  strength over the near copper. The view popover has a toggle for each copper layer and
+  one for vias.
+- Vias are drawn as their ring and drill: a tented via's ring under a mask tint with an
+  outline, an open via's ring solid. A via shows while the via toggle and a copper layer it
+  joins are shown.
+- A click selects a via (and lights its net). Its Via card shows net, position, drill,
+  pad, ring and span, with Tented and Locked toggles and Delete via in the footer. A 3D
+  pick on a via body selects the via too. A finding that names only a via locates it: it
+  selects the via and its net and frames it in 2D.
+- The Route card offers every stackup layer and Tent vias. While routing, V (Shift+V
+  backwards) places a via at the pointer, snapped to a track end of the net within reach or
+  the grid, and moves the route to the next layer. The next click issues one
+  `layout.route_layer_change`. Without a route, V only changes the layer.
+- The Via tool (ribbon, Edit group) places a through via on the net of the pad or track
+  under the pointer, else on the chosen net, snapped to a track end or the grid.
+
+## Board update review
+
+Conflicting vias are one acknowledged line ("A via on GND conflicts with this update",
+acknowledged by "Remove that via"). Acknowledging every track and via line confirms the
+removal (`remove_conflicting_tracks`), so an update whose only conflicts are vias applies
+from the GUI. The core warning that restated them is no longer shown twice.
+
+## Build cost (measured)
+
+`build_timings` (`cargo test --profile ci -p pcbcraft-solidcraft build_timings -- --ignored
+--nocapture`, one machine, release-like `ci` profile):
+
+| Board | Native bodies | Drawn | Build p50 |
+| --- | --- | --- | --- |
+| Demo | 13 | 30 | 117 ms |
+| Showcase (4 layers, 11 vias) | 240 | 459 | 7.0 s |
+| Demo on 4 layers, 50 vias, 25 inner tracks | 288 | 484 | 30.3 s |
+| Demo, 400 tracks | 413 | 830 | 13.5 s |
+
+Each via is its own native component, and the laminate is cut once per layer around every
+drill, so vias cost far more than tracks. 200 vias on 4 layers fail to build: Solidcraft
+refuses the laminate cut ("planar tool comparison budget exceeded"). Validation allows
+4,096 vias, so via counts above about 50 are an unmeasured target, not a supported size.
+
+## Merge points with the sidebar redesign
+
+These edits touch files the sidebar slice restructures, so its merge should rebase them on
+purpose:
+
+- `pcb_editor.rs`: the Via tool and `Inspected::Via`, header, footer and issue-slot arms,
+  layer toggles (`Layers::inner`, `vias`), 2D via and inner-layer painting, V layer change,
+  via picking and Locate.
+- `pcb_editor/board_card.rs` `view_menu`: one copper toggle per stackup layer and Vias;
+  earlier, the silkscreen hint and the Copper row.
+- `pcb_editor/route_card.rs`: stackup layers and Tent vias; `pcb_editor/track_card.rs`:
+  stackup layer options. `pcb_editor/via_card.rs` and `via_tests.rs` are new.
+- `update_preview.rs`: the grouped via conflict line, in `content` and its test.
+- `app.rs`: a 3D via pick calls `PcbEditor::select_via`. `app/chrome.rs`: the 3D Layers
+  button on the navigation bar.
+- `layer_view.rs` uses `kit::form` and `kit::check_row`.
 
 ## Open
 
-- PCB 2D draws outer-layer tracks only. It draws no board vias and no inner-layer tracks.
-  It has no via tool and no stackup editor; vias and stackups are edited through commands,
-  the CLI or MCP.
+- There is no stackup editor in the app; stackups are set through commands, the CLI or MCP.
+  Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
+- The GUI could not be checked live: the screen was locked during both runs, so windows drew
+  nothing. The offscreen GPU pictures and the egui tests are the evidence.
+- Builds slow down steeply with vias, and 200 vias on 4 layers fail (see Build cost).
+- Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
+  whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
+  its moiré at overview distance are in Solidcraft's shader. Seen from below, the key
+  light still leaves a soft hotspot. Some showcase designators sit under or beside bodies
+  (C3, R1). Silkscreen placement is not checked.
 - There are no zones or pours.
 - Blind and buried vias are not supported.
 - The via checks use estimated defaults, not configurable rules.

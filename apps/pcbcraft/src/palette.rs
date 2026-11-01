@@ -30,6 +30,27 @@ pub fn board() -> BoardColors {
 }
 
 impl BoardColors {
+    /// A copper layer's colour: the outer layers' side colours, and a
+    /// distinct hue per inner layer.
+    pub fn copper_layer(&self, layer: pcbcraft_core::CopperLayer) -> Color32 {
+        use pcbcraft_core::CopperLayer;
+        let dark = theme::is_dark();
+        match layer {
+            CopperLayer::Top => self.copper_top,
+            CopperLayer::Bottom => self.copper_bottom,
+            CopperLayer::Inner(n) => {
+                let (d, l) = match n % 4 {
+                    1 => ((206, 190, 76), (150, 132, 20)),
+                    2 => ((112, 186, 104), (52, 128, 52)),
+                    3 => ((196, 120, 204), (140, 60, 150)),
+                    _ => ((86, 186, 186), (30, 124, 124)),
+                };
+                let (r, g, b) = if dark { d } else { l };
+                Color32::from_rgb(r, g, b)
+            }
+        }
+    }
+
     pub fn copper(&self, layer: pcbcraft_core::Layer) -> Color32 {
         match layer {
             pcbcraft_core::Layer::Top => self.copper_top,

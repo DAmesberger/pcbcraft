@@ -44,7 +44,6 @@ pub struct Source {
     pub pad: Option<PadId>,
     pub track: Option<Id>,
     /// The board via a via body came from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via: Option<Id>,
     pub net: Option<Id>,
     pub layer: Option<CopperLayer>,
@@ -360,7 +359,8 @@ fn finish_with(
         let layer = item
             .and_then(|pick| sources.iter().find(|s| s.pick_id == pick))
             .filter(|_| !kind.is_envelope() && !kind.is_generated())
-            .and_then(|s| s.layer);
+            .and_then(|s| s.layer)
+            .and_then(|layer| body_layer(name, layer));
         geometry.push(Geometry {
             item,
             kind,
@@ -379,6 +379,19 @@ fn finish_with(
         sources,
         models,
     })
+}
+
+/// The copper layer of one body of a source on `layer`: a through-hole
+/// pad's opposite land lies on the other side, and its plated barrels on
+/// no single layer (they span the board, like a via's).
+fn body_layer(name: &str, layer: CopperLayer) -> Option<CopperLayer> {
+    if name.contains("_barrel_") {
+        None
+    } else if name.ends_with("_opposite") {
+        layer.side().map(|side| other(side).into())
+    } else {
+        Some(layer)
+    }
 }
 
 /// The joint origin that holds a generated definition (drawn in its model

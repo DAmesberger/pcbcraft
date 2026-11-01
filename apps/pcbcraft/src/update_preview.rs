@@ -69,8 +69,8 @@ pub struct Content {
     pub lines: Vec<ReviewLine>,
     /// The objects of `lines[n]`, for Show.
     pub refs: Vec<Vec<ObjectRef>>,
-    /// Which of `lines` are conflicting tracks: their acknowledgements
-    /// together confirm removing the tracks.
+    /// Which of `lines` are conflicting tracks and vias: their
+    /// acknowledgements together confirm removing them.
     pub conflicts: Vec<usize>,
     /// The errors applying leaves behind, with their objects in
     /// `after_refs`.
@@ -344,6 +344,36 @@ impl UpdatePreview {
     }
 }
 
+/// The one acknowledged line of a plan's conflicting vias: "2 vias on GND
+/// conflict with this update", acknowledged by "Remove those vias".
+fn via_conflict_line(plan: &UpdatePlan, project: &Project) -> ReviewLine {
+    let count = plan.conflicting_vias.len();
+    let nets: BTreeSet<&str> = project
+        .vias
+        .iter()
+        .filter(|v| plan.conflicting_vias.contains(&v.id))
+        .map(|v| project.net_name(v.net))
+        .collect();
+    let nets = nets.into_iter().collect::<Vec<_>>().join(", ");
+    let (title, ack) = if count == 1 {
+        (
+            format!("A via on {nets} conflicts with this update"),
+            "Remove that via".to_owned(),
+        )
+    } else {
+        (
+            format!("{count} vias on {nets} conflict with this update"),
+            "Remove those vias".to_owned(),
+        )
+    };
+    ReviewLine {
+        level: Level::Error,
+        title: refusal::clip(&title, MAX_LINE),
+        ack: Some(ack),
+        locate: true,
+    }
+}
+
 /// The header icon of a review.
 fn icon(change: &Change) -> &'static str {
     match change {
@@ -504,6 +534,19 @@ pub fn content(
         );
         conflicts.push(n);
     }
+    // The conflicting vias, grouped in one acknowledged line: applying
+    // removes them with the conflicting tracks.
+    if !plan.conflicting_vias.is_empty() {
+        let n = push(
+            via_conflict_line(plan, project),
+            plan.conflicting_vias
+                .iter()
+                .map(|id| ObjectRef::Via { id: *id })
+                .collect(),
+        );
+        conflicts.push(n);
+    }
+    let vias: BTreeSet<Id> = plan.conflicting_vias.iter().copied().collect();
     let conflicting: BTreeSet<Id> = plan.conflicts.iter().map(|c| c.track).collect();
     for (n, warning) in plan.warnings.iter().enumerate() {
         let (line, objects) = match plan.warning_lines.get(n) {
@@ -516,6 +559,17 @@ pub fn content(
                     && line.refs.iter().all(
                         |r| matches!(r, ObjectRef::Track { id } if conflicting.contains(id)),
                     ) =>
+            {
+                continue;
+            }
+            // Likewise the warning that restates the conflicting vias.
+            Some(line)
+                if !vias.is_empty()
+                    && !line.refs.is_empty()
+                    && line
+                        .refs
+                        .iter()
+                        .all(|r| matches!(r, ObjectRef::Via { id } if vias.contains(id))) =>
             {
                 continue;
             }
@@ -1211,6 +1265,76 @@ mod tests {
         );
         assert_eq!(style::check(&first.text), vec![]);
         assert_eq!(first.actions, vec![ToastAction::Undo]);
+        Ok(())
+    }
+
+    /// An update whose only conflicts are vias shows them as one
+    /// acknowledged line; acknowledging it confirms their removal, and the
+    /// engine applies the update and removes the via.
+    #[test]
+    fn an_update_with_only_via_conflicts_applies_once_acknowledged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::layout::{LayoutCommand, ViaRequest};
+        let mut engine = Engine::demo()?;
+        let wire = engine.project().wires.first().ok_or("a wire")?.id;
+        let r1 = engine
+            .project()
+            .instances
+            .iter()
+            .find(|i| i.designator == "R1")
+            .map(|i| i.id)
+            .ok_or("R1")?;
+        let net = engine
+            .project()
+            .net_of(pcbcraft_core::Endpoint {
+                instance: r1,
+                terminal: pcbcraft_core::TerminalId(2),
+            })
+            .map(|n| n.id)
+            .ok_or("the shared net")?;
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::AddVia {
+                via: ViaRequest::through(net, [12.0, 20.0]),
+            }),
+        )?;
+        let change = Change::Schematic {
+            command: pcbcraft_core::schematic::SchematicCommand::Disconnect { wire },
+        };
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let mut review = UpdatePreview::default();
+        review.begin(&engine, change);
+        let plan = review.plan.as_ref().ok_or("plan")?;
+        assert_eq!(plan.conflicting_vias.len(), 1);
+        assert!(plan.conflicts.is_empty(), "no track conflicts");
+        let content = content(plan, engine.project(), None, &[]);
+        let [line] = content.conflicts.as_slice() else {
+            return Err("one conflict line".into());
+        };
+        assert_eq!(content.lines[*line].ack.as_deref(), Some("Remove that via"));
+        assert!(matches!(
+            content.refs[*line].as_slice(),
+            [ObjectRef::Via { .. }]
+        ));
+        // No warning restates it.
+        assert!(
+            !content
+                .lines
+                .iter()
+                .any(|l| l.title.contains("conflicting via"))
+        );
+        assert!(click(&mut review, &engine, &ctx, "Remove that via")?.is_none());
+        let op = click(&mut review, &engine, &ctx, "Apply update")?.ok_or("apply")?;
+        let Operation::Update(request) = &op else {
+            return Err("not an update".into());
+        };
+        assert!(
+            request.remove_conflicting_tracks,
+            "the acknowledgement confirms"
+        );
+        engine.apply(engine.revision(), op)?;
+        assert!(engine.project().vias.is_empty());
         Ok(())
     }
 

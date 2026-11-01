@@ -33,14 +33,14 @@ pub const STUDIO_INTENSITY: f32 = 1.0;
 /// The studio the look reflects: the high-contrast strip-light studio, so
 /// metal shows dark faces with bright edge streaks and gloss mask a crisp
 /// streak instead of a smear (chosen in the founder's look review,
-/// 1 Nov 2026). Its turn about +Z puts a strip light in the mirror
-/// direction of the default overview, so the mask shows a crisp lacquer
-/// sheen over part of the board with the rest saturated, instead of the
-/// flat board and soft smear a quarter turn gave once the overview was
-/// fitted to the whole board (tuned on the showcase pictures, v3; the
-/// overview test below measures it).
+/// 1 Nov 2026). Its turn about +Z puts one strip light's mirror image on
+/// the default overview's far end as a crisp-edged lacquer band: unturned,
+/// it washed a third of the board pale with a blurred edge; a quarter
+/// turn read flat; at 140° the band leaves the board (tuned on the
+/// showcase pictures, realism review v4; the overview test below measures
+/// it).
 pub const STUDIO: StudioPreset = StudioPreset::Contrast;
-const STUDIO_TURN_DEG: f32 = 0.0;
+const STUDIO_TURN_DEG: f32 = 145.0;
 /// Scale of the direct lights' records.
 const DIRECT: f64 = 1.0;
 /// Seen from below, the board's underside faces the studio's dark floor:
@@ -52,7 +52,10 @@ const BELOW_AMBIENT: f64 = 0.6;
 /// Camera-relative (azimuth, elevation in degrees, intensity, colour).
 const KEY: (f64, f64, f64, [f64; 3]) = (-35.0, 50.0, 0.6, [1.0, 0.97, 0.92]);
 const FILL: (f64, f64, f64, [f64; 3]) = (60.0, 25.0, 0.30, [1.0, 1.0, 1.0]);
-const RIM: (f64, f64, f64, [f64; 3]) = (165.0, 35.0, 0.12, [0.92, 0.96, 1.0]);
+/// The rim grazes in low from behind: it outlines parts' far edges, and
+/// its mirror image on the gloss mask lies past the board's far edge
+/// instead of glowing across a close-up.
+const RIM: (f64, f64, f64, [f64; 3]) = (165.0, 12.0, 0.12, [0.92, 0.96, 1.0]);
 /// Light bounced off a pale studio floor, fixed in the world: (azimuth from
 /// +X, elevation, intensity). Below the horizon, so only vertical faces
 /// (termination ends, solder fillets, package sides) see it; the studio's
@@ -118,14 +121,13 @@ fn diagonal(bounds: &Aabb3) -> f64 {
 
 /// The direct lights for `camera` looking at a model within `bounds`.
 pub fn studio(camera: &Camera, bounds: &Aabb3) -> Vec<[f32; 16]> {
-    let target = camera.target;
     let below = camera.pitch < 0.0;
     let direct = if below { DIRECT * BELOW_DIRECT } else { DIRECT };
     let mut rig = Vec::with_capacity(4 + FLOOR.len());
     let (az, el, i, rgb) = KEY;
     let distance = 1.6 * diagonal(bounds);
     rig.push(record(
-        target + around(camera, az, el) * distance,
+        camera.target + around(camera, az, el) * distance,
         1.0,
         rgb,
         i * direct,

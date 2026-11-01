@@ -36,6 +36,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 
 ```sh
 cargo run --locked --profile ci -p pcbcraft-cli -- demo example.pcbcraft
+cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft   # a routed 4-layer board with via examples; open it in the app
 cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
 cargo run --locked --profile ci -p pcbcraft-cli -- sample-library NEW_DIR [NAME]   # the same catalog as a library folder
 cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft

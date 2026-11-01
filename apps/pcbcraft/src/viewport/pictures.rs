@@ -9,6 +9,7 @@
 //! set, a missing adapter is a failure instead, so a green run there is
 //! evidence of the look.
 use super::*;
+use crate::layer_view::ViewLayer;
 use egui_wgpu::wgpu;
 use pcbcraft_core::{Fabrication, Layer, MaskColour, PadFinish, Project};
 use pcbcraft_solidcraft::material::BodyKind;
@@ -700,8 +701,14 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {
         return Err("no GPU adapter".into());
     };
+    // `PCBCRAFT_PICTURES_ONLY` (a name prefix) writes only those pictures,
+    // for tuning.
+    let only = std::env::var("PCBCRAFT_PICTURES_ONLY").unwrap_or_default();
     let mut save =
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            if !name.starts_with(only.as_str()) {
+                return Ok(());
+            }
             let (w, h) = (1280, 960);
             let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
             let clipped = rgba
@@ -795,21 +802,93 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("{name}: the board has no such part");
         }
     }
-    for (tented, name) in [(true, "08-via-tented"), (false, "09-via-open")] {
-        match project.vias.iter().find(|via| via.tented == tented) {
-            Some(via) => {
-                aim(
-                    &mut v,
-                    Vec3::new(via.position[0], via.position[1], top),
-                    4.0,
-                    30.0,
-                    40.0,
-                );
-                save(&mut v, name)?;
-            }
-            None => eprintln!("{name}: the board has no such via yet"),
+    // Vias ranked by their clearance to the nearest component body, the
+    // clearest first, so nothing hides them (the showcase's vias are
+    // fan-outs about 1 mm from their parts).
+    let model = v.model.as_ref().ok_or("no model")?;
+    let clearance = |via: &pcbcraft_core::Via| {
+        model
+            .geometry
+            .iter()
+            .filter(|g| ViewLayer::of(g.kind, g.layer) == ViewLayer::Bodies)
+            .map(|g| {
+                let dx = (g.min[0] - via.position[0]).max(via.position[0] - g.max[0]);
+                let dy = (g.min[1] - via.position[1]).max(via.position[1] - g.max[1]);
+                dx.max(dy)
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let ranked = |tented: bool| {
+        let mut vias: Vec<(f64, &pcbcraft_core::Via)> = project
+            .vias
+            .iter()
+            .filter(|v| v.tented == tented)
+            .map(|v| (clearance(v), v))
+            .filter(|(c, _)| *c > 0.75)
+            .collect();
+        vias.sort_by(|a, b| b.0.total_cmp(&a.0));
+        vias.into_iter().map(|(_, v)| v).collect::<Vec<_>>()
+    };
+    let open = ranked(false);
+    let tented = ranked(true);
+    // A via's pick: that of the plated barrel standing at its position.
+    let pick_of = |v: &Viewport, via: &pcbcraft_core::Via| {
+        v.model.as_ref().and_then(|m| {
+            m.geometry
+                .iter()
+                .find(|g| {
+                    g.kind == BodyKind::ViaCopper
+                        && (g.min[0]..=g.max[0]).contains(&via.position[0])
+                        && (g.min[1]..=g.max[1]).contains(&via.position[1])
+                })
+                .and_then(|g| g.item)
+        })
+    };
+    let (w, h) = (1280.0, 960.0);
+    for (via, name) in [
+        (tented.first(), "08-via-tented"),
+        (open.first(), "09-via-open"),
+    ] {
+        let Some(via) = via else {
+            return Err(format!("{name}: the showcase has no unobstructed via").into());
+        };
+        let at = Vec3::new(via.position[0], via.position[1], top);
+        aim(&mut v, at, 3.0, 30.0, 55.0);
+        // The frame shows the via: it is what the centre pixel picks.
+        let centre = v.pick(w / 2.0, h / 2.0, w, h);
+        if centre.is_none() || centre != pick_of(&v, via) {
+            return Err(format!("{name}: the frame's centre is not the via").into());
         }
+        save(&mut v, name)?;
     }
+    // A tented and an open via side by side: the closest such pair.
+    let pair = tented
+        .iter()
+        .flat_map(|t| open.iter().map(move |o| (*t, *o)))
+        .min_by(|a, b| {
+            let d = |(t, o): (&pcbcraft_core::Via, &pcbcraft_core::Via)| {
+                (t.position[0] - o.position[0]).hypot(t.position[1] - o.position[1])
+            };
+            d(*a).total_cmp(&d(*b))
+        })
+        .ok_or("no tented and open vias")?;
+    let (t, o) = pair;
+    let mid = Vec3::new(
+        (t.position[0] + o.position[0]) / 2.0,
+        (t.position[1] + o.position[1]) / 2.0,
+        top,
+    );
+    let gap = (t.position[0] - o.position[0]).hypot(t.position[1] - o.position[1]);
+    aim(&mut v, mid, 2.2 * gap + 3.0, 20.0, 50.0);
+    save(&mut v, "08b-vias-tented-and-open")?;
+    // The open via's barrel through the 4-layer stackup, in X-ray: the
+    // plated barrel with its ring on every copper layer and the inner
+    // tracks it joins.
+    show_layers(&mut v, crate::layer_view::LayerView::x_ray())?;
+    let barrel = Vec3::new(o.position[0], o.position[1], (underside + top) / 2.0);
+    aim(&mut v, barrel, 6.5, 30.0, 12.0);
+    save(&mut v, "09b-via-barrel-x-ray")?;
+    show_layers(&mut v, crate::layer_view::LayerView::default())?;
     // The board edge face on, low, so the stackup bands fill the frame.
     let mid = (underside + top) / 2.0;
     aim(
@@ -824,6 +903,20 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "11-edge-corner")?;
     aim(&mut v, b.center(), 0.75 * b.diagonal(), 200.0, -35.0);
     save(&mut v, "12-bottom-side")?;
+    Ok(())
+}
+
+/// Show only `view`'s layers: a fresh pack of the shown bodies, what the
+/// background repack publishes in the window.
+fn show_layers(
+    v: &mut Viewport,
+    view: crate::layer_view::LayerView,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let model = v.model.as_ref().ok_or("no model")?;
+    let (pbr, _) = crate::model_scene::pack(&model.geometry, &view)?;
+    v.set_layers(view);
+    v.repack = None;
+    v.publish_pbr(pbr);
     Ok(())
 }
 

@@ -281,13 +281,18 @@ pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
             pattern: Pattern::MaskPeel,
             strength: 1.0,
         },
+        // Half strength: at full strength the ink's grain read as blotchy
+        // dirt at mid zoom (realism review v4).
         BodyKind::Silkscreen => Detail {
             pattern: Pattern::Silkscreen,
-            strength: 1.0,
+            strength: SILK_GRAIN,
         },
         _ => Detail::NONE,
     }
 }
+
+/// How strongly silkscreen ink's grain shows (est.).
+const SILK_GRAIN: f64 = 0.5;
 
 /// Internal diffuse reflectance of the mask/air interface for n ≈ 1.52
 /// (first principles; Saunderson's k₂).
@@ -915,7 +920,7 @@ mod tests {
                 detail_of(BodyKind::Silkscreen, colour),
                 Detail {
                     pattern: Pattern::Silkscreen,
-                    strength: 1.0
+                    strength: SILK_GRAIN
                 }
             );
             assert_eq!(

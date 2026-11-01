@@ -2,8 +2,9 @@
 //! bore an open side shows. An open side's finished ring and mask opening
 //! are an ordinary [`super::Land`] ([`super::ViaMark::lands`]).
 use super::{
-    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, MASK_CAP_MM, MASK_THICKNESS_MM, Region,
-    TENT_SAG_MM, TENT_SKIRT_MM, VIA_SEGMENTS, ViaMark, circle, push, slab,
+    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, FINISH_THICKNESS_MM, MASK_CAP_MM,
+    MASK_THICKNESS_MM, Region, TENT_SAG_MM, TENT_SKIRT_MM, VIA_SEGMENTS, ViaMark, circle, push,
+    slab,
 };
 use crate::Result;
 use crate::material::BodyKind;
@@ -51,7 +52,32 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
         Some(via.pick),
         None,
         slab(&region, reach(Layer::Bottom), reach(Layer::Top), f64::MAX),
-    )
+    )?;
+    // Seen into an open side, the drill is dark: a shadow disc across the
+    // bore at the face of the via's finished ring. A track ending at the
+    // via centre keeps its copper under it, as the saved model has it, but
+    // no longer shows as a bright floor in the hole.
+    for side in [Layer::Top, Layer::Bottom].into_iter().filter(|s| open(*s)) {
+        let copper = board.copper(side);
+        let (z0, z1) = board.span(side, copper, copper + FINISH_THICKNESS_MM);
+        push(
+            out,
+            &looks,
+            BodyKind::ViaBore,
+            Some(via.pick),
+            None,
+            slab(
+                &Region {
+                    fills: vec![circle(via.at, via.bore() - BORE_GAP_MM)],
+                    cuts: vec![],
+                },
+                z0,
+                z1,
+                f64::MAX,
+            ),
+        )?;
+    }
+    Ok(())
 }
 
 /// The mask's height above a side's board face at radius `r` from a tented
@@ -275,7 +301,12 @@ mod tests {
         let open = via(false);
         let mut out = Vec::new();
         via_layers(&mut out, &board, &open)?;
-        assert_eq!(out.len(), 1);
+        // The shadow tube, then a dark disc across the drill on each side.
+        assert_eq!(out.len(), 3);
+        for disc in &out[1..] {
+            assert_eq!(disc.kind, BodyKind::ViaBore);
+            assert!(disc.max[2] - disc.min[2] < 0.01);
+        }
         let bore = &out[0];
         assert_eq!(bore.kind, BodyKind::ViaBore);
         assert!(bore.kind.is_appearance());
@@ -301,6 +332,7 @@ mod tests {
             kinds,
             [
                 (BodyKind::MaskCap, Some(CopperLayer::Top)),
+                (BodyKind::ViaBore, None),
                 (BodyKind::ViaBore, None)
             ]
         );

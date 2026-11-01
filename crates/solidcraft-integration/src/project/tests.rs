@@ -439,7 +439,54 @@ fn build_timings() -> Result<()> {
             locked: false,
         });
     }
-    for (name, project, runs) in [("demo", &demo, 15), ("400 tracks", &tracks, 3)] {
+    let showcase = Engine::showcase()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    // The demo on 4 layers with 50 through vias and 25 inner tracks. (200
+    // vias exceed Solidcraft's planar comparison budget cutting the
+    // laminate: see docs/pcb-realism.md, "Open".)
+    let mut vias = demo.clone();
+    vias.stackup = Stackup::preset(4).map_err(|error| Error::Verification(error.to_string()))?;
+    for k in 0..50 {
+        let id = vias
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        let position = [
+            4.0 + f64::from(k % 20) * 2.5,
+            22.0 + f64::from(k / 20) * 1.5,
+        ];
+        vias.vias.push(pcbcraft_core::Via {
+            id,
+            net,
+            position,
+            drill: 0.3,
+            diameter: 0.6,
+            span: pcbcraft_core::ViaSpan::Through,
+            tented: k % 2 == 0,
+            locked: false,
+        });
+        if k % 2 == 0 {
+            let id = vias
+                .allocate()
+                .map_err(|error| Error::Verification(error.to_string()))?;
+            vias.tracks.push(Track {
+                id,
+                net,
+                start: position,
+                end: [position[0] + 2.5, position[1]],
+                width: 0.15,
+                layer: CopperLayer::Inner(1 + u8::from(k % 4 == 0)),
+                locked: false,
+            });
+        }
+    }
+    for (name, project, runs) in [
+        ("demo", &demo, 15),
+        ("400 tracks", &tracks, 3),
+        ("showcase", &showcase, 5),
+        ("4 layers, 50 vias, 25 inner tracks", &vias, 3),
+    ] {
         let mut times = vec![];
         let mut bodies = (0, 0);
         for _ in 0..runs {
@@ -512,10 +559,16 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
     let model = build(&fixture()?)?;
     looks_match_the_native_file(&model)?;
     for geometry in &model.geometry {
-        // Board-level bodies and the edge bands (standing proud of the
-        // routed outline) have no pick identity; everything else does.
-        let edge = geometry.min[0] < 0.0;
-        let board = (geometry.kind.is_board() && geometry.kind != BodyKind::MaskCap) || edge;
+        // Board-level bodies and the edge's stackup bands have no pick
+        // identity; neither do the mask lips at the edge (mask caps
+        // standing proud of the routed outline). Everything else does.
+        let lip = geometry.kind == BodyKind::MaskCap && geometry.min[0] < 0.0;
+        let board = (geometry.kind.is_board() && geometry.kind != BodyKind::MaskCap)
+            || matches!(
+                geometry.kind,
+                BodyKind::EdgeDielectric | BodyKind::EdgeCopper
+            )
+            || lip;
         assert_eq!(geometry.item.is_none(), board, "{:?}", geometry.kind);
     }
     let copper = material::material(BodyKind::PadCopper, &Fabrication::default()).surface()?;

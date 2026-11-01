@@ -268,11 +268,16 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
             (BodyKind::MaskCap, Some(CopperLayer::Bottom)),
         ]
     );
+    // A via's finished rings belong to the via, on no single layer, so
+    // the 3D Vias toggle hides them with its barrel.
     assert_eq!(
         shown(vias[1]),
         [
-            (BodyKind::PadFinish, Some(CopperLayer::Top)),
-            (BodyKind::PadFinish, Some(CopperLayer::Bottom)),
+            (BodyKind::PadFinish, None),
+            (BodyKind::PadFinish, None),
+            // The bore's shadow tube, and its dark disc on each open side.
+            (BodyKind::ViaBore, None),
+            (BodyKind::ViaBore, None),
             (BodyKind::ViaBore, None),
         ]
     );
@@ -296,6 +301,9 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
     assert_eq!(hit([30.0, 20.0]), Some(BodyKind::MaskCap));
     assert_eq!(hit([40.25, 20.0]), Some(BodyKind::PadFinish));
     assert_eq!(hit([40.0 + 0.117, 20.0]), Some(BodyKind::ViaBore));
+    // Straight into the drill, the hole is dark, though the inner tracks
+    // end at its centre.
+    assert_eq!(hit([40.0, 20.0]), Some(BodyKind::ViaBore));
     // The dome stands over the ring as a cap over copper does.
     let dome = geometry_of(&model, |s| s.via == Some(vias[0]))
         .into_iter()
@@ -310,17 +318,25 @@ fn every_display_layer_names_its_copper_layer_or_side() -> Result<()> {
     let (project, _, _) = four_layer()?;
     let model = build(&project)?;
     let mut seen = BTreeSet::new();
+    let via_picks: BTreeSet<u64> = model
+        .sources
+        .iter()
+        .filter(|s| s.via.is_some())
+        .map(|s| s.pick_id)
+        .collect();
     for g in model.geometry.iter().filter(|g| g.kind.is_appearance()) {
         seen.insert(g.kind);
-        let layered = matches!(
-            g.kind,
+        let of_via = g.item.is_some_and(|i| via_picks.contains(&i));
+        let layered = match g.kind {
             BodyKind::MaskTop
-                | BodyKind::MaskBottom
-                | BodyKind::MaskCap
-                | BodyKind::PadFinish
-                | BodyKind::Silkscreen
-                | BodyKind::EdgeCopper
-        );
+            | BodyKind::MaskBottom
+            | BodyKind::MaskCap
+            | BodyKind::Silkscreen
+            | BodyKind::EdgeCopper => true,
+            // A via's finished ring is the via's, on no single layer.
+            BodyKind::PadFinish => !of_via,
+            _ => false,
+        };
         assert_eq!(g.layer.is_some(), layered, "{:?}", g.kind);
         match g.kind {
             BodyKind::MaskTop => assert_eq!(g.layer, Some(CopperLayer::Top)),
@@ -392,5 +408,47 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
             .map(|g| g.surface.base_color().x)
     };
     assert!(ink(&model) > Some(0.5) && ink(&dark) < Some(0.1));
+    Ok(())
+}
+
+/// A through-hole pad's bodies lie on their own layers: its land on the
+/// placement side, its opposite land on the other side and its plated
+/// barrels on none, so hiding one side's copper in 3D hides that side's
+/// lands only (the barrels go with the vias).
+#[test]
+fn a_through_hole_pad_s_lands_and_barrels_carry_their_own_layers() -> Result<()> {
+    let project = Engine::showcase().map_err(invalid)?.project().clone();
+    let model = build(&project)?;
+    let through: BTreeSet<u64> = model
+        .sources
+        .iter()
+        .filter(|s| s.pad.is_some() && s.layer == Some(CopperLayer::Top))
+        .map(|s| s.pick_id)
+        .collect();
+    let mut layers = BTreeSet::new();
+    for g in model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::PadCopper && g.item.is_some_and(|i| through.contains(&i)))
+    {
+        layers.insert(g.layer);
+    }
+    assert_eq!(
+        layers,
+        BTreeSet::from([Some(CopperLayer::Top), Some(CopperLayer::Bottom), None]),
+        "top lands, the header's bottom lands and its barrels"
+    );
+    // The bottom lands lie under the board, the top ones on it.
+    for g in model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::PadCopper && g.item.is_some_and(|i| through.contains(&i)))
+    {
+        match g.layer {
+            Some(CopperLayer::Bottom) => assert!(g.max[2] <= 1e-6, "{:?}", g.max),
+            Some(CopperLayer::Top) => assert!(g.min[2] >= project.stackup.dielectric_mm() - 1e-6),
+            _ => {}
+        }
+    }
     Ok(())
 }

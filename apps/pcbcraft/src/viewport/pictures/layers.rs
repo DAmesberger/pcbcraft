@@ -1,7 +1,8 @@
-//! Evidence pictures of the 3D layer toggles: the demo board whole, with
-//! the top solder mask hidden (the copper under it shows), with the
-//! substrate hidden, and with the copper alone. Written to
-//! `PCBCRAFT_PICTURES` by `write_layer_pictures`.
+//! Evidence pictures of the 3D layer toggles on the 4-layer showcase:
+//! every layer, the top mask hidden (the copper under it shows), X-ray
+//! (copper and vias only, the stackup's copper layer over layer), the
+//! copper alone, each inner layer alone, and the top copper and mask
+//! hidden. Written to `PCBCRAFT_PICTURES` by `write_layer_pictures`.
 use super::*;
 use crate::layer_view::{LayerView, ViewLayer};
 use pcbcraft_core::{CopperLayer, Layer};
@@ -17,8 +18,19 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {
         return Err("no GPU adapter".into());
     };
-    let mut v = viewport(&project(Fabrication::default())?)?;
-    let target = centre(&v, BodyKind::CopperTrack).ok_or("no track")?;
+    let project = showcase_project()?;
+    let stack = project.stackup.layers();
+    if stack.len() < 4 {
+        return Err("the showcase is a 4-layer board".into());
+    }
+    let mut v = viewport(&project)?;
+    // The routed middle of the board, where every layer carries tracks.
+    let b = v.bounds;
+    let target = Vec3::new(
+        b.min.x + 0.45 * (b.max.x - b.min.x),
+        b.center().y,
+        b.max.z.min(2.0),
+    );
     let hidden = |layers: &[ViewLayer]| {
         let mut view = LayerView::default();
         for layer in layers {
@@ -26,20 +38,20 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
         }
         view
     };
+    let mut copper_only = LayerView::x_ray();
+    copper_only.set(ViewLayer::Vias, false);
     let views = [
         ("layers-all", LayerView::default()),
         ("layers-no-top-mask", hidden(&[ViewLayer::Mask(Layer::Top)])),
-        ("layers-no-substrate", hidden(&[ViewLayer::Substrate])),
+        ("layers-x-ray", LayerView::x_ray()),
+        ("layers-copper-only", copper_only),
         (
-            "layers-copper-only",
-            hidden(&[
-                ViewLayer::Bodies,
-                ViewLayer::Substrate,
-                ViewLayer::Mask(Layer::Top),
-                ViewLayer::Mask(Layer::Bottom),
-                ViewLayer::Silkscreen(Layer::Top),
-                ViewLayer::Silkscreen(Layer::Bottom),
-            ]),
+            "layers-inner-1-only",
+            LayerView::only(CopperLayer::Inner(1), &stack),
+        ),
+        (
+            "layers-inner-2-only",
+            LayerView::only(CopperLayer::Inner(2), &stack),
         ),
         (
             "layers-no-top-copper-no-mask",
@@ -50,14 +62,9 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
         ),
     ];
     for (name, view) in views {
-        // A fresh pack of the shown layers: what the background repack
-        // publishes in the window.
-        let model = v.model.as_ref().ok_or("no model")?;
-        let (pbr, _) = crate::model_scene::pack(&model.geometry, &view)?;
-        v.set_layers(view);
-        v.repack = None;
-        v.publish_pbr(pbr);
-        for (suffix, distance, yaw, pitch) in [("", 0.0, 35.0, 40.0), ("-close", 9.0, 20.0, 50.0)] {
+        show_layers(&mut v, view)?;
+        for (suffix, distance, yaw, pitch) in [("", 0.0, 35.0, 40.0), ("-close", 16.0, 20.0, 50.0)]
+        {
             if distance > 0.0 {
                 aim(&mut v, target, distance, yaw, pitch);
             } else {

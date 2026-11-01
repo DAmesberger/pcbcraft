@@ -36,8 +36,9 @@ pub use placed::{
     pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
 };
 pub use via::{
-    DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM, LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest,
-    via_pad_clearance_conflict, via_touches_pad,
+    DEFAULT_VIA_DIAMETER_MM, DEFAULT_VIA_DRILL_MM, DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM,
+    LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest, via_pad_clearance_conflict,
+    via_touches_pad,
 };
 const MAX_CHECK_PAIRS: usize = 100_000;
 
