@@ -546,6 +546,9 @@ pub struct ToolState {
     pub drag: Option<MoveDrag>,
     /// Delete was pressed; the canvas resolves it against its scene.
     pub delete_requested: bool,
+    /// Gesture refusals waiting to be shown as error toasts (they arise
+    /// where no egui context is at hand; the next frame posts them).
+    pub refusals: Vec<String>,
     /// The sketch view of the last sketch drawn, kept while the sketch is
     /// unchanged so idle frames parse nothing.
     view_cache: Option<(SketchBlob, std::sync::Arc<SketchView>)>,
@@ -561,9 +564,19 @@ pub struct MoveDrag {
 }
 
 /// Why a gesture finished while another waits to be sent is refused.
-pub const OUTBOX_BUSY: &str = "The previous change is still being applied; repeat this one.";
+pub const OUTBOX_BUSY: &str = "The previous change is still being applied; repeat this one";
 
 impl ToolState {
+    /// Record a gesture refusal for an error toast, in shown wording: the
+    /// engine text's first sentence when it follows the message style,
+    /// else `fallback`.
+    pub fn refuse(&mut self, text: &str, fallback: &str) {
+        let shown = crate::refusal::presentable(text).unwrap_or_else(|| fallback.to_owned());
+        if self.refusals.len() < 4 && !self.refusals.contains(&shown) {
+            self.refusals.push(shown);
+        }
+    }
+
     /// Queue one finished gesture; refused (false) while another waits,
     /// so no gesture is ever overwritten.
     pub fn queue(&mut self, edits: Vec<FootprintEdit>) -> bool {
@@ -598,6 +611,7 @@ impl Default for ToolState {
             held_for: None,
             drag: None,
             delete_requested: false,
+            refusals: Vec::new(),
             view_cache: None,
         }
     }

@@ -180,6 +180,7 @@ impl PartEditor {
         grid: f64,
     ) {
         let t = Tokens::get();
+        self.post_footprint_refusals(ui.ctx());
         let Some(set) = &self.draft else {
             return;
         };

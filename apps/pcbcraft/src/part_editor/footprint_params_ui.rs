@@ -25,6 +25,8 @@ pub struct Panel {
     new_name: String,
     new_expr: String,
     new_unit: ParamUnit,
+    /// The add row is open (its name, expression and unit fields show).
+    adding: bool,
     /// The row (or `None`: the new row) a refusal belongs to, and why.
     error: Option<(Option<ParamName>, String)>,
     stale: bool,
@@ -107,8 +109,10 @@ fn in_use_text(row: &ParamRow) -> Option<String> {
 }
 
 impl PartEditor {
-    /// The Parameters section of the Footprint inspector, for a sketched
-    /// footprint.
+    /// The Parameters section of the Footprint card, for a sketched
+    /// footprint: the package values (collapsed, read-only), each own
+    /// parameter's name and expression with its value and readers, then
+    /// the add row. A refused edit marks its field and keeps the text.
     pub(super) fn footprint_parameters(&mut self, ui: &mut egui::Ui) {
         self.refresh_footprint_sketch();
         let Some(loaded) = &self.footprint_dims.loaded else {
@@ -118,30 +122,17 @@ impl PartEditor {
         let errors = loaded.errors.clone();
         self.footprint_dims.panel.fill(&rows);
         let own = rows.iter().filter(|r| !r.read_only).count();
+        let package = rows.iter().filter(|r| r.read_only).count();
         let mut change = None;
         let mut hovered = None;
         kit::section(ui, "fp-parameters", "Parameters", true, Some(own), |ui| {
             kit::form(ui, |ui| {
                 let t = Tokens::get();
-                for row in rows.iter().filter(|r| r.read_only) {
-                    let text = row.value.map_or_else(|| row.expr.0.clone(), value_text);
-                    let response = ui
-                        .scope(|ui| kit::value_row(ui, &row.name.0, &text))
-                        .response;
-                    if response.hovered() {
-                        hovered = Some(row.name.clone());
-                    }
-                }
-                if rows.iter().any(|r| r.read_only) {
-                    kit::note(
-                        ui,
-                        "Package values (pkg_…) come from the package and are read-only here.",
-                    );
-                    kit::rule(ui);
-                }
                 let panel = &mut self.footprint_dims.panel;
                 for row in rows.iter().filter(|r| !r.read_only) {
                     let response = ui.scope(|ui| {
+                        let mut name_field = None;
+                        let mut expr_field = None;
                         ui.horizontal(|ui| {
                             let width = ui.available_width();
                             let name_w = (width * 0.34).max(48.0);
@@ -168,6 +159,9 @@ impl PartEditor {
                                 if r.lost_focus() && name.trim() != row.name.0 {
                                     change = Some(Change::Rename(row.name.clone(), name.clone()));
                                 }
+                                if failed && name.trim() != row.name.0 {
+                                    name_field = Some(r);
+                                }
                             }
                             if let Some(expr) = panel.exprs.get_mut(&row.name) {
                                 let r = ui
@@ -188,6 +182,7 @@ impl PartEditor {
                                     change =
                                         Some(Change::Set(row.name.clone(), expr.clone(), row.unit));
                                 }
+                                expr_field = Some(r);
                             }
                             if ui_kit::button(ui, "×", Button::Small)
                                 .on_hover_text("Remove this parameter (refused while it is read)")
@@ -196,26 +191,28 @@ impl PartEditor {
                                 change = Some(Change::Remove(row.name.clone()));
                             }
                         });
+                        let field = name_field.or(expr_field);
                         // A refused edit shows only why: the stored value
                         // and its readers belong to the text it replaced.
                         let refused = panel
                             .error
                             .as_ref()
                             .and_then(|(n, why)| (n.as_ref() == Some(&row.name)).then_some(why));
-                        if let Some(why) = refused {
-                            kit::status(ui, why, kit::Tone::Error);
-                        } else {
-                            let value = match (&row.value, errors.get(&row.name)) {
-                                (Some(v), _) => {
-                                    format!("= {} · {}", value_text(*v), readers_text(row))
-                                }
-                                (None, Some(e)) => e.clone(),
-                                (None, None) => readers_text(row),
-                            };
-                            if row.value.is_none() && errors.contains_key(&row.name) {
-                                kit::status(ui, &value, kit::Tone::Error);
-                            } else {
-                                kit::note(ui, &value);
+                        match (refused, &row.value, errors.get(&row.name), field) {
+                            (Some(why), _, _, Some(field)) => {
+                                kit::field_error(ui, &field, why, true);
+                            }
+                            (None, None, Some(e), Some(field)) => {
+                                kit::field_error(ui, &field, e, false);
+                            }
+                            (_, Some(v), _, _) => {
+                                kit::note(
+                                    ui,
+                                    &format!("= {} · {}", value_text(*v), readers_text(row)),
+                                );
+                            }
+                            _ => {
+                                kit::note(ui, &readers_text(row));
                             }
                         }
                     });
@@ -224,42 +221,89 @@ impl PartEditor {
                     }
                 }
                 if own == 0 {
-                    kit::note(
+                    kit::hint(
                         ui,
-                        "Name a dimension's value (pitch = 1.27 mm) or add a parameter here; dimensions bound to it follow it.",
+                        "Name a dimension's value or add a parameter",
+                        "Type pitch = 1.27 mm into a dimension, or add a parameter here; dimensions bound to it follow it",
                     );
                 }
-                kit::rule(ui);
-                kit::text_row(ui, "New name", &mut panel.new_name);
-                kit::text_row(ui, "Expression", &mut panel.new_expr);
-                let suggested = unit_of(&panel.new_expr);
-                if suggested == ParamUnit::Deg && panel.new_unit == ParamUnit::Mm {
-                    panel.new_unit = ParamUnit::Deg;
-                }
-                kit::row(ui, "Unit", |ui| {
-                    kit::dropdown(
-                        ui,
-                        "fp-param-unit",
-                        &mut panel.new_unit,
-                        &[
-                            (ParamUnit::Mm, "Length (mm)".into()),
-                            (ParamUnit::Deg, "Angle (°)".into()),
-                            (ParamUnit::Count, "Count".into()),
-                        ],
-                    );
-                });
-                if let Some((None, why)) = &panel.error {
-                    kit::status(ui, why, kit::Tone::Error);
-                }
-                kit::actions(ui, |ui| {
-                    let ready =
-                        !panel.new_name.trim().is_empty() && !panel.new_expr.trim().is_empty();
-                    if kit::primary(ui, "Add parameter", ready).clicked() {
-                        change = Some(Change::Add);
+                if panel.adding {
+                    kit::rule(ui);
+                    let name = kit::text_row(ui, "New name", &mut panel.new_name);
+                    let expr = kit::text_row(ui, "Expression", &mut panel.new_expr);
+                    let suggested = unit_of(&panel.new_expr);
+                    if suggested == ParamUnit::Deg && panel.new_unit == ParamUnit::Mm {
+                        panel.new_unit = ParamUnit::Deg;
                     }
-                });
+                    kit::row(ui, "Unit", |ui| {
+                        kit::dropdown(
+                            ui,
+                            "fp-param-unit",
+                            &mut panel.new_unit,
+                            &[
+                                (ParamUnit::Mm, "Length (mm)".into()),
+                                (ParamUnit::Deg, "Angle (°)".into()),
+                                (ParamUnit::Count, "Count".into()),
+                            ],
+                        );
+                    });
+                    if let Some((None, why)) = &panel.error {
+                        let field = if name_of(&panel.new_name).is_err() {
+                            &name
+                        } else {
+                            &expr
+                        };
+                        kit::field_error(ui, field, why, true);
+                    }
+                    let mut cancel = false;
+                    kit::actions(ui, |ui| {
+                        let ready =
+                            !panel.new_name.trim().is_empty() && !panel.new_expr.trim().is_empty();
+                        if kit::primary(ui, "Add", ready).clicked() && ready {
+                            change = Some(Change::Add);
+                        }
+                        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
+                            cancel = true;
+                        }
+                    });
+                    if cancel {
+                        panel.adding = false;
+                        panel.new_name.clear();
+                        panel.new_expr.clear();
+                        if matches!(panel.error, Some((None, _))) {
+                            panel.error = None;
+                        }
+                    }
+                } else if kit::summary_row(ui, "", Some("Add parameter…")) {
+                    panel.adding = true;
+                }
             });
         });
+        if package > 0 {
+            kit::section(
+                ui,
+                "fp-package-values",
+                "Package values",
+                false,
+                Some(package),
+                |ui| {
+                    for row in rows.iter().filter(|r| r.read_only) {
+                        let text = row.value.map_or_else(|| row.expr.0.clone(), value_text);
+                        let response = ui
+                            .scope(|ui| kit::value_row(ui, &row.name.0, &text))
+                            .response;
+                        if response.hovered() {
+                            hovered = Some(row.name.clone());
+                        }
+                    }
+                    kit::hint(
+                        ui,
+                        "From the package; read-only here",
+                        "The pkg_ values come from the package's outline; change them on the 3D tab",
+                    );
+                },
+            );
+        }
         self.footprint_dims.highlight = hovered;
         if let Some(change) = change {
             self.apply_parameter_change(change);
@@ -328,6 +372,7 @@ impl PartEditor {
                     panel.new_name.clear();
                     panel.new_expr.clear();
                     panel.new_unit = ParamUnit::Mm;
+                    panel.adding = false;
                 }
                 self.queue_footprint_edits(edits);
             }

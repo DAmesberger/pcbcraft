@@ -131,6 +131,20 @@ impl Harness {
         out
     }
 
+    /// The finding codes `project.issues` reports for the whole project:
+    /// the one home of the package's checks.
+    fn issue_codes(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        use pcbcraft_core::issues::IssueScope;
+        match self.engine.query(pcbcraft_core::Query::Issues {
+            scope: IssueScope::All,
+        })? {
+            pcbcraft_core::QueryResult::Issues(report) => {
+                Ok(report.rows.into_iter().map(|r| r.finding.code).collect())
+            }
+            other => Err(format!("{other:?}").into()),
+        }
+    }
+
     fn button(pos: Pos2, pressed: bool) -> egui::Event {
         egui::Event::PointerButton {
             pos,
@@ -295,10 +309,14 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
     ));
     h.apply_sent()?;
     assert_eq!(h.placement()?.rotation_deg, [0.0, 0.0, 90.0]);
-    // Turned a quarter, the terminations miss their lands: a finding, and
-    // a fit that turns it back.
-    let texts = h.inspector(vec![]);
-    assert!(texts.iter().any(|(t, _)| t.contains("off their lands")));
+    // Turned a quarter, the terminations miss their lands: a finding in
+    // Issues (its one home, never repeated in the card), and a fit that
+    // turns it back.
+    assert!(
+        h.issue_codes()?
+            .iter()
+            .any(|c| c == "package.lead_off_land")
+    );
     h.click_label("Fit")?;
     assert!(matches!(
         h.sent.as_slice(),
@@ -311,11 +329,11 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
     let fitted = h.placement()?;
     assert_eq!(fitted.rotation_deg, [0.0; 3]);
     assert!(fitted.translation.iter().all(|v| v.abs() < 1e-9));
-    let texts = h.inspector(vec![]);
     assert!(
-        texts
+        !h.issue_codes()?
             .iter()
-            .any(|(t, _)| t.contains("Leads on their lands"))
+            .any(|c| c.starts_with("package.lead_")),
+        "the fitted leads sit on their lands"
     );
     Ok(())
 }
@@ -449,11 +467,18 @@ fn the_form_chooser_sends_one_typed_form_and_parameters_commit_when_left() -> Te
     ] {
         assert!(texts.iter().any(|(t, _)| t == label), "{label}");
     }
+    // The terminal mismatch is a package finding: named in Issues, not
+    // repeated in the card.
     assert!(
-        texts
+        h.issue_codes()?
             .iter()
-            .any(|(t, _)| t.contains("The form has 8 leads; the package has 2 terminals")),
+            .any(|c| c == "package.form_terminals"),
         "the terminal mismatch is named"
+    );
+    assert!(
+        !texts
+            .iter()
+            .any(|(t, _)| t.contains("leads; the package has"))
     );
     // A typed pitch is previewed and sent once the field is left.
     let pitch = texts
