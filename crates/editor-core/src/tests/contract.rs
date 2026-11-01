@@ -4,7 +4,7 @@
 //! by the new optional fields.
 use super::support::*;
 use crate::diagnostics::Error;
-use crate::ids::{DefinitionKind, Id};
+use crate::ids::DefinitionKind;
 use crate::{Engine, Operation, Query};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -16,12 +16,6 @@ fn unsupported<T: std::fmt::Debug>(result: crate::Result<T>) -> bool {
 #[test]
 fn new_queries_refuse_as_unsupported() -> Fallible<()> {
     let engine = Engine::demo()?;
-    let instance = engine
-        .project()
-        .instances
-        .first()
-        .map(|i| i.id)
-        .ok_or("instance")?;
     let queries = [Query::Templates {
         query: "soic pins:8".into(),
         limit: None,
