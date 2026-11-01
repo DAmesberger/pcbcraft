@@ -47,6 +47,18 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 
 /// Write to a sibling temporary file, flush it, then rename it over `path`.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_via_temporary(path, bytes, true)
+}
+
+/// Like [`atomic_write`], but `path` must not exist: the finished temporary
+/// file is linked into place without replacing anything, so a file created
+/// at `path` meanwhile is never overwritten. That case is an `Io` error of
+/// kind `AlreadyExists`, and no temporary file is left behind.
+pub fn atomic_create(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_via_temporary(path, bytes, false)
+}
+
+fn write_via_temporary(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(Error::TooLarge("file exceeds 16 MiB".into()));
     }
@@ -57,13 +69,19 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(bytes)?;
     temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|e| Error::Io(e.error))?;
+    if replace {
+        temporary.persist(path).map_err(|e| Error::Io(e.error))?;
+    } else {
+        temporary
+            .persist_noclobber(path)
+            .map_err(|e| Error::Io(e.error))?;
+    }
     #[cfg(unix)]
     std::fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
             Error::Invalid(format!(
-                "The file was replaced, but synchronizing its directory failed; power-loss durability is unconfirmed: {error}"
+                "The file was written, but synchronizing its directory failed; power-loss durability is unconfirmed: {error}"
             ))
         })?;
     Ok(())

@@ -75,6 +75,11 @@ pub struct FirmwarePin {
     pub initial: Option<Level>,
     /// Sanitised `[A-Z0-9_]` identifier.
     pub firmware_name: String,
+    /// Whether the design configures this pin: its function was selected,
+    /// it takes a peripheral role, it has a pin configuration or its net
+    /// has a name. `false` means it only carries its default function, so
+    /// emitters keep it out of the code they generate.
+    pub assigned: bool,
     pub endpoints: Vec<ReportEndpoint>,
 }
 
@@ -161,6 +166,10 @@ pub fn from_pin_report(project: &Project, report: &PinReport) -> Result<PinConfi
             pin.net
                 .is_none_or(|net| *name != crate::nets::default_name(net))
         });
+        let assigned = function.selected
+            || function.peripheral.is_some()
+            || config.is_some()
+            || net_name.is_some();
         let source = config
             .and_then(|c| c.name.as_deref())
             .or(net_name)
@@ -179,6 +188,7 @@ pub fn from_pin_report(project: &Project, report: &PinReport) -> Result<PinConfi
             speed: config.and_then(|c| c.speed.clone()),
             initial: config.and_then(|c| c.initial),
             firmware_name: sanitise(source),
+            assigned,
             endpoints: pin.endpoints.clone(),
         });
     }
@@ -298,6 +308,7 @@ mod tests {
             role_label: None,
             signal: None,
             mux: None,
+            selected: false,
         }
     }
 
@@ -397,6 +408,9 @@ mod tests {
 
         let names: Vec<_> = ir.pins.iter().map(|p| p.firmware_name.as_str()).collect();
         assert_eq!(names, ["PA5", "DEBUG_TX", "CONSOLE_RX"]);
+        // PA5 only carries its default function; the UART pins are assigned.
+        let assigned: Vec<_> = ir.pins.iter().map(|p| p.assigned).collect();
+        assert_eq!(assigned, [false, true, true]);
         let rx = ir.pins.get(2).ok_or("rx")?;
         assert_eq!(rx.pull, Some(Pull::Up));
         assert_eq!(rx.mux.as_deref(), Some("AF7"));

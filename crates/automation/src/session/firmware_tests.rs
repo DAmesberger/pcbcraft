@@ -199,6 +199,23 @@ fn assign_report_export(s: &mut Scenario, placed: &Placed) -> Fallible<()> {
             .is_some_and(|m| m.contains("sampling switch"))),
         "the forbidding rule is named: {report}"
     );
+    // The blocker names the conflicting assignment and offers a way out.
+    let blocker = blockers.first().ok_or("blocker")?;
+    let message = blocker["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("It conflicts with ‘adc1_in0’ (ADC1 in0) on terminal ‘PA0’ under rule ‘spi1_excludes_adc1_in0’"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Alternative: use ‘ADC1’ ‘in1’ on terminal ‘PA1’ instead."),
+        "{message}"
+    );
+    assert_eq!(
+        blocker["culprit"]["terminal"],
+        json!(t("PA0")?),
+        "{blocker}"
+    );
+    assert!(blocker["alternative"]["edits"].is_array(), "{blocker}");
     let refused = s.refuse_apply(
         "assign SPI1 forbidden",
         assign_op(u1, p.peripheral("SPI1")?, &[]),
@@ -467,7 +484,7 @@ fn exm48_from_datasheet_to_firmware_pins() -> Fallible<()> {
 fn report() -> Fallible<PinConfigReport> {
     let pin = |terminal: u32, name: &str, function: &str, firmware: &str| {
         json!({"terminal": terminal, "name": name, "gpio": {"port": "B", "index": terminal},
-               "function": function, "firmware_name": firmware, "endpoints": []})
+               "function": function, "firmware_name": firmware, "assigned": true, "endpoints": []})
     };
     let mut tx = pin(6, "PB6", "usart1_tx", "CONSOLE_TX");
     tx["peripheral"] = json!("USART1");

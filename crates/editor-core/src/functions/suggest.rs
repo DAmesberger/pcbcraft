@@ -9,6 +9,15 @@
 //! selections; terminals without a net, or whose net already reaches the
 //! role's counterpart; declared order; terminal order. Pure and
 //! wasm-safe; never applies anything.
+//!
+//! A peripheral requested without a role list gets every role that has a
+//! candidate: its `required_when_used` roles (or its first role when none
+//! is) must be placed, the others are optional and may be left out. A
+//! suggestion that leaves an optional role out ranks after every complete
+//! one and lists the role in [`Suggestion::unplaced`].
+//!
+//! One Rhai engine serves the whole search ([`rules::Evaluator`]); each
+//! node swaps its view in.
 use super::FunctionEdit;
 use super::rules::{
     self, MAX_RESOLUTION_OPERATIONS, MAX_RULE_OPERATIONS, MAX_SUGGEST_OPERATIONS, RuleBudget,
@@ -21,7 +30,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Search nodes one `functions.suggest` may visit (target: < 50 ms on a
-/// 176-pin fixture; to be measured).
+/// 176-pin fixture; see the ignored `suggest_benchmark` test for the
+/// measurement).
 pub const SUGGEST_NODE_BUDGET: u64 = 100_000;
 /// Ranked assignments one suggestion returns.
 pub const MAX_SUGGESTIONS: usize = 8;
@@ -32,7 +42,8 @@ pub const MAX_AVOID: usize = 2048;
 
 /// One peripheral to enable; `roles` restricts which roles are placed
 /// (a stepwise edit: required roles it leaves out may stay missing), else
-/// every `required_when_used` role, else the first role.
+/// every role: the `required_when_used` ones (or the first role when none
+/// is) must be placed, the others are placed where a candidate allows.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PeripheralRequest {
@@ -64,6 +75,13 @@ pub struct Suggestion {
     pub edits: Vec<FunctionEdit>,
     /// Terminals whose active function changes.
     pub changed: Vec<TerminalId>,
+    /// Terminals the suggestion places an optional role on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional: Vec<TerminalId>,
+    /// Optional roles of the enabled peripherals this suggestion leaves
+    /// out; empty for a complete assignment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced: Vec<super::ResourceRole>,
 }
 
 /// What stops a peripheral from being enabled.
@@ -75,6 +93,14 @@ pub struct Blocker {
     /// The rule script that rejects every candidate, if one does.
     pub rule: Option<RuleId>,
     pub message: String,
+    /// The existing selection whose removal unblocks the peripheral, when
+    /// the search finds one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub culprit: Option<crate::ids::FunctionKey>,
+    /// A complete alternative that moves the culprit's role to another
+    /// terminal and enables the peripheral, when the search finds one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative: Option<Suggestion>,
 }
 
 /// The `functions.suggest` report.
@@ -122,8 +148,16 @@ const MAX_REASONS: usize = 3;
 struct Slot {
     resource: usize,
     role: RoleId,
+    /// The role may be left out (at [`SKIP_COST`]).
+    optional: bool,
     candidates: Vec<Candidate>,
 }
+
+/// The cost of leaving an optional role out: dearer than any placement,
+/// so complete assignments rank first.
+const SKIP_COST: u32 = 8;
+/// Existing selections the blocker analysis tries removing.
+const MAX_CULPRIT_TRIES: usize = 16;
 
 #[derive(Clone, Copy)]
 struct Candidate {
@@ -154,6 +188,10 @@ struct Reason {
 
 struct Found {
     assignment: Vec<Candidate>,
+    /// The slot of each placed candidate.
+    slots: Vec<usize>,
+    /// Optional slots left out.
+    skipped: Vec<usize>,
     cost: u32,
 }
 
@@ -168,7 +206,12 @@ struct Search<'s, 'a> {
     selections: super::FunctionSelections,
     used: BTreeSet<TerminalId>,
     chosen: Vec<Candidate>,
+    /// Optional slots of the current branch left out.
+    skipped: Vec<usize>,
+    /// Slots placed for the current branch, parallel to `chosen`.
+    chosen_slots: Vec<usize>,
     found: Vec<Found>,
+    evaluator: rules::Evaluator,
     nodes: u64,
     operations: u64,
     exhausted: bool,
@@ -184,6 +227,191 @@ struct Search<'s, 'a> {
 /// the current selections do not already have.
 pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<SuggestReport> {
     let limit = check_request(input, request)?;
+    let mut evaluator = rules::Evaluator::new();
+    let mut spent = Spent::default();
+    let mut report = search(input, request, limit, &mut evaluator, &mut spent)?;
+    if report.suggestions.is_empty() && !report.exhausted {
+        explain_blocker(input, request, &mut evaluator, &mut spent, &mut report)?;
+    }
+    Ok(report)
+}
+
+/// Nodes and rule operations spent so far by one `functions.suggest`,
+/// across the main search and the blocker analysis: both share
+/// [`SUGGEST_NODE_BUDGET`] and [`MAX_SUGGEST_OPERATIONS`].
+#[derive(Clone, Copy, Default)]
+struct Spent {
+    nodes: u64,
+    operations: u64,
+}
+
+/// A blocked request: find the existing selection that blocks it (the
+/// first, in terminal order, whose removal lets the request succeed) and
+/// name it with the rule involved; where the culprit takes a peripheral
+/// role, look for a complete alternative that moves that role elsewhere.
+/// Bounded by [`MAX_CULPRIT_TRIES`] and the shared budgets.
+fn explain_blocker(
+    input: &SuggestInput<'_>,
+    request: &SuggestRequest,
+    evaluator: &mut rules::Evaluator,
+    spent: &mut Spent,
+    report: &mut SuggestReport,
+) -> Result<()> {
+    let requested: BTreeSet<ResourceId> = request.enable.iter().map(|w| w.peripheral).collect();
+    let declared = |terminal: TerminalId, function: FunctionId| {
+        input
+            .terminals
+            .iter()
+            .find(|d| d.terminal == terminal)
+            .and_then(|d| {
+                d.functions
+                    .and_then(|f| f.function(function))
+                    .map(|f| (d.name, f))
+            })
+    };
+    let mut tries = 0;
+    for (terminal, function) in input.selections {
+        let Some((terminal_name, declared)) = declared(*terminal, *function) else {
+            continue;
+        };
+        if declared
+            .resource_role
+            .is_some_and(|rr| requested.contains(&rr.resource))
+        {
+            continue;
+        }
+        if tries == MAX_CULPRIT_TRIES || spent.nodes >= SUGGEST_NODE_BUDGET {
+            break;
+        }
+        tries += 1;
+        let mut without = input.selections.clone();
+        without.remove(terminal);
+        let trial_input = SuggestInput {
+            selections: &without,
+            ..*input
+        };
+        let trial = search(&trial_input, request, 1, evaluator, spent)?;
+        if trial.suggestions.is_empty() {
+            continue;
+        }
+        let Some(blocker) = report.blockers.first_mut() else {
+            return Ok(());
+        };
+        let role = declared.resource_role.and_then(|rr| {
+            let resource = input.resources.iter().find(|r| r.id == rr.resource)?;
+            Some((rr, resource, resource.role(rr.role)?))
+        });
+        let what = role.map_or_else(String::new, |(_, resource, role)| {
+            format!(" ({} {})", resource.label, role.label)
+        });
+        let rule = blocker
+            .rule
+            .and_then(|r| input.rules.label(r))
+            .map_or_else(String::new, |label| format!(" under rule ‘{label}’"));
+        blocker.culprit = Some(crate::ids::FunctionKey {
+            terminal: *terminal,
+            function: *function,
+        });
+        blocker.message.push_str(&format!(
+            " It conflicts with ‘{}’{what} on terminal ‘{}’{rule}; without that selection it can be enabled.",
+            declared.label,
+            terminal_name.trim()
+        ));
+        if let Some((rr, resource, _)) = role
+            && request.enable.len() < MAX_PERIPHERAL_REQUESTS
+            && request.avoid.len() < MAX_AVOID
+        {
+            // The culprit's role elsewhere first, then the peripheral's
+            // other roles in declaration order.
+            let roles = std::iter::once(rr.role).chain(
+                resource
+                    .roles
+                    .iter()
+                    .map(|r| r.id)
+                    .filter(|r| *r != rr.role),
+            );
+            for alternative_role in roles {
+                if spent.nodes >= SUGGEST_NODE_BUDGET {
+                    break;
+                }
+                let mut moved = request.clone();
+                moved.enable.push(PeripheralRequest {
+                    peripheral: rr.resource,
+                    roles: Some(vec![alternative_role]),
+                });
+                moved.avoid.push(*terminal);
+                let alternative = search(&trial_input, &moved, 1, evaluator, spent)?;
+                let Some(mut found) = alternative.suggestions.into_iter().next() else {
+                    continue;
+                };
+                let wanted = super::ResourceRole {
+                    resource: rr.resource,
+                    role: alternative_role,
+                };
+                let target = found
+                    .edits
+                    .iter()
+                    .filter_map(|e| Some((e.terminal, e.function?)))
+                    .find(|(t, f)| declared_role(input, *t, *f) == Some(wanted))
+                    .and_then(|(t, _)| input.terminals.iter().find(|d| d.terminal == t))
+                    .map(|d| d.name.trim().to_owned());
+                found.edits.push(FunctionEdit {
+                    terminal: *terminal,
+                    function: None,
+                });
+                found.edits.sort_by_key(|e| e.terminal);
+                if !found.changed.contains(terminal) {
+                    found.changed.push(*terminal);
+                    found.changed.sort();
+                }
+                let label = resource
+                    .role(alternative_role)
+                    .map_or_else(|| alternative_role.to_string(), |r| r.label.clone());
+                if let Some(target) = target {
+                    if alternative_role == rr.role {
+                        blocker.message.push_str(&format!(
+                            " Alternative: move ‘{}’ ‘{label}’ to terminal ‘{target}’.",
+                            resource.label
+                        ));
+                    } else {
+                        blocker.message.push_str(&format!(
+                            " Alternative: use ‘{}’ ‘{label}’ on terminal ‘{target}’ instead.",
+                            resource.label
+                        ));
+                    }
+                }
+                blocker.alternative = Some(found);
+                break;
+            }
+        }
+        return Ok(());
+    }
+    Ok(())
+}
+
+/// The peripheral role `function` of `terminal` takes, if any.
+fn declared_role(
+    input: &SuggestInput<'_>,
+    terminal: TerminalId,
+    function: FunctionId,
+) -> Option<super::ResourceRole> {
+    input
+        .terminals
+        .iter()
+        .find(|d| d.terminal == terminal)?
+        .functions?
+        .function(function)?
+        .resource_role
+}
+
+/// One search over `input` (the request already checked).
+fn search(
+    input: &SuggestInput<'_>,
+    request: &SuggestRequest,
+    limit: usize,
+    evaluator: &mut rules::Evaluator,
+    spent: &mut Spent,
+) -> Result<SuggestReport> {
     let base_resolution = super::resolve(
         input.terminals,
         input.resources,
@@ -191,8 +419,9 @@ pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<Sug
         input.unavailable,
         input.selections,
     )?;
-    let mut operations = 0;
-    let base = check_state(input, &base_resolution, &mut operations)?.unwrap_or_default();
+    let mut operations = spent.operations;
+    let base =
+        check_state(input, &base_resolution, &mut operations, evaluator)?.unwrap_or_default();
     let base_active = base_resolution
         .active
         .iter()
@@ -200,7 +429,10 @@ pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<Sug
         .collect();
     let slots = slots(input, request, &base_active);
     let mut report = SuggestReport::default();
-    for slot in slots.iter().filter(|s| s.candidates.is_empty()) {
+    for slot in slots
+        .iter()
+        .filter(|s| s.candidates.is_empty() && !s.optional)
+    {
         let resource = &input.resources[slot.resource];
         let role = resource
             .role(slot.role)
@@ -213,11 +445,28 @@ pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<Sug
                 "‘{}’ cannot be enabled: no terminal can take role {role} (none offers it, or every one that does is avoided, kept for another selection or unavailable in this implementation).",
                 resource.label
             ),
+            culprit: None,
+            alternative: None,
         });
     }
     if !report.blockers.is_empty() {
         return Ok(report);
     }
+    // An optional role nothing can take is simply left out.
+    let mut unplaceable = Vec::new();
+    let slots: Vec<Slot> = slots
+        .into_iter()
+        .filter(|s| {
+            let keep = !s.candidates.is_empty();
+            if !keep {
+                unplaceable.push(super::ResourceRole {
+                    resource: input.resources[s.resource].id,
+                    role: s.role,
+                });
+            }
+            keep
+        })
+        .collect();
     let count = slots.len();
     let placed: BTreeSet<(ResourceId, RoleId)> = slots
         .iter()
@@ -240,18 +489,26 @@ pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<Sug
         selections: input.selections.clone(),
         used: BTreeSet::new(),
         chosen: Vec::new(),
+        skipped: Vec::new(),
+        chosen_slots: Vec::new(),
         found: Vec::new(),
-        nodes: 0,
+        evaluator: std::mem::take(evaluator),
+        nodes: spent.nodes,
         operations,
         exhausted: false,
         reasons: vec![Vec::new(); count],
         dead_end: None,
     };
-    search.descend(0)?;
-    report.nodes = search.nodes;
+    let descended = search.descend(0);
+    *evaluator = std::mem::take(&mut search.evaluator);
+    descended?;
+    report.nodes = search.nodes.saturating_sub(spent.nodes);
+    spent.nodes = search.nodes;
+    spent.operations = search.operations;
     report.exhausted = search.exhausted;
-    // Stable: equal costs keep the search's declared order.
-    search.found.sort_by_key(|f| f.cost);
+    // Complete assignments first, then by cost. Stable: equal ranks keep
+    // the search's declared order.
+    search.found.sort_by_key(|f| (f.skipped.len(), f.cost));
     for found in search.found.iter().take(limit) {
         let mut edits: Vec<FunctionEdit> = found
             .assignment
@@ -264,7 +521,30 @@ pub fn suggest(input: &SuggestInput<'_>, request: &SuggestRequest) -> Result<Sug
             .collect();
         edits.sort_by_key(|e| e.terminal);
         let changed = edits.iter().map(|e| e.terminal).collect();
-        report.suggestions.push(Suggestion { edits, changed });
+        let mut optional: Vec<TerminalId> = found
+            .assignment
+            .iter()
+            .zip(&found.slots)
+            .filter(|(_, slot)| search.slots[**slot].optional)
+            .map(|(c, _)| c.terminal)
+            .collect();
+        optional.sort();
+        let mut unplaced: Vec<super::ResourceRole> = found
+            .skipped
+            .iter()
+            .map(|slot| super::ResourceRole {
+                resource: input.resources[search.slots[*slot].resource].id,
+                role: search.slots[*slot].role,
+            })
+            .chain(unplaceable.iter().copied())
+            .collect();
+        unplaced.sort_by_key(|r| (r.resource, r.role));
+        report.suggestions.push(Suggestion {
+            edits,
+            changed,
+            optional,
+            unplaced,
+        });
     }
     if report.suggestions.is_empty() {
         report.blockers.push(search.blocker());
@@ -367,23 +647,27 @@ fn slots(
             continue;
         };
         let resource = &input.resources[index];
-        let roles: Vec<RoleId> = match &wanted.roles {
-            Some(roles) => roles.clone(),
+        // (role, optional)
+        let roles: Vec<(RoleId, bool)> = match &wanted.roles {
+            Some(roles) => roles.iter().map(|r| (*r, false)).collect(),
             None => {
-                let required: Vec<RoleId> = resource
+                let any_required = resource.roles.iter().any(|r| r.required_when_used);
+                resource
                     .roles
                     .iter()
-                    .filter(|r| r.required_when_used)
-                    .map(|r| r.id)
-                    .collect();
-                if required.is_empty() {
-                    resource.roles.iter().map(|r| r.id).take(1).collect()
-                } else {
-                    required
-                }
+                    .enumerate()
+                    .map(|(i, r)| {
+                        let mandatory = if any_required {
+                            r.required_when_used
+                        } else {
+                            i == 0
+                        };
+                        (r.id, !mandatory)
+                    })
+                    .collect()
             }
         };
-        for role in roles {
+        for (role, optional) in roles {
             let mut candidates = Vec::new();
             for declaration in input.terminals {
                 let Some(declared) = declaration.functions else {
@@ -425,6 +709,7 @@ fn slots(
             out.push(Slot {
                 resource: index,
                 role,
+                optional,
                 candidates,
             });
         }
@@ -443,6 +728,7 @@ fn check_state(
     input: &SuggestInput<'_>,
     resolution: &super::Resolution,
     operations: &mut u64,
+    evaluator: &mut rules::Evaluator,
 ) -> Result<Option<Vec<Item>>> {
     let mut items: Vec<Item> = resolution
         .conflicts
@@ -480,7 +766,7 @@ fn check_state(
         per_rule: MAX_RULE_OPERATIONS,
         total: remaining.min(MAX_RESOLUTION_OPERATIONS),
     };
-    let evaluation = rules::evaluate(input.rules, &view(input, resolution), budget)?;
+    let evaluation = rules::evaluate_with(evaluator, input.rules, view(input, resolution), budget)?;
     *operations = operations.saturating_add(evaluation.operations);
     for outcome in evaluation.outcomes {
         match outcome.verdict {
@@ -518,6 +804,24 @@ impl Search<'_, '_> {
         self.exhausted || self.found.len() >= MAX_COLLECTED
     }
 
+    /// Record the current branch as a complete assignment.
+    fn record(&mut self) {
+        let cost = self
+            .chosen
+            .iter()
+            .map(|c| c.cost)
+            .sum::<u32>()
+            .saturating_add(
+                SKIP_COST.saturating_mul(u32::try_from(self.skipped.len()).unwrap_or(u32::MAX)),
+            );
+        self.found.push(Found {
+            assignment: self.chosen.clone(),
+            slots: self.chosen_slots.clone(),
+            skipped: self.skipped.clone(),
+            cost,
+        });
+    }
+
     /// Place slot `at` and everything after it.
     fn descend(&mut self, at: usize) -> Result<()> {
         if at == self.slots.len() {
@@ -548,16 +852,15 @@ impl Search<'_, '_> {
                     passed = true;
                     self.used.insert(candidate.terminal);
                     self.chosen.push(candidate);
+                    self.chosen_slots.push(at);
                     let result = if last {
-                        self.found.push(Found {
-                            assignment: self.chosen.clone(),
-                            cost: self.chosen.iter().map(|c| c.cost).sum(),
-                        });
+                        self.record();
                         Ok(())
                     } else {
                         self.descend(at + 1)
                     };
                     self.chosen.pop();
+                    self.chosen_slots.pop();
                     self.used.remove(&candidate.terminal);
                     result
                 }
@@ -581,6 +884,37 @@ impl Search<'_, '_> {
             };
             outcome?;
         }
+        // An optional role may be left out; tried after every placement so
+        // complete assignments are found first.
+        if self.slots[at].optional && !self.stop() {
+            self.skipped.push(at);
+            let result = if last {
+                if self.nodes >= SUGGEST_NODE_BUDGET {
+                    self.exhausted = true;
+                    Ok(())
+                } else {
+                    self.nodes += 1;
+                    match self.verdict(true) {
+                        Ok(Some(None)) => {
+                            passed = true;
+                            self.record();
+                            Ok(())
+                        }
+                        Ok(Some(Some(_))) => Ok(()),
+                        Ok(None) => {
+                            self.exhausted = true;
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            } else {
+                passed = true;
+                self.descend(at + 1)
+            };
+            self.skipped.pop();
+            result?;
+        }
         if !passed && !self.exhausted && self.dead_end.is_none() {
             self.dead_end = Some(at);
         }
@@ -599,7 +933,13 @@ impl Search<'_, '_> {
             self.input.unavailable,
             &self.selections,
         )?;
-        let Some(items) = check_state(self.input, &resolution, &mut self.operations)? else {
+        let Some(items) = check_state(
+            self.input,
+            &resolution,
+            &mut self.operations,
+            &mut self.evaluator,
+        )?
+        else {
             return Ok(None);
         };
         let new = items
@@ -645,6 +985,8 @@ impl Search<'_, '_> {
             role: slot.map(|s| s.role),
             rule: reasons.iter().find_map(|r| r.rule),
             message,
+            culprit: None,
+            alternative: None,
         }
     }
 }

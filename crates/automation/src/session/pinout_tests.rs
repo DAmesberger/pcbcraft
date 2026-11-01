@@ -15,7 +15,7 @@
 use super::*;
 use std::collections::BTreeMap;
 
-pub(super) use crate::mcp::scenario::{EXM48, Fallible, Stub, finish, stub_in};
+pub(super) use crate::mcp::scenario::{EXM48, Fallible, Stub, finish, finish_stubbed, stub_in};
 
 /// One session driven only by JSON requests. The engine is read only to
 /// prove that refusals changed nothing.

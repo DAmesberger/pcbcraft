@@ -315,3 +315,98 @@ fn rule_scripts_persist_with_the_revision() -> Result<()> {
     assert_eq!(rules, vec![rule(90, "shared_pins", SHARED_PINS)]);
     Ok(())
 }
+
+/// `instance.set_pin_config` does not change function ERC, but rules read
+/// the configuration: a `forbid` over `option(…)` refuses the edit and a
+/// `require` becomes a `config.rule_unmet` finding.
+#[test]
+fn rules_over_pin_options_refuse_or_flag_a_pin_configuration() -> Result<()> {
+    use crate::functions::pin_config::PinConfigEdit;
+    use crate::functions::{PinConfig, PinOption, Pull};
+    let mut engine = Engine::default();
+    let f = mcu(
+        &mut engine,
+        vec![
+            rule(
+                90,
+                "no_pull_down",
+                r#"if option("TX", "pull") == "down" { forbid("TX must not be pulled down.", ["TX"]) } else { ok() }"#,
+            ),
+            rule(
+                91,
+                "pull_up_needs_uart",
+                r#"if option("TX", "pull") == "up" && !used("USART1") { require("A pulled-up TX needs USART1.", ["TX"]) } else { ok() }"#,
+            ),
+        ],
+    )?;
+    with(&mut engine, f.component, component_body, |c| {
+        if let Some(TerminalClass::Electrical(declared)) = c
+            .terminals
+            .iter_mut()
+            .find(|t| t.id == TerminalId(1))
+            .map(|t| &mut t.class)
+        {
+            declared.options = vec![PinOption::Pull(vec![Pull::None, Pull::Up, Pull::Down])];
+        }
+    })?;
+    publish(&mut engine, f.all())?;
+    let (x, _) = place(&mut engine, &f, "U1", 1, [0.0, 0.0])?;
+    let set = |engine: &mut Engine, pull: Pull| {
+        apply(
+            engine,
+            Operation::Instance(InstanceCommand::SetPinConfig {
+                instance: x,
+                edits: vec![PinConfigEdit {
+                    terminal: TerminalId(1),
+                    config: Some(PinConfig {
+                        pull: Some(pull),
+                        ..PinConfig::default()
+                    }),
+                }],
+            }),
+        )
+    };
+    let kept = Snapshot::of(&engine);
+    let refused = set(&mut engine, Pull::Down).err();
+    let message = refused
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert_eq!(refused.map(|e| e.code()), Some("conflict"), "{message}");
+    assert!(message.contains("TX must not be pulled down."), "{message}");
+    kept.assert_kept(&engine, "a forbidden pin configuration");
+
+    set(&mut engine, Pull::Up)?;
+    let unmet: Vec<_> = inspect(&engine, x)?
+        .findings
+        .into_iter()
+        .filter(|f| f.code == "config.rule_unmet")
+        .collect();
+    assert_eq!(unmet.len(), 1, "{unmet:?}");
+    assert!(unmet[0].message.contains("A pulled-up TX needs USART1."));
+    Ok(())
+}
+
+#[test]
+fn a_rule_note_keeps_its_datasheet_source() -> Result<()> {
+    let mut engine = Engine::default();
+    let mut note = rule(91, "debug_clock", NOTE);
+    note.source = Some(crate::functions::SourceSpan {
+        page: Some(16),
+        table: Some("Table 5".into()),
+    });
+    let f = mcu(&mut engine, vec![note])?;
+    publish(&mut engine, f.all())?;
+    let (x, _) = place(&mut engine, &f, "U1", 1, [0.0, 0.0])?;
+    choose(&mut engine, x, &[(2, 13)])?;
+    let notes: Vec<_> = erc::checks(engine.project())
+        .into_iter()
+        .filter(|f| f.code == "config.rule_note")
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(
+        notes[0].message,
+        "U1: Pin rule ‘debug_clock’: SPI1 disables the debug clock. (source: page 16, Table 5)"
+    );
+    Ok(())
+}

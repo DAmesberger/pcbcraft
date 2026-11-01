@@ -561,6 +561,57 @@ fn assign_peripheral_is_one_atomic_undo_step() -> Result<()> {
 }
 
 #[test]
+fn an_explicit_placement_moves_a_placed_role() -> Result<()> {
+    let mut engine = Engine::default();
+    let (_, u1) = exq(&mut engine, vec![])?;
+    let place = |role: u32, terminal: u32| RolePlacement {
+        role: RoleId(role),
+        terminal: Some(TerminalId(terminal)),
+    };
+    assign(
+        &mut engine,
+        AssignPeripheral {
+            instance: u1,
+            peripheral: ResourceId(UART1),
+            roles: vec![place(TX, PB0), place(RX, PA1)],
+            enable: true,
+        },
+    )?;
+    let placed = engine.to_file();
+    // Both roles move in one step; their earlier terminals return to
+    // their defaults.
+    let moved = assign(
+        &mut engine,
+        AssignPeripheral {
+            instance: u1,
+            peripheral: ResourceId(UART1),
+            roles: vec![place(TX, PA0), place(RX, PB1)],
+            enable: true,
+        },
+    )?;
+    for (terminal, function) in [(PA0, PA0_TX), (PB1, PB1_RX), (PB0, PB0_IN), (PA1, PA1_IN)] {
+        assert_eq!(active(&moved, terminal), Some(function), "{terminal}");
+    }
+    assert!(moved.conflicts.is_empty() && moved.incomplete.is_empty());
+    engine.undo()?;
+    assert_eq!(engine.to_file(), placed, "the move is one undo step");
+    // Moving one role leaves the other where it is.
+    let one = assign(
+        &mut engine,
+        AssignPeripheral {
+            instance: u1,
+            peripheral: ResourceId(UART1),
+            roles: vec![place(RX, PB1)],
+            enable: true,
+        },
+    )?;
+    for (terminal, function) in [(PB0, PB0_TX), (PB1, PB1_RX), (PA1, PA1_IN)] {
+        assert_eq!(active(&one, terminal), Some(function), "{terminal}");
+    }
+    Ok(())
+}
+
+#[test]
 fn pin_config_is_validated_against_declared_options() -> Result<()> {
     let mut engine = Engine::default();
     let (_, u1) = exq(&mut engine, vec![])?;
@@ -855,6 +906,54 @@ fn pin_config_is_carried_through_updates_and_reported_when_withdrawn() -> Result
             .findings
             .iter()
             .all(|f| f.code != "config.pin_option")
+    );
+    Ok(())
+}
+
+#[test]
+fn an_update_lists_the_pin_configurations_it_drops() -> Result<()> {
+    let mut engine = Engine::default();
+    let (fixture, u1) = exq(&mut engine, vec![])?;
+    set_config(
+        &mut engine,
+        u1,
+        vec![edit(
+            PB0,
+            Some(PinConfig {
+                pull: Some(Pull::Up),
+                name: Some("SENSE".into()),
+                ..PinConfig::default()
+            }),
+        )],
+    )?;
+    // r2 declares PB0 not connected.
+    with(&mut engine, fixture.component, component_body, |c| {
+        if let Some(t) = c.terminals.iter_mut().find(|t| t.id == TerminalId(PB0)) {
+            t.class = TerminalClass::DeviceNc;
+        }
+    })?;
+    let r2 = publish(&mut engine, vec![fixture.component])?
+        .into_iter()
+        .next()
+        .map(|r| ComponentRef::new(r.id, r.revision))
+        .ok_or(Error::NotFound("r2".into()))?;
+    let plan = engine.preview_update(Change::ComponentRevision {
+        instances: vec![u1],
+        target: r2,
+        resolutions: Resolutions::default(),
+    });
+    assert!(
+        plan.changes.iter().any(|c| c
+            == "U1: the pin configuration of terminal 3 (pull up, name SENSE) is dropped; the new revision removes the terminal or declares it not connected."),
+        "{:#?}",
+        plan.changes
+    );
+    assert!(
+        plan.items
+            .iter()
+            .any(|i| i.line == "U1: pin configuration of terminal ‘PB0’ is dropped"),
+        "{:#?}",
+        plan.items
     );
     Ok(())
 }

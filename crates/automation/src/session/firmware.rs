@@ -91,10 +91,14 @@ pub(super) fn export(
             .as_deref()
             .ok_or_else(|| invalid("firmware.export needs path, a new file"))?,
     )?;
-    if path.try_exists().map_err(pcbcraft_io::Error::from)? {
-        return Err(invalid("output exists; choose a new file"));
+    // Created without replacing: a file that appears at `path` before the
+    // write lands is refused, never overwritten.
+    match pcbcraft_io::persistence::atomic_create(path, emitted.text.as_bytes()) {
+        Err(pcbcraft_io::Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(invalid("output exists; choose a new file"));
+        }
+        other => other?,
     }
-    pcbcraft_io::persistence::atomic_write(path, emitted.text.as_bytes())?;
     Ok(json!({
         "path": path.display().to_string(),
         "file_name": emitted.file_name,

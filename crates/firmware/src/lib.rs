@@ -46,8 +46,10 @@ pub enum Emitter {
     ZephyrOverlay,
     /// `pub const` items.
     RustConsts,
-    /// A user text template stored as a project or library-folder asset by
-    /// hash: a Rhai script over the IR ([`template`]).
+    /// A user text template: a Rhai script over the IR ([`template`]),
+    /// named by the SHA-256 of its text. The caller reads the text (the
+    /// `firmware.export` command reads it from its `template_file` path)
+    /// and [`emit`] checks it against this hash.
     User { template: ContentHash },
 }
 

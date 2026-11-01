@@ -27,6 +27,7 @@ fn pin(terminal: u32, name: &str, function: &str, firmware_name: &str, index: u1
         speed: None,
         initial: None,
         firmware_name: firmware_name.into(),
+        assigned: true,
         endpoints: vec![],
     }
 }
@@ -157,6 +158,88 @@ fn the_zephyr_overlay_enables_peripherals_and_lists_plain_gpios() -> Fallible<()
         text.matches('}').count(),
         "{text}"
     );
+    Ok(())
+}
+
+/// The fixture plus PC13 left on its default `gpio_in` and an SWD debug
+/// port.
+fn with_defaults() -> PinConfigReport {
+    let mut ir = report();
+    let mut idle = pin(13, "PC13", "gpio_in", "PC13", 13);
+    idle.assigned = false;
+    if let Some(gpio) = &mut idle.gpio {
+        gpio.port = "C".into();
+    }
+    let mut swdio = pin(14, "PA13", "swd_swdio", "PA13", 13);
+    swdio.peripheral = Some("SWD".into());
+    swdio.peripheral_kind = Some("debug".into());
+    swdio.role = Some("swdio".into());
+    swdio.mux = Some("AF0".into());
+    ir.peripherals.push(FirmwarePeripheral {
+        peripheral: ResourceId(9),
+        label: "SWD".into(),
+        kind: Some("debug".into()),
+        roles: vec!["swdio".into()],
+    });
+    ir.pins.push(idle);
+    ir.pins.push(swdio);
+    ir
+}
+
+#[test]
+fn the_c_header_leaves_default_pins_out_and_gives_numbers() -> Fallible<()> {
+    let text = emit(&with_defaults(), &Emitter::CHeader, None)?.text;
+    for line in [
+        " *   PC13: gpio_in",
+        "#define CONSOLE_TX_PORT_INDEX 0",
+        "#define CONSOLE_TX_AF_NUM 7",
+        "#define PA13_AF_NUM 0",
+        "#define U1_PIN_COUNT 5",
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "missing {line:?} in\n{text}"
+        );
+    }
+    assert!(!text.contains("#define PC13_"), "{text}");
+    assert!(!text.contains("\"PC13\", \"PC13\""), "{text}");
+    Ok(())
+}
+
+#[test]
+fn the_zephyr_overlay_skips_debug_ports_and_default_pins_and_lists_pinctrl() -> Fallible<()> {
+    let text = emit(&with_defaults(), &Emitter::ZephyrOverlay, None)?.text;
+    assert!(!text.contains("&swd"), "{text}");
+    assert!(text.contains("/* SWD (debug): swdio."), "{text}");
+    assert!(!text.contains("pc13-gpios"), "{text}");
+    for line in [
+        " * TODO pinctrl: the labels above follow <peripheral>_<role>_p<port><index>.",
+        " *   usart1_tx_pa9: PA9 as usart1_tx, mux AF7",
+        " *   usart1_rx_pa10: PA10 as usart1_rx, mux AF7",
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "missing {line:?} in\n{text}"
+        );
+    }
+    // Every label referenced is listed.
+    for label in text
+        .split('&')
+        .skip(1)
+        .filter_map(|r| {
+            r.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .next()
+        })
+        .filter(|l| l.contains("_p"))
+    {
+        assert!(
+            text.contains(&format!(" *   {label}: ")),
+            "{label} in\n{text}"
+        );
+    }
+    let rust = emit(&with_defaults(), &Emitter::RustConsts, None)?.text;
+    assert!(!rust.contains("pub const PC13"), "{rust}");
+    assert!(rust.contains("// Left on their default function, so no consts: PC13 (gpio_in)."));
     Ok(())
 }
 

@@ -1,4 +1,5 @@
-//! `rust-consts`: a `Pin` type and one `pub const` per pin.
+//! `rust-consts`: a `Pin` type and one `pub const` per assigned pin. Pins
+//! on their default function are listed in a comment only.
 use crate::text::{comment, preamble, rust_string};
 use pcbcraft_core::firmware::PinConfigReport;
 use pcbcraft_core::functions::{Level, Pull};
@@ -62,7 +63,20 @@ pub struct Pin {
 }
 ",
     );
-    for pin in &report.pins {
+    let defaults: Vec<String> = report
+        .pins
+        .iter()
+        .filter(|p| !p.assigned)
+        .map(|p| format!("{} ({})", comment(&p.name), comment(&p.function)))
+        .collect();
+    if !defaults.is_empty() {
+        let _ = writeln!(
+            out,
+            "\n// Left on their default function, so no consts: {}.",
+            defaults.join(", ")
+        );
+    }
+    for pin in report.pins.iter().filter(|p| p.assigned) {
         let gpio = pin.gpio.as_ref().map_or_else(
             || "None".to_owned(),
             |g| {
@@ -114,6 +128,7 @@ pub const {}: Pin = Pin {{
     let names: Vec<&str> = report
         .pins
         .iter()
+        .filter(|p| p.assigned)
         .map(|p| p.firmware_name.as_str())
         .collect();
     let _ = writeln!(

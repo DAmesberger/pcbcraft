@@ -27,7 +27,7 @@ use pcbcraft_core::functions::{
 };
 use pcbcraft_core::ids::MAX_LABEL;
 use pcbcraft_core::library::ComponentDefinition;
-use pcbcraft_core::library::pinout::{PinoutAccept, PinoutApply, PinoutTarget};
+use pcbcraft_core::library::pinout::{PinoutApply, PinoutTarget};
 use pcbcraft_core::{
     Engine, FunctionId, LibraryCommand, Operation, Query, QueryResult, ResourceId, RoleId, RuleId,
     TerminalId,
@@ -636,6 +636,7 @@ impl PartEditor {
             .is_some_and(|(planned, _)| Some(planned) != document.as_ref())
         {
             flow.plan = None;
+            flow.rejected.clear();
         }
         let planned = flow.plan.is_some();
         let disabled = match (&rows, &document) {
@@ -646,6 +647,13 @@ impl PartEditor {
             (_, None) => Some("Map a Number column and paste at least one pin row"),
             _ if !clean => Some("Wait until your last edit is saved"),
             _ if flow.sent.is_some() => Some("Applying…"),
+            _ if planned
+                && flow.plan.as_ref().is_some_and(|(d, _)| {
+                    d.pins.iter().all(|p| flow.rejected.contains(&p.row))
+                }) =>
+            {
+                Some("Tick at least one row to import")
+            }
             _ => None,
         };
         let primary = if planned { "Apply" } else { "Preview" };
@@ -657,7 +665,7 @@ impl PartEditor {
         panel.refusal = shown_refusal.as_deref();
         panel.reset_scroll = std::mem::take(&mut flow.opened);
         let action = panel.show(ui, |ui| {
-            paste_body(ui, flow, &rows, &problems);
+            paste_body(ui, flow, &rows, document.as_ref(), &problems);
         });
         match action {
             Some(kit::dialog::DialogAction::Cancel) => {
@@ -689,12 +697,13 @@ impl PartEditor {
                         flow.refusal = None;
                         flow.sent = Some(engine.revision());
                         refusal::mark(&ctx, Origin::Dialog(id));
+                        let accept = flow.accept();
                         Some(Operation::Library(LibraryCommand::PinoutApply(Box::new(
                             PinoutApply {
                                 target,
                                 document,
                                 base,
-                                accept: PinoutAccept::All,
+                                accept,
                             },
                         ))))
                     }
@@ -1223,10 +1232,57 @@ pub fn speed_values(text: &str) -> Vec<String> {
 
 /// The Paste table… body: pasted text, delimiter and header, provenance,
 /// the column mapping, problems and the last plan.
+/// One imported row as the preview shows it: class or direction and
+/// signal, GPIO, and each function with its role and mux code.
+fn pin_summary(pin: &pcbcraft_core::library::pinout::PinoutPin) -> String {
+    use pcbcraft_core::library::pinout::PinoutClass;
+    let mut parts = vec![pin.name.clone()];
+    match pin.class {
+        PinoutClass::DeviceNc => parts.push("not connected".into()),
+        PinoutClass::Reserved => parts.push("reserved".into()),
+        PinoutClass::Electrical => {}
+    }
+    if let Some(gpio) = &pin.gpio {
+        parts.push(format!("GPIO {}·{}", gpio.port, gpio.index));
+    }
+    if let Some(first) = pin.functions.first() {
+        parts.push(format!(
+            "{} {}",
+            sentence(first.direction.label()),
+            SIGNALS
+                .iter()
+                .find(|(k, _)| *k == first.signal)
+                .map_or("", |(_, l)| *l)
+                .to_lowercase()
+        ));
+    }
+    let functions: Vec<String> = pin
+        .functions
+        .iter()
+        .map(|f| {
+            let mut text = f.label.clone();
+            if let (Some(p), Some(r)) = (&f.peripheral, &f.role) {
+                text.push_str(&format!(" → {p} · {r}"));
+            }
+            if let Some(mux) = &f.mux {
+                text.push_str(&format!(" [{mux}]"));
+            }
+            text
+        })
+        .collect();
+    if functions.is_empty() {
+        parts.push("no functions".into());
+    } else {
+        parts.push(functions.join(", "));
+    }
+    parts.join(" · ")
+}
+
 fn paste_body(
     ui: &mut Ui,
     flow: &mut PasteFlow,
     rows: &Result<Vec<Vec<String>>, String>,
+    document: Option<&pcbcraft_core::library::pinout::PinoutDocument>,
     problems: &[pins_table::RowProblem],
 ) {
     let text_id = ui.id().with("paste-text");
@@ -1275,6 +1331,9 @@ fn paste_body(
     kit::text_row(ui, "Split role at", &mut m.role_separator).on_hover_text(
         "Split a function into peripheral and role at this text, such as _; empty for none",
     );
+    kit::text_row(ui, "Split mux code at", &mut m.mux_separator).on_hover_text(
+        "Split a function into label and mux code at the last occurrence of this text, such as : in USART1_TX:AF7; empty for none",
+    );
     let Ok(rows) = rows else {
         return;
     };
@@ -1309,41 +1368,8 @@ fn paste_body(
             }
         },
     );
-    let m = &flow.mapping;
-    if let Some(cells) = rows.get(usize::from(m.header)) {
-        let functions: Vec<String> = m
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| **c == pins_table::ColumnMap::Function)
-            .filter_map(|(i, _)| cells.get(i))
-            .filter(|c| !c.is_empty())
-            .flat_map(|cell| {
-                let parts: Vec<String> = if m.list_separator.is_empty() {
-                    vec![cell.clone()]
-                } else {
-                    cell.split(m.list_separator.as_str())
-                        .map(|p| p.trim().to_owned())
-                        .filter(|p| !p.is_empty())
-                        .collect()
-                };
-                parts.into_iter().map(|label| {
-                    match pins_table::split_role(&label, &m.role_separator) {
-                        (Some(p), Some(r)) => format!("{label} → {p} · {r}"),
-                        _ => label,
-                    }
-                })
-            })
-            .collect();
-        kit::value_row(
-            ui,
-            "First pin",
-            &if functions.is_empty() {
-                "no functions".to_owned()
-            } else {
-                functions.join(", ")
-            },
-        );
+    if let Some(first) = document.and_then(|d| d.pins.first()) {
+        kit::value_row(ui, "First pin", &pin_summary(first));
     }
     for problem in problems.iter().take(kit::LIST_MAX_ROWS) {
         kit::status(ui, &problem.message, kit::Tone::Dim);
@@ -1354,30 +1380,63 @@ fn paste_body(
             &format!("{} more rows left out", problems.len() - kit::LIST_MAX_ROWS),
         );
     }
-    if let Some((document, plan)) = &flow.plan {
-        kit::section(ui, "paste-plan", "Preview", true, None, |ui| {
-            kit::value_row(ui, "Pins", &document.pins.len().to_string());
-            kit::value_row(ui, "Peripherals", &document.peripherals.len().to_string());
-            kit::value_row(ui, "Changes", &plan.changes.len().to_string());
-            kit::value_row(ui, "Findings", &plan.findings.len().to_string());
-            kit::value_row(ui, "To review", &plan.review.len().to_string());
-            for item in plan.review.iter().take(kit::LIST_MAX_ROWS) {
-                kit::status(
-                    ui,
-                    &format!("{}: {}", item.row, item.message),
-                    kit::Tone::Dim,
-                );
+    let Some((document, plan)) = &flow.plan else {
+        return;
+    };
+    let rejected = &mut flow.rejected;
+    let mut show_all = false;
+    kit::section(ui, "paste-plan", "Preview", true, None, |ui| {
+        kit::value_row(ui, "Pins", &document.pins.len().to_string());
+        kit::value_row(ui, "Peripherals", &document.peripherals.len().to_string());
+        kit::value_row(ui, "Changes", &plan.changes.len().to_string());
+        kit::value_row(ui, "Findings", &plan.findings.len().to_string());
+        kit::value_row(ui, "To review", &plan.review.len().to_string());
+        kit::note(ui, "Untick a row to leave it out of the import");
+        let count = document.pins.len();
+        let max = if flow.all_rows {
+            count
+        } else {
+            kit::LIST_MAX_ROWS
+        };
+        let listed = kit::list_frame(ui, count, max, |ui, index| {
+            let Some(pin) = document.pins.get(index) else {
+                return;
+            };
+            let changes = plan
+                .changes
+                .iter()
+                .filter(|c| c.row.as_deref() == Some(pin.row.as_str()))
+                .count();
+            let review = plan.review.iter().find(|r| r.row == pin.row);
+            let mut label = format!("{} · {}", pin.row, pin_summary(pin));
+            if changes > 0 {
+                label.push_str(&format!(
+                    " · {changes} change{}",
+                    if changes == 1 { "" } else { "s" }
+                ));
             }
-            if plan.review.len() > kit::LIST_MAX_ROWS {
-                kit::note(
-                    ui,
-                    &format!(
-                        "{} more review items",
-                        plan.review.len() - kit::LIST_MAX_ROWS
-                    ),
-                );
+            if let Some(review) = review {
+                label.push_str(" · ");
+                label.push_str(&review.message);
+            }
+            let mut on = !rejected.contains(&pin.row);
+            if ui
+                .push_id(("paste-row", index), |ui| {
+                    kit::check_row(ui, &label, &mut on)
+                })
+                .inner
+            {
+                if on {
+                    rejected.remove(&pin.row);
+                } else {
+                    rejected.insert(pin.row.clone());
+                }
             }
         });
+        show_all = listed.show_all;
+    });
+    if show_all {
+        flow.all_rows = true;
     }
 }
 

@@ -450,9 +450,53 @@ fn verdict(script: ScriptVerdict) -> RuleVerdict {
     }
 }
 
+/// A Rhai engine with every rule helper registered, reused across
+/// evaluations: each one swaps its view in. A search that evaluates the
+/// rules at many nodes builds it once instead of once per node.
+pub struct Evaluator {
+    engine: rhai::Engine,
+    spent: Arc<std::sync::atomic::AtomicU64>,
+    slot: sandbox::ViewSlot,
+}
+
+impl Evaluator {
+    pub fn new() -> Self {
+        let slot: sandbox::ViewSlot = Arc::new(std::sync::RwLock::new(Arc::new(ViewIndex::new(
+            RuleView::default(),
+        ))));
+        let (engine, spent) = sandbox::evaluator(slot.clone());
+        Self {
+            engine,
+            spent,
+            slot,
+        }
+    }
+}
+
+impl Default for Evaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn evaluate_detailed(
     compiled: &CompiledRules,
     view: &RuleView,
+    budget: RuleBudget,
+) -> Result<Detailed> {
+    if compiled.compiled.is_empty() {
+        return Ok(Detailed {
+            evaluation: RuleEvaluation::default(),
+            references: BTreeSet::new(),
+        });
+    }
+    evaluate_in(&mut Evaluator::new(), compiled, view.clone(), budget)
+}
+
+fn evaluate_in(
+    evaluator: &mut Evaluator,
+    compiled: &CompiledRules,
+    view: RuleView,
     budget: RuleBudget,
 ) -> Result<Detailed> {
     let mut out = Detailed {
@@ -467,8 +511,16 @@ fn evaluate_detailed(
             "rule.bounds: the view exceeds the supported terminal or peripheral count".into(),
         ));
     }
-    let index = Arc::new(ViewIndex::new(view.clone()));
-    let (mut engine, spent) = sandbox::evaluator(index);
+    match evaluator.slot.write() {
+        Ok(mut current) => *current = Arc::new(ViewIndex::new(view)),
+        Err(_) => {
+            return Err(Error::Invalid(
+                "rule.bounds: the rule evaluator is unusable after an earlier failure".into(),
+            ));
+        }
+    }
+    let engine = &mut evaluator.engine;
+    let spent = &evaluator.spent;
     let evaluation = &mut out.evaluation;
     for rule in compiled.compiled.iter() {
         let fail = |kind, message: String| RuleFailure {
@@ -537,6 +589,16 @@ pub fn evaluate(
     budget: RuleBudget,
 ) -> Result<RuleEvaluation> {
     evaluate_detailed(compiled, view, budget).map(|d| d.evaluation)
+}
+
+/// [`evaluate`] with a reused [`Evaluator`], taking the view by value.
+pub fn evaluate_with(
+    evaluator: &mut Evaluator,
+    compiled: &CompiledRules,
+    view: RuleView,
+    budget: RuleBudget,
+) -> Result<RuleEvaluation> {
+    evaluate_in(evaluator, compiled, view, budget).map(|d| d.evaluation)
 }
 
 /// The view rules see of one resolution: every terminal with its declared

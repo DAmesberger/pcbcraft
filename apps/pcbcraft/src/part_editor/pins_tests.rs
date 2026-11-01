@@ -546,6 +546,98 @@ fn paste_document_follows_the_explicit_mapping() -> TestResult {
     Ok(())
 }
 
+/// Pin type, mux and GPIO columns: power rows import as power inputs
+/// (with a function named after the pin when none is listed), mux codes
+/// pair with functions in order or come from a split cell, and the GPIO
+/// identity is taken only from its mapped columns.
+#[test]
+fn paste_document_maps_type_mux_and_gpio_columns() -> TestResult {
+    use pcbcraft_core::functions::{Direction, SignalKind};
+    use pcbcraft_core::library::pinout::PinoutClass;
+    let rows = pins_table::split_table(
+        "Pin;Name;Type;Port;Index;Functions;AF
+         1;VDD;power;;;;
+         2;PA9;I/O;A;9;GPIO,USART1_TX;,AF7
+         3;NC1;nc;;;;
+         4;PA10;I/O;A;;GPIO;
+         5;PB0;bogus;;;;
+",
+        Delimiter::Semicolon,
+    )?;
+    let mapping = Mapping {
+        columns: vec![
+            ColumnMap::Number,
+            ColumnMap::Name,
+            ColumnMap::Type,
+            ColumnMap::Port,
+            ColumnMap::Index,
+            ColumnMap::Function,
+            ColumnMap::Mux,
+        ],
+        list_separator: ",".into(),
+        source_title: "EXM datasheet".into(),
+        ..Mapping::default()
+    };
+    let (document, problems) = pins_table::document(&rows, &mapping, "EXM", "QFN-48");
+    let document = document.ok_or("no document")?;
+    let messages: Vec<&str> = problems.iter().map(|p| p.message.as_str()).collect();
+    assert_eq!(document.pins.len(), 3, "{messages:?}");
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("GPIO port or index without the other"))
+    );
+    assert!(messages.iter().any(|m| m.contains("pin type is not")));
+    let vdd = &document.pins[0];
+    assert_eq!(vdd.functions.len(), 1);
+    assert_eq!(vdd.functions[0].label, "VDD");
+    assert_eq!(vdd.functions[0].direction, Direction::PowerInput);
+    assert_eq!(vdd.functions[0].signal, SignalKind::Power);
+    let pa9 = &document.pins[1];
+    assert_eq!(
+        pa9.gpio.as_ref().map(|g| (g.port.as_str(), g.index)),
+        Some(("A", 9))
+    );
+    let muxes: Vec<Option<&str>> = pa9.functions.iter().map(|f| f.mux.as_deref()).collect();
+    assert_eq!(muxes, [None, Some("AF7")]);
+    assert_eq!(pa9.functions[1].direction, Direction::Bidirectional);
+    assert_eq!(document.pins[2].class, PinoutClass::DeviceNc);
+    assert!(document.pins[2].functions.is_empty());
+
+    // A mux code split out of the function cell instead.
+    let rows = pins_table::split_table(
+        "1;PA9;USART1_TX:AF7
+",
+        Delimiter::Semicolon,
+    )?;
+    let mapping = Mapping {
+        columns: vec![ColumnMap::Number, ColumnMap::Name, ColumnMap::Function],
+        header: false,
+        mux_separator: ":".into(),
+        source_title: "EXM datasheet".into(),
+        ..Mapping::default()
+    };
+    let (document, _) = pins_table::document(&rows, &mapping, "EXM", "QFN-48");
+    let function = document
+        .as_ref()
+        .and_then(|d| d.pins.first())
+        .and_then(|p| p.functions.first())
+        .ok_or("no function")?;
+    assert_eq!(function.label, "USART1_TX");
+    assert_eq!(function.mux.as_deref(), Some("AF7"));
+    Ok(())
+}
+
+/// Unticked preview rows are applied as `PinoutAccept::Except`.
+#[test]
+fn unticked_paste_rows_are_left_out_of_the_apply() {
+    use pcbcraft_core::library::pinout::PinoutAccept;
+    let mut flow = pins_table::PasteFlow::new();
+    assert_eq!(flow.accept(), PinoutAccept::All);
+    flow.rejected.insert("2".into());
+    assert_eq!(flow.accept(), PinoutAccept::Except(vec!["2".into()]));
+}
+
 /// Paste table → Preview goes through `library.pinout_preview`: it shows
 /// the plan or the engine's refusal in the dialog and never changes the
 /// document; Cancel closes it.

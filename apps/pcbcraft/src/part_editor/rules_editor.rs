@@ -8,7 +8,7 @@ use crate::kit;
 use crate::refusal::shown_error;
 use egui::Ui;
 use pcbcraft_core::functions::rules::{
-    self, MAX_RULE_SOURCE, PinRule, RuleBudget, RuleEvaluation, RuleVerdict, RuleView,
+    self, MAX_RULE_SOURCE, PinRule, RuleExplanations, RuleVerdict,
 };
 use pcbcraft_core::functions::{self, FunctionSelections, PinConfigs, Resolution};
 use pcbcraft_core::library::ComponentDefinition;
@@ -37,7 +37,8 @@ pub fn check(rule: &PinRule) -> Check {
 /// The read-only view rules see of `component` resolved as `resolution`,
 /// built by the core exactly as the resolution builds it (no pin
 /// configuration: the explain panel has no instance).
-pub fn rule_view(component: &ComponentDefinition, resolution: &Resolution) -> RuleView {
+#[cfg(test)]
+pub fn rule_view(component: &ComponentDefinition, resolution: &Resolution) -> rules::RuleView {
     rules::view(
         &component.declarations(),
         &component.resources,
@@ -50,8 +51,9 @@ pub fn rule_view(component: &ComponentDefinition, resolution: &Resolution) -> Ru
 #[derive(Clone, Debug, PartialEq)]
 pub struct Explained {
     pub resolution: Result<Resolution, String>,
-    /// Every rule's verdict; `None` when the selection did not resolve.
-    pub evaluation: Option<Result<RuleEvaluation, String>>,
+    /// Every rule's verdict or failure; `None` when the selection did not
+    /// resolve.
+    pub evaluation: Option<RuleExplanations>,
 }
 
 /// `scratch` without selections that no longer name a declared function.
@@ -72,35 +74,27 @@ pub fn valid_scratch(
 }
 
 /// Resolve `component` with the scratch selection and evaluate its rules
-/// over the result within the default budget, folding their verdicts into
-/// the resolution as the design's resolution does.
+/// over the result: the core's one explain pipeline
+/// (`functions::explain_rules`), which folds the verdicts into the
+/// resolution as the design's resolution does.
 pub fn explain(component: &ComponentDefinition, scratch: &FunctionSelections) -> Explained {
     let scratch = valid_scratch(component, scratch);
-    let declarations = component.declarations();
-    let mut resolution = functions::resolve(
-        &declarations,
+    match functions::explain_rules(
+        &component.declarations(),
         &component.resources,
         &component.constraints,
-        None,
         &scratch,
-    )
-    .map_err(|e| shown_error(&e));
-    let evaluation = match &mut resolution {
-        Err(_) => None,
-        Ok(_) if component.pin_rules.is_empty() => Some(Ok(RuleEvaluation::default())),
-        Ok(resolved) => {
-            let view = rule_view(component, resolved);
-            let evaluated = rules::compile(&component.pin_rules).and_then(|compiled| {
-                let evaluation = rules::evaluate(&compiled, &view, RuleBudget::default())?;
-                rules::apply(resolved, &compiled, &evaluation);
-                Ok(evaluation)
-            });
-            Some(evaluated.map_err(|e| shown_error(&e)))
-        }
-    };
-    Explained {
-        resolution,
-        evaluation,
+        &component.pin_rules,
+        &PinConfigs::default(),
+    ) {
+        Ok((resolution, explanations)) => Explained {
+            resolution: Ok(resolution),
+            evaluation: Some(explanations),
+        },
+        Err(error) => Explained {
+            resolution: Err(shown_error(&error)),
+            evaluation: None,
+        },
     }
 }
 
@@ -213,14 +207,38 @@ pub fn script_editor(ui: &mut Ui, rule: &mut PinRule, editor: &mut RulesEditor) 
     let t = Tokens::get();
     kit::form(ui, |ui| {
         let id = ui.id().with(("script", rule.id.0));
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut rule.script.source)
-                .id(id)
-                .code_editor()
-                .desired_rows(9)
-                .desired_width(ui.available_width())
-                .text_color(t.text),
-        );
+        let error_line = match editor.check(rule) {
+            Check::Error(message) => error_line(&message),
+            Check::Compiles => None,
+        };
+        let rows = rule.script.source.lines().count().max(9);
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
+        let mut gutter = egui::text::LayoutJob::default();
+        for line in 1..=rows {
+            let color = if error_line == Some(line) {
+                t.form_error
+            } else {
+                t.text_dim
+            };
+            gutter.append(
+                &format!("{line:>3}\n"),
+                0.0,
+                egui::TextFormat::simple(font.clone(), color),
+            );
+        }
+        let response = ui
+            .horizontal_top(|ui| {
+                ui.add(egui::Label::new(gutter).selectable(false));
+                ui.add(
+                    egui::TextEdit::multiline(&mut rule.script.source)
+                        .id(id)
+                        .code_editor()
+                        .desired_rows(9)
+                        .desired_width(ui.available_width())
+                        .text_color(t.text),
+                )
+            })
+            .inner;
         bound_bytes(&mut rule.script.source, MAX_RULE_SOURCE);
         let bytes = rule.script.source.len();
         match editor.check(rule) {
@@ -234,7 +252,50 @@ pub fn script_editor(ui: &mut Ui, rule: &mut PinRule, editor: &mut RulesEditor) 
                 kit::field_error(ui, &response, &message, false);
             }
         }
+        kit::section(ui, "rule-api", "Script reference", false, None, |ui| {
+            for (call, what) in API {
+                kit::value_row(ui, call, what);
+            }
+        });
     });
+}
+
+/// The helpers a rule script may call, as the reference lists them.
+const API: [(&str, &str); 12] = [
+    ("active(pin, fn)", "Whether the pin's active function is fn"),
+    ("active(\"pin.fn\")", "The same, as one reference"),
+    (
+        "active_count([refs])",
+        "How many of the references are active",
+    ),
+    ("function(pin)", "The pin's active function label, or \"\""),
+    (
+        "used(peripheral)",
+        "Whether any role of the peripheral is taken",
+    ),
+    ("role(peripheral, role)", "Whether that role is taken"),
+    ("kind(peripheral)", "The peripheral's kind, or \"\""),
+    (
+        "option(pin, name)",
+        "pull, speed, initial, schmitt or name, or \"\"",
+    ),
+    ("excludes(a, b)", "Forbids two function references together"),
+    ("requires(a, b)", "Requires b whenever a is active"),
+    (
+        "ok() / warn(msg, [pins])",
+        "Allowed; warn adds an advisory note",
+    ),
+    (
+        "forbid / require(msg, [pins])",
+        "Rejects, or reports a requirement unmet",
+    ),
+];
+
+/// The 1-based line a compiler message names ("… (line 3, position 5)").
+fn error_line(message: &str) -> Option<usize> {
+    let rest = &message[message.find("line ")? + 5..];
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Cut `text` to at most `limit` bytes at a character boundary.
@@ -359,28 +420,21 @@ fn outcome(ui: &mut Ui, component: &ComponentDefinition, explained: &Explained) 
         return;
     }
     kit::rule(ui);
-    match &explained.evaluation {
-        None => {}
-        Some(Err(message)) => {
-            kit::refusal(ui, message);
-        }
-        Some(Ok(evaluation)) => {
-            for rule in &component.pin_rules {
-                let text = evaluation
-                    .outcomes
-                    .iter()
-                    .find(|o| o.rule == rule.id)
-                    .map(|o| verdict_text(&o.verdict))
-                    .or_else(|| {
-                        evaluation
-                            .failures
-                            .iter()
-                            .find(|f| f.rule == rule.id)
+    if let Some(explanations) = &explained.evaluation {
+        for rule in &component.pin_rules {
+            let text = explanations
+                .rules
+                .iter()
+                .find(|e| e.rule == rule.id)
+                .and_then(|e| {
+                    e.verdict.as_ref().map(verdict_text).or_else(|| {
+                        e.failure
+                            .as_ref()
                             .map(|f| format!("No verdict: {}", f.message))
                     })
-                    .unwrap_or_else(|| "Not evaluated".into());
-                kit::value_row(ui, &rule.label, &text);
-            }
+                })
+                .unwrap_or_else(|| "Not evaluated".into());
+            kit::value_row(ui, &rule.label, &text);
         }
     }
 }

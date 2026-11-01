@@ -269,9 +269,21 @@ fn pair(a: TerminalId, b: TerminalId) -> Vec<TerminalId> {
     if a == b { vec![a] } else { vec![a, b] }
 }
 
-/// The engine with every helper registered over `index`, and the counter
+/// The view the helpers of one engine read: swapped per evaluation, so a
+/// search builds its engine once and evaluates many views with it.
+pub(super) type ViewSlot = Arc<std::sync::RwLock<Arc<ViewIndex>>>;
+
+/// The view in `slot`; a poisoned lock (a panic elsewhere) is a runtime
+/// failure, never a panic here.
+fn load(slot: &ViewSlot) -> ScriptResult<Arc<ViewIndex>> {
+    slot.read()
+        .map(|view| view.clone())
+        .map_err(|_| failure("The rule view is unavailable."))
+}
+
+/// The engine with every helper registered over the view in `slot`, and the counter
 /// its progress callback updates with the operations of the current run.
-pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
+pub(super) fn evaluator(slot: ViewSlot) -> (Engine, Arc<AtomicU64>) {
     let mut engine = engine();
     let spent = Arc::new(AtomicU64::new(0));
     let counter = spent.clone();
@@ -291,33 +303,37 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
         engine.register_fn(name, move |text: ImmutableString| -> ScriptResult<_> {
             Ok(make(message(&text)?, Vec::new()))
         });
-        let i = index.clone();
+        let s = slot.clone();
         engine.register_fn(
             name,
             move |text: ImmutableString, names: Array| -> ScriptResult<_> {
+                let i = load(&s)?;
                 Ok(make(message(&text)?, terminals(&i, &names)?))
             },
         );
     }
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "active",
         move |terminal: ImmutableString, function: ImmutableString| -> ScriptResult<bool> {
+            let i = load(&s)?;
             let t = i.terminal(&terminal).map_err(reference)?;
             i.declares(t, &function).map_err(reference)?;
             Ok(ViewIndex::is_active(t, &function))
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "active",
         move |fref: ImmutableString| -> ScriptResult<bool> {
+            let i = load(&s)?;
             let (t, f) = i.function_ref(&fref).map_err(reference)?;
             Ok(ViewIndex::is_active(t, &f))
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn("active_count", move |frefs: Array| -> ScriptResult<i64> {
+        let i = load(&s)?;
         let mut count = 0_i64;
         for fref in frefs {
             let fref = fref
@@ -330,10 +346,11 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
         }
         Ok(count)
     });
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "function",
         move |terminal: ImmutableString| -> ScriptResult<String> {
+            let i = load(&s)?;
             let t = i.terminal(&terminal).map_err(reference)?;
             Ok(t.active
                 .as_ref()
@@ -341,10 +358,11 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
                 .unwrap_or_default())
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "used",
         move |resource: ImmutableString| -> ScriptResult<bool> {
+            let i = load(&s)?;
             Ok(!i
                 .resource(&resource)
                 .map_err(reference)?
@@ -352,10 +370,11 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
                 .is_empty())
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "kind",
         move |resource: ImmutableString| -> ScriptResult<String> {
+            let i = load(&s)?;
             Ok(i.resource(&resource)
                 .map_err(reference)?
                 .kind
@@ -363,25 +382,28 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
                 .unwrap_or_default())
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "role",
         move |resource: ImmutableString, role: ImmutableString| -> ScriptResult<bool> {
+            let i = load(&s)?;
             i.role(&resource, &role).map_err(reference)
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "option",
         move |terminal: ImmutableString, name: ImmutableString| -> ScriptResult<String> {
+            let i = load(&s)?;
             let t = i.terminal(&terminal).map_err(reference)?;
             ViewIndex::option(t, &name).map_err(reference)
         },
     );
-    let i = index.clone();
+    let s = slot.clone();
     engine.register_fn(
         "excludes",
         move |a: ImmutableString, b: ImmutableString| -> ScriptResult<ScriptVerdict> {
+            let i = load(&s)?;
             let (ta, fa) = i.function_ref(&a).map_err(reference)?;
             let (tb, fb) = i.function_ref(&b).map_err(reference)?;
             if !(ViewIndex::is_active(ta, &fa) && ViewIndex::is_active(tb, &fb)) {
@@ -400,10 +422,11 @@ pub(super) fn evaluator(index: Arc<ViewIndex>) -> (Engine, Arc<AtomicU64>) {
             ))
         },
     );
-    let i = index;
+    let s = slot;
     engine.register_fn(
         "requires",
         move |a: ImmutableString, b: ImmutableString| -> ScriptResult<ScriptVerdict> {
+            let i = load(&s)?;
             let (ta, fa) = i.function_ref(&a).map_err(reference)?;
             let (tb, fb) = i.function_ref(&b).map_err(reference)?;
             if !ViewIndex::is_active(ta, &fa) || ViewIndex::is_active(tb, &fb) {

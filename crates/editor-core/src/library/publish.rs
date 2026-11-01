@@ -303,6 +303,28 @@ pub fn publish(
         }
         return Err(Error::Conflict(message));
     }
+    // Import review state (F8) is draft bookkeeping: it gates publishing
+    // (an uncertain row blocks above) but never becomes revision content,
+    // so a revision's identity does not depend on it. The published drafts
+    // drop it too, staying equal to their new revisions.
+    let reviewed = set.iter().any(|r| {
+        drafts.get(r.id).is_some_and(
+            |d| matches!(&d.definition, Definition::Component(c) if c.review.is_some()),
+        )
+    });
+    let (staged, set) = if reviewed {
+        let mut cleared = drafts.clone();
+        for draft in cleared.items.iter_mut().filter(|d| ids.contains(&d.id)) {
+            if let Definition::Component(component) = &mut draft.definition {
+                component.review = None;
+            }
+        }
+        let restaged = candidate(library, &cleared, ids)?;
+        *drafts = cleared;
+        restaged
+    } else {
+        (staged, set)
+    };
     *library = staged;
     for r in &set {
         drafts.set_base(r.id, r.revision);

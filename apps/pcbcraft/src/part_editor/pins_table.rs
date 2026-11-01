@@ -9,7 +9,7 @@
 use crate::kit;
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, Ui, pos2, vec2};
 use pcbcraft_core::functions::{
-    Direction, Drive, Function, SignalKind, SourceSpan, TerminalFunctions,
+    Direction, Drive, Function, GpioRef, SignalKind, SourceSpan, TerminalFunctions,
 };
 use pcbcraft_core::ids::MAX_LABEL;
 use pcbcraft_core::library::pinout::{
@@ -677,16 +677,66 @@ pub enum ColumnMap {
     Function,
     /// The label of the design-default function.
     Default,
+    /// The mux (alternate-function) codes of the row's functions, in the
+    /// same order, split at the list separator ("AF7").
+    Mux,
+    /// The pin's type: power, ground, input, output, I/O, analog, NC or
+    /// reserved ([`pin_type`]); power and ground rows get power functions.
+    Type,
+    /// The GPIO port, stated as data ("A").
+    Port,
+    /// The GPIO index within its port ("9").
+    Index,
 }
 
 impl ColumnMap {
-    pub const ALL: [(ColumnMap, &'static str); 5] = [
+    pub const ALL: [(ColumnMap, &'static str); 9] = [
         (ColumnMap::Ignore, "Ignore"),
         (ColumnMap::Number, "Number"),
         (ColumnMap::Name, "Name"),
         (ColumnMap::Function, "Function"),
         (ColumnMap::Default, "Default"),
+        (ColumnMap::Mux, "Mux / AF"),
+        (ColumnMap::Type, "Pin type"),
+        (ColumnMap::Port, "GPIO port"),
+        (ColumnMap::Index, "GPIO index"),
     ];
+}
+
+/// What a Pin type cell says about its row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinType {
+    /// Electrical, with every function of this direction and signal.
+    Electrical(Direction, SignalKind),
+    /// Electrical with the mapping's direction, signal analog.
+    Analog,
+    /// Electrical with the mapping's direction and signal.
+    Unstated,
+    DeviceNc,
+    Reserved,
+}
+
+/// Read a Pin type cell, ignoring case: `power`/`supply`/`pwr`,
+/// `ground`/`gnd`, `input`/`in`/`i`, `output`/`out`/`o`, `i/o`/`io`,
+/// `analog`/`a`, `nc`, `reserved`/`rsv`, or empty. The person maps the
+/// column; the text is a stated pin type, not a name to guess from.
+pub fn pin_type(text: &str) -> Option<PinType> {
+    let text = text.trim().to_ascii_lowercase();
+    Some(match text.as_str() {
+        "" => PinType::Unstated,
+        "power" | "supply" | "pwr" | "s" | "p" | "ground" | "gnd" => {
+            PinType::Electrical(Direction::PowerInput, SignalKind::Power)
+        }
+        "input" | "in" | "i" => PinType::Electrical(Direction::Input, SignalKind::Digital),
+        "output" | "out" | "o" => PinType::Electrical(Direction::Output, SignalKind::Digital),
+        "i/o" | "io" | "bidirectional" => {
+            PinType::Electrical(Direction::Bidirectional, SignalKind::Digital)
+        }
+        "analog" | "a" => PinType::Analog,
+        "nc" | "n/c" | "not connected" => PinType::DeviceNc,
+        "reserved" | "rsv" => PinType::Reserved,
+        _ => return None,
+    })
 }
 
 /// Split `text` into rows of cells at `delimiter`, honouring double quotes
@@ -746,6 +796,10 @@ pub struct Mapping {
     /// A function cell is "peripheral<sep>role" split at the first
     /// occurrence of this text; empty for no peripheral.
     pub role_separator: String,
+    /// A function cell is "label<sep>mux" split at the last occurrence of
+    /// this text ("USART1_TX:AF7" at ":"); empty for no mux code in the
+    /// cell.
+    pub mux_separator: String,
     pub direction: Direction,
     pub signal: SignalKind,
     /// The datasheet the table comes from (required provenance).
@@ -761,6 +815,7 @@ impl Default for Mapping {
             header: true,
             list_separator: String::new(),
             role_separator: String::new(),
+            mux_separator: String::new(),
             direction: Direction::Bidirectional,
             signal: SignalKind::Digital,
             source_title: String::new(),
@@ -808,6 +863,10 @@ pub fn document(
     };
     let name_column = column(ColumnMap::Name);
     let default_column = column(ColumnMap::Default);
+    let mux_column = column(ColumnMap::Mux);
+    let type_column = column(ColumnMap::Type);
+    let port_column = column(ColumnMap::Port);
+    let index_column = column(ColumnMap::Index);
     let function_columns: Vec<usize> = mapping
         .columns
         .iter()
@@ -863,6 +922,20 @@ pub fn document(
             });
             continue;
         }
+        let Some(kind) = pin_type(type_column.map(cell).unwrap_or("")) else {
+            problems.push(RowProblem {
+                line,
+                message: format!(
+                    "Row {line}'s pin type is not power, ground, input, output, I/O, analog, NC or reserved"
+                ),
+            });
+            continue;
+        };
+        let (direction, signal) = match kind {
+            PinType::Electrical(d, s) => (d, s),
+            PinType::Analog => (mapping.direction, SignalKind::Analog),
+            _ => (mapping.direction, mapping.signal),
+        };
         let mut functions = Vec::new();
         let mut row_ok = true;
         for text in function_columns.iter().map(|i| cell(*i)) {
@@ -876,18 +949,19 @@ pub fn document(
                     row_ok = false;
                     break;
                 }
+                let (label, mux) = split_mux(label, &mapping.mux_separator);
                 let (peripheral, role) = split_role(label, &mapping.role_separator);
                 if let (Some(p), Some(r)) = (peripheral, role) {
                     add_role(&mut peripherals, p, r);
                 }
                 functions.push(PinoutFunction {
                     label: label.to_owned(),
-                    direction: mapping.direction,
-                    signal: mapping.signal,
+                    direction,
+                    signal,
                     drive: Drive::None,
                     peripheral: peripheral.map(str::to_owned),
                     role: role.map(str::to_owned),
-                    mux: None,
+                    mux: mux.map(str::to_owned),
                 });
             }
         }
@@ -898,6 +972,88 @@ pub fn document(
             });
             continue;
         }
+        if let Some(text) = mux_column.map(cell).filter(|t| !t.is_empty()) {
+            let codes: Vec<&str> = if mapping.list_separator.is_empty() {
+                vec![text]
+            } else {
+                text.split(mapping.list_separator.as_str())
+                    .map(str::trim)
+                    .collect()
+            };
+            if codes.len() != functions.len() {
+                problems.push(RowProblem {
+                    line,
+                    message: format!(
+                        "Row {line} has {} mux codes for {} functions",
+                        codes.len(),
+                        functions.len()
+                    ),
+                });
+                continue;
+            }
+            for (function, code) in functions.iter_mut().zip(codes) {
+                if !code.is_empty() {
+                    function.mux = Some(code.to_owned());
+                }
+            }
+        }
+        let class = match kind {
+            PinType::DeviceNc => PinoutClass::DeviceNc,
+            PinType::Reserved => PinoutClass::Reserved,
+            _ => PinoutClass::Electrical,
+        };
+        if class != PinoutClass::Electrical && !functions.is_empty() {
+            problems.push(RowProblem {
+                line,
+                message: format!("Row {line} is NC or reserved but lists functions"),
+            });
+            continue;
+        }
+        // A power or ground row without a function cell gets one named
+        // after the pin, so it imports as a power input, never as I/O.
+        if class == PinoutClass::Electrical
+            && functions.is_empty()
+            && direction == Direction::PowerInput
+        {
+            functions.push(PinoutFunction {
+                label: name.to_owned(),
+                direction,
+                signal,
+                drive: Drive::None,
+                peripheral: None,
+                role: None,
+                mux: None,
+            });
+        }
+        let port = port_column.map(cell).filter(|p| !p.is_empty());
+        let index = index_column.map(cell).filter(|i| !i.is_empty());
+        let gpio = match (port, index) {
+            (None, None) => None,
+            (Some(port), Some(index)) => match index.parse::<u16>() {
+                Ok(index) if port.len() <= pcbcraft_core::functions::pin_config::MAX_GPIO_PORT => {
+                    Some(GpioRef {
+                        port: port.to_owned(),
+                        index,
+                    })
+                }
+                _ => {
+                    problems.push(RowProblem {
+                        line,
+                        message: format!(
+                            "Row {line}'s GPIO needs a port of at most 8 bytes and an index from 0 to 65535"
+                        ),
+                    });
+                    continue;
+                }
+            },
+            _ => {
+                problems.push(RowProblem {
+                    line,
+                    message: format!("Row {line} states a GPIO port or index without the other"),
+                });
+                continue;
+            }
+        };
         let default = default_column.map(cell).filter(|d| !d.is_empty());
         if let Some(default) = default
             && !functions.iter().any(|f| f.label == default)
@@ -912,8 +1068,8 @@ pub fn document(
             row: number.to_owned(),
             number: BTreeMap::from([(variant.to_owned(), number.to_owned())]),
             name: name.to_owned(),
-            class: PinoutClass::Electrical,
-            gpio: None,
+            class,
+            gpio,
             options: PinoutOptions::default(),
             functions,
             default: default.map(str::to_owned),
@@ -953,6 +1109,19 @@ pub fn document(
         }),
         problems,
     )
+}
+
+/// "USART1_TX:AF7" at ":" → ("USART1_TX", Some("AF7")), split at the
+/// last occurrence; no split without a separator or when either side
+/// would be empty.
+pub fn split_mux<'a>(label: &'a str, separator: &str) -> (&'a str, Option<&'a str>) {
+    if separator.is_empty() {
+        return (label, None);
+    }
+    match label.rsplit_once(separator) {
+        Some((l, m)) if !l.trim().is_empty() && !m.trim().is_empty() => (l.trim(), Some(m.trim())),
+        _ => (label, None),
+    }
 }
 
 /// "USART1_TX" at "_" → ("USART1", "TX"); no split without a separator
@@ -1008,6 +1177,23 @@ pub struct PasteFlow {
     pub sent: Option<u64>,
     /// The flow opened this frame.
     pub opened: bool,
+    /// Row keys the person unticked in the preview: applied as
+    /// `PinoutAccept::Except`.
+    pub rejected: std::collections::BTreeSet<String>,
+    /// The preview lists every row, not the first few.
+    pub all_rows: bool,
+}
+
+impl PasteFlow {
+    /// What the apply takes: every row, or all but the unticked ones.
+    pub fn accept(&self) -> pcbcraft_core::library::pinout::PinoutAccept {
+        use pcbcraft_core::library::pinout::PinoutAccept;
+        if self.rejected.is_empty() {
+            PinoutAccept::All
+        } else {
+            PinoutAccept::Except(self.rejected.iter().cloned().collect())
+        }
+    }
 }
 
 impl PasteFlow {

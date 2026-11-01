@@ -171,14 +171,54 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     }
     for instance in &project.instances {
         if let Some(resolution) = resolutions.get(&instance.id) {
-            rule_notes(instance, resolution, &mut out);
+            let rules = project
+                .library
+                .component(instance.component)
+                .map(|c| c.definition.pin_rules.as_slice())
+                .unwrap_or_default();
+            rule_notes(instance, resolution, rules, &mut out);
         }
     }
     out
 }
 
-/// Pin rule `warn` verdicts (C1): advisory, never blocking.
-fn rule_notes(instance: &ComponentInstance, resolution: &Resolution, out: &mut Vec<Finding>) {
+/// Where a rule came from in its reference document, as a message suffix
+/// (" (source: page 16, Table 5)"); empty when the rule names none.
+pub(crate) fn rule_source(rules: &[crate::functions::PinRule], rule: crate::ids::RuleId) -> String {
+    let Some(source) = rules
+        .iter()
+        .find(|r| r.id == rule)
+        .and_then(|r| r.source.as_ref())
+    else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if let Some(page) = source.page {
+        parts.push(format!("page {page}"));
+    }
+    if let Some(table) = source
+        .table
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        parts.push(table.to_owned());
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" (source: {})", parts.join(", "))
+    }
+}
+
+/// Pin rule `warn` verdicts (C1): advisory, never blocking. The message
+/// keeps the rule's datasheet source.
+fn rule_notes(
+    instance: &ComponentInstance,
+    resolution: &Resolution,
+    rules: &[crate::functions::PinRule],
+    out: &mut Vec<Finding>,
+) {
     for note in &resolution.notes {
         let mut objects = vec![ObjectRef::Instance { id: instance.id }];
         objects.extend(note.terminals.iter().map(|terminal| ObjectRef::Terminal {
@@ -189,7 +229,12 @@ fn rule_notes(instance: &ComponentInstance, resolution: &Resolution, out: &mut V
         }));
         out.push(Finding::new(
             "config.rule_note",
-            format!("{}: {}", instance.designator, note.message),
+            format!(
+                "{}: {}{}",
+                instance.designator,
+                note.message,
+                rule_source(rules, note.rule)
+            ),
             objects,
         ));
     }

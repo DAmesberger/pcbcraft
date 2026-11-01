@@ -58,3 +58,18 @@ pub(crate) fn finish(result: Fallible<()>) -> Fallible<()> {
         other => other,
     }
 }
+
+/// End a scenario that still meets a contract stub (the template and model
+/// scenarios until B1 and D1 are integrated). Like [`finish`], and it
+/// fails when the scenario runs to its end without meeting a stub while
+/// [`REQUIRE_COMPLETE`] is unset: the track is integrated, so the flag
+/// must be flipped and the stub removed from [`STUBS`].
+pub(crate) fn finish_stubbed(result: Fallible<()>) -> Fallible<()> {
+    match result {
+        Ok(()) if !REQUIRE_COMPLETE => Err(
+            "the scenario ran to its end without meeting a contract stub: set REQUIRE_COMPLETE and drop the stub from STUBS"
+                .into(),
+        ),
+        other => finish(other),
+    }
+}

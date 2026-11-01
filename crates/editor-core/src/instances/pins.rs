@@ -98,7 +98,10 @@ pub fn suggest_with(
 /// `instance.assign_peripheral`. Enabling places each named role on its
 /// given terminal (the terminal's function that takes that role) and lets
 /// the solver place the rest, plus every `required_when_used` role not
-/// named; the solver keeps every other explicit selection. Disabling
+/// named; with no placements at all the solver places every role that has
+/// a candidate. The solver keeps every other explicit selection. An explicit
+/// placement of a role of capacity 1 is a move: the role's earlier
+/// selected terminal is cleared in the same batch. Disabling
 /// clears every explicit selection of the peripheral's functions. Either
 /// way the edits are applied as one `select_functions` batch, so the
 /// final state is checked once and nothing changes on failure.
@@ -207,21 +210,49 @@ pub fn assign_peripheral(project: &mut Project, request: &AssignPeripheral) -> R
             function: Some(function.id),
         });
     }
+    // Move: a placed role of capacity 1 leaves its earlier selected
+    // terminal, which returns to its default function.
+    let mut moves: Vec<FunctionEdit> = Vec::new();
+    for placement in &request.roles {
+        let (Some(target), Some(role)) = (placement.terminal, resource.role(placement.role)) else {
+            continue;
+        };
+        if role.capacity != 1 {
+            continue;
+        }
+        for (terminal, function) in &instance.functions {
+            let earlier = *terminal != target
+                && !explicit.iter().any(|e| e.terminal == *terminal)
+                && component
+                    .terminal(*terminal)
+                    .and_then(|t| t.functions())
+                    .and_then(|d| d.function(*function))
+                    .and_then(|f| f.resource_role)
+                    .is_some_and(|rr| rr.resource == resource.id && rr.role == role.id);
+            if earlier && !moves.iter().any(|m| m.terminal == *terminal) {
+                moves.push(FunctionEdit {
+                    terminal: *terminal,
+                    function: None,
+                });
+            }
+        }
+    }
+    explicit.extend(moves);
     for role in &resource.roles {
         if role.required_when_used && !named.contains(&role.id) {
             solve.push(role.id);
         }
     }
-    if request.roles.is_empty() && solve.is_empty() {
-        solve.extend(resource.roles.first().map(|r| r.id));
-    }
+    // No placements: the solver's default, every role that has a
+    // candidate (the required ones must be placed).
+    let all_roles = request.roles.is_empty();
     let staged = if explicit.is_empty() {
         instance.functions.clone()
     } else {
         functions::apply_edits(&instance.functions, &explicit)?
     };
     let mut edits = explicit;
-    if !solve.is_empty() {
+    if all_roles || !solve.is_empty() {
         let avoid = edits.iter().map(|e| e.terminal).collect();
         let report = suggest_with(
             project,
@@ -230,7 +261,7 @@ pub fn assign_peripheral(project: &mut Project, request: &AssignPeripheral) -> R
             &SuggestRequest {
                 enable: vec![PeripheralRequest {
                     peripheral: resource.id,
-                    roles: Some(solve),
+                    roles: (!all_roles).then_some(solve),
                 }],
                 keep_existing: true,
                 avoid,
@@ -255,7 +286,10 @@ pub fn assign_peripheral(project: &mut Project, request: &AssignPeripheral) -> R
 /// atomically. Each terminal must be electrical, each set value must be
 /// offered by the terminal's declared options
 /// ([`check_config`](functions::pin_config::check_config)), and an empty
-/// configuration clears the entry. Never changes ERC.
+/// configuration clears the entry. Never changes function ERC directly,
+/// but pin rules read it through `option(…)`: the final state is checked
+/// by `check_instance`, so a `forbid` over an option refuses the edit and
+/// a `require` becomes a `config.rule_unmet` finding.
 pub fn set_pin_config(project: &mut Project, instance: Id, edits: &[PinConfigEdit]) -> Result<()> {
     if edits.is_empty() || edits.len() > MAX_PIN_CONFIG_EDITS {
         return Err(Error::Invalid(format!(
@@ -343,7 +377,7 @@ pub(crate) fn carry_pin_config(
 
 /// `config.pin_option` findings of one instance: stored values its pinned
 /// component no longer offers (after a library update). Advisory: a pin
-/// configuration never changes ERC.
+/// configuration never changes function ERC (rules may read it).
 pub fn pin_option_findings(
     instance: &ComponentInstance,
     component: &ComponentDefinition,

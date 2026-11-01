@@ -516,6 +516,8 @@ fn cycling_steps_through_alternatives_over_the_base_and_wraps() -> TestResult {
             function: Some(function),
         }],
         changed: vec![T1],
+        optional: vec![],
+        unplaced: vec![],
     };
     let mut state = State {
         staged: model::stage_suggestion(&base, &suggestion(ids.uart_tx).edits),
@@ -572,6 +574,13 @@ fn ticking_asks_the_engine_for_a_suggestion() -> TestResult {
         &preview,
         Action::Tick(ids.usart1, true),
     );
+    // The search runs on a worker thread; wait for it.
+    assert!(
+        state.pending.is_some(),
+        "the suggestion runs off the UI thread"
+    );
+    poll(&mut state, true);
+    assert!(state.pending.is_none());
     assert!(state.expanded.contains(&ids.usart1));
     let request = SuggestRequest {
         enable: vec![PeripheralRequest {

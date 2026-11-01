@@ -237,6 +237,10 @@ pub enum ReviewReason {
     Uncertain,
     ContradictsDraft,
     VariantsDisagree,
+    /// The draft has no binding, so the row kept an existing terminal's
+    /// identity only because the names are equal: a person confirms it is
+    /// the same pin.
+    MatchedByName,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]

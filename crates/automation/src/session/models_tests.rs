@@ -1,12 +1,12 @@
 //! Slice C7: the 3D model library (D1) over JSON. Staged as
 //! `mcp::scenario` explains: the D1 stub's explicit refusal (nothing
 //! changed) ends the step until D1 is merged and `REQUIRE_COMPLETE` is set.
-use super::pinout_tests::{Fallible, Scenario, finish};
+use super::pinout_tests::{Fallible, Scenario, finish_stubbed};
 use super::*;
 
 #[test]
 fn the_model_query_answers_a_bounded_report() -> Fallible<()> {
-    finish((|| -> Fallible<()> {
+    finish_stubbed((|| -> Fallible<()> {
         let mut s = Scenario::demo()?;
         let report = s.query(
             "models",

@@ -3,8 +3,10 @@
 //! Resolve-parts container, `ui_kit::Window`) with three parts:
 //!
 //! - **Peripherals**: one tick per declared peripheral (resource). Ticking
-//!   runs `functions.suggest` and stages its first assignment; Tab (or
-//!   Next) cycles through the ranked alternatives. Each peripheral in use
+//!   runs `functions.suggest` on a worker thread (the search may take
+//!   seconds; the panel shows it running with Cancel) and stages its first
+//!   assignment, every role that has a pin; Tab (or Next) cycles through
+//!   the ranked alternatives while the pointer is over the panel. Each peripheral in use
 //!   lists its roles with a choice of the pins whose functions declare
 //!   that role. Unticking releases its pins.
 //! - **Pins**: each multi-function or peripheral pin with its previewed
@@ -27,16 +29,17 @@ use crate::refusal::{self, Origin};
 use egui::{Align, FontId, Layout, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 use model::{Candidate, Model, Preview, Staged};
 use pcbcraft_core::functions::suggest::{
-    MAX_SUGGESTIONS, PeripheralRequest, SuggestRequest, Suggestion,
+    MAX_SUGGESTIONS, PeripheralRequest, SuggestReport, SuggestRequest, Suggestion,
 };
 use pcbcraft_core::ids::{ResourceId, RoleId, TerminalId};
-use pcbcraft_core::{
-    ComponentInstance, Engine, Id, InstanceCommand, Operation, Query, QueryResult,
-};
+use pcbcraft_core::{ComponentInstance, Engine, Id, InstanceCommand, Operation};
+#[cfg(test)]
+use pcbcraft_core::{Query, QueryResult};
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 
 /// The panel's egui id: its window, its memory and its refusal origin.
 fn panel_id() -> egui::Id {
@@ -50,6 +53,15 @@ struct Alternatives {
     index: usize,
     base: Staged,
     exhausted: bool,
+}
+
+/// A `functions.suggest` running on a worker thread, and what its result
+/// is staged over.
+#[derive(Clone)]
+struct Pending {
+    receiver: Arc<Mutex<Receiver<Result<SuggestReport, String>>>>,
+    base: Staged,
+    revision: u64,
 }
 
 /// The model and preview of one document revision and staging.
@@ -84,6 +96,11 @@ struct State {
     /// The engine's refusal of the last Apply.
     refusal: Option<String>,
     cache: Option<Cached>,
+    /// The suggestion being searched for.
+    pending: Option<Pending>,
+    /// The pointer is over the panel (or a field in it has focus): only
+    /// then do Enter and Tab act on it.
+    engaged: bool,
 }
 
 fn load(ctx: &egui::Context) -> State {
@@ -217,6 +234,7 @@ enum Action {
     Tick(ResourceId, bool),
     Place(ResourceId, RoleId, Option<Candidate>),
     Suggest,
+    CancelSuggest,
     Cycle(isize),
     Focus(TerminalId),
     ShowAllPeripherals,
@@ -242,6 +260,7 @@ pub fn entry(ui: &mut Ui, engine: &Engine, instance: &ComponentInstance) -> Opti
     if state.revision != engine.revision() {
         model::settle(instance, &mut state.staged);
         state.alternatives = None;
+        state.pending = None;
         state.blockers.clear();
         state.suggest_note = None;
         if state.revision != 0 {
@@ -257,6 +276,9 @@ pub fn entry(ui: &mut Ui, engine: &Engine, instance: &ComponentInstance) -> Opti
             return None;
         }
     };
+    if poll(&mut state, false) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
     let preview = preview_of(&mut state, engine, instance, &model);
     let t = Tokens::get();
     let cards = ((ctx.content_rect().width() - t.space_24 * 2.0) / t.form_card_width.max(1.0))
@@ -266,6 +288,7 @@ pub fn entry(ui: &mut Ui, engine: &Engine, instance: &ComponentInstance) -> Opti
     let closed = ui_kit::Window::new(panel_id(), "component", &title)
         .cards(cards)
         .show_body(&ctx, |ui| {
+            state.engaged = ui.rect_contains_pointer(ui.max_rect());
             kit::form(ui, |ui| {
                 action = body(ui, engine, instance, &model, &preview, &state)
             });
@@ -312,6 +335,10 @@ fn handle(
             }));
         }
         Action::Close => *state = State::default(),
+        Action::CancelSuggest => {
+            state.pending = None;
+            state.suggest_note = Some("Suggestion cancelled".into());
+        }
         Action::Tick(peripheral, true) => {
             state.alternatives = None;
             state.expanded.insert(peripheral);
@@ -379,8 +406,11 @@ fn focus(state: &mut State, model: &Model, terminal: TerminalId) {
     }
 }
 
-/// Run `functions.suggest` for `enable` and stage its first assignment
-/// over `base`; the core's blockers and refusals are kept for display.
+/// Start `functions.suggest` for `enable` on a worker thread over the
+/// project as it is now; [`poll`] stages its first assignment over `base`
+/// when it arrives. The core bounds the search (node and rule-operation
+/// budgets), so the thread always ends; a cancelled or superseded search
+/// is simply not read.
 fn suggest(
     state: &mut State,
     engine: &Engine,
@@ -391,6 +421,7 @@ fn suggest(
 ) {
     state.blockers.clear();
     state.suggest_note = None;
+    state.pending = None;
     if enable.is_empty() {
         state.suggest_note = Some("Tick a peripheral to suggest pins for it".into());
         return;
@@ -407,11 +438,65 @@ fn suggest(
         avoid: Vec::new(),
         limit: Some(MAX_SUGGESTIONS),
     };
-    match engine.query(Query::SuggestPins {
-        instance: instance.id,
-        request,
-    }) {
-        Ok(QueryResult::SuggestPins(report)) => {
+    let project = engine.project_arc().clone();
+    let id = instance.id;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("pin-mux-suggest".into())
+        .spawn(move || {
+            let report = pcbcraft_core::pins::suggest(&project, id, &request)
+                .map_err(|e| refusal::shown_error(&e));
+            let _ = sender.send(report);
+        });
+    match spawned {
+        Ok(_) => {
+            state.pending = Some(Pending {
+                receiver: Arc::new(Mutex::new(receiver)),
+                base,
+                revision: engine.revision(),
+            });
+        }
+        Err(error) => {
+            state.suggest_note = Some(format!("The suggestion could not start: {error}"));
+        }
+    }
+}
+
+/// Read a finished suggestion into `state`; with `wait`, block until it
+/// arrives (tests). Returns whether one is still running.
+fn poll(state: &mut State, wait: bool) -> bool {
+    let Some(pending) = state.pending.clone() else {
+        return false;
+    };
+    if pending.revision != state.revision && state.revision != 0 {
+        state.pending = None;
+        return false;
+    }
+    let received = match pending.receiver.lock() {
+        Ok(receiver) if wait => receiver.recv().map_err(|_| TryRecvError::Disconnected),
+        Ok(receiver) => receiver.try_recv(),
+        Err(_) => Err(TryRecvError::Disconnected),
+    };
+    match received {
+        Err(TryRecvError::Empty) => true,
+        Err(TryRecvError::Disconnected) => {
+            state.pending = None;
+            state.suggest_note = Some("The suggestion stopped without a result".into());
+            false
+        }
+        Ok(result) => {
+            state.pending = None;
+            receive(state, result, pending.base);
+            false
+        }
+    }
+}
+
+/// Stage a suggestion's first assignment over `base`; the core's blockers
+/// and refusals are kept for display.
+fn receive(state: &mut State, result: Result<SuggestReport, String>, base: Staged) {
+    match result {
+        Ok(report) => {
             state.blockers = report
                 .blockers
                 .iter()
@@ -433,8 +518,7 @@ fn suggest(
                 });
             }
         }
-        Ok(_) => state.suggest_note = Some("The suggestion could not be read".into()),
-        Err(error) => state.suggest_note = Some(refusal::shown_error(&error)),
+        Err(message) => state.suggest_note = Some(message),
     }
 }
 
@@ -520,6 +604,31 @@ fn parts(
             action = Some(Action::Focus(*first));
         }
     }
+    if state.pending.is_some()
+        && kit::summary_row(ui, "Searching for an assignment…", Some("Cancel"))
+    {
+        action = Some(Action::CancelSuggest);
+    }
+    if let Some(alt) = &state.alternatives
+        && let Some(current) = alt.suggestions.get(alt.index)
+        && !current.unplaced.is_empty()
+    {
+        let roles: Vec<String> = current
+            .unplaced
+            .iter()
+            .filter_map(|r| {
+                let peripheral = model.peripherals.iter().find(|p| p.id == r.resource)?;
+                let role = peripheral.roles.iter().find(|x| x.id == r.role)?;
+                Some(format!("{} {}", peripheral.label, role.label))
+            })
+            .collect();
+        line(
+            ui,
+            Some(Level::Info),
+            &format!("Optional roles left out: {}", roles.join(", ")),
+            None,
+        );
+    }
     if let Some(alt) = &state.alternatives {
         let text = format!(
             "Suggestion {} of {}{} · Tab for the next",
@@ -546,6 +655,7 @@ fn parts(
         line(ui, Some(Level::Info), note, None);
     }
     if !preview.lines.is_empty()
+        || state.pending.is_some()
         || state.alternatives.is_some()
         || !state.blockers.is_empty()
         || state.suggest_note.is_some()
@@ -577,8 +687,9 @@ fn parts(
         action = action.or(pins(ui, engine, instance, model, preview, state));
         action = action.or(package_part(ui, model, preview, state));
     }
-    // Tab and Shift+Tab cycle the alternatives while no field has focus.
-    let free = ui.ctx().memory(|m| m.focused().is_none());
+    // Tab and Shift+Tab cycle the alternatives while the pointer is over
+    // the panel and no field has focus.
+    let free = state.engaged && ui.ctx().memory(|m| m.focused().is_none());
     if free
         && state
             .alternatives
@@ -600,8 +711,10 @@ fn parts(
     action
 }
 
-/// The summary and Cancel / Apply. Enter applies while no field has focus.
-fn footer(ui: &mut Ui, preview: Option<&Preview>, _state: &State) -> Option<Action> {
+/// The summary and Cancel / Apply. Enter applies while the pointer is over
+/// the panel and no field has focus, so Enter on the canvas beside it
+/// never applies.
+fn footer(ui: &mut Ui, preview: Option<&Preview>, state: &State) -> Option<Action> {
     let gate = preview.map_or(Some("The preview could not be computed"), Preview::gate);
     let summary = match preview.map_or(0, |p| p.changed.len()) {
         0 if preview.is_some_and(|p| !p.edits.is_empty()) => {
@@ -631,6 +744,7 @@ fn footer(ui: &mut Ui, preview: Option<&Preview>, _state: &State) -> Option<Acti
         }
     });
     let enter = gate.is_none()
+        && state.engaged
         && ui.ctx().memory(|m| m.focused().is_none())
         && ui
             .ctx()

@@ -258,6 +258,51 @@ fn uncertain_rows_block_publishing_until_a_person_clears_them() -> Fallible<()> 
         .ok_or("unreviewed warning")?;
     assert_eq!(unreviewed.blocks, None);
     assert_eq!(unreviewed.objects.len(), 49);
+
+    // Publishing with unreviewed rows keeps the review state out of the
+    // immutable revision and drops it from the draft. The imported packages
+    // have no outline yet, so the component and its symbol publish alone,
+    // schematic-only.
+    let draft = engine.drafts().get(id).ok_or("draft")?.clone();
+    let mut body = component(&engine, id)?;
+    body.implementations.clear();
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id,
+                meta: draft.meta,
+                definition: Definition::Component(body),
+            }],
+        }),
+    )?;
+    let logical: Vec<DefinitionId> = applied
+        .drafts
+        .iter()
+        .copied()
+        .filter(|d| {
+            engine.drafts().get(*d).is_some_and(|draft| {
+                matches!(
+                    draft.definition,
+                    Definition::Component(_) | Definition::Symbol(_)
+                )
+            })
+        })
+        .collect();
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Publish { drafts: logical }),
+    )?;
+    let published = engine
+        .project()
+        .library
+        .components
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or("published revision")?;
+    assert_eq!(published.definition.review, None);
+    assert_eq!(component(&engine, id)?.review, None);
+    assert_eq!(component(&engine, id)?, published.definition);
     Ok(())
 }
 
@@ -322,6 +367,51 @@ fn reimporting_into_the_draft_keeps_terminals_by_number() -> Fallible<()> {
         .map(|f| (f.id, f.mux.clone()));
     assert_eq!(new_tx, old_tx.map(|id| (id, Some(MuxCode("ALT7".into())))));
     assert_eq!(after.next_local, first.next_local, "no new identities");
+    Ok(())
+}
+
+/// Without a binding, rows keep terminals by equal name only, and every
+/// such row is a review item, never trusted silently.
+#[test]
+fn a_reimport_without_a_binding_flags_every_name_match() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let document = exl48()?;
+    let applied = import_new(&mut engine, &document)?;
+    let id = *applied.drafts.first().ok_or("no component")?;
+    // Drop the binding drafts (and the component's link to them).
+    let draft = engine.drafts().get(id).ok_or("draft")?.clone();
+    let mut body = component(&engine, id)?;
+    body.implementations.clear();
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id,
+                meta: draft.meta,
+                definition: Definition::Component(body),
+            }],
+        }),
+    )?;
+    let bindings: Vec<DefinitionId> = engine
+        .drafts()
+        .items
+        .iter()
+        .filter(|d| matches!(d.definition, Definition::Binding(_)))
+        .map(|d| d.id)
+        .collect();
+    for binding in bindings {
+        engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::DiscardDraft { id: binding }),
+        )?;
+    }
+    let plan = preview(&engine, &PinoutTarget::Draft { id }, &document)?;
+    let by_name = plan
+        .review
+        .iter()
+        .filter(|r| r.reason == ReviewReason::MatchedByName)
+        .count();
+    assert_eq!(by_name, document.pins.len(), "{:?}", plan.review);
     Ok(())
 }
 

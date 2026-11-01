@@ -996,6 +996,24 @@ pub fn stage(
                 ));
             };
             let matched = match_rows(library, drafts, *id, existing, document);
+            // Without a binding, terminal identity was kept by equal name
+            // only: never trusted silently.
+            if numbered_terminals(library, drafts, *id, existing).is_empty() {
+                for pin in document
+                    .pins
+                    .iter()
+                    .filter(|p| matched.contains_key(&p.row))
+                {
+                    out.review.push(ReviewItem {
+                        row: pin.row.clone(),
+                        reason: ReviewReason::MatchedByName,
+                        message: format!(
+                            "The draft has no binding, so this row kept terminal ‘{}’ only because the names are equal; confirm it is the same pin.",
+                            pin.name
+                        ),
+                    });
+                }
+            }
             number_findings(document, *id, &mut out);
             document_review(document, accept, &mut out);
             let component =

@@ -1,7 +1,31 @@
-//! `c-header`: `#define <NAME>_PORT/_PIN/_AF` per pin and a pin table.
+//! `c-header`: `#define <NAME>_PORT/_PIN/_AF` per assigned pin and a pin
+//! table. Pins that only carry their default function get no macros; a
+//! comment lists them so the reader can tell them from assigned pins.
+//!
+//! `_PORT` and `_AF` are the library's identifiers as C strings. Where
+//! they have a plain numeric reading, `_PORT_INDEX` (a one-letter port,
+//! `A` = 0) and `_AF_NUM` (a mux code `AF<n>` or `<n>`) give it as a
+//! number for preprocessor arithmetic and token pasting.
 use crate::text::{c_string, comment, level_name, lower_ident, preamble, pull_name};
-use pcbcraft_core::firmware::{PinConfigReport, sanitise};
+use pcbcraft_core::firmware::{FirmwarePin, PinConfigReport, sanitise};
 use std::fmt::Write;
+
+/// A one-letter port's index (`A` = 0 … `Z` = 25).
+fn port_index(port: &str) -> Option<u8> {
+    match port.as_bytes() {
+        [letter] if letter.is_ascii_uppercase() => Some(letter - b'A'),
+        _ => None,
+    }
+}
+
+/// A mux code's number: `AF7` or `7` give 7.
+fn af_number(mux: &str) -> Option<u32> {
+    let digits = mux.strip_prefix("AF").unwrap_or(mux);
+    if digits.is_empty() || digits.len() > 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
 
 pub fn emit(report: &PinConfigReport) -> String {
     let device = sanitise(&report.device.designator);
@@ -14,7 +38,21 @@ pub fn emit(report: &PinConfigReport) -> String {
     }
     out.push_str(" */\n");
     let _ = writeln!(out, "#ifndef {guard}\n#define {guard}\n");
-    for pin in &report.pins {
+    let assigned: Vec<&FirmwarePin> = report.pins.iter().filter(|p| p.assigned).collect();
+    let defaults: Vec<&FirmwarePin> = report.pins.iter().filter(|p| !p.assigned).collect();
+    if !defaults.is_empty() {
+        out.push_str("/* Left on their default function, so no macros:\n");
+        for pin in &defaults {
+            let _ = writeln!(
+                out,
+                " *   {}: {}",
+                comment(&pin.name),
+                comment(&pin.function)
+            );
+        }
+        out.push_str(" */\n\n");
+    }
+    for pin in &assigned {
         let name = &pin.firmware_name;
         let mut about = format!("{}: {}", comment(&pin.name), comment(&pin.function));
         if let (Some(peripheral), Some(role)) = (&pin.peripheral, &pin.role) {
@@ -24,12 +62,18 @@ pub fn emit(report: &PinConfigReport) -> String {
         match &pin.gpio {
             Some(gpio) => {
                 let _ = writeln!(out, "#define {name}_PORT {}", c_string(&gpio.port));
+                if let Some(index) = port_index(&gpio.port) {
+                    let _ = writeln!(out, "#define {name}_PORT_INDEX {index}");
+                }
                 let _ = writeln!(out, "#define {name}_PIN {}", gpio.index);
             }
             None => out.push_str("/* no GPIO identity */\n"),
         }
         if let Some(mux) = &pin.mux {
             let _ = writeln!(out, "#define {name}_AF {}", c_string(mux));
+            if let Some(number) = af_number(mux) {
+                let _ = writeln!(out, "#define {name}_AF_NUM {number}");
+            }
         }
         if let Some(pull) = pin.pull {
             let _ = writeln!(out, "#define {name}_PULL PCBCRAFT_PULL_{}", pull_name(pull));
@@ -68,11 +112,11 @@ struct pcbcraft_pin {
     );
     let optional =
         |value: Option<&String>| value.map_or_else(|| "NULL".to_owned(), |v| c_string(v));
-    let _ = writeln!(out, "#define {device}_PIN_COUNT {}", report.pins.len());
-    if report.pins.is_empty() {
+    let _ = writeln!(out, "#define {device}_PIN_COUNT {}", assigned.len());
+    if assigned.is_empty() {
         let _ = writeln!(
             out,
-            "/* {} has no configurable pins. */",
+            "/* {} has no assigned pins. */",
             comment(&report.device.designator)
         );
     } else {
@@ -80,7 +124,7 @@ struct pcbcraft_pin {
             out,
             "static const struct pcbcraft_pin {table}_pins[{device}_PIN_COUNT] = {{"
         );
-        for pin in &report.pins {
+        for pin in &assigned {
             let (port, index) = pin.gpio.as_ref().map_or_else(
                 || ("NULL".to_owned(), "-1".to_owned()),
                 |g| (c_string(&g.port), g.index.to_string()),

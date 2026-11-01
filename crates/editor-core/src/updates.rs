@@ -1968,6 +1968,66 @@ fn instance_details(
             format!("{designator}: terminal {terminal} is marked no-connect."),
         );
     }
+    // Pin configurations on terminals the target removes or declares NC
+    // are dropped (as no-connect markers are); each is listed with its
+    // values so nothing disappears unseen.
+    for (terminal, config) in &old.pin_config {
+        if new.pin_config.contains_key(terminal) {
+            continue;
+        }
+        let endpoint = endpoint(*terminal);
+        let values = pin_config_values(config);
+        plan.detail(
+            head(
+                A::Component,
+                K::Remove,
+                O::Terminal,
+                vec![ObjectRef::Terminal { endpoint }],
+                format!(
+                    "{designator}: pin configuration of terminal {} is dropped",
+                    terminal_name(project, endpoint)
+                ),
+            ),
+            format!(
+                "{designator}: the pin configuration of terminal {terminal} ({values}) is dropped; the new revision removes the terminal or declares it not connected."
+            ),
+        );
+    }
+}
+
+/// A pin configuration's set values as text ("pull up, name BUTTON").
+fn pin_config_values(config: &crate::functions::PinConfig) -> String {
+    use crate::functions::{Level, Pull};
+    let mut parts = Vec::new();
+    if let Some(pull) = config.pull {
+        parts.push(format!(
+            "pull {}",
+            match pull {
+                Pull::None => "none",
+                Pull::Up => "up",
+                Pull::Down => "down",
+            }
+        ));
+    }
+    if let Some(speed) = &config.speed {
+        parts.push(format!("speed {}", clip(speed)));
+    }
+    if let Some(level) = config.initial {
+        parts.push(format!(
+            "initial {}",
+            match level {
+                Level::Low => "low",
+                Level::High => "high",
+            }
+        ));
+    }
+    if let Some(schmitt) = config.schmitt {
+        parts.push(format!("Schmitt {}", if schmitt { "on" } else { "off" }));
+    }
+    if let Some(name) = &config.name {
+        parts.push(format!("name {}", clip(name)));
+    }
+    parts.join(", ")
 }
 
 /// Effective-value changes per field lineage, including label-only field

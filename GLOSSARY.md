@@ -61,7 +61,7 @@ A pin option is a setting a terminal declares with its allowed values: pull, spe
 A datasheet restriction on pin-function combinations, stored in the component revision as a short sandboxed Rhai script that reads a read-only view of one assignment and returns ok, forbid, require or warn. Forbid rejects the assignment, require leaves it incomplete and warn is a note; a script that fails to compile, raises an error or exceeds its budget is a finding.
 
 **Pinout document**:
-A typed, format-versioned description of a device's pins, peripherals, functions, options and rules, filled from a datasheet by a person or an agent. Importing it is previewed as a plan, applied against that plan's base and leaves every written row unreviewed; a row flagged uncertain blocks publishing until it is corrected or cleared (import review).
+A typed, format-versioned description of a device's pins, peripherals, functions, options and rules, filled from a datasheet by a person or an agent. Importing it is previewed as a plan, applied against that plan's base and leaves every written row unreviewed; a row flagged uncertain blocks publishing until it is corrected or cleared (import review). The review state is draft-only (publishing drops it) and the gate is advisory against automation: an agent that edits the draft can clear it, so agents clear a flag only after the person confirms the row.
 
 **Firmware pin configuration**:
 The format-1 description of one instance's configured pins (function, peripheral, role, mux code, GPIO, options and firmware name) derived from its function resolution, pin configuration and named nets, and emitted as JSON, a C header, a Zephyr overlay skeleton, Rust constants or a user template. It is a starting point, not clock, register or HAL setup.

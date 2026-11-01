@@ -3,12 +3,12 @@
 //! a package row with `library.templates` (B1). Staged as
 //! `mcp::scenario` explains: the B1 stub's explicit refusal (nothing
 //! changed) ends the step until B1 is merged and `REQUIRE_COMPLETE` is set.
-use super::pinout_tests::{Fallible, Scenario, finish};
+use super::pinout_tests::{Fallible, Scenario, finish_stubbed};
 use super::*;
 
 #[test]
 fn the_exm48_package_is_found_among_the_no_lead_templates() -> Fallible<()> {
-    finish((|| -> Fallible<()> {
+    finish_stubbed((|| -> Fallible<()> {
         let mut s = Scenario::demo()?;
         let report = s.query(
             "templates",
