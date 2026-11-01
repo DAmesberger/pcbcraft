@@ -2781,6 +2781,7 @@ name = "pcbcraft-firmware"
 version = "0.1.0"
 dependencies = [
  "pcbcraft-core",
+ "rhai",
  "schemars",
  "serde",
  "serde_json",
