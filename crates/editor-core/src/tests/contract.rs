@@ -43,7 +43,6 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
         },
         Query::PinReport { instance },
         Query::PinConfig { instance },
-        Query::Marking { instance },
     ];
     for query in queries {
         let shown = format!("{query:?}");
@@ -63,11 +62,6 @@ fn new_commands_refuse_and_change_nothing() -> Fallible<()> {
         .ok_or("instance")?;
     let revision = engine.revision();
     let before = engine.to_file();
-    let operation = Operation::Instance(crate::InstanceCommand::SetMarking {
-        instance,
-        marking: Default::default(),
-    });
-    assert!(unsupported(engine.apply(revision, operation)));
     let operation = Operation::Instance(crate::InstanceCommand::SetPinConfig {
         instance,
         edits: vec![],
