@@ -48,7 +48,9 @@ The laminate result lands close to the check target estimated independently from
 
 ## Geometry that carries the looks
 
-The saved native model holds only physical bodies: the laminate, exact copper (pads and tracks), package envelopes and generated package models (one shared definition per package revision, every body with its material). They are disjoint except where copper joins copper (a track ending in its pad), so Solidcraft's interference checks and mass properties of the saved file are physical; a test checks the bodies' boxes pairwise and the total volume.
+The saved native model holds only physical bodies: the laminate, exact copper (pads, tracks on every copper layer and board vias), package envelopes and generated package models (one shared definition per package revision, every body with its material). They are disjoint except where copper joins copper (a track ending in its pad), so Solidcraft's interference checks and mass properties of the saved file are physical; a test checks the bodies' boxes pairwise and the total volume.
+
+The stackup (`Project::stackup`) sets the heights: the laminate is the sum of the dielectrics (parameters `dielectric_N_thickness`, summed as `board_thickness`), each foil has its own thickness parameter (`copper_thickness` for the top; a foil as thick follows it), and inner copper sits at the top of the dielectric below it. Inner copper is embedded in the laminate, so the union of each inner layer's copper (tracks and via rings) is cut out of it in one feature per layer, like the drills where the copper is now; a test checks the laminate's volume. A via is one component: a plated barrel (drill less 0.025 mm plating) through the laminate and an annular ring on each layer it joins, outer rings capping the barrel and inner rings round it (a 64-gon, the laminate's cut).
 
 Everything else is a display-only layer built on the model worker as meshes in Solidcraft's mesh type (`crates/solidcraft-integration/src/appearance.rs`). They are drawn and picked like native bodies (mask caps and finish strips pick as their track, terminations, overcoat and solder as their part) but are never saved, and they are not native features, so they add nothing to native construction time.
 
@@ -58,14 +60,18 @@ Everything else is a display-only layer built on the model worker as meshes in S
 |---|---|---|
 | Soldermask slabs | 0.020 mm over each board face, 0.03 mm in from the board outline | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. The pull-back (**est.**; fabricators pull mask back from a routed edge) keeps the mask's walls off the laminate's, which drew a dashed line along the far edge at the silhouette. |
 | Mask cap over a track | 0.015 mm above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
-| Mask opening | Land + 0.05 mm | A common fabrication default. |
+| Mask opening | Land + 0.05 mm; an open via's ring + 0.05 mm | A common fabrication default. |
+| Tented via | A dome of revolution over the ring: as high as a mask cap (copper + 0.015 mm), sagging 0.008 mm over the drill, sloping into the flat mask 0.08 mm beyond the ring | **est.** Dry-film and LPI tents dip a little into the hole they bridge; the slope keeps the bump from reading as a stamped disc. |
+| Open via | Finished ring (as a land) and a dark sleeve 0.01 mm thick lining the bore, through the board and both foils (`via_bore`) | The view computes no occlusion, so a bore five or more diameters deep would light up like an open copper face; real ones read as dark holes. Reflectance 0.01 (**est.**). |
+| Silkscreen | Legend ink 0.015 mm thick, half sunk into the mask; on a track's mask cap or a tent's crown it stands on the crown instead; clipped 0.05 mm clear of mask openings | Screen-printed and inkjet legend is 10–25 µm (**est.**); quoted silkscreen-to-pad clearances are 0.05–0.15 mm. Text uses Pcbcraft's own stroke font (`silkscreen/font.rs`) laid out by the core's text metric; bottom-side text is reflected in its box so it reads from below. |
+| Edge stackup bands | Thin frames 0.002 mm proud of the routed faces (copper lines 0.003 mm): a band per dielectric (split around inner foils), a line per foil, a mask lip over each outer foil | Display only, so the board reads as a sectioned real board; the native laminate stays one body. Weave strength per glass style (**est.**): 7628 1.0, 2116 0.8, 1080 0.6, 106 0.45; prepreg 0.75 × its style. |
 | Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
 | Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages with a chip form (publication requires exactly two package terminals for these). On an envelope chip these are display-only, and an inductor shows the ceramic chip's terminations; a generated chip has real tin termination bodies and a ferrite inductor body. The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
 | Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only chip resistors get it; chip capacitors are MLCC ceramic without an overcoat. |
 | Solder fillet | A closed solid: concave meniscus z = h(1 − s/reach)² from the termination face to the land's toe, rounding down to the land at both sides as 1 − u⁴ across 92 % of the termination width; h = 0.4 × body height (at most 0.4 mm) | J-STD-001 asks for at least a quarter of the termination height. Only where the end face stands over its land. Also drawn against a generated chip's real terminations while its model frame is the package frame (no datum shift or turn). No vertical side walls: a flat metal wall mirrored the studio's dark lower walls and read as a black hollow. |
 
-There is no silkscreen: the core has no outline or reference-designator graphics yet. The silkscreen colour is saved with the design and will be drawn once legend graphics exist.
+Every display layer carries the copper layer it lies on, or the side a mask or legend film covers, so the 3D view's layer toggles can show and hide it.
 
 ## Package materials
 
@@ -153,7 +159,7 @@ Drawn by the product look from the world position in millimetres (display only).
 
 The weave is a plain weave of continuous warp and weft bundles that rise over one crossing and dip under the next, with filament striations along each bundle; only the windows between four crossings are gaps, so it reads as cloth, not tiles. It and its striations fade out by the time their period falls to about three pixels, so there is no moiré at board distance. Orange peel is a long, shallow waviness (2.4 and 0.9 mm wavelengths, 6 and 1 µm relief, slopes of a few milliradians) so a gloss mask's softbox reflection keeps its shape; all relief fades out toward grazing views. These amplitudes are Solidcraft's visual estimates, lowered after a visual check found the earlier peel turned the softbox into ripples and the weave into a brick-like grid.
 
-Show-through is **est.** No measured print-through value was found in public sources; the mask levels the surface and the weave changes the colour beneath. It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Silkscreen grain is available but unused until legend graphics exist.
+Show-through is **est.** No measured print-through value was found in public sources; the mask levels the surface and the weave changes the colour beneath. It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Legend ink shows the silkscreen grain; the edge bands show the weave per glass style.
 
 ### Pad finishes
 
@@ -167,7 +173,7 @@ Show-through is **est.** No measured print-through value was found in public sou
 
 ### Silkscreen colour
 
-White (default), black or yellow. Saved and exposed to CLI and MCP; not drawn until the board has legend graphics.
+White (default), black or yellow: matte epoxy legend ink (roughness 0.75; reflectance **est.** white 0.78, black 0.03, yellow (0.70, 0.52, 0.04)) with the silkscreen grain, on the sides the stackup prints.
 
 ## PCB 3D look
 

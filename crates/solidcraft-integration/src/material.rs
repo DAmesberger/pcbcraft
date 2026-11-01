@@ -60,10 +60,14 @@ pub enum BodyKind {
     EdgeDielectric,
     /// A copper foil's line at the routed board edge (display-only).
     EdgeCopper,
+    /// The shadowed inside of an open via's drill (display-only). The 3D
+    /// view computes no occlusion, so a narrow plated bore would otherwise
+    /// light up like an open copper face; a real one reads as a dark hole.
+    ViaBore,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 20] = [
+    pub const ALL: [BodyKind; 21] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -84,6 +88,7 @@ impl BodyKind {
         BodyKind::Silkscreen,
         BodyKind::EdgeDielectric,
         BodyKind::EdgeCopper,
+        BodyKind::ViaBore,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -128,6 +133,7 @@ impl BodyKind {
                 | BodyKind::Silkscreen
                 | BodyKind::EdgeDielectric
                 | BodyKind::EdgeCopper
+                | BodyKind::ViaBore
         )
     }
 }
@@ -255,7 +261,7 @@ pub fn weave_show_through(colour: MaskColour) -> f64 {
 /// The procedural detail of `kind` on a board built to `fabrication`.
 pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
     match kind {
-        BodyKind::Substrate => Detail {
+        BodyKind::Substrate | BodyKind::EdgeDielectric => Detail {
             pattern: Pattern::Weave,
             strength: 1.0,
         },
@@ -273,6 +279,10 @@ pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
         }
         BodyKind::MaskCap => Detail {
             pattern: Pattern::MaskPeel,
+            strength: 1.0,
+        },
+        BodyKind::Silkscreen => Detail {
+            pattern: Pattern::Silkscreen,
             strength: 1.0,
         },
         _ => Detail::NONE,
@@ -326,6 +336,9 @@ const INK_WHITE: [f64; 3] = [0.78, 0.78, 0.76];
 const INK_BLACK: [f64; 3] = [0.03, 0.03, 0.03];
 const INK_YELLOW: [f64; 3] = [0.70, 0.52, 0.04];
 const INK_ROUGHNESS: f64 = 0.75;
+/// The inside of a narrow open drill as seen from outside: almost no light
+/// returns from a bore five or more diameters deep (est.).
+const BORE_SHADOW: [f64; 3] = [0.010, 0.009, 0.008];
 /// Barium titanate is n ≈ 2.4; Solidcraft's dielectric IOR is at most 3.
 const MLCC_IOR: f64 = 2.4;
 
@@ -403,8 +416,9 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         | BodyKind::PadCopper
         | BodyKind::ViaCopper
         | BodyKind::EdgeCopper => metal("Copper", COPPER, 0.30),
-        // Stand-in until the edge bands carry the weave detail.
+        // The routed edge of the laminate; its weave is the detail.
         BodyKind::EdgeDielectric => dielectric("FR-4 laminate edge", FR4, 0.60, EPOXY_IOR),
+        BodyKind::ViaBore => dielectric("Shadowed drill", BORE_SHADOW, 0.90, EPOXY_IOR),
         BodyKind::Silkscreen => dielectric(
             "Epoxy legend ink",
             match fabrication.silkscreen_colour {
@@ -887,10 +901,20 @@ mod tests {
             .detail
         };
         for colour in COLOURS {
+            for kind in [BodyKind::Substrate, BodyKind::EdgeDielectric] {
+                assert_eq!(
+                    detail_of(kind, colour),
+                    Detail {
+                        pattern: Pattern::Weave,
+                        strength: 1.0
+                    },
+                    "{kind:?}"
+                );
+            }
             assert_eq!(
-                detail_of(BodyKind::Substrate, colour),
+                detail_of(BodyKind::Silkscreen, colour),
                 Detail {
-                    pattern: Pattern::Weave,
+                    pattern: Pattern::Silkscreen,
                     strength: 1.0
                 }
             );
@@ -931,6 +955,8 @@ mod tests {
                 if !matches!(
                     kind,
                     BodyKind::Substrate
+                        | BodyKind::EdgeDielectric
+                        | BodyKind::Silkscreen
                         | BodyKind::MaskTop
                         | BodyKind::MaskBottom
                         | BodyKind::MaskCap

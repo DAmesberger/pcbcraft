@@ -35,7 +35,7 @@ impl ViewLayer {
             | BodyKind::PadCopper
             | BodyKind::PadFinish
             | BodyKind::EdgeCopper => Self::Copper(layer.unwrap_or(CopperLayer::Top)),
-            BodyKind::ViaCopper => Self::Vias,
+            BodyKind::ViaCopper | BodyKind::ViaBore => Self::Vias,
             BodyKind::PackageBody
             | BodyKind::ChipResistor
             | BodyKind::ChipCapacitor

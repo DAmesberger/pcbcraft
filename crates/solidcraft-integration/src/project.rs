@@ -7,24 +7,26 @@
 //! properties of the saved file are physical. Soldermask, plated finish,
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
-use crate::appearance::{self, Body, Land, Part, Path};
+use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
 use crate::material::{self, BodyKind};
 use crate::models::{self, ModelDefinition, look};
-use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Native, ProfileBody};
+use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
 use pcbcraft_core::{
-    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout,
+    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, ViaSpan,
+    instances, layout,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-const BOARD_THICKNESS_MM: f64 = 1.6;
-const COPPER_THICKNESS_MM: f64 = 0.035;
+/// Segments of an inner via ring's outline: the ring body and the
+/// laminate's cut share it, so the two meet exactly.
+const INNER_RING_SEGMENTS: usize = 64;
 const METADATA_KEY: &str = "org.pcbcraft.electronics";
 /// Body kinds: `org.pcbcraft.electronics.bodies.0`, `.1`, … each
 /// `{kind: [body names]}`, below Solidcraft's 64 KiB value limit.
@@ -623,27 +625,124 @@ fn flat(contour: &Contour) -> Result<Vec<Point>> {
     contour.flatten(FLATTEN_TOLERANCE_MM)
 }
 
+/// The parameter holding a copper layer's foil thickness. The top's is
+/// `copper_thickness`; every other foil as thick follows it.
+fn copper_param(layer: CopperLayer) -> String {
+    match layer {
+        CopperLayer::Top => "copper_thickness".into(),
+        CopperLayer::Bottom => "copper_bottom_thickness".into(),
+        CopperLayer::Inner(n) => format!("copper_inner_{n}_thickness"),
+    }
+}
+
+/// The parameter holding `dielectrics[index]`'s thickness (from 1, top
+/// down).
+fn dielectric_param(index: usize) -> String {
+    format!("dielectric_{}_thickness", index + 1)
+}
+
+/// The board height (an expression) of an inner layer's lower face: the
+/// dielectrics below it, less its foil (inner foils lie at the top of the
+/// dielectric below them, as `Stackup::copper_span` places them).
+fn inner_base(stackup: &Stackup, layer: CopperLayer) -> Result<String> {
+    let index = stackup
+        .index(layer)
+        .ok_or_else(|| Error::Invalid(format!("the stackup has no {} layer", layer.name())))?;
+    let below: Vec<String> = (index..stackup.dielectrics.len())
+        .map(dielectric_param)
+        .collect();
+    Ok(format!("{} - {}", below.join(" + "), copper_param(layer)))
+}
+
+/// The stackup's parameters: each dielectric and foil thickness, the board
+/// (laminate) thickness as their sum, and the board outline.
+fn stackup_params(b: &mut Builder, project: &Project) -> Result<()> {
+    let stackup = &project.stackup;
+    stackup.check().map_err(|e| Error::Invalid(e.to_string()))?;
+    b.param("board_width", project.board_size[0], "mm")?;
+    b.param("board_depth", project.board_size[1], "mm")?;
+    if let [only] = stackup.dielectrics.as_slice() {
+        b.param("board_thickness", only.thickness_mm, "mm")?;
+    } else {
+        let mut sum = Vec::new();
+        for (index, dielectric) in stackup.dielectrics.iter().enumerate() {
+            b.param(&dielectric_param(index), dielectric.thickness_mm, "mm")?;
+            sum.push(dielectric_param(index));
+        }
+        b.native.parameter("board_thickness", sum.join(" + "))?;
+    }
+    let layers = stackup.layers();
+    let top = stackup
+        .copper
+        .first()
+        .map(|c| c.thickness_um)
+        .ok_or_else(|| Error::Invalid("the stackup has no copper".into()))?;
+    for (layer, foil) in layers.iter().zip(&stackup.copper) {
+        let name = copper_param(*layer);
+        if *layer == CopperLayer::Top {
+            b.param(&name, top / 1000.0, "mm")?;
+        } else if foil.thickness_um == top {
+            b.native.parameter(&name, "copper_thickness")?;
+        } else {
+            b.param(&name, foil.thickness_um / 1000.0, "mm")?;
+        }
+    }
+    Ok(())
+}
+
+/// A closed polyline as a sketch contour.
+fn polygon(points: &[Point]) -> Option<Contour> {
+    use pcbcraft_core::library::{Outline, Segment};
+    let (first, rest) = points.split_first()?;
+    let mut segments: Vec<Segment> = rest.iter().map(|&to| Segment::Line { to }).collect();
+    segments.push(Segment::Line { to: *first });
+    Some(Contour::Outline(Outline {
+        start: *first,
+        segments,
+    }))
+}
+
+/// A regular polygon of `INNER_RING_SEGMENTS` sides about a circle (its
+/// vertices on it).
+fn ring_outline(center: Point, radius: f64) -> Vec<Point> {
+    (0..INNER_RING_SEGMENTS)
+        .map(|k| {
+            let a = std::f64::consts::TAU * k as f64 / INNER_RING_SEGMENTS as f64;
+            [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
+        })
+        .collect()
+}
+
+/// A track's copper rectangle on the board.
+fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
+    let d = [end[0] - start[0], end[1] - start[1]];
+    let length = d[0].hypot(d[1]);
+    if length <= 0.0 {
+        return Vec::new();
+    }
+    let n = [-d[1] / length * width / 2.0, d[0] / length * width / 2.0];
+    vec![
+        [start[0] - n[0], start[1] - n[1]],
+        [end[0] - n[0], end[1] - n[1]],
+        [end[0] + n[0], end[1] + n[1]],
+        [start[0] + n[0], start[1] + n[1]],
+    ]
+}
+
 pub fn build(project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
-    if project.stackup != pcbcraft_core::Stackup::default() {
+    if project
+        .vias
+        .iter()
+        .any(|v| !matches!(v.span, ViaSpan::Through))
+    {
         return Err(Error::Invalid(
-            "only the default 2-layer stackup is built in the native model yet".into(),
+            "blind and buried vias are not built in the native model yet".into(),
         ));
     }
-    if !project.vias.is_empty() {
-        return Err(Error::Invalid(
-            "board vias are not built in the native model yet".into(),
-        ));
-    }
+    let stackup = &project.stackup;
     let mut b = Builder::new(&project.name)?;
-    for (name, value) in [
-        ("board_width", project.board_size[0]),
-        ("board_depth", project.board_size[1]),
-        ("board_thickness", BOARD_THICKNESS_MM),
-        ("copper_thickness", COPPER_THICKNESS_MM),
-    ] {
-        b.param(name, value, "mm")?;
-    }
+    stackup_params(&mut b, project)?;
     let board = b.native.component("PCB substrate", true)?.occurrence;
     b.body(
         BodyKind::Substrate,
@@ -661,10 +760,19 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     // Every drill through the laminate, cut in one feature: the holes sit
     // where the pads are placed now (they do not follow placement
     // parameters edited in Solidcraft).
-    let drills: Vec<Contour> = pads
+    let mut drills: Vec<Contour> = pads
         .iter()
         .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
         .collect();
+    if drills.len().saturating_add(project.vias.len()) > MAX_DRILLS {
+        return Err(Error::Invalid(format!(
+            "the board has more than {MAX_DRILLS} drilled holes"
+        )));
+    }
+    drills.extend(project.vias.iter().map(|via| Contour::Circle {
+        center: via.position,
+        radius: via.drill / 2.0,
+    }));
     if !drills.is_empty() {
         b.native.profile_cut(
             "Drills",
@@ -674,6 +782,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             &["Substrate"],
         )?;
     }
+    inner_copper_cuts(&mut b, project)?;
     let mut sources = vec![];
     let mut parts = vec![];
     // Joints of shared definitions wait until every occurrence is placed:
@@ -723,9 +832,10 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                     x: format!("{prefix}_x").into(),
                     y: format!("{prefix}_y").into(),
                     angle: format!("{prefix}_angle").into(),
-                    layer: placement.layer,
+                    mount: placement.layer.into(),
                 },
                 holding_frame(&frame),
+                copper_param(placement.layer.into()),
             ));
             sources.push(Source {
                 pick_id: pick,
@@ -776,10 +886,10 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 x: format!("{prefix}_x").into(),
                 y: format!("{prefix}_y").into(),
                 angle: format!("{prefix}_angle").into(),
-                layer: placement.layer,
+                mount: placement.layer.into(),
             },
             &holding_frame(&frame),
-            Some("copper_thickness"),
+            Some(&copper_param(placement.layer.into())),
         )?;
         let pick = next_pick(&sources);
         // The display-only terminations, overcoat and fillets are drawn in
@@ -807,9 +917,8 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             occurrence: None,
         });
     }
-    for (joint, frame) in shared_joints {
-        b.native
-            .board_joint_at(joint, &frame, Some("copper_thickness"))?;
+    for (joint, frame, lift) in shared_joints {
+        b.native.board_joint_at(joint, &frame, Some(&lift))?;
     }
     let mut lands = Vec::with_capacity(pads.len());
     for pad in &pads {
@@ -873,14 +982,16 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let prefix = format!("instance_{}", pad.placed.instance);
         let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
         let created = b.native.component(&pp, false)?;
-        let land = |b: &mut Builder, name: &str, offset: Expr| -> Result<()> {
+        let near_copper = copper_param(pad.placed.layer.into());
+        let far_copper = copper_param(other(pad.placed.layer).into());
+        let land = |b: &mut Builder, name: &str, offset: Expr, height: &str| -> Result<()> {
             let mut contours = vec![pad.local(&shape)];
             contours.extend(bores.iter().map(|c| pad.local(c)));
             b.native.profile_body(ProfileBody {
                 name,
                 offset,
                 contours: &contours,
-                height: "copper_thickness".into(),
+                height: height.into(),
             })?;
             b.record(name, BodyKind::PadCopper)
         };
@@ -903,17 +1014,18 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                             format!("-{y} / 2").into(),
                             0.into(),
                         ],
-                        size: [x.into(), y.into(), "copper_thickness".into()],
+                        size: [x.into(), y.into(), near_copper.as_str().into()],
                     },
                 )?;
             }
-            None => land(&mut b, &pp, 0.into())?,
+            None => land(&mut b, &pp, 0.into(), &near_copper)?,
         }
         if copper == Copper::Through {
             land(
                 &mut b,
                 &format!("{pp}_opposite"),
-                "- board_thickness - copper_thickness".into(),
+                format!("- board_thickness - {far_copper}").into(),
+                &far_copper,
             )?;
         }
         for (index, [drill, bore]) in pad.barrels().iter().enumerate() {
@@ -937,7 +1049,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             x: x.into(),
             y: y.into(),
             angle: format!("{prefix}_angle").into(),
-            layer: pad.placed.layer,
+            mount: pad.placed.layer.into(),
         })?;
         sources.push(Source {
             pick_id: pick,
@@ -954,11 +1066,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let mut paths = Vec::with_capacity(project.tracks.len());
     for track in &project.tracks {
-        let Some(side) = track.layer.side() else {
-            return Err(Error::Invalid(format!(
-                "inner-layer copper ({}) is not built in the native model yet",
-                track.layer.name()
-            )));
+        let mount = match track.layer.side() {
+            Some(side) => Mount::Side(side),
+            None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
         for (suffix, value) in [
@@ -981,7 +1091,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 size: [
                     length.into(),
                     format!("{prefix}_width").into(),
-                    "copper_thickness".into(),
+                    copper_param(track.layer).into(),
                 ],
             },
         )?;
@@ -991,16 +1101,19 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             x: format!("{prefix}_x0").into(),
             y: format!("{prefix}_y0").into(),
             angle: angle.into(),
-            layer: side,
+            mount,
         })?;
         let pick = next_pick(&sources);
-        paths.push(Path {
-            pick,
-            start: track.start,
-            end: track.end,
-            width: track.width,
-            layer: side,
-        });
+        // Inner copper is buried: no mask cap or finish over it.
+        if let Some(side) = track.layer.side() {
+            paths.push(Path {
+                pick,
+                start: track.start,
+                end: track.end,
+                width: track.width,
+                layer: side,
+            });
+        }
         sources.push(Source {
             pick_id: pick,
             instance: None,
@@ -1014,21 +1127,184 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             occurrence: None,
         });
     }
+    let display = appearance::Board::of(project);
+    let marks = vias(&mut b, project, board, &mut sources)?;
+    for mark in &marks {
+        lands.extend(mark.lands(&display));
+    }
     let mut model = b.finish(sources)?;
-    let layers = appearance::board(
-        &appearance::Board {
-            width: project.board_size[0],
-            depth: project.board_size[1],
-            thickness: BOARD_THICKNESS_MM,
-            copper: COPPER_THICKNESS_MM,
-            fabrication: project.fabrication,
-        },
-        &lands,
-        &paths,
-        &parts,
-    )?;
+    let picks: BTreeMap<Id, u64> = model
+        .sources
+        .iter()
+        .filter(|s| s.pad.is_none())
+        .filter_map(|s| s.instance.map(|i| (i, s.pick_id)))
+        .collect();
+    let layers = appearance::board(&display, &lands, &paths, &marks, &parts)?;
     model.geometry.extend(layers);
+    model.geometry.extend(crate::silkscreen::films(
+        project,
+        &crate::silkscreen::Legend {
+            board: &display,
+            lands: &lands,
+            paths: &paths,
+            vias: &marks,
+            picks: &picks,
+        },
+    )?);
+    model
+        .geometry
+        .extend(crate::stackup_edge::bands(stackup, &display)?);
     Ok(model)
+}
+
+/// Every board via as saved copper: its plated barrel through the laminate
+/// and an annular ring on each copper layer it joins, in one component
+/// held upright on the board at the via's position parameters. Returns
+/// what the display layers draw of each.
+fn vias(
+    b: &mut Builder,
+    project: &Project,
+    board: u64,
+    sources: &mut Vec<Source>,
+) -> Result<Vec<ViaMark>> {
+    let stackup = &project.stackup;
+    let layers = stackup.layers();
+    let mut marks = Vec::with_capacity(project.vias.len());
+    for via in &project.vias {
+        let prefix = format!("via_{}", via.id);
+        b.param(&format!("{prefix}_x"), via.position[0], "mm")?;
+        b.param(&format!("{prefix}_y"), via.position[1], "mm")?;
+        let created = b.native.component(&prefix, false)?;
+        let drill = via.drill / 2.0;
+        let bore = drill - PLATING_MM;
+        let ring = via.diameter / 2.0;
+        let circle = |radius| Contour::Circle {
+            center: [0.0, 0.0],
+            radius,
+        };
+        if bore > 0.0 {
+            let name = format!("{prefix}_barrel");
+            b.native.profile_body(ProfileBody {
+                name: &name,
+                offset: 0.into(),
+                contours: &[circle(drill), circle(bore)],
+                height: "board_thickness".into(),
+            })?;
+            b.record(&name, BodyKind::ViaCopper)?;
+        }
+        for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
+            let name = format!("{prefix}_ring_{}", layer_slug(*layer));
+            let height = copper_param(*layer);
+            // Outer rings cap the barrel; inner rings stand round it.
+            let (offset, contours): (Expr, Vec<Contour>) = match layer {
+                CopperLayer::Top => ("board_thickness".into(), vec![circle(ring), circle(bore)]),
+                CopperLayer::Bottom => (
+                    format!("- {height}").into(),
+                    vec![circle(ring), circle(bore)],
+                ),
+                CopperLayer::Inner(_) => (
+                    inner_base(stackup, *layer)?.into(),
+                    vec![
+                        polygon(&ring_outline([0.0, 0.0], ring))
+                            .ok_or_else(|| Error::Invalid("empty via ring".into()))?,
+                        circle(drill),
+                    ],
+                ),
+            };
+            if bore <= 0.0 && layer.side().is_some() {
+                continue;
+            }
+            b.native.profile_body(ProfileBody {
+                name: &name,
+                offset,
+                contours: &contours,
+                height: height.as_str().into(),
+            })?;
+            b.record(&name, BodyKind::ViaCopper)?;
+        }
+        b.native.board_joint(BoardJoint {
+            board,
+            occurrence: created.occurrence,
+            x: format!("{prefix}_x").into(),
+            y: format!("{prefix}_y").into(),
+            angle: 0.into(),
+            mount: Mount::Height(0.into()),
+        })?;
+        let pick = next_pick(sources);
+        sources.push(Source {
+            pick_id: pick,
+            instance: None,
+            pad: None,
+            track: None,
+            via: Some(via.id),
+            net: Some(via.net),
+            layer: None,
+            label: format!("Via {}", via.id),
+            component: created.component,
+            occurrence: None,
+        });
+        marks.push(ViaMark {
+            pick,
+            at: via.position,
+            drill: via.drill,
+            diameter: via.diameter,
+            tented: via.tented,
+        });
+    }
+    Ok(marks)
+}
+
+/// A copper layer's name in body names.
+fn layer_slug(layer: CopperLayer) -> String {
+    match layer {
+        CopperLayer::Top => "top".into(),
+        CopperLayer::Bottom => "bottom".into(),
+        CopperLayer::Inner(n) => format!("inner_{n}"),
+    }
+}
+
+/// Inner copper is embedded in the laminate: cut the union of each inner
+/// layer's copper (tracks and via rings) out of the substrate at its
+/// height, in one feature per layer, so the saved bodies stay disjoint and
+/// the laminate's mass is physical. Like the drills, the cuts sit where the
+/// copper is now.
+fn inner_copper_cuts(b: &mut Builder, project: &Project) -> Result<()> {
+    let stackup = &project.stackup;
+    let layers = stackup.layers();
+    for layer in layers.iter().filter(|l| l.side().is_none()) {
+        let mut loops: Vec<Vec<Point>> = project
+            .tracks
+            .iter()
+            .filter(|t| t.layer == *layer)
+            .map(|t| track_outline(t.start, t.end, t.width))
+            .filter(|l| !l.is_empty())
+            .collect();
+        loops.extend(
+            project
+                .vias
+                .iter()
+                .filter(|v| v.on(*layer, &layers))
+                .map(|v| ring_outline(v.position, v.diameter / 2.0)),
+        );
+        if loops.is_empty() {
+            continue;
+        }
+        let outline = appearance::union(&loops).ok_or_else(|| {
+            Error::Invalid(format!("{} has too much copper to model", layer.name()))
+        })?;
+        let contours: Vec<Contour> = outline.iter().filter_map(|l| polygon(l)).collect();
+        if contours.is_empty() {
+            continue;
+        }
+        b.native.profile_cut(
+            &format!("{} copper", layer.name()),
+            inner_base(stackup, *layer)?.into(),
+            &contours,
+            copper_param(*layer).into(),
+            &["Substrate"],
+        )?;
+    }
+    Ok(())
 }
 
 /// The native envelope of one package definition, draft or published, with
@@ -1118,5 +1394,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
     b.finish(vec![])
 }
 
+#[cfg(test)]
+mod realism_tests;
 #[cfg(test)]
 mod tests;
