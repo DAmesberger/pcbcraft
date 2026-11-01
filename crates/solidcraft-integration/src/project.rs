@@ -24,17 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-const METADATA_KEY: &str = "org.pcbcraft.electronics";
-/// Body kinds: `org.pcbcraft.electronics.bodies.0`, `.1`, … each
-/// `{kind: [body names]}`, below Solidcraft's 64 KiB value limit.
-const BODIES_KEY: &str = "org.pcbcraft.electronics.bodies.";
-const BODIES_CHUNK_BYTES: usize = 48 * 1024;
-/// Solidcraft allows 256 metadata keys; leave room for others.
-const MAX_BODY_CHUNKS: usize = 200;
-
 /// Which Pcbcraft object a native body came from. Stored in the native file's
-/// metadata so identity survives reopening. Absent fields are left out of
-/// the file, so a board's sources fit Solidcraft's bounded metadata.
+/// metadata so identity survives reopening, compactly ([`identity`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
     pub pick_id: u64,
@@ -173,254 +164,15 @@ impl Builder {
                     .appearance(&names, &material::material(kind, &Fabrication::default()))?;
             }
         }
-        // Vias are recorded compactly on their own (a board has thousands
-        // and Solidcraft's metadata is bounded); the rest one by one.
-        let others: Vec<&Source> = sources.iter().filter(|s| s.via.is_none()).collect();
-        let listed = source_chunks(&others)?;
-        let mut listed = listed.into_iter();
-        let first = listed.next().unwrap_or_default();
-        self.native
-            .set_metadata(METADATA_KEY, json!({"version": 1, "sources": first}))?;
-        for (index, chunk) in listed.enumerate() {
-            self.native.set_metadata(
-                &format!("{SOURCES_KEY}{}", index + 1),
-                json!({"sources": chunk}),
-            )?;
-        }
-        for (index, chunk) in saved_vias(&sources)?.iter().enumerate() {
-            self.native
-                .set_metadata(&format!("{VIAS_KEY}{index}"), json!(chunk))?;
-        }
-        let chunks = kind_chunks(&self.bodies)?;
-        for (index, chunk) in chunks.iter().enumerate() {
-            self.native
-                .set_metadata(&format!("{BODIES_KEY}{index}"), json!(chunk))?;
-        }
+        identity::write(&mut self.native, &sources, &self.bodies)?;
         models::record(&mut self.native, &self.models)?;
         finish_with(self.native, sources, self.models)
     }
 }
 
-/// Board vias as the native file records them: `org.pcbcraft.electronics.vias.0`,
-/// `.1`, … each a run of vias of one definition, in placement order, with
-/// occurrence and via ids as differences from the one before and nets as
-/// runs, so ten thousand vias take a few tens of KiB.
-const VIAS_KEY: &str = "org.pcbcraft.electronics.vias.";
-/// Vias per record: well below Solidcraft's 64 KiB a value even with
-/// 20-digit ids and a net change at every via.
-const VIAS_PER_RECORD: usize = 512;
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-struct SavedVias {
-    component: u64,
-    /// Each occurrence less the one before (the first less 0).
-    occurrences: Vec<i128>,
-    /// Each via id less the one before.
-    vias: Vec<i128>,
-    /// `(net, count)`: the next `count` vias are on `net`.
-    nets: Vec<(Id, usize)>,
-}
-
-/// Differences of consecutive values, the first from 0.
-fn deltas(values: impl Iterator<Item = u64>) -> Vec<i128> {
-    let mut last = 0i128;
-    values
-        .map(|v| {
-            let v = i128::from(v);
-            let d = v - last;
-            last = v;
-            d
-        })
-        .collect()
-}
-
-/// The values [`deltas`] were taken of; `None` when one leaves `u64`.
-fn undelta(deltas: &[i128]) -> Option<Vec<u64>> {
-    let mut last = 0i128;
-    deltas
-        .iter()
-        .map(|d| {
-            last = last.checked_add(*d)?;
-            u64::try_from(last).ok()
-        })
-        .collect()
-}
-
-/// The via sources as records of [`VIAS_PER_RECORD`] vias of one
-/// definition each.
-fn saved_vias(sources: &[Source]) -> Result<Vec<SavedVias>> {
-    let vias: Vec<&Source> = sources.iter().filter(|s| s.via.is_some()).collect();
-    let mut out = Vec::new();
-    let mut runs: BTreeMap<u64, Vec<&Source>> = BTreeMap::new();
-    for source in vias {
-        runs.entry(source.component).or_default().push(source);
-    }
-    for (component, run) in runs {
-        for chunk in run.chunks(VIAS_PER_RECORD) {
-            let occurrence = |s: &Source| {
-                s.occurrence
-                    .ok_or_else(|| Error::Verification(format!("{} has no occurrence", s.label)))
-            };
-            let occurrences = chunk
-                .iter()
-                .map(|s| occurrence(s))
-                .collect::<Result<Vec<_>>>()?;
-            let mut nets: Vec<(Id, usize)> = Vec::new();
-            for s in chunk {
-                let net = s.net.unwrap_or_default();
-                match nets.last_mut() {
-                    Some((last, count)) if *last == net => *count += 1,
-                    _ => nets.push((net, 1)),
-                }
-            }
-            out.push(SavedVias {
-                component,
-                occurrences: deltas(occurrences.into_iter()),
-                vias: deltas(chunk.iter().filter_map(|s| s.via)),
-                nets,
-            });
-        }
-    }
-    Ok(out)
-}
-
-/// Sources listed one by one past the first value's: `org.pcbcraft.electronics.sources.1`, `.2`, …
-const SOURCES_KEY: &str = "org.pcbcraft.electronics.sources.";
-
-/// `sources` split into lists of at most [`BODIES_CHUNK_BYTES`] serialized.
-fn source_chunks<'a>(sources: &[&'a Source]) -> Result<Vec<Vec<&'a Source>>> {
-    let mut chunks: Vec<Vec<&Source>> = vec![Vec::new()];
-    let mut size = 2;
-    for source in sources {
-        let entry = serde_json::to_string(source)?.len() + 1;
-        if entry + 2 > BODIES_CHUNK_BYTES {
-            return Err(Error::Invalid(format!(
-                "{} is too large to record",
-                source.label
-            )));
-        }
-        if size + entry > BODIES_CHUNK_BYTES {
-            chunks.push(Vec::new());
-            size = 2;
-        }
-        if let Some(chunk) = chunks.last_mut() {
-            chunk.push(source);
-            size += entry;
-        }
-    }
-    Ok(chunks)
-}
-
-/// Every source a saved native model records: the objects listed one by
-/// one, then its vias, numbered on from them.
+/// Every source a saved native model records, in pick order.
 pub fn saved_sources(native: &Native) -> Result<Vec<Source>> {
-    let metadata = &native.session().doc.metadata.0;
-    let listed = metadata
-        .get(METADATA_KEY)
-        .and_then(|m| m.get("sources"))
-        .cloned()
-        .ok_or_else(|| Error::Verification("native model has no Pcbcraft sources".into()))?;
-    let mut sources: Vec<Source> = serde_json::from_value(listed)?;
-    for index in 1usize.. {
-        let Some(value) = metadata.get(&format!("{SOURCES_KEY}{index}")) else {
-            break;
-        };
-        let listed = value.get("sources").cloned().unwrap_or_default();
-        sources.extend(serde_json::from_value::<Vec<Source>>(listed)?);
-    }
-    for index in 0usize.. {
-        let Some(value) = metadata.get(&format!("{VIAS_KEY}{index}")) else {
-            break;
-        };
-        let saved: SavedVias = serde_json::from_value(value.clone())?;
-        let broken = || Error::Verification(format!("via record {index} is inconsistent"));
-        let occurrences = undelta(&saved.occurrences).ok_or_else(broken)?;
-        let vias = undelta(&saved.vias).ok_or_else(broken)?;
-        let nets: Vec<Id> = saved
-            .nets
-            .iter()
-            .flat_map(|(net, count)| std::iter::repeat_n(*net, *count))
-            .take(vias.len().saturating_add(1))
-            .collect();
-        if occurrences.len() != vias.len() || nets.len() != vias.len() {
-            return Err(broken());
-        }
-        let mut pick = sources.iter().map(|s| s.pick_id).max().unwrap_or(0);
-        for ((occurrence, via), net) in occurrences.into_iter().zip(vias).zip(nets) {
-            pick = pick.saturating_add(1);
-            sources.push(Source {
-                pick_id: pick,
-                instance: None,
-                pad: None,
-                track: None,
-                via: Some(via),
-                net: Some(net),
-                layer: None,
-                label: format!("Via {via}"),
-                component: saved.component,
-                occurrence: Some(occurrence),
-            });
-        }
-    }
-    Ok(sources)
-}
-
-/// The body → kind map split over metadata values: Solidcraft caps each
-/// value at 64 KiB. Sizes are measured as serialized (escaping included).
-fn kind_chunks(bodies: &BTreeMap<String, BodyKind>) -> Result<Vec<BTreeMap<BodyKind, Vec<&str>>>> {
-    let mut chunks: Vec<BTreeMap<BodyKind, Vec<&str>>> = vec![BTreeMap::new()];
-    let mut size = 2;
-    for (name, kind) in bodies {
-        // The escaped name and its comma, plus the kind's key, colon and
-        // brackets when it is the chunk's first body of that kind.
-        let entry = serde_json::to_string(name)?.len() + 1;
-        let key = serde_json::to_string(kind)?.len() + 4;
-        let new_kind = chunks.last().is_some_and(|c| !c.contains_key(kind));
-        let needed = entry + if new_kind { key } else { 0 };
-        if needed + 2 > BODIES_CHUNK_BYTES {
-            return Err(Error::Invalid(format!("body name too long: {name}")));
-        }
-        if size + needed > BODIES_CHUNK_BYTES {
-            chunks.push(BTreeMap::new());
-            size = 2;
-        }
-        if let Some(chunk) = chunks.last_mut() {
-            if !chunk.contains_key(kind) {
-                size += key;
-            }
-            chunk.entry(*kind).or_default().push(name);
-            size += entry;
-        }
-    }
-    if chunks.len() > MAX_BODY_CHUNKS {
-        return Err(Error::Invalid(
-            "the model has too many bodies to record their kinds".into(),
-        ));
-    }
-    Ok(chunks)
-}
-
-/// The body → kind map stored with the model.
-fn body_kinds(native: &Native) -> Result<BTreeMap<String, BodyKind>> {
-    let metadata = serde_json::to_value(&native.session().doc.metadata)?;
-    let mut kinds = BTreeMap::new();
-    for (key, value) in metadata.as_object().into_iter().flatten() {
-        if !key.starts_with(BODIES_KEY) {
-            continue;
-        }
-        let chunk: BTreeMap<BodyKind, Vec<String>> = serde_json::from_value(value.clone())?;
-        for (kind, names) in chunk {
-            for name in names {
-                kinds.insert(name, kind);
-            }
-        }
-    }
-    if kinds.is_empty() {
-        return Err(Error::Verification(
-            "native model has no Pcbcraft body kinds".into(),
-        ));
-    }
-    Ok(kinds)
+    Ok(identity::read(native)?.0)
 }
 
 /// The pick of every world body that places a shared generated-model
@@ -521,7 +273,7 @@ fn finish_with(
     if let Some(error) = native.evaluation_error() {
         return Err(Error::Verification(error));
     }
-    let kinds = body_kinds(&native)?;
+    let (_, kinds) = identity::read(&native)?;
     let generated = models::recorded(&native)?;
     let shared = shared_picks(&native, &sources)?;
     let doc = &native.session().doc;
@@ -1809,6 +1561,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
     b.finish(vec![])
 }
 
+mod identity;
 #[cfg(test)]
 mod realism_tests;
 #[cfg(test)]

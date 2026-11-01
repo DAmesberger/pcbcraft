@@ -22,9 +22,11 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 
 mod copper;
 pub mod courtyard;
+mod grid;
 mod placed;
 pub mod showcase;
 pub mod via;
+use copper::CHECK_REACH_MM;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
@@ -40,7 +42,11 @@ pub use via::{
     LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest, via_pad_clearance_conflict,
     via_touches_pad,
 };
-const MAX_CHECK_PAIRS: usize = 100_000;
+/// Most nearby copper pairs one check compares (shapes whose bounds come
+/// within [`copper::CHECK_REACH_MM`]; farther pairs are never compared, so
+/// a board of the most vias, pads and tracks is checked whole). Only
+/// copper piled on copper reaches it.
+const MAX_CHECK_PAIRS: usize = 1_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
@@ -602,20 +608,40 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     validate(project)?;
     let copper = BoardCopper::of(project);
     let track_rings: Vec<CopperRing> = project.tracks.iter().map(CopperRing::of_track).collect();
+    let layers = project.stackup.layers();
+    let via_rings: Vec<CopperRing> = project.vias.iter().map(CopperRing::of_via).collect();
+    let track_grid = grid::BoundsGrid::new(track_rings.iter().map(|r| r.bounds), CHECK_REACH_MM);
+    let via_grid = grid::BoundsGrid::new(via_rings.iter().map(|r| r.bounds), CHECK_REACH_MM);
+    let pad_grid = grid::BoundsGrid::new(
+        (0..copper.pads().len()).map(|k| copper.ring(k).and_then(|r| r.bounds)),
+        CHECK_REACH_MM,
+    );
+    let mut near = Vec::new();
     let mut check_pairs = 0usize;
+    let mut budget = |pairs: usize| {
+        check_pairs = check_pairs.saturating_add(pairs);
+        if check_pairs > MAX_CHECK_PAIRS {
+            return Err(Error::Limit(
+                "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
+            ));
+        }
+        Ok(())
+    };
     for (track, ring) in project
         .tracks
         .iter()
         .zip(&track_rings)
         .filter(|(t, _)| changed.contains(&t.id))
     {
-        for (other, other_ring) in project.tracks.iter().zip(&track_rings) {
-            check_pairs += 1;
-            if check_pairs > MAX_CHECK_PAIRS {
-                return Err(Error::Limit(
-                    "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
-                ));
-            }
+        let Some(bounds) = ring.bounds else {
+            continue;
+        };
+        track_grid.near(&bounds, CHECK_REACH_MM, &mut near);
+        budget(near.len())?;
+        for (other, other_ring) in near
+            .iter()
+            .filter_map(|k| Some((project.tracks.get(*k)?, track_rings.get(*k)?)))
+        {
             if other.id != track.id
                 && other.layer == track.layer
                 && other.net != track.net
@@ -627,25 +653,29 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                 )));
             }
         }
-        check_pairs = check_pairs.saturating_add(project.vias.len());
-        if check_pairs > MAX_CHECK_PAIRS {
-            return Err(Error::Limit(
-                "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
-            ));
-        }
-        if let Some(via) = via::track_violates_via(project, track, ring) {
+        via_grid.near(&bounds, CHECK_REACH_MM, &mut near);
+        budget(near.len())?;
+        if let Some(via) = near
+            .iter()
+            .filter_map(|k| Some((project.vias.get(*k)?, via_rings.get(*k)?)))
+            .find(|(via, via_ring)| {
+                via.net != track.net
+                    && via.on(track.layer, &layers)
+                    && ring.violates_clearance(via_ring)
+            })
+            .map(|(via, _)| via)
+        {
             return Err(Error::Conflict(format!(
                 "Too close to a via on {}: needs 0.2 mm",
                 project.net_name(via.net)
             )));
         }
-        for (index, pad) in copper.pads().iter().enumerate() {
-            check_pairs += 1;
-            if check_pairs > MAX_CHECK_PAIRS {
-                return Err(Error::Limit(
-                    "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
-                ));
-            }
+        pad_grid.near(&bounds, CHECK_REACH_MM, &mut near);
+        budget(near.len())?;
+        for index in near.iter().copied() {
+            let Some(pad) = copper.pads().get(index) else {
+                continue;
+            };
             if pad.on(track.layer)
                 && pad.net != track.net
                 && copper
