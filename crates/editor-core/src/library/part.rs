@@ -192,6 +192,7 @@ impl PartDefinition {
         let named = |r: crate::ids::DefinitionRef| super::names::capitalised(&library.describe(r));
         if let Some(mark) = &self.top_mark {
             out.extend(super::marking::spec_findings(id, mark));
+            out.extend(super::marking::artwork_findings(library, id, mark));
         }
         if !printable(&self.manufacturer) || !printable(&self.mpn) {
             out.push(issue(

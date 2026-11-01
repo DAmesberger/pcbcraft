@@ -62,9 +62,17 @@ fn corrupted_or_newer_records_do_not_hide_other_recoveries() -> Result<()> {
     let broken = directory.path().join("session-broken.pcbcraft-recovery");
     std::fs::write(&broken, b"broken")?;
     let newer = directory.path().join("session-newer.pcbcraft-recovery");
-    let mut record = read(valid.path())?;
-    record.version = 999;
-    std::fs::write(&newer, serde_json::to_vec(&record)?)?;
+    let meta = RecoveryMeta {
+        version: 999,
+        original_path: None,
+        saved_unix_ms: 1,
+    };
+    container::write(
+        &newer,
+        &Engine::demo()?.to_file(),
+        Some(&serde_json::to_vec(&meta)?),
+        Method::Stored,
+    )?;
     let entries = list(directory.path())?;
     assert_eq!(entries.len(), 3);
     assert_eq!(entries.iter().filter(|e| e.error.is_some()).count(), 2);
@@ -95,5 +103,45 @@ fn discard_is_limited_to_direct_regular_session_files() -> Result<()> {
         assert!(list(directory.path())?.is_empty());
         assert!(other.exists());
     }
+    Ok(())
+}
+
+/// Recovery snapshots are containers: assets survive a restore, a listing
+/// reads only the document and metadata, and a damaged asset is refused at
+/// restore while the listing still shows the snapshot.
+#[test]
+fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()> {
+    use crate::persistence::container::tests::{noise, packed, with_assets};
+    let directory = tempfile::tempdir()?;
+    let store = RecoveryStore::new(directory.path())?;
+    let asset = packed(noise(3 * 1024 * 1024, 11), "model/step");
+    let document = with_assets(vec![asset.clone()])?;
+    store.write(&document, None)?;
+    assert_eq!(read(store.path())?.document, document);
+    let entries = list(directory.path())?;
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].error.is_none());
+
+    // Damage the stored asset bytes in place.
+    let mut bytes = std::fs::read(store.path())?;
+    let at = bytes
+        .windows(32)
+        .position(|w| w == &asset.data[..32])
+        .ok_or_else(|| Error::Invalid("stored asset bytes".into()))?;
+    bytes[at + 1000] ^= 0x5A;
+    std::fs::write(store.path(), &bytes)?;
+    assert!(read(store.path()).is_err());
+    let entries = list(directory.path())?;
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].error.is_none());
+
+    // A plain project container is not a recovery snapshot.
+    let project = directory.path().join("session-project.pcbcraft-recovery");
+    crate::persistence::container::write_container(&project, &document)?;
+    let refused = read(&project)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(refused.contains("has no recovery.json"), "{refused}");
     Ok(())
 }

@@ -1,87 +1,23 @@
-//! Contract C0 (docs/library-pins-3d-contract.md): the new kinds, commands
-//! and queries exist on the wire, refuse explicitly until their slice
-//! lands, and leave the document unchanged; existing files are unchanged
-//! by the new optional fields.
+//! What the library/pins/3D contract (C0) still pins now that every slice
+//! is integrated: empty drafts of the new kinds refuse to publish, existing
+//! documents are unchanged by the new optional fields, and the new schemas
+//! are served. Behaviour of each command and query is tested by its slice.
 use super::support::*;
-use crate::diagnostics::Error;
-use crate::ids::{DefinitionKind, Id};
-use crate::{Engine, Operation, Query};
+use crate::ids::DefinitionKind;
+use crate::{Engine, Operation};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-fn unsupported<T: std::fmt::Debug>(result: crate::Result<T>) -> bool {
-    matches!(result, Err(Error::Unsupported(_)))
-}
-
-#[test]
-fn new_queries_refuse_as_unsupported() -> Fallible<()> {
-    let engine = Engine::demo()?;
-    let instance = engine
-        .project()
-        .instances
-        .first()
-        .map(|i| i.id)
-        .ok_or("instance")?;
-    let queries = [
-        Query::Models {
-            query: "pins:8".into(),
-            fits: None,
-            limit: None,
-        },
-        Query::SuggestPins {
-            instance,
-            request: crate::functions::suggest::SuggestRequest {
-                enable: vec![],
-                keep_existing: true,
-                avoid: vec![],
-                limit: None,
-            },
-        },
-        Query::PinReport { instance },
-        Query::PinConfig { instance },
-        Query::Marking { instance },
-    ];
-    for query in queries {
-        let shown = format!("{query:?}");
-        assert!(unsupported(engine.query(query)), "{shown}");
-    }
-    Ok(())
-}
-
-#[test]
-fn new_commands_refuse_and_change_nothing() -> Fallible<()> {
-    let mut engine = Engine::demo()?;
-    let instance: Id = engine
-        .project()
-        .instances
-        .first()
-        .map(|i| i.id)
-        .ok_or("instance")?;
-    let revision = engine.revision();
-    let before = engine.to_file();
-    let operation = Operation::Instance(crate::InstanceCommand::SetMarking {
-        instance,
-        marking: Default::default(),
-    });
-    assert!(unsupported(engine.apply(revision, operation)));
-    let operation = Operation::Instance(crate::InstanceCommand::SetPinConfig {
-        instance,
-        edits: vec![],
-    });
-    assert!(unsupported(engine.apply(revision, operation)));
-    assert_eq!(engine.revision(), revision);
-    assert_eq!(engine.to_file(), before);
-    Ok(())
-}
 
 #[test]
 fn model_and_empty_row_drafts_cannot_publish() -> Fallible<()> {
     let mut engine = Engine::default();
-    // B1: an empty row has no family (`package_row.family`); a valid row
-    // publishes (catalog/templates/tests.rs).
+    // An empty model has no asset (`model.asset`); an empty row has no
+    // family (`package_row.family`). Valid ones publish (model3d and
+    // catalog/templates tests).
     for kind in [DefinitionKind::Model, DefinitionKind::PackageRow] {
         let draft = new_draft(&mut engine, kind)?;
         let revision = engine.revision();
+        let before = engine.to_file();
         let published = engine.apply(
             revision,
             Operation::Library(crate::LibraryCommand::Publish {
@@ -90,6 +26,7 @@ fn model_and_empty_row_drafts_cannot_publish() -> Fallible<()> {
         );
         assert!(published.is_err(), "{kind:?}");
         assert_eq!(engine.revision(), revision);
+        assert_eq!(engine.to_file(), before);
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Slices B2a–d (contract C0): typed parameter rows of the later package
+//! Slices B2a–d: typed parameter rows of the later package
 //! families in the 3D tab Body section, one file per family under
 //! `family_rows/`. `model_body::form_rows` dispatches here.
 use egui::Ui;

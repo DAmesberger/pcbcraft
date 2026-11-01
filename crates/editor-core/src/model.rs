@@ -53,7 +53,8 @@ pub struct ComponentInstance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<PartRef>,
     /// C2: per-terminal pin configuration (pull, speed, initial level,
-    /// firmware name). Never changes ERC.
+    /// firmware name). Never changes function ERC directly;
+    /// pin rules may read it through `option(…)`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub pin_config: crate::functions::PinConfigs,
     /// D4: the instance's marking choices.

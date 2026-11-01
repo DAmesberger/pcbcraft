@@ -197,9 +197,20 @@ pub enum LibraryCommand {
     /// `base`. Imported rows stay unreviewed.
     #[serde(rename = "library.pinout_apply")]
     PinoutApply(Box<PinoutApply>),
-    /// D1: pack a model's asset bytes and create a Model draft.
+    /// D1: pack a model's asset bytes and create a Model draft; with
+    /// `assign`, also use it in a package draft, one undo step.
     #[serde(rename = "library.import_model")]
     ImportModel(Box<ImportModel>),
+    /// D4: apply `library.edit`'s 1–16 draft edits and pack the 1–8 SVG
+    /// artwork files their markings name (`image/svg+xml` text of at most
+    /// 1 MiB, each named by an `Artwork` item of an edited component
+    /// marking or Part top mark), as one undo step; any refusal changes
+    /// nothing.
+    #[serde(rename = "library.pack_artwork")]
+    PackArtwork {
+        edits: Vec<DraftEdit>,
+        artwork: Vec<library::PackedAsset>,
+    },
 }
 
 fn package_draft(
@@ -538,11 +549,19 @@ pub(crate) fn apply_library(
             })
         }
         LibraryCommand::Edit { edits } => {
+            let before =
+                super::assets::named_by_drafts(&document.drafts, edits.iter().map(|e| e.id));
             drafts::edit(Arc::make_mut(&mut document.drafts), edits)?;
+            super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
+        LibraryCommand::PackArtwork { edits, artwork } => {
+            super::marking::pack_artwork(document, edits, artwork)
+        }
         LibraryCommand::DiscardDraft { id } => {
+            let before = super::assets::named_by_drafts(&document.drafts, [id]);
             drafts::discard(Arc::make_mut(&mut document.drafts), id)?;
+            super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
         LibraryCommand::Publish { drafts } => {
@@ -820,6 +839,30 @@ pub(crate) fn apply_library(
             super::templates::save_package_row(document, *request)
         }
         LibraryCommand::PinoutApply(request) => super::pinout::apply(document, *request),
-        LibraryCommand::ImportModel(request) => super::model3d::import_model(document, *request),
+        LibraryCommand::ImportModel(request) => {
+            let assign = request.assign.clone();
+            let outcome = super::model3d::import_model(document, *request)?;
+            if let (Some(assign), Outcome::DraftCreated { id }) = (assign, &outcome) {
+                // The new model used by the package draft through
+                // `library.edit_package`'s own path: one undo step.
+                let revision = document
+                    .drafts
+                    .get(*id)
+                    .and_then(|d| d.pending())
+                    .ok_or_else(|| Error::NotFound("The new model draft is missing".into()))?;
+                let edits = [PackageEdit::SetModel(library::PackageModel::Library(
+                    library::model3d::LibraryModel {
+                        model: crate::ids::ModelRef::new(*id, revision),
+                        lead_map: assign.lead_map,
+                    },
+                ))];
+                let (current, package) = package_draft(document, assign.package)?;
+                let footprint = landing_footprint(document, assign.package).ok();
+                let edited = package_fit::edit_package_in(package, footprint, &edits)?;
+                let meta = current.meta.clone();
+                store_package(document, assign.package, meta, edited)?;
+            }
+            Ok(outcome)
+        }
     }
 }

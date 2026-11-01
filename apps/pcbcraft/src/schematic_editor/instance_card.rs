@@ -117,8 +117,9 @@ impl SchematicEditor {
         }
         output = output.or(self.property_rows(ui, project, instance));
         output = output.or(self.part_section(ui, engine, instance));
-        output = output.or(self.function_section(ui, project, instance));
-        // C6 and D6 (contract C0): Pin assignment… and the Marking row.
+        output = output.or(self.function_section(ui, engine, instance));
+        // C6: the docked pin-mux panel, opened by Pin assignment… above;
+        // D6: the Marking row.
         output = output.or(crate::pin_mux::entry(ui, engine, instance));
         output.or(super::marking_row::row(ui, engine, instance))
     }
@@ -326,15 +327,17 @@ impl SchematicEditor {
         output
     }
 
-    /// PIN FUNCTIONS, folded by default: a live choice per multi-function
-    /// terminal, then the fixed terminals read-only. A terminal with no
+    /// PIN FUNCTIONS, folded by default unless the component declares
+    /// peripherals: Pin assignment… (C6) when it does, a live choice per
+    /// multi-function terminal, then the fixed terminals read-only. A terminal with no
     /// active function is an Issue, not a line here.
     fn function_section(
         &mut self,
         ui: &mut egui::Ui,
-        project: &Project,
+        engine: &Engine,
         instance: &pcbcraft_core::ComponentInstance,
     ) -> Option<Operation> {
+        let project = engine.project();
         let Ok(resolved) = instances::resolve(&project.library, instance) else {
             return None;
         };
@@ -353,41 +356,51 @@ impl SchematicEditor {
             .partition(|(_, f)| f.functions.len() > 1);
         let mut output = None;
         let count = choices.len() + fixed.len();
-        kit::section(ui, "functions", "Pin functions", false, Some(count), |ui| {
-            for (terminal, functions) in &choices {
-                let default = functions
-                    .design_default
-                    .and_then(|d| functions.functions.iter().find(|f| f.id == d))
-                    .map_or_else(
-                        || "Unselected".to_owned(),
-                        |f| format!("Default ({})", f.label),
+        // C6: a component with peripherals opens on Pin assignment….
+        let peripherals = !resolved.component.definition.resources.is_empty();
+        kit::section(
+            ui,
+            "functions",
+            "Pin functions",
+            peripherals,
+            Some(count),
+            |ui| {
+                crate::pin_mux::row(ui, engine, instance);
+                for (terminal, functions) in &choices {
+                    let default = functions
+                        .design_default
+                        .and_then(|d| functions.functions.iter().find(|f| f.id == d))
+                        .map_or_else(
+                            || "Unselected".to_owned(),
+                            |f| format!("Default ({})", f.label),
+                        );
+                    let mut options = vec![(None, default)];
+                    options.extend(
+                        functions
+                            .functions
+                            .iter()
+                            .map(|f| (Some(f.id), f.label.clone())),
                     );
-                let mut options = vec![(None, default)];
-                options.extend(
-                    functions
-                        .functions
-                        .iter()
-                        .map(|f| (Some(f.id), f.label.clone())),
-                );
-                let mut value = instance.functions.get(&terminal.id).copied();
-                if kit::choice_row(ui, &terminal.name, &mut value, &options) {
-                    output = Some(Operation::Instance(InstanceCommand::SelectFunctions {
-                        instance: instance.id,
-                        edits: vec![FunctionEdit {
-                            terminal: terminal.id,
-                            function: value,
-                        }],
-                    }));
+                    let mut value = instance.functions.get(&terminal.id).copied();
+                    if kit::choice_row(ui, &terminal.name, &mut value, &options) {
+                        output = Some(Operation::Instance(InstanceCommand::SelectFunctions {
+                            instance: instance.id,
+                            edits: vec![FunctionEdit {
+                                terminal: terminal.id,
+                                function: value,
+                            }],
+                        }));
+                    }
                 }
-            }
-            for (terminal, functions) in &fixed {
-                let label = functions
-                    .functions
-                    .first()
-                    .map_or("—", |f| f.label.as_str());
-                kit::value_row(ui, &terminal.name, &format!("{label} · fixed"));
-            }
-        });
+                for (terminal, functions) in &fixed {
+                    let label = functions
+                        .functions
+                        .first()
+                        .map_or("—", |f| f.label.as_str());
+                    kit::value_row(ui, &terminal.name, &format!("{label} · fixed"));
+                }
+            },
+        );
         output
     }
 }

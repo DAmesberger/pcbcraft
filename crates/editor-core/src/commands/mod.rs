@@ -1,6 +1,7 @@
 //! Wire-level library and instance command families. Handlers look up,
 //! stage on the candidate document and call domain functions; they hold no
 //! domain rules. The engine reconciles nets and validates afterwards.
+mod assets;
 mod instance;
 mod library;
 pub(crate) mod marking;
@@ -12,6 +13,10 @@ pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
 pub use library::LibraryCommand;
 pub(crate) use library::{apply_library, preview_footprint};
+/// `instance.marking` as a pure function of a valid project, for hosts that
+/// lay out many instances at once (the model worker's decals) without an
+/// engine.
+pub use marking::layout as instance_marking;
 
 use crate::fields::EffectiveField;
 use crate::functions::Resolution;

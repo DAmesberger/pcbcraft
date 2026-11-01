@@ -1,4 +1,4 @@
-//! Slice C3 (contract C0): `library.pinout_schema`, the JSON schema of the
+//! Slice C3: `library.pinout_schema`, the JSON schema of the
 //! typed pinout document agents fill from a datasheet. Preview and apply
 //! are core operations (`project.query` `library.pinout_preview`,
 //! `project.apply` `library.pinout_apply`).

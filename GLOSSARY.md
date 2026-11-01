@@ -37,7 +37,7 @@ A declared capability of an electrical terminal, with its own identity, electric
 The intended active function chosen for a terminal of a particular component instance. It determines that terminal's displayed function and electrical checking behavior without changing its identity or package mapping.
 
 **Peripheral resource**:
-A named functional resource within a component, such as a UART instance or ADC channel. Pin functions may refer to that resource and its signal roles, with explicit rules governing compatible selections.
+A named functional resource within a component, such as a UART instance or ADC channel; also called a peripheral instance. Pin functions may refer to that resource and its signal roles, with explicit rules governing compatible selections. Its optional kind (`uart`, `spi`, …) is grouping text and never selects behaviour.
 
 **Terminal class**:
 How a component definition classifies a terminal: electrical, with one or more pin functions; device NC, declared by the device as not connected; or reserved. Device-NC and reserved terminals have no functions, cannot be wired and need no project decision.
@@ -46,7 +46,25 @@ How a component definition classifies a terminal: electrical, with one or more p
 How an output or bidirectional function drives its net: push-pull, open drain or open source. Inputs, passive and power functions have no drive. Electrical checks use the active function's drive, so several open-drain drivers with a pull-up are not a conflict.
 
 **Resource role**:
-A part of a peripheral resource, such as a UART's transmit line, with a capacity (how many active functions may take it at once) and whether it is required once the resource is used.
+A part of a peripheral resource, such as a UART's transmit line, with a capacity (how many active functions may take it at once), whether it is required once the resource is used and optionally the datasheet's signal name for it (signal role).
+
+**Mux code**:
+The datasheet's selector for one pin function, such as an alternate-function number, stored as explicit text on the function. It is shown and exported, never parsed out of a name.
+
+**GPIO identity**:
+The port and index a datasheet gives a terminal (`A`, 9). One identity belongs to one terminal of a component.
+
+**Pin option** / **Pin configuration**:
+A pin option is a setting a terminal declares with its allowed values: pull, speed, initial level or Schmitt input. A pin configuration is an instance's chosen values for one terminal, plus an optional firmware name; it is checked against the declared options and never changes electrical checks.
+
+**Pin rule**:
+A datasheet restriction on pin-function combinations, stored in the component revision as a short sandboxed Rhai script that reads a read-only view of one assignment and returns ok, forbid, require or warn. Forbid rejects the assignment, require leaves it incomplete and warn is a note; a script that fails to compile, raises an error or exceeds its budget is a finding.
+
+**Pinout document**:
+A typed, format-versioned description of a device's pins, peripherals, functions, options and rules, filled from a datasheet by a person or an agent. Importing it is previewed as a plan, applied against that plan's base and leaves every written row unreviewed; a row flagged uncertain blocks publishing until it is corrected or cleared (import review). The review state is draft-only (publishing drops it) and the gate is advisory against automation: an agent that edits the draft can clear it, so agents clear a flag only after the person confirms the row.
+
+**Firmware pin configuration**:
+The format-1 description of one instance's configured pins (function, peripheral, role, mux code, GPIO, options and firmware name) derived from its function resolution, pin configuration and named nets, and emitted as JSON, a C header, a Zephyr overlay skeleton, Rust constants or a user template. It is a starting point, not clock, register or HAL setup.
 
 **Design default**:
 The function a multi-function terminal uses when an instance makes no explicit selection. A terminal with one function is fixed and needs no default; a reset state is never a design default.
@@ -69,6 +87,31 @@ A built-in material a 3D body is made of (epoxy mould compound, alumina, tin, go
 
 **Generated model**:
 A package's parametric 3D model built from its package form by a family builder, with a body role and a physical material on every body; one shared native definition per package revision, used by every instance.
+
+**Library model** (3D model):
+A revisioned library definition of a package's 3D model from a file (GLB for appearance, STEP for mechanical shape, `.solidcraft` for parametric): its packed asset by content hash, source frame, bounds, every body mapped explicitly to a role and material, lead tags with measured contacts, an optional marking area and provenance with redistribution. Packages share it by exact revision.
+_Avoid_: Imported model, vendor model
+
+**Lead tag**:
+A body (or one face of a body) of a library model named as a lead, with its designation and its contact point, measured on the geometry and rechecked when the model is built.
+
+**Lead map**:
+The explicit pairing of a library model's lead tags with a package's terminals, stored where the package uses the model. Exact designation matches are only proposed, never inferred.
+
+**Project container**:
+The `.pcbcraft` file: a ZIP archive of `project.json` and one raw entry per packed asset under `assets/sha256/<hash>`, read with bounds on the decompressed bytes and written atomically.
+
+**Packed asset**:
+File bytes a project carries by content hash (a model file, SVG artwork), so it reopens offline; stored as their own container entries.
+
+**Marking**:
+The lettering and marks on a package top (top mark, value code, polarity mark, colour bands): a spec on the component or a Part's top mark, overridden per instance. Display only: never in the saved native model or fabrication output.
+
+**Value code**:
+A marking item that encodes a field value with a cited scheme (3- or 4-digit resistor code, EIA-96, capacitor pF code, tantalum voltage letter, IEC 60062 colour bands); a value the scheme cannot hold exactly gives no code, never a rounded one.
+
+**Marking decal**:
+The display-only mesh of an instance's laid-out marking, 5 µm above the package's marked face, drawn with the finish's look and shown with the Markings layer toggle.
 
 **Model placement**:
 The authored rigid transform of a package's 3D model relative to its footprint datum; the seating plane (z = 0) is the top of the land copper. Fit leads to pads, quick actions and the triad each set it with one command.
@@ -120,7 +163,7 @@ The host component that interprets a footprint source: it applies sketch edits a
 A parametric footprint family (2-terminal chip, gull-wing SOIC/SOP, QFN/DFN, pin header, tabbed SOT/DPAK, molded SOD/SMA/MELF, BGA/LGA, through-hole) that builds into an empty footprint draft as ordinary sketch edits, with dimensions bound to named parameters, in one undo step. Its land defaults are estimated unless a package row cites a land pattern.
 
 **Package row**:
-A revisioned library record holding one typed package form of a family, with aliases, a size code, a suggested skeleton, optional lands, provenance and a citation of the public outline drawing its values were typed from. A row without a citation is *estimated*. New from template and From template build from an exact published row revision.
+A revisioned library record holding one typed package form of a family, with aliases, a size code, a suggested skeleton, optional lands, provenance and a citation of the public outline drawing its values were typed from. A row without a citation is *estimated*. New from template and From template build from an exact published row revision, a folder row read with its bundle, or a built-in **starter row** (the compiled-in, read-only tables every install lists).
 _Avoid_: Preset (test and sample data only), wizard
 
 **Custom entry**:
@@ -271,7 +314,7 @@ A named layer of the stackup that carries copper: Top, Inner 1…n or Bottom. Tr
 A plated hole that joins its net's copper on every copper layer it spans, placed on the board (distinct from a pad via inside a footprint pad). It is tented (covered by mask) or open, and it is real copper in the native model. Only through vias exist yet.
 
 **Display-only layer**:
-A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations and solder. The saved native model holds only the physical bodies.
+A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations, solder and marking decals. The saved native model holds only the physical bodies.
 
 **Layer view**:
 Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It is display state: hiding a layer filters what is drawn and picked and never rebuilds geometry. Outer copper and silkscreen share their state with PCB 2D.

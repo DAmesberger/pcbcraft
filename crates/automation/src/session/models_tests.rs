@@ -1,26 +1,21 @@
-//! Slice C7 (contract C0): JSON-only scenario tests of the 3D model library (D1, D2). The
-//! contract test pins the request surface and the explicit refusal of
-//! the stubs; C7 replaces it with the scenario (import EXM-48 → review →
-//! apply → assign → report → export).
+//! Slice C7: the `library.models` query on the wire (D1). The EXM-48
+//! scenario's model step, ranking the generated model for the imported
+//! package, is in `templates_tests::build_footprint`.
 use super::*;
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// The diagnostic code of a refused reply.
-fn refused(reply: &Value) -> Option<String> {
-    (reply["ok"] == false).then(|| {
-        reply["error"]["code"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
-    })
-}
-
 #[test]
-fn the_model_queries_refuse_until_d1() -> Fallible<()> {
+fn the_model_query_answers_on_the_wire() -> Fallible<()> {
     let mut session = Session::new(Engine::demo()?);
     let reply = session.dispatch(json!({"command": "project.query",
-        "params": {"query": "library.models", "params": {"query": "kind:model pins:8"}}}));
-    assert_eq!(refused(&reply).as_deref(), Some("unsupported"), "{reply}");
+        "params": {"query": "library.models", "params": {"query": "kind:model mount:smd"}}}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    let text = reply.to_string();
+    assert!(text.contains("Generated · chip"), "{reply}");
+    let reply = session.dispatch(json!({"command": "project.query",
+        "params": {"query": "library.models", "params": {"query": "kind:part"}}}));
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"]["code"], "invalid_input", "{reply}");
     Ok(())
 }

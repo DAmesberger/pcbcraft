@@ -5,12 +5,14 @@
 //!
 //! Findings describe circuit state and never block a component stage. A
 //! terminal alone on its net is not an ERC condition: completeness reports it
-//! once as `instance.terminal_unaccounted`.
+//! once as `instance.terminal_unaccounted`. Pin rule `warn` verdicts are ERC
+//! notes (`config.rule_note`); `require` verdicts and rule failures block
+//! electrical resolution and are completeness findings.
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::functions::{ActiveFunction, Direction, Drive, Resolution};
 use crate::ids::{Endpoint, Id};
 use crate::instances;
-use crate::model::{Net, Project};
+use crate::model::{ComponentInstance, Net, Project};
 use std::collections::BTreeMap;
 
 /// What one net terminal contributes to the net rules.
@@ -167,5 +169,73 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     for net in &project.nets {
         net_checks(project, net, &resolutions, &mut out);
     }
+    for instance in &project.instances {
+        if let Some(resolution) = resolutions.get(&instance.id) {
+            let rules = project
+                .library
+                .component(instance.component)
+                .map(|c| c.definition.pin_rules.as_slice())
+                .unwrap_or_default();
+            rule_notes(instance, resolution, rules, &mut out);
+        }
+    }
     out
+}
+
+/// Where a rule came from in its reference document, as a message suffix
+/// (" (source: page 16, Table 5)"); empty when the rule names none.
+pub(crate) fn rule_source(rules: &[crate::functions::PinRule], rule: crate::ids::RuleId) -> String {
+    let Some(source) = rules
+        .iter()
+        .find(|r| r.id == rule)
+        .and_then(|r| r.source.as_ref())
+    else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if let Some(page) = source.page {
+        parts.push(format!("page {page}"));
+    }
+    if let Some(table) = source
+        .table
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        parts.push(table.to_owned());
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" (source: {})", parts.join(", "))
+    }
+}
+
+/// Pin rule `warn` verdicts (C1): advisory, never blocking. The message
+/// keeps the rule's datasheet source.
+fn rule_notes(
+    instance: &ComponentInstance,
+    resolution: &Resolution,
+    rules: &[crate::functions::PinRule],
+    out: &mut Vec<Finding>,
+) {
+    for note in &resolution.notes {
+        let mut objects = vec![ObjectRef::Instance { id: instance.id }];
+        objects.extend(note.terminals.iter().map(|terminal| ObjectRef::Terminal {
+            endpoint: Endpoint {
+                instance: instance.id,
+                terminal: *terminal,
+            },
+        }));
+        out.push(Finding::new(
+            "config.rule_note",
+            format!(
+                "{}: {}{}",
+                instance.designator,
+                note.message,
+                rule_source(rules, note.rule)
+            ),
+            objects,
+        ));
+    }
 }

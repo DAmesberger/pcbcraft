@@ -665,8 +665,13 @@ impl App {
 
     fn request_model(&mut self) {
         if let Some(key) = self.model_key() {
+            let package = self.part.preview_package();
+            let engine = &self.engine;
             self.scene
-                .request(key, self.part.preview_package().as_ref());
+                .request(key, package.as_ref(), || match &package {
+                    Some(package) => crate::scene::library_asset(engine, package),
+                    None => Ok(None),
+                });
         }
     }
 

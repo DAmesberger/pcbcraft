@@ -1,4 +1,4 @@
-//! Slice B1 (contract C0): templates as data. A package-family generator
+//! Slice B1: templates as data. A package-family generator
 //! (Rust: a [`PackageForm`] variant, its footprint template, its model
 //! builder) is driven by **dimension-table rows**: revisioned library
 //! lineages of kind `PackageRow`, with per-row citations, searched by the
@@ -567,14 +567,6 @@ pub struct SavePackageRow {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub provenance: Provenance,
-}
-
-/// Contract stub until B1.
-pub fn unsupported() -> Error {
-    Error::Unsupported(
-        "template.unsupported: data-driven package templates are not available yet (slice B1)"
-            .into(),
-    )
 }
 
 /// A template row ready to build: its display name and definition. A

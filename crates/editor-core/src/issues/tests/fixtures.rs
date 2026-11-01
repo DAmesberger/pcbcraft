@@ -628,6 +628,32 @@ fn every_finding_code_in_the_sources_is_known() -> Fallible<()> {
     Ok(())
 }
 
+/// Every code in [`KNOWN_CODES`] except the synthetic ones `project.issues`
+/// adds is still written in a production source (as a literal outside the
+/// classification table), so a code whose last emitter is gone is removed
+/// with it.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn every_known_code_is_still_emitted() -> Fallible<()> {
+    let texts: Vec<String> = sources()?
+        .into_iter()
+        .filter(|(path, _)| path != "issues/rules.rs")
+        .map(|(_, text)| text)
+        .collect();
+    let synthetic = [
+        super::super::rules::NO_PART,
+        super::super::rules::CHECK_FAILED,
+    ];
+    for code in KNOWN_CODES.iter().filter(|c| !synthetic.contains(c)) {
+        let literal = format!("\"{code}\"");
+        assert!(
+            texts.iter().any(|text| text.contains(&literal)),
+            "{code} is classified but nothing emits it"
+        );
+    }
+    Ok(())
+}
+
 /// No message or refusal in the core formats a value with `Debug`.
 /// Purchasing group keys are internal sort keys and never shown.
 #[cfg(not(target_arch = "wasm32"))]

@@ -8,20 +8,24 @@
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
-use crate::material::{self, BodyKind};
+use crate::material::{self, BodyKind, Detail};
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
-use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
+use pcbcraft_core::library::model3d::{LibraryModel, ModelDefinition as LibraryModelDefinition};
+use pcbcraft_core::library::{
+    ModelPlacement, PackageDefinition, PackageModel, Pad, PadDefaults, PadShape,
+};
 use pcbcraft_core::{
     CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, ViaSpan,
     instances, layout,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use solidcraft_engine::render::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Segments of an inner via ring's outline: the ring body and the
@@ -87,6 +91,12 @@ struct Builder {
     models: Vec<ModelDefinition>,
     /// Definitions whose first occurrence an instance already holds.
     placed: BTreeSet<String>,
+    /// Library-model bodies with one of the model's own materials, by body
+    /// name: drawn with that material's look (the file keeps its opaque
+    /// projection).
+    custom_looks: BTreeMap<String, (OpaqueSurface, Detail)>,
+    /// Library model files read by earlier builds.
+    sources: models::imported::SourceCache,
 }
 
 impl Builder {
@@ -96,7 +106,43 @@ impl Builder {
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
+            custom_looks: BTreeMap::new(),
+            sources: models::imported::SourceCache::default(),
         })
+    }
+
+    /// An occurrence of the library-model definition `stem` (`model` with
+    /// its asset `bytes`, used as `use_`), built on first use like
+    /// [`Self::model`]; bounds and lead contacts are rechecked when built.
+    fn library_model(
+        &mut self,
+        stem: &str,
+        model: &LibraryModelDefinition,
+        use_: &LibraryModel,
+        bytes: &[u8],
+    ) -> Result<Created> {
+        if !self.models.iter().any(|d| d.component == stem) {
+            let built = models::imported::build_library_model_cached(
+                &mut self.native,
+                stem,
+                model,
+                use_,
+                bytes,
+                &self.sources,
+            )?;
+            for body in &built.bodies {
+                self.record(&body.name, body.kind())?;
+                if matches!(
+                    body.material,
+                    pcbcraft_core::library::model3d::ModelMaterial::Custom(_)
+                ) {
+                    let look = models::imported::surface(model, body.material)?;
+                    self.custom_looks.insert(body.name.clone(), look);
+                }
+            }
+            self.models.push(built.generated());
+        }
+        self.model_occurrence(stem)
     }
 
     /// An occurrence of the generated definition `stem` of `package`,
@@ -110,6 +156,12 @@ impl Builder {
             }
             self.models.push(definition);
         }
+        self.model_occurrence(stem)
+    }
+
+    /// The first occurrence of the built definition `stem` the first time
+    /// it is asked for, a new copy every time after.
+    fn model_occurrence(&mut self, stem: &str) -> Result<Created> {
         let created = self.native.find_component(stem).ok_or_else(|| {
             Error::Verification(format!("model definition {stem} has no occurrence"))
         })?;
@@ -167,7 +219,7 @@ impl Builder {
                 .set_metadata(&format!("{BODIES_KEY}{index}"), json!(chunk))?;
         }
         models::record(&mut self.native, &self.models)?;
-        finish_with(self.native, sources, self.models)
+        finish_with(self.native, sources, self.models, &self.custom_looks)
     }
 }
 
@@ -308,14 +360,16 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
 
 #[cfg(test)]
 fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
-    finish_with(native, sources, Vec::new())
+    finish_with(native, sources, Vec::new(), &BTreeMap::new())
 }
 
-/// [`finish`] for a model whose generated definitions are `models`.
+/// [`finish`] for a model whose generated definitions are `models` and
+/// whose library-model bodies with their own materials look `custom`.
 fn finish_with(
     native: Native,
     sources: Vec<Source>,
     models: Vec<ModelDefinition>,
+    custom: &BTreeMap<String, (OpaqueSurface, Detail)>,
 ) -> Result<NativeModel> {
     if let Some(error) = native.evaluation_error() {
         return Err(Error::Verification(error));
@@ -338,7 +392,9 @@ fn finish_with(
             .ok_or_else(|| Error::Verification(format!("body {name} has no physical look")))?;
         // A generated body is drawn with its material's full product look
         // (coat, pattern); the file keeps the opaque projection.
-        let (surface, detail) = if kind.is_generated() {
+        let (surface, detail) = if let Some(look) = custom.get(name) {
+            *look
+        } else if kind.is_generated() {
             let body = generated.get(name).ok_or_else(|| {
                 Error::Verification(format!("generated body {name} has no recorded material"))
             })?;
@@ -760,6 +816,24 @@ fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
+    build_with(project, &models::imported::SourceCache::default())
+}
+
+/// [`build`] reading library model files through `sources`, which the
+/// caller keeps between builds (the model worker), so an unchanged model is
+/// neither re-hashed nor re-read. Entries this build did not use are
+/// dropped.
+pub fn build_with(
+    project: &Project,
+    sources: &models::imported::SourceCache,
+) -> Result<NativeModel> {
+    sources.begin();
+    let built = build_in(project, sources);
+    sources.sweep();
+    built
+}
+
+fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     if project
         .vias
@@ -772,6 +846,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let stackup = &project.stackup;
     let mut b = Builder::new(&project.name)?;
+    b.sources = sources.clone();
     stackup_params(&mut b, project)?;
     let board = b.native.component("PCB substrate", true)?.occurrence;
     b.body(
@@ -838,14 +913,21 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         ] {
             b.param(&format!("{prefix}_{suffix}"), value, unit)?;
         }
-        if models::is_generated(package) {
+        let library = match &package.model {
+            PackageModel::Library(use_) => Some(library_model(project, use_)?),
+            _ => None,
+        };
+        if library.is_some() || models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
-            let created = b.model(&stem, package)?;
+            let created = match &library {
+                Some((model, use_, bytes)) => b.library_model(&stem, model, use_, bytes)?,
+                None => b.model(&stem, package)?,
+            };
             let frame = datum_frame(package);
             let pick = next_pick(&sources);
             // Display-only solder fillets of a chip, while its placement
             // does not turn it out of the package frame they draw in.
-            if package.chip_kind().is_some() && package_frame(&frame) {
+            if library.is_none() && package.chip_kind().is_some() && package_frame(&frame) {
                 parts.push(Part {
                     pick: Some(pick),
                     package,
@@ -1182,6 +1264,34 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         .geometry
         .extend(crate::stackup_edge::bands(stackup, &display)?);
     Ok(model)
+}
+
+/// The published model a package's library model names, how it is used and
+/// its packed asset bytes; refused, naming them, when the project does not
+/// hold them.
+pub fn library_model<'a>(
+    project: &'a Project,
+    use_: &'a LibraryModel,
+) -> Result<(&'a LibraryModelDefinition, &'a LibraryModel, &'a [u8])> {
+    let model = project.library.model(use_.model).ok_or_else(|| {
+        Error::Invalid(format!(
+            "model.asset: the library model {} is not in the project",
+            use_.model
+        ))
+    })?;
+    let definition = &model.definition;
+    let asset = project
+        .library
+        .assets
+        .iter()
+        .find(|a| a.hash == definition.asset.hash)
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "model.asset: the packed asset {} ({}) is not in the project",
+                definition.asset.file_name, definition.asset.hash
+            ))
+        })?;
+    Ok((definition, use_, asset.data.as_slice()))
 }
 
 /// Every board via as saved copper: its plated barrel through the laminate

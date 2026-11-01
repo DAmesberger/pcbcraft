@@ -1,0 +1,2460 @@
+{
+ "format": 1,
+ "device": {
+  "name": "EXL-48 controller",
+  "reference": {
+   "title": "EXL-48 controller datasheet (invented fixture)",
+   "document_revision": "C"
+  }
+ },
+ "variants": [
+  {
+   "name": "QFN-48",
+   "terminal_count": 49
+  },
+  {
+   "name": "LQFP-48",
+   "terminal_count": 48
+  }
+ ],
+ "peripherals": [
+  {
+   "label": "UART0",
+   "kind": "uart",
+   "roles": [
+    {
+     "label": "tx",
+     "signal": "TX",
+     "required_when_used": true
+    },
+    {
+     "label": "rx",
+     "signal": "RX"
+    },
+    {
+     "label": "rts",
+     "signal": "RTS"
+    },
+    {
+     "label": "cts",
+     "signal": "CTS"
+    }
+   ]
+  },
+  {
+   "label": "UART1",
+   "kind": "uart",
+   "roles": [
+    {
+     "label": "tx",
+     "signal": "TX",
+     "required_when_used": true
+    },
+    {
+     "label": "rx",
+     "signal": "RX"
+    }
+   ]
+  },
+  {
+   "label": "SPI0",
+   "kind": "spi",
+   "roles": [
+    {
+     "label": "sck",
+     "signal": "SCK",
+     "required_when_used": true
+    },
+    {
+     "label": "mosi",
+     "signal": "MOSI"
+    },
+    {
+     "label": "miso",
+     "signal": "MISO"
+    },
+    {
+     "label": "cs",
+     "signal": "CS"
+    }
+   ]
+  },
+  {
+   "label": "I2C0",
+   "kind": "i2c",
+   "roles": [
+    {
+     "label": "scl",
+     "signal": "SCL",
+     "required_when_used": true
+    },
+    {
+     "label": "sda",
+     "signal": "SDA",
+     "required_when_used": true
+    }
+   ]
+  },
+  {
+   "label": "TMR0",
+   "kind": "timer",
+   "roles": [
+    {
+     "label": "ch0",
+     "signal": "CH0"
+    },
+    {
+     "label": "ch1",
+     "signal": "CH1"
+    },
+    {
+     "label": "ch2",
+     "signal": "CH2"
+    },
+    {
+     "label": "ch3",
+     "signal": "CH3"
+    }
+   ]
+  },
+  {
+   "label": "ADC0",
+   "kind": "adc",
+   "roles": [
+    {
+     "label": "in0",
+     "signal": "IN0"
+    },
+    {
+     "label": "in1",
+     "signal": "IN1"
+    },
+    {
+     "label": "in2",
+     "signal": "IN2"
+    },
+    {
+     "label": "in3",
+     "signal": "IN3"
+    },
+    {
+     "label": "in4",
+     "signal": "IN4"
+    },
+    {
+     "label": "in5",
+     "signal": "IN5"
+    },
+    {
+     "label": "in6",
+     "signal": "IN6"
+    },
+    {
+     "label": "in7",
+     "signal": "IN7"
+    }
+   ]
+  },
+  {
+   "label": "SWD",
+   "kind": "debug",
+   "roles": [
+    {
+     "label": "swdio",
+     "signal": "SWDIO",
+     "required_when_used": true
+    },
+    {
+     "label": "swclk",
+     "signal": "SWCLK",
+     "required_when_used": true
+    }
+   ]
+  },
+  {
+   "label": "OSC",
+   "kind": "clock",
+   "roles": [
+    {
+     "label": "xin",
+     "signal": "XIN",
+     "required_when_used": true
+    },
+    {
+     "label": "xout",
+     "signal": "XOUT",
+     "required_when_used": true
+    }
+   ]
+  }
+ ],
+ "pins": [
+  {
+   "row": "r1",
+   "number": {
+    "QFN-48": "1",
+    "LQFP-48": "1"
+   },
+   "name": "VDD",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r2",
+   "number": {
+    "QFN-48": "2",
+    "LQFP-48": "2"
+   },
+   "name": "P2_0",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 0
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch0",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch0",
+     "mux": "ALT6"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r3",
+   "number": {
+    "QFN-48": "3",
+    "LQFP-48": "3"
+   },
+   "name": "P2_1",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 1
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r4",
+   "number": {
+    "QFN-48": "4",
+    "LQFP-48": "4"
+   },
+   "name": "P2_2",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 2
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "osc_in",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "OSC",
+     "role": "xin",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r5",
+   "number": {
+    "QFN-48": "5",
+    "LQFP-48": "5"
+   },
+   "name": "P2_3",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 3
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "osc_out",
+     "direction": "output",
+     "signal": "analog",
+     "drive": "push_pull",
+     "peripheral": "OSC",
+     "role": "xout",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r6",
+   "number": {
+    "QFN-48": "6",
+    "LQFP-48": "6"
+   },
+   "name": "NRST",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "reset",
+     "direction": "input",
+     "signal": "digital"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r7",
+   "number": {
+    "QFN-48": "7",
+    "LQFP-48": "7"
+   },
+   "name": "VDDA",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r8",
+   "number": {
+    "QFN-48": "8",
+    "LQFP-48": "8"
+   },
+   "name": "VSSA",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r9",
+   "number": {
+    "QFN-48": "9",
+    "LQFP-48": "9"
+   },
+   "name": "P0_0",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 0
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_cts",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "UART0",
+     "role": "cts",
+     "mux": "ALT1"
+    },
+    {
+     "label": "adc0_in0",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in0",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r10",
+   "number": {
+    "QFN-48": "10",
+    "LQFP-48": "10"
+   },
+   "name": "P0_1",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 1
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_rts",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "UART0",
+     "role": "rts",
+     "mux": "ALT1"
+    },
+    {
+     "label": "adc0_in1",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in1",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r11",
+   "number": {
+    "QFN-48": "11",
+    "LQFP-48": "11"
+   },
+   "name": "P0_2",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 2
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_tx",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "UART0",
+     "role": "tx",
+     "mux": "ALT1"
+    },
+    {
+     "label": "adc0_in2",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in2",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r12",
+   "number": {
+    "QFN-48": "12",
+    "LQFP-48": "12"
+   },
+   "name": "P0_3",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 3
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_rx",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "UART0",
+     "role": "rx",
+     "mux": "ALT1"
+    },
+    {
+     "label": "adc0_in3",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in3",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r13",
+   "number": {
+    "QFN-48": "13",
+    "LQFP-48": "13"
+   },
+   "name": "P0_4",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 4
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_cs",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SPI0",
+     "role": "cs",
+     "mux": "ALT2"
+    },
+    {
+     "label": "adc0_in4",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in4",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r14",
+   "number": {
+    "QFN-48": "14",
+    "LQFP-48": "14"
+   },
+   "name": "P0_5",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 5
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_sck",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SPI0",
+     "role": "sck",
+     "mux": "ALT2"
+    },
+    {
+     "label": "adc0_in5",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in5",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r15",
+   "number": {
+    "QFN-48": "15",
+    "LQFP-48": "15"
+   },
+   "name": "P0_6",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 6
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_miso",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "SPI0",
+     "role": "miso",
+     "mux": "ALT2"
+    },
+    {
+     "label": "adc0_in6",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in6",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r16",
+   "number": {
+    "QFN-48": "16",
+    "LQFP-48": "16"
+   },
+   "name": "P0_7",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 7
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_mosi",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SPI0",
+     "role": "mosi",
+     "mux": "ALT2"
+    },
+    {
+     "label": "adc0_in7",
+     "direction": "input",
+     "signal": "analog",
+     "peripheral": "ADC0",
+     "role": "in7",
+     "mux": "ANA"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r17",
+   "number": {
+    "QFN-48": "17",
+    "LQFP-48": "17"
+   },
+   "name": "P1_0",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 0
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch0",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch0",
+     "mux": "ALT5"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r18",
+   "number": {
+    "QFN-48": "18",
+    "LQFP-48": "18"
+   },
+   "name": "P1_1",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 1
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch1",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch1",
+     "mux": "ALT5"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r19",
+   "number": {
+    "QFN-48": "19",
+    "LQFP-48": "19"
+   },
+   "name": "P1_2",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 2
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch2",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch2",
+     "mux": "ALT5"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r20",
+   "number": {
+    "QFN-48": "20",
+    "LQFP-48": "20"
+   },
+   "name": "VSS",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r21",
+   "number": {
+    "QFN-48": "21",
+    "LQFP-48": "21"
+   },
+   "name": "VDD",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r22",
+   "number": {
+    "QFN-48": "22",
+    "LQFP-48": "22"
+   },
+   "name": "P1_3",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 3
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_sck",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SPI0",
+     "role": "sck",
+     "mux": "ALT3"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r23",
+   "number": {
+    "QFN-48": "23",
+    "LQFP-48": "23"
+   },
+   "name": "P1_4",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 4
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_miso",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "SPI0",
+     "role": "miso",
+     "mux": "ALT3"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r24",
+   "number": {
+    "QFN-48": "24",
+    "LQFP-48": "24"
+   },
+   "name": "P1_5",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 5
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "spi0_mosi",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SPI0",
+     "role": "mosi",
+     "mux": "ALT3"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r25",
+   "number": {
+    "QFN-48": "25",
+    "LQFP-48": "25"
+   },
+   "name": "P1_6",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 6
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_tx",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "UART0",
+     "role": "tx",
+     "mux": "ALT2"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r26",
+   "number": {
+    "QFN-48": "26",
+    "LQFP-48": "26"
+   },
+   "name": "P1_7",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 7
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart0_rx",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "UART0",
+     "role": "rx",
+     "mux": "ALT2"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r27",
+   "number": {
+    "QFN-48": "27",
+    "LQFP-48": "27"
+   },
+   "name": "P1_8",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 8
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true,
+    "schmitt": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "i2c0_scl",
+     "direction": "bidirectional",
+     "signal": "digital",
+     "drive": "open_drain",
+     "peripheral": "I2C0",
+     "role": "scl",
+     "mux": "ALT4"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r28",
+   "number": {
+    "QFN-48": "28",
+    "LQFP-48": "28"
+   },
+   "name": "P1_9",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 9
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true,
+    "schmitt": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "i2c0_sda",
+     "direction": "bidirectional",
+     "signal": "digital",
+     "drive": "open_drain",
+     "peripheral": "I2C0",
+     "role": "sda",
+     "mux": "ALT4"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r29",
+   "number": {
+    "QFN-48": "29",
+    "LQFP-48": "29"
+   },
+   "name": "P1_10",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 10
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart1_tx",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "UART1",
+     "role": "tx",
+     "mux": "ALT1"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r30",
+   "number": {
+    "QFN-48": "30",
+    "LQFP-48": "30"
+   },
+   "name": "P1_11",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 11
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart1_rx",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "UART1",
+     "role": "rx",
+     "mux": "ALT1"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r31",
+   "number": {
+    "QFN-48": "31",
+    "LQFP-48": "31"
+   },
+   "name": "P1_12",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 12
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch3",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch3",
+     "mux": "ALT5"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r32",
+   "number": {
+    "QFN-48": "32",
+    "LQFP-48": "32"
+   },
+   "name": "P1_13",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 13
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r33",
+   "number": {
+    "QFN-48": "33",
+    "LQFP-48": "33"
+   },
+   "name": "P0_8",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 8
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true,
+    "schmitt": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "i2c0_scl",
+     "direction": "bidirectional",
+     "signal": "digital",
+     "drive": "open_drain",
+     "peripheral": "I2C0",
+     "role": "scl",
+     "mux": "ALT4"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r34",
+   "number": {
+    "QFN-48": "34",
+    "LQFP-48": "34"
+   },
+   "name": "P0_9",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 9
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true,
+    "schmitt": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "i2c0_sda",
+     "direction": "bidirectional",
+     "signal": "digital",
+     "drive": "open_drain",
+     "peripheral": "I2C0",
+     "role": "sda",
+     "mux": "ALT4"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r35",
+   "number": {
+    "QFN-48": "35",
+    "LQFP-48": "35"
+   },
+   "name": "P0_10",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 10
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r36",
+   "number": {
+    "QFN-48": "36",
+    "LQFP-48": "36"
+   },
+   "name": "P0_11",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 11
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r37",
+   "number": {
+    "QFN-48": "37",
+    "LQFP-48": "37"
+   },
+   "name": "P0_12",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 12
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r38",
+   "number": {
+    "QFN-48": "38",
+    "LQFP-48": "38"
+   },
+   "name": "P0_13",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 13
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "swdio",
+     "direction": "bidirectional",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "SWD",
+     "role": "swdio",
+     "mux": "ALT0"
+    }
+   ],
+   "default": "swdio",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r39",
+   "number": {
+    "QFN-48": "39",
+    "LQFP-48": "39"
+   },
+   "name": "P0_14",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 14
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "swclk",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "SWD",
+     "role": "swclk",
+     "mux": "ALT0"
+    }
+   ],
+   "default": "swclk",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r40",
+   "number": {
+    "QFN-48": "40",
+    "LQFP-48": "40"
+   },
+   "name": "P0_15",
+   "class": "electrical",
+   "gpio": {
+    "port": "P0",
+    "index": 15
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r41",
+   "number": {
+    "QFN-48": "41",
+    "LQFP-48": "41"
+   },
+   "name": "P1_14",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 14
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r42",
+   "number": {
+    "QFN-48": "42",
+    "LQFP-48": "42"
+   },
+   "name": "P1_15",
+   "class": "electrical",
+   "gpio": {
+    "port": "P1",
+    "index": 15
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r43",
+   "number": {
+    "QFN-48": "43",
+    "LQFP-48": "43"
+   },
+   "name": "P2_4",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 4
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart1_tx",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "UART1",
+     "role": "tx",
+     "mux": "ALT3"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r44",
+   "number": {
+    "QFN-48": "44",
+    "LQFP-48": "44"
+   },
+   "name": "P2_5",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 5
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "uart1_rx",
+     "direction": "input",
+     "signal": "digital",
+     "peripheral": "UART1",
+     "role": "rx",
+     "mux": "ALT3"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r45",
+   "number": {
+    "QFN-48": "45",
+    "LQFP-48": "45"
+   },
+   "name": "VCAP",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "regulator_cap",
+     "direction": "passive",
+     "signal": "analog"
+    }
+   ],
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r46",
+   "number": {
+    "QFN-48": "46",
+    "LQFP-48": "46"
+   },
+   "name": "P2_6",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 6
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r47",
+   "number": {
+    "QFN-48": "47",
+    "LQFP-48": "47"
+   },
+   "name": "P2_7",
+   "class": "electrical",
+   "gpio": {
+    "port": "P2",
+    "index": 7
+   },
+   "options": {
+    "pull": [
+     "none",
+     "up",
+     "down"
+    ],
+    "speed": [
+     "low",
+     "high"
+    ],
+    "initial_level": true
+   },
+   "functions": [
+    {
+     "label": "gpio_in",
+     "direction": "input",
+     "signal": "digital"
+    },
+    {
+     "label": "gpio_out",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull"
+    },
+    {
+     "label": "tmr0_ch3",
+     "direction": "output",
+     "signal": "digital",
+     "drive": "push_pull",
+     "peripheral": "TMR0",
+     "role": "ch3",
+     "mux": "ALT6"
+    }
+   ],
+   "default": "gpio_in",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   },
+   "uncertain": true,
+   "note": "The pin table lists TMR0 CH3 on ALT6, but the alternate-function table leaves that cell empty."
+  },
+  {
+   "row": "r48",
+   "number": {
+    "QFN-48": "48",
+    "LQFP-48": "48"
+   },
+   "name": "NC",
+   "class": "device_nc",
+   "source": {
+    "page": 12,
+    "table": "Table 4"
+   }
+  },
+  {
+   "row": "r49",
+   "number": {
+    "QFN-48": "49"
+   },
+   "name": "EP",
+   "class": "electrical",
+   "functions": [
+    {
+     "label": "power_in",
+     "direction": "power_input",
+     "signal": "power"
+    }
+   ],
+   "source": {
+    "page": 13,
+    "table": "Figure 3"
+   },
+   "note": "Exposed pad, connected to VSS inside the package."
+  }
+ ],
+ "rules": [
+  {
+   "label": "uart0_pin_set",
+   "script": "if (active(\"P0_2\", \"uart0_tx\") || active(\"P0_3\", \"uart0_rx\")) && (active(\"P1_6\", \"uart0_tx\") || active(\"P1_7\", \"uart0_rx\")) {\n    forbid(\"UART0 uses one pin set: P0_2/P0_3 or P1_6/P1_7.\", [\"P0_2\", \"P0_3\", \"P1_6\", \"P1_7\"])\n} else {\n    ok()\n}",
+   "source": {
+    "page": 30,
+    "table": "Table 11"
+   }
+  },
+  {
+   "label": "spi0_i2c0_shared_block",
+   "script": "if used(\"SPI0\") && used(\"I2C0\") {\n    forbid(\"SPI0 and I2C0 share one serial block on this die.\")\n} else {\n    ok()\n}",
+   "source": {
+    "page": 30,
+    "table": "Table 11"
+   }
+  },
+  {
+   "label": "uart0_flow_control",
+   "script": "if role(\"UART0\", \"rts\") && !role(\"UART0\", \"cts\") {\n    require(\"UART0 flow control needs CTS whenever RTS is used.\", [\"P0_0\"])\n} else {\n    ok()\n}",
+   "source": {
+    "page": 30,
+    "table": "Table 11"
+   }
+  },
+  {
+   "label": "swd_as_gpio",
+   "script": "if active(\"P0_13\", \"gpio_in\") || active(\"P0_13\", \"gpio_out\") || active(\"P0_14\", \"gpio_in\") || active(\"P0_14\", \"gpio_out\") {\n    warn(\"Using the SWD pins as GPIO disables debugging.\", [\"P0_13\", \"P0_14\"])\n} else {\n    ok()\n}",
+   "source": {
+    "page": 31,
+    "table": "Section 6.2"
+   }
+  }
+ ]
+}

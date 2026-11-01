@@ -503,7 +503,7 @@ impl PartEditor {
     /// package stays, only the footprint is built.
     #[allow(
         dead_code,
-        reason = "offered as From template ▾ › Footprint only… by slice A1"
+        reason = "not offered in the ribbon yet; its tests drive the dialog"
     )]
     pub(super) fn open_footprint_expressions(&mut self) {
         if let Some(set) = &self.draft {

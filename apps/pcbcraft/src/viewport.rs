@@ -463,7 +463,7 @@ impl Viewport {
                 .highlight
                 .iter()
                 .filter(|(item, layer, _)| {
-                    self.highlighted.contains(item) && self.layers.visible(*layer)
+                    self.highlighted.contains(item) && self.layers.draws(*layer)
                 })
                 .map(|(_, _, block)| block.clone())
                 .collect();

@@ -124,8 +124,7 @@ enum View {
     #[default]
     Details,
     Symbol,
-    /// C5: the pin table, peripherals and rule scripts; offered only when
-    /// `pins_tab::AVAILABLE`.
+    /// C5: the pin table, peripherals and rule scripts.
     Pins,
     Footprint,
     Mapping,
@@ -437,13 +436,16 @@ impl PartEditor {
             .lineage
             .and_then(|lineage| self.parts.take_edit(engine, lineage));
         if self.draft == self.baseline {
-            return part.map(|edit| Operation::Library(LibraryCommand::Edit { edits: vec![edit] }));
+            let edit =
+                part.map(|edit| Operation::Library(LibraryCommand::Edit { edits: vec![edit] }));
+            return self.marking.with_artwork(edit);
         }
         let mut operation = self.send(engine);
         if let Some(Operation::Library(LibraryCommand::Edit { edits })) = &mut operation {
             edits.extend(part);
         }
-        operation
+        // SVG artwork a marking now names packs with this edit.
+        self.marking.with_artwork(operation)
     }
 
     /// Send the working copy with sibling references at their pending
@@ -485,7 +487,6 @@ impl PartEditor {
             ("model", "3D", View::Model),
         ]
         .into_iter()
-        .filter(|(_, _, view)| *view != View::Pins || pins_tab::AVAILABLE)
         .map(|(id, label, view)| Tab {
             id,
             label,
@@ -783,7 +784,7 @@ impl PartEditor {
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
             "details" => View::Details,
-            "pins" if pins_tab::AVAILABLE => View::Pins,
+            "pins" => View::Pins,
             "footprint" => View::Footprint,
             "mapping" => View::Mapping,
             "model" => View::Model,
@@ -1771,7 +1772,7 @@ impl PartEditor {
         if self.update.is_open() {
             ui.disable();
         }
-        // Contract call sites (C0): each slice fills its own module.
+        // The library, pins and 3D call sites, one module each.
         let sheet = self.gallery.show(ui.ctx(), engine);
         if let Some(id) = self.gallery.take_created() {
             // The gallery's create applied: open what it made.

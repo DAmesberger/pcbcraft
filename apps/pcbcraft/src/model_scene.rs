@@ -96,7 +96,7 @@ fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
 pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
-        .filter(|(layer, _)| view.visible(*layer))
+        .filter(|(layer, _)| view.draws(*layer))
         .collect();
     let too_large = || "model too large for the 3D view".to_string();
     let total = bodies
@@ -158,7 +158,7 @@ pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), 
 pub fn keep_visible(bytes: &mut Vec<u8>, runs: &[(ViewLayer, Range<usize>)], view: &LayerView) {
     let mut end = 0;
     for (layer, run) in runs {
-        if !view.visible(*layer) || run.end > bytes.len() || run.start > run.end {
+        if !view.draws(*layer) || run.end > bytes.len() || run.start > run.end {
             continue;
         }
         let len = run.end - run.start;
@@ -499,7 +499,7 @@ pub(crate) mod tests {
             keep_visible(&mut kept, &scene.runs, &view);
             let (packed, runs) = pack(&scene.geometry, &view)?;
             assert_eq!(kept, packed, "{view:?}");
-            assert!(runs.iter().all(|(l, _)| view.visible(*l)));
+            assert!(runs.iter().all(|(l, _)| view.draws(*l)));
             if view != LayerView::default() {
                 assert!(kept.len() < scene.pbr.len(), "{view:?} hides something");
             }
@@ -628,6 +628,100 @@ pub(crate) mod tests {
         assert!(scene.shadows.top.iter().all(|(p, w)| {
             (p[2] - mask - CONTACT_LIFT as f32).abs() < 1e-4 && (0.0..=1.0).contains(w)
         }));
+        Ok(())
+    }
+
+    /// The demo board with a marking on every placed instance: its built
+    /// geometry plus the decals, as the model worker appends them.
+    fn marked_scene() -> Result<(ModelScene, usize), Box<dyn std::error::Error>> {
+        use pcbcraft_core::library::marking::{Finish, LaidElement, LaidText, MarkingLayout};
+        use pcbcraft_solidcraft::marking::{DecalCache, board};
+        let project = demo_project()?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let layouts = project
+            .placements
+            .iter()
+            .map(|p| {
+                let layout = MarkingLayout {
+                    elements: vec![LaidElement::Text(LaidText {
+                        text: "103".into(),
+                        height_mm: 0.3,
+                        origin: [0.0, 0.0],
+                    })],
+                    finish: Finish::LaserEtch,
+                    findings: Vec::new(),
+                };
+                (p.instance, layout)
+            })
+            .collect();
+        let decals = board::board_decals(
+            &project,
+            &model.geometry,
+            &model.sources,
+            &layouts,
+            &mut DecalCache::default(),
+        );
+        let count = decals.len();
+        let mut geometry = model.geometry;
+        geometry.extend(decals);
+        Ok((build(geometry)?, count))
+    }
+
+    /// PCB 3D: decals pack in their own Markings run (the Markings toggle or
+    /// hiding the bodies drops them, nothing rebuilt), take their finish's
+    /// look and highlight with their instance.
+    #[test]
+    fn marking_decals_draw_and_hide_with_the_component_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_solidcraft::marking::{board::DECAL_KIND, finish_surface};
+        let (scene, count) = marked_scene()?;
+        assert!(count >= 2, "{count}");
+        let plain = demo_scene()?;
+        let decals: Vec<&Geometry> = scene.geometry[plain.geometry.len()..].iter().collect();
+        assert_eq!(decals.len(), count);
+        let triangles: usize = decals.iter().map(|g| g.mesh.triangles.len()).sum();
+        // The decal vertices are exactly the Markings run; the bodies'
+        // run is unchanged.
+        let run = |s: &ModelScene, layer: ViewLayer| {
+            s.runs
+                .iter()
+                .find(|(l, _)| *l == layer)
+                .map(|(_, r)| r.len())
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            run(&scene, ViewLayer::Bodies),
+            run(&plain, ViewLayer::Bodies)
+        );
+        assert_eq!(
+            run(&scene, ViewLayer::Markings),
+            3 * PBR_DETAILED_SIZE * triangles
+        );
+        assert_eq!(
+            scene.pbr.len(),
+            plain.pbr.len() + 3 * PBR_DETAILED_SIZE * triangles
+        );
+        let laser = finish_surface(pcbcraft_core::library::marking::Finish::LaserEtch)?;
+        for g in &decals {
+            assert_eq!(g.kind, DECAL_KIND);
+            assert_eq!(g.surface.base_color(), laser.base_color());
+            assert!(scene.highlight.iter().any(|(item, layer, _)| {
+                Some(*item) == g.item && *layer == ViewLayer::Markings
+            }));
+        }
+        // Hiding the bodies drops the decals too, and the Markings toggle
+        // drops only them; shadows are unchanged.
+        for hidden in [ViewLayer::Bodies, ViewLayer::Markings] {
+            let mut view = LayerView::default();
+            view.set(hidden, false);
+            let (marked, _) = pack(&scene.geometry, &view)?;
+            let (unmarked, _) = pack(&plain.geometry, &view)?;
+            assert_eq!(marked, unmarked, "{hidden:?}");
+            let mut kept = scene.pbr.clone();
+            keep_visible(&mut kept, &scene.runs, &view);
+            assert_eq!(kept, marked, "{hidden:?}: kept without a repack");
+        }
+        assert_eq!(scene.shadows.top.len(), plain.shadows.top.len());
         Ok(())
     }
 

@@ -26,7 +26,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod models;
 mod review;
+pub use models::model_details;
 pub use review::{
     ChangeArea, ChangeKind, ChangeObject, ConflictReason, FindingRow, FindingsDiff, PlanChange,
     PlanLine, TrackConflict, summarize,
@@ -1031,6 +1033,8 @@ struct View<'a> {
     binding: Option<&'a BindingDefinition>,
     footprint: Option<&'a FootprintDefinition>,
     package: Option<&'a PackageDefinition>,
+    /// The package's library model (D1), if it uses one.
+    model: Option<&'a crate::library::Published<crate::library::ModelDefinition>>,
 }
 
 fn view<'a>(project: &'a Project, instance: &ComponentInstance) -> Option<View<'a>> {
@@ -1046,6 +1050,7 @@ fn view<'a>(project: &'a Project, instance: &ComponentInstance) -> Option<View<'
         binding: physical.map(|p| &p.binding.definition),
         footprint: physical.map(|p| &p.footprint.definition),
         package: physical.map(|p| &p.package.definition),
+        model: models::of(project, physical.map(|p| &p.package.definition)),
     })
 }
 
@@ -1214,7 +1219,10 @@ fn definition_details(
         );
     }
     if let (Some(pa), Some(pb)) = (a.package, b.package) {
-        for line in package_details(pa, pb) {
+        let lines = package_details(pa, pb)
+            .into_iter()
+            .chain(models::model_details(a.model, b.model));
+        for line in lines {
             match packages.iter_mut().find(|(l, _)| *l == line) {
                 Some((_, designators)) => designators.push((designator.to_owned(), instance)),
                 None => packages.push((line, vec![(designator.to_owned(), instance)])),
@@ -1968,6 +1976,66 @@ fn instance_details(
             format!("{designator}: terminal {terminal} is marked no-connect."),
         );
     }
+    // Pin configurations on terminals the target removes or declares NC
+    // are dropped (as no-connect markers are); each is listed with its
+    // values so nothing disappears unseen.
+    for (terminal, config) in &old.pin_config {
+        if new.pin_config.contains_key(terminal) {
+            continue;
+        }
+        let endpoint = endpoint(*terminal);
+        let values = pin_config_values(config);
+        plan.detail(
+            head(
+                A::Component,
+                K::Remove,
+                O::Terminal,
+                vec![ObjectRef::Terminal { endpoint }],
+                format!(
+                    "{designator}: pin configuration of terminal {} is dropped",
+                    terminal_name(project, endpoint)
+                ),
+            ),
+            format!(
+                "{designator}: the pin configuration of terminal {terminal} ({values}) is dropped; the new revision removes the terminal or declares it not connected."
+            ),
+        );
+    }
+}
+
+/// A pin configuration's set values as text ("pull up, name BUTTON").
+fn pin_config_values(config: &crate::functions::PinConfig) -> String {
+    use crate::functions::{Level, Pull};
+    let mut parts = Vec::new();
+    if let Some(pull) = config.pull {
+        parts.push(format!(
+            "pull {}",
+            match pull {
+                Pull::None => "none",
+                Pull::Up => "up",
+                Pull::Down => "down",
+            }
+        ));
+    }
+    if let Some(speed) = &config.speed {
+        parts.push(format!("speed {}", clip(speed)));
+    }
+    if let Some(level) = config.initial {
+        parts.push(format!(
+            "initial {}",
+            match level {
+                Level::Low => "low",
+                Level::High => "high",
+            }
+        ));
+    }
+    if let Some(schmitt) = config.schmitt {
+        parts.push(format!("Schmitt {}", if schmitt { "on" } else { "off" }));
+    }
+    if let Some(name) = &config.name {
+        parts.push(format!("name {}", clip(name)));
+    }
+    parts.join(", ")
 }
 
 /// Effective-value changes per field lineage, including label-only field

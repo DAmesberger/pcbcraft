@@ -677,7 +677,7 @@ fn read_asset(folder: &Folder, hash: ContentHash) -> Result<PackedAsset> {
     Ok(PackedAsset {
         hash,
         media_type: meta.media_type,
-        data: AssetBytes(data),
+        data: AssetBytes::new(data),
     })
 }
 
@@ -853,7 +853,7 @@ pub fn write_bundle(folder: &Folder, bundle: &Bundle) -> Result<WriteReport> {
         if !intact {
             // Content-addressed: replacing missing or damaged bytes with the
             // bytes that hash to the name is always safe.
-            replace_atomic(&data_path, &asset.data.0)?;
+            replace_atomic(&data_path, &asset.data[..])?;
         }
         if !present(&meta_path) {
             create_new_atomic(&meta_path, &pretty(&meta)?)?;
