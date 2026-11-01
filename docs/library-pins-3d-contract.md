@@ -2,7 +2,9 @@
 
 **Track "models" (D0–D6) is built and integrated (1 November 2026).** Its as-built description, including the integration choices below, is [D0–D6 as built](component-model.md#3d-model-library-project-container-and-markings-d0d6-as-built); its rows here are kept only as the record of what the fan-out owned. Integration wired D2's board hook (`project::build` builds a package's library model once per package revision), the library-model Component 3D preview (`scene::library_asset` and `imported::preview`), D5's decals into the model worker as their own display-only `BodyKind::Marking` with the D6 Markings toggle, and the import wizard's frame and contacts through D2's functions (contacts measured off the UI thread at Finish). It removed the `marking.unsupported`, `model.unsupported` and `package.model_unsupported` finding codes; `model.unsupported:` remains a refusal prefix of the integration crate for models it does not build yet (B2 families, `.solidcraft`). Tracks "libui" and "pins" still follow this contract.
 
-Status (tracks "libui" and "pins"): contract only. Every type, command, query, schema, finding code, module-map row, layer rule and limit below exists and compiles. Every new handler refuses with an explicit error (`Error::Unsupported` in core and firmware, `Error::Invalid("<code>: …")` in io and the integration crate, which have no `Unsupported` variant). No handler panics or uses an unfinished-code macro. The UI call sites are wired to stub modules that draw nothing, so the app looks and behaves as before. The design behind this is the "Component catalog, templates, pin functions and 3D library" design note of 1 November 2026, with its founder decisions F1–F8. **F2 is decided differently from the note's recommendation: pin rules are sandboxed Rhai scripts** (see [C1](#pin-rules-c1-rhai-scripts-f2)).
+**Track "pins" (C1–C7) is built and integrated** (1 November 2026): its behaviour, limits and evidence are in [pin functions as built](component-model.md#pin-functions-peripherals-rules-pinout-import-and-firmware-c1c7-as-built) and the [editor evidence](editor-evidence.md#pin-functions-c1c7), and its terms in the [glossary](../GLOSSARY.md). Its rows below record the ownership it worked under; as-built differences are noted in [Pins track as built](#pins-track-as-built). Track "libui" is still built against this contract.
+
+Status of the rest (track "libui"): contract only. Every type, command, query, schema, finding code, module-map row, layer rule and limit below exists and compiles. Every new handler refuses with an explicit error (`Error::Unsupported` in core and firmware, `Error::Invalid("<code>: …")` in io and the integration crate, which have no `Unsupported` variant). No handler panics or uses an unfinished-code macro. The UI call sites are wired to stub modules that draw nothing, so the app looks and behaves as before. The design behind this is the "Component catalog, templates, pin functions and 3D library" design note of 1 November 2026, with its founder decisions F1–F8. **F2 is decided differently from the note's recommendation: pin rules are sandboxed Rhai scripts** (see [C1](#pin-rules-c1-rhai-scripts-f2)).
 
 `tests/contract.rs` (core) and the automation `session/*_tests.rs` files pin the contract: the new queries and commands exist on the wire, refuse as `unsupported`, leave the document and its revision unchanged, and existing documents serialize exactly as before (every new field is `serde(default)` and skipped when empty).
 
@@ -68,13 +70,15 @@ MCP tools are generated from the automation catalog, so every request above is a
 
 ### Finding codes (registered in `issues/rules.rs`)
 
-- **C1 rules:** `rule.unsupported` (contract refusal; removed by C1), `rule.bounds`, `rule.script` (compile error), `rule.budget`, `rule.runtime`, `rule.reference`, `rule.default_conflict`.
+- **C1 rules:** `rule.bounds`, `rule.script` (compile error), `rule.budget`, `rule.runtime`, `rule.reference`, `rule.default_conflict`.
 - **C1/C2 issues:** `config.rule_unmet` (Error, blocks ElectricallyResolved), `config.rule_note` (Warning), `config.pin_option` (an invalid pin config after a library update).
-- **C3/C5 review (F8):** `pinout.uncertain` (blocks publishing), `pinout.unreviewed` (Warning).
+- **C2 pin data (added at integration):** `function.mux`, `function.gpio`, `function.pin_option`, `resource.kind`, `resource.signal` (publish blockers).
+- **C3 import:** `pinout.stale_base` is the rule of the conflict refusing a stale plan (a refusal, not a finding).
+- **C3/C5 review (F8):** `pinout.uncertain` (blocks publishing), `pinout.unreviewed` (Warning). The review state is draft bookkeeping: publishing drops it from the revision and its draft, so it never enters revision content or snapshot identity. The gate is advisory against automation: any client that can edit the draft (`library.edit`, or a re-import without the flag) can clear it, and nothing tells a person's confirmation from an agent's. Agents are instructed to clear a flag only after the person confirms the row in the conversation. A re-import into a draft without a binding matches rows to terminals by equal name only, and each such row is a `matched_by_name` review item.
 - **D4 markings (built):** `marking.template`, `marking.unrepresentable` (Info), `marking.does_not_fit` (Info).
 - **D1 models (built):** `model.bounds`, `model.licence`, `model.leads`, `model.body_unmapped`, `model.asset`.
 - **B1 rows:** `package_row.unsupported` (contract), `package_row.family`, `package_row.range`, `package_row.alias`, `package_row.provenance`.
-- Refusal prefixes, which are not findings: `template.unsupported`, `footprint.template_unsupported`, `pin_config.unsupported`, `pins.unsupported`, `functions.suggest_unsupported`, `pinout.unsupported`, `firmware.unsupported`, `library.preview_unsupported` (`container.unsupported` is gone: D0 built the container).
+- Refusal prefixes, which are not findings: `template.unsupported`, `footprint.template_unsupported`, `library.preview_unsupported`. (`container.unsupported` and the pins prefixes are gone with their stubs.)
 
 ### Pin rules (C1): Rhai scripts (F2)
 
@@ -134,6 +138,20 @@ Slice I merges the tracks and owns the frozen C0 files above. Its work:
 - Wire D2's board hook in `solidcraft-integration/src/project.rs`.
 - Remove the `*.unsupported` codes that no slice still emits.
 - Gather end-to-end evidence.
+
+## Pins track as built
+
+Where the integration departs from or settles the contract above:
+
+- **One rule view.** `functions::rules::view` builds the `RuleView` for the resolution, the solver and the Pins tab's explain panel; nobody keeps a copy. `ViewResource` also lists every declared role (`roles`).
+- **Helpers.** C1 finalised the helpers as `active`, `active_count`, `function`, `used`, `role`, `kind`, `option`, `excludes` and `requires`; terminals by name or `#number`, labels without case.
+- **Stale plans.** A changed import target is refused as `conflict` with rule `pinout.stale_base`; the base is a content token, not a document revision, so it is not `stale_revision`.
+- **Review state.** A re-import whose accepted row is no longer flagged clears that row's uncertainty; a person can also clear it by editing the draft's `review`.
+- **What an import creates.** For a new component: the component, a block symbol and a package and binding per variant (the bindings have no footprints yet). The EXM-48 scenario publishes the logical component and its symbol only.
+- **Firmware names.** A net's name is used only when someone named it; every placed terminal sits on a net, and an unnamed `N<id>` net leaves the pin name. Templates are Rhai scripts over the IR (no MiniJinja).
+- **Pin data at publication.** `declaration_problems` is wired into the component's publish findings with the five codes above.
+- **Fixtures.** The automation scenario's EXM-48 (one package) and the core import tests' EXL-48 (two packages) are separate invented devices.
+- **Scenario staging.** `mcp::scenario::STUBS` lists only `template.unsupported` and `model.unsupported`; `REQUIRE_COMPLETE` is set when B1 and D1 are integrated.
 
 ## C0 choices the slices inherit
 

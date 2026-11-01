@@ -170,6 +170,7 @@ pub fn function_resolution(library: &Library, instance: &ComponentInstance) -> R
         &resolved.component.definition,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -177,13 +178,16 @@ fn resolve_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<Resolution> {
-    functions::resolve(
+    functions::resolve_with_rules(
         &component.declarations(),
         &component.resources,
         &component.constraints,
         physical.map(|p| p.binding.definition.unavailable.as_slice()),
         selections,
+        &component.pin_rules,
+        config,
     )
 }
 
@@ -332,11 +336,13 @@ fn check_with<'a>(
             )));
         }
     }
+    pins::check_configs(name, component, &instance.pin_config)?;
     check_functions(
         name,
         component,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -348,13 +354,14 @@ fn check_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<()> {
     if selections.len() > component.terminals.len() {
         return Err(invalid(format!(
             "{name}: more function selections than terminals."
         )));
     }
-    let resolution = resolve_functions(component, physical, selections)
+    let resolution = resolve_functions(component, physical, selections, config)
         .map_err(|e| invalid(format!("{name}: {e}")))?;
     if resolution.conflicts.is_empty() {
         return Ok(());
@@ -700,7 +707,8 @@ pub(crate) struct Retarget {
 }
 
 /// Pin an instance to another revision of its lineage. Project no-connect
-/// markers on terminals the target removes or declares NC are dropped; the
+/// markers and pin configurations on terminals the target removes or
+/// declares NC are dropped ([`pins::carry_pin_config`]); the
 /// caller has already unplaced dropped units and removed wires on such
 /// terminals through `schematic`, and checks the instance once its schematic
 /// is regrouped.
@@ -737,6 +745,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.properties = target.properties;
     instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
+    instance.pin_config = pins::carry_pin_config(&instance.pin_config, &component);
     Ok(())
 }
 

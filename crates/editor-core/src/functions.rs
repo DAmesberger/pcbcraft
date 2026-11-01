@@ -22,7 +22,7 @@ pub mod rules;
 pub mod suggest;
 
 pub use pin_config::{GpioRef, Level, MuxCode, PinConfig, PinConfigs, PinOption, Pull, SourceSpan};
-pub use rules::{PinRule, PinRuleScript, RuleNote};
+pub use rules::{PinRule, PinRuleScript, RuleFailure, RuleNote};
 
 /// Alternative functions of one terminal.
 pub const MAX_FUNCTIONS: usize = 32;
@@ -307,6 +307,11 @@ pub struct Resolution {
     /// C1: `warn` verdicts of pin rule scripts; never blocking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<RuleNote>,
+    /// C1: pin rules that gave no verdict (compile error, runtime error,
+    /// exhausted budget). Each is a finding that blocks electrical
+    /// resolution; it never rejects an edit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_failures: Vec<RuleFailure>,
 }
 
 impl Resolution {
@@ -926,4 +931,49 @@ pub fn resolve(
     resolution.conflicts = conflicts;
     resolution.incomplete = incomplete;
     Ok(resolution)
+}
+
+/// [`resolve`] followed by the component's pin rules (founder decision
+/// F2): every rule is evaluated over the resolved assignment and the
+/// instance's pin configuration within the default [`rules::RuleBudget`],
+/// and its verdict lands in the buckets (`forbid` → conflicts, `require`
+/// → incomplete, `warn` → notes, failures → `rule_failures`). Rules
+/// compile once per distinct source set ([`rules::compile`]).
+pub fn resolve_with_rules(
+    terminals: &[TerminalDeclaration<'_>],
+    resources: &[Resource],
+    constraints: &[FunctionConstraint],
+    unavailable: Option<&[FunctionKey]>,
+    selections: &FunctionSelections,
+    pin_rules: &[PinRule],
+    config: &PinConfigs,
+) -> Result<Resolution> {
+    let mut resolution = resolve(terminals, resources, constraints, unavailable, selections)?;
+    if pin_rules.is_empty() {
+        return Ok(resolution);
+    }
+    let compiled = rules::compile(pin_rules)?;
+    let view = rules::view(terminals, resources, &resolution, config);
+    let evaluation = rules::evaluate(&compiled, &view, rules::RuleBudget::default())?;
+    rules::apply(&mut resolution, &compiled, &evaluation);
+    Ok(resolution)
+}
+
+/// The explain/test panel: resolve a scratch `selections` with the rules
+/// as [`resolve_with_rules`] does and report each rule's own verdict or
+/// failure next to the resolution.
+pub fn explain_rules(
+    terminals: &[TerminalDeclaration<'_>],
+    resources: &[Resource],
+    constraints: &[FunctionConstraint],
+    selections: &FunctionSelections,
+    pin_rules: &[PinRule],
+    config: &PinConfigs,
+) -> Result<(Resolution, rules::RuleExplanations)> {
+    let mut resolution = resolve(terminals, resources, constraints, None, selections)?;
+    let compiled = rules::compile(pin_rules)?;
+    let view = rules::view(terminals, resources, &resolution, config);
+    let evaluation = rules::evaluate(&compiled, &view, rules::RuleBudget::default())?;
+    rules::apply(&mut resolution, &compiled, &evaluation);
+    Ok((resolution, rules::explanations(&compiled, &evaluation)))
 }

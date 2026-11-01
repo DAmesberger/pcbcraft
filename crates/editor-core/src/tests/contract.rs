@@ -27,43 +27,11 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
             query: "soic pins:8".into(),
             limit: None,
         },
-        Query::SuggestPins {
-            instance,
-            request: crate::functions::suggest::SuggestRequest {
-                enable: vec![],
-                keep_existing: true,
-                avoid: vec![],
-                limit: None,
-            },
-        },
-        Query::PinReport { instance },
-        Query::PinConfig { instance },
     ];
     for query in queries {
         let shown = format!("{query:?}");
         assert!(unsupported(engine.query(query)), "{shown}");
     }
-    Ok(())
-}
-
-#[test]
-fn new_commands_refuse_and_change_nothing() -> Fallible<()> {
-    let mut engine = Engine::demo()?;
-    let instance: Id = engine
-        .project()
-        .instances
-        .first()
-        .map(|i| i.id)
-        .ok_or("instance")?;
-    let revision = engine.revision();
-    let before = engine.to_file();
-    let operation = Operation::Instance(crate::InstanceCommand::SetPinConfig {
-        instance,
-        edits: vec![],
-    });
-    assert!(unsupported(engine.apply(revision, operation)));
-    assert_eq!(engine.revision(), revision);
-    assert_eq!(engine.to_file(), before);
     Ok(())
 }
 

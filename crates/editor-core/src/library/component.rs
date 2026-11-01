@@ -190,10 +190,18 @@ impl ComponentDefinition {
             &self.resources,
             &self.constraints,
         ));
+        out.extend(
+            functions::pin_config::declaration_problems(&declarations, &self.resources)
+                .into_iter()
+                .map(|p| issue(p.code, p.message, vec![object(id, p.local)])),
+        );
         out.extend(functions::rules::declaration_findings(id, &self.pin_rules));
         if let Some(marking) = &self.marking {
             out.extend(super::marking::spec_findings(id, marking));
             out.extend(super::marking::artwork_findings(library, id, marking));
+        }
+        if let Some(review) = &self.review {
+            out.extend(super::pinout::review_findings(id, review));
         }
         if self.representations.is_empty() {
             out.push(issue(

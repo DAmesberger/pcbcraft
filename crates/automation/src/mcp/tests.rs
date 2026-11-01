@@ -210,3 +210,132 @@ fn library_folder_tools_are_listed_and_report_refusals() {
         "{missing}"
     );
 }
+
+/// Every wire ID the instructions name (`library.pinout_apply`,
+/// `project.pin_report`, …) is a request, command or query this build
+/// accepts (or a registered finding code such as `pinout.uncertain`), and every tool name they name is listed, so an agent following
+/// them never meets an unknown tool.
+#[test]
+fn the_instructions_name_only_requests_and_tools_that_exist() {
+    let catalog = Request::catalog();
+    let wire: String = catalog
+        .iter()
+        .map(|c| format!("\"{}\" {}", c.id, c.params))
+        .collect();
+    let tool_names: Vec<String> = catalog.iter().map(|c| tool_name(c.id)).collect();
+    // Dotted words that are prose or a refusal's rule, not wire IDs;
+    // finding codes are checked against the registered codes.
+    let prose = ["purchasing.state", "e.g", "library.other_revision"];
+    let finding = |word: &str| pcbcraft_core::issues::KNOWN_CODES.contains(&word);
+    let words = INSTRUCTIONS.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
+    let mut named = 0;
+    for word in words.map(|w| w.trim_matches('.')) {
+        let dotted = word.contains('.')
+            && word.split('.').all(|part| {
+                !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            });
+        if dotted && !prose.contains(&word) && !finding(word) {
+            assert!(
+                wire.contains(&format!("\"{word}\"")),
+                "unknown wire ID {word}"
+            );
+            named += 1;
+        }
+        let tool = ["project_", "library_", "firmware_"]
+            .iter()
+            .any(|prefix| word.starts_with(prefix));
+        if tool {
+            assert!(tool_names.iter().any(|t| t == word), "unknown tool {word}");
+        }
+    }
+    assert!(named > 20, "the check found the IDs ({named})");
+}
+
+/// The instructions walk an agent through the reviewed datasheet
+/// workflow: schema, preview, review, apply, the publish gate, suggest,
+/// assign, pin configuration, the report and the firmware export.
+#[test]
+fn the_instructions_describe_the_reviewed_pinout_workflow() -> super::scenario::Fallible<()> {
+    let mut server = Server::new(Session::default());
+    let init = call(&mut server, 1, "initialize", json!({}));
+    let text = init["result"]["instructions"].as_str().unwrap_or_default();
+    let mut last = 0;
+    for step in [
+        "library_pinout_schema",
+        "uncertain: true",
+        "library.pinout_preview",
+        "review items",
+        "library.pinout_apply",
+        "pinout.uncertain",
+        "unreviewed count",
+        "library.templates",
+        "library.assign_terminals",
+        "functions.suggest",
+        "instance.assign_peripheral",
+        "instance.set_pin_config",
+        "project.pin_report",
+        "project.pin_config",
+        "firmware_export_preview",
+        "firmware_export ",
+        "never configures clocks",
+    ] {
+        let at = text[last..]
+            .find(step)
+            .ok_or_else(|| format!("{step} after byte {last}"))?;
+        last += at;
+    }
+    assert!(text.contains("never infers electrical compatibility from matching names"));
+    assert!(text.contains("never split a name such as USART1_TX"));
+    Ok(())
+}
+
+/// The pinout and firmware requests are generated tools; the schema tool
+/// answers now, and the preview through `project_query` answers the EXM-48
+/// document with its one review item.
+#[test]
+fn the_pinout_tools_answer_over_mcp() -> super::scenario::Fallible<()> {
+    use super::scenario::EXM48;
+    let mut server = Server::new(Session::new(Engine::demo()?));
+    let tools = call(&mut server, 1, "tools/list", json!({}));
+    let listed: Vec<_> = tools["result"]["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    for name in [
+        "library_pinout_schema",
+        "firmware_export_preview",
+        "firmware_export",
+    ] {
+        assert!(listed.contains(&name), "{name}");
+    }
+    let schema = call(
+        &mut server,
+        2,
+        "tools/call",
+        json!({"name": "library_pinout_schema", "arguments": {}}),
+    );
+    assert_eq!(schema["result"]["isError"], false, "{schema}");
+    assert_eq!(schema["result"]["structuredContent"]["format"], 1);
+
+    let document: Value = serde_json::from_str(EXM48)?;
+    let before = server.session().engine().document().clone();
+    let revision = server.session().engine().revision();
+    let plan = call(
+        &mut server,
+        3,
+        "tools/call",
+        json!({"name": "project_query", "arguments": {"query": "library.pinout_preview",
+            "params": {"target": {"target": "new", "name": "EXM-48"}, "document": document}}}),
+    );
+    assert_eq!(server.session().engine().revision(), revision);
+    assert_eq!(server.session().engine().document(), &before);
+    assert_eq!(plan["result"]["isError"], false, "{plan}");
+    let content = &plan["result"]["structuredContent"];
+    let review = content["result"]["review"].as_array().ok_or("review")?;
+    assert_eq!(review.len(), 1, "{plan}");
+    assert_eq!(review[0]["row"], "r20");
+    assert_eq!(review[0]["reason"], "uncertain");
+    Ok(())
+}

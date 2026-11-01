@@ -74,7 +74,8 @@ pub enum InstanceCommand {
     #[serde(rename = "instance.assign_peripheral")]
     AssignPeripheral(AssignPeripheral),
     /// C2: set or clear 1–256 terminals' pin configuration, validated
-    /// against their declared options. Never changes ERC.
+    /// against their declared options. Never changes function ERC
+    /// directly; pin rules may read it through `option(…)`.
     #[serde(rename = "instance.set_pin_config")]
     SetPinConfig {
         instance: Id,
