@@ -206,6 +206,9 @@ pub struct BoardCopper {
     rings: Vec<CopperRing>,
     vias: Vec<Via>,
     via_rings: Vec<CopperRing>,
+    /// Copper each fill island joins (`fill::links`): connected through
+    /// the fill.
+    fill_links: Vec<Vec<ObjectRef>>,
 }
 
 /// One copper shape the checks compare: a pad, a via or a track.
@@ -231,6 +234,33 @@ impl BoardCopper {
             rings,
             vias,
             via_rings,
+            fill_links: super::fill::links(project),
+        }
+    }
+
+    /// Union the shapes each fill island joins, marking them joined.
+    fn join_fills(&self, shapes: &[Copper<'_>], parents: &mut [usize], joined: &mut [bool]) {
+        if self.fill_links.is_empty() {
+            return;
+        }
+        let index: BTreeMap<(u8, Id, u32), usize> = shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| fill_key(&s.object).map(|k| (k, i)))
+            .collect();
+        for group in &self.fill_links {
+            let members: Vec<usize> = group
+                .iter()
+                .filter_map(|o| fill_key(o).and_then(|k| index.get(&k).copied()))
+                .collect();
+            for &m in &members {
+                if let Some(flag) = joined.get_mut(m) {
+                    *flag = true;
+                }
+            }
+            for pair in members.windows(2) {
+                union(parents, pair[0], pair[1]);
+            }
         }
     }
 
@@ -382,6 +412,7 @@ impl BoardCopper {
                 }
             }
         }
+        self.join_fills(&shapes, &mut parents, &mut joined);
         let mut groups: BTreeMap<Id, BTreeSet<usize>> = BTreeMap::new();
         for (i, shape) in shapes.iter().enumerate().filter(|(_, s)| s.pad.is_some()) {
             groups
@@ -438,6 +469,8 @@ impl BoardCopper {
                 }
             }
         }
+        let mut joined = vec![false; shapes.len()];
+        self.join_fills(&shapes, &mut parents, &mut joined);
         let mut islands: BTreeMap<Id, BTreeMap<usize, usize>> = BTreeMap::new();
         for (i, pad) in self.pads.iter().enumerate() {
             islands
@@ -456,6 +489,16 @@ impl BoardCopper {
             }
         }
         result
+    }
+}
+
+/// The identity a fill join names: (kind, id, pad).
+fn fill_key(object: &ObjectRef) -> Option<(u8, Id, u32)> {
+    match *object {
+        ObjectRef::Pad { instance, pad } => Some((0, instance, pad.0)),
+        ObjectRef::Via { id } => Some((1, id, 0)),
+        ObjectRef::Track { id } => Some((2, id, 0)),
+        _ => None,
     }
 }
 

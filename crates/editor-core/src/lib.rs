@@ -925,6 +925,44 @@ impl Engine {
         .map(|_| ())
     }
 
+    /// Store fill copper a host computed off the UI thread
+    /// (`layout::fill::compute_stale`) without an undo step: the copper is
+    /// derivable, so it belongs to the revision it was computed for, not
+    /// to the history. Refused when `expected_revision` is not current;
+    /// results whose key no longer matches their fill are skipped.
+    /// Returns how many fills were stored.
+    pub fn store_fills(
+        &mut self,
+        expected_revision: u64,
+        results: Vec<(Id, model::fill::FilledCopper)>,
+    ) -> Result<usize> {
+        if expected_revision != self.revision {
+            return Err(Error::Stale {
+                expected: expected_revision,
+                actual: self.revision,
+            });
+        }
+        let keys = layout::fill::inputs_keys(&self.document.project)?;
+        let fresh: Vec<_> = results
+            .into_iter()
+            .filter(|(id, c)| keys.get(id) == Some(&c.key))
+            .collect();
+        if fresh.is_empty() {
+            return Ok(0);
+        }
+        let mut project = (*self.document.project).clone();
+        for (id, copper) in &fresh {
+            if let Some(f) = project.fills.iter_mut().find(|f| f.id == *id) {
+                f.computed = Some(copper.clone());
+            }
+        }
+        layout::fill::validate(&project)?;
+        let revision = self.next_revision()?;
+        self.document.project = Arc::new(project);
+        self.revision = revision;
+        Ok(fresh.len())
+    }
+
     pub fn undo(&mut self) -> Result<()> {
         let revision = self.next_revision()?;
         let previous = self

@@ -13,6 +13,7 @@ schemars.workspace = true
 thiserror.workspace = true
 rhai.workspace = true
 sha2.workspace = true
+i_overlay.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

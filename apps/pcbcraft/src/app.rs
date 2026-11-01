@@ -41,6 +41,8 @@ pub struct App {
     schematic: schematic_editor::SchematicEditor,
     pcb: pcb_editor::PcbEditor,
     scene: SceneController,
+    /// Stale copper fills refill off the UI thread.
+    fills: crate::fill_worker::FillWorker,
     files: FileUi,
     /// Library folders, favourites and recents (S3).
     sources: LibrarySources,
@@ -88,6 +90,7 @@ impl App {
                 cc.egui_ctx.clone(),
                 viewport::Viewport::new(render_state, &cc.egui_ctx),
             ),
+            fills: crate::fill_worker::FillWorker::start(cc.egui_ctx.clone()),
             files,
             sources: LibrarySources::from_env(&cc.egui_ctx),
             engine,
@@ -178,6 +181,31 @@ impl App {
                 refusal::shown_error(&refused.error),
                 vec![ToastAction::Details],
             );
+        }
+    }
+
+    /// Store fill copper the worker computed for this revision (no undo
+    /// step), and queue the revision. Undo and a pending import review
+    /// still name the step before the refill.
+    fn refill_fills(&mut self) {
+        if self.files.busy() {
+            return;
+        }
+        let before = self.engine.revision();
+        match self.fills.poll(&mut self.engine) {
+            Ok(0) => {}
+            Ok(_) => {
+                let now = self.engine.revision();
+                if self.undo_revision == Some(before) {
+                    self.undo_revision = Some(now);
+                }
+                if let Some(pending) = &mut self.pending_import
+                    && pending.revision == before
+                {
+                    pending.revision = now;
+                }
+            }
+            Err(text) => self.say(Level::Warning, text),
         }
     }
 
@@ -842,6 +870,7 @@ impl eframe::App for App {
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
         self.scene.receive();
+        self.refill_fills();
         self.file_effects(&ctx);
         self.library_sources(&ctx);
         self.component_subject(&ctx);

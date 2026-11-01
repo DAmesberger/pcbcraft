@@ -897,7 +897,9 @@ pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
 /// outlines; see [`BoardCopper::checks`]. Callers holding a per-revision
 /// [`BoardCopper`] call that instead.
 pub fn checks(project: &Project) -> Vec<Finding> {
-    BoardCopper::of(project).checks(project)
+    let mut findings = BoardCopper::of(project).checks(project);
+    findings.extend(fill::findings(project));
+    findings
 }
 
 /// Airwires between physically disconnected copper islands; see

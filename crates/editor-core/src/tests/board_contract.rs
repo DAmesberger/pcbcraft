@@ -170,15 +170,31 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
     else {
         return Err("no constraint".into());
     };
-    // Computation is a later slice: refusing leaves the document.
+    // Refilling computes and stores the copper as one undo step (the
+    // contract refused it before the fill computation existed).
     let rev = engine.revision();
-    let filled = engine.apply(
+    engine.apply(
         rev,
         Operation::Fill(FillCommand::Refill {
             target: crate::layout::fill::RefillTarget::All,
         }),
+    )?;
+    assert_eq!(engine.revision(), rev + 1);
+    assert!(
+        engine
+            .project()
+            .fill(fill)
+            .is_some_and(|f| f.computed.is_some())
     );
-    assert!(filled.is_err());
+    // Refilling a missing fill is refused and leaves the document.
+    let rev = engine.revision();
+    let missing = engine.apply(
+        rev,
+        Operation::Fill(FillCommand::Refill {
+            target: crate::layout::fill::RefillTarget::One(u64::MAX),
+        }),
+    );
+    assert!(missing.is_err());
     assert_eq!(engine.revision(), rev);
 
     let QueryResult::Rules(report) = engine.query(Query::RulesEffective {})? else {
@@ -200,7 +216,8 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
 
     let reopened = format::decode(&format::encode(&engine.to_file())?)?;
     assert_eq!(reopened, engine.to_file());
-    for _ in 0..5 {
+    // Profile, class, assignment, fill, constraint and the refill.
+    for _ in 0..6 {
         engine.undo()?;
     }
     assert_eq!(engine.to_file(), before);
