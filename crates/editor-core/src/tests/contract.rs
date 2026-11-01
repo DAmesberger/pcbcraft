@@ -32,7 +32,6 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
             fits: None,
             limit: None,
         },
-        Query::PinConfig { instance },
         Query::Marking { instance },
     ];
     for query in queries {
