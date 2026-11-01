@@ -23,10 +23,6 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
         .map(|i| i.id)
         .ok_or("instance")?;
     let queries = [
-        Query::Templates {
-            query: "soic pins:8".into(),
-            limit: None,
-        },
         Query::Models {
             query: "pins:8".into(),
             fits: None,
@@ -79,8 +75,10 @@ fn new_commands_refuse_and_change_nothing() -> Fallible<()> {
 }
 
 #[test]
-fn model_and_row_drafts_cannot_publish_yet() -> Fallible<()> {
+fn model_and_empty_row_drafts_cannot_publish() -> Fallible<()> {
     let mut engine = Engine::default();
+    // B1: an empty row has no family (`package_row.family`); a valid row
+    // publishes (catalog/templates/tests.rs).
     for kind in [DefinitionKind::Model, DefinitionKind::PackageRow] {
         let draft = new_draft(&mut engine, kind)?;
         let revision = engine.revision();

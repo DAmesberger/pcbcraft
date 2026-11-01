@@ -298,6 +298,46 @@ pub enum Term {
     /// `mpn:` — a case-folded text match on the manufacturer part number
     /// only.
     Mpn { text: String },
+    /// `pins:14`, `pins>=8`: the package's lead count (an exposed pad is
+    /// not a lead).
+    Pins { op: Op, count: u32 },
+    /// `pitch:0.5`, `pitch<=0.65mm`, `pitch:50mil`: the lead pitch in mm.
+    Pitch { op: Op, mm: f64 },
+    /// `body:5x5`, `body:4.9x3.9x1.75`: the body length × width (×
+    /// height) in mm, within [`BODY_TOLERANCE_MM`], either way round in
+    /// the plane.
+    Body { size: Vec<f64> },
+    /// `pkg:i0402` or `pkg:m0402`: a chip size code in one system only.
+    /// A bare `pkg:0402` matches both meanings (and package labels).
+    SizeCode { system: SizeSystem, code: String },
+}
+
+/// Which size-code system a `pkg:i…` / `pkg:m…` filter names.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeSystem {
+    Imperial,
+    Metric,
+}
+
+/// How far a `body:` size may be from the typed body, in mm.
+pub const BODY_TOLERANCE_MM: f64 = 0.05;
+/// How far a `pitch:` value may be from the typed pitch, in mm.
+pub const PITCH_TOLERANCE_MM: f64 = 0.005;
+
+impl Op {
+    /// `value op bound` with an absolute tolerance on equality and at the
+    /// bound.
+    pub fn holds_within(self, value: f64, bound: f64, tolerance: f64) -> bool {
+        let near = (value - bound).abs() <= tolerance;
+        match self {
+            Self::Eq => near,
+            Self::Lt => value < bound && !near,
+            Self::Le => value <= bound || near,
+            Self::Gt => value > bound && !near,
+            Self::Ge => value >= bound || near,
+        }
+    }
 }
 
 impl Term {
@@ -328,8 +368,39 @@ impl Term {
             Self::Components => "components".into(),
             Self::Parts => "Parts".into(),
             Self::Mpn { text } => format!("MPN: {text}"),
+            Self::Pins { op, count } => format!("pins {} {count}", op_text(*op)),
+            Self::Pitch { op, mm } => format!("pitch {} {} mm", op_text(*op), short(*mm)),
+            Self::Body { size } => format!(
+                "body {} mm",
+                size.iter()
+                    .map(|v| short(*v))
+                    .collect::<Vec<_>>()
+                    .join(" × ")
+            ),
+            Self::SizeCode { system, code } => format!(
+                "pkg: {code} {}",
+                match system {
+                    SizeSystem::Imperial => "imperial",
+                    SizeSystem::Metric => "metric",
+                }
+            ),
         }
     }
+}
+
+/// `:` reads as equality in a chip.
+fn op_text(op: Op) -> &'static str {
+    match op {
+        Op::Eq => "=",
+        other => other.symbol(),
+    }
+}
+
+/// A length without trailing zeros.
+fn short(v: f64) -> String {
+    let text = format!("{v:.4}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    text.to_owned()
 }
 
 /// A parsed query.
@@ -359,7 +430,7 @@ pub fn fold(text: &str) -> String {
 /// Reserved filter keys, checked before field names and units: a field
 /// named like one of them is reached through a shorter prefix (`kin:`).
 pub const RESERVED: &[&str] = &[
-    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life",
+    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life", "pins", "pitch", "body",
 ];
 /// Reserved keys that name data arriving with library labels and
 /// lifecycle records.
@@ -482,7 +553,53 @@ fn predicate(
     match folded.as_str() {
         "pkg" => {
             filter_op()?;
-            return Ok(Term::Package { text: fold(value) });
+            let text = fold(value);
+            let coded = |prefix: char| {
+                text.strip_prefix(prefix)
+                    .filter(|c| {
+                        !c.is_empty() && c.len() <= 8 && c.bytes().all(|b| b.is_ascii_digit())
+                    })
+                    .map(str::to_owned)
+            };
+            if let Some(code) = coded('i') {
+                return Ok(Term::SizeCode {
+                    system: SizeSystem::Imperial,
+                    code,
+                });
+            }
+            if let Some(code) = coded('m') {
+                return Ok(Term::SizeCode {
+                    system: SizeSystem::Metric,
+                    code,
+                });
+            }
+            return Ok(Term::Package { text });
+        }
+        "pins" => {
+            let count = value
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n <= crate::library::package_form::MAX_FORM_LEADS)
+                .ok_or_else(|| {
+                    format!(
+                        "pins: takes a whole lead count up to {} (is ‘{value}’)",
+                        crate::library::package_form::MAX_FORM_LEADS
+                    )
+                })?;
+            return Ok(Term::Pins { op, count });
+        }
+        "pitch" => {
+            let mm = length_mm(value).ok_or_else(|| {
+                format!("pitch: takes a length such as 0.5, 0.5mm or 50mil (is ‘{value}’)")
+            })?;
+            return Ok(Term::Pitch { op, mm });
+        }
+        "body" => {
+            filter_op()?;
+            let size = body_mm(value).ok_or_else(|| {
+                format!("body: takes length × width (× height) in mm, such as 5x5 or 4.9x3.9x1.75 (is ‘{value}’)")
+            })?;
+            return Ok(Term::Body { size });
         }
         "has" | "missing" => {
             filter_op()?;
@@ -752,6 +869,44 @@ fn quantity_value(
         .to_si(number, unit)
         .map(|q| q.value())
         .map_err(|e| e.to_string())
+}
+
+/// A positive length in mm from `0.5`, `0.5mm`, `50mil`, `0.05in` or
+/// `500um`; `None` otherwise.
+fn length_mm(text: &str) -> Option<f64> {
+    let (number, unit) = split_number(text.trim())?;
+    let scale = match fold(unit).as_str() {
+        "" | "mm" => 1.0,
+        "mil" | "mils" | "thou" => 0.0254,
+        "in" | "\"" => 25.4,
+        "um" | "\u{3bc}m" => 0.001,
+        _ => return None,
+    };
+    let mm = number * scale;
+    (mm.is_finite() && mm > 0.0 && mm <= crate::library::package_form::FORM_LENGTH_LIMIT_MM)
+        .then_some(mm)
+}
+
+/// `LxW` or `LxWxH` in mm (`x`, `X`, `×` or `*` between, an optional
+/// trailing `mm`).
+fn body_mm(text: &str) -> Option<Vec<f64>> {
+    let text = text.trim();
+    let text = text
+        .strip_suffix("mm")
+        .or_else(|| text.strip_suffix("MM"))
+        .unwrap_or(text);
+    let parts: Vec<&str> = text.split(['x', 'X', '×', '*']).collect();
+    if !(2..=3).contains(&parts.len()) {
+        return None;
+    }
+    parts
+        .into_iter()
+        .map(|p| {
+            let v = p.trim().parse::<f64>().ok()?;
+            (v.is_finite() && v > 0.0 && v <= crate::library::package_form::FORM_LENGTH_LIMIT_MM)
+                .then_some(v)
+        })
+        .collect()
 }
 
 /// `number [whitespace] suffix`, with the number grammar of

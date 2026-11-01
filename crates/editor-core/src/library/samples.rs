@@ -5,12 +5,14 @@
 use super::footprint::{Hole, HoleShape, PadKind, PadShape};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
 use super::templates;
+use super::templates::catalog::{LandValues, SkeletonHint};
 use super::{
     BindingDefinition, ChipForm, ChipKind, ComponentDefinition, Definition, DefinitionMeta,
     DraftEdit, FootprintDefinition, GeneratedMaterials, GullWingForm, HeaderForm, LeadSides,
     ModelPlacement, NoLeadForm, PackageDefinition, PackageForm, PackageModel, PackageTerminal, Pad,
     SymbolDefinition, Terminal, TerminalClass, TerminalMap, Unit,
 };
+use crate::diagnostics::{Error, Result};
 use crate::fields::{FieldDefinition, QuantityKind, ValueType};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::geometry::{Bounds, Point};
@@ -546,12 +548,214 @@ pub fn packaged_form(
     prefix: &str,
     refs: SampleRefs,
 ) -> Vec<DraftEdit> {
-    let count = form
-        .terminal_counts()
+    build_packaged(
+        &Packaged {
+            name,
+            form,
+            prefix,
+            symbol: SymbolStyle::Block,
+            lands: None,
+            provenance: PROVENANCE,
+        },
+        refs,
+    )
+}
+
+/// How a generated component's symbol is laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SymbolStyle {
+    /// Pins down the left, then up the right, in package order.
+    Block,
+    /// Two pins, left and right of a small body (2-terminal passives).
+    Axial,
+    /// Pins down the left side only, in package order.
+    Column,
+    /// The body and its texts; pins are drawn by the user.
+    Empty,
+}
+
+struct Packaged<'a> {
+    name: &'a str,
+    form: PackageForm,
+    prefix: &'a str,
+    symbol: SymbolStyle,
+    lands: Option<&'a LandValues>,
+    provenance: &'a str,
+}
+
+/// What [`from_template`] builds: a typed `form`, the skeleton the
+/// symbol starts from, the designator prefix, optional cited land
+/// overrides and the provenance text every draft records.
+pub struct TemplateSpec<'a> {
+    pub name: &'a str,
+    pub form: PackageForm,
+    pub skeleton: SkeletonHint,
+    pub prefix: &'a str,
+    pub lands: Option<&'a LandValues>,
+    pub provenance: &'a str,
+}
+
+/// Clearance kept between a no-lead perimeter land's heel and the
+/// exposed pad when the lands are estimated (original rule of thumb).
+pub const EXPOSED_PAD_CLEARANCE_MM: f64 = 0.2;
+
+/// The five drafts of a component built from a typed `form` and a
+/// skeleton (`library.new_from_template`): one passive terminal per lead
+/// (and the exposed pad), the skeleton's symbol, form-derived lands with
+/// the spec's land overrides, the standard drawings, a pin-1 marker on
+/// packages of more than two terminals or a polarised two-terminal one,
+/// and a straight terminal mapping. The package model is generated.
+/// Refuses a form that has no terminals and a two-terminal skeleton on a
+/// package of another count.
+pub fn from_template(spec: &TemplateSpec<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
+    let count = form_terminal_count(&spec.form);
+    if count == 0 {
+        return Err(Error::Invalid(format!(
+            "template.values: the {} family values give no terminals",
+            spec.form.label()
+        )));
+    }
+    let (symbol, polarised) = match spec.skeleton {
+        SkeletonHint::TwoTerminal { polarised } => {
+            if count != 2 {
+                return Err(Error::Invalid(format!(
+                    "template.skeleton: a two-terminal skeleton needs a package of 2 terminals; this one has {count}"
+                )));
+            }
+            (SymbolStyle::Axial, polarised)
+        }
+        SkeletonHint::IcBox => (SymbolStyle::Block, false),
+        SkeletonHint::Connector => (SymbolStyle::Column, false),
+        SkeletonHint::Blank => (SymbolStyle::Empty, false),
+    };
+    let mut edits = build_packaged(
+        &Packaged {
+            name: spec.name,
+            form: spec.form.clone(),
+            prefix: spec.prefix,
+            symbol,
+            lands: spec.lands,
+            provenance: spec.provenance,
+        },
+        refs,
+    );
+    if spec.lands.is_none() {
+        let trim = heel_trim(&spec.form);
+        if trim > 0.0 {
+            trim_heels(&mut edits, trim);
+        }
+    }
+    if polarised || count > 2 {
+        mark_pin_one(&mut edits);
+    }
+    Ok(edits)
+}
+
+/// The terminal count a typed form gives a new package: its largest
+/// accepted count (a no-lead exposed pad becomes a terminal).
+pub fn form_terminal_count(form: &PackageForm) -> u32 {
+    form.terminal_counts()
         .last()
         .copied()
         .and_then(|n| u32::try_from(n).ok())
-        .unwrap_or(0);
+        .filter(|n| *n <= super::package_form::MAX_FORM_LEADS + 1)
+        .unwrap_or(0)
+}
+
+/// How much to trim the heels of a no-lead form's estimated perimeter
+/// lands so they keep [`EXPOSED_PAD_CLEARANCE_MM`] from its exposed pad;
+/// 0 for other forms.
+pub fn heel_trim(form: &PackageForm) -> f64 {
+    let PackageForm::NoLead(n) = form else {
+        return 0.0;
+    };
+    let Some(ep) = n.exposed_pad else {
+        return 0.0;
+    };
+    // Estimated land length (see `form_lands`) and its centre.
+    let length = n.terminal_length + 0.4;
+    let gap = |body: f64, ep: f64| body / 2.0 - n.terminal_length / 2.0 - length / 2.0 - ep / 2.0;
+    let mut gaps = vec![gap(n.body_width, ep[1])];
+    if n.sides == LeadSides::Four {
+        gaps.push(gap(n.body_length, ep[0]));
+    }
+    let worst = gaps.into_iter().fold(f64::INFINITY, f64::min);
+    let trim = EXPOSED_PAD_CLEARANCE_MM - worst;
+    // Never trim a land below half its estimated length.
+    if trim.is_finite() && trim > 0.0 {
+        trim.min(length / 2.0)
+    } else {
+        0.0
+    }
+}
+
+/// Apply cited land overrides to form-derived `pads` of `form`: each
+/// perimeter land's length along its lead and width across it, the
+/// centre-to-centre distance between opposite lands (both pairs of sides
+/// of a four-sided form), and the exposed pad's size. Plated-through pins
+/// keep their lands. Values that are not positive and finite are ignored.
+pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
+    let ok = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
+    let per = match form {
+        PackageForm::GullWing(g) => Some((g.sides, g.leads_per_side)),
+        PackageForm::NoLead(n) => Some((n.sides, n.terminals_per_side)),
+        _ => None,
+    };
+    let chip = matches!(form, PackageForm::Chip(_));
+    if !chip && per.is_none() {
+        return;
+    }
+    for (k, pad) in pads.iter_mut().enumerate() {
+        if pad.kind != PadKind::Smd {
+            continue;
+        }
+        let PadShape::Rect { size } = &mut pad.shape else {
+            continue;
+        };
+        if pad.number == "EP" {
+            if let Some([x, y]) = lands.exposed_pad
+                && x.is_finite()
+                && y.is_finite()
+                && x > 0.0
+                && y > 0.0
+            {
+                *size = [x, y];
+            }
+            continue;
+        }
+        // The axis the lead runs along: x for a chip and the short sides
+        // of a four-sided form, y for the long rows.
+        let axis = match per {
+            Some((sides, per)) if !across_x(sides, per, k) => 1,
+            _ => 0,
+        };
+        if let Some(l) = ok(lands.pad_length) {
+            size[axis] = l;
+        }
+        if let Some(w) = ok(lands.pad_width) {
+            size[1 - axis] = w;
+        }
+        if let Some(gap) = ok(lands.gap) {
+            let sign = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
+            pad.position[axis] = sign * gap / 2.0;
+        }
+    }
+}
+
+fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
+    let Packaged {
+        name,
+        prefix,
+        provenance,
+        ..
+    } = *spec;
+    let form = spec.form.clone();
+    let meta = |name: &str| DefinitionMeta {
+        name: name.into(),
+        description: String::new(),
+        provenance: provenance.into(),
+    };
+    let count = form_terminal_count(&form);
     let leads = u32::try_from(form.lead_count()).unwrap_or(0);
     let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let package_terminals: Vec<PackageTerminalId> = (1..=count).map(PackageTerminalId).collect();
@@ -576,7 +780,10 @@ pub fn packaged_form(
         },
         placement: ModelPlacement::default(),
     };
-    let pads = form_lands(&package.form, &package_terminals).unwrap_or_default();
+    let mut pads = form_lands(&package.form, &package_terminals).unwrap_or_default();
+    if let Some(lands) = spec.lands {
+        apply_lands(&mut pads, &package.form, lands);
+    }
     let mut footprint = FootprintDefinition {
         package: refs.package,
         next_local: u32::try_from(pads.len() + 1).unwrap_or(1),
@@ -589,6 +796,12 @@ pub fn packaged_form(
         footprint.graphics.clear();
         footprint.next_local = first_graphic;
     }
+    let symbol = match spec.symbol {
+        SymbolStyle::Block => block_symbol(refs.component, &terminals),
+        SymbolStyle::Axial => axial_symbol(refs.component, &terminals),
+        SymbolStyle::Column => column_symbol(refs.component, &terminals),
+        SymbolStyle::Empty => block_symbol(refs.component, &[]),
+    };
     vec![
         DraftEdit {
             id: refs.component,
@@ -624,7 +837,7 @@ pub fn packaged_form(
         DraftEdit {
             id: refs.symbol.id,
             meta: meta(&format!("{name} symbol")),
-            definition: Definition::Symbol(block_symbol(refs.component, &terminals)),
+            definition: Definition::Symbol(symbol),
         },
         DraftEdit {
             id: refs.package.id,
@@ -792,6 +1005,70 @@ fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefi
             pins,
         }],
     }
+}
+
+/// The two-terminal sample symbol: a small body with pin 1 on the left
+/// and pin 2 on the right, numbers hidden.
+fn axial_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+    symbol(
+        component,
+        terminals,
+        &Layout {
+            body: Bounds {
+                min: [-2.5, -1.0],
+                max: [2.5, 1.0],
+            },
+            pins: [[-5.0, 0.0], [5.0, 0.0]],
+            envelope: [0.0; 3],
+            offset: [0.0; 3],
+            pads: [[0.0; 2]; 2],
+            land: [0.0; 2],
+        },
+    )
+}
+
+/// A narrow body with every terminal down its left side in package order,
+/// on a 2.54 mm grid (a connector's starting point).
+fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+    const STEP: f64 = 2.54;
+    let mut symbol = block_symbol(component, &[]);
+    let rows = terminals.len().max(1) as f64;
+    let body = Bounds {
+        min: [-STEP, -rows * STEP],
+        max: [STEP, STEP],
+    };
+    let gap = 0.5;
+    if let Some(unit) = symbol.units.first_mut() {
+        unit.graphics = vec![
+            graphics::body_rect(GraphicId(2), body),
+            graphics::text(
+                GraphicId(3),
+                TextContent::Designator,
+                [body.center()[0], body.max[1] + gap],
+                Justify {
+                    h: HAlign::Center,
+                    v: VAlign::Bottom,
+                },
+            ),
+            graphics::text(
+                GraphicId(4),
+                TextContent::ComponentName,
+                [body.center()[0], body.min[1] - gap],
+                Justify {
+                    h: HAlign::Center,
+                    v: VAlign::Top,
+                },
+            ),
+        ];
+        unit.pins = terminals
+            .iter()
+            .enumerate()
+            .map(|(k, terminal)| {
+                graphics::pin_toward(*terminal, [-2.0 * STEP, -(k as f64) * STEP], body)
+            })
+            .collect();
+    }
+    symbol
 }
 
 /// A resistance quantity kind (ohm, SI prefixes) and a non-negative
