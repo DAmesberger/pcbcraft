@@ -1055,6 +1055,7 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
         affected_placements: vec![],
         removed_placements: vec![],
         conflicting_tracks: vec![],
+        conflicting_vias: vec![],
         blockers: vec![],
         warnings: vec![],
     };

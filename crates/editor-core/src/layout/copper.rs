@@ -15,7 +15,7 @@ use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance};
 use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
-use crate::model::{CopperLayer, Project, Track};
+use crate::model::{CopperLayer, Project, Track, Via};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The chord tolerance curved copper edges are flattened at, in mm, and so
@@ -52,6 +52,26 @@ impl CopperRing {
     /// A placed pad's copper outline.
     pub fn of_pad(pad: &WorldPad) -> Self {
         Self::of_shape(&pad.outline(), curved(&pad.shape))
+    }
+
+    /// A via's annular pad, a circle of its diameter.
+    pub fn of_via(via: &Via) -> Self {
+        Self::of_circle(via.position, via.diameter)
+    }
+
+    /// A via's drilled hole, a circle of its drill diameter.
+    pub fn of_drill(via: &Via) -> Self {
+        Self::of_circle(via.position, via.drill)
+    }
+
+    fn of_circle(center: Point, diameter: f64) -> Self {
+        Self::of_shape(
+            &Shape::Circle {
+                center,
+                radius: diameter / 2.0,
+            },
+            true,
+        )
     }
 
     /// A track's rectangle with butt end caps.
@@ -108,8 +128,14 @@ impl CopperRing {
     /// Whether the two outlines are closer than the clearance rule (an
     /// exact boundary passes; curved edges are judged conservatively).
     pub fn violates_clearance(&self, other: &CopperRing) -> bool {
+        self.closer_than(other, CLEARANCE_MM)
+    }
+
+    /// Whether the two outlines are closer than `limit` mm (an exact
+    /// boundary passes; curved edges are judged conservatively).
+    pub fn closer_than(&self, other: &CopperRing, limit: f64) -> bool {
         let slack = self.slack + other.slack;
-        self.gap(other, CLEARANCE_MM + slack) - slack < CLEARANCE_MM - EPS
+        self.gap(other, limit + slack) - slack < limit - EPS
     }
 
     /// Whether the whole outline lies on the board, by its exact bounds.
@@ -136,15 +162,17 @@ fn curved(shape: &PadShape) -> bool {
     }
 }
 
-/// The connected pads of a board with their copper outlines, built once per
-/// document revision.
+/// The connected pads and the vias of a board with their copper outlines,
+/// built once per document revision.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoardCopper {
     pads: Vec<WorldPad>,
     rings: Vec<CopperRing>,
+    vias: Vec<Via>,
+    via_rings: Vec<CopperRing>,
 }
 
-/// One copper shape the checks compare: a pad or a track.
+/// One copper shape the checks compare: a pad, a via or a track.
 struct Copper<'a> {
     net: Id,
     layer: CopperLayer,
@@ -155,11 +183,29 @@ struct Copper<'a> {
 }
 
 impl BoardCopper {
-    /// Every connected pad of `project` with its exact outline.
+    /// Every connected pad and every via of `project` with its exact
+    /// outline.
     pub fn of(project: &Project) -> Self {
         let pads = super::pads(project);
         let rings = pads.iter().map(CopperRing::of_pad).collect();
-        Self { pads, rings }
+        let vias = project.vias.clone();
+        let via_rings = vias.iter().map(CopperRing::of_via).collect();
+        Self {
+            pads,
+            rings,
+            vias,
+            via_rings,
+        }
+    }
+
+    /// The board's vias, in document order.
+    pub fn vias(&self) -> &[Via] {
+        &self.vias
+    }
+
+    /// The annular-pad outline of the via at `index` in [`Self::vias`].
+    pub fn via_ring(&self, index: usize) -> Option<&CopperRing> {
+        self.via_rings.get(index)
     }
 
     /// The connected pads, in placement then pad order.
@@ -202,6 +248,19 @@ impl BoardCopper {
                 },
                 pad: Some(i),
             });
+        // A through via has copper on every layer, as a plated barrel pad.
+        let vias = self
+            .vias
+            .iter()
+            .zip(&self.via_rings)
+            .map(|(v, ring)| Copper {
+                net: v.net,
+                layer: CopperLayer::Top,
+                through: true,
+                ring,
+                object: ObjectRef::Via { id: v.id },
+                pad: None,
+            });
         let tracks = tracks.iter().zip(track_rings).map(|(t, ring)| Copper {
             net: t.net,
             layer: t.layer,
@@ -210,7 +269,7 @@ impl BoardCopper {
             object: ObjectRef::Track { id: t.id },
             pad: None,
         });
-        pads.chain(tracks).collect()
+        pads.chain(vias).chain(tracks).collect()
     }
 
     /// Geometric connectivity and clearance checks. Net membership does not
@@ -243,12 +302,14 @@ impl BoardCopper {
                     .unwrap_or_else(|| pad.to_string())
             ),
             ObjectRef::Track { id } => format!("track {id}"),
+            ObjectRef::Via { id } => format!("via {id}"),
             _ => String::new(),
         };
         let track_rings: Vec<CopperRing> =
             project.tracks.iter().map(CopperRing::of_track).collect();
         let shapes = self.shapes(&project.tracks, &track_rings);
         let mut parents = (0..shapes.len()).collect::<Vec<_>>();
+        let mut joined = vec![false; shapes.len()];
         let mut pairs = 0usize;
         for (i, a) in shapes.iter().enumerate() {
             if !a.ring.inside(project.board_size) {
@@ -275,6 +336,11 @@ impl BoardCopper {
                 if a.net == b.net {
                     if a.ring.touches(b.ring) {
                         union(&mut parents, i, j);
+                        for k in [i, j] {
+                            if let Some(flag) = joined.get_mut(k) {
+                                *flag = true;
+                            }
+                        }
                     }
                 } else if a.ring.violates_clearance(b.ring) {
                     issues.push(Finding::new(
@@ -305,6 +371,20 @@ impl BoardCopper {
                 ));
             }
         }
+        for (shape, joined) in shapes.iter().zip(&joined) {
+            if let (ObjectRef::Via { .. }, false) = (shape.object, joined) {
+                issues.push(Finding::new(
+                    "board.via_dangling",
+                    format!(
+                        "{} ({}) joins no copper of its net",
+                        label(shape),
+                        project.net_name(shape.net)
+                    ),
+                    vec![shape.object, ObjectRef::Net { id: shape.net }],
+                ));
+            }
+        }
+        issues.extend(super::via::findings(self, &project.tracks));
         issues.extend(courtyard::findings(project));
         issues
     }

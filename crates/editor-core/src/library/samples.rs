@@ -529,7 +529,16 @@ fn across_x(sides: LeadSides, per: [u32; 2], k: usize) -> bool {
 /// form-derived lands and a straight terminal mapping. The package model
 /// is generated.
 pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Vec<DraftEdit> {
-    let form = preset.form();
+    packaged_form(name, preset.form(), preset.prefix(), refs)
+}
+
+/// [`packaged`] for any typed `form` and designator `prefix`.
+pub fn packaged_form(
+    name: &str,
+    form: PackageForm,
+    prefix: &str,
+    refs: SampleRefs,
+) -> Vec<DraftEdit> {
     let count = form
         .terminal_counts()
         .last()
@@ -579,7 +588,7 @@ pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Vec<DraftEdit> 
             meta: meta(name),
             definition: Definition::Component(ComponentDefinition {
                 next_local: 2 * count + 1,
-                designator_prefix: preset.prefix().into(),
+                designator_prefix: prefix.into(),
                 terminals: terminals
                     .iter()
                     .map(|id| Terminal {
@@ -636,6 +645,84 @@ pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Vec<DraftEdit> 
             }),
         },
     ]
+}
+
+/// Silkscreen pin-1 dot radius, in mm.
+pub const PIN_ONE_DOT_RADIUS_MM: f64 = 0.2;
+
+/// Mark pad 1 of the footprint among `edits` as the polarity pad, with a
+/// filled silkscreen dot just beyond it on the footprint's −x side (where
+/// the presets start numbering), clear of its mask opening. Edits without
+/// a footprint, or a footprint without pad 1, are left unchanged.
+pub fn mark_pin_one(edits: &mut [DraftEdit]) {
+    for edit in edits {
+        let Definition::Footprint(footprint) = &mut edit.definition else {
+            continue;
+        };
+        let Some(pad) = footprint.pad(PadId(1)) else {
+            continue;
+        };
+        let at = pad.position;
+        let half = pad.bounds().size().map(|v| v / 2.0);
+        let gap = templates::footprint::SILK_PAD_CLEARANCE_MM
+            + pad
+                .mask_expansion(&footprint.defaults)
+                .unwrap_or(0.0)
+                .max(0.0)
+            + 2.0 * PIN_ONE_DOT_RADIUS_MM;
+        let center = [at[0] - half[0] - gap, at[1]];
+        let id = GraphicId(footprint.next_local);
+        let Some(next) = footprint.next_local.checked_add(1) else {
+            continue;
+        };
+        footprint.next_local = next;
+        footprint.graphics.push(graphics::FootprintGraphic {
+            id,
+            layer: graphics::DrawingLayer::Silkscreen,
+            side: graphics::Side::Component,
+            item: graphics::Item::Shape {
+                shape: crate::geometry::Shape::Circle {
+                    center,
+                    radius: PIN_ONE_DOT_RADIUS_MM,
+                },
+                width: 0.0,
+                fill: graphics::Fill::Solid,
+            },
+        });
+        footprint.polarity = Some(graphics::Polarity {
+            pad: PadId(1),
+            markers: vec![id],
+        });
+    }
+}
+
+/// Shorten every rectangular land but the exposed pad of the footprint
+/// among `edits` by `mm` at its inner end (the heel, towards the footprint
+/// centre along the land's long axis), keeping its outer end in place.
+pub fn trim_heels(edits: &mut [DraftEdit], mm: f64) {
+    if !(mm.is_finite() && mm > 0.0) {
+        return;
+    }
+    for edit in edits {
+        let Definition::Footprint(footprint) = &mut edit.definition else {
+            continue;
+        };
+        for pad in &mut footprint.pads {
+            let PadShape::Rect { size } = &mut pad.shape else {
+                continue;
+            };
+            if pad.number == "EP" {
+                continue;
+            }
+            let axis = usize::from(size[1] > size[0]);
+            if size[axis] <= mm {
+                continue;
+            }
+            size[axis] -= mm;
+            let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
+            pad.position[axis] += outward * mm / 2.0;
+        }
+    }
 }
 
 /// A rectangle with the first half of `terminals` down its left side and
@@ -733,6 +820,128 @@ pub fn resistance_field(kind: QuantityKindRef, field: DefinitionId) -> Vec<Draft
         },
     ]
 }
+
+/// One component of the PCB realism showcase: its name, typed package
+/// form, designator prefix and whether its footprint marks pin 1.
+pub struct ShowcasePart {
+    pub name: &'static str,
+    pub form: PackageForm,
+    pub prefix: &'static str,
+    pub pin_one: bool,
+    /// How much of each perimeter land's inner end to trim, in mm (see
+    /// [`trim_heels`]).
+    pub heel_trim_mm: f64,
+}
+
+/// The showcase's components, in `SHOWCASE_INSTANCES` part order: an
+/// SOIC-8, a QFN-16, a 2×5 header, 0603 resistors, 0805 capacitors and a
+/// polarised 3216 tantalum capacitor. Original typical values.
+pub fn showcase_parts() -> Vec<ShowcasePart> {
+    vec![
+        ShowcasePart {
+            name: "Interface bridge (SOIC-8)",
+            form: Preset::Soic8.form(),
+            prefix: "U",
+            pin_one: true,
+            heel_trim_mm: 0.0,
+        },
+        ShowcasePart {
+            name: "Controller (QFN-16)",
+            form: Preset::Qfn16.form(),
+            prefix: "U",
+            pin_one: true,
+            // The preset's lands reach 0.05 mm from the exposed pad and
+            // meet at the corners; trimming their heels keeps 0.2 mm.
+            heel_trim_mm: 0.2,
+        },
+        ShowcasePart {
+            name: "Header 2×5",
+            form: Preset::Header2x5.form(),
+            prefix: "J",
+            pin_one: true,
+            heel_trim_mm: 0.0,
+        },
+        ShowcasePart {
+            name: "Resistor 0603",
+            form: Preset::Chip0603.form(),
+            prefix: "R",
+            pin_one: false,
+            heel_trim_mm: 0.0,
+        },
+        ShowcasePart {
+            name: "Capacitor 0805",
+            form: PackageForm::Chip(Box::new(ChipForm::new(
+                ChipKind::Capacitor,
+                [2.0, 1.25, 0.85],
+            ))),
+            prefix: "C",
+            pin_one: false,
+            heel_trim_mm: 0.0,
+        },
+        ShowcasePart {
+            name: "Tantalum capacitor 3216 (polarised)",
+            form: PackageForm::Chip(Box::new(ChipForm::new(
+                ChipKind::Capacitor,
+                [3.2, 1.6, 1.6],
+            ))),
+            prefix: "C",
+            pin_one: true,
+            heel_trim_mm: 0.0,
+        },
+    ]
+}
+
+/// The showcase instances: (designator, index into [`showcase_parts`]).
+pub const SHOWCASE_INSTANCES: &[(&str, usize)] = &[
+    ("J1", 2),
+    ("U1", 0),
+    ("U2", 1),
+    ("C1", 4),
+    ("C2", 4),
+    ("C3", 5),
+    ("R1", 3),
+    ("R2", 3),
+    ("R3", 3),
+];
+
+/// The showcase netlist: (net name, terminals as (designator, terminal)).
+/// Terminal numbers are the pad numbers; the QFN's exposed pad is 17 and
+/// the tantalum's pad 1 is its positive terminal.
+pub const SHOWCASE_NETS: &[(&str, &[(&str, u32)])] = &[
+    (
+        "VCC",
+        &[
+            ("J1", 1),
+            ("C3", 1),
+            ("U1", 8),
+            ("C1", 2),
+            ("U2", 13),
+            ("C2", 2),
+            ("R1", 2),
+            ("R2", 2),
+        ],
+    ),
+    (
+        "GND",
+        &[
+            ("J1", 2),
+            ("J1", 10),
+            ("C3", 2),
+            ("U1", 4),
+            ("C1", 1),
+            ("C2", 1),
+            ("U2", 17),
+        ],
+    ),
+    ("SDA", &[("J1", 7), ("U1", 5), ("R1", 1)]),
+    ("SCL", &[("J1", 5), ("U1", 6), ("R2", 1)]),
+    ("EN", &[("J1", 3), ("U1", 7)]),
+    ("D0", &[("U1", 1), ("U2", 16)]),
+    ("D1", &[("U1", 2), ("U2", 15)]),
+    ("D2", &[("U1", 3), ("U2", 14)]),
+    ("INT", &[("U2", 6), ("R3", 2)]),
+    ("OUT", &[("R3", 1), ("J1", 9)]),
+];
 
 #[cfg(test)]
 mod tests {

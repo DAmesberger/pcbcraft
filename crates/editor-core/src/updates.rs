@@ -191,6 +191,11 @@ pub struct UpdatePlan {
     pub affected_placements: Vec<Id>,
     pub removed_placements: Vec<Id>,
     pub conflicting_tracks: Vec<Id>,
+    /// Vias on nets the update changes, or too close to a changed pad of
+    /// another net. Removed together with the conflicting tracks
+    /// (`ApplyUpdate::remove_conflicting_tracks`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicting_vias: Vec<Id>,
     pub blockers: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -1523,6 +1528,7 @@ pub(crate) fn preview(
         affected_placements: vec![],
         removed_placements: vec![],
         conflicting_tracks: vec![],
+        conflicting_vias: vec![],
         blockers: vec![],
         warnings: vec![],
     };
@@ -1743,6 +1749,13 @@ pub(crate) fn preview(
         .map(|t| t.id)
         .collect();
     let mut affected_tracks = conflicts.clone();
+    let mut via_conflicts: BTreeSet<Id> = project
+        .vias
+        .iter()
+        .filter(|v| electrical_changes.contains(&v.net))
+        .map(|v| v.id)
+        .collect();
+    let layers = next.stackup.layers();
     let mut pairs = 0usize;
     for key in pad_ids {
         let before = old_pads.get(&key);
@@ -1789,10 +1802,43 @@ pub(crate) fn preview(
                 ));
             }
         }
+        for via in &project.vias {
+            pairs += 1;
+            if pairs > 100_000 {
+                break;
+            }
+            if after.is_some_and(|p| layout::via_pad_clearance_conflict(via, p, &layers)) {
+                via_conflicts.insert(via.id);
+            } else if before.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
+                && !after.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
+            {
+                plan.warnings.push(format!(
+                    "Via {} is detached from {} after its geometry changes; copper stays in place for rerouting.",
+                    via.id,
+                    pad_label(&key)
+                ));
+            }
+        }
         if pairs > 100_000 {
             break;
         }
     }
+    for via in &project.vias {
+        if via_conflicts.contains(&via.id) && via.locked {
+            plan.blockers.push(format!(
+                "Via {} is locked and affected; unlock it before updating.",
+                via.id
+            ));
+        }
+    }
+    plan.conflicting_vias = via_conflicts.into_iter().collect();
+    if !plan.conflicting_vias.is_empty() {
+        plan.warnings.push(format!(
+            "Explicit removal required for vias {:?}; retained vias are never retagged.",
+            plan.conflicting_vias
+        ));
+    }
+    next.vias.retain(|v| !plan.conflicting_vias.contains(&v.id));
     for track in &project.tracks {
         if affected_tracks.contains(&track.id) && track.locked {
             plan.blockers.push(format!(
@@ -1851,6 +1897,12 @@ pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -
         return Err(Error::Conflict(format!(
             "Update requires explicit removal of conflicting tracks {:?}.",
             plan.conflicting_tracks
+        )));
+    }
+    if !plan.conflicting_vias.is_empty() && !update.remove_conflicting_tracks {
+        return Err(Error::Conflict(format!(
+            "Update requires explicit removal of conflicting vias {:?}.",
+            plan.conflicting_vias
         )));
     }
     candidate.ok_or_else(|| invalid("Update could not be staged."))

@@ -23,6 +23,7 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 mod copper;
 pub mod courtyard;
 mod placed;
+pub mod showcase;
 pub mod via;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
@@ -30,7 +31,10 @@ pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
     pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
 };
-pub use via::{LayerChangeRequest, ViaRequest};
+pub use via::{
+    DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM, LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest,
+    via_pad_clearance_conflict, via_touches_pad,
+};
 const MAX_CHECK_PAIRS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -81,9 +85,14 @@ pub enum LayoutCommand {
     SetViaTented { id: Id, tented: bool },
     #[serde(rename = "layout.via_lock")]
     SetViaLock { id: Id, locked: bool },
-    /// Route to a via, change layer there and route on.
+    /// Route to a via, change layer there and route on, as one undo step;
+    /// the outcome names the via (`Outcome::ViaAdded`).
     #[serde(rename = "layout.route_layer_change")]
     RouteLayerChange { request: LayerChangeRequest },
+    /// Resize the rectangular board outline (mm, origin at the lower-left
+    /// corner). Placements, tracks and vias must stay inside it.
+    #[serde(rename = "layout.set_board_size")]
+    SetBoardSize { size: Point },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -453,16 +462,23 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
                 .locked = locked;
         }
         LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
-        LayoutCommand::SetStackup(stackup) => project.stackup = stackup,
+        LayoutCommand::SetStackup(stackup) => {
+            via::check_stackup_change(project, &stackup)?;
+            project.stackup = stackup;
+        }
         LayoutCommand::AddVia { via } => return via::add(project, via).map(Some),
         LayoutCommand::MoveVia { id, position } => via::move_to(project, id, position)?,
         LayoutCommand::DeleteVia { id } => via::delete(project, id)?,
         LayoutCommand::SetViaTented { id, tented } => via::set_tented(project, id, tented)?,
         LayoutCommand::SetViaLock { id, locked } => via::set_lock(project, id, locked)?,
-        LayoutCommand::RouteLayerChange { .. } => {
-            return Err(Error::Unsupported(
-                "routing through a layer change is not supported yet; route each layer and add the via".into(),
-            ));
+        LayoutCommand::RouteLayerChange { request } => {
+            return via::route_layer_change(project, request).map(Some);
+        }
+        LayoutCommand::SetBoardSize { size } => {
+            if !point_valid(size) || !size.iter().all(|v| (5.0..=1000.0).contains(v)) {
+                return invalid("board dimensions must be 5–1000 mm");
+            }
+            project.board_size = size;
         }
     }
     Ok(None)
@@ -567,6 +583,17 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                     "route violates 0.2 mm clearance to another net's track".into(),
                 ));
             }
+        }
+        check_pairs = check_pairs.saturating_add(project.vias.len());
+        if check_pairs > MAX_CHECK_PAIRS {
+            return Err(Error::Limit(
+                "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
+            ));
+        }
+        if via::track_violates_via(project, track, ring) {
+            return Err(Error::Conflict(
+                "route violates 0.2 mm clearance to another net's via".into(),
+            ));
         }
         for (index, pad) in copper.pads().iter().enumerate() {
             check_pairs += 1;

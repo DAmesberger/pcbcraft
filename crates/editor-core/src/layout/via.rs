@@ -1,10 +1,15 @@
-//! Board via commands and the document rules over vias. Manufacturing
-//! checks (annular ring, drill-to-copper clearance) and connectivity through
-//! vias build on these types.
-use super::{EPS, Error, Result, invalid};
+//! Board via commands, the document rules over vias, routing through a
+//! layer change, and the via manufacturing checks (annular ring, drill to
+//! copper, hole to hole). Connectivity through vias lives in
+//! [`BoardCopper`], which treats a through via as copper on every layer.
+use super::{
+    BoardCopper, CopperRing, EPS, Error, MAX_CHECK_PAIRS, Result, RouteEditSet, RouteRequest,
+    WorldPad, distance, invalid,
+};
+use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};
 use crate::ids::Id;
-use crate::model::{CopperLayer, Project, Via, ViaSpan};
+use crate::model::{CopperLayer, Project, Stackup, Track, Via, ViaSpan};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -17,6 +22,16 @@ pub const DEFAULT_VIA_DRILL_MM: f64 = 0.3;
 pub const DEFAULT_VIA_DIAMETER_MM: f64 = 0.6;
 const MIN_DRILL_MM: f64 = 0.1;
 const MAX_DIAMETER_MM: f64 = 6.0;
+/// Smallest annular ring the check accepts, in mm. Like
+/// [`super::CLEARANCE_MM`], an estimated prototype default until a rules
+/// document replaces it, not a fabricator qualification.
+pub const MIN_ANNULAR_RING_MM: f64 = 0.1;
+/// Smallest gap from a via's drilled hole to another net's copper on any
+/// layer, in mm (estimated prototype default).
+pub const DRILL_TO_COPPER_MM: f64 = 0.25;
+/// Smallest gap between two vias' drilled holes, any nets, in mm
+/// (estimated prototype default).
+pub const HOLE_TO_HOLE_MM: f64 = 0.25;
 
 /// A via to add: everything but its identity.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -55,8 +70,14 @@ pub struct LayerChangeRequest {
     pub end: Point,
 }
 
-/// Add a via; returns its identity.
+/// Add a via clear of other nets' copper; returns its identity.
 pub(super) fn add(project: &mut Project, request: ViaRequest) -> Result<Id> {
+    let id = insert(project, request)?;
+    check_clearance(project, id)?;
+    Ok(id)
+}
+
+fn insert(project: &mut Project, request: ViaRequest) -> Result<Id> {
     let id = project.allocate()?;
     project.vias.push(Via {
         id,
@@ -85,7 +106,269 @@ fn unlocked(project: &mut Project, id: Id) -> Result<&mut Via> {
 
 pub(super) fn move_to(project: &mut Project, id: Id, position: Point) -> Result<()> {
     unlocked(project, id)?.position = position;
+    check_clearance(project, id)
+}
+
+/// Route `request.request` to the via, place the via at its end and route
+/// on `to_layer` to `request.end`, with one width: one transaction that
+/// creates two tracks and the via. Returns the via.
+pub(super) fn route_layer_change(project: &mut Project, request: LayerChangeRequest) -> Result<Id> {
+    let LayerChangeRequest {
+        request: first,
+        via,
+        to_layer,
+        end,
+    } = request;
+    if !point_valid(via.position) || distance(via.position, first.end) > EPS {
+        return invalid("the via must sit at the end of the first route");
+    }
+    if via.net != first.net {
+        return invalid("the via must be on the routed net");
+    }
+    if to_layer == first.layer {
+        return invalid("a layer change needs a different copper layer to route on");
+    }
+    for layer in [first.layer, to_layer] {
+        if !project.stackup.has(layer) {
+            return Err(Error::Invalid(format!(
+                "the stackup has no {} copper layer",
+                layer.name()
+            )));
+        }
+    }
+    let layers = project.stackup.layers();
+    let probe = Via {
+        id: 0,
+        net: via.net,
+        position: via.position,
+        drill: via.drill,
+        diameter: via.diameter,
+        span: via.span,
+        tented: via.tented,
+        locked: false,
+    };
+    if !probe.on(first.layer, &layers) || !probe.on(to_layer, &layers) {
+        return invalid("the via must join both routed layers");
+    }
+    let id = insert(project, via)?;
+    let second = RouteRequest {
+        net: first.net,
+        start: first.end,
+        end,
+        width: first.width,
+        layer: to_layer,
+    };
+    super::apply_routes(
+        project,
+        RouteEditSet {
+            add: vec![first, second],
+            ..Default::default()
+        },
+    )?;
+    check_clearance(project, id)?;
+    Ok(id)
+}
+
+/// Refuse a stackup that drops a copper layer tracks still use, naming it.
+pub(super) fn check_stackup_change(project: &Project, stackup: &Stackup) -> Result<()> {
+    stackup.check()?;
+    let mut used = std::collections::BTreeMap::<CopperLayer, usize>::new();
+    for track in &project.tracks {
+        if !stackup.has(track.layer) {
+            *used.entry(track.layer).or_default() += 1;
+        }
+    }
+    if let Some((layer, count)) = used.into_iter().next() {
+        return Err(Error::Conflict(format!(
+            "{} still carries {count} track{}; delete or move them before removing the layer",
+            layer.name(),
+            if count == 1 { "" } else { "s" }
+        )));
+    }
+    for via in &project.vias {
+        if let ViaSpan::Between { from, to } = via.span
+            && (!stackup.has(from) || !stackup.has(to))
+        {
+            return Err(Error::Conflict(format!(
+                "via {} spans a copper layer the new stackup lacks",
+                via.id
+            )));
+        }
+    }
     Ok(())
+}
+
+/// Whether a via has copper on any layer a pad has copper on.
+fn shares_layer(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
+    pad.through || via.on(pad.layer.into(), layers)
+}
+
+/// Whether a via is closer than the clearance rule to another net's pad:
+/// the via side of a revision impact plan.
+pub fn via_pad_clearance_conflict(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
+    via.net != pad.net
+        && shares_layer(via, pad, layers)
+        && CopperRing::of_via(via).violates_clearance(&CopperRing::of_pad(pad))
+}
+
+/// Whether a via's copper touches a pad's exact outline on a shared layer.
+pub fn via_touches_pad(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
+    shares_layer(via, pad, layers) && CopperRing::of_via(via).touches(&CopperRing::of_pad(pad))
+}
+
+fn budget(pairs: &mut usize) -> Result<()> {
+    *pairs += 1;
+    if *pairs > MAX_CHECK_PAIRS {
+        return Err(Error::Limit(
+            "via clearance budget exceeded; split this edit into smaller transactions".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a via closer than the clearance rule to another net's copper on
+/// a layer it joins, as routing refuses a track.
+fn check_clearance(project: &Project, id: Id) -> Result<()> {
+    let via = project
+        .via(id)
+        .ok_or_else(|| Error::NotFound("unknown via".into()))?;
+    let layers = project.stackup.layers();
+    let ring = CopperRing::of_via(via);
+    let mut pairs = 0usize;
+    for track in project.tracks.iter().filter(|t| t.net != via.net) {
+        budget(&mut pairs)?;
+        if via.on(track.layer, &layers) && ring.violates_clearance(&CopperRing::of_track(track)) {
+            return Err(Error::Conflict(
+                "via violates 0.2 mm clearance to another net's track".into(),
+            ));
+        }
+    }
+    for pad in super::pads(project).iter().filter(|p| p.net != via.net) {
+        budget(&mut pairs)?;
+        if via_pad_clearance_conflict(via, pad, &layers) {
+            return Err(Error::Conflict(
+                "via violates 0.2 mm clearance to another net's pad".into(),
+            ));
+        }
+    }
+    for other in project.vias.iter().filter(|v| v.net != via.net) {
+        budget(&mut pairs)?;
+        if layers
+            .iter()
+            .any(|l| via.on(*l, &layers) && other.on(*l, &layers))
+            && ring.violates_clearance(&CopperRing::of_via(other))
+        {
+            return Err(Error::Conflict(
+                "via violates 0.2 mm clearance to another net's via".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a track on another net breaks the clearance rule to any via:
+/// the via side of routing's clearance check.
+pub(super) fn track_violates_via(project: &Project, track: &Track, ring: &CopperRing) -> bool {
+    let layers = project.stackup.layers();
+    project.vias.iter().any(|via| {
+        via.net != track.net
+            && via.on(track.layer, &layers)
+            && ring.violates_clearance(&CopperRing::of_via(via))
+    })
+}
+
+/// The via manufacturing checks over `copper`'s vias: annular ring, drilled
+/// hole to another net's copper on any layer, and hole to hole. Copper
+/// clearance and connectivity through vias are part of
+/// [`BoardCopper::checks`].
+pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
+    let mut issues = Vec::new();
+    let track_rings: Vec<CopperRing> = tracks.iter().map(CopperRing::of_track).collect();
+    let vias = copper.vias();
+    let drills: Vec<CopperRing> = vias.iter().map(CopperRing::of_drill).collect();
+    let mut pairs = 0usize;
+    let over = |pairs: &mut usize, issues: &mut Vec<Finding>| {
+        *pairs += 1;
+        let over = *pairs > MAX_CHECK_PAIRS;
+        if over {
+            issues.push(Finding::new(
+                "board.check_limit",
+                "Via check limit reached; remaining vias are unchecked".into(),
+                vec![],
+            ));
+        }
+        over
+    };
+    for (i, (via, drill)) in vias.iter().zip(&drills).enumerate() {
+        let me = ObjectRef::Via { id: via.id };
+        if via.annular_ring() < MIN_ANNULAR_RING_MM - EPS {
+            issues.push(Finding::new(
+                "board.via_annular_ring",
+                format!(
+                    "Via {}: annular ring {:.3} mm is under {MIN_ANNULAR_RING_MM} mm",
+                    via.id,
+                    via.annular_ring()
+                ),
+                vec![me],
+            ));
+        }
+        let pads = copper
+            .pads()
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.net != via.net)
+            .filter_map(|(k, p)| {
+                Some((
+                    copper.ring(k)?,
+                    ObjectRef::Pad {
+                        instance: p.instance,
+                        pad: p.pad,
+                    },
+                    "pad",
+                ))
+            });
+        let others = vias
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.net != via.net)
+            .filter_map(|(k, v)| Some((copper.via_ring(k)?, ObjectRef::Via { id: v.id }, "via")));
+        let wires = tracks
+            .iter()
+            .zip(&track_rings)
+            .filter(|(t, _)| t.net != via.net)
+            .map(|(t, ring)| (ring, ObjectRef::Track { id: t.id }, "track"));
+        for (ring, object, kind) in pads.chain(others).chain(wires) {
+            if over(&mut pairs, &mut issues) {
+                return issues;
+            }
+            if drill.closer_than(ring, DRILL_TO_COPPER_MM) {
+                issues.push(Finding::new(
+                    "board.via_drill_clearance",
+                    format!(
+                        "Via {} drill is within {DRILL_TO_COPPER_MM} mm of another net's {kind}",
+                        via.id
+                    ),
+                    vec![me, object],
+                ));
+            }
+        }
+        for (other, other_drill) in vias.iter().zip(&drills).skip(i + 1) {
+            if over(&mut pairs, &mut issues) {
+                return issues;
+            }
+            if drill.closer_than(other_drill, HOLE_TO_HOLE_MM) {
+                issues.push(Finding::new(
+                    "board.via_hole_spacing",
+                    format!(
+                        "Vias {} and {} drills are closer than {HOLE_TO_HOLE_MM} mm",
+                        via.id, other.id
+                    ),
+                    vec![me, ObjectRef::Via { id: other.id }],
+                ));
+            }
+        }
+    }
+    issues
 }
 
 pub(super) fn delete(project: &mut Project, id: Id) -> Result<()> {
@@ -148,116 +431,4 @@ pub(super) fn validate(project: &Project, nets: &BTreeSet<Id>) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::layout::LayoutCommand;
-    use crate::model::Stackup;
-    use crate::{Engine, Operation, Outcome};
-
-    fn layout(engine: &mut Engine, command: LayoutCommand) -> Result<Outcome> {
-        engine.apply(engine.revision(), Operation::Layout(command))
-    }
-
-    #[test]
-    fn a_via_is_added_moved_tented_and_deleted_as_a_document_object() -> Result<()> {
-        let mut engine = Engine::demo()?;
-        let net = engine.project().nets[0].id;
-        let Outcome::ViaAdded { via } = layout(
-            &mut engine,
-            LayoutCommand::AddVia {
-                via: ViaRequest::through(net, [20.0, 20.0]),
-            },
-        )?
-        else {
-            return Err(Error::Invalid("no via outcome".into()));
-        };
-        assert_eq!(engine.project().via(via).map(|v| v.tented), Some(true));
-        layout(
-            &mut engine,
-            LayoutCommand::MoveVia {
-                id: via,
-                position: [21.0, 20.0],
-            },
-        )?;
-        layout(
-            &mut engine,
-            LayoutCommand::SetViaTented {
-                id: via,
-                tented: false,
-            },
-        )?;
-        let moved = engine.project().via(via).cloned();
-        assert_eq!(
-            moved.map(|v| (v.position, v.tented)),
-            Some(([21.0, 20.0], false))
-        );
-        layout(&mut engine, LayoutCommand::DeleteVia { id: via })?;
-        assert!(engine.project().vias.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn invalid_vias_leave_the_document_unchanged() -> Result<()> {
-        let mut engine = Engine::demo()?;
-        let net = engine.project().nets[0].id;
-        let before = engine.project().clone();
-        let outside = ViaRequest::through(net, [0.1, 0.1]);
-        let mut drill = ViaRequest::through(net, [20.0, 20.0]);
-        drill.drill = drill.diameter;
-        let mut blind = ViaRequest::through(net, [20.0, 20.0]);
-        blind.span = ViaSpan::Between {
-            from: CopperLayer::Top,
-            to: CopperLayer::Inner(1),
-        };
-        for via in [
-            outside,
-            drill,
-            blind,
-            ViaRequest::through(9_999, [20.0, 20.0]),
-        ] {
-            assert!(layout(&mut engine, LayoutCommand::AddVia { via }).is_err());
-        }
-        assert_eq!(engine.project(), &before);
-        Ok(())
-    }
-
-    #[test]
-    fn the_stackup_is_set_and_checked_and_names_its_layers() -> Result<()> {
-        let mut engine = Engine::demo()?;
-        assert_eq!(engine.project().stackup, Stackup::default());
-        let four = Stackup::preset(4)?;
-        assert_eq!(
-            four.layers(),
-            [
-                CopperLayer::Top,
-                CopperLayer::Inner(1),
-                CopperLayer::Inner(2),
-                CopperLayer::Bottom
-            ]
-        );
-        layout(&mut engine, LayoutCommand::SetStackup(four.clone()))?;
-        assert_eq!(engine.project().stackup, four);
-        let mut three = four.clone();
-        three.copper.pop();
-        assert!(layout(&mut engine, LayoutCommand::SetStackup(three)).is_err());
-        assert_eq!(engine.project().stackup, four);
-        Ok(())
-    }
-
-    #[test]
-    fn stackup_heights_stack_from_the_bottom_dielectric_face() -> Result<()> {
-        let missing = || Error::Invalid("missing layer".into());
-        let two = Stackup::default();
-        assert_eq!(two.copper_span(CopperLayer::Bottom), Some((-0.035, 0.0)));
-        let top = two.copper_span(CopperLayer::Top).ok_or_else(missing)?;
-        assert!((top.0 - 1.6).abs() < 1e-12 && (top.1 - 1.635).abs() < 1e-12);
-        let four = Stackup::preset(4)?;
-        let inner = four
-            .copper_span(CopperLayer::Inner(2))
-            .ok_or_else(missing)?;
-        assert!((inner.1 - 0.2).abs() < 1e-12, "{inner:?}");
-        assert_eq!(four.copper_span(CopperLayer::Inner(3)), None);
-        assert!((four.thickness_mm() - 1.74).abs() < 1e-12);
-        Ok(())
-    }
-}
+mod tests;

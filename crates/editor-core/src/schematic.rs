@@ -321,7 +321,12 @@ pub fn rename_net(project: &mut Project, net: Id, name: String) -> Result<()> {
 /// Direct edits may not change the membership of a routed net; the update
 /// planner previews and applies such changes with explicit track removal.
 pub fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
-    let routed: BTreeSet<Id> = before.tracks.iter().map(|t| t.net).collect();
+    let routed: BTreeSet<Id> = before
+        .tracks
+        .iter()
+        .map(|t| t.net)
+        .chain(before.vias.iter().map(|v| v.net))
+        .collect();
     for id in routed {
         let a = before.net(id).map(|net| &net.terminals);
         let b = after.net(id).map(|net| &net.terminals);

@@ -178,10 +178,116 @@ impl Engine {
     /// a 2x5 header, 0603/0805 passives and a polarised part, routed on top
     /// and bottom through tented and open vias, built through the public
     /// commands. The sample parts live in `library::samples`.
+    ///
+    /// Unconnected terminals are marked no-connect. The undo history is
+    /// cleared, as for [`Engine::demo`].
     pub fn showcase() -> Result<Self> {
-        Err(Error::Unsupported(
-            "the showcase project is not built yet".into(),
-        ))
+        let mut engine = Self::default();
+        let mut refs = Vec::new();
+        for part in samples::showcase_parts() {
+            let lineages = engine.reserve_lineages()?;
+            let mut part_edits =
+                samples::packaged_form(part.name, part.form, part.prefix, lineages);
+            samples::trim_heels(&mut part_edits, part.heel_trim_mm);
+            if part.pin_one {
+                samples::mark_pin_one(&mut part_edits);
+            }
+            engine.apply(
+                engine.revision,
+                Operation::Library(LibraryCommand::Edit { edits: part_edits }),
+            )?;
+            engine.apply(
+                engine.revision,
+                Operation::Library(LibraryCommand::Publish {
+                    drafts: vec![
+                        lineages.component,
+                        lineages.symbol.id,
+                        lineages.package.id,
+                        lineages.footprint.id,
+                        lineages.binding.id,
+                    ],
+                }),
+            )?;
+            refs.push(lineages);
+        }
+        for (k, (designator, part)) in samples::SHOWCASE_INSTANCES.iter().enumerate() {
+            let lineages = refs
+                .get(*part)
+                .ok_or_else(|| Error::Invalid("showcase part index".into()))?;
+            let column = (k % 3) as f64;
+            let row = (k / 3) as f64;
+            engine.apply(
+                engine.revision,
+                Operation::Instance(InstanceCommand::Place(instances::NewInstance {
+                    component: ComponentRef::new(lineages.component, Revision::FIRST),
+                    designator: Some((*designator).into()),
+                    properties: vec![],
+                    representation: lineages.symbol.id,
+                    unit: UnitId(1),
+                    position: [column * 40.0, -row * 40.0],
+                    physical: Some(PhysicalChoice {
+                        binding: lineages.binding.id,
+                        footprint: lineages.footprint.id,
+                    }),
+                })),
+            )?;
+        }
+        for (name, terminals) in samples::SHOWCASE_NETS {
+            let mut ends = Vec::with_capacity(terminals.len());
+            for (designator, terminal) in *terminals {
+                ends.push(layout::showcase::endpoint(
+                    engine.project(),
+                    designator,
+                    *terminal,
+                )?);
+            }
+            for pair in ends.windows(2) {
+                engine.apply(
+                    engine.revision,
+                    Operation::Schematic(schematic::SchematicCommand::Connect {
+                        from: pair[0],
+                        to: pair[1],
+                    }),
+                )?;
+            }
+            let net = ends
+                .first()
+                .and_then(|end| engine.project().net_of(*end))
+                .map(|net| net.id)
+                .ok_or_else(|| Error::Invalid("showcase net".into()))?;
+            engine.apply(
+                engine.revision,
+                Operation::Schematic(schematic::SchematicCommand::RenameNet {
+                    net,
+                    name: (*name).into(),
+                }),
+            )?;
+        }
+        let mut unconnected: std::collections::BTreeMap<Id, Vec<TerminalId>> = Default::default();
+        for net in &engine.project().nets {
+            if let [only] = net.terminals[..] {
+                unconnected
+                    .entry(only.instance)
+                    .or_default()
+                    .push(only.terminal);
+            }
+        }
+        for (instance, terminals) in unconnected {
+            engine.apply(
+                engine.revision,
+                Operation::Instance(InstanceCommand::SetNoConnect {
+                    instance,
+                    terminals,
+                    no_connect: true,
+                }),
+            )?;
+        }
+        for command in layout::showcase::commands(engine.project())? {
+            engine.apply(engine.revision, Operation::Layout(command))?;
+        }
+        engine.undo.clear();
+        engine.redo.clear();
+        Ok(engine)
     }
 
     /// Two connected two-terminal components, placed on the board, with a

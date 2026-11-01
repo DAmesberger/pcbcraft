@@ -116,6 +116,10 @@ pub enum ObjectRef {
         instance: Id,
         field: DefinitionId,
     },
+    /// A board via.
+    Via {
+        id: Id,
+    },
 }
 
 /// A derived completeness state a finding can block. Nothing stores these
