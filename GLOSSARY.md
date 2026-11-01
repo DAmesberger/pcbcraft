@@ -325,6 +325,12 @@ A geometric representation of the board and its components for enclosure and ass
 **Native Solidcraft model**:
 A Solidcraft design containing the board and component models, with editable parameters, features and placement relationships. It is the 3D model used by Pcbcraft and saved for direct use in Solidcraft.
 
+**Board model update**:
+How the model worker makes the native model of an edited board from the last one it built: when the edit changes only values (a parameter, a sketch's drawing, where a via placement stands) they are changed in the kept design and only what they reach is evaluated and meshed again; any other edit builds the board anew. The result is the model a fresh build makes. See [PCB realism](docs/pcb-realism.md#edits-update-the-model-in-place).
+
+**Placed definition mesh**:
+The one mesh a shared native definition (a via size, a package revision) is drawn from, with each placement's rigid move. The 3D view draws it instanced, once per placement with that placement's identity; the saved model and its geometry stay those of every placement.
+
 **Push-and-shove routing**:
 Interactive routing that moves existing tracks to make room while preserving their connections and obeying the board rules and locked-object constraints.
 

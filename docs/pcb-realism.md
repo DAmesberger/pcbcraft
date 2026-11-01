@@ -121,8 +121,10 @@ The board and ERC checks pass with no findings.
 - The laminate is the stack it is made of, with no Boolean: each dielectric is a slab
   extruded from the board outline with every drill as a hole (`Substrate`, `Substrate 2`,
   …), and where an inner foil lies at the top of a dielectric, the foil's level is a slab
-  of its own whose holes are also that layer's copper (tracks and via rings; the sketch
-  unites them where they overlap). The saved bodies stay disjoint and a board of
+  of its own whose holes are also that layer's copper (round-capped tracks and via rings;
+  the sketch unites them where they overlap, and a hole wholly inside another, such as a
+  via ring under a wider track, is left out, as the sketch would take it as an island:
+  `without_nested` in `project.rs`). The saved bodies stay disjoint and a board of
   thousands of vias builds in time about linear in their number. The holes go in with one
   `sketch.insert_dxf` per slab and sit where they are now; the outline is a rectangle to the
   `board_width` and `board_depth` parameters, so changing them in the saved file resizes
@@ -133,10 +135,8 @@ The board and ERC checks pass with no findings.
   built once; every via of that size is an occurrence of it, placed at the via (all but the
   first in one `occurrence.copy` with `translations`), so each size is also meshed once.
   Vias sit where they are now (no per-via position parameters).
-- Sources are saved compactly: absent fields are left out, the listed sources spill over
-  `org.pcbcraft.electronics.sources.N`, and vias are recorded per definition in
-  `org.pcbcraft.electronics.vias.N` (occurrence and via ids as differences, nets as runs);
-  `saved_sources` reads them back.
+- Sources and body kinds are saved compactly as columns (`project/identity.rs`; see Build
+  cost); `saved_sources` reads them back.
 - The stackup becomes native parameters:
   - `dielectric_N_thickness` for each dielectric;
   - `board_thickness`, their sum;
@@ -253,20 +253,32 @@ from the GUI. The core warning that restated them is no longer shown twice.
 via boards are `via_board` in `project/tests.rs`: the showcase on 4 layers with that many
 vias on a 1.27 mm grid and about 260 tracks (200 inner).
 
-| Board | Native bodies | Before | Phase 1 | Phase 2 |
-| --- | --- | --- | --- | --- |
-| Demo | 13 | 117 ms | 93 ms | 45 ms |
-| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s | 1.0 s |
-| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s | 0.14 s |
-| Demo, 400 tracks | 413 | 13.5 s | 3.8 s | 0.39 s |
-| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s | 1.6 s |
-| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s | 2.3 s |
-| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s | 2.7–3.5 s |
+| Board | Native bodies | Before | Phase 1 | Phase 2 (butt-capped tracks) | Integrated (round caps) |
+| --- | --- | --- | --- | --- | --- |
+| Demo | 13 | 117 ms | 93 ms | 45 ms | 45 ms |
+| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s | 1.0 s | 1.0 s |
+| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s | 0.14 s | 0.15 s |
+| Demo, 400 tracks | 413 | 13.5 s | 3.8 s | 0.39 s | 2.2 s |
+| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s | 1.6 s | 2.4 s |
+| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s | 2.3 s | 2.9 s |
+| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s | 2.7–3.5 s | 4.0 s |
 
 "Before" is the pinned `pcbcraft-product-look` build (the showcase with 50 vias took 607 s
 there). Phase 1 and phase 2 were measured at a load average of about 5–40 from other builds;
-the 10,000-via row is the range of best-of-3 runs over several minutes (`via_build_profile` in
-`project/tests.rs`, `PCBCRAFT_VIAS=10000`).
+the phase 2 10,000-via cell is the range of best-of-3 runs over several minutes
+(`via_build_profile` in `project/tests.rs`, `PCBCRAFT_VIAS=10000`). The integrated column is
+the merged branch (fork branch `pcbcraft-via2`), best of two runs at a load average of 5–8.
+
+The integrated build draws each track as its round-capped stadium (component-model's
+`layout::track_shape`), a sketch and an extrusion per track instead of a parametric box.
+A box is one command Solidcraft puts off in a batch; a sketch's finish and its extrusion
+each evaluate the whole pending design first, so every track costs about 5 ms on these
+boards: about 1.2 s for the via boards' 260 tracks and 2 s for 400 tracks. The fork puts
+off the sketch and its polyline (`deferrable` in the engine), which took the 10,000-via board
+from 4.6 s to 4.0 s; the finish and the extrusion read the sketch's profiles, so they still
+evaluate. Without the tracks, a 10,000-via board builds in 2.8 s (the `via_display_timings`
+board below, measured on the same branch). The 3 s target for 10,000 vias is met for vias
+alone, not with 260 round-capped tracks; see Open.
 
 What made vias expensive, and what changed in phase 1:
 
@@ -305,7 +317,7 @@ Phase 2 (fork branch `via2-mesh`):
   batch. Evaluating an expression reads only the parameters it names (every named feature
   input is one), and a parameter change is checked without copying the design.
 - **Order and overlap.** The laminate is built last (its sketches hold every drill, which
-  each earlier command would read again); the display-only layers (mask, finish,
+  each later command would read again); the display-only layers (mask, finish,
   silkscreen, edge) are drawn on another thread while the laminate, joints and native
   finish run; a body whose mesh box is its outline box is measured only when its volume is
   read; all bodies are meshed at once on all cores.
@@ -344,12 +356,16 @@ average about 20):
 | 4,096 | 285 ms | 63 ms | 6.8 ms | 6.9 MiB | 105 MiB | 2.5 M |
 | 10,000 | 577 ms | 102 ms | 9.6 ms | 6.9 MiB | 249 MiB | 5.9 M |
 
+On the integrated branch (load average about 5): 1,000 vias build in 1.21 s, scene 69 ms,
+first frame 23 ms, orbit 4.7 ms; 4,096 vias 1.66 s, 183 ms, 53 ms, 7.2 ms; 10,000 vias
+2.80 s, 540 ms, 97 ms, 9.7 ms (6.1 M triangles, 267 MiB instanced, 6.9 MiB stream).
+
 "First frame" is opening the view on a finished build: the scene handed to the view, its
 upload, culling and the first frame. Copied into the stream, the 10,000 vias alone would
 have been 11 GB of vertices (`ten_thousand_vias_hold_one_mesh_per_definition`); their
 definition meshes and levels take 0.7 MB and their placements 52 bytes each. Most of the
 instanced bytes at 10,000 vias are the drilled laminate and the mask openings, each hole
-meshed in place (item 2 below).
+meshed in place.
 
 Plan items of phase 1, all done in phase 2: vias drawn instanced (above), repeated faces
 meshed once, one evaluation per build, and in-place updates for edits that change values
@@ -377,9 +393,12 @@ the board anew. Tests check that every update's native bodies, display layers, s
 and saved metadata match a fresh build of the edited board.
 
 What an edit does not reach is reused, so the design's history is ordered by how rarely
-it changes: generated package models and via definitions first, then the laminate, then
-envelopes, pads and tracks. Evaluation keeps every feature before the first one an edit
-changes; a body whose evaluation and placement are unchanged keeps its mesh and measure
+it changes: generated and library package models and via definitions first, then
+envelopes, pads, tracks and vias, and the laminate last (its sketches hold every drill;
+see Build cost). A library model's definition is built through the session directly
+(`Native::session_mut`), so its commands are not recorded: an update passes over the whole
+definition of the same model and use, as it does a generated one. Evaluation keeps every
+feature before the first one an edit changes; a body whose evaluation and placement are unchanged keeps its mesh and measure
 (`ModelBody::geometry_key`); a laminate slab evaluated again with the same holes and
 heights keeps its mesh; and the display layers keep each side's mask, each land's finish
 and each via's dome and bore whose inputs did not change (`appearance::Memo`). A part's
@@ -391,19 +410,19 @@ change.
 
 | Board | Fresh build | Outer track width | Part moved | Via moved | Inner track moved |
 | --- | --- | --- | --- | --- | --- |
-| Showcase | 3.5 s | 155 ms | 40 ms | 0.75 s | 0.69 s |
-| Showcase, 4 layers, 1,000 vias | 6.1 s | 590 ms | 116 ms | 2.3 s | 1.5 s |
-| Showcase, 4 layers, 4,096 vias | 11.4 s | 748 ms | 370 ms | 6.5 s | 3.3 s |
-| Showcase, 4 layers, 10,000 vias | 89 s | 1.3 s | 1.1 s | 72 s | 10.7 s |
+| Showcase | 1.0 s | 83 ms | 8 ms | 41 ms | 76 ms |
+| Showcase, 4 layers, 1,000 vias | 2.4 s | 416 ms | 49 ms | 286 ms | 440 ms |
+| Showcase, 4 layers, 4,096 vias | 2.9 s | 616 ms | 175 ms | 692 ms | 729 ms |
+| Showcase, 4 layers, 10,000 vias | 3.9 s | 1.1 s | 431 ms | 2.0 s | 1.5 s |
 
-Measured on the shared 18-core machine at a load average of about 13–18 (the 10,000-via
-row at 30–100, one run each for the two slow edits), `ci` profile.
+Measured on the integrated branch at a load average of about 5, `ci` profile. (Before the
+phase 2 meshing was merged, a via moved on the 10,000-via board took 72 s.)
 
-Moving a via redraws the holes of all five slabs and evaluates and meshes them again: in
-place, but at 10,000 vias as slow as a fresh build (the slabs' evaluation and meshing, the
-plan's items 2 and 3, and Solidcraft's `sketch.delete`, which looks up each named entity
-by a linear search). Splitting the laminate into tiles cut along gaps between holes would
-make a via edit remake one tile per slab. A via added or removed is still a fresh build.
+Moving a via redraws the holes of all five slabs and evaluates and meshes them again,
+now about 0.3 s a slab, plus Solidcraft's `sketch.delete`, which looks up each named
+entity by a linear search. Splitting the laminate into tiles cut along gaps between holes
+would make a via edit remake one tile per slab. A via added or removed is still a fresh
+build.
 
 ### Opening the 3D view
 
@@ -416,11 +435,13 @@ a GPU) measures the same steps offscreen:
 
 | Board | Prepared in the background | First frame after opening |
 | --- | --- | --- |
-| Showcase | 2.4 s | 9 ms |
-| Showcase, 4 layers, 40 or more vias | 2.4 s (40), 4.2 s (1,000) | not shown: over the view's 88 MiB vertex cap |
+| Showcase | 1.0 s | 13 ms |
+| Showcase, 4 layers, 1,000 vias | 1.2 s | 24 ms |
+| Showcase, 4 layers, 4,096 vias | 1.7 s | 53 ms |
+| Showcase, 4 layers, 10,000 vias | 2.7 s | 96 ms |
 
-The view cannot show boards of many vias until vias are drawn instanced (plan item 1);
-once it can, opening one is the same upload and draw.
+Integrated branch, load average about 5, 1600 × 1000, best of five openings (each a new
+viewport; the frame is read back, which the window does not do).
 
 Board checks and saved identity scale with the vias too. The copper, via and routing checks
 file every shape in a grid by its bounds and compare only shapes within the largest rule of
@@ -453,8 +474,12 @@ purpose:
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
 - The GUI could not be checked live: the screen was locked during both runs, so windows drew
   nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- 10,000 vias build in about 3 s; the 3D view then shows them in about 0.1 s and orbits at
-  interactive rates (see Build cost and The 3D view at scale).
+- 10,000 vias build in about 2.8 s and the 3D view then shows them in about 0.1 s and
+  orbits at interactive rates, but the benchmark board with its 260 round-capped tracks
+  builds in 4.0 s: each track is a sketch and an extrusion, about 5 ms each (Build cost).
+  Making them as cheap as boxes needs Solidcraft to evaluate a batch's sketches and
+  extrusions without re-reading every parameter and feature (`param_values` and
+  `chain_fingerprint` per command), or a stadium primitive a batch can put off.
 - Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
   whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
   its moiré at overview distance are in Solidcraft's shader. Seen from below, the key
