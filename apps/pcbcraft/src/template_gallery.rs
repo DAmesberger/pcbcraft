@@ -1091,7 +1091,7 @@ impl TemplateGallery {
         let mut moved_chip = false;
         let scroll = std::mem::take(&mut open.scroll);
         let source_name = |h: &TemplateHit| match &h.source {
-            Source::Project if h.is_starter() => "Built-in".to_owned(),
+            Source::Project if h.is_starter() || h.is_custom() => "Built-in".to_owned(),
             Source::Project => "This project".to_owned(),
             Source::Library(id) => names
                 .iter()

@@ -1114,10 +1114,11 @@ fn trim_pads(pads: &mut [Pad], mm: f64) {
 }
 
 /// A rectangle with the first half of `terminals` down its left side and
-/// the rest up its right side, on a 2.54 mm grid, with the designator
-/// above and the name below.
+/// the rest up its right side, on the default symbol grid
+/// ([`graphics::SYMBOL_MODULE_MM`]), with the designator above and the
+/// name below.
 fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
-    const STEP: f64 = 2.54;
+    const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let left = terminals.len().div_ceil(2);
     let rows = left.max(1) as f64;
     let top = ((rows - 1.0) / 2.0).floor() * STEP;
@@ -1193,9 +1194,9 @@ fn axial_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefi
 }
 
 /// A narrow body with every terminal down its left side in package order,
-/// on a 2.54 mm grid (a connector's starting point).
+/// on the default symbol grid (a connector's starting point).
 fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
-    const STEP: f64 = 2.54;
+    const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let mut symbol = block_symbol(component, &[]);
     let rows = terminals.len().max(1) as f64;
     let body = Bounds {

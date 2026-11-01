@@ -1019,6 +1019,14 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
         else {
             return Err(format!("{name}: package and footprint drafts").into());
         };
+        if let Some(Definition::Symbol(symbol)) = draft(1) {
+            for pin in symbol.units.iter().flat_map(|u| &u.pins) {
+                assert!(
+                    crate::library::graphics::on_grid(pin.position, engine.drafts().grid.symbol_mm),
+                    "{name}: a symbol pin off the authoring grid"
+                );
+            }
+        }
         let pads = &footprint.pads;
         assert_eq!(pads.len(), package.terminals.len(), "{name}");
         let mut landed = std::collections::BTreeSet::new();
