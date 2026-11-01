@@ -3710,7 +3710,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-derive"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3720,7 +3719,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-doc"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "log",
  "serde",
@@ -3738,7 +3736,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-engine"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "image",
  "log",
@@ -3760,7 +3757,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-geom"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -3769,7 +3765,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-gpu"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "log",
  "pollster 0.4.0",
@@ -3784,7 +3779,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-io"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -3809,7 +3803,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-kernel"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "log",
  "rayon",
@@ -3829,7 +3822,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-render"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "image",
  "moxcms",
@@ -3843,7 +3835,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-sketch"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "harfrust",
  "serde",
@@ -3856,7 +3847,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-space-mouse"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "serde",
 ]
@@ -3864,7 +3854,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-ui-egui"
 version = "0.26.0"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=87b1009b029a1b381ad1799fe72bfec44a4b1a66#87b1009b029a1b381ad1799fe72bfec44a4b1a66"
 dependencies = [
  "arboard",
  "egui",

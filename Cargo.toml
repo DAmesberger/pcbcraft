@@ -75,3 +75,9 @@ truck-shapeops = { git = "https://github.com/DAmesberger/solidcraft.git", rev = 
 truck-stepio = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
 truck-meshalgo = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
 matext4cgmath = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "87b1009b029a1b381ad1799fe72bfec44a4b1a66" }
+
+# TEMPORARY: build against the local Solidcraft via-scale branch. Drop this
+# once the fork commit is pushed and pinned above.
+[patch."https://github.com/DAmesberger/solidcraft.git"]
+solidcraft-engine = { path = "/Users/amd/dev/solidcraft-via-scale/crates/engine" }
+solidcraft-ui-egui = { path = "/Users/amd/dev/solidcraft-via-scale/crates/ui-egui" }
