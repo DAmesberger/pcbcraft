@@ -820,3 +820,173 @@ fn copper_ring_gaps_are_exact_for_straight_edges_and_bounded_for_curves() {
     assert_eq!(square.gap(&empty, 1.0), f64::INFINITY);
     assert!(empty.inside([1.0, 1.0]));
 }
+
+fn track_set(id: Id, width: Option<f64>, layer: Option<Layer>) -> LayoutCommand {
+    LayoutCommand::SetTrack { id, width, layer }
+}
+
+/// `layout.track_set` changes only the width, the layer or both: the
+/// track keeps its identity, net and ends.
+#[test]
+fn track_set_changes_width_and_layer_in_place() -> Result<()> {
+    let mut project = fixture()?;
+    apply(&mut project, LayoutCommand::Route { request: request() })?;
+    let original = project.tracks[0].clone();
+    apply(&mut project, track_set(original.id, Some(0.5), None))?;
+    assert_eq!(
+        project.tracks,
+        vec![Track {
+            width: 0.5,
+            ..original.clone()
+        }]
+    );
+    apply(
+        &mut project,
+        track_set(original.id, None, Some(Layer::Bottom)),
+    )?;
+    assert_eq!(
+        project.tracks,
+        vec![Track {
+            width: 0.5,
+            layer: Layer::Bottom,
+            ..original.clone()
+        }]
+    );
+    apply(
+        &mut project,
+        track_set(original.id, Some(0.25), Some(Layer::Top)),
+    )?;
+    assert_eq!(
+        project.tracks,
+        vec![Track {
+            width: 0.25,
+            ..original
+        }]
+    );
+    Ok(())
+}
+
+/// Every refusal leaves the project exactly as it was: nothing to change,
+/// an unknown or locked track, a width out of range or not finite, and a
+/// width that breaks clearance to another net's pad.
+#[test]
+fn track_set_refusals_change_nothing() -> Result<()> {
+    let mut project = fixture()?;
+    apply(&mut project, LayoutCommand::Route { request: request() })?;
+    let id = project.tracks[0].id;
+    let before = project.clone();
+    let refused = |project: &mut Project, command| {
+        let result = apply(project, command);
+        assert!(result.is_err(), "{result:?}");
+        result.err()
+    };
+    assert!(matches!(
+        refused(&mut project, track_set(id, None, None)),
+        Some(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        refused(&mut project, track_set(id + 999, Some(0.4), None)),
+        Some(Error::NotFound(_))
+    ));
+    for width in [0.01, 5.5, f64::NAN, f64::INFINITY, -0.3] {
+        assert!(matches!(
+            refused(&mut project, track_set(id, Some(width), None)),
+            Some(Error::Invalid(_))
+        ));
+    }
+    assert_eq!(project, before);
+    // Another net's tracks: one on top 2 mm above the track's centre line,
+    // one on the bottom right under it.
+    for (y, layer) in [(12.0, Layer::Top), (10.0, Layer::Bottom)] {
+        apply(
+            &mut project,
+            LayoutCommand::Route {
+                request: RouteRequest {
+                    net: R1_1,
+                    start: [14.0, y],
+                    end: [20.0, y],
+                    width: 0.3,
+                    layer,
+                },
+            },
+        )?;
+    }
+    let before = project.clone();
+    // 3.5 mm wide, its edge is 0.1 mm from the top track. The refusal
+    // names what is too close in the message style.
+    let Some(Error::Conflict(text)) = refused(&mut project, track_set(id, Some(3.5), None)) else {
+        return Err(Error::Invalid("a clearance conflict expected".into()));
+    };
+    assert!(text.starts_with("Too close to "), "{text}");
+    assert!(text.ends_with(": needs 0.2 mm"), "{text}");
+    assert_eq!(crate::issues::style::check(&text), vec![], "{text}");
+    // On the bottom it would overlap the other net's track.
+    assert!(matches!(
+        refused(&mut project, track_set(id, None, Some(Layer::Bottom))),
+        Some(Error::Conflict(_))
+    ));
+    assert_eq!(project, before);
+    apply(&mut project, track_set(id, Some(3.0), None))?;
+    apply(
+        &mut project,
+        LayoutCommand::SetTrackLock { id, locked: true },
+    )?;
+    let locked = project.clone();
+    assert!(matches!(
+        refused(&mut project, track_set(id, None, Some(Layer::Bottom))),
+        Some(Error::Conflict(_))
+    ));
+    assert_eq!(project, locked);
+    Ok(())
+}
+
+/// Through the engine `layout.track_set` is one revision and one undo
+/// step, refuses a stale revision, and has a typed wire form in the
+/// generated schemas that CLI and MCP serve.
+#[test]
+fn track_set_is_one_undo_step_with_a_typed_wire_form() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    engine.apply(engine.revision(), Operation::Layout(LayoutCommand::Sync))?;
+    let (r1, r2) = ids()?;
+    for (instance, position) in [(r1, [10.0, 10.0]), (r2, [25.0, 10.0])] {
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Move {
+                instance,
+                position,
+                rotation_deg: 0.0,
+                layer: Layer::Top,
+            }),
+        )?;
+    }
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route { request: request() }),
+    )?;
+    let before = engine.project().clone();
+    let id = before.tracks[0].id;
+    let revision = engine.revision();
+    let wire = serde_json::json!({
+        "editor": "Layout",
+        "operation": {"command": "layout.track_set",
+            "params": {"id": id, "width": 0.6}}
+    });
+    let operation: Operation = serde_json::from_value(wire.clone())?;
+    engine.apply(revision, operation.clone())?;
+    assert_eq!(engine.revision(), revision + 1);
+    assert_eq!(engine.project().tracks[0].width, 0.6);
+    assert_eq!(engine.project().tracks[0].layer, Layer::Top);
+    assert!(matches!(
+        engine.apply(revision, operation),
+        Err(Error::Stale { .. })
+    ));
+    engine.undo()?;
+    assert_eq!(engine.project(), &before, "one undo step");
+
+    let mut extra = wire;
+    extra["operation"]["params"]["net"] = serde_json::json!(1);
+    assert!(serde_json::from_value::<Operation>(extra).is_err());
+    let schemas = serde_json::to_string(&crate::schemas())?;
+    assert!(schemas.contains("layout.track_set"));
+    Ok(())
+}

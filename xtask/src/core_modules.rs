@@ -134,6 +134,25 @@ const MAP: &[(&str, &[&str])] = &[
             "layout",
         ],
     ),
+    (
+        "issues",
+        &[
+            "geometry",
+            "ids",
+            "diagnostics",
+            "quantity",
+            "fields",
+            "functions",
+            "library",
+            "model",
+            "instances",
+            "nets",
+            "schematic",
+            "layout",
+            "erc",
+            "completeness",
+        ],
+    ),
     ("updates", BELOW_UPDATES),
     ("commands", BELOW_COMMANDS),
     ("format", &["diagnostics", "model", "library", "validate"]),
@@ -158,6 +177,7 @@ const BELOW_UPDATES: &[&str] = &[
     "catalog",
     "scripting",
     "validate",
+    "issues",
 ];
 
 const BELOW_COMMANDS: &[&str] = &[
@@ -179,6 +199,7 @@ const BELOW_COMMANDS: &[&str] = &[
     "catalog",
     "scripting",
     "validate",
+    "issues",
     "updates",
 ];
 

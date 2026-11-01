@@ -781,7 +781,7 @@ pub fn definition_findings(
                 if !printable(&choice.label) || !labels.insert(choice.label.trim().to_lowercase()) {
                     out.push(issue(
                         "field.choice_label",
-                        format!("Choice {} needs a unique printable label.", choice.id),
+                        "A choice needs a unique printable label.".into(),
                         vec![ObjectRef::LibraryObject {
                             definition: id,
                             local: choice.id.0,

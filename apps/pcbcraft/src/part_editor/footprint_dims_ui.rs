@@ -323,7 +323,7 @@ impl PartEditor {
                 match dims::dimension_picks(&view, &state.picks) {
                     DimPicks::Wrong(why) => {
                         state.picks.clear();
-                        self.notice = why.into();
+                        self.footprint_tool.refuse(why, why);
                     }
                     DimPicks::Ready { .. } | DimPicks::More => {}
                 }
@@ -365,7 +365,7 @@ impl PartEditor {
             ConstrainPicks::More => {}
             ConstrainPicks::Wrong(why) => {
                 state.picks.clear();
-                self.notice = why.into();
+                self.footprint_tool.refuse(why, why);
             }
             ConstrainPicks::Ready => {
                 let refs = std::mem::take(&mut state.picks);
@@ -375,7 +375,9 @@ impl PartEditor {
                 })];
                 match self.try_footprint_edits(&edits) {
                     Ok(()) => self.queue_footprint_edits(edits),
-                    Err(e) => self.notice = e,
+                    Err(e) => self
+                        .footprint_tool
+                        .refuse(&e, "That constraint is not accepted"),
                 }
             }
         }
@@ -466,7 +468,10 @@ impl PartEditor {
                 drag.moved |= frame.moved;
                 drag.live = frame.sketch;
             }
-            Err(e) => self.notice = e.to_string(),
+            Err(e) => self.footprint_tool.refuse(
+                &crate::refusal::shown_error(&e),
+                "That point cannot move there",
+            ),
         }
         let ms = clock.elapsed().as_secs_f64() * 1e3;
         self.footprint_dims.times.add(ms);

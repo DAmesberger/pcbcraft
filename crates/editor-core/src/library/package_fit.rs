@@ -468,7 +468,8 @@ pub fn spacing_mismatch(pairs: &[LeadPair], tolerance_mm: f64) -> Option<(f64, f
 
 fn needs_footprint(action: QuickAction) -> Error {
     Error::Invalid(format!(
-        "package.quick_needs_footprint: {action:?} needs the footprint the package lands on"
+        "package.quick_needs_footprint: {} needs the footprint the package lands on",
+        action.label()
     ))
 }
 

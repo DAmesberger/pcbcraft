@@ -32,11 +32,29 @@ pub enum PackageModel {
     Imported(ImportedModel),
 }
 
+impl QuickAction {
+    /// The action's name in messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rotate { .. } => "Rotate",
+            Self::Flip => "Flip",
+            Self::StandUp => "Stand up",
+            Self::Seat => "Seat",
+            Self::CentreOnPads => "Centre on pads",
+            Self::Pin1ToPad1 => "Pin 1 to pad 1",
+        }
+    }
+}
+
 impl PackageModel {
     /// A short description for update diffs and the inspector.
     pub fn describe(&self) -> String {
         match self {
-            Self::Envelope { material } => format!("approximate envelope ({material:?})"),
+            Self::Envelope { material } => format!(
+                "approximate envelope ({})",
+                crate::materials::builtin(*material)
+                    .map_or_else(|_| "unknown material".into(), |m| m.name)
+            ),
             Self::Generated { family_rev, .. } => format!("generated (builder rev {family_rev})"),
             Self::Imported(_) => "imported".into(),
         }

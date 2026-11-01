@@ -50,68 +50,88 @@ impl PartEditor {
         let draft = set.ids.package;
         let package = set.package.clone();
         let footprint = set.footprint.clone();
-        let footprint_id = set.ids.footprint;
         let revision = engine.revision();
         let mut operation = None;
         let tab = &mut self.model;
-        kit::section(ui, "model-placement", "Placement", true, None, |ui| {
-            let mut values = tab.shown(&package);
-            let mut changed = false;
-            for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
-                changed |= kit::number_row(ui, label, &mut values.translation[index], "mm", LENGTH);
-            }
-            for (index, label) in ["Rotate X", "Rotate Y", "Rotate Z"].into_iter().enumerate() {
-                changed |= kit::number_row(ui, label, &mut values.rotation_deg[index], "°", ANGLE);
-            }
-            if changed && tab.drag.is_none() {
-                tab.fields = Some(values);
-            }
-            kit::note(
-                ui,
-                "Model frame in the package datum: shift in mm, then turns about X, Y and Z.",
-            );
-        });
+        // Folded by default so the tab's default state fits one screen; the
+        // caption says the offset.
+        let summary = offset_summary(&tab.shown(&package));
+        kit::summary_section(
+            ui,
+            "model-placement",
+            "Model offset",
+            false,
+            &summary,
+            |ui| {
+                let mut values = tab.shown(&package);
+                let mut changed = false;
+                for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
+                    changed |=
+                        kit::number_row(ui, label, &mut values.translation[index], "mm", LENGTH);
+                }
+                for (index, label) in ["Rotate X", "Rotate Y", "Rotate Z"].into_iter().enumerate() {
+                    changed |=
+                        kit::number_row(ui, label, &mut values.rotation_deg[index], "°", ANGLE);
+                }
+                if changed && tab.drag.is_none() {
+                    tab.fields = Some(values);
+                }
+                kit::hint(
+                    ui,
+                    "Shift in mm, then turns about X, Y and Z",
+                    "The model frame in the package datum: a shift in mm, then turns about X, Y and Z",
+                );
+            },
+        );
         let focused = ui.ctx().memory(|m| m.focused().is_some());
         if !focused && let Some(values) = tab.fields.take() {
             operation = tab.set(draft, &package.placement, values, revision);
         }
-        kit::section(ui, "model-quick", "Quick actions", true, None, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for (label, action) in QUICK {
-                    if ui_kit::button(ui, label, Button::Small).clicked() {
-                        operation = Some(model_place::edit(
-                            draft,
-                            vec![PackageEdit::ApplyQuick(action)],
-                        ));
+        kit::summary_section(
+            ui,
+            "model-quick",
+            "Quick actions",
+            false,
+            "Turn, flip, seat, centre",
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (label, action) in QUICK {
+                        if ui_kit::button(ui, label, Button::Small).clicked() {
+                            operation = Some(model_place::edit(
+                                draft,
+                                vec![PackageEdit::ApplyQuick(action)],
+                            ));
+                        }
                     }
-                }
-            });
-            let armed = tab.point_to_point != PointToPoint::Off;
-            let label = match tab.point_to_point {
-                PointToPoint::Off => "Point to point",
-                PointToPoint::Source => "Pick a model point…",
-                PointToPoint::Target(_) => "Pick a pad point or the datum…",
-            };
-            let style = if armed {
-                Button::SmallSelected
-            } else {
-                Button::Small
-            };
-            if ui_kit::button(ui, label, style).clicked() {
-                tab.point_to_point = if armed {
-                    PointToPoint::Off
-                } else {
-                    PointToPoint::Source
+                });
+                let armed = tab.point_to_point != PointToPoint::Off;
+                let label = match tab.point_to_point {
+                    PointToPoint::Off => "Point to point",
+                    PointToPoint::Source => "Pick a model point…",
+                    PointToPoint::Target(_) => "Pick a pad point or the datum…",
                 };
-            }
-            kit::note(
-                ui,
-                &format!(
-                    "Drag the triad to move or turn the model; Esc cancels a drag. Over the view, arrow keys nudge {} mm (Shift ×10), Page Up/Down lift.",
-                    model_place::NUDGE_MM
-                ),
-            );
-        });
+                let style = if armed {
+                    Button::SmallSelected
+                } else {
+                    Button::Small
+                };
+                if ui_kit::button(ui, label, style).clicked() {
+                    tab.point_to_point = if armed {
+                        PointToPoint::Off
+                    } else {
+                        PointToPoint::Source
+                    };
+                }
+                kit::hint(
+                    ui,
+                    "Drag the triad to move or turn the model",
+                    &format!(
+                        "Drag the triad to move or turn the model; Esc cancels a drag. Over the view, arrow keys nudge {} mm (Shift ×10), Page Up/Down lift.",
+                        model_place::NUDGE_MM
+                    ),
+                );
+            },
+        );
         kit::section(ui, "model-fit", "Fit leads to pads", true, None, |ui| {
             let options = [
                 (false, "Free rotation".to_owned()),
@@ -172,29 +192,37 @@ impl PartEditor {
                     });
                 }
                 Err(error) => {
-                    kit::note(ui, &fit_message(&error.to_string()));
+                    let text = fit_message(&error.to_string());
+                    kit::hint(ui, &text, &text);
                 }
             }
         });
-        let findings = package_fit::placement_findings(&package, &footprint, footprint_id);
-        let count = (!findings.is_empty()).then_some(findings.len());
-        kit::section(
-            ui,
-            "model-findings",
-            "Placement checks",
-            true,
-            count,
-            |ui| {
-                if findings.is_empty() {
-                    kit::status(ui, "Leads on their lands; body above the board.", Tone::Dim);
-                }
-                for finding in &findings {
-                    kit::status(ui, &finding.message, Tone::Warning);
-                }
-            },
-        );
+        // Placement checks (leads off their lands, body below the board)
+        // are footprint findings: they show in Issues, not here.
         operation
     }
+}
+
+/// The folded Model offset's one line: "0, 0, 0 mm · 0°", or the three
+/// turns when any is set ("1, 0, 0.5 mm · 90°, 0°, 0°").
+fn offset_summary(values: &pcbcraft_core::library::ModelPlacement) -> String {
+    let join = |v: &[f64; 3]| {
+        v.iter()
+            .map(|x| kit::number_text(*x))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let turns = if values.rotation_deg.iter().all(|r| *r == 0.0) {
+        "0°".to_owned()
+    } else {
+        values
+            .rotation_deg
+            .iter()
+            .map(|r| format!("{}°", kit::number_text(*r)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{} mm · {turns}", join(&values.translation))
 }
 
 /// Plain guidance for a fit that cannot run, without the rule code.

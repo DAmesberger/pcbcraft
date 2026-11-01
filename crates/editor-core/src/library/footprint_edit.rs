@@ -446,7 +446,7 @@ fn apply_one(
                 .arrays
                 .iter_mut()
                 .find(|a| a.id == array.id)
-                .ok_or_else(|| Error::NotFound(format!("no array {}", array.id.0)))?;
+                .ok_or_else(|| Error::NotFound("That pad array no longer exists".into()))?;
             *slot = array.clone();
         }
         FootprintEdit::RemoveArray { id } => {
@@ -478,7 +478,9 @@ fn apply_one(
             let before = source.overrides.len();
             source.overrides.retain(|o| o.key != *key);
             if source.overrides.len() == before {
-                return Err(Error::NotFound(format!("no override for {key:?}")));
+                return Err(Error::NotFound(
+                    "That array pad has no override to clear.".into(),
+                ));
             }
         }
         FootprintEdit::SetGraphicRole { role } => {
@@ -508,7 +510,7 @@ fn apply_one(
             let before = source.graphics.len();
             source.graphics.retain(|g| g.id != *id);
             if source.graphics.len() == before {
-                return Err(Error::NotFound(format!("no graphic role {id}")));
+                return Err(Error::NotFound("That graphic has no role to clear".into()));
             }
             next.graphics.retain(|g| g.id != *id);
             if let Some(p) = &mut next.polarity {

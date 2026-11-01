@@ -78,11 +78,19 @@ pub enum LibraryCommand {
     /// courtyard and assembly roles) go through the same path as
     /// `library.edit_footprint`, evaluated once, as one undo step; any
     /// failure leaves the draft unchanged. Terminals stay unassigned.
-    /// Needs the host's footprint evaluator.
+    /// A draft that already has pads or parametric content is refused
+    /// (`footprint.template_not_empty`) unless `replace` is true: then its
+    /// source, pads, polarity and role-solved graphics are dropped and the
+    /// template built in their place, still one atomic undo step (authored
+    /// graphics and mask/paste defaults stay). Needs the host's
+    /// footprint evaluator.
     #[serde(rename = "library.footprint_from_template")]
     FootprintFromTemplate {
         draft: DefinitionId,
         template: Box<FootprintTemplate>,
+        /// Replace the draft's current content instead of refusing it.
+        #[serde(default)]
+        replace: bool,
     },
     /// Land package terminals on footprint pads by an explicit rule. With
     /// `confirm: false` it only reports the changes; nothing is ever
@@ -162,11 +170,23 @@ fn package_draft(
     let current = document
         .drafts
         .get(draft)
-        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+        .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
     match &current.definition {
         Definition::Package(package) => Ok((current, package)),
-        _ => Err(Error::Invalid(format!("draft {draft} is not a package"))),
+        _ => Err(Error::Invalid(format!(
+            "The draft ‘{}’ is not a package",
+            current.meta.name
+        ))),
     }
+}
+
+/// The name of a draft, for a message.
+fn draft_name(document: &Document, draft: DefinitionId) -> String {
+    document
+        .drafts
+        .get(draft)
+        .map(|d| d.meta.name.clone())
+        .unwrap_or_default()
 }
 
 /// The one footprint draft whose pads land the package draft `draft`.
@@ -185,10 +205,12 @@ fn landing_footprint(
     match (found.next(), found.next()) {
         (Some(footprint), None) => Ok(footprint),
         (None, _) => Err(Error::NotFound(format!(
-            "package.no_footprint: no footprint draft lands package {draft}"
+            "package.no_footprint: no footprint draft lands the package ‘{}’",
+            draft_name(document, draft)
         ))),
         (Some(_), Some(_)) => Err(Error::Invalid(format!(
-            "package.footprint_ambiguous: several footprint drafts land package {draft}; pass lead pairs"
+            "package.footprint_ambiguous: several footprint drafts land the package ‘{}’; pass lead pairs",
+            draft_name(document, draft)
         ))),
     }
 }
@@ -214,10 +236,13 @@ fn footprint_draft(
     let current = document
         .drafts
         .get(draft)
-        .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+        .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
     match &current.definition {
         Definition::Footprint(footprint) => Ok((current, footprint)),
-        _ => Err(Error::Invalid(format!("draft {draft} is not a footprint"))),
+        _ => Err(Error::Invalid(format!(
+            "The draft ‘{}’ is not a footprint",
+            current.meta.name
+        ))),
     }
 }
 
@@ -232,8 +257,11 @@ fn package_of<'a>(
     )
     .ok_or_else(|| {
         Error::NotFound(format!(
-            "package {} {} is not in the library or the drafts",
-            footprint.package.id, footprint.package.revision
+            "The footprint's {} is not in the library or the drafts",
+            document
+                .project
+                .library
+                .describe(footprint.package.erased())
         ))
     })
 }
@@ -286,7 +314,8 @@ fn place_request(
         }
         kind => {
             return Err(Error::Invalid(format!(
-                "library.place_from places a component or a Part, not a {kind:?}"
+                "library.place_from: only a component or a Part can be placed, not a {}",
+                crate::library::names::noun(kind)
             )));
         }
     };
@@ -406,7 +435,7 @@ pub(crate) fn apply_library(
             let current = document
                 .drafts
                 .get(draft)
-                .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
             let Definition::Footprint(footprint) = &current.definition else {
                 return Err(Error::Invalid(
                     "pad generation requires a footprint draft".into(),
@@ -454,7 +483,7 @@ pub(crate) fn apply_library(
             let current = document
                 .drafts
                 .get(draft)
-                .ok_or_else(|| Error::NotFound(format!("there is no draft of {draft}")))?;
+                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
             let terminals = match &current.definition {
                 Definition::Symbol(symbol) => library::graphics::owner_terminals(
                     &document.drafts,
@@ -473,11 +502,19 @@ pub(crate) fn apply_library(
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
             Ok(Outcome::GraphicsEdited { added })
         }
-        LibraryCommand::FootprintFromTemplate { draft, template } => {
+        LibraryCommand::FootprintFromTemplate {
+            draft,
+            template,
+            replace,
+        } => {
             let (current, footprint) = footprint_draft(document, draft)?;
             let package = package_of(document, footprint)?;
-            let (definition, report) =
-                footprint_family::build(footprint, package, &template, need(evaluator)?)?;
+            let build = if replace {
+                footprint_family::rebuild
+            } else {
+                footprint_family::build
+            };
+            let (definition, report) = build(footprint, package, &template, need(evaluator)?)?;
             let edit = DraftEdit {
                 id: draft,
                 meta: current.meta.clone(),

@@ -33,7 +33,7 @@ const OVERFLOW_MENU_WIDTH: f32 = 200.0;
 const OVERFLOW_ROW_HEIGHT: f32 = 30.0;
 const WORKSPACE_MENU_WIDTH: f32 = 280.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Workspace {
     Part,
     Schematic,
@@ -143,7 +143,22 @@ pub enum RibbonEvent {
     Workspace(Workspace),
     Tab(&'static str),
     Tool(&'static str),
+    /// The Issues toggle: expand or collapse the Issues card.
+    Issues,
 }
+
+/// The ribbon's Issues toggle at its right end, in every workspace and
+/// state (docs/sidebar-ia.md, D2: it replaces Check). It shows the active
+/// workspace's counts and is lit while the Issues card is expanded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IssuesToggle {
+    /// `None` while the issues cannot be counted.
+    pub counts: Option<pcbcraft_core::issues::IssueCounts>,
+    pub expanded: bool,
+}
+
+/// The Issues toggle's width at the ribbon's right end.
+const ISSUES_TOGGLE_WIDTH: f32 = 112.0;
 
 fn button_width(ui: &Ui, label: &str) -> f32 {
     let t = Tokens::get();
@@ -369,7 +384,12 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
 }
 
 /// The workspace switcher card and the ribbon card.
-pub fn ribbon(ui: &mut Ui, workspace: Workspace, ribbon: &Ribbon) -> Option<RibbonEvent> {
+pub fn ribbon(
+    ui: &mut Ui,
+    workspace: Workspace,
+    ribbon: &Ribbon,
+    issues: &IssuesToggle,
+) -> Option<RibbonEvent> {
     let ctx = ui.ctx().clone();
     let t = Tokens::get();
     let host = Container::new(&ctx, Surface::Chrome);
@@ -397,11 +417,93 @@ pub fn ribbon(ui: &mut Ui, workspace: Workspace, ribbon: &Ribbon) -> Option<Ribb
                 event = Some(RibbonEvent::Tab(tab));
             }
             let groups = Rect::from_min_max(pos2(card.left(), tabs.bottom()), card.max);
+            let (groups, toggle) = issues_slot(groups);
             if let Some(tool) = group_row(ui, groups, ribbon) {
                 event = Some(RibbonEvent::Tool(tool));
             }
+            if issues_toggle(ui, toggle, issues) {
+                event = Some(RibbonEvent::Issues);
+            }
         });
     event
+}
+
+/// Split the groups row: the tools, and the Issues toggle at the right.
+/// The toggle keeps its width (the tools overflow into » first) unless the
+/// row is narrower than it.
+fn issues_slot(groups: Rect) -> (Rect, Rect) {
+    let width = ISSUES_TOGGLE_WIDTH.min(groups.width() / 2.0).max(0.0);
+    let split = groups.right() - width;
+    (
+        Rect::from_min_max(groups.min, pos2(split, groups.bottom())),
+        Rect::from_min_max(pos2(split, groups.top()), groups.max),
+    )
+}
+
+/// The Issues toggle: the counts as a badge over the label "Issues", lit
+/// while the card is expanded. Returns whether it was clicked.
+fn issues_toggle(ui: &mut Ui, slot: Rect, toggle: &IssuesToggle) -> bool {
+    let t = Tokens::get();
+    let rect = Rect::from_min_size(
+        pos2(slot.left() + TAB_INSET, slot.top() + 2.0),
+        vec2((slot.width() - 2.0 * TAB_INSET).max(0.0), BUTTON_HEIGHT),
+    );
+    let separator = t.toolbar.lerp_to_gamma(t.border, 0.6);
+    t.secondary_vline(
+        ui.painter(),
+        slot.left(),
+        (rect.top() + 4.0)..=(slot.bottom() - 6.0),
+        separator,
+    );
+    let response = ui.interact(rect, ui.id().with("issues-toggle"), Sense::click());
+    if toggle.expanded {
+        ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, t.radius_sm, t.hover);
+    }
+    let mut badge_clicked = false;
+    let words = match &toggle.counts {
+        Some(counts) => {
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_max(
+                        pos2(rect.left(), rect.top() + 5.0),
+                        pos2(rect.right(), rect.top() + 32.0),
+                    ))
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            badge_clicked = crate::kit::count_badge(&mut child, counts, false).clicked();
+            crate::kit::issues::counts_words(counts, true, false)
+        }
+        None => "Not counted".to_owned(),
+    };
+    let ink = if toggle.expanded {
+        t.selected_ink
+    } else {
+        t.text
+    };
+    let font = if toggle.expanded {
+        fonts::semibold(t.font_body)
+    } else {
+        FontId::proportional(t.font_body)
+    };
+    ui.painter().text(
+        pos2(rect.center().x, rect.top() + 32.0),
+        Align2::CENTER_TOP,
+        "Issues",
+        font,
+        ink,
+    );
+    let label = format!("Issues: {words}");
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, toggle.expanded, &label)
+    });
+    let tip = if toggle.expanded {
+        "Hide the Issues list"
+    } else {
+        "Show the Issues list"
+    };
+    response.on_hover_text(format!("{label}\n{tip}")).clicked() || badge_clicked
 }
 
 fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<Workspace> {
@@ -827,6 +929,47 @@ pub fn card(
                         });
                 });
         });
+}
+
+/// The inset of a column card's frame, in points.
+pub const COLUMN_CARD_INSET: i8 = 4;
+
+/// A card of the right column (`kit::card::column`): it fills `rect`
+/// exactly, whatever its content, so the cards stacked in the column keep
+/// their places. `add` gets the whole inner rectangle, with no scroll of
+/// its own (`kit::card::card` owns the one scroll). `inset` is the frame's
+/// vertical inset; the horizontal one is [`COLUMN_CARD_INSET`].
+pub fn column_card<R>(
+    ctx: &egui::Context,
+    id: &str,
+    rect: Rect,
+    inset: i8,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let t = Tokens::get();
+    if !rect.is_finite() || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return None;
+    }
+    let host = Container::new(ctx, Surface::Panel);
+    let frame = host
+        .frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
+        .inner_margin(egui::Margin::symmetric(COLUMN_CARD_INSET, inset));
+    let inner = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
+    let shown = host
+        .area(egui::Id::new(id))
+        .fixed_pos(rect.min)
+        .movable(false)
+        .order(egui::Order::Middle)
+        .show(ctx, |ui| {
+            frame
+                .show(ui, |ui| {
+                    ui.set_min_size(inner);
+                    ui.set_max_size(inner);
+                    add(ui)
+                })
+                .inner
+        });
+    Some(shown.inner)
 }
 
 /// The properties card's title band: what is inspected and its kind.

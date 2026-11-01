@@ -1,8 +1,10 @@
 //! Schematic tests of manufacturer parts: the Part row, assign mode and
 //! the Resolve parts card, driven through the engine.
 use super::*;
+use crate::kit;
 use crate::resolve_parts::demo_part;
 use pcbcraft_core::PartRef;
+use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::format::{EditorFile, FILE_VERSION};
 use solidcraft_ui_egui::fonts;
 
@@ -39,6 +41,32 @@ fn frame(
         texts(&shape.shape, &mut out);
     }
     (out, command)
+}
+
+/// The texts one frame of the docked dialog draws.
+fn dialog_texts(editor: &mut SchematicEditor, engine: &Engine, ctx: &egui::Context) -> Vec<String> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 1800.0))),
+            ..Default::default()
+        },
+        |ui| {
+            let _ = editor.dialog(ui, engine);
+        },
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    out
 }
 
 /// Click the text `label`; returns the operation of the release frame.
@@ -112,7 +140,7 @@ fn the_part_row_chooses_in_assign_mode_and_clears_through_the_engine() -> TestRe
     assert!(editor.palette.is_open());
     assert_eq!(
         editor.palette.mode(),
-        &PaletteMode::Assign {
+        &crate::place_palette::Mode::Assign {
             instances: vec![r1]
         }
     );
@@ -121,7 +149,10 @@ fn the_part_row_chooses_in_assign_mode_and_clears_through_the_engine() -> TestRe
         crate::resolve_parts::query_for(&engine, r1)
     );
     assert!(editor.palette.query().starts_with("kind:part"));
-    assert_eq!(editor.header(&engine).title, "Choose part");
+    // Choose part docks as a dialog in the subject slot, under its title.
+    assert!(editor.dialog_open());
+    let shown = dialog_texts(&mut editor, &engine, &ctx);
+    assert!(shown.iter().any(|t| t == "Choose part"), "{shown:?}");
     // Esc closes the palette without a choice.
     editor.palette.close();
     let operation = click(&mut editor, &engine, &ctx, "Clear")?.ok_or("Clear sent nothing")?;
@@ -162,11 +193,76 @@ fn a_group_assignment_is_one_atomic_command() -> TestResult {
     Ok(())
 }
 
-/// The ribbon's Resolve opens the card in Properties; it shows the
-/// groups, Choose… opens the palette in assign mode for the first group,
-/// and Close returns to the sheet.
+/// One frame of the Resolve parts window at the audit's narrow size.
+fn window_frame(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> Vec<(String, Pos2)> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(860.0, 1081.0))),
+            events,
+            ..Default::default()
+        },
+        |ui| editor.resolve_window(ui.ctx(), engine),
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                text.pos + text.galley.size() * 0.5,
+            )),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    out
+}
+
+/// Click the text `label` in the Resolve parts window.
+fn window_click(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    label: &str,
+) -> TestResult {
+    let mut shown = Vec::new();
+    for _ in 0..3 {
+        shown = window_frame(editor, engine, ctx, vec![]);
+    }
+    let point = shown
+        .iter()
+        .find(|(text, _)| text == label)
+        .map(|(_, p)| *p)
+        .ok_or_else(|| format!("missing {label}: {shown:?}"))?;
+    let press = |pressed| egui::Event::PointerButton {
+        pos: point,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    window_frame(
+        editor,
+        engine,
+        ctx,
+        vec![egui::Event::PointerMoved(point), press(true)],
+    );
+    window_frame(editor, engine, ctx, vec![press(false)]);
+    Ok(())
+}
+
+/// The ribbon's Resolve opens the Resolve parts window and leaves the
+/// Properties card on the sheet; Choose… opens the docked Choose part
+/// dialog for the first group beside the window, and Close closes it.
 #[test]
-fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
+fn resolve_opens_the_window_and_choose_docks_the_dialog() -> TestResult {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let engine = Engine::demo()?;
@@ -180,23 +276,34 @@ fn resolve_opens_the_card_and_close_returns_to_the_sheet() -> TestResult {
             .any(|t| t.id == "resolve")
     );
     editor.on_tool("resolve", &engine);
-    assert_eq!(editor.header(&engine).title, "Resolve parts");
-    let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(editor.resolve.is_open());
+    assert_eq!(editor.header(&engine).title, "Sheet");
+    assert!(!editor.dialog_open());
     let Ok(QueryResult::ResolveGroups(report)) = engine.query(Query::ResolveGroups {}) else {
         return Err("library.resolve_groups".into());
     };
     let first = report.groups.first().ok_or("the demo has a group")?;
-    assert!(shown.iter().any(|(t, _)| t == "Choose…"), "{shown:?}");
-    click(&mut editor, &engine, &ctx, "Choose…")?;
+    window_click(&mut editor, &engine, &ctx, "Choose…")?;
     assert_eq!(
         editor.palette.mode(),
-        &PaletteMode::Assign {
+        &crate::place_palette::Mode::Assign {
             instances: first.instances.clone()
         }
     );
     assert_eq!(editor.palette.query(), first.query);
+    assert!(editor.dialog_open());
+    assert!(
+        editor.resolve.is_open(),
+        "the table returns after the dialog"
+    );
+    // The window steps aside while the dialog is open.
+    let hidden = window_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(
+        !hidden.iter().any(|(t, _)| t == "Resolve parts"),
+        "{hidden:?}"
+    );
     editor.palette.close();
-    click(&mut editor, &engine, &ctx, "Close")?;
+    window_click(&mut editor, &engine, &ctx, "Close")?;
     assert!(!editor.resolve.is_open());
     assert_eq!(editor.header(&engine).title, "Sheet");
     Ok(())
@@ -213,7 +320,7 @@ fn place_closes_resolve_parts() -> TestResult {
     editor.on_tool("place", &engine);
     assert!(!editor.resolve.is_open());
     assert!(editor.palette.is_open());
-    assert_eq!(editor.header(&engine).title, "Place part");
+    assert_eq!(editor.header(&engine).title, "Place component");
     let ribbon = editor.ribbon(&engine);
     let active: Vec<&str> = ribbon
         .groups
@@ -226,10 +333,11 @@ fn place_closes_resolve_parts() -> TestResult {
     Ok(())
 }
 
-/// A group whose Part disagrees says so: the card names the current Part
-/// and its finding, and the BOM line leads with its state.
+/// A group whose Part disagrees says so: its row names the current Part
+/// and, open, core's own title for why it is unresolved. New Part… asks
+/// the app for a draft rated at the group's values.
 #[test]
-fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestResult {
+fn the_resolve_window_names_the_current_part_and_why_it_is_unresolved() -> TestResult {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let (mut engine, _, r1, _) = engine_with_part()?;
@@ -249,36 +357,54 @@ fn the_resolve_card_names_the_current_part_and_why_it_is_unresolved() -> TestRes
             }],
         }),
     )?;
+    let Ok(QueryResult::Issues(issues)) = engine.query(Query::Issues {
+        scope: pcbcraft_core::issues::IssueScope::Selection {
+            objects: vec![pcbcraft_core::diagnostics::ObjectRef::Instance { id: r1 }],
+        },
+    }) else {
+        return Err("project.issues".into());
+    };
+    let title = issues
+        .rows
+        .iter()
+        .find(|r| r.group.code.starts_with("part."))
+        .map(|r| r.title.clone())
+        .ok_or("R1 has a purchasing issue")?;
     let mut editor = SchematicEditor::default();
     editor.on_tool("resolve", &engine);
-    let (shown, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let mut shown = Vec::new();
+    for _ in 0..3 {
+        shown = window_frame(&mut editor, &engine, &ctx, vec![]);
+    }
     let texts: Vec<&str> = shown.iter().map(|(t, _)| t.as_str()).collect();
-    assert!(texts.contains(&"Current part"), "{texts:?}");
     assert!(
-        texts.iter().any(|t| t.contains("is not met by")),
+        texts.contains(&"ExampleCo EX-R0603-10K0-F · r1"),
         "{texts:?}"
     );
-    assert!(
-        texts.iter().any(|t| t.starts_with("R1: unresolved")),
-        "{texts:?}"
-    );
+    // The first row is open: R1 sorts first.
+    assert!(texts.contains(&title.as_str()), "{title} in {texts:?}");
     assert!(texts.contains(&"New Part…"), "{texts:?}");
-    // New Part… asks the app to open the component's Parts editor with
-    // the group's values.
-    click(&mut editor, &engine, &ctx, "New Part…")?;
+    window_click(&mut editor, &engine, &ctx, "New Part…")?;
     let (component, values) = editor.take_new_part().ok_or("no request")?;
     let instance = engine.project().instance(r1).ok_or("R1")?;
     assert_eq!(component, instance.component.id);
     assert!(values.iter().any(|(f, _)| f.id == field.id));
+    assert!(
+        !editor.resolve.is_open(),
+        "New Part… leaves for the Component"
+    );
     Ok(())
 }
 
-/// B-b: a Checks row is a button that selects the instance it names. R1's
-/// pinned Part does not meet a changed value, an advisory purchasing row.
+/// R1's pinned Part does not meet a changed value: `project.issues`
+/// reports it, and locating that issue selects R1 (from another selection
+/// and with the palette open) and frames it. Locate never touches the
+/// document, and refs the sheet does not show locate nothing.
 #[test]
-fn a_check_row_click_selects_the_named_instance() -> TestResult {
-    let ctx = egui::Context::default();
-    fonts::setup_bundled_fonts(&ctx);
+fn an_issue_locates_its_instance_and_frames_it() -> TestResult {
+    use crate::issues::Locate;
+    use pcbcraft_core::diagnostics::ObjectRef;
+    use pcbcraft_core::issues::{IssueArea, IssueScope};
     let (mut engine, _, r1, r2) = engine_with_part()?;
     let field = engine
         .project()
@@ -296,39 +422,132 @@ fn a_check_row_click_selects_the_named_instance() -> TestResult {
             }],
         }),
     )?;
-    let message = engine
-        .project()
-        .instance(r1)
-        .and_then(|i| {
-            instances::part_findings(&engine.project().library, i)
-                .into_iter()
-                .next()
-        })
-        .map(|f| f.message)
-        .ok_or("R1 has no purchasing finding")?;
-    let mut editor = SchematicEditor {
-        show_checks: true,
-        ..Default::default()
+    let QueryResult::Issues(report) = engine.query(Query::Issues {
+        scope: IssueScope::Area {
+            area: IssueArea::Schematic,
+        },
+    })?
+    else {
+        return Err("not an issue report".into());
     };
+    let row = report
+        .rows
+        .iter()
+        .find(|r| {
+            r.finding.code.starts_with("part.")
+                && r.objects().any(|o| {
+                    matches!(o, ObjectRef::Instance { id } | ObjectRef::Property { instance: id, .. } if *id == r1)
+                })
+        })
+        .ok_or("no purchasing issue on R1")?;
+    let before = engine.project().clone();
+    let mut editor = SchematicEditor::default();
     editor.select(Some(r2), None, engine.project());
-    assert!(click(&mut editor, &engine, &ctx, &message)?.is_none());
+    editor.palette.open();
+    let refs: Vec<ObjectRef> = row.objects().copied().collect();
+    assert!(editor.locate(&engine, &refs));
+    assert_eq!(editor.selected, Some(r1));
+    assert!(!editor.palette.is_open());
+    assert_eq!(editor.tool, Tool::Select);
+    assert!(editor.frame_request.is_some(), "R1 is framed");
+    assert_eq!(engine.project(), &before);
+    assert!(!editor.locate(&engine, &[ObjectRef::Track { id: 1 }]));
+    assert!(!editor.locate(&engine, &[]));
     assert_eq!(editor.selected, Some(r1));
     Ok(())
 }
 
+/// Locate prefers an instance (here through a terminal) to a net, and a
+/// net alone selects the net through its first wire.
 #[test]
-fn a_check_row_locates_instances_through_terminals_then_nets() {
+fn locate_selects_instances_through_terminals_then_nets() -> TestResult {
+    use crate::issues::Locate;
     use pcbcraft_core::diagnostics::ObjectRef;
-    let terminal = ObjectRef::Terminal {
-        endpoint: Endpoint {
-            instance: 7,
-            terminal: pcbcraft_core::TerminalId(1),
-        },
-    };
-    assert_eq!(
-        locate(&[ObjectRef::Net { id: 3 }, terminal]),
-        Some(Locate::Instance(7))
+    let engine = Engine::demo()?;
+    let net = engine
+        .project()
+        .nets
+        .iter()
+        .find(|n| n.terminals.len() >= 2)
+        .ok_or("no wired net")?;
+    let endpoint = *net.terminals.last().ok_or("no terminal")?;
+    let mut editor = SchematicEditor::default();
+    assert!(editor.locate(
+        &engine,
+        &[
+            ObjectRef::Net { id: net.id },
+            ObjectRef::Terminal { endpoint }
+        ],
+    ));
+    assert_eq!(editor.selected, Some(endpoint.instance));
+    let mut editor = SchematicEditor::default();
+    assert!(editor.locate(&engine, &[ObjectRef::Net { id: net.id }]));
+    assert_eq!(editor.selected, None);
+    assert_eq!(editor.selected_net(&engine), Some(net.id));
+    assert_eq!(editor.header(&engine).kind, "Net");
+    Ok(())
+}
+
+/// A property commit that leaves R1's purchasing unresolved says so once,
+/// as a To do toast with Undo.
+#[test]
+fn a_commit_that_unresolves_purchasing_posts_an_undo_toast() -> TestResult {
+    use crate::kit::severity::Level;
+    use crate::kit::toast::{ToastAction, take_posted};
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let (mut engine, _, r1, _) = engine_with_part()?;
+    let mut editor = SchematicEditor::default();
+    editor.select_instance(Some(r1), engine.project());
+    let operation =
+        edit_field(&mut editor, &engine, &ctx, "10 kΩ", "22k")?.ok_or("the edit sent nothing")?;
+    assert!(
+        take_posted(&ctx).is_empty(),
+        "nothing is said before it applies"
     );
-    assert_eq!(locate(&[ObjectRef::Net { id: 3 }]), Some(Locate::Net(3)));
-    assert_eq!(locate(&[]), None);
+    engine.apply(engine.revision(), operation)?;
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let posted = take_posted(&ctx);
+    let [toast] = &posted[..] else {
+        return Err(format!("expected one toast, got {posted:?}").into());
+    };
+    assert_eq!(toast.level, Level::ToDo);
+    assert_eq!(toast.text, "Purchasing unresolved for R1");
+    assert_eq!(toast.actions, [ToastAction::Undo]);
+    frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(take_posted(&ctx).is_empty(), "said once");
+    Ok(())
+}
+
+/// Focus the field showing `shown`, replace its text with `text` and press
+/// Enter; returns the operation of that frame.
+fn edit_field(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    shown: &str,
+    text: &str,
+) -> Result<Option<Operation>, Box<dyn std::error::Error>> {
+    click(editor, engine, ctx, shown)?;
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    frame(
+        editor,
+        engine,
+        ctx,
+        vec![select_all, egui::Event::Text(text.into())],
+    );
+    Ok(frame(editor, engine, ctx, vec![key(egui::Key::Enter)]).1)
 }

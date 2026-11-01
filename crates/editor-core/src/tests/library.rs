@@ -33,7 +33,7 @@ fn refused(engine: &mut Engine, ids: Vec<DefinitionId>, expect: &str) -> Result<
     };
     assert_eq!(error.code(), "conflict", "{expect}: {error}");
     assert!(
-        error.to_string().contains("Nothing was published"),
+        error.to_string().contains("Not published: "),
         "{expect}: {error}"
     );
     assert_eq!(engine.document(), &before, "{expect}");

@@ -8,8 +8,12 @@ mod browser;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};
+use crate::kit::messages::Messages;
+use crate::kit::severity::Level;
+use crate::kit::toast::{ToastAction, ToastEvent, Toasts};
 use crate::library_sources::{self, BundlePurpose, LibrarySources};
 use crate::place_palette::PaletteEvent;
+use crate::refusal::{self, Origin, Refused};
 use crate::scene::{Display, ModelKey, SceneController};
 use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
@@ -17,6 +21,9 @@ use pcbcraft_core::{Engine, Operation, format::EditorFile};
 use solidcraft_ui_egui::{fonts, theme};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// The longest toast text; Messages keeps the whole message.
+const MAX_TOAST_CHARS: usize = pcbcraft_core::issues::MAX_TITLE;
 
 /// An import made for an update review that is still open.
 struct PendingImport {
@@ -36,7 +43,16 @@ pub struct App {
     files: FileUi,
     /// Library folders, favourites and recents (S3).
     sources: LibrarySources,
-    status: Option<chrome::Status>,
+    /// Command results and refusals in the canvas (slice K3).
+    toasts: Toasts,
+    /// Every message of this run, with the full engine text.
+    messages: Messages,
+    messages_open: bool,
+    /// The Issues card, canvas badge and pill, and their cached answers.
+    issues: crate::issues::Surface,
+    /// The engine revision a toast's Undo would undo; Undo is withdrawn
+    /// once another step follows.
+    undo_revision: Option<u64>,
     /// Browser shown by width, or as the user toggled it (⌘B).
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
@@ -78,7 +94,11 @@ impl App {
             part: Default::default(),
             schematic: Default::default(),
             pcb: Default::default(),
-            status: None,
+            toasts: Toasts::default(),
+            messages: Messages::default(),
+            messages_open: false,
+            issues: Default::default(),
+            undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
             pending_import: None,
@@ -89,13 +109,15 @@ impl App {
 
     /// The one path from UI gestures to document changes. It carries the
     /// footprint evaluator CLI and MCP use, so sourced footprints edit and
-    /// publish the same way here.
-    fn apply(&mut self, operation: Option<Operation>) {
+    /// publish the same way here. A refusal goes back to `default` unless
+    /// the editor marked another origin this frame (`refusal::mark`).
+    fn apply(&mut self, ctx: &egui::Context, default: Origin, operation: Option<Operation>) {
         let Some(operation) = operation else {
             return;
         };
+        let origin = refusal::take_mark(ctx).unwrap_or(default);
         if self.files.busy() {
-            self.say("Wait for the file operation to finish", false);
+            self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
         match self.engine.apply_with(
@@ -104,23 +126,132 @@ impl App {
             &pcbcraft_solidcraft::footprint::SketchEvaluator,
         ) {
             Ok(_) => self.clear_error(),
-            Err(error) => self.say(error.to_string(), true),
+            Err(error) => self.refuse(ctx, origin, error),
         }
     }
 
-    /// Show a status message in the canvas; errors stay until the next
-    /// successful action, a workspace change or a timeout.
-    fn say(&mut self, text: impl Into<String>, error: bool) {
-        self.status = Some(chrome::Status {
-            text: text.into(),
-            error,
-            at: self.now,
-        });
+    /// A refused operation: Messages keeps the full engine text; a field or
+    /// dialog gets it back on the next frame and shows it itself; a canvas
+    /// gesture or a command shows a toast (the gesture's editor may still
+    /// claim it, to keep its gesture going).
+    fn refuse(&mut self, ctx: &egui::Context, origin: Origin, error: pcbcraft_core::Error) {
+        let level = refusal::level(&error);
+        self.messages.push(level, &error.to_string(), self.now);
+        match origin {
+            Origin::Field(_) | Origin::Dialog(_) => {
+                refusal::hand_back(ctx, Refused { origin, error }, false);
+            }
+            Origin::Canvas => {
+                self.toast(
+                    level,
+                    refusal::shown_error(&error),
+                    vec![ToastAction::Details],
+                );
+                refusal::hand_back(ctx, Refused { origin, error }, true);
+            }
+            Origin::Command => self.command_refused(error, false),
+        }
     }
 
+    /// A ribbon, menu or keyboard command was refused: a toast, and the
+    /// full engine text in Messages unless `refuse` already put it there.
+    fn command_refused(&mut self, error: pcbcraft_core::Error, record: bool) {
+        let level = refusal::level(&error);
+        if record {
+            self.messages.push(level, &error.to_string(), self.now);
+        }
+        self.toast(
+            level,
+            refusal::shown_error(&error),
+            vec![ToastAction::Details],
+        );
+    }
+
+    /// Refusals handed back last frame that no editor claimed: they show
+    /// as toasts after all (Messages already has them).
+    fn unclaimed_refusals(&mut self, ctx: &egui::Context) {
+        for refused in refusal::unclaimed(ctx) {
+            let level = refusal::level(&refused.error);
+            self.toast(
+                level,
+                refusal::shown_error(&refused.error),
+                vec![ToastAction::Details],
+            );
+        }
+    }
+
+    /// Tell the person something: a toast now, and the same text in
+    /// Messages. The severity is explicit, never guessed from the text.
+    fn say(&mut self, level: Level, text: impl Into<String>) {
+        self.say_with(level, text, Vec::new());
+    }
+
+    /// [`Self::say`] with toast actions. Undo applies to the step just made.
+    fn say_with(&mut self, level: Level, text: impl Into<String>, actions: Vec<ToastAction>) {
+        let text = text.into();
+        self.messages.push(level, &text, self.now);
+        let shown = refusal::clip(text.lines().next().unwrap_or_default(), MAX_TOAST_CHARS);
+        if actions.contains(&ToastAction::Undo) {
+            self.undo_revision = Some(self.engine.revision());
+        }
+        self.toast(level, shown, actions);
+    }
+
+    /// A toast only: its full text is in Messages already.
+    fn toast(&mut self, level: Level, text: String, actions: Vec<ToastAction>) {
+        self.toasts.push(level, text, actions, self.now);
+    }
+
+    /// A successful action or a workspace change makes error toasts stale.
     fn clear_error(&mut self) {
-        if self.status.as_ref().is_some_and(|s| s.error) {
-            self.status = None;
+        self.toasts.dismiss_errors();
+    }
+
+    /// Toasts editors posted this frame, and Undo withdrawn once the step it
+    /// names is no longer the last.
+    fn feedback(&mut self, ctx: &egui::Context) {
+        for posted in crate::kit::toast::take_posted(ctx) {
+            self.say_with(posted.level, posted.text, posted.actions);
+        }
+        if self
+            .undo_revision
+            .is_some_and(|revision| revision != self.engine.revision())
+        {
+            self.toasts.withdraw(ToastAction::Undo);
+            self.undo_revision = None;
+        }
+    }
+
+    /// What a toast's click asked for.
+    pub(super) fn toast_event(&mut self, event: ToastEvent) {
+        match event {
+            ToastEvent::Action {
+                action: ToastAction::Undo,
+                ..
+            } => {
+                if self.undo_revision == Some(self.engine.revision()) {
+                    self.toasts.withdraw(ToastAction::Undo);
+                    self.undo_revision = None;
+                    self.history(false);
+                }
+            }
+            ToastEvent::Action {
+                action: ToastAction::Details,
+                ..
+            }
+            | ToastEvent::OpenMessages => self.messages_open = true,
+            // Show opens Issues, where every finding locates.
+            ToastEvent::Action {
+                action: ToastAction::Show,
+                ..
+            } => self.issues.open(),
+        }
+    }
+
+    /// The Messages window, while open.
+    fn messages_window(&mut self, ctx: &egui::Context) {
+        if self.messages_open && self.messages.window(ctx).closed {
+            self.messages_open = false;
         }
     }
 
@@ -131,13 +262,13 @@ impl App {
             return;
         };
         if self.files.busy() {
-            self.say("Wait for the file operation to finish", false);
+            self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
         match part_editor::run(&mut self.engine, request) {
             Ok(None) => self.clear_error(),
-            Ok(Some(created)) => self.say(created, false),
-            Err(error) => self.say(error.to_string(), true),
+            Ok(Some(created)) => self.say(Level::Ok, created),
+            Err(error) => self.command_refused(error, true),
         }
     }
 
@@ -147,7 +278,12 @@ impl App {
         let busy = self.files.busy();
         self.sources.tick(ctx, &mut self.engine, busy);
         for notice in self.sources.take_notices() {
-            self.say(notice.text, notice.error);
+            let level = if notice.error {
+                Level::Error
+            } else {
+                Level::Ok
+            };
+            self.say(level, notice.text);
         }
         let updates = self.sources.updates(&self.engine);
         self.schematic.set_updates(updates);
@@ -155,6 +291,8 @@ impl App {
         self.schematic
             .palette_mut()
             .set_context(sources.generation(), || sources.context());
+        let loading = sources.loading();
+        self.schematic.palette_mut().set_loading(loading);
     }
 
     /// What the palette, the Schematic instance properties and the
@@ -176,7 +314,7 @@ impl App {
                 Some(library_sources::ComponentAction::Duplicate { .. })
             );
         if mutating && self.files.busy() {
-            self.say("Wait for the file operation to finish", false);
+            self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
         for event in events {
@@ -207,9 +345,13 @@ impl App {
                 match library_sources::duplicate(&mut self.engine, component, &name) {
                     Ok(lineage) => {
                         self.part.open(lineage, &self.engine);
-                        self.say(format!("Duplicated as {name}"), false);
+                        self.say_with(
+                            Level::Ok,
+                            format!("Duplicated as {name}"),
+                            vec![ToastAction::Undo],
+                        );
                     }
-                    Err(error) => self.say(error, true),
+                    Err(error) => self.say(Level::Error, error),
                 }
             }
             None => {}
@@ -230,7 +372,7 @@ impl App {
                 Err(error) => {
                     match read.purpose {
                         BundlePurpose::Place(_) => self.schematic.palette_mut().refuse(error),
-                        BundlePurpose::Update(_) => self.say(error, true),
+                        BundlePurpose::Update(_) => self.say(Level::Error, error),
                     }
                     continue;
                 }
@@ -265,7 +407,11 @@ impl App {
                 self.workspace = Workspace::Schematic;
                 self.schematic
                     .reveal_placed(instance, position, self.engine.project());
-                self.say(format!("Placed {designator} from the library"), false);
+                self.say_with(
+                    Level::Ok,
+                    format!("Placed {designator} from the library"),
+                    vec![ToastAction::Undo],
+                );
             }
             Ok(library_sources::Placed::OtherRevision { message }) => {
                 self.schematic.palette_mut().offer_choice(pick, message);
@@ -304,16 +450,16 @@ impl App {
                     None => {
                         self.pending_import = None;
                         self.say(
+                            Level::Info,
                             format!(
                                 "{} {} is in the project as {}; nothing placed uses an older revision",
                                 pick.name, pick.revision, import.target.revision
                             ),
-                            false,
                         );
                     }
                 }
             }
-            Err(error) => self.say(error, true),
+            Err(error) => self.say(Level::Error, error),
         }
     }
 
@@ -332,19 +478,19 @@ impl App {
         }
         if self.engine.revision() == pending.revision && self.engine.undo().is_ok() {
             self.say(
+                Level::Info,
                 format!(
                     "Cancelled: {} {} was removed from the project again",
                     pending.name, pending.target
                 ),
-                false,
             );
         } else {
             self.say(
+                Level::Info,
                 format!(
                     "{} {} stays in the project; no instance changed. Undo removes it.",
                     pending.name, pending.target
                 ),
-                false,
             );
         }
     }
@@ -363,7 +509,7 @@ impl App {
         };
         match result {
             Ok(_) => self.clear_error(),
-            Err(error) => self.say(error.to_string(), true),
+            Err(error) => self.command_refused(error, true),
         }
     }
 
@@ -373,16 +519,18 @@ impl App {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| document.project.name.clone());
         if let Err(error) = self.engine.replace_document(document) {
-            self.say(format!("Open failed: {error}"), true);
+            self.say(Level::Error, format!("Open failed: {error}"));
             return;
         }
         self.sources.forget_project();
         self.pending_import = None;
         self.pcb.set_selection(None, None, None);
         match self.files.adopt(&self.engine, path, recovered) {
-            Ok(()) if recovered => self.say(format!("Recovered {name}; save it to keep it"), false),
-            Ok(()) => self.say(format!("Opened {name}"), false),
-            Err(error) => self.say(error, true),
+            Ok(()) if recovered => {
+                self.say(Level::Info, format!("Recovered {name}; save it to keep it"));
+            }
+            Ok(()) => self.say(Level::Ok, format!("Opened {name}")),
+            Err(error) => self.say(Level::Error, error),
         }
     }
 
@@ -400,9 +548,8 @@ impl App {
                 }
             }
         }
-        if let Some(status) = self.files.take_status() {
-            let error = status.to_ascii_lowercase().contains("fail");
-            self.say(status, error);
+        if let Some((level, status)) = self.files.take_status() {
+            self.say(level, status);
         }
     }
 
@@ -428,17 +575,34 @@ impl App {
         }
     }
 
-    fn inspector(&mut self, ui: &mut egui::Ui) {
-        let operation = match self.workspace {
-            Workspace::Part => self.part.inspector(ui, &self.engine),
-            Workspace::Schematic => self.schematic.inspector(ui, &self.engine),
-            Workspace::Pcb => self.pcb.inspector(ui, &self.engine),
-        };
-        self.apply(operation);
+    /// New Part… from the schematic opens the Part dialog; its return link
+    /// comes back to the instance.
+    fn open_new_part(&mut self) {
         if let Some((component, values)) = self.schematic.take_new_part() {
             self.clear_error();
+            // The Part dialog returns to the instance the request came from.
+            let back = self.schematic.selected_instance().map_or_else(
+                crate::part_editor::PartReturn::default,
+                |id| crate::part_editor::PartReturn {
+                    instance: Some(id),
+                    designator: self
+                        .engine
+                        .project()
+                        .instance(id)
+                        .map(|i| i.designator.clone())
+                        .unwrap_or_default(),
+                },
+            );
             self.workspace = Workspace::Part;
             self.part.new_part_for(component, values, &self.engine);
+            self.part.part_return_to(Some(back));
+        }
+        if let Some(back) = self.part.take_part_return() {
+            self.workspace = Workspace::Schematic;
+            if back.instance.is_some() {
+                self.schematic
+                    .select_instance(back.instance, self.engine.project());
+            }
         }
     }
 
@@ -449,7 +613,7 @@ impl App {
                 Workspace::Schematic => self.schematic.canvas(ui, &self.engine),
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
-            self.apply(operation);
+            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
             return;
         };
         let display = self.scene.display(&key);
@@ -469,7 +633,7 @@ impl App {
                 .model_view_prepare(&mut self.scene.viewport, &self.engine);
             self.scene.viewport.show(ui);
             let operation = self.part.model_view(ui, &self.scene.viewport, &self.engine);
-            self.apply(operation);
+            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
             None
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
@@ -553,12 +717,15 @@ impl eframe::App for App {
         self.part_requests();
         self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
-        self.apply(draft);
+        self.apply(&ctx, Origin::Command, draft);
         self.shortcuts(&ctx);
         self.guard_close(&ctx);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
         self.sources.dialogs(&ctx);
+        self.messages_window(&ctx);
+        self.feedback(&ctx);
+        self.unclaimed_refusals(&ctx);
         self.request_model();
     }
 }

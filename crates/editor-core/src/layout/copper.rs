@@ -242,7 +242,7 @@ impl BoardCopper {
                     .cloned()
                     .unwrap_or_else(|| pad.to_string())
             ),
-            ObjectRef::Track { id } => format!("track {id}"),
+            ObjectRef::Track { .. } => format!("a track on {}", project.net_name(shape.net)),
             _ => String::new(),
         };
         let track_rings: Vec<CopperRing> =
@@ -261,12 +261,7 @@ impl BoardCopper {
             for (j, b) in shapes.iter().enumerate().skip(i + 1) {
                 pairs += 1;
                 if pairs > MAX_CHECK_PAIRS {
-                    issues.push(Finding::new(
-                        "board.check_limit",
-                        "Connectivity/clearance check limit reached; remaining geometry is unchecked"
-                            .into(),
-                        vec![],
-                    ));
+                    issues.push(limit_finding());
                     return issues;
                 }
                 if a.layer != b.layer && !a.through && !b.through {
@@ -367,4 +362,14 @@ fn union(parents: &mut [usize], a: usize, b: usize) {
     if let Some(parent) = parents.get_mut(b) {
         *parent = a;
     }
+}
+
+/// The finding that says the copper checks stopped at their pair limit, so
+/// the geometry after it is unchecked. It names the board, so it locates.
+pub(crate) fn limit_finding() -> Finding {
+    Finding::new(
+        "board.check_limit",
+        "Board checks incomplete: copper past the check limit is unchecked".into(),
+        vec![ObjectRef::Board],
+    )
 }

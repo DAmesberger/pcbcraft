@@ -44,7 +44,7 @@ pub fn parse_input(text: &str) -> Result<DimInput, String> {
         let name = ParamName(name.trim().into());
         let expr = Expr(expr.trim().into());
         if !name.valid() {
-            return Err(format!("`{}` is not a parameter name", name.0));
+            return Err(format!("{} is not a parameter name", name.0));
         }
         if name.is_package() {
             return Err("Package values (pkg_…) are read-only".into());
