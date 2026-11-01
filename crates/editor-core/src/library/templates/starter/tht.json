@@ -1,0 +1,640 @@
+{
+ "format": 1,
+ "family": "tht",
+ "family_rev": 1,
+ "citations": {
+  "ms-001": {
+   "document": "JEDEC MS-001, plastic dual in-line family, 0.300 inch row spacing",
+   "document_revision": null,
+   "page": null
+  },
+  "ms-011": {
+   "document": "JEDEC MS-011, plastic dual in-line family, 0.600 inch row spacing",
+   "document_revision": null,
+   "page": null
+  },
+  "to-220": {
+   "document": "JEDEC TO-220, flange-mount transistor outline",
+   "document_revision": null,
+   "page": null
+  },
+  "to-226": {
+   "document": "JEDEC TO-226 (TO-92), cylindrical plastic transistor outline",
+   "document_revision": null,
+   "page": null
+  },
+  "do-204": {
+   "document": "JEDEC DO-204, axial-lead glass and plastic diode outlines (DO-35, DO-41)",
+   "document_revision": null,
+   "page": null
+  }
+ },
+ "rows": [
+  {
+   "name": "DIP-8 300 mil",
+   "description": "Plastic dual in-line, 8 pins at 2.54 mm, rows 7.62 mm apart, body 9.27 × 6.35 mm.",
+   "aliases": [
+    "DIP-8",
+    "DIP8",
+    "PDIP-8",
+    "PDIP8",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 8,
+     "row_pitch": 7.62,
+     "body_length": 9.27,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-14 300 mil",
+   "description": "Plastic dual in-line, 14 pins at 2.54 mm, rows 7.62 mm apart, body 19.05 × 6.35 mm.",
+   "aliases": [
+    "DIP-14",
+    "DIP14",
+    "PDIP-14",
+    "PDIP14",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 14,
+     "row_pitch": 7.62,
+     "body_length": 19.05,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-16 300 mil",
+   "description": "Plastic dual in-line, 16 pins at 2.54 mm, rows 7.62 mm apart, body 19.30 × 6.35 mm.",
+   "aliases": [
+    "DIP-16",
+    "DIP16",
+    "PDIP-16",
+    "PDIP16",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 16,
+     "row_pitch": 7.62,
+     "body_length": 19.3,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-18 300 mil",
+   "description": "Plastic dual in-line, 18 pins at 2.54 mm, rows 7.62 mm apart, body 22.86 × 6.35 mm.",
+   "aliases": [
+    "DIP-18",
+    "DIP18",
+    "PDIP-18",
+    "PDIP18",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 18,
+     "row_pitch": 7.62,
+     "body_length": 22.86,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-20 300 mil",
+   "description": "Plastic dual in-line, 20 pins at 2.54 mm, rows 7.62 mm apart, body 26.16 × 6.35 mm.",
+   "aliases": [
+    "DIP-20",
+    "DIP20",
+    "PDIP-20",
+    "PDIP20",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 20,
+     "row_pitch": 7.62,
+     "body_length": 26.16,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-24 300 mil",
+   "description": "Plastic dual in-line, 24 pins at 2.54 mm, rows 7.62 mm apart, body 31.75 × 6.35 mm.",
+   "aliases": [
+    "DIP-24",
+    "DIP24",
+    "PDIP-24",
+    "PDIP24",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 24,
+     "row_pitch": 7.62,
+     "body_length": 31.75,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-28 300 mil",
+   "description": "Plastic dual in-line, 28 pins at 2.54 mm, rows 7.62 mm apart, body 35.05 × 6.35 mm.",
+   "aliases": [
+    "DIP-28",
+    "DIP28",
+    "PDIP-28",
+    "PDIP28",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-001",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 28,
+     "row_pitch": 7.62,
+     "body_length": 35.05,
+     "body_width": 6.35,
+     "body_height": 3.3
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-24 600 mil",
+   "description": "Plastic dual in-line, 24 pins at 2.54 mm, rows 15.24 mm apart, body 31.75 × 13.97 mm.",
+   "aliases": [
+    "DIP-24 wide",
+    "PDIP-24 600",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-011",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 24,
+     "row_pitch": 15.24,
+     "body_length": 31.75,
+     "body_width": 13.97,
+     "body_height": 3.81
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-28 600 mil",
+   "description": "Plastic dual in-line, 28 pins at 2.54 mm, rows 15.24 mm apart, body 36.83 × 13.97 mm.",
+   "aliases": [
+    "DIP-28 wide",
+    "PDIP-28 600",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-011",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 28,
+     "row_pitch": 15.24,
+     "body_length": 36.83,
+     "body_width": 13.97,
+     "body_height": 3.81
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "DIP-40 600 mil",
+   "description": "Plastic dual in-line, 40 pins at 2.54 mm, rows 15.24 mm apart, body 52.07 × 13.97 mm.",
+   "aliases": [
+    "DIP-40 wide",
+    "PDIP-40 600",
+    "DIP",
+    "PDIP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-011",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "dip",
+     "pins": 40,
+     "row_pitch": 15.24,
+     "body_length": 52.07,
+     "body_width": 13.97,
+     "body_height": 3.81
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.46,
+    "lead_below": 3.3
+   }
+  },
+  {
+   "name": "TO-220-3",
+   "description": "TO-220 flange-mount transistor, 3 leads at 2.54 mm, body 10.0 × 4.5 mm.",
+   "aliases": [
+    "TO-220",
+    "TO220",
+    "TO-220AB"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "to-220",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "to",
+     "pins": 3,
+     "body_length": 10.0,
+     "body_width": 4.5,
+     "body_height": 15.5
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.8,
+    "lead_below": 3.5
+   },
+   "note": "The tab and mounting hole are not modelled; the body height includes the tab. Lead width 0.8 mm is the nominal of the drawing's range."
+  },
+  {
+   "name": "TO-220-5",
+   "description": "TO-220 flange-mount, 5 leads at 1.70 mm, body 10.0 × 4.5 mm.",
+   "aliases": [
+    "TO-220-5",
+    "TO220-5"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "to",
+     "pins": 5,
+     "body_length": 10.0,
+     "body_width": 4.5,
+     "body_height": 15.5
+    },
+    "lead_pitch": 1.7,
+    "lead_diameter": 0.6,
+    "lead_below": 3.5
+   },
+   "note": "Estimated: five-lead TO-220 variants differ between manufacturers (straight or staggered leads); a straight row at 1.70 mm is assumed."
+  },
+  {
+   "name": "TO-92-3 1.27",
+   "description": "TO-92 cylindrical transistor, 3 leads in line at 1.27 mm, body 4.8 × 3.8 mm.",
+   "aliases": [
+    "TO-92",
+    "TO92",
+    "TO-226AA"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "to-226",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "to",
+     "pins": 3,
+     "body_length": 4.8,
+     "body_width": 3.8,
+     "body_height": 4.8
+    },
+    "lead_pitch": 1.27,
+    "lead_diameter": 0.45,
+    "lead_below": 3.0
+   }
+  },
+  {
+   "name": "TO-92-3 2.54 formed",
+   "description": "TO-92 with leads formed out to 2.54 mm on the board (1.27 mm at the body).",
+   "aliases": [
+    "TO-92 formed",
+    "TO-92 2.54"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "to",
+     "pins": 3,
+     "body_length": 4.8,
+     "body_width": 3.8,
+     "body_height": 4.8
+    },
+    "lead_pitch": 2.54,
+    "lead_diameter": 0.45,
+    "lead_below": 3.0,
+    "body_pitch": 1.27
+   },
+   "note": "Estimated: the formed lead shape varies by supplier (tape and reel forming); the 2.54 mm board pitch is the common one."
+  },
+  {
+   "name": "Axial DO-35 7.62",
+   "description": "Axial-lead diode, body Ø1.9 × 4.25 mm, leads bent to 7.62 mm.",
+   "aliases": [
+    "DO-35",
+    "DO35",
+    "DO-204AH",
+    "axial"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": "do-204",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "axial",
+     "body_diameter": 1.9,
+     "body_length": 4.25
+    },
+    "lead_pitch": 7.62,
+    "lead_diameter": 0.5,
+    "lead_below": 3.0
+   }
+  },
+  {
+   "name": "Axial DO-41 10.16",
+   "description": "Axial-lead diode, body Ø2.7 × 5.2 mm, leads bent to 10.16 mm.",
+   "aliases": [
+    "DO-41",
+    "DO41",
+    "DO-204AL",
+    "axial"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": "do-204",
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "axial",
+     "body_diameter": 2.7,
+     "body_length": 5.2
+    },
+    "lead_pitch": 10.16,
+    "lead_diameter": 0.86,
+    "lead_below": 3.0
+   }
+  },
+  {
+   "name": "Axial resistor 0.25 W 10.16",
+   "description": "Axial-lead resistor, body Ø2.5 × 6.5 mm, leads bent to 10.16 mm.",
+   "aliases": [
+    "axial",
+    "axial resistor"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "axial",
+     "body_diameter": 2.5,
+     "body_length": 6.5
+    },
+    "lead_pitch": 10.16,
+    "lead_diameter": 0.6,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: axial resistor bodies differ between manufacturers and series; typical values for the power rating."
+  },
+  {
+   "name": "Axial resistor 0.5 W 12.7",
+   "description": "Axial-lead resistor, body Ø3.2 × 9.0 mm, leads bent to 12.7 mm.",
+   "aliases": [
+    "axial",
+    "axial resistor"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "axial",
+     "body_diameter": 3.2,
+     "body_length": 9.0
+    },
+    "lead_pitch": 12.7,
+    "lead_diameter": 0.7,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: axial resistor bodies differ between manufacturers and series; typical values for the power rating."
+  },
+  {
+   "name": "Radial Ø5×11 2",
+   "description": "Radial-lead can (electrolytic capacitor), Ø5 × 11 mm, leads at 2 mm.",
+   "aliases": [
+    "radial",
+    "CP Ø5",
+    "electrolytic"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "radial",
+     "body_diameter": 5.0,
+     "body_height": 11.0
+    },
+    "lead_pitch": 2.0,
+    "lead_diameter": 0.5,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: radial can sizes and lead spacings are the common series values; heights vary by series. Confirm against the capacitor's drawing."
+  },
+  {
+   "name": "Radial Ø6.3×11 2.5",
+   "description": "Radial-lead can (electrolytic capacitor), Ø6.3 × 11 mm, leads at 2.5 mm.",
+   "aliases": [
+    "radial",
+    "CP Ø6.3",
+    "electrolytic"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "radial",
+     "body_diameter": 6.3,
+     "body_height": 11.0
+    },
+    "lead_pitch": 2.5,
+    "lead_diameter": 0.5,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: radial can sizes and lead spacings are the common series values; heights vary by series. Confirm against the capacitor's drawing."
+  },
+  {
+   "name": "Radial Ø8×11.5 3.5",
+   "description": "Radial-lead can (electrolytic capacitor), Ø8 × 11.5 mm, leads at 3.5 mm.",
+   "aliases": [
+    "radial",
+    "CP Ø8",
+    "electrolytic"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "radial",
+     "body_diameter": 8.0,
+     "body_height": 11.5
+    },
+    "lead_pitch": 3.5,
+    "lead_diameter": 0.6,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: radial can sizes and lead spacings are the common series values; heights vary by series. Confirm against the capacitor's drawing."
+  },
+  {
+   "name": "Radial Ø10×12.5 5",
+   "description": "Radial-lead can (electrolytic capacitor), Ø10 × 12.5 mm, leads at 5 mm.",
+   "aliases": [
+    "radial",
+    "CP Ø10",
+    "electrolytic"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": true
+   },
+   "cite": null,
+   "values": {
+    "family": "tht",
+    "kind": {
+     "construction": "radial",
+     "body_diameter": 10.0,
+     "body_height": 12.5
+    },
+    "lead_pitch": 5.0,
+    "lead_diameter": 0.6,
+    "lead_below": 3.0
+   },
+   "note": "Estimated: radial can sizes and lead spacings are the common series values; heights vary by series. Confirm against the capacitor's drawing."
+  }
+ ]
+}

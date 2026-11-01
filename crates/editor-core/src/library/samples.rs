@@ -450,18 +450,60 @@ impl Preset {
     }
 }
 
+/// The designation of each of `count` package terminals a typed `form`
+/// gives, in lead order: a grid's ball names (A1, A2, …), else lead
+/// numbers from 1 and `EP` for an exposed pad. The footprint's pad numbers
+/// ([`form_lands`]) are the same text.
+pub fn form_designations(form: &PackageForm, count: usize) -> Vec<String> {
+    let leads = usize::try_from(form.lead_count()).unwrap_or(0);
+    let balls = match form {
+        PackageForm::Grid(g) => g.ball_names(),
+        _ => Vec::new(),
+    };
+    (0..count)
+        .map(|k| {
+            if k >= leads {
+                "EP".to_owned()
+            } else {
+                balls.get(k).cloned().unwrap_or_else(|| (k + 1).to_string())
+            }
+        })
+        .collect()
+}
+
+/// Outward offset of an estimated gull-wing land's centre from its foot's
+/// centre: the toe gets 0.4 mm, the heel 0.2 mm (the B2 template rules).
+const TOE_HEEL_SHIFT_MM: f64 = 0.1;
+
+/// The least gap between the two estimated lands of a chip, mm (original
+/// rule of thumb; it only trims the heels of the smallest sizes).
+const CHIP_MIN_GAP_MM: f64 = 0.2;
+
 /// Lands for the leads of a typed `form`, in lead order, landing
-/// `terminals[k]` (pad IDs and numbers from 1): each centred on its lead
-/// contact so the leads fit their pads, sized from the lead (original
-/// rules of thumb, not a land-pattern standard), plated-through for header
-/// pins, and the exposed pad last when the package lists it as a terminal.
-/// `None` for `Generic` or when the terminal count does not match.
+/// `terminals[k]` (pad IDs from 1, numbers from [`form_designations`]):
+/// each centred on its lead contact (a toe-heavy land just outside a
+/// gull-wing or molded foot) so the leads fit their pads, sized from the
+/// lead (original rules of thumb, not a land-pattern standard, the same
+/// estimates the family's footprint template uses), and the exposed pad
+/// last when the package lists it as a terminal. Header, DIP, TO, axial
+/// and radial leads are plated through with a round drill; a DIP's or TO's
+/// pin 1 is a rounded square. A grid's lands are round, smaller than the
+/// ball ([`GridForm::estimated_land_diameter`]). `None` for `Generic` or
+/// when the terminal count does not match.
+///
+/// [`GridForm::estimated_land_diameter`]: super::package_form::grid::GridForm::estimated_land_diameter
 pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option<Vec<Pad>> {
     let points = form.lead_points();
     let leads = usize::try_from(form.lead_count()).ok()?;
     if points.is_empty() || !form.terminal_counts().contains(&(terminals.len() as u64)) {
         return None;
     }
+    let numbers = form_designations(form, terminals.len());
+    let family_sizes: Vec<[f64; 2]> = match form {
+        PackageForm::Tabbed(t) => t.land_sizes(),
+        PackageForm::Molded(m) => m.land_sizes(),
+        _ => Vec::new(),
+    };
     // Lead k's land size [along x, along y].
     let size = |k: usize| -> [f64; 2] {
         match form {
@@ -483,21 +525,66 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
                 }
             }
             PackageForm::Header(h) => {
-                let d = h.pin_side * std::f64::consts::SQRT_2 + 0.8;
+                // Within the pitch (as a through-hole land), keeping a
+                // minimal ring round the drill.
+                let drill = h.pin_side * std::f64::consts::SQRT_2 + 0.1;
+                let pitch = if h.rows > 1 {
+                    h.pitch.min(h.row_pitch)
+                } else {
+                    h.pitch
+                };
+                let d = (h.pin_side * std::f64::consts::SQRT_2 + 0.8)
+                    .min(pitch - super::package_form::tht::LAND_GAP_MM)
+                    .max(drill + super::package_form::tht::MIN_RING_MM);
                 [d, d]
             }
-            PackageForm::Generic
-            | PackageForm::Tabbed(_)
-            | PackageForm::Molded(_)
-            | PackageForm::Grid(_)
-            | PackageForm::Tht(_) => [1.0, 1.0],
+            PackageForm::Tabbed(_) | PackageForm::Molded(_) => {
+                family_sizes.get(k).copied().unwrap_or([1.0, 1.0])
+            }
+            PackageForm::Grid(g) => {
+                let d = g.estimated_land_diameter();
+                [d, d]
+            }
+            PackageForm::Tht(t) => {
+                let (_, land) = t.estimated_drill_and_land();
+                [land, land]
+            }
+            PackageForm::Generic => [1.0, 1.0],
         }
+    };
+    let tab_index = match form {
+        PackageForm::Tabbed(t) if t.tab.is_some() => leads.checked_sub(1),
+        _ => None,
     };
     let mut pads = Vec::with_capacity(terminals.len());
     for (k, (terminal, point)) in terminals.iter().zip(&points).enumerate() {
         let id = PadId(u32::try_from(k + 1).ok()?);
-        let at = [point[0], point[1]];
-        let mut pad = Pad::smd_rect(id, *terminal, id.0.to_string(), at, size(k));
+        let mut at = [point[0], point[1]];
+        let number = numbers.get(k).cloned().unwrap_or_else(|| id.0.to_string());
+        match form {
+            // Molded lands lie along x, tabbed leads along y; a flange tab
+            // sits on its solderable area, a tab lead like the others.
+            PackageForm::Molded(_) => at[0] += at[0].signum() * TOE_HEEL_SHIFT_MM,
+            PackageForm::Tabbed(t) => {
+                let flange = t.tab.is_some_and(|tab| tab.flange.is_some());
+                if !(Some(k) == tab_index && flange) {
+                    at[1] += at[1].signum() * TOE_HEEL_SHIFT_MM;
+                }
+            }
+            _ => {}
+        }
+        let mut land = size(k);
+        if let PackageForm::Chip(_) = form {
+            // Small chips: keep the lands' inner edges at least
+            // CHIP_MIN_GAP_MM apart, trimming the heel, never the toe.
+            let outer = at[0].abs() + land[0] / 2.0;
+            let inner = (at[0].abs() - land[0] / 2.0).max(CHIP_MIN_GAP_MM / 2.0);
+            if inner < outer {
+                land[0] = outer - inner;
+                at[0] = at[0].signum() * (outer + inner) / 2.0;
+            }
+        }
+        let mut pad = Pad::smd_rect(id, *terminal, number, at, land);
         if k >= leads {
             // The exposed pad.
             if let PackageForm::NoLead(n) = form
@@ -520,6 +607,35 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
                 plated: true,
                 offset: [0.0, 0.0],
             });
+        } else if let PackageForm::Tht(t) = form {
+            let (drill, land) = t.estimated_drill_and_land();
+            pad.kind = PadKind::PlatedThrough;
+            pad.shape = if k == 0 && t.marks_pin_one() {
+                PadShape::RoundRect {
+                    size: [land, land],
+                    radius_ratio: 0.25,
+                    max_radius: None,
+                    corners: super::footprint::CornerMask::ALL,
+                }
+            } else {
+                PadShape::Circle { diameter: land }
+            };
+            pad.hole = Some(Hole {
+                shape: HoleShape::Round { diameter: drill },
+                plated: true,
+                offset: [0.0, 0.0],
+            });
+        } else if let PackageForm::Grid(_) = form {
+            pad.shape = PadShape::Circle {
+                diameter: size(k)[0],
+            };
+        } else if let PackageForm::Molded(_) = form {
+            pad.shape = PadShape::RoundRect {
+                size: size(k),
+                radius_ratio: 0.25,
+                max_radius: None,
+                corners: super::footprint::CornerMask::ALL,
+            };
         }
         pads.push(pad);
     }
@@ -556,6 +672,7 @@ pub fn packaged_form(
             symbol: SymbolStyle::Block,
             lands: None,
             provenance: PROVENANCE,
+            template: false,
         },
         refs,
     )
@@ -581,6 +698,9 @@ struct Packaged<'a> {
     symbol: SymbolStyle,
     lands: Option<&'a LandValues>,
     provenance: &'a str,
+    /// Lands from [`template_lands`] (a template build) rather than the
+    /// plain form lands of a sample.
+    template: bool,
 }
 
 /// What [`from_template`] builds: a typed `form`, the skeleton the
@@ -636,15 +756,10 @@ pub fn from_template(spec: &TemplateSpec<'_>, refs: SampleRefs) -> Result<Vec<Dr
             symbol,
             lands: spec.lands,
             provenance: spec.provenance,
+            template: true,
         },
         refs,
     );
-    if spec.lands.is_none() {
-        let trim = heel_trim(&spec.form);
-        if trim > 0.0 {
-            trim_heels(&mut edits, trim);
-        }
-    }
     if polarised || count > 2 {
         mark_pin_one(&mut edits);
     }
@@ -696,20 +811,42 @@ pub fn heel_trim(form: &PackageForm) -> f64 {
 /// keep their lands. Values that are not positive and finite are ignored.
 pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
     let ok = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
+    // Round lands (grid balls, through-hole rings) take one diameter.
+    if let PackageForm::Grid(_) | PackageForm::Tht(_) = form {
+        let Some(d) = ok(lands.pad_width).or(ok(lands.pad_length)) else {
+            return;
+        };
+        for pad in pads.iter_mut() {
+            match &mut pad.shape {
+                PadShape::Circle { diameter } => *diameter = d,
+                PadShape::RoundRect { size, .. } => *size = [d, d],
+                _ => {}
+            }
+        }
+        return;
+    }
     let per = match form {
         PackageForm::GullWing(g) => Some((g.sides, g.leads_per_side)),
         PackageForm::NoLead(n) => Some((n.sides, n.terminals_per_side)),
         _ => None,
     };
-    let chip = matches!(form, PackageForm::Chip(_));
-    if !chip && per.is_none() {
+    let chip = matches!(form, PackageForm::Chip(_) | PackageForm::Molded(_));
+    // A tabbed form's leads run along y; its tab keeps its own land.
+    let tab = match form {
+        PackageForm::Tabbed(t) if t.tab.is_some() => usize::try_from(form.lead_count())
+            .ok()
+            .and_then(|n| n.checked_sub(1)),
+        _ => None,
+    };
+    let tabbed = matches!(form, PackageForm::Tabbed(_));
+    if !chip && !tabbed && per.is_none() {
         return;
     }
     for (k, pad) in pads.iter_mut().enumerate() {
-        if pad.kind != PadKind::Smd {
+        if pad.kind != PadKind::Smd || Some(k) == tab {
             continue;
         }
-        let PadShape::Rect { size } = &mut pad.shape else {
+        let (PadShape::Rect { size } | PadShape::RoundRect { size, .. }) = &mut pad.shape else {
             continue;
         };
         if pad.number == "EP" {
@@ -726,6 +863,7 @@ pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
         // The axis the lead runs along: x for a chip and the short sides
         // of a four-sided form, y for the long rows.
         let axis = match per {
+            _ if tabbed => 1,
             Some((sides, per)) if !across_x(sides, per, k) => 1,
             _ => 0,
         };
@@ -742,6 +880,25 @@ pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
     }
 }
 
+/// The lands a template build gives a typed `form` landing `terminals`
+/// (`library.new_from_template`, `library.package_from_template` and the
+/// gallery preview, so the preview is exactly what Create builds):
+/// [`form_lands`], then the row's cited land overrides, or without them
+/// the estimated heel trim that keeps no-lead lands clear of an exposed
+/// pad. `None` when the form gives no lands for that many terminals.
+pub fn template_lands(
+    form: &PackageForm,
+    terminals: &[PackageTerminalId],
+    lands: Option<&LandValues>,
+) -> Option<Vec<Pad>> {
+    let mut pads = form_lands(form, terminals)?;
+    match lands {
+        Some(lands) => apply_lands(&mut pads, form, lands),
+        None => trim_pads(&mut pads, heel_trim(form)),
+    }
+    Some(pads)
+}
+
 fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     let Packaged {
         name,
@@ -756,20 +913,17 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
         provenance: provenance.into(),
     };
     let count = form_terminal_count(&form);
-    let leads = u32::try_from(form.lead_count()).unwrap_or(0);
     let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let package_terminals: Vec<PackageTerminalId> = (1..=count).map(PackageTerminalId).collect();
+    let designations = form_designations(&form, package_terminals.len());
     let package = PackageDefinition {
         next_local: count + 1,
         terminals: package_terminals
             .iter()
-            .map(|id| PackageTerminal {
+            .zip(&designations)
+            .map(|(id, designation)| PackageTerminal {
                 id: *id,
-                designation: if id.0 > leads {
-                    "EP".into()
-                } else {
-                    id.to_string()
-                },
+                designation: designation.clone(),
             })
             .collect(),
         envelope: form.envelope().unwrap_or([1.0; 3]),
@@ -780,10 +934,17 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
         },
         placement: ModelPlacement::default(),
     };
-    let mut pads = form_lands(&package.form, &package_terminals).unwrap_or_default();
-    if let Some(lands) = spec.lands {
-        apply_lands(&mut pads, &package.form, lands);
+    let pads = if spec.template {
+        template_lands(&package.form, &package_terminals, spec.lands)
+    } else {
+        form_lands(&package.form, &package_terminals).map(|mut pads| {
+            if let Some(lands) = spec.lands {
+                apply_lands(&mut pads, &package.form, lands);
+            }
+            pads
+        })
     }
+    .unwrap_or_default();
     let mut footprint = FootprintDefinition {
         package: refs.package,
         next_local: u32::try_from(pads.len() + 1).unwrap_or(1),
@@ -816,11 +977,11 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                     .iter()
                     .map(|id| Terminal {
                         id: *id,
-                        name: if id.0 > leads {
-                            "EP".into()
-                        } else {
-                            id.to_string()
-                        },
+                        name: usize::try_from(id.0)
+                            .ok()
+                            .and_then(|k| designations.get(k.checked_sub(1)?))
+                            .cloned()
+                            .unwrap_or_else(|| id.to_string()),
                         class: TerminalClass::Electrical(TerminalFunctions::fixed(
                             FunctionId(id.0 + count),
                             Direction::Passive,
@@ -923,28 +1084,32 @@ pub fn mark_pin_one(edits: &mut [DraftEdit]) {
 /// among `edits` by `mm` at its inner end (the heel, towards the footprint
 /// centre along the land's long axis), keeping its outer end in place.
 pub fn trim_heels(edits: &mut [DraftEdit], mm: f64) {
+    for edit in edits {
+        if let Definition::Footprint(footprint) = &mut edit.definition {
+            trim_pads(&mut footprint.pads, mm);
+        }
+    }
+}
+
+/// [`trim_heels`] on a pad list.
+fn trim_pads(pads: &mut [Pad], mm: f64) {
     if !(mm.is_finite() && mm > 0.0) {
         return;
     }
-    for edit in edits {
-        let Definition::Footprint(footprint) = &mut edit.definition else {
+    for pad in pads {
+        let PadShape::Rect { size } = &mut pad.shape else {
             continue;
         };
-        for pad in &mut footprint.pads {
-            let PadShape::Rect { size } = &mut pad.shape else {
-                continue;
-            };
-            if pad.number == "EP" {
-                continue;
-            }
-            let axis = usize::from(size[1] > size[0]);
-            if size[axis] <= mm {
-                continue;
-            }
-            size[axis] -= mm;
-            let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
-            pad.position[axis] += outward * mm / 2.0;
+        if pad.number == "EP" {
+            continue;
         }
+        let axis = usize::from(size[1] > size[0]);
+        if size[axis] <= mm {
+            continue;
+        }
+        size[axis] -= mm;
+        let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
+        pad.position[axis] += outward * mm / 2.0;
     }
 }
 

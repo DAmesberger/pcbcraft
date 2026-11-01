@@ -213,14 +213,7 @@ fn finish(
     let mut findings = Vec::new();
     let mut edits = Vec::new();
     let mut meta = current.meta.clone();
-    meta.provenance = if as_row {
-        resolved.row.provenance_text(&resolved.name)
-    } else {
-        format!(
-            "Custom values edited from package template row ‘{}’ (estimated values and lands); verify against the selected component datasheet.",
-            resolved.name
-        )
-    };
+    meta.provenance = catalog::provenance(resolved, as_row);
     let mut pads_after = 0;
     if let Some((draft, footprint)) = landing {
         let lands = resolved.row.lands.as_ref().filter(|_| as_row);
@@ -238,6 +231,7 @@ fn finish(
         edits.extend(edit);
     }
     findings.extend(mapping_findings(document, request.draft, &next));
+    findings.extend(retained_findings(document, request.draft, before, &next));
     let plan = PackagePlan {
         terminals_before: u32::try_from(before.terminals.len()).unwrap_or(u32::MAX),
         terminals_after: u32::try_from(next.terminals.len()).unwrap_or(u32::MAX),
@@ -257,16 +251,17 @@ fn finish(
 }
 
 /// `package` with `form`: its envelope, and its terminals for the form's
-/// count. Terminals the new count keeps keep their identities and
-/// designations, in order; terminals beyond it are removed; new ones get
-/// fresh identities (an exposed pad is designated `EP`). Mappings change
-/// only through `library.assign_terminals` and binding edits.
+/// count. Terminals the new count keeps keep their identities, in order;
+/// terminals beyond it are removed; new ones get fresh identities. Every
+/// terminal is designated from the new form ([`samples::form_designations`]:
+/// lead numbers then `EP`, or a grid's ball names), so designations never
+/// repeat. Mappings change only through `library.assign_terminals` and
+/// binding edits.
 fn replaced_package(
     package: &PackageDefinition,
     form: crate::library::PackageForm,
 ) -> Result<PackageDefinition> {
     let count = samples::form_terminal_count(&form);
-    let leads = u32::try_from(form.lead_count()).unwrap_or(0);
     let mut next = package.clone();
     let keep = usize::try_from(count)
         .unwrap_or(usize::MAX)
@@ -278,15 +273,14 @@ fn replaced_package(
             .next_local
             .checked_add(1)
             .ok_or_else(|| Error::Limit("package local identities exhausted".into()))?;
-        let position = u32::try_from(next.terminals.len() + 1).unwrap_or(u32::MAX);
         next.terminals.push(PackageTerminal {
             id,
-            designation: if position > leads {
-                "EP".into()
-            } else {
-                position.to_string()
-            },
+            designation: String::new(),
         });
+    }
+    let designations = samples::form_designations(&form, next.terminals.len());
+    for (terminal, designation) in next.terminals.iter_mut().zip(designations) {
+        terminal.designation = designation;
     }
     next.envelope = form.envelope().unwrap_or(next.envelope);
     next.form = form;
@@ -305,39 +299,13 @@ fn rebuilt_footprint(
     let mut next = footprint_family::cleared(footprint);
     next.graphics.clear();
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
-    let mut pads = samples::form_lands(&package.form, &terminals).ok_or_else(|| {
+    let mut pads = samples::template_lands(&package.form, &terminals, lands).ok_or_else(|| {
         Error::Invalid(format!(
             "template.values: the {} values give no lands for {} terminals",
             package.form.label(),
             terminals.len()
         ))
     })?;
-    if let Some(lands) = lands {
-        samples::apply_lands(&mut pads, &package.form, lands);
-    } else {
-        let trim = samples::heel_trim(&package.form);
-        if trim > 0.0 {
-            let mut edit = [DraftEdit {
-                id: DefinitionId(0),
-                meta: Default::default(),
-                definition: Definition::Footprint(FootprintDefinition {
-                    pads,
-                    ..FootprintDefinition::default()
-                }),
-            }];
-            samples::trim_heels(&mut edit, trim);
-            let [
-                DraftEdit {
-                    definition: Definition::Footprint(trimmed),
-                    ..
-                },
-            ] = edit
-            else {
-                return Err(Error::Invalid("template.lands: heel trim failed".into()));
-            };
-            pads = trimmed.pads;
-        }
-    }
     for pad in &mut pads {
         pad.id = PadId(next.next_local);
         next.next_local = next
@@ -351,6 +319,51 @@ fn rebuilt_footprint(
         next = before;
     }
     Ok(next)
+}
+
+/// Advice when the package changes family or lead count but a binding
+/// draft keeps mapping retained terminals: those terminals are reused by
+/// position (`binding.mapping_retained`), so each mapping should be
+/// checked against the new pinout before publishing.
+fn retained_findings(
+    document: &Document,
+    package: DefinitionId,
+    before: &PackageDefinition,
+    next: &PackageDefinition,
+) -> Vec<Finding> {
+    let family = |p: &PackageDefinition| catalog::FamilyKind::of(&p.form);
+    if family(before) == family(next) && before.terminals.len() == next.terminals.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for draft in &document.drafts.items {
+        let Definition::Binding(binding) = &draft.definition else {
+            continue;
+        };
+        if binding.package.id != package {
+            continue;
+        }
+        let kept = binding
+            .mappings
+            .iter()
+            .filter(|m| next.terminal(m.package_terminal).is_some())
+            .count();
+        if kept > 0 {
+            out.push(Finding::new(
+                "binding.mapping_retained",
+                format!(
+                    "{kept} mapping(s) of ‘{}’ keep package terminals by position while the package changes from {} terminal(s) ({}) to {} ({}); check each against the new pinout.",
+                    draft.meta.name,
+                    before.terminals.len(),
+                    before.form.label(),
+                    next.terminals.len(),
+                    next.form.label(),
+                ),
+                vec![ObjectRef::Definition { id: draft.id }],
+            ));
+        }
+    }
+    out
 }
 
 /// Mapping findings the new terminals give each binding draft of the

@@ -87,8 +87,17 @@ fn publish_row(
     Ok(PackageRowRef::new(id, crate::ids::Revision::FIRST))
 }
 
+/// The project's rows and the custom entries, without the built-in
+/// starter rows (tested on their own below).
 fn templates(engine: &Engine, query: &str) -> Fallible<TemplateReport> {
-    templates_with(engine, query, &CatalogContext::default())
+    templates_with(engine, query, &project_only())
+}
+
+fn project_only() -> CatalogContext {
+    CatalogContext {
+        without_starter_rows: true,
+        ..CatalogContext::default()
+    }
 }
 
 fn templates_with(
@@ -212,8 +221,8 @@ fn a_size_code_matches_both_meanings_unless_a_system_is_named() -> Fallible<()> 
     let both = templates(&engine, "pkg:0402")?;
     assert_eq!(
         names(&both),
-        ["Chip 01005 (0402 metric)", "Chip 0402 (1005 metric)"],
-        "imperial 0402 and metric 0402 are both listed, nothing guessed"
+        ["Chip 0402 (1005 metric)", "Chip 01005 (0402 metric)"],
+        "imperial 0402 and metric 0402 are both listed, nothing guessed; the imperial meaning first"
     );
     assert_eq!(
         names(&templates(&engine, "pkg:i0402")?),
@@ -232,8 +241,8 @@ fn a_size_code_matches_both_meanings_unless_a_system_is_named() -> Fallible<()> 
     assert_eq!(
         shown.collect::<Vec<_>>(),
         [
-            "01005 imperial · 0402 metric",
-            "0402 imperial · 1005 metric"
+            "0402 imperial · 1005 metric",
+            "01005 imperial · 0402 metric"
         ]
     );
     Ok(())
@@ -267,10 +276,14 @@ fn template_queries_refuse_component_filters_and_bad_values() -> Fallible<()> {
     let QueryResult::Templates(limited) = limited else {
         return Err("templates".into());
     };
-    // Five project rows and one custom entry per family match.
+    // Five project rows, every built-in starter row and one custom entry
+    // per family match.
+    let starters = crate::library::templates::starter::rows()
+        .map_err(|e| e.to_owned())?
+        .len();
     assert_eq!(
         (limited.hits.len(), limited.more),
-        (2, 5 + FamilyKind::ALL.len() - 2)
+        (2, 5 + starters + FamilyKind::ALL.len() - 2)
     );
     Ok(())
 }
@@ -297,7 +310,7 @@ fn folder_rows_are_indexed_and_searched_with_their_source_revision() -> Fallible
     );
     let context = CatalogContext {
         sources: vec![Arc::new(catalog)],
-        ..CatalogContext::default()
+        ..project_only()
     };
     let engine = Engine::default();
     let found = templates_with(&engine, "pkg:i0603", &context)?;
@@ -667,7 +680,12 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
         (8, 17, 17)
     );
     assert_eq!(previewed.model_family_rev, Some(BUILT_FAMILY_REV));
-    assert_eq!(codes(&previewed.findings), ["binding.mapping_missing"]);
+    // SOIC-8 to QFN-16 + EP: nine new terminals are unmapped, and the
+    // eight kept mappings are flagged as reused by position.
+    assert_eq!(
+        codes(&previewed.findings),
+        ["binding.mapping_missing", "binding.mapping_retained"]
+    );
     assert_eq!(engine.to_file(), before, "a plan changes nothing");
     let Outcome::PackageReplaced { plan: applied } = apply(
         &mut engine,
@@ -862,4 +880,312 @@ fn preset_rows_are_valid_estimated_rows() {
         assert!(findings_of(&definition).is_empty(), "{name}");
         assert!(!definition.cited(), "{name}");
     }
+}
+
+/// A fresh engine with the hosts' default context lists the built-in
+/// starter rows: the gallery is populated with no library source added.
+#[test]
+fn a_fresh_engine_lists_the_built_in_starter_rows() -> Fallible<()> {
+    let engine = Engine::default();
+    let all = |query: &str| templates_with(&engine, query, &CatalogContext::default());
+    for query in [
+        "qfn 48",
+        "pitch:0.5",
+        "0603",
+        "dip",
+        "bga",
+        "sot-89",
+        "to-220",
+        "to-92",
+        "sc-70",
+        "lqfp",
+        "sod-123",
+        "header",
+    ] {
+        let found = all(query)?;
+        let first = found.hits.first().ok_or(format!("{query}: no hits"))?;
+        assert!(first.is_starter(), "{query}: {}", first.name);
+        // Custom entries come after every row hit.
+        let custom = found.hits.iter().position(TemplateHit::is_custom);
+        if let Some(at) = custom {
+            assert!(
+                found.hits[at..].iter().all(TemplateHit::is_custom),
+                "{query}: {:?}",
+                names(&found)
+            );
+        }
+    }
+    // Numbers in names order naturally within a tier.
+    let pitch = all("pitch:0.5")?;
+    let at = |name: &str| names(&pitch).iter().position(|n| *n == name);
+    assert!(
+        at("DFN-8 2×2 0.5") < at("DFN-10 3×3 0.5"),
+        "{:?}",
+        names(&pitch)
+    );
+    // A bare size code lists its imperial meaning first.
+    let code = all("0603")?;
+    let first = code.hits.first().and_then(|h| h.size_code.clone());
+    assert_eq!(first.map(|c| c.imperial), Some("0603".into()));
+    // A search for a family's outline name never comes back empty.
+    for query in ["pdip", "wlcsp", "melf", "dpak", "son"] {
+        assert!(!all(query)?.hits.is_empty(), "{query}");
+    }
+    // Starter hits build from their name; cited ones without a drawing
+    // revision and page read unverified.
+    let soic = all("soic-8")?;
+    let hit = soic.hits.first().ok_or("soic")?;
+    assert!(hit.cited && !hit.citation_checked, "{}", hit.name);
+    assert!(
+        !templates(&engine, "soic-8")?
+            .hits
+            .iter()
+            .any(TemplateHit::is_starter)
+    );
+    assert!(
+        all("src:project")?.hits.is_empty(),
+        "starter rows are not project rows"
+    );
+    Ok(())
+}
+
+/// Copper of two pads of one footprint overlaps (touching is allowed).
+fn overlapping(pads: &[crate::library::Pad]) -> Option<(String, String)> {
+    for (i, a) in pads.iter().enumerate() {
+        for b in &pads[i + 1..] {
+            let (p, q) = (a.bounds(), b.bounds());
+            let eps = 1e-9;
+            if p.min[0] < q.max[0] - eps
+                && q.min[0] < p.max[0] - eps
+                && p.min[1] < q.max[1] - eps
+                && q.min[1] < p.max[1] - eps
+            {
+                return Some((a.number.clone(), b.number.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// Every family builds family-correct lands: plated holes for
+/// through-hole parts, round lands smaller than the pitch and A1 names
+/// for grids, a tab land for tabbed packages, no overlapping copper, pad
+/// numbers equal to the terminals' designations, every terminal landed
+/// once, and exactly the pads the gallery previews
+/// (`samples::template_lands`).
+#[test]
+fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
+    use crate::library::{PadKind, samples};
+    let mut sources: Vec<(String, RowSource, PackageRowDefinition)> = FamilyKind::ALL
+        .into_iter()
+        .filter_map(|family| {
+            let values = family.custom_values()?;
+            Some((
+                format!("custom {family:?}"),
+                RowSource::Custom { family },
+                row(values, &[]),
+            ))
+        })
+        .collect();
+    for starter in crate::library::templates::starter::rows().map_err(|e| e.to_owned())? {
+        sources.push((
+            starter.name.clone(),
+            RowSource::Starter {
+                name: starter.name.clone(),
+            },
+            starter.definition.clone(),
+        ));
+    }
+    assert!(sources.len() > 150);
+    for (name, source, definition) in sources {
+        let mut engine = Engine::default();
+        let ids = new_from(
+            &mut engine,
+            NewFromTemplate {
+                row: source,
+                values: None,
+                skeleton: definition.skeleton,
+                name: name.clone(),
+                designator_prefix: None,
+            },
+        )?;
+        let draft = |k: usize| {
+            ids.get(k)
+                .and_then(|id| engine.drafts().get(*id))
+                .map(|d| d.definition.clone())
+        };
+        let (Some(Definition::Package(package)), Some(Definition::Footprint(footprint))) =
+            (draft(2), draft(3))
+        else {
+            return Err(format!("{name}: package and footprint drafts").into());
+        };
+        let pads = &footprint.pads;
+        assert_eq!(pads.len(), package.terminals.len(), "{name}");
+        let mut landed = std::collections::BTreeSet::new();
+        for pad in pads {
+            let terminal = pad.terminal.and_then(|t| package.terminal(t));
+            let terminal =
+                terminal.ok_or(format!("{name}: pad {} lands no terminal", pad.number))?;
+            assert!(landed.insert(terminal.id), "{name}: {} twice", pad.number);
+            assert_eq!(pad.number, terminal.designation, "{name}");
+            let through = matches!(package.form, PackageForm::Tht(_) | PackageForm::Header(_));
+            if through {
+                assert_eq!(pad.kind, PadKind::PlatedThrough, "{name}");
+                assert!(pad.hole.as_ref().is_some_and(|h| h.plated), "{name}");
+            } else {
+                assert_eq!(pad.kind, PadKind::Smd, "{name}");
+                assert!(pad.hole.is_none(), "{name}");
+            }
+        }
+        if let Some((a, b)) = overlapping(pads) {
+            return Err(format!("{name}: pads {a} and {b} overlap").into());
+        }
+        match &package.form {
+            PackageForm::Grid(g) => {
+                assert_eq!(
+                    pads.first().map(|p| p.number.as_str()),
+                    Some("A1"),
+                    "{name}"
+                );
+                for pad in pads {
+                    let PadShape::Circle { diameter } = pad.shape else {
+                        return Err(format!("{name}: a round grid land").into());
+                    };
+                    assert!(diameter < g.pitch[0].min(g.pitch[1]), "{name}");
+                }
+            }
+            PackageForm::Tabbed(t) if t.tab.is_some() => {
+                let (tab, lead) = (pads.last().ok_or("tab")?, pads.first().ok_or("lead")?);
+                assert!(
+                    tab.bounds().size()[0] > lead.bounds().size()[0],
+                    "{name}: the tab land is wider than a lead's"
+                );
+            }
+            _ => {
+                for pad in pads {
+                    let size = pad.bounds().size();
+                    assert!(
+                        !(size[0] == 1.0 && size[1] == 1.0),
+                        "{name}: no placeholder 1 mm lands"
+                    );
+                }
+            }
+        }
+        let terminals: Vec<_> = package.terminals.iter().map(|t| t.id).collect();
+        let lands = definition.lands.as_ref();
+        let preview = samples::template_lands(&package.form, &terminals, lands)
+            .ok_or(format!("{name}: preview lands"))?;
+        assert_eq!(&preview, pads, "{name}: the preview is what Create builds");
+        let published = apply(&mut engine, LibraryCommand::Publish { drafts: ids });
+        assert!(published.is_ok(), "{name}: {published:?}");
+    }
+    Ok(())
+}
+
+/// A component built from a row records the row's exact identity.
+#[test]
+fn built_drafts_record_the_row_identity() -> Fallible<()> {
+    let mut engine = rows_engine()?;
+    let qfn = templates(&engine, "qfn pins:32")?
+        .hits
+        .first()
+        .and_then(|h| h.row)
+        .ok_or("the QFN-32 row")?;
+    let ids = new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Project { row: qfn },
+            values: None,
+            skeleton: SkeletonHint::IcBox,
+            name: "U".into(),
+            designator_prefix: None,
+        },
+    )?;
+    let provenance = |engine: &Engine, id: DefinitionId| {
+        engine
+            .drafts()
+            .get(id)
+            .map(|d| d.meta.provenance.clone())
+            .unwrap_or_default()
+    };
+    let expected = format!("[project row {} r{}]", qfn.id, qfn.revision);
+    let text = provenance(&engine, ids[0]);
+    assert!(text.contains(&expected), "{text}");
+    let ids = new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Starter {
+                name: "SOIC-8 3.9 mm".into(),
+            },
+            values: None,
+            skeleton: SkeletonHint::IcBox,
+            name: "U2".into(),
+            designator_prefix: None,
+        },
+    )?;
+    let text = provenance(&engine, ids[0]);
+    assert!(
+        text.contains("[built-in starter table gull_wing.json format 1]")
+            && text.contains("citation unverified"),
+        "{text}"
+    );
+    Ok(())
+}
+
+/// Replacing a package re-designates every terminal from the new form:
+/// no repeated `EP`, no missing number.
+#[test]
+fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let ids = new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Custom {
+                family: FamilyKind::NoLead,
+            },
+            // A DFN-8 with an exposed pad: terminal 9 is `EP`.
+            values: Some(PackageForm::NoLead(Box::new(NoLeadForm {
+                sides: LeadSides::Two,
+                terminals_per_side: [4, 0],
+                pitch: 0.5,
+                body_length: 3.0,
+                body_width: 3.0,
+                body_height: 0.75,
+                terminal_length: 0.4,
+                terminal_width: 0.25,
+                exposed_pad: Some([1.5, 2.0]),
+            }))),
+            skeleton: SkeletonHint::IcBox,
+            name: "U".into(),
+            designator_prefix: None,
+        },
+    )?;
+    let request = PackageFromTemplate {
+        draft: ids[2],
+        row: RowSource::Custom {
+            family: FamilyKind::NoLead,
+        },
+        values: Some(qfn32()),
+        replace: true,
+    };
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(request)),
+    )?;
+    let Some(Definition::Package(package)) =
+        engine.drafts().get(ids[2]).map(|d| d.definition.clone())
+    else {
+        return Err("package".into());
+    };
+    let designations: Vec<_> = package
+        .terminals
+        .iter()
+        .map(|t| t.designation.clone())
+        .collect();
+    let expected: Vec<String> = (1..=32)
+        .map(|n: u32| n.to_string())
+        .chain(["EP".to_owned()])
+        .collect();
+    assert_eq!(designations, expected);
+    Ok(())
 }

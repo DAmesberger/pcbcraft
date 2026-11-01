@@ -4,10 +4,10 @@
 //! A preview never touches the open project. The folder bundle is read on
 //! a worker and imported, with drafts of its closure, into a scratch,
 //! in-memory engine; the Component workspace then shows that scratch
-//! engine's working set with every edit refused. "Edit a copy" applies
-//! `library.import` of the same bundle to the project and drafts the
-//! imported revision with public commands; the app records those steps as
-//! one undo step.
+//! engine's working set with every edit refused. "Edit a copy" is one
+//! `library.edit_copy` of the same bundle on the project: the import and
+//! the drafts of the imported revision are one engine step, so they undo
+//! as one on every transport and a refusal changes nothing.
 use super::working_set::{self, WorkingSet};
 use crate::library_sources::FolderPick;
 use pcbcraft_core::catalog::ItemReport;
@@ -93,34 +93,32 @@ fn import(engine: &mut Engine, bundle: Bundle) -> Result<ComponentRef, String> {
 pub struct Copied {
     /// The project's component lineage, now drafted.
     pub lineage: DefinitionId,
-    /// How many engine steps it took (0 when the project already held the
-    /// revision and its drafts); the app undoes them as one.
-    pub steps: usize,
+    /// Whether the project changed (false when it already held the
+    /// revision and its drafts): one undo step when it did.
+    pub changed: bool,
 }
 
-/// "Edit a copy in this project": `library.import` (deduplicated by
-/// origin), then drafts of the imported revision. A failure undoes the
-/// steps already taken, so the project is unchanged.
+/// "Edit a copy in this project": one `library.edit_copy` (the import,
+/// deduplicated by origin, and drafts of the imported revision). A
+/// refusal leaves the project, its revision and its history unchanged.
 pub fn edit_copy(engine: &mut Engine, bundle: Bundle) -> Result<Copied, String> {
     let start = engine.revision();
-    let result = import(engine, bundle).and_then(|component| {
-        working_set::draft_closure(engine, component)
-            .map(|_| component.id)
-            .map_err(|e| e.to_string())
-    });
-    // Every committed command advances the revision by one.
-    let steps = usize::try_from(engine.revision().saturating_sub(start)).unwrap_or(usize::MAX);
-    match result {
-        Ok(lineage) => Ok(Copied { lineage, steps }),
-        Err(error) => {
-            for _ in 0..steps {
-                if engine.undo().is_err() {
-                    break;
-                }
-            }
-            Err(error)
-        }
-    }
+    let outcome = engine
+        .apply_with(
+            start,
+            Operation::Library(LibraryCommand::EditCopy {
+                bundle: Box::new(bundle),
+            }),
+            &pcbcraft_solidcraft::footprint::SketchEvaluator,
+        )
+        .map_err(|e| e.to_string())?;
+    let Outcome::Copied { component, .. } = outcome else {
+        return Err("library.edit_copy returned an unexpected outcome".into());
+    };
+    Ok(Copied {
+        lineage: component.id,
+        changed: engine.revision() != start,
+    })
 }
 
 /// Read `pick`'s bundle and build its preview on a worker; the result

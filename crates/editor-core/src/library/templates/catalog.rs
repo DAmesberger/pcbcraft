@@ -254,6 +254,15 @@ pub struct RowCitation {
     pub page: Option<u16>,
 }
 
+impl RowCitation {
+    /// The citation records the drawing's revision and page, so a reader
+    /// can check the values against it. A citation naming only the
+    /// document reads "cited (unverified)".
+    pub fn checked(&self) -> bool {
+        self.document_revision.is_some() && self.page.is_some()
+    }
+}
+
 impl PackageRowDefinition {
     pub(crate) fn within_bounds(&self) -> bool {
         self.aliases.len() <= MAX_ROW_ALIASES
@@ -416,8 +425,10 @@ impl PackageRowDefinition {
     }
 
     /// The text a component built from this row records as its drafts'
-    /// provenance: the row, and its citation or that it is estimated.
-    pub fn provenance_text(&self, name: &str) -> String {
+    /// provenance: the row by name and exact identity (`identity`, see
+    /// [`ResolvedRow::identity`]), and its citation or that it is
+    /// estimated.
+    pub fn provenance_text(&self, name: &str, identity: &str) -> String {
         let basis = match &self.citation {
             Some(c) => {
                 let mut text = format!("values from {}", c.document);
@@ -426,6 +437,9 @@ impl PackageRowDefinition {
                 }
                 if let Some(page) = c.page {
                     text.push_str(&format!(" p. {page}"));
+                }
+                if !c.checked() {
+                    text.push_str(", citation unverified");
                 }
                 text
             }
@@ -437,7 +451,7 @@ impl PackageRowDefinition {
             "estimated lands"
         };
         format!(
-            "From package template row ‘{name}’ ({basis}; {lands}); verify against the selected component datasheet."
+            "From package template row ‘{name}’ [{identity}] ({basis}; {lands}); verify against the selected component datasheet."
         )
     }
 }
@@ -490,6 +504,9 @@ pub enum RowSource {
     Bundle { bundle: Box<Bundle> },
     /// The family's built-in custom entry: values come with the request.
     Custom { family: FamilyKind },
+    /// A row of the built-in starter tables, by its unique name
+    /// (`library::templates::starter`).
+    Starter { name: String },
 }
 
 /// The `library.new_from_template` request.
@@ -566,6 +583,10 @@ pub fn unsupported() -> Error {
 pub struct ResolvedRow {
     pub name: String,
     pub row: PackageRowDefinition,
+    /// The row's exact identity, as built drafts record it: "project row
+    /// 12 r1", "library 7 lineage 3 r2", "built-in starter table
+    /// chip.json format 1" or "custom entry".
+    pub identity: String,
 }
 
 /// The row a request names, checked: a published project row, the root
@@ -584,6 +605,7 @@ pub fn resolve_row(library: &Library, source: &RowSource) -> Result<ResolvedRow>
             ResolvedRow {
                 name: published.meta.name.clone(),
                 row: published.definition.clone(),
+                identity: format!("project row {} r{}", row.id, row.revision),
             }
         }
         RowSource::Bundle { bundle } => {
@@ -604,6 +626,10 @@ pub fn resolve_row(library: &Library, source: &RowSource) -> Result<ResolvedRow>
             ResolvedRow {
                 name: record.meta.name.clone(),
                 row: (**row).clone(),
+                identity: format!(
+                    "library {} lineage {} r{}",
+                    bundle.library, record.lineage, record.revision
+                ),
             }
         }
         RowSource::Custom { family } => {
@@ -624,6 +650,19 @@ pub fn resolve_row(library: &Library, source: &RowSource) -> Result<ResolvedRow>
                     values,
                     ..PackageRowDefinition::default()
                 },
+                identity: "custom entry".into(),
+            }
+        }
+        RowSource::Starter { name } => {
+            let starter = super::starter::row(name)?;
+            ResolvedRow {
+                name: starter.name.clone(),
+                row: starter.definition.clone(),
+                identity: format!(
+                    "built-in starter table {} format {}",
+                    starter.file,
+                    super::starter::FORMAT
+                ),
             }
         }
     };
@@ -717,14 +756,7 @@ pub fn new_from_template(
         }
         None => default_prefix(request.skeleton, &form).to_owned(),
     };
-    let provenance = if as_row {
-        resolved.row.provenance_text(&resolved.name)
-    } else {
-        format!(
-            "Custom values edited from package template row ‘{}’ (estimated values and lands); verify against the selected component datasheet.",
-            resolved.name
-        )
-    };
+    let provenance = provenance(&resolved, as_row);
     let lands = resolved.row.lands.as_ref().filter(|_| as_row);
     let edits = samples::from_template(
         &TemplateSpec {
@@ -743,6 +775,22 @@ pub fn new_from_template(
         ));
     }
     Ok(edits)
+}
+
+/// The provenance text drafts built from `resolved` record: the row's
+/// own (`as_row`), or edited custom values that name the row they started
+/// from.
+pub fn provenance(resolved: &ResolvedRow, as_row: bool) -> String {
+    if as_row {
+        resolved
+            .row
+            .provenance_text(&resolved.name, &resolved.identity)
+    } else {
+        format!(
+            "Custom values edited from package template row ‘{}’ [{}] (estimated values and lands); verify against the selected component datasheet.",
+            resolved.name, resolved.identity
+        )
+    }
 }
 
 /// A new package-row draft body and meta (`library.save_package_row`):

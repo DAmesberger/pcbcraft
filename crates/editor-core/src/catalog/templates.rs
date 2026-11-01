@@ -13,9 +13,10 @@ use crate::library::bundle::SourceRevision;
 use crate::library::footprint_source::ParamValue;
 use crate::library::package_form::PackageForm;
 use crate::library::templates::catalog::{
-    FamilyKind, MAX_PACKAGE_ROWS_PER_SOURCE, PackageRowDefinition, RowCitation, SizeCode,
-    SkeletonHint,
+    FamilyKind, LandValues, MAX_PACKAGE_ROWS_PER_SOURCE, PackageRowDefinition, RowCitation,
+    SizeCode, SkeletonHint,
 };
+use crate::library::templates::starter;
 use crate::library::{Drafts, Library};
 use crate::model::Project;
 use schemars::JsonSchema;
@@ -42,6 +43,10 @@ pub struct TemplateHit {
     pub size_code: Option<SizeCode>,
     /// The row cites an outline drawing (else its values are estimated).
     pub cited: bool,
+    /// The citation records the drawing's revision and page; a cited row
+    /// without them reads "cited (unverified)".
+    #[serde(default)]
+    pub citation_checked: bool,
     /// The lands come from a cited land pattern (else estimated defaults).
     pub lands_cited: bool,
     /// A folder row's own revision: the host reads its bundle (io
@@ -57,13 +62,26 @@ pub struct TemplateHit {
     /// Lead count, pitch and body, as the filters read them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shape: Option<PackageShape>,
+    /// A built-in starter row's unique name (`RowSource::Starter`); the
+    /// hit's `source` is then `Project` (nothing to read from a folder).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starter: Option<String>,
+    /// The row's land overrides, which the preview applies exactly as
+    /// `library.new_from_template` does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lands: Option<LandValues>,
     pub tier: MatchTier,
 }
 
 impl TemplateHit {
     /// The family's built-in custom entry (no row).
     pub fn is_custom(&self) -> bool {
-        self.row.is_none() && self.source_row.is_none()
+        self.row.is_none() && self.source_row.is_none() && self.starter.is_none()
+    }
+
+    /// A row of the built-in starter tables.
+    pub fn is_starter(&self) -> bool {
+        self.starter.is_some()
     }
 }
 
@@ -200,6 +218,10 @@ pub(crate) fn source_rows(
 /// One searchable row with its folded text.
 struct Candidate {
     hit: TemplateHit,
+    /// 0 when a bare text term is the row's imperial size code, 1 when it
+    /// is only its metric one, else 2: "0603" lists the imperial 0603
+    /// before the metric 0603 (an 0201).
+    code_rank: u8,
     name: String,
     words: Vec<String>,
     aliases: Vec<String>,
@@ -224,6 +246,7 @@ impl Candidate {
         }
         Self {
             hit,
+            code_rank: 2,
             name,
             words,
             aliases,
@@ -251,6 +274,28 @@ impl Candidate {
         } else {
             None
         }
+    }
+
+    /// See [`Candidate::code_rank`].
+    fn code_rank(&self, terms: &[Term]) -> u8 {
+        let Some(code) = &self.hit.size_code else {
+            return 2;
+        };
+        let texts = terms.iter().filter_map(|t| match t {
+            Term::Text { text } | Term::Value { text, .. } | Term::Package { text } => {
+                Some(text.as_str())
+            }
+            _ => None,
+        });
+        let mut rank = 2;
+        for text in texts {
+            if code.imperial == text {
+                rank = 0;
+            } else if code.metric == text {
+                rank = rank.min(1);
+            }
+        }
+        rank
     }
 
     /// The worst tier over the text terms, `Filter` without text, or
@@ -286,7 +331,10 @@ impl Candidate {
                     }
                 }
                 Term::Project => {
-                    if self.hit.source != Source::Project || self.hit.is_custom() {
+                    if self.hit.source != Source::Project
+                        || self.hit.is_custom()
+                        || self.hit.is_starter()
+                    {
                         return None;
                     }
                 }
@@ -345,13 +393,36 @@ fn hit_of(
         values: row.values.clone(),
         size_code: row.size_code.clone(),
         cited: row.cited(),
+        citation_checked: row.citation.as_ref().is_some_and(RowCitation::checked),
         lands_cited: row.lands_cited(),
         source_row,
         skeleton: row.skeleton,
         citation: row.citation.clone(),
         shape: PackageShape::of(&row.values),
+        starter: None,
+        lands: row.lands.clone(),
         tier: MatchTier::Filter,
     })
+}
+
+/// Search text of each family's custom entry beyond its label: the
+/// outline names a user types, so a search for one never comes back
+/// empty while the family can build it.
+fn custom_aliases(family: FamilyKind) -> &'static [&'static str] {
+    match family {
+        FamilyKind::Chip => &["resistor", "capacitor", "inductor", "passive", "chip"],
+        FamilyKind::GullWing => &[
+            "SOIC", "SOP", "SSOP", "TSSOP", "MSOP", "QFP", "LQFP", "TQFP",
+        ],
+        FamilyKind::NoLead => &["QFN", "DFN", "SON", "MLF"],
+        FamilyKind::Header => &["header", "connector", "pin header"],
+        FamilyKind::Tabbed => &[
+            "SOT", "SOT-23", "SOT-89", "SOT-223", "SC-70", "DPAK", "D2PAK",
+        ],
+        FamilyKind::Molded => &["SOD", "SMA", "SMB", "SMC", "MELF", "tantalum", "diode"],
+        FamilyKind::Grid => &["BGA", "FBGA", "LGA", "WLCSP", "CSP"],
+        FamilyKind::Tht => &["DIP", "PDIP", "TO-220", "TO-92", "axial", "radial", "THT"],
+    }
 }
 
 /// Every searchable row: the project's published rows at their latest
@@ -380,6 +451,20 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
             out.push(Candidate::new(hit, &row.meta.description));
         }
     }
+    if let Ok(rows) = starter::rows().map(|r| {
+        if context.without_starter_rows {
+            &[][..]
+        } else {
+            r
+        }
+    }) {
+        for row in rows.iter().filter(|r| r.held.is_none()) {
+            if let Some(mut hit) = hit_of(&row.name, &row.definition, Source::Project, None, None) {
+                hit.starter = Some(row.name.clone());
+                out.push(Candidate::new(hit, &row.description));
+            }
+        }
+    }
     for source in &context.sources {
         for row in &source.rows {
             let at = SourceRevision {
@@ -405,6 +490,10 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
             family: None,
             skeleton: FamilyKind::default_skeleton(&values),
             values,
+            aliases: custom_aliases(family)
+                .iter()
+                .map(|a| (*a).to_owned())
+                .collect(),
             ..PackageRowDefinition::default()
         };
         let name = format!("Custom {}", family.label().to_lowercase());
@@ -422,10 +511,53 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
     out
 }
 
-/// `library.templates`: rows matching `query`, ranked by match tier, then
-/// rows before custom entries, the project before sources, then folded
-/// name and source row. At most `limit` (1–500) hits; `more` counts the
-/// rest. Equal inputs always give the same order.
+/// Order two folded names naturally: runs of digits compare by value
+/// ("dfn-8" before "dfn-10"), everything else by character.
+fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let run = |it: &mut std::iter::Peekable<std::str::Chars<'_>>| {
+                    let mut digits = String::new();
+                    while let Some(c) = it.peek().copied().filter(char::is_ascii_digit) {
+                        digits.push(c);
+                        it.next();
+                    }
+                    digits
+                };
+                let (x, y) = (run(&mut a), run(&mut b));
+                let (tx, ty) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+                let order = tx
+                    .len()
+                    .cmp(&ty.len())
+                    .then_with(|| tx.cmp(ty))
+                    .then_with(|| x.len().cmp(&y.len()));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                if x != y {
+                    return x.cmp(&y);
+                }
+                a.next();
+                b.next();
+            }
+        }
+    }
+}
+
+/// `library.templates`: rows matching `query`; rows before custom
+/// entries, then by match tier, a bare size code's imperial meaning
+/// before its metric one, the project before sources, then folded name in
+/// natural order ("DFN-8" before "DFN-10") and source row. At most
+/// `limit` (1–500) hits; `more` counts the rest. Equal inputs always give
+/// the same order.
 pub fn search(
     project: &Project,
     _drafts: &Drafts,
@@ -439,15 +571,19 @@ pub fn search(
         .into_iter()
         .filter_map(|mut c| {
             c.hit.tier = c.tier(&parsed.terms)?;
+            c.code_rank = c.code_rank(&parsed.terms);
             Some(c)
         })
         .collect();
     matched.sort_by(|a, b| {
         a.hit
-            .tier
-            .cmp(&b.hit.tier)
-            .then_with(|| a.hit.is_custom().cmp(&b.hit.is_custom()))
+            .is_custom()
+            .cmp(&b.hit.is_custom())
+            .then_with(|| a.hit.tier.cmp(&b.hit.tier))
+            .then_with(|| a.code_rank.cmp(&b.code_rank))
             .then_with(|| a.hit.source.cmp(&b.hit.source))
+            .then_with(|| a.hit.is_starter().cmp(&b.hit.is_starter()))
+            .then_with(|| natural(&a.name, &b.name))
             .then_with(|| a.name.cmp(&b.name))
             .then_with(|| {
                 a.hit

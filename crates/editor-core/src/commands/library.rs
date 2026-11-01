@@ -36,6 +36,19 @@ pub enum LibraryCommand {
     /// Draft an existing lineage starting from one of its revisions.
     #[serde(rename = "library.draft_from")]
     DraftFrom { revision: DefinitionRef },
+    /// Draft a published component revision's working set (the component,
+    /// its first symbol, its first binding with that binding's package and
+    /// first footprint) wherever a lineage has no draft yet, as one undo
+    /// step (`Outcome::DraftsCreated`, possibly empty: nothing changes).
+    #[serde(rename = "library.draft_closure")]
+    DraftClosure { component: ComponentRef },
+    /// "Edit a copy in this project": import a folder bundle whose root is
+    /// a component or a Part (revisions the project holds are reused, as
+    /// `library.import` does) and draft the component's working set as
+    /// `library.draft_closure` does, as one undo step. A refusal leaves the
+    /// document unchanged.
+    #[serde(rename = "library.edit_copy")]
+    EditCopy { bundle: Box<Bundle> },
     /// Replace 1–16 draft bodies atomically, as one undo step.
     #[serde(rename = "library.edit")]
     Edit { edits: Vec<DraftEdit> },
@@ -390,6 +403,76 @@ fn place_request(
     ))
 }
 
+/// `library.import` of `bundle` into the candidate `document`. The
+/// library is taken out so lineages can be allocated while it is edited; a
+/// failure discards the whole candidate. Imported on a copy, so a bundle
+/// whose revisions are all in the project already leaves the document
+/// (revision, undo) alone.
+fn import_bundle(document: &mut Document, bundle: &Bundle) -> Result<import::ImportReport> {
+    library::bundle::validate_bundle(bundle)?;
+    let mut project = (*document.project).clone();
+    let mut library = std::mem::take(&mut project.library);
+    let mut allocate = || project.allocate().map(DefinitionId);
+    let report = import::import(&mut library, bundle, &mut allocate);
+    project.library = library;
+    let report = report?;
+    if report.revisions.iter().any(|r| !r.reused) {
+        document.project = Arc::new(project);
+    }
+    Ok(report)
+}
+
+/// Draft every lineage of `component`'s working set that has no draft:
+/// the component, its first symbol, its first binding, that binding's
+/// package and first footprint, each from the revision the component
+/// names. Returns the drafted lineages, component first.
+fn draft_closure(document: &mut Document, component: ComponentRef) -> Result<Vec<DefinitionId>> {
+    let library = &document.project.library;
+    let body = &library
+        .component(component)
+        .ok_or_else(|| {
+            Error::NotFound(format!(
+                "component {} r{} is not in the project library",
+                component.id, component.revision
+            ))
+        })?
+        .definition;
+    let mut wanted = vec![component.erased()];
+    if let Some(symbol) = body.representations.first() {
+        wanted.push(symbol.erased());
+    }
+    if let Some(binding_ref) = body.implementations.first() {
+        wanted.push(binding_ref.erased());
+        if let Some(binding) = library.binding(*binding_ref) {
+            wanted.push(binding.definition.package.erased());
+            if let Some(footprint) = binding.definition.footprints.first() {
+                wanted.push(footprint.erased());
+            }
+        }
+    }
+    let mut drafted = Vec::new();
+    for revision in wanted {
+        if document.drafts.get(revision.id).is_some() {
+            continue;
+        }
+        let (meta, definition) = document
+            .project
+            .library
+            .definition(revision)
+            .ok_or_else(|| Error::NotFound("that revision is not in the project library".into()))?;
+        drafts::create(
+            Arc::make_mut(&mut document.drafts),
+            &document.project.library,
+            revision.id,
+            Some(revision.revision),
+            meta,
+            definition,
+        )?;
+        drafted.push(revision.id);
+    }
+    Ok(drafted)
+}
+
 /// `evaluator` is the host's footprint evaluator (`Engine::apply_with`);
 /// footprint-source edits refuse without one.
 pub(crate) fn apply_library(
@@ -425,6 +508,34 @@ pub(crate) fn apply_library(
                 definition,
             )?;
             Ok(Outcome::DraftCreated { id: revision.id })
+        }
+        LibraryCommand::DraftClosure { component } => {
+            let ids = draft_closure(document, component)?;
+            Ok(Outcome::DraftsCreated { ids })
+        }
+        LibraryCommand::EditCopy { bundle } => {
+            let report = import_bundle(document, &bundle)?;
+            let root = report.root;
+            let component = match root.kind {
+                DefinitionKind::Component => ComponentRef::new(root.id, root.revision),
+                DefinitionKind::Part => document
+                    .project
+                    .library
+                    .part(PartRef::new(root.id, root.revision))
+                    .map(|part| part.definition.component)
+                    .ok_or_else(|| Error::NotFound("the imported Part is missing".into()))?,
+                _ => {
+                    return Err(Error::Invalid(
+                        "library.edit_copy: only a component or a Part opens as a copy".into(),
+                    ));
+                }
+            };
+            let drafted = draft_closure(document, component)?;
+            Ok(Outcome::Copied {
+                component,
+                import: report,
+                drafted,
+            })
         }
         LibraryCommand::Edit { edits } => {
             drafts::edit(Arc::make_mut(&mut document.drafts), edits)?;
@@ -585,20 +696,7 @@ pub(crate) fn apply_library(
             })
         }
         LibraryCommand::Import { bundle } => {
-            library::bundle::validate_bundle(&bundle)?;
-            // The library is taken out so lineages can be allocated while it
-            // is edited; a failure discards the whole candidate.
-            // Imported on a copy, so a bundle whose revisions are all in the
-            // project already leaves the document (revision, undo) alone.
-            let mut project = (*document.project).clone();
-            let mut library = std::mem::take(&mut project.library);
-            let mut allocate = || project.allocate().map(DefinitionId);
-            let report = import::import(&mut library, &bundle, &mut allocate);
-            project.library = library;
-            let report = report?;
-            if report.revisions.iter().any(|r| !r.reused) {
-                document.project = Arc::new(project);
-            }
+            let report = import_bundle(document, &bundle)?;
             Ok(Outcome::Imported { report })
         }
         LibraryCommand::PlaceFrom {

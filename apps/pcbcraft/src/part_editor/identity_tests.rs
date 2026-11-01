@@ -266,7 +266,7 @@ fn a_folder_item_opens_read_only_and_edit_a_copy_drafts_it() -> TestResult {
         vec![identity::FolderAction::EditCopy]
     );
     let copied = edit_copy(&mut project, editor.preview_bundle().ok_or("bundle")?)?;
-    assert!(copied.steps > 1, "an import and its drafts");
+    assert!(copied.changed, "an import and its drafts");
     editor.open(copied.lineage, &project);
     editor.commit(&ctx, &project);
     assert!(!editor.is_read_only());
@@ -282,10 +282,41 @@ fn a_folder_item_opens_read_only_and_edit_a_copy_drafts_it() -> TestResult {
         editor.origin_text(&project),
         Some(format!("from Sample Parts {}", pick.revision))
     );
-    // Undoing every step of it restores the project exactly.
-    for _ in 0..copied.steps {
-        project.undo()?;
-    }
+    // One undo (one `library.edit_copy`) restores the project exactly.
+    project.undo()?;
     assert_eq!((project.project().clone(), project.drafts().clone()), kept);
+    Ok(())
+}
+
+/// A preview lent for the 3D view comes back only under its own subject:
+/// after a subject change it is dropped, never shown for another item.
+#[test]
+fn a_lent_preview_is_restored_only_under_its_own_subject() -> TestResult {
+    let (pick, bundle) = folder_item()?;
+    let mut editor = PartEditor::default();
+    editor.set_sources(
+        vec![(LibraryId(7), "Sample Parts".into(), false)],
+        1,
+        Default::default,
+    );
+    editor.open_folder(pick.clone());
+    editor.show_preview(Box::new(folder_preview::build(
+        pick.clone(),
+        bundle.clone(),
+    )?));
+    let lent = editor.lend_preview();
+    assert!(lent.is_some());
+    editor.restore_preview(lent);
+    assert!(editor.preview_bundle().is_some(), "same subject: restored");
+    let lent = editor.lend_preview();
+    editor.show_start();
+    let mut other = pick.clone();
+    other.revision = pcbcraft_core::Revision(other.revision.0 + 1);
+    editor.open_folder(other);
+    editor.restore_preview(lent);
+    assert!(
+        editor.preview_bundle().is_none(),
+        "another subject: dropped"
+    );
     Ok(())
 }

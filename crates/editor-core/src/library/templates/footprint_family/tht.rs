@@ -23,25 +23,13 @@ use crate::library::footprint_source::{
     NumberingScheme, PadOverride, PadShapeExpr, PadTemplate, PadTemplateParams, ParamUnit,
     SketchEdit, SkipRule,
 };
-use crate::library::package_form::tht::{DIP_LEAD_THICKNESS_MM, ThtKind};
+use crate::library::package_form::tht::ThtKind;
 use crate::library::package_form::{FamilyForm, PackageForm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Whether the picker offers this template.
 pub const AVAILABLE: bool = true;
-
-/// Drill clearance over the lead's largest cross-section, mm (estimated:
-/// a plated hole a few tenths larger than the lead inserts by hand or
-/// machine).
-const DRILL_CLEARANCE_MM: f64 = 0.3;
-/// Copper ring added to the drill diameter, mm (estimated: a 0.3 mm
-/// annular ring each side).
-const RING_MM: f64 = 0.6;
-/// Copper left between neighbouring lands, mm (estimated).
-const LAND_GAP_MM: f64 = 0.25;
-/// The smallest ring a tight pitch may shrink the land to, mm.
-const MIN_RING_MM: f64 = 0.2;
 
 /// How the pads are laid out.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -98,12 +86,9 @@ impl ThtTemplate {
                 pin1: n > 2,
             };
         };
-        let d = f.lead_diameter;
         let matches = u64::try_from(n).ok() == Some(f.lead_count());
-        let (layout, per_row, row_pitch, section, pin1) = match f.kind {
-            ThtKind::Axial { .. } | ThtKind::Radial { .. } => {
-                (ThtLayout::Row, e("2"), e("2.54"), d, false)
-            }
+        let (layout, per_row, row_pitch) = match f.kind {
+            ThtKind::Axial { .. } | ThtKind::Radial { .. } => (ThtLayout::Row, e("2"), e("2.54")),
             ThtKind::Dip { pins, .. } => (
                 ThtLayout::DualRow,
                 if matches {
@@ -112,8 +97,6 @@ impl ThtTemplate {
                     Expr((pins / 2).to_string())
                 },
                 e("pkg_eA"),
-                d.hypot(DIP_LEAD_THICKNESS_MM),
-                true,
             ),
             ThtKind::To { pins, .. } => (
                 ThtLayout::Row,
@@ -123,20 +106,14 @@ impl ThtTemplate {
                     Expr(pins.to_string())
                 },
                 e("2.54"),
-                d * std::f64::consts::SQRT_2,
-                true,
             ),
         };
-        // Rounded up to 0.05 mm.
-        let drill = ((section + DRILL_CLEARANCE_MM) * 20.0).ceil() / 20.0;
-        // A land within the pitch, keeping at least a minimal ring.
-        let land = (drill + RING_MM)
-            .min(f.lead_pitch - LAND_GAP_MM)
-            .max(drill + MIN_RING_MM);
+        let (drill, land) = f.estimated_drill_and_land();
+        let pin1 = f.marks_pin_one();
         Self {
             pitch: e("pkg_e"),
             drill: Expr(format!("{drill}")),
-            land: Expr(format!("{}", (land * 20.0).floor() / 20.0)),
+            land: Expr(format!("{land}")),
             courtyard_excess: excess,
             layout,
             per_row,

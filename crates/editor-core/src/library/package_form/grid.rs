@@ -31,6 +31,10 @@ pub const MAX_DEPOPULATED: usize = 4096;
 /// Most grid positions (rows × columns, depopulated ones included) a form
 /// describes: the bound on iterating the matrix.
 pub const MAX_GRID_POSITIONS: u64 = 4096;
+/// NSMD land diameter as a share of the ball diameter (estimated default:
+/// a land somewhat smaller than the ball, as package makers commonly
+/// recommend; replace it with the maker's figure where one is cited).
+pub const NSMD_LAND_SHARE: f64 = 0.8;
 /// Most rows or columns of one grid.
 pub const MAX_GRID_SIDE: u32 = 64;
 /// The JEDEC row-letter alphabet: A–Z without I, O, Q, S, X and Z (the
@@ -82,6 +86,17 @@ impl GridForm {
             contact_height: ball[1],
             depopulated: Vec::new(),
             row_letters: JEDEC_ROW_LETTERS.to_owned(),
+        }
+    }
+
+    /// The estimated copper land diameter: [`NSMD_LAND_SHARE`] of a ball,
+    /// a land grid's own land. Estimated prototype value, not a
+    /// compliance claim; the footprint template and `samples::form_lands`
+    /// both use it.
+    pub fn estimated_land_diameter(&self) -> f64 {
+        match self.contact {
+            GridContact::Ball => NSMD_LAND_SHARE * self.contact_diameter,
+            GridContact::Land => self.contact_diameter,
         }
     }
 

@@ -15,7 +15,7 @@ pub(crate) use library::{apply_library, preview_footprint};
 
 use crate::fields::EffectiveField;
 use crate::functions::Resolution;
-use crate::ids::{DefinitionId, DefinitionRef, GraphicId, Id, TerminalId};
+use crate::ids::{ComponentRef, DefinitionId, DefinitionRef, GraphicId, Id, TerminalId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -97,9 +97,17 @@ pub enum Outcome {
         fit: crate::library::package_fit::LeadFit,
         applied: bool,
     },
-    /// B1 `library.new_from_template`: the new drafts, component first.
+    /// B1 `library.new_from_template` and `library.draft_closure`: the new
+    /// drafts, component first.
     DraftsCreated {
         ids: Vec<DefinitionId>,
+    },
+    /// `library.edit_copy`: the copied component revision, what the import
+    /// appended or reused, and the lineages it drafted.
+    Copied {
+        component: ComponentRef,
+        import: crate::library::import::ImportReport,
+        drafted: Vec<DefinitionId>,
     },
     /// B1 `library.package_from_template`: what changed.
     PackageReplaced {

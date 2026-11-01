@@ -19,7 +19,7 @@ use crate::library::footprint_source::{
     SkipRule,
 };
 use crate::library::package_form::PackageForm;
-use crate::library::package_form::grid::{GridContact, MAX_DEPOPULATED};
+use crate::library::package_form::grid::{GridContact, MAX_DEPOPULATED, NSMD_LAND_SHARE};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -29,10 +29,6 @@ pub const AVAILABLE: bool = true;
 /// The skipped letters of the JEDEC row alphabet (JESD95-1 concept).
 pub const JEDEC_SKIP_LETTERS: &str = "IOQSXZ";
 
-/// NSMD land diameter as a share of the ball diameter (estimated default:
-/// a land somewhat smaller than the ball, as package makers commonly
-/// recommend; replace it with the maker's figure where one is cited).
-const NSMD_LAND_SHARE: &str = "0.8";
 /// Mask clearance (NSMD) or overlap (SMD) per side, mm (estimated).
 const MASK_MM: &str = "0.05";
 

@@ -594,9 +594,9 @@ impl PartEditor {
                 .selected(
                     self.gallery.scope() == Some(&crate::template_gallery::Scope::NewComponent),
                 )
-                .tip("Start a new component from a package template"),
+                .tip("Start a new component from a package template (⇧⌘N)"),
             Tool::new("component-open", "open", "Open")
-                .tip("Open a component of this project or a library source"),
+                .tip("Open a component of this project or a library source (⌘P)"),
         ];
         if self.is_read_only() {
             tools.push(

@@ -371,38 +371,18 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
 }
 
 /// Draft every lineage of a published component revision's first symbol and
-/// implementation that has no draft yet.
+/// implementation that has no draft yet: one `library.draft_closure`, so
+/// one undo step (none when everything is drafted already).
 /// Returns how many drafts it created: drafts are project state (saved
 /// with the project and undoable), so creating them is a real change.
 pub fn draft_closure(engine: &mut Engine, component: ComponentRef) -> Result<usize> {
-    let library = &engine.project().library;
-    let body = library
-        .component(component)
-        .ok_or_else(|| Error::NotFound("unknown component revision".into()))?
-        .definition
-        .clone();
-    let mut wanted = vec![component.erased()];
-    if let Some(symbol) = body.representations.first() {
-        wanted.push(symbol.erased());
+    match engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::DraftClosure { component }),
+    )? {
+        pcbcraft_core::Outcome::DraftsCreated { ids } => Ok(ids.len()),
+        _ => Err(Error::Invalid(
+            "library.draft_closure returned an unexpected outcome".into(),
+        )),
     }
-    if let Some(binding_ref) = body.implementations.first() {
-        wanted.push(binding_ref.erased());
-        if let Some(binding) = library.binding(*binding_ref) {
-            wanted.push(binding.definition.package.erased());
-            if let Some(footprint) = binding.definition.footprints.first() {
-                wanted.push(footprint.erased());
-            }
-        }
-    }
-    let mut created = 0;
-    for revision in wanted {
-        if engine.drafts().get(revision.id).is_none() {
-            engine.apply(
-                engine.revision(),
-                Operation::Library(LibraryCommand::DraftFrom { revision }),
-            )?;
-            created += 1;
-        }
-    }
-    Ok(created)
 }

@@ -4,3 +4,4 @@
 pub mod catalog;
 pub mod footprint;
 pub mod footprint_family;
+pub mod starter;

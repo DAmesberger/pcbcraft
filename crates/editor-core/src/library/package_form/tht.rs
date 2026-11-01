@@ -57,6 +57,17 @@ pub const TO_STANDOFF_MM: f64 = 1.0;
 /// A DIP lead's strip thickness (est.: 0.2–0.36 mm); `lead_diameter` is
 /// its width.
 pub const DIP_LEAD_THICKNESS_MM: f64 = 0.25;
+/// Drill clearance over the lead's largest cross-section, mm (estimated:
+/// a plated hole a few tenths larger than the lead inserts by hand or
+/// machine).
+pub const DRILL_CLEARANCE_MM: f64 = 0.3;
+/// Copper ring added to the drill diameter, mm (estimated: a 0.3 mm
+/// annular ring each side).
+pub const RING_MM: f64 = 0.6;
+/// Copper left between neighbouring lands, mm (estimated).
+pub const LAND_GAP_MM: f64 = 0.25;
+/// The smallest ring a tight pitch may shrink the land to, mm.
+pub const MIN_RING_MM: f64 = 0.2;
 /// Share of a DIP body's height at which the leads leave it (est.).
 pub const DIP_LEAD_EXIT_SHARE: f64 = 0.3;
 
@@ -149,6 +160,32 @@ impl ThtForm {
             ThtKind::Dip { pins, .. } => pins / 2,
             ThtKind::To { pins, .. } => pins,
         }
+    }
+
+    /// The estimated drill and copper land diameters of the leads, mm:
+    /// the drill clears the lead's largest cross-section by
+    /// [`DRILL_CLEARANCE_MM`] (rounded up to 0.05 mm), the land adds a
+    /// [`RING_MM`] ring but stays [`LAND_GAP_MM`] inside the pitch, keeping
+    /// at least a [`MIN_RING_MM`] ring (rounded down to 0.05 mm). Estimated
+    /// prototype values, not a compliance claim; the footprint template
+    /// and `samples::form_lands` both use them.
+    pub fn estimated_drill_and_land(&self) -> (f64, f64) {
+        let d = self.lead_diameter;
+        let section = match self.kind {
+            ThtKind::Axial { .. } | ThtKind::Radial { .. } => d,
+            ThtKind::Dip { .. } => d.hypot(DIP_LEAD_THICKNESS_MM),
+            ThtKind::To { .. } => d * std::f64::consts::SQRT_2,
+        };
+        let drill = ((section + DRILL_CLEARANCE_MM) * 20.0).ceil() / 20.0;
+        let land = (drill + RING_MM)
+            .min(self.lead_pitch - LAND_GAP_MM)
+            .max(drill + MIN_RING_MM);
+        (drill, (land * 20.0).floor() / 20.0)
+    }
+
+    /// Whether pin 1 is marked (a rounded-square land): DIP and TO parts.
+    pub fn marks_pin_one(&self) -> bool {
+        matches!(self.kind, ThtKind::Dip { .. } | ThtKind::To { .. })
     }
 
     /// The x of lead `i` of a row of `n` at `pitch`, centred.

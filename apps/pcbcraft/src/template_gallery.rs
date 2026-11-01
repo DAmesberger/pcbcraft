@@ -21,10 +21,13 @@
 //! says whether its values are cited from an outline drawing or estimated,
 //! and whether its lands are cited or template defaults.
 //!
-//! The preview's pads are the same pure `footprint_family::build` the
-//! Footprint tab's template dialog ghosts, on an empty copy of a package
-//! with the row's form; the top view draws the row's envelope and lead
-//! points. Both are rebuilt only when the values change.
+//! The preview's pads are the core's own `samples::template_lands`, the
+//! one land generator `library.new_from_template` and
+//! `library.package_from_template` build with (the row's cited land
+//! overrides included), so the preview is exactly what Create or Apply
+//! builds; the top view draws the row's envelope and lead points. The pads
+//! are plain arithmetic (no sketch solve), rebuilt only when the values
+//! change and shared by reference between frames.
 //!
 //! A folder row is carried inline (`RowSource::Bundle`), as
 //! `library.place_from` carries folder items: the gallery asks its host to
@@ -46,26 +49,27 @@ use egui::{Align, Layout, Rect, Sense, Stroke, Ui, pos2, vec2};
 use pcbcraft_core::catalog::templates::{TemplateHit, TemplateReport};
 use pcbcraft_core::catalog::{CatalogContext, MAX_QUERY, Source};
 use pcbcraft_core::library::footprint_source::ParamValue;
+use pcbcraft_core::library::samples;
 use pcbcraft_core::library::templates::catalog::{
-    FamilyKind, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation, RowFrom, RowSource,
-    SavePackageRow, SkeletonHint,
+    FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
+    RowFrom, RowSource, SavePackageRow, SkeletonHint,
 };
-use pcbcraft_core::library::templates::footprint_family::{self, FootprintTemplate, TemplateKind};
+use pcbcraft_core::library::templates::footprint_family::TemplateKind;
 use pcbcraft_core::library::{
-    Bundle, ChipKind, Definition, FootprintDefinition, MAX_DESIGNATOR_PREFIX, MAX_LABEL,
-    PackageDefinition, PackageForm, PackageTerminal, Pad, PadKind, Provenance,
+    Bundle, ChipKind, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
+    PackageTerminal, Pad, PadKind, Provenance,
 };
 use pcbcraft_core::{
     DefinitionId, Engine, LibraryCommand, Operation, PackageTerminalId, Query, QueryResult,
 };
-use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
+use std::sync::Arc;
 
 /// The sheet's id (also its refusal origin).
 pub const GALLERY: &str = "template-gallery";
 /// Rows one search asks for (the core caps it at `MAX_TEMPLATE_HITS`).
-pub const ROWS: usize = 200;
+pub const ROWS: usize = pcbcraft_core::catalog::templates::MAX_TEMPLATE_HITS;
 /// Frames a submit waits for the engine's answer before the sheet is
 /// usable again (the app may drop an operation while a file is busy).
 const ANSWER_FRAMES: u64 = 3;
@@ -114,7 +118,7 @@ impl Chip {
         match self {
             Self::All => true,
             Self::Family(family) => hit.family == family,
-            Self::Project => hit.source == Source::Project && !hit.is_custom(),
+            Self::Project => hit.source == Source::Project && !hit.is_custom() && !hit.is_starter(),
         }
     }
 
@@ -247,13 +251,21 @@ pub fn summary(hit: &TemplateHit, form: &PackageForm) -> Vec<(&'static str, Stri
     rows
 }
 
+/// How a row's values are sourced: "custom values", "cited" (the
+/// citation records the drawing's revision and page), "cited
+/// (unverified)" (it names only the document) or "estimated".
+pub fn basis(hit: &TemplateHit) -> &'static str {
+    match (hit.is_custom(), hit.cited, hit.citation_checked) {
+        (true, _, _) => "custom values",
+        (false, true, true) => "cited",
+        (false, true, false) => "cited (unverified)",
+        (false, false, _) => "estimated",
+    }
+}
+
 /// A row's second line: family, source, and cited or estimated values.
 pub fn detail(hit: &TemplateHit, source: &str) -> String {
-    let basis = match (hit.is_custom(), hit.cited) {
-        (true, _) => "custom values",
-        (false, true) => "cited",
-        (false, false) => "estimated",
-    };
+    let basis = basis(hit);
     let mut line = format!("{} · {source} · {basis}", family_label(hit.family));
     if let Some(code) = &hit.size_code {
         line.push_str(&format!(" · {} / {}", code.imperial, code.metric));
@@ -278,11 +290,15 @@ pub fn citation_text(citation: &RowCitation) -> String {
 }
 
 /// Where a hit's row comes from, when the engine can take it directly:
-/// a project row by reference, the family's custom entry by family. A
-/// folder row needs its bundle read first (`None`).
+/// a project row by reference, a built-in starter row by name, the
+/// family's custom entry by family. A folder row needs its bundle read
+/// first (`None`).
 pub fn direct_source(hit: &TemplateHit) -> Option<RowSource> {
     if hit.is_custom() {
         return Some(RowSource::Custom { family: hit.family });
+    }
+    if let Some(name) = &hit.starter {
+        return Some(RowSource::Starter { name: name.clone() });
     }
     match (hit.row, &hit.source) {
         (Some(row), Source::Project) => Some(RowSource::Project { row }),
@@ -370,17 +386,14 @@ pub fn save_request(values: PackageForm, name: &str, aliases: &str) -> Operation
 /// A package with `form`'s envelope and one terminal per lead (plus the
 /// exposed pad), numbered from 1: what a template builds against.
 pub fn preview_package(form: &PackageForm) -> PackageDefinition {
-    let leads = form.lead_count();
-    let terminals = terminal_count(form).min(u64::from(u32::MAX - 1));
-    let terminals = (1..=terminals)
-        .filter_map(|n| u32::try_from(n).ok())
-        .map(|n| PackageTerminal {
+    let count = terminal_count(form).min(u64::from(u32::MAX - 1));
+    let count = usize::try_from(count).unwrap_or(0);
+    let terminals = samples::form_designations(form, count)
+        .into_iter()
+        .zip(1u32..)
+        .map(|(designation, n)| PackageTerminal {
             id: PackageTerminalId(n),
-            designation: if u64::from(n) > leads {
-                "EP".into()
-            } else {
-                n.to_string()
-            },
+            designation,
         })
         .collect::<Vec<_>>();
     PackageDefinition {
@@ -394,20 +407,20 @@ pub fn preview_package(form: &PackageForm) -> PackageDefinition {
     }
 }
 
-/// The pads the family's template builds for `form` (estimated land
-/// defaults), or why it does not.
-pub fn preview_pads(family: FamilyKind, form: &PackageForm) -> Result<Vec<Pad>, String> {
-    let kind = template_kind(family)
+/// The pads Create or Apply builds for `form` with the row's cited land
+/// overrides `lands` (the core's `samples::template_lands`), or why it
+/// does not.
+pub fn preview_pads(
+    family: FamilyKind,
+    form: &PackageForm,
+    lands: Option<&LandValues>,
+) -> Result<Vec<Pad>, String> {
+    template_kind(family)
         .ok_or_else(|| format!("{} footprints are not built yet", family_label(family)))?;
     let package = preview_package(form);
-    let template = FootprintTemplate::defaults(kind, &package);
-    let empty = FootprintDefinition {
-        next_local: 1,
-        ..FootprintDefinition::default()
-    };
-    footprint_family::build(&empty, &package, &template, &SketchEvaluator)
-        .map(|(def, _)| def.pads)
-        .map_err(|e| refusal::presentable(&e.to_string()).unwrap_or_else(|| e.to_string()))
+    let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
+    samples::template_lands(form, &terminals, lands)
+        .ok_or_else(|| format!("These {} values give no lands", family_label(family)))
 }
 
 /// The component drafts the engine holds.
@@ -430,12 +443,13 @@ struct Results {
     report: Result<TemplateReport, String>,
 }
 
-/// The preview pads for one family and form.
+/// The preview pads for one family, form and land overrides.
 #[derive(Clone, Debug)]
 struct PadPreview {
     family: FamilyKind,
     form: PackageForm,
-    pads: Result<Vec<Pad>, String>,
+    lands: Option<LandValues>,
+    pads: Arc<Result<Vec<Pad>, String>>,
 }
 
 /// The package plan for one request at one revision.
@@ -987,20 +1001,26 @@ impl TemplateGallery {
     }
 
     /// The pads of the preview, rebuilt only when the values change.
-    fn pads(&mut self, family: FamilyKind, form: &PackageForm) -> Option<Result<Vec<Pad>, String>> {
+    fn pads(
+        &mut self,
+        family: FamilyKind,
+        form: &PackageForm,
+        lands: Option<&LandValues>,
+    ) -> Option<Arc<Result<Vec<Pad>, String>>> {
         let open = self.open.as_mut()?;
         let fresh = open
             .pads
             .as_ref()
-            .is_some_and(|p| p.family == family && p.form == *form);
+            .is_some_and(|p| p.family == family && p.form == *form && p.lands.as_ref() == lands);
         if !fresh {
             open.pads = Some(PadPreview {
                 family,
                 form: form.clone(),
-                pads: preview_pads(family, form),
+                lands: lands.cloned(),
+                pads: Arc::new(preview_pads(family, form, lands)),
             });
         }
-        open.pads.as_ref().map(|p| p.pads.clone())
+        open.pads.as_ref().map(|p| Arc::clone(&p.pads))
     }
 
     /// Draw the sheet. Returns whether the user closed it; sets `primary`
@@ -1027,7 +1047,12 @@ impl TemplateGallery {
                 .map_or_else(|| h.values.clone(), |o| o.form(h))
         });
         let pads = match (hit, &form) {
-            (Some(h), Some(f)) => self.pads(h.family, f),
+            // Edited values are a custom package: the row's land
+            // overrides no longer apply (as the core builds it).
+            (Some(h), Some(f)) => {
+                let lands = h.lands.as_ref().filter(|_| *f == h.values);
+                self.pads(h.family, f, lands)
+            }
             _ => None,
         };
         let plan_request = match (self.open.as_ref().map(|o| &o.scope), hit, source) {
@@ -1065,7 +1090,8 @@ impl TemplateGallery {
         let mut picked = None;
         let mut moved_chip = false;
         let scroll = std::mem::take(&mut open.scroll);
-        let source_name = |s: &Source| match s {
+        let source_name = |h: &TemplateHit| match &h.source {
+            Source::Project if h.is_starter() => "Built-in".to_owned(),
             Source::Project => "This project".to_owned(),
             Source::Library(id) => names
                 .iter()
@@ -1139,12 +1165,14 @@ impl TemplateGallery {
                                         .auto_shrink([false, true])
                                         .show(ui, |ui| {
                                             for (i, h) in hits.iter().enumerate() {
-                                                let line = detail(h, &source_name(&h.source));
+                                                let line = detail(h, &source_name(h));
                                                 let badges = [kit::SearchBadge {
                                                     label: if h.is_custom() {
                                                         "custom"
-                                                    } else if h.cited {
+                                                    } else if h.cited && h.citation_checked {
                                                         "cited"
+                                                    } else if h.cited {
+                                                        "cited?"
                                                     } else {
                                                         "est."
                                                     },
@@ -1196,7 +1224,7 @@ impl TemplateGallery {
                                             open,
                                             h,
                                             f,
-                                            pads.as_ref(),
+                                            pads.as_deref(),
                                             plan.as_ref(),
                                             blocked.as_deref(),
                                             primary,
@@ -1270,7 +1298,13 @@ fn preview(
                 family_label(hit.family)
             ),
             (false, true, _) => match &hit.citation {
-                Some(citation) => format!("Values cited from {}", citation_text(citation)),
+                Some(citation) if citation.checked() => {
+                    format!("Values cited from {}", citation_text(citation))
+                }
+                Some(citation) => format!(
+                    "Values cited from {} (unverified: no drawing revision or page recorded)",
+                    citation_text(citation)
+                ),
                 None => "Values cited from a public outline drawing".to_owned(),
             },
             (false, false, _) => "Values estimated: no outline drawing cited".to_owned(),
@@ -1627,6 +1661,9 @@ mod tests {
             skeleton,
             citation: None,
             shape: None,
+            starter: None,
+            lands: None,
+            citation_checked: false,
             tier: pcbcraft_core::catalog::MatchTier::Substring,
         }
     }
@@ -1820,7 +1857,7 @@ mod tests {
     /// perimeter pads plus the exposed pad, one per terminal.
     #[test]
     fn previews_build_one_pad_per_terminal() -> Result<(), String> {
-        let chip_pads = preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor))?;
+        let chip_pads = preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor), None)?;
         let landing = |pads: &[Pad]| {
             pads.iter()
                 .filter(|p| matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough))
@@ -1834,11 +1871,11 @@ mod tests {
             package.terminals.last().map(|t| t.designation.as_str()),
             Some("EP")
         );
-        let qfn_pads = preview_pads(FamilyKind::NoLead, &qfn)?;
+        let qfn_pads = preview_pads(FamilyKind::NoLead, &qfn, None)?;
         assert_eq!(landing(&qfn_pads), package.terminals.len());
         // A family whose template is not built says so instead of guessing.
         if template_kind(FamilyKind::Grid).is_none() {
-            assert!(preview_pads(FamilyKind::Grid, &PackageForm::Generic).is_err());
+            assert!(preview_pads(FamilyKind::Grid, &PackageForm::Generic, None).is_err());
         }
         Ok(())
     }

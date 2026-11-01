@@ -841,6 +841,11 @@ pub struct CatalogContext {
     /// project's own entries; never part of a request on the wire.
     #[serde(skip)]
     pub sources: Vec<Arc<SourceCatalog>>,
+    /// Leave the built-in starter package rows out of
+    /// `library.templates` (tests of project rows alone); hosts list them,
+    /// the default.
+    #[serde(skip)]
+    pub without_starter_rows: bool,
 }
 
 impl CatalogContext {
@@ -851,6 +856,7 @@ impl CatalogContext {
             favourites: favourites.iter().map(key).collect(),
             recent: recent.iter().map(key).collect(),
             sources: Vec::new(),
+            without_starter_rows: false,
         }
     }
 }

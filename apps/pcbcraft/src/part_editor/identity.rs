@@ -281,9 +281,17 @@ impl PartEditor {
         self.identity.preview.take()
     }
 
+    /// Give a lent preview back. It is kept only while the same folder
+    /// item is still the subject (as [`Self::scoped`] keeps it only
+    /// within one subject epoch); a subject change meanwhile drops it.
     pub fn restore_preview(&mut self, preview: Option<Box<Preview>>) {
-        if self.identity.preview.is_none() && self.identity.previewing.is_some() {
-            self.identity.preview = preview;
+        let Some(preview) = preview else {
+            return;
+        };
+        if self.identity.preview.is_none()
+            && self.identity.previewing.as_ref() == Some(&preview.pick)
+        {
+            self.identity.preview = Some(preview);
         }
     }
 
@@ -475,11 +483,11 @@ impl PartEditor {
                     if !recents.is_empty() {
                         kit::rule(ui);
                     }
-                    if ui.button("Open…").clicked() {
+                    if ui.button("Open…").on_hover_text("⌘P").clicked() {
                         open = true;
                         ui.close();
                     }
-                    if ui.button("New…").clicked() {
+                    if ui.button("New…").on_hover_text("⇧⌘N").clicked() {
                         new = true;
                         ui.close();
                     }
@@ -543,18 +551,25 @@ impl PartEditor {
         }
     }
 
-    /// ⌘[ and ⌘] walk the open history.
+    /// ⌘[ and ⌘] walk the open history; ⌘P opens a component (the start
+    /// page with its catalog search focused) and ⇧⌘N starts one from a
+    /// template, while the Component workspace is shown. The workspace
+    /// draws before the app's file shortcuts, so ⇧⌘N never reaches ⌘N.
     fn history_keys(&mut self, ctx: &egui::Context, engine: &Engine) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let pressed = |key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, key)))
+        let pressed = |modifiers, key| {
+            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(modifiers, key)))
         };
-        if pressed(Key::OpenBracket) {
+        if pressed(Modifiers::COMMAND | Modifiers::SHIFT, Key::N) {
+            self.open_template_gallery();
+        } else if pressed(Modifiers::COMMAND, Key::P) {
+            self.show_start();
+        } else if pressed(Modifiers::COMMAND, Key::OpenBracket) {
             self.go_back(engine);
-        } else if pressed(Key::CloseBracket) {
+        } else if pressed(Modifiers::COMMAND, Key::CloseBracket) {
             self.go_forward(engine);
         }
     }
