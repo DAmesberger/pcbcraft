@@ -188,6 +188,11 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             Stage::ElectricallyResolved,
         ));
     }
+    // C2: stored pin configuration the pinned revision no longer offers.
+    findings.extend(instances::pins::pin_option_findings(
+        item,
+        &resolved.component.definition,
+    ));
     let properties = instances::effective_fields(&project.library, item)?;
     for field in &properties {
         if let Some(stage) = fields::unmet(field) {
