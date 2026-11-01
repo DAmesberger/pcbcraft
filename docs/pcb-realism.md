@@ -123,9 +123,10 @@ The board and ERC checks pass with no findings.
   …), and where an inner foil lies at the top of a dielectric, the foil's level is a slab
   of its own whose holes are also that layer's copper (tracks and via rings; the sketch
   unites them where they overlap). The saved bodies stay disjoint and a board of
-  thousands of vias builds in time about linear in their number. The sketches go in with
-  one `sketch.insert_dxf` each. Like the drills before, the outline and the holes sit where
-  they are now; the slab heights follow the stackup parameters.
+  thousands of vias builds in time about linear in their number. The holes go in with one
+  `sketch.insert_dxf` per slab and sit where they are now; the outline is a rectangle to the
+  `board_width` and `board_depth` parameters, so changing them in the saved file resizes
+  every slab; the slab heights follow the stackup parameters.
 - Through vias are saved copper (`BodyKind::ViaCopper`): a plated barrel with an annular
   ring on every copper layer (inner rings exact circles round the drill, the circle the
   foil level leaves). Each via size is one component `via_<drill>_<diameter>` (`via_0p3_0p6`)
@@ -309,14 +310,75 @@ Plan to reach thousands of vias in a few seconds and an instant 3D view:
    an extrusion from its profile instead of a coarse mesh.
 3. One evaluation per build: a batch scope in the engine that defers parameter evaluation
    and joint solving to its end, for the remaining per-part commands.
-4. Incremental rebuilds: keep the native session between builds and change only the
-   features of the parts that changed (a moved via is one occurrence move, a moved track
-   its parameters), instead of rebuilding the board on every edit.
+4. Incremental rebuilds: done for edits that change values (below); adding or removing a
+   part, pad, track or via still builds the board anew.
 
 The 3D model is prepared in the background while the board is edited in 2D (debounced
 350 ms after the last change), a build that a newer board replaces stops at its next
-native command, and the 3D view shows the last finished model under "Updating" while a
-newer one builds, so opening the 3D view does not wait for a build that has finished.
+native command, and the 3D view shows the last finished model under a small "Updating"
+chip (top right) while a newer one is made, so opening the 3D view does not wait for a
+model that has finished.
+
+### Edits update the model in place
+
+The model worker keeps the last board model it made (its native session, geometry and
+display layers). `project::update` builds the edited board against it: every native
+command the build issues is compared with the one recorded at that step and answered with
+the recorded reply, and nothing runs (`native/replay.rs`). When the commands differ only
+in values (a parameter's expression, a sketch's drawing, where a via placement stands,
+recorded metadata) the differences are applied to the kept design: changed parameters in
+one `parameters.change`, each changed drawing erased (what its step created) and drawn
+again while the history is rolled back to the first changed sketch (so later features
+are evaluated once), and each moved via placement moved (at most 256). Any other
+difference (an object added or removed, a new package revision, a layer change) builds
+the board anew. Tests check that every update's native bodies, display layers, sources
+and saved metadata match a fresh build of the edited board.
+
+What an edit does not reach is reused, so the design's history is ordered by how rarely
+it changes: generated package models and via definitions first, then the laminate, then
+envelopes, pads and tracks. Evaluation keeps every feature before the first one an edit
+changes; a body whose evaluation and placement are unchanged keeps its mesh and measure
+(`ModelBody::geometry_key`); a laminate slab evaluated again with the same holes and
+heights keeps its mesh; and the display layers keep each side's mask, each land's finish
+and each via's dome and bore whose inputs did not change (`appearance::Memo`). A part's
+pad offsets in its joints are rounded to a nanometre, so moving a part is a parameter
+change.
+
+`update_timings` (`cargo test --profile ci -p pcbcraft-solidcraft update_timings --
+--ignored --nocapture`) times a fresh build and three updates of each edit, best of three:
+
+| Board | Fresh build | Outer track width | Part moved | Via moved | Inner track moved |
+| --- | --- | --- | --- | --- | --- |
+| Showcase | 3.5 s | 155 ms | 40 ms | 0.75 s | 0.69 s |
+| Showcase, 4 layers, 1,000 vias | 6.1 s | 590 ms | 116 ms | 2.3 s | 1.5 s |
+| Showcase, 4 layers, 4,096 vias | 11.4 s | 748 ms | 370 ms | 6.5 s | 3.3 s |
+| Showcase, 4 layers, 10,000 vias | 89 s | 1.3 s | 1.1 s | 72 s | 10.7 s |
+
+Measured on the shared 18-core machine at a load average of about 13–18 (the 10,000-via
+row at 30–100, one run each for the two slow edits), `ci` profile.
+
+Moving a via redraws the holes of all five slabs and evaluates and meshes them again: in
+place, but at 10,000 vias as slow as a fresh build (the slabs' evaluation and meshing, the
+plan's items 2 and 3, and Solidcraft's `sketch.delete`, which looks up each named entity
+by a linear search). Splitting the laminate into tiles cut along gaps between holes would
+make a via edit remake one tile per slab. A via added or removed is still a fresh build.
+
+### Opening the 3D view
+
+Opening PCB 3D shows the model prepared in the background: the scene is already packed
+on the worker and published to the viewport when it arrives, so the first frame only
+uploads it and draws. `PCBCRAFT_TIMINGS=1` prints the time from opening to the end of the
+first frame with the board in it (`app/open_timing.rs`); `opening_3d_timings`
+(`cargo test --profile ci -p pcbcraft opening_3d_timings -- --ignored --nocapture`, needs
+a GPU) measures the same steps offscreen:
+
+| Board | Prepared in the background | First frame after opening |
+| --- | --- | --- |
+| Showcase | 2.4 s | 9 ms |
+| Showcase, 4 layers, 40 or more vias | 2.4 s (40), 4.2 s (1,000) | not shown: over the view's 88 MiB vertex cap |
+
+The view cannot show boards of many vias until vias are drawn instanced (plan item 1);
+once it can, opening one is the same upload and draw.
 
 ## Merge points with the sidebar redesign
 
@@ -341,7 +403,8 @@ purpose:
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
 - The GUI could not be checked live: the screen was locked during both runs, so windows drew
   nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- 10,000 vias build without error but take about a minute, and the 3D view cannot show
+- 10,000 vias build without error but take about a minute (an edit that changes only
+  values updates the model in place, see Build cost), and the 3D view cannot show
   1,000 vias yet: every via body is meshed at its own scale (about 700 triangles a body),
   far over the view's 88 MiB vertex cap. See Build cost for where the time goes and the
   plan.

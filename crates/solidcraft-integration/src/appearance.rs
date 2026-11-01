@@ -319,6 +319,58 @@ pub fn board(
     vias: &[ViaMark],
     parts: &[Part<'_>],
 ) -> Result<Vec<Geometry>> {
+    board_with(board, lands, paths, vias, parts, &mut Memo::default())
+}
+
+/// Display layers made before, by a digest of what each was made from: a
+/// side's mask (the board and that side's openings), a land's finish (the
+/// board and the land) and a via's dome and bore (the board and the via).
+/// [`board_with`] takes each unchanged one from the last call instead of
+/// making it again, so an edit remakes only what it changed.
+#[derive(Default)]
+pub struct Memo {
+    made: std::collections::HashMap<u64, Vec<Geometry>>,
+}
+
+impl Memo {
+    /// The layers `inputs` (debug-printed: every number exactly) make: the
+    /// last call's if it made them, else `make`'s, kept in `next`.
+    fn unit(
+        &self,
+        next: &mut Self,
+        out: &mut Vec<Geometry>,
+        inputs: &dyn std::fmt::Debug,
+        make: impl FnOnce(&mut Vec<Geometry>) -> Result<()>,
+    ) -> Result<()> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{inputs:?}").hash(&mut h);
+        let key = h.finish();
+        let made = match self.made.get(&key).or_else(|| next.made.get(&key)) {
+            Some(made) => made.clone(),
+            None => {
+                let mut made = Vec::new();
+                make(&mut made)?;
+                made
+            }
+        };
+        out.extend(made.iter().cloned());
+        next.made.insert(key, made);
+        Ok(())
+    }
+}
+
+/// [`board`], taking unchanged layers from `memo` and leaving there this
+/// call's.
+pub fn board_with(
+    board: &Board,
+    lands: &[Land],
+    paths: &[Path],
+    vias: &[ViaMark],
+    parts: &[Part<'_>],
+    memo: &mut Memo,
+) -> Result<Vec<Geometry>> {
+    let mut next = Memo::default();
     let mut out = Vec::new();
     // The mask stops short of the routed edge, so its walls never meet the
     // laminate's at the silhouette.
@@ -340,15 +392,19 @@ pub fn board(
                 .flat_map(|land| land.openings.iter().cloned())
                 .collect(),
         };
-        push(
-            &mut out,
-            &board.fabrication,
-            kind,
-            None,
-            Some(layer.into()),
-            slab(&region, z0, z1, MASK_TILE_MM),
-        )?;
+        memo.unit(&mut next, &mut out, &(kind, board, &region), |out| {
+            push(
+                out,
+                &board.fabrication,
+                kind,
+                None,
+                Some(layer.into()),
+                slab(&region, z0, z1, MASK_TILE_MM),
+            )
+        })?;
     }
+    // Via picks, looked up per land (a board has thousands of each).
+    let via_picks: std::collections::BTreeSet<u64> = vias.iter().map(|v| v.pick).collect();
     for land in lands {
         let Some(copper) = &land.copper else {
             continue;
@@ -371,25 +427,30 @@ pub fn board(
         };
         // A via's finished ring belongs to the via, not to its side's
         // copper: no layer, as its barrel has none.
-        let via = land.pick.is_some() && vias.iter().any(|v| Some(v.pick) == land.pick);
-        push(
-            &mut out,
-            &board.fabrication,
-            BodyKind::PadFinish,
-            land.pick,
-            (!via).then_some(land.layer.into()),
-            slab(&region, z0, z1, f64::MAX),
-        )?;
+        let via = land.pick.is_some_and(|pick| via_picks.contains(&pick));
+        memo.unit(&mut next, &mut out, &(board, land, via), |out| {
+            push(
+                out,
+                &board.fabrication,
+                BodyKind::PadFinish,
+                land.pick,
+                (!via).then_some(land.layer.into()),
+                slab(&region, z0, z1, f64::MAX),
+            )
+        })?;
     }
     for path in paths {
         track(&mut out, board, lands, vias, path)?;
     }
     for via in vias {
-        via_layers(&mut out, board, via)?;
+        memo.unit(&mut next, &mut out, &(board, via), |out| {
+            via_layers(out, board, via)
+        })?;
     }
     for part in parts {
         package(&mut out, Some(board), part)?;
     }
+    *memo = next;
     Ok(out)
 }
 

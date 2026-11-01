@@ -922,3 +922,88 @@ fn show_layers(
 
 /// Pictures of the 3D layer toggles.
 mod layers;
+
+/// The time from opening the PCB 3D view, its model prepared in the
+/// background, to its first frame: the prepared scene published to the
+/// viewport, framed, uploaded and drawn on the GPU (and read back, which
+/// the window does not do). Best of a few openings, each with a new
+/// viewport. `cargo test --profile ci -p pcbcraft opening_3d_timings --
+/// --ignored --nocapture`; `PCBCRAFT_BENCH_VIAS=0,40` sets the boards (the
+/// showcase on 4 layers with that many vias; 0, the showcase).
+#[test]
+#[ignore = "benchmark"]
+fn opening_3d_timings() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let boards: Vec<usize> = std::env::var("PCBCRAFT_BENCH_VIAS")
+        .ok()
+        .map(|v| v.split(',').filter_map(|n| n.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![0, 40, 1000, 10_000]);
+    for count in boards {
+        let mut project = showcase_project()?;
+        if count > 0 {
+            project.stackup = pcbcraft_core::Stackup::preset(4)?;
+            let net = project.nets[0].id;
+            let [width, depth] = project.board_size;
+            let rows = count.div_ceil(64);
+            project.board_size = [
+                width.max(64.0 * 1.27 + 6.0),
+                depth + rows as f64 * 1.27 + 4.0,
+            ];
+            for k in 0..count {
+                let id = project.allocate()?;
+                project.vias.push(pcbcraft_core::Via {
+                    id,
+                    net,
+                    position: [
+                        3.0 + (k % 64) as f64 * 1.27,
+                        depth + 2.0 + (k / 64) as f64 * 1.27,
+                    ],
+                    drill: 0.3,
+                    diameter: 0.6,
+                    span: pcbcraft_core::ViaSpan::Through,
+                    tented: k % 2 == 0,
+                    locked: false,
+                });
+            }
+        }
+        // Prepared in the background while the board is edited in 2D.
+        let start = std::time::Instant::now();
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let built = start.elapsed();
+        let name = if count == 0 {
+            "showcase".to_owned()
+        } else {
+            format!("showcase, 4 layers, {count} vias")
+        };
+        let mut best = f64::MAX;
+        let mut prepared = None;
+        for _ in 0..5 {
+            let scene = match crate::model_scene::build(model.geometry.clone()) {
+                Ok(scene) => scene,
+                Err(error) => {
+                    prepared = Some(error);
+                    break;
+                }
+            };
+            let start = std::time::Instant::now();
+            let mut viewport = Viewport::detached();
+            viewport.set_model(scene);
+            viewport.fit_to(16.0 / 10.0);
+            gpu.draw(&mut viewport, 1600, 1000, 1.0).ok_or("no frame")?;
+            best = best.min(start.elapsed().as_secs_f64() * 1e3);
+        }
+        match prepared {
+            Some(error) => println!(
+                "{name}: prepared in {:.0} ms; the view cannot show it: {error}",
+                built.as_secs_f64() * 1e3
+            ),
+            None => println!(
+                "{name}: prepared in {:.0} ms; first frame {best:.0} ms after opening",
+                built.as_secs_f64() * 1e3
+            ),
+        }
+    }
+    Ok(())
+}

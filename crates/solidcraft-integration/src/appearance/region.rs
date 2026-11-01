@@ -18,6 +18,7 @@ const EPS: f64 = 1e-9;
 /// distance, well below any tile).
 const WALL_MARGIN_MM: f64 = 1e-4;
 
+#[derive(Debug)]
 pub struct Region {
     pub fills: Vec<Vec<Point>>,
     pub cuts: Vec<Vec<Point>>,

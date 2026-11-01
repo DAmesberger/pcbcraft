@@ -174,13 +174,24 @@ pub struct Native {
     session: Session,
     /// Set by another thread to stop a build at its next command.
     cancel: Option<Arc<AtomicBool>>,
+    /// Every command a build ran, when it records them ([`Self::record`]),
+    /// so a later build of an edited board can update this one in place.
+    log: Option<replay::Log>,
+    /// A build of an edited board compared with [`Self::log`] instead of
+    /// run ([`replay`]).
+    replay: Option<replay::Replay>,
 }
+
+mod replay;
+use replay::Log;
 
 impl Native {
     fn with(session: Session) -> Self {
         let mut native = Self {
             session,
             cancel: None,
+            log: None,
+            replay: None,
         };
         if cfg!(test) {
             native.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
@@ -205,6 +216,88 @@ impl Native {
     /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
     pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
         self.cancel = Some(cancel);
+    }
+
+    /// Record every command from now on, for [`Self::replaying`].
+    pub(crate) fn record(&mut self) {
+        self.log = Some(Log::default());
+    }
+
+    /// This design (built with [`Self::record`]) for a build of an edited
+    /// board: every command the build issues is compared with the one the
+    /// design was built with at that step and answered with its recorded
+    /// reply, nothing runs, until [`Self::settle`] applies what changed.
+    /// A command that differs in more than values (a parameter's
+    /// expression, a sketch's drawing, where a placement stands, recorded
+    /// metadata) fails the build with [`Error::Verification`]: the board
+    /// is then built anew.
+    pub(crate) fn replaying(mut self) -> Option<Self> {
+        let log = self.log.take()?;
+        self.replay = Some(replay::Replay::new(log));
+        // The flag that could stop the build this design came from.
+        self.cancel = None;
+        Some(self)
+    }
+
+    /// Whether this design is being replayed ([`Self::replaying`]).
+    pub(crate) fn is_replaying(&self) -> bool {
+        self.replay.is_some()
+    }
+
+    /// The position in the command stream (recorded or replayed).
+    pub(crate) fn step(&self) -> usize {
+        match (&self.replay, &self.log) {
+            (Some(replay), _) => replay.step(),
+            (None, Some(log)) => log.len(),
+            (None, None) => 0,
+        }
+    }
+
+    /// Mark the commands from `start` to now as the definition `name`.
+    pub(crate) fn mark(&mut self, name: &str, start: usize) {
+        let end = self.step();
+        if let Some(log) = &mut self.log {
+            log.mark(name, start, end);
+        }
+        if let Some(replay) = &mut self.replay {
+            replay.mark(name, start, end);
+        }
+    }
+
+    /// Replaying, pass over the commands that built the definition `name`
+    /// (built from the same immutable source, so they are the same);
+    /// `false` if they are not next.
+    pub(crate) fn pass(&mut self, name: &str) -> bool {
+        self.replay.as_mut().is_some_and(|r| r.pass(name))
+    }
+
+    /// End a replay: apply what changed to the design (the changed
+    /// parameters in one command, each changed sketch redrawn, each moved
+    /// placement moved) and keep the new command stream. Recording, does
+    /// nothing. Returns how many commands the update ran.
+    pub(crate) fn settle(&mut self) -> Result<usize> {
+        let Some(replay) = self.replay.take() else {
+            return Ok(0);
+        };
+        // An update is short and leaves the design consistent only once
+        // done: a newer request does not stop it.
+        self.cancel = None;
+        let (log, ran) = replay.apply(self)?;
+        self.log = Some(log);
+        Ok(ran)
+    }
+
+    /// Drop the design's undo history: a built model is never undone, and
+    /// each step holds a whole design.
+    pub(crate) fn forget_history(&mut self) {
+        self.session.undo.clear();
+        self.session.redo.clear();
+    }
+
+    /// Activate a component of the root by id.
+    pub fn activate(&mut self, component: u64) -> Result<()> {
+        self.call("component.activate", json!({"component": component}))?;
+        Ok(())
     }
 
     pub fn session(&self) -> &Session {
@@ -297,6 +390,38 @@ impl Native {
         self.call(
             "sketch.insert_dxf",
             json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+        )?;
+        self.call("sketch.finish", json!({}))?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(())
+    }
+
+    /// A board slab: [`Self::batched_body`]'s holes inside the board
+    /// outline, a rectangle from the origin to the length parameters
+    /// `size` (`board_width`, `board_depth`), so the saved slab follows the
+    /// board size.
+    pub fn board_slab(&mut self, body: ProfileBody<'_>, size: [&str; 2]) -> Result<()> {
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": Plane::Xy.name(), "offset": body.offset.0,
+                "name": format!("{} sketch", body.name)}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        if !body.contours.is_empty() {
+            let drawing = dxf(body.contours)?;
+            self.call(
+                "sketch.insert_dxf",
+                json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+            )?;
+        }
+        let [w, d] = size;
+        self.call(
+            "sketch.line",
+            json!({"points": [[0, 0], [w, 0], [w, d], [0, d]], "closed": true}),
         )?;
         self.call("sketch.finish", json!({}))?;
         self.call(
@@ -418,9 +543,7 @@ impl Native {
     /// axes) from where its first occurrence is now, in one command;
     /// returns the new occurrence.
     pub fn copy_occurrence_by(&mut self, component: u64, by: [f64; 3]) -> Result<u64> {
-        if self.session.active_component != 0 {
-            self.activate_root()?;
-        }
+        self.activate_root()?;
         let reply = self.call(
             "occurrence.copy",
             json!({"component": component, "translate": by}),
@@ -435,9 +558,7 @@ impl Native {
         if offsets.is_empty() {
             return Ok(Vec::new());
         }
-        if self.session.active_component != 0 {
-            self.activate_root()?;
-        }
+        self.activate_root()?;
         let reply = self.call(
             "occurrence.copy",
             json!({"component": component, "translations": offsets}),
@@ -678,8 +799,20 @@ impl Native {
         {
             return Err(Error::Cancelled);
         }
+        if let Some(replay) = &mut self.replay {
+            return replay.next(command, params);
+        }
+        let reply = self.run(command, &params)?;
+        if let Some(log) = &mut self.log {
+            log.push(command, params, reply.clone());
+        }
+        Ok(reply)
+    }
+
+    /// Run one command on the session, unrecorded.
+    fn run(&mut self, command: &str, params: &Value) -> Result<Value> {
         self.session
-            .execute(command, &params)
+            .execute(command, params)
             .map_err(|error| Error::Engine {
                 command: command.into(),
                 message: error.to_string(),

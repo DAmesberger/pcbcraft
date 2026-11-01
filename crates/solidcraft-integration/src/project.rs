@@ -65,6 +65,34 @@ pub struct NativeModel {
     pub sources: Vec<Source>,
     /// The generated package-model definitions, one per package revision.
     pub models: Vec<ModelDefinition>,
+    /// What an update can reuse of this model's native geometry.
+    reuse: Reused,
+    /// Commands the update that made this model ran; `None` when it was
+    /// built anew.
+    updated: Option<usize>,
+    /// The display layers made for this model, for an update to reuse.
+    display: appearance::Memo,
+}
+
+/// How [`update`] made its model.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Rebuilt {
+    /// The previous model, updated in place by this many native commands.
+    InPlace(usize),
+    /// Built anew, and why: the board changed in more than values, or the
+    /// update failed (`None`: nothing was built before).
+    Anew(Option<String>),
+}
+
+/// The identity of each native body's geometry ([`Geometry`] in model
+/// order, native bodies first), so an update reuses the meshes and measures
+/// of every body it did not change. A laminate slab is also known by its
+/// inputs: re-evaluated after an edit before it, it is the same solid.
+#[derive(Clone, Default)]
+struct Reused {
+    keys: Vec<Option<u64>>,
+    /// Laminate slabs: name → (input digest, geometry index).
+    slabs: BTreeMap<String, (u64, usize)>,
 }
 
 impl NativeModel {
@@ -79,6 +107,30 @@ impl NativeModel {
     }
 }
 
+/// The previous model's geometry by identity, for [`finish_with`].
+struct Previous {
+    geometry: Vec<Geometry>,
+    by_key: std::collections::HashMap<u64, usize>,
+    /// Laminate slabs: name → (input digest, geometry index).
+    slabs: BTreeMap<String, (u64, usize)>,
+}
+
+impl Previous {
+    fn of(geometry: Vec<Geometry>, reuse: Reused) -> Self {
+        let by_key = reuse
+            .keys
+            .iter()
+            .enumerate()
+            .filter_map(|(index, key)| key.map(|key| (key, index)))
+            .collect();
+        Self {
+            geometry,
+            by_key,
+            slabs: reuse.slabs,
+        }
+    }
+}
+
 /// A native design under construction, recording each body's kind.
 struct Builder {
     native: Native,
@@ -87,29 +139,86 @@ struct Builder {
     models: Vec<ModelDefinition>,
     /// Definitions whose first occurrence an instance already holds.
     placed: BTreeSet<String>,
+    /// Replaying: the definitions the previous build made.
+    known: Vec<ModelDefinition>,
+    /// Each laminate slab's input digest, by body name.
+    slabs: BTreeMap<String, u64>,
+    /// Replaying: the previous model's geometry.
+    previous: Option<Previous>,
+    /// Display layers made before ([`appearance::Memo`]).
+    display: appearance::Memo,
 }
 
 impl Builder {
     fn new(name: &str) -> Result<Self> {
+        let mut native = Native::new(name)?;
+        native.record();
         Ok(Self {
-            native: Native::new(name)?,
+            native,
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
+            known: Vec::new(),
+            slabs: BTreeMap::new(),
+            previous: None,
+            display: appearance::Memo::default(),
         })
+    }
+
+    /// A build of an edited board replayed against `native`, the model
+    /// `known` and `previous` came from ([`Native::replaying`]).
+    fn replaying(
+        native: Native,
+        known: Vec<ModelDefinition>,
+        previous: Previous,
+        display: appearance::Memo,
+    ) -> Self {
+        Self {
+            native,
+            bodies: BTreeMap::new(),
+            models: Vec::new(),
+            placed: BTreeSet::new(),
+            known,
+            slabs: BTreeMap::new(),
+            previous: Some(previous),
+            display,
+        }
+    }
+
+    /// Build the generated definition `stem` of `package` unless it is
+    /// built. Replaying, the previous build's definition of the same
+    /// immutable package revision is taken as it is.
+    fn define(&mut self, stem: &str, package: &PackageDefinition) -> Result<()> {
+        if self.models.iter().any(|d| d.component == stem) {
+            return Ok(());
+        }
+        let definition = if self.native.is_replaying() {
+            match self.known.iter().find(|d| d.component == stem).cloned() {
+                Some(definition) if self.native.pass(stem) => definition,
+                _ => {
+                    return Err(Error::Verification(format!(
+                        "the board's model {stem} is new"
+                    )));
+                }
+            }
+        } else {
+            let start = self.native.step();
+            let definition = models::build_definition(&mut self.native, stem, package)?;
+            self.native.mark(stem, start);
+            definition
+        };
+        for body in &definition.bodies {
+            self.record(&body.name, body.kind())?;
+        }
+        self.models.push(definition);
+        Ok(())
     }
 
     /// An occurrence of the generated definition `stem` of `package`,
     /// unmoved: the definition is built on first use (its first occurrence
     /// returned), then every further call places it once more.
     fn model(&mut self, stem: &str, package: &PackageDefinition) -> Result<Created> {
-        if !self.models.iter().any(|d| d.component == stem) {
-            let definition = models::build_definition(&mut self.native, stem, package)?;
-            for body in &definition.bodies {
-                self.record(&body.name, body.kind())?;
-            }
-            self.models.push(definition);
-        }
+        self.define(stem, package)?;
         let created = self.native.find_component(stem).ok_or_else(|| {
             Error::Verification(format!("model definition {stem} has no occurrence"))
         })?;
@@ -197,7 +306,21 @@ impl Builder {
                 .set_metadata(&format!("{BODIES_KEY}{index}"), json!(chunk))?;
         }
         models::record(&mut self.native, &self.models)?;
-        finish_with(self.native, sources, self.models)
+        let updated = self
+            .native
+            .is_replaying()
+            .then(|| self.native.settle())
+            .transpose()?;
+        self.native.forget_history();
+        let mut model = finish_with(
+            self.native,
+            sources,
+            self.models,
+            self.previous,
+            &self.slabs,
+        )?;
+        model.updated = updated;
+        Ok(model)
     }
 }
 
@@ -502,7 +625,7 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
 
 #[cfg(test)]
 fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
-    finish_with(native, sources, Vec::new())
+    finish_with(native, sources, Vec::new(), None, &BTreeMap::new())
 }
 
 /// A definition body's measure at one placement: volume, box (low, high)
@@ -512,11 +635,15 @@ type Measured = (f64, [f64; 3], [f64; 3], [f64; 3]);
 /// Via definitions by drill and diameter (their bits).
 type ViaKey = (u64, u64);
 
-/// [`finish`] for a model whose generated definitions are `models`.
+/// [`finish`] for a model whose generated definitions are `models`. The
+/// geometry of a body `previous` holds (the same evaluated body where it
+/// was, or a laminate slab of the same inputs `slabs`) is taken from it.
 fn finish_with(
     native: Native,
     sources: Vec<Source>,
     models: Vec<ModelDefinition>,
+    previous: Option<Previous>,
+    slabs: &BTreeMap<String, u64>,
 ) -> Result<NativeModel> {
     if let Some(error) = native.evaluation_error() {
         return Err(Error::Verification(error));
@@ -538,11 +665,50 @@ fn finish_with(
     // each definition body is measured once, at its first placement.
     let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
+    let mut reuse = Reused::default();
     for (index, body) in native.session().world_state().bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
             .ok_or_else(|| Error::Verification(format!("body {name} has no Pcbcraft kind")))?;
+        let identity = body.geometry_key();
+        let slab = (kind == BodyKind::Substrate)
+            .then(|| slabs.get(name).copied())
+            .flatten();
+        reuse.keys.push(identity);
+        if let Some(digest) = slab {
+            reuse
+                .slabs
+                .insert(name.to_owned(), (digest, geometry.len()));
+        }
+        let item = shared
+            .get(&index)
+            .copied()
+            .or_else(|| own.get(&body.component).copied());
+        let layer = |kind: BodyKind| {
+            item.and_then(|pick| by_pick.get(&pick).copied())
+                .filter(|_| !kind.is_envelope() && !kind.is_generated())
+                .and_then(|s| s.layer)
+                .and_then(|layer| body_layer(name, layer))
+        };
+        // The same body where it was, or a slab of the same inputs.
+        let same = previous.as_ref().and_then(|p| {
+            let at = identity
+                .and_then(|k| p.by_key.get(&k).copied())
+                .or_else(|| {
+                    let (digest, at) = p.slabs.get(name)?;
+                    (Some(*digest) == slab).then_some(*at)
+                })?;
+            p.geometry.get(at).filter(|g| g.kind == kind)
+        });
+        if let Some(same) = same {
+            geometry.push(Geometry {
+                item,
+                layer: layer(kind),
+                ..same.clone()
+            });
+            continue;
+        }
         let saved = doc
             .model_body_look(body)
             .ok_or_else(|| Error::Verification(format!("body {name} has no look")))?
@@ -603,19 +769,10 @@ fn finish_with(
                 (Volume::known(m.volume), min, max)
             }
         };
-        let item = shared
-            .get(&index)
-            .copied()
-            .or_else(|| own.get(&body.component).copied());
-        let layer = item
-            .and_then(|pick| by_pick.get(&pick).copied())
-            .filter(|_| !kind.is_envelope() && !kind.is_generated())
-            .and_then(|s| s.layer)
-            .and_then(|layer| body_layer(name, layer));
         geometry.push(Geometry {
             item,
             kind,
-            layer,
+            layer: layer(kind),
             surface,
             detail,
             mesh,
@@ -629,6 +786,9 @@ fn finish_with(
         geometry,
         sources,
         models,
+        reuse,
+        updated: None,
+        display: appearance::Memo::default(),
     })
 }
 
@@ -995,10 +1155,58 @@ pub fn build_cancellable(
     build_with(project, Some(cancel))
 }
 
+/// The model of `project`, made from `previous` (a model of an earlier
+/// state of the same board) when the board changed only in values: the
+/// previous design is updated in place ([`Native::replaying`]: changed
+/// parameters, redrawn sketches, moved via placements), its evaluation
+/// keeps every feature the edit did not reach, and every body it did not
+/// change keeps its mesh. Otherwise the board is built anew. The result is
+/// the model [`build`] makes of `project`. An update (comparing, then
+/// changing a few features) always finishes; a build anew stops with
+/// [`Error::Cancelled`] at its next native command once `cancel` is set.
+pub fn update(
+    previous: NativeModel,
+    project: &Project,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<(NativeModel, Rebuilt)> {
+    let NativeModel {
+        native,
+        geometry,
+        models,
+        reuse,
+        display,
+        ..
+    } = previous;
+    let mut why = None;
+    if let Some(native) = native.replaying() {
+        let b = Builder::replaying(native, models, Previous::of(geometry, reuse), display);
+        match build_on(b, project) {
+            Ok(model) => {
+                let ran = model.updated.unwrap_or(0);
+                return Ok((model, Rebuilt::InPlace(ran)));
+            }
+            // Refused, it would be refused anew.
+            Err(error @ Error::Invalid(_)) => return Err(error),
+            // Changed in more than values, or the update failed.
+            Err(error) => why = Some(error.to_string()),
+        }
+    }
+    Ok((build_with(project, cancel)?, Rebuilt::Anew(why)))
+}
+
 fn build_with(
     project: &Project,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<NativeModel> {
+    let mut b = Builder::new(&project.name)?;
+    if let Some(cancel) = cancel {
+        b.native.cancel_with(cancel);
+    }
+    build_on(b, project)
+}
+
+/// Build `project` with `b`: a new design, or one replayed.
+fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     if project
         .vias
@@ -1010,14 +1218,25 @@ fn build_with(
         ));
     }
     let stackup = &project.stackup;
-    let mut b = Builder::new(&project.name)?;
-    if let Some(cancel) = cancel {
-        b.native.cancel_with(cancel);
-    }
     stackup_params(&mut b, project)?;
-    let board = b.native.component("PCB substrate", true)?.occurrence;
     let pads = placed_pads(project)?;
     b.params(&object_params(project, &pads)?)?;
+    // What an edit rarely changes comes first in the design's history, so
+    // evaluating an edit reuses it: the generated package models and the
+    // via definitions, then the laminate, then the parts and copper.
+    for placement in &project.placements {
+        if let Some(physical) = project
+            .instance(placement.instance)
+            .and_then(|instance| instances::resolve(&project.library, instance).ok())
+            .and_then(|r| r.physical)
+            .filter(|p| models::is_generated(&p.package.definition))
+        {
+            let stem = models::definition_name(physical.package.id, physical.package.revision.0);
+            b.define(&stem, &physical.package.definition)?;
+        }
+    }
+    let mut styles = via_styles(&mut b, project)?;
+    let board = b.native.component("PCB substrate", true)?.occurrence;
     laminate(&mut b, project, &pads)?;
     let mut sources = vec![];
     let mut parts = vec![];
@@ -1254,7 +1473,9 @@ fn build_with(
             })?;
             b.record(&name, BodyKind::PadCopper)?;
         }
-        let [dx, dy] = pad.offset();
+        // Rounded to a nanometre, so moving a part (whose offsets carry
+        // rounding of its position) leaves the joint as it was.
+        let [dx, dy] = pad.offset().map(|v| (v * 1e9).round() / 1e9);
         let x =
             format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
         let y =
@@ -1343,7 +1564,7 @@ fn build_with(
         });
     }
     let display = appearance::Board::of(project);
-    let marks = vias(&mut b, project, &mut sources)?;
+    let marks = vias(&mut b, project, &mut styles, &mut sources)?;
     // Every joint goes in once the parts are built, solved together (one
     // by one, each would solve all the joints made before it); a copy of a
     // shared definition starts where its first occurrence stands.
@@ -1351,6 +1572,7 @@ fn build_with(
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
+    let mut memo = std::mem::take(&mut b.display);
     let mut model = b.finish(sources)?;
     let picks: BTreeMap<Id, u64> = model
         .sources
@@ -1358,7 +1580,8 @@ fn build_with(
         .filter(|s| s.pad.is_none())
         .filter_map(|s| s.instance.map(|i| (i, s.pick_id)))
         .collect();
-    let layers = appearance::board(&display, &lands, &paths, &marks, &parts)?;
+    let layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, &mut memo)?;
+    model.display = memo;
     model.geometry.extend(layers);
     model.geometry.extend(crate::silkscreen::films(
         project,
@@ -1449,11 +1672,27 @@ fn mm_slug(value: f64) -> String {
     format!("{value}").replace('.', "p").replace('-', "m")
 }
 
-/// Every board via as saved copper: an occurrence of its size's definition
-/// ([`via_style`]) moved to the via. Like the drills, a via sits where it
-/// is now. Returns what the display layers draw of each.
-fn vias(b: &mut Builder, project: &Project, sources: &mut Vec<Source>) -> Result<Vec<ViaMark>> {
+/// One definition per via size ([`via_style`]), built before the laminate.
+fn via_styles(b: &mut Builder, project: &Project) -> Result<BTreeMap<ViaKey, ViaStyle>> {
     let mut styles: BTreeMap<ViaKey, ViaStyle> = BTreeMap::new();
+    for via in &project.vias {
+        let key = (via.drill.to_bits(), via.diameter.to_bits());
+        if let std::collections::btree_map::Entry::Vacant(slot) = styles.entry(key) {
+            slot.insert(via_style(b, project, via)?);
+        }
+    }
+    Ok(styles)
+}
+
+/// Every board via as saved copper: an occurrence of its size's definition
+/// (`styles`, from [`via_styles`]) moved to the via. Like the drills, a via
+/// sits where it is now. Returns what the display layers draw of each.
+fn vias(
+    b: &mut Builder,
+    project: &Project,
+    styles: &mut BTreeMap<ViaKey, ViaStyle>,
+    sources: &mut Vec<Source>,
+) -> Result<Vec<ViaMark>> {
     // Each via's definition, and the copies each definition still needs:
     // (via index, offset from the definition's first occurrence).
     let mut style_of = Vec::with_capacity(project.vias.len());
@@ -1461,12 +1700,9 @@ fn vias(b: &mut Builder, project: &Project, sources: &mut Vec<Source>) -> Result
     let mut occurrences: Vec<Option<u64>> = vec![None; project.vias.len()];
     for (index, via) in project.vias.iter().enumerate() {
         let key = (via.drill.to_bits(), via.diameter.to_bits());
-        let style = match styles.entry(key) {
-            std::collections::btree_map::Entry::Occupied(style) => style.into_mut(),
-            std::collections::btree_map::Entry::Vacant(slot) => {
-                slot.insert(via_style(b, project, via)?)
-            }
-        };
+        let style = styles
+            .get_mut(&key)
+            .ok_or_else(|| Error::Verification("via definition missing".into()))?;
         let [x, y] = via.position;
         match style.origin {
             None => {
@@ -1626,14 +1862,12 @@ fn dielectric_sum(stackup: &Stackup, range: std::ops::Range<usize>) -> String {
 /// rings, united by the sketch where they overlap). The saved bodies are
 /// disjoint and the laminate's mass is physical, without a Boolean: a
 /// board of thousands of vias is built in time linear in their number.
-/// Like the drills, the outline and the holes sit where the board and its
-/// copper are now (they do not follow parameters edited in Solidcraft);
-/// the slabs' heights follow the stackup parameters.
+/// The outline follows `board_width` and `board_depth`; the holes sit
+/// where the board's copper is now (they do not follow placement
+/// parameters edited in Solidcraft); the slabs' heights follow the stackup
+/// parameters.
 fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Result<()> {
     let stackup = &project.stackup;
-    let [width, depth] = project.board_size;
-    let outline = polygon(&[[0.0, 0.0], [width, 0.0], [width, depth], [0.0, depth]])
-        .ok_or_else(|| Error::Invalid("the board has no outline".into()))?;
     let pad_drills: Vec<Contour> = pads
         .iter()
         .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
@@ -1647,8 +1881,9 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
         center: via.position,
         radius: via.drill / 2.0,
     });
-    let mut dielectric = vec![outline.clone()];
-    dielectric.extend(pad_drills.iter().cloned());
+    // The outline is the board size parameters' rectangle
+    // ([`Native::board_slab`]); the contours are its holes.
+    let mut dielectric = pad_drills.clone();
     dielectric.extend(via_drills);
     let layers = stackup.layers();
     let count = stackup.dielectrics.len();
@@ -1661,6 +1896,15 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
             format!("Substrate {slab}")
         }
     };
+    // What every slab's solid depends on besides its holes and heights.
+    let base = digest(&(stackup, project.board_size));
+    let extrude = |b: &mut Builder, body: ProfileBody<'_>| -> Result<()> {
+        let inputs = digest(&(base, body.name, &body.offset, &body.height, body.contours));
+        let name = body.name.to_owned();
+        b.native.board_slab(body, BOARD_SIZE)?;
+        b.slabs.insert(name.clone(), inputs);
+        b.record(&name, BodyKind::Substrate)
+    };
     for index in 0..count {
         let low = dielectric_sum(stackup, index + 1..count);
         let thickness = dielectric_sum(stackup, index..index + 1);
@@ -1671,19 +1915,20 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
             .find(|l| l.side().is_none() && stackup.index(*l) == Some(index));
         let Some(layer) = foil else {
             let name = name();
-            b.native.batched_body(ProfileBody {
-                name: &name,
-                offset: low.as_str().into(),
-                contours: &dielectric,
-                height: thickness.as_str().into(),
-            })?;
-            b.record(&name, BodyKind::Substrate)?;
+            extrude(
+                b,
+                ProfileBody {
+                    name: &name,
+                    offset: low.as_str().into(),
+                    contours: &dielectric,
+                    height: thickness.as_str().into(),
+                },
+            )?;
             continue;
         };
         // The foil's level: its copper is cut out with the pad drills (via
         // drills lie inside their rings).
-        let mut level = vec![outline.clone()];
-        level.extend(pad_drills.iter().cloned());
+        let mut level = pad_drills.clone();
         level.extend(
             project
                 .tracks
@@ -1703,23 +1948,39 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
         );
         let foil_name = name();
         let foil_height = copper_param(layer);
-        b.native.batched_body(ProfileBody {
-            name: &foil_name,
-            offset: inner_base(stackup, layer)?.into(),
-            contours: &level,
-            height: foil_height.as_str().into(),
-        })?;
-        b.record(&foil_name, BodyKind::Substrate)?;
+        extrude(
+            b,
+            ProfileBody {
+                name: &foil_name,
+                offset: inner_base(stackup, layer)?.into(),
+                contours: &level,
+                height: foil_height.as_str().into(),
+            },
+        )?;
         let below = name();
-        b.native.batched_body(ProfileBody {
-            name: &below,
-            offset: low.as_str().into(),
-            contours: &dielectric,
-            height: format!("{thickness} - {foil_height}").into(),
-        })?;
-        b.record(&below, BodyKind::Substrate)?;
+        extrude(
+            b,
+            ProfileBody {
+                name: &below,
+                offset: low.as_str().into(),
+                contours: &dielectric,
+                height: format!("{thickness} - {foil_height}").into(),
+            },
+        )?;
     }
     Ok(())
+}
+
+/// The board outline's size parameters (`stackup_params`).
+const BOARD_SIZE: [&str; 2] = ["board_width", "board_depth"];
+
+/// A digest of `value` as debug-printed (every number in its shortest
+/// round-trip form: equal values, equal digests).
+fn digest(value: &impl std::fmt::Debug) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{value:?}").hash(&mut h);
+    h.finish()
 }
 
 /// The native envelope of one package definition, draft or published, with
@@ -1813,3 +2074,5 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
 mod realism_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod update_tests;
