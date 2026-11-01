@@ -127,7 +127,7 @@ impl Viewport {
             moved = transformed(&model.geometry, &self.display);
             &moved
         };
-        if let Ok((pbr, _)) = model_scene::pack(geometry, !self.hide_substrate) {
+        if let Ok((pbr, _)) = model_scene::pack(geometry, &self.layers) {
             self.repack = None;
             self.publish_pbr(pbr);
         }

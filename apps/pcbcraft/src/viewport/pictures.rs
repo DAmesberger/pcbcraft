@@ -616,3 +616,6 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// Pictures of the 3D layer toggles.
+mod layers;

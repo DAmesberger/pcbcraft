@@ -1,15 +1,17 @@
 //! GPU-ready form of a built native model, prepared on the model worker so
 //! the UI thread only publishes it. PBR vertices carry each body's physical
 //! look, clear coat and procedural pattern (Solidcraft's detailed PBR
-//! stream, drawn with the product look) in one buffer, parts first and
-//! board-level bodies after, so the
-//! buffer moves into the viewport once and is never copied on the UI thread;
-//! shadows are theme-free geometry with alpha weights; highlight blocks are
-//! flat copies keyed by pick identity, so selection only recolours.
+//! stream, drawn with the product look) in one buffer, grouped by
+//! [`ViewLayer`] so a layer view keeps or drops whole runs of it; the
+//! buffer moves into the viewport once and is never repacked on the UI
+//! thread. Shadows are theme-free geometry with alpha weights; highlight
+//! blocks are flat copies keyed by pick identity and view layer, so
+//! selection only recolours and hidden layers drop their blocks.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! upstream revision 4f3ac07, unchanged in the pinned fork; see
 //! ATTRIBUTION.md), adapted to a Z-up board.
+use crate::layer_view::{LayerView, ViewLayer};
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     material::{BodyKind, Pattern},
@@ -20,6 +22,7 @@ use solidcraft_ui_egui::gpu::{
     BlockBuilder, GpuScene, PBR_DETAILED_SIZE, PaletteIndex, SceneBlock, SurfacePattern, TriClass,
 };
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Upper bound on PBR vertex bytes per model: about 480 000 triangles of
@@ -45,23 +48,6 @@ pub fn next_key() -> u64 {
     NEXT_KEY.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Board-level bodies (hidden with the substrate) or everything else.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Segment {
-    Board,
-    Parts,
-}
-
-impl Segment {
-    fn of(kind: BodyKind) -> Self {
-        if kind.is_board() {
-            Self::Board
-        } else {
-            Self::Parts
-        }
-    }
-}
-
 /// A shadow vertex: world position and opacity weight (0..1).
 pub type ShadowVertex = ([f32; 3], f32);
 
@@ -78,41 +64,51 @@ pub struct Shadows {
 
 pub struct ModelScene {
     pub geometry: Vec<pcbcraft_solidcraft::scene::Geometry>,
-    /// PBR vertices: parts, then board-level bodies. The viewport takes it.
+    /// PBR vertices of every body, grouped by view layer in [`ViewLayer`]
+    /// order. The viewport takes it.
     pub pbr: Vec<u8>,
-    /// Bytes of `pbr` that are parts; the prefix shown without the board.
-    pub parts_bytes: usize,
+    /// Each view layer's run of `pbr` bytes, in buffer order.
+    pub runs: Runs,
     pub shadows: Shadows,
-    /// One flat block per pick identity and segment, drawn over the model in
-    /// the selection colour.
-    pub highlight: Vec<(u64, Segment, SceneBlock)>,
+    /// One flat block per pick identity and view layer, drawn over the model
+    /// in the selection colour.
+    pub highlight: Vec<(u64, ViewLayer, SceneBlock)>,
     pub bounds: Aabb3,
 }
 
-/// Detailed PBR vertex bytes of `geometry`: parts first, then board-level bodies
-/// when `board` is set. Returns the bytes and the parts' share.
-pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), String> {
-    let bytes_of = |board: bool| {
-        geometry
-            .iter()
-            .filter(|g| g.kind.is_board() == board)
-            .try_fold(0usize, |n, g| {
-                g.mesh
-                    .triangles
-                    .len()
-                    .checked_mul(3 * PBR_DETAILED_SIZE)
-                    .and_then(|b| n.checked_add(b))
-            })
-    };
+/// Each view layer's run of bytes in a PBR buffer, in buffer order.
+pub type Runs = Vec<(ViewLayer, Range<usize>)>;
+
+/// The bodies of `geometry` in buffer order: grouped by view layer, in
+/// model order within a layer.
+fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
+    let mut out: Vec<(ViewLayer, &Geometry)> = geometry
+        .iter()
+        .map(|g| (ViewLayer::of(g.kind, g.layer), g))
+        .collect();
+    // A stable sort keeps model order inside each layer.
+    out.sort_by_key(|(layer, _)| *layer);
+    out
+}
+
+/// Detailed PBR vertex bytes of the bodies of `geometry` that `view` shows,
+/// grouped by view layer, and each layer's run of bytes.
+pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), String> {
+    let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
+        .into_iter()
+        .filter(|(layer, _)| view.visible(*layer))
+        .collect();
     let too_large = || "model too large for the 3D view".to_string();
-    let parts = bytes_of(false).ok_or_else(too_large)?;
-    let total = if board {
-        parts
-            .checked_add(bytes_of(true).ok_or_else(too_large)?)
-            .ok_or_else(too_large)?
-    } else {
-        parts
-    };
+    let total = bodies
+        .iter()
+        .try_fold(0usize, |n, (_, g)| {
+            g.mesh
+                .triangles
+                .len()
+                .checked_mul(3 * PBR_DETAILED_SIZE)
+                .and_then(|b| n.checked_add(b))
+        })
+        .ok_or_else(too_large)?;
     if total > MAX_PBR_BYTES {
         return Err(too_large());
     }
@@ -121,51 +117,71 @@ pub fn pack(geometry: &[Geometry], board: bool) -> Result<(Vec<u8>, usize), Stri
         .pbr_detailed
         .try_reserve_exact(total)
         .map_err(|e| e.to_string())?;
-    for segment in [false, true] {
-        if segment && !board {
-            break;
-        }
-        for g in geometry.iter().filter(|g| g.kind.is_board() == segment) {
-            let pattern = surface_pattern(g.detail.pattern);
-            let strength = g.detail.strength as f32;
-            for indices in &g.mesh.triangles {
-                let Some(p) = g.mesh.tri(indices) else {
-                    continue;
-                };
-                let face = (p[1] - p[0]).cross(p[2] - p[0]);
-                let face = unit_direction(face).unwrap_or(Vec3::Z);
-                for (corner, index) in p.iter().zip(indices) {
-                    let normal = usize::try_from(*index)
-                        .ok()
-                        .and_then(|i| g.mesh.normals.get(i))
-                        .and_then(|n| unit_direction(*n).ok())
-                        .unwrap_or(face);
-                    scene.pbr_tri_with(
-                        corner.to_f32(),
-                        normal.to_f32(),
-                        g.surface,
-                        pattern,
-                        strength,
-                    );
-                }
+    let mut runs: Runs = Vec::new();
+    for (layer, g) in bodies {
+        let start = scene.pbr_detailed.len();
+        let pattern = surface_pattern(g.detail.pattern);
+        let strength = g.detail.strength as f32;
+        for indices in &g.mesh.triangles {
+            let Some(p) = g.mesh.tri(indices) else {
+                continue;
+            };
+            let face = (p[1] - p[0]).cross(p[2] - p[0]);
+            let face = unit_direction(face).unwrap_or(Vec3::Z);
+            for (corner, index) in p.iter().zip(indices) {
+                let normal = usize::try_from(*index)
+                    .ok()
+                    .and_then(|i| g.mesh.normals.get(i))
+                    .and_then(|n| unit_direction(*n).ok())
+                    .unwrap_or(face);
+                scene.pbr_tri_with(
+                    corner.to_f32(),
+                    normal.to_f32(),
+                    g.surface,
+                    pattern,
+                    strength,
+                );
             }
         }
+        let end = scene.pbr_detailed.len();
+        match runs.last_mut() {
+            Some((last, run)) if *last == layer => run.end = end,
+            _ => runs.push((layer, start..end)),
+        }
     }
-    Ok((scene.pbr_detailed, parts))
+    Ok((scene.pbr_detailed, runs))
+}
+
+/// Keep only the runs of `bytes` that `view` shows, in place: a move of
+/// the kept bytes toward the front, never a repack. `runs` describe
+/// `bytes` as [`pack`] laid it out.
+pub fn keep_visible(bytes: &mut Vec<u8>, runs: &[(ViewLayer, Range<usize>)], view: &LayerView) {
+    let mut end = 0;
+    for (layer, run) in runs {
+        if !view.visible(*layer) || run.end > bytes.len() || run.start > run.end {
+            continue;
+        }
+        let len = run.end - run.start;
+        if run.start != end {
+            bytes.copy_within(run.clone(), end);
+        }
+        end += len;
+    }
+    bytes.truncate(end);
 }
 
 pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
-    let (pbr, parts_bytes) = pack(&geometry, true)?;
+    let (pbr, runs) = pack(&geometry, &LayerView::default())?;
     let mut bounds = Aabb3::EMPTY;
-    let mut flat: Vec<(u64, Segment, BlockBuilder)> = Vec::new();
-    let mut index: HashMap<(u64, Segment), usize> = HashMap::new();
+    let mut flat: Vec<(u64, ViewLayer, BlockBuilder)> = Vec::new();
+    let mut index: HashMap<(u64, ViewLayer), usize> = HashMap::new();
     for g in &geometry {
         bounds.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
         bounds.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
         let Some(item) = g.item else {
             continue;
         };
-        let segment = Segment::of(g.kind);
+        let segment = ViewLayer::of(g.kind, g.layer);
         let at = *index.entry((item, segment)).or_insert_with(|| {
             flat.push((item, segment, BlockBuilder::default()));
             flat.len() - 1
@@ -190,7 +206,7 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
     Ok(ModelScene {
         geometry,
         pbr,
-        parts_bytes,
+        runs,
         shadows,
         highlight: flat
             .into_iter()
@@ -422,26 +438,72 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn pbr_bytes_hold_three_vertices_per_triangle_split_by_segment()
+    fn pbr_bytes_hold_three_vertices_per_triangle_in_one_run_per_layer()
     -> Result<(), Box<dyn std::error::Error>> {
         let scene = demo_scene()?;
-        let triangles = |board: bool| {
-            scene
-                .geometry
-                .iter()
-                .filter(|g| g.kind.is_board() == board)
-                .map(|g| g.mesh.triangles.len())
-                .sum::<usize>()
+        let bytes = |layer: ViewLayer| {
+            3 * PBR_DETAILED_SIZE
+                * scene
+                    .geometry
+                    .iter()
+                    .filter(|g| ViewLayer::of(g.kind, g.layer) == layer)
+                    .map(|g| g.mesh.triangles.len())
+                    .sum::<usize>()
         };
-        assert_eq!(scene.parts_bytes, 3 * PBR_DETAILED_SIZE * triangles(false));
-        assert_eq!(
-            scene.pbr.len(),
-            3 * PBR_DETAILED_SIZE * (triangles(true) + triangles(false))
-        );
-        assert!(triangles(true) > 0 && triangles(false) > 0);
-        let (parts, share) = pack(&scene.geometry, false)?;
-        assert_eq!((parts.len(), share), (scene.parts_bytes, scene.parts_bytes));
-        assert_eq!(parts.as_slice(), &scene.pbr[..scene.parts_bytes]);
+        // The runs tile the buffer in layer order, one per layer.
+        let mut at = 0;
+        for window in scene.runs.windows(2) {
+            assert!(window[0].0 < window[1].0, "{:?}", scene.runs);
+        }
+        for (layer, run) in &scene.runs {
+            assert_eq!(run.start, at);
+            assert_eq!(run.len(), bytes(*layer), "{layer:?}");
+            at = run.end;
+        }
+        assert_eq!(at, scene.pbr.len());
+        for layer in [
+            ViewLayer::Bodies,
+            ViewLayer::Substrate,
+            ViewLayer::Mask(pcbcraft_core::Layer::Top),
+            ViewLayer::Copper(pcbcraft_core::CopperLayer::Top),
+        ] {
+            assert!(scene.runs.iter().any(|(l, _)| *l == layer), "{layer:?}");
+        }
+        Ok(())
+    }
+
+    /// Hiding layers in place gives exactly the bytes a fresh pack of the
+    /// shown bodies gives: the same vertices, nothing rebuilt.
+    #[test]
+    fn keeping_visible_runs_matches_packing_only_the_shown_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::{CopperLayer, Layer};
+        let scene = demo_scene()?;
+        let views = [
+            LayerView::substrate_hidden(true),
+            {
+                let mut v = LayerView::default();
+                v.set(ViewLayer::Mask(Layer::Top), false);
+                v
+            },
+            {
+                let mut v = LayerView::default();
+                v.set(ViewLayer::Bodies, false);
+                v.set(ViewLayer::Copper(CopperLayer::Top), false);
+                v
+            },
+            LayerView::default(),
+        ];
+        for view in views {
+            let mut kept = scene.pbr.clone();
+            keep_visible(&mut kept, &scene.runs, &view);
+            let (packed, runs) = pack(&scene.geometry, &view)?;
+            assert_eq!(kept, packed, "{view:?}");
+            assert!(runs.iter().all(|(l, _)| view.visible(*l)));
+            if view != LayerView::default() {
+                assert!(kept.len() < scene.pbr.len(), "{view:?} hides something");
+            }
+        }
         Ok(())
     }
 
@@ -496,36 +558,30 @@ pub(crate) mod tests {
         };
         let mut at = 0;
         let mut seen = std::collections::HashSet::new();
-        for segment in [false, true] {
-            for g in scene
-                .geometry
-                .iter()
-                .filter(|g| g.kind.is_board() == segment)
-            {
-                let bytes = 3 * PBR_DETAILED_SIZE * g.mesh.triangles.len();
-                let body = scene.pbr.get(at..at + bytes).ok_or("short buffer")?;
-                at += bytes;
-                let Some(vertex) = body.chunks_exact(PBR_DETAILED_SIZE).next() else {
-                    continue;
-                };
-                let v = floats(vertex);
-                assert_eq!(v.len(), 16);
-                let [id, strength, weight, coat_roughness] = [v[12], v[13], v[14], v[15]];
-                let pattern = surface_pattern(g.detail.pattern).id() as f32;
-                assert_eq!(id.floor(), pattern, "{:?}", g.kind);
-                assert!((strength - g.detail.strength as f32).abs() < 1e-6);
-                match g.surface.clear_coat() {
-                    Some(coat) => {
-                        assert_eq!(weight, 1.0, "{:?}", g.kind);
-                        assert!((coat_roughness - coat.roughness() as f32).abs() < 1e-6);
-                        let ior = 1.0 + (id.fract() - 0.25) * 4.0;
-                        assert!((ior - 1.52).abs() < 1e-3, "{:?}: {ior}", g.kind);
-                        assert_eq!(v[11], 1.0, "the body under the coat has IOR 1");
-                    }
-                    None => assert_eq!(weight, 0.0, "{:?}", g.kind),
+        for (_, g) in ordered(&scene.geometry) {
+            let bytes = 3 * PBR_DETAILED_SIZE * g.mesh.triangles.len();
+            let body = scene.pbr.get(at..at + bytes).ok_or("short buffer")?;
+            at += bytes;
+            let Some(vertex) = body.chunks_exact(PBR_DETAILED_SIZE).next() else {
+                continue;
+            };
+            let v = floats(vertex);
+            assert_eq!(v.len(), 16);
+            let [id, strength, weight, coat_roughness] = [v[12], v[13], v[14], v[15]];
+            let pattern = surface_pattern(g.detail.pattern).id() as f32;
+            assert_eq!(id.floor(), pattern, "{:?}", g.kind);
+            assert!((strength - g.detail.strength as f32).abs() < 1e-6);
+            match g.surface.clear_coat() {
+                Some(coat) => {
+                    assert_eq!(weight, 1.0, "{:?}", g.kind);
+                    assert!((coat_roughness - coat.roughness() as f32).abs() < 1e-6);
+                    let ior = 1.0 + (id.fract() - 0.25) * 4.0;
+                    assert!((ior - 1.52).abs() < 1e-3, "{:?}: {ior}", g.kind);
+                    assert_eq!(v[11], 1.0, "the body under the coat has IOR 1");
                 }
-                seen.insert((g.kind, g.detail.pattern));
+                None => assert_eq!(weight, 0.0, "{:?}", g.kind),
             }
+            seen.insert((g.kind, g.detail.pattern));
         }
         assert_eq!(at, scene.pbr.len());
         assert!(seen.contains(&(BodyKind::Substrate, Pattern::Weave)));
@@ -590,11 +646,17 @@ pub(crate) mod tests {
                 scene
                     .geometry
                     .iter()
-                    .any(|g| g.item == Some(*item) && Segment::of(g.kind) == *segment)
+                    .any(|g| g.item == Some(*item) && ViewLayer::of(g.kind, g.layer) == *segment)
             );
         }
-        // Tracks' mask caps are board-level but still highlight with their track.
-        assert!(scene.highlight.iter().any(|(_, s, _)| *s == Segment::Board));
+        // Tracks' mask caps sit on the mask layer but still highlight with
+        // their track.
+        assert!(
+            scene
+                .highlight
+                .iter()
+                .any(|(_, s, _)| matches!(s, ViewLayer::Mask(_)))
+        );
         Ok(())
     }
 }

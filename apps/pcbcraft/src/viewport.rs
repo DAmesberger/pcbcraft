@@ -10,13 +10,17 @@
 //! baked once on a worker thread and installed into the renderer, so the
 //! window never waits for it. Three slots are published separately so each change
 //! uploads only what it touches: the model's PBR vertices (`slot`: a new
-//! model, moved in without a copy, or the Hide-substrate toggle, repacked off
-//! the UI thread), shadows (`sketch_slot`: theme, side or toggle) and the
-//! selection (`hl_slot`: cached flat blocks recoloured). Adaptive
+//! model, moved in without a copy, or a change of the [`LayerView`], whose
+//! shown layers are packed again off the UI thread), shadows (`sketch_slot`:
+//! theme, side or layers) and the selection (`hl_slot`: cached flat blocks
+//! recoloured, hidden layers' blocks left out). Layer visibility is display
+//! state: it never rebuilds the model's geometry, and picking skips hidden
+//! layers. Adaptive
 //! supersampling follows Solidcraft's viewport `supersampling` and
 //! `view_settled` (MIT, revision 4f3ac07; see ATTRIBUTION.md).
+use crate::layer_view::{LayerView, ViewLayer};
 use crate::lighting;
-use crate::model_scene::{self, ModelScene, Segment, ShadowVertex, next_key};
+use crate::model_scene::{self, ModelScene, ShadowVertex, next_key};
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     render::Camera,
@@ -47,14 +51,38 @@ const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
 const AO_SAMPLES: [u32; 2] = [32, 8];
 
 /// What the shadow slot was last built for: dark theme, seen from below,
-/// substrate hidden.
-type ShadowView = (bool, bool, bool);
+/// and which shadows the layers allow ([`ShadowLayers`]).
+type ShadowView = (bool, bool, ShadowLayers);
 
-/// A PBR repack running off the UI thread: the model generation and
-/// substrate state it is for.
+/// The shadows the shown layers leave: the ground shadow with the laminate,
+/// and the contact shadows of each side's packages with the bodies and a
+/// surface under them on that side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ShadowLayers {
+    ground: bool,
+    top: bool,
+    bottom: bool,
+}
+
+impl ShadowLayers {
+    fn of(view: &LayerView) -> Self {
+        use pcbcraft_core::Layer;
+        let board = view.visible(ViewLayer::Substrate);
+        let bodies = view.visible(ViewLayer::Bodies);
+        let side = |side| bodies && (board || view.visible(ViewLayer::Mask(side)));
+        Self {
+            ground: board,
+            top: side(Layer::Top),
+            bottom: side(Layer::Bottom),
+        }
+    }
+}
+
+/// A PBR repack running off the UI thread: the model generation and layer
+/// view it is for.
 struct Repack {
     generation: u64,
-    hidden: bool,
+    layers: LayerView,
     result: Receiver<Result<Vec<u8>, String>>,
 }
 
@@ -82,7 +110,8 @@ pub struct Viewport {
     fit_pending: bool,
     /// The point a right-drag orbits about.
     pivot: Option<Vec3>,
-    hide_substrate: bool,
+    /// The layers drawn and picked.
+    layers: LayerView,
     /// Rigid display transform of the shown model (the Component 3D
     /// placement and its drag preview), applied to cached meshes
     /// ([`display`]); never a rebuild.
@@ -165,7 +194,7 @@ impl Viewport {
             aspect: 1.6,
             fit_pending: false,
             pivot: None,
-            hide_substrate: false,
+            layers: LayerView::default(),
             display: pcbcraft_core::geometry::Transform3::IDENTITY,
             model_bounds: Self::initial_bounds(),
             overlay_bounds: Aabb3::EMPTY,
@@ -252,9 +281,7 @@ impl Viewport {
             self.model_bounds = model.bounds;
         }
         let mut pbr = std::mem::take(&mut model.pbr);
-        if self.hide_substrate {
-            pbr.truncate(model.parts_bytes);
-        }
+        model_scene::keep_visible(&mut pbr, &model.runs, &self.layers);
         self.model = Some(model);
         self.generation = self.generation.wrapping_add(1);
         self.repack = None;
@@ -268,35 +295,54 @@ impl Viewport {
         self.publish_highlight();
     }
 
-    pub fn hide_substrate(&self) -> bool {
-        self.hide_substrate
+    #[cfg(test)]
+    /// The layers drawn and picked.
+    pub fn layers(&self) -> &LayerView {
+        &self.layers
     }
 
-    /// Show or hide the board-level bodies. Shadows and selection change at
-    /// once; the model's vertices are repacked on a background thread.
-    pub fn set_hide_substrate(&mut self, hidden: bool) {
-        if self.hide_substrate == hidden {
+    #[cfg(test)]
+    /// Show or hide one layer ([`Viewport::set_layers`]).
+    pub fn set_layer(&mut self, layer: ViewLayer, visible: bool) {
+        if self.layers.visible(layer) != visible {
+            let mut layers = self.layers.clone();
+            layers.set(layer, visible);
+            self.set_layers(layers);
+        }
+    }
+
+    /// Draw and pick only the layers `layers` shows. Shadows and selection
+    /// change at once; the model's shown bodies are packed again on a
+    /// background thread from the cached meshes (nothing is rebuilt), and
+    /// the last vertices stay up until then.
+    pub fn set_layers(&mut self, layers: LayerView) {
+        if self.layers == layers {
             return;
         }
-        self.hide_substrate = hidden;
-        self.shadow_view = None;
+        self.layers = layers;
         self.publish_shadows();
         self.publish_highlight();
         let Some(model) = &self.model else {
             return;
         };
-        let geometry: Vec<Geometry> = model.geometry.clone();
+        let layers = self.layers.clone();
+        let geometry = if self.display == pcbcraft_core::geometry::Transform3::IDENTITY {
+            model.geometry.clone()
+        } else {
+            display::transformed(&model.geometry, &self.display)
+        };
         let (send, result) = mpsc::channel();
+        let view = layers.clone();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-repack".into())
             .spawn(move || {
-                let packed = model_scene::pack(&geometry, !hidden).map(|(bytes, _)| bytes);
+                let packed = model_scene::pack(&geometry, &view).map(|(bytes, _)| bytes);
                 let _ = send.send(packed);
             });
         self.repack = match spawned {
             Ok(_) => Some(Repack {
                 generation: self.generation,
-                hidden,
+                layers,
                 result,
             }),
             Err(_) => None,
@@ -310,7 +356,7 @@ impl Viewport {
         };
         match repack.result.try_recv() {
             Ok(Ok(bytes))
-                if repack.generation == self.generation && repack.hidden == self.hide_substrate =>
+                if repack.generation == self.generation && repack.layers == self.layers =>
             {
                 self.repack = None;
                 self.publish_pbr(bytes);
@@ -343,23 +389,23 @@ impl Viewport {
         (
             theme::is_dark(),
             self.camera.pitch < 0.0,
-            self.hide_substrate,
+            ShadowLayers::of(&self.layers),
         )
     }
 
-    /// Rebuild the shadow slot when the theme, the side seen or the toggle
-    /// changed. The model's PBR buffer is not touched.
+    /// Rebuild the shadow slot when the theme, the side seen or the shown
+    /// layers changed. The model's PBR buffer is not touched.
     fn publish_shadows(&mut self) {
         let view = self.current_shadow_view();
         if self.shadow_view == Some(view) {
             return;
         }
         self.shadow_view = Some(view);
-        let (dark, below, hidden) = view;
+        let (dark, below, shown) = view;
         let peak = SHADOW_ALPHA[usize::from(dark)];
         let display = self.display;
         let mut scene = GpuScene::default();
-        if let Some(model) = self.model.as_ref().filter(|_| !hidden) {
+        if let Some(model) = self.model.as_ref() {
             let mut add = |vertices: &[ShadowVertex]| {
                 for (p, weight) in vertices {
                     let alpha = (peak * weight.clamp(0.0, 1.0)).round() as u8;
@@ -368,10 +414,16 @@ impl Viewport {
                 }
             };
             if below {
-                add(&model.shadows.bottom);
+                if shown.bottom {
+                    add(&model.shadows.bottom);
+                }
             } else {
-                add(&model.shadows.ground);
-                add(&model.shadows.top);
+                if shown.ground {
+                    add(&model.shadows.ground);
+                }
+                if shown.top {
+                    add(&model.shadows.top);
+                }
             }
         }
         Self::publish(&self.sketch_slot, &mut self.sketch_key, scene);
@@ -394,9 +446,8 @@ impl Viewport {
             scene.blocks = model
                 .highlight
                 .iter()
-                .filter(|(item, segment, _)| {
-                    self.highlighted.contains(item)
-                        && !(self.hide_substrate && *segment == Segment::Board)
+                .filter(|(item, layer, _)| {
+                    self.highlighted.contains(item) && self.layers.visible(*layer)
                 })
                 .map(|(_, _, block)| block.clone())
                 .collect();
@@ -410,11 +461,10 @@ impl Viewport {
         let model = self.model.as_ref()?;
         let (origin, direction) = self.camera.ray(x, y, width, height);
         let (origin, direction) = self.model_ray(origin, direction);
-        let layers = crate::layer_view::LayerView::substrate_hidden(self.hide_substrate);
         model
             .geometry
             .iter()
-            .filter(|g| layers.shows(g))
+            .filter(|g| self.layers.shows(g))
             .filter(|g| box_hit(g, origin, direction))
             .filter_map(|g| g.mesh.raycast(origin, direction).map(|(d, _)| (d, g)))
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -642,6 +692,8 @@ mod pictures;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pcbcraft_core::{CopperLayer, Layer};
+    use pcbcraft_solidcraft::material::BodyKind;
 
     fn demo() -> Result<Viewport, Box<dyn std::error::Error>> {
         let project = crate::model_scene::tests::demo_project()?;
@@ -663,6 +715,25 @@ mod tests {
                         .collect()
                 })
             })
+            .unwrap_or_default()
+    }
+
+    /// Wait for a layer repack to land.
+    fn settle(viewport: &mut Viewport) -> Result<(), Box<dyn std::error::Error>> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while viewport.receive_repack() {
+            if std::time::Instant::now() > deadline {
+                return Err("the repack did not finish".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        Ok(())
+    }
+
+    fn pbr_bytes(slot: &SceneSlot) -> Vec<u8> {
+        slot.lock()
+            .ok()
+            .and_then(|s| s.as_ref().map(|s| s.pbr_detailed.clone()))
             .unwrap_or_default()
     }
 
@@ -696,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn hiding_the_substrate_republishes_the_model_but_no_blocks()
+    fn hiding_the_substrate_republishes_the_model_but_no_new_blocks()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut viewport = demo()?;
         let all: Vec<u64> = viewport
@@ -710,14 +781,8 @@ mod tests {
             blocks(&viewport.hl_slot),
             pbr_len(&viewport.slot),
         );
-        viewport.set_hide_substrate(true);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while viewport.receive_repack() {
-            if std::time::Instant::now() > deadline {
-                return Err("the repack did not finish".into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        viewport.set_layers(LayerView::substrate_hidden(true));
+        settle(&mut viewport)?;
         let after = (
             viewport.key,
             blocks(&viewport.hl_slot),
@@ -738,7 +803,7 @@ mod tests {
         let mut viewport = demo()?;
         let dark = theme::is_dark();
         let before = (viewport.key, viewport.hl_key, viewport.sketch_key);
-        viewport.shadow_view = Some((!dark, false, false));
+        viewport.shadow_view = Some((!dark, false, ShadowLayers::of(&LayerView::default())));
         viewport.publish_shadows();
         let after = (viewport.key, viewport.hl_key, viewport.sketch_key);
         assert_eq!((before.0, before.1), (after.0, after.1));
@@ -746,6 +811,132 @@ mod tests {
         let unchanged = viewport.sketch_key;
         viewport.publish_shadows();
         assert_eq!(viewport.sketch_key, unchanged, "nothing changed: no upload");
+        Ok(())
+    }
+
+    /// The middle of the demo track, seen from straight above.
+    fn above_track(viewport: &mut Viewport) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+        let (w, h) = (800.0, 600.0);
+        let track = viewport
+            .model
+            .as_ref()
+            .and_then(|m| m.geometry.iter().find(|g| g.kind == BodyKind::CopperTrack))
+            .ok_or("no track")?;
+        let middle = Vec3::new(
+            (track.min[0] + track.max[0]) / 2.0,
+            (track.min[1] + track.max[1]) / 2.0,
+            track.max[2],
+        );
+        viewport.camera.target = middle;
+        viewport.camera.yaw = 0.0;
+        viewport.camera.pitch = 1.55;
+        viewport.camera.distance = 20.0;
+        let (x, y, _) = viewport
+            .camera
+            .to_screen(middle, w, h, viewport.bounds.diagonal())
+            .ok_or("behind the eye")?;
+        Ok((x, y))
+    }
+
+    /// Hiding the top mask shows the copper under it: the mask is neither
+    /// drawn nor picked, the track under it is, and no mesh is rebuilt.
+    #[test]
+    fn hiding_the_top_mask_reveals_and_picks_the_copper_under_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = demo()?;
+        let meshes: Vec<usize> = viewport
+            .model
+            .as_ref()
+            .map(|m| {
+                m.geometry
+                    .iter()
+                    .map(|g| Arc::as_ptr(&g.mesh) as usize)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (x, y) = above_track(&mut viewport)?;
+        let (w, h) = (800.0, 600.0);
+        let kind = |v: &Viewport| v.hit(x, y, w, h).map(|(_, g)| g.kind);
+        assert_eq!(
+            kind(&viewport),
+            Some(BodyKind::MaskCap),
+            "the mask covers it"
+        );
+        let full = pbr_len(&viewport.slot);
+        viewport.set_layer(ViewLayer::Mask(Layer::Top), false);
+        assert_eq!(kind(&viewport), Some(BodyKind::CopperTrack));
+        settle(&mut viewport)?;
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let (expected, _) = model_scene::pack(&model.geometry, viewport.layers())?;
+        assert_eq!(pbr_bytes(&viewport.slot), expected);
+        assert!(expected.len() < full);
+        let after: Vec<usize> = model
+            .geometry
+            .iter()
+            .map(|g| Arc::as_ptr(&g.mesh) as usize)
+            .collect();
+        assert_eq!(meshes, after, "the cached meshes are kept");
+        // Copper hidden as well: the pick reaches the laminate.
+        viewport.set_layer(ViewLayer::Copper(CopperLayer::Top), false);
+        assert_eq!(kind(&viewport), Some(BodyKind::Substrate));
+        viewport.set_layers(LayerView::default());
+        assert_eq!(kind(&viewport), Some(BodyKind::MaskCap));
+        Ok(())
+    }
+
+    /// The selection and shadows follow the layers: a hidden layer's
+    /// highlight blocks and a hidden package's contact shadow are left out.
+    #[test]
+    fn hidden_layers_drop_their_highlight_and_shadows() -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = demo()?;
+        let all: Vec<u64> = viewport
+            .model
+            .as_ref()
+            .map(|m| m.highlight.iter().map(|(i, _, _)| *i).collect())
+            .unwrap_or_default();
+        viewport.highlight(all);
+        let count = |v: &Viewport| blocks(&v.hl_slot).len();
+        let shadow = |v: &Viewport| {
+            v.sketch_slot
+                .lock()
+                .ok()
+                .and_then(|s| s.as_ref().map(|s| s.trans.len()))
+                .unwrap_or(0)
+        };
+        let (blocks_all, shadows_all) = (count(&viewport), shadow(&viewport));
+        let key = viewport.key;
+        viewport.set_layer(ViewLayer::Bodies, false);
+        assert!(count(&viewport) < blocks_all);
+        assert!(
+            shadow(&viewport) < shadows_all,
+            "contact shadows go with the bodies"
+        );
+        assert!(shadow(&viewport) > 0, "the ground shadow stays");
+        assert_eq!(viewport.key, key, "the model waits for its repack");
+        viewport.set_layers(LayerView::default());
+        assert_eq!(
+            (count(&viewport), shadow(&viewport)),
+            (blocks_all, shadows_all)
+        );
+        Ok(())
+    }
+
+    /// A model that arrives while layers are hidden is shown with them
+    /// hidden at once, its vertices moved in place, not packed again.
+    #[test]
+    fn a_new_model_keeps_the_hidden_layers() -> Result<(), Box<dyn std::error::Error>> {
+        let project = crate::model_scene::tests::demo_project()?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let scene = crate::model_scene::build(model.geometry)?;
+        let mut view = LayerView::default();
+        view.set(ViewLayer::Substrate, false);
+        view.set(ViewLayer::Silkscreen(Layer::Top), false);
+        let (expected, _) = model_scene::pack(&scene.geometry, &view)?;
+        let mut viewport = Viewport::detached();
+        viewport.set_layers(view);
+        viewport.set_model(scene);
+        assert!(viewport.repack.is_none());
+        assert_eq!(pbr_bytes(&viewport.slot), expected);
         Ok(())
     }
 
@@ -853,7 +1044,7 @@ mod tests {
             .ok_or("behind the eye")?;
         assert_eq!(viewport.pick(x, y, w, h), None, "laminate has no item");
         assert!(viewport.hit(x, y, w, h).is_some(), "the board is hit");
-        viewport.set_hide_substrate(true);
+        viewport.set_layers(LayerView::substrate_hidden(true));
         assert!(
             viewport.hit(x, y, w, h).is_none(),
             "hidden board is not hit"
