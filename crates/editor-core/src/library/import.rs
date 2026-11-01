@@ -20,8 +20,8 @@ use super::bundle::{
 use super::{Definition, DefinitionMeta, Library, MAX_NOTE, drafts};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{
-    BindingRef, ComponentRef, ContentHash, DefinitionId, DefinitionRef, LibraryId, Revision,
-    SourceLineageId, SymbolRef, printable,
+    BindingRef, ComponentRef, ContentHash, DefinitionId, DefinitionKind, DefinitionRef, LibraryId,
+    Revision, SourceLineageId, SymbolRef, printable,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -391,6 +391,7 @@ pub fn export(
         }
     }
     let members = bundle::closure(library, root)?;
+    shareable(library, &members)?;
     let mut lineages: BTreeMap<DefinitionId, SourceLineageId> = map
         .lineages
         .iter()
@@ -510,6 +511,29 @@ pub fn export(
         origins,
         used,
     })
+}
+
+/// FD11: a 3D model is promoted or shared only when its licence permits
+/// redistribution; `Forbidden` and `Unknown` refuse and name the model.
+fn shareable(library: &Library, members: &[DefinitionRef]) -> Result<()> {
+    for member in members {
+        if member.kind != DefinitionKind::Model {
+            continue;
+        }
+        let Some(model) = library.model(crate::ids::ModelRef::new(member.id, member.revision))
+        else {
+            continue;
+        };
+        let redistribution = model.definition.provenance.redistribution;
+        if redistribution != super::model3d::Redistribution::Permitted {
+            return Err(Error::Invalid(format!(
+                "model.licence: {} may not be redistributed (redistribution {}); it stays in this project",
+                library.describe(*member),
+                redistribution.label()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `note` then `line`, or `line` alone when both would not fit.

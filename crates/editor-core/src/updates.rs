@@ -26,7 +26,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod models;
 mod review;
+pub use models::model_details;
 pub use review::{
     ChangeArea, ChangeKind, ChangeObject, ConflictReason, FindingRow, FindingsDiff, PlanChange,
     PlanLine, TrackConflict, summarize,
@@ -1031,6 +1033,8 @@ struct View<'a> {
     binding: Option<&'a BindingDefinition>,
     footprint: Option<&'a FootprintDefinition>,
     package: Option<&'a PackageDefinition>,
+    /// The package's library model (D1), if it uses one.
+    model: Option<&'a crate::library::Published<crate::library::ModelDefinition>>,
 }
 
 fn view<'a>(project: &'a Project, instance: &ComponentInstance) -> Option<View<'a>> {
@@ -1046,6 +1050,7 @@ fn view<'a>(project: &'a Project, instance: &ComponentInstance) -> Option<View<'
         binding: physical.map(|p| &p.binding.definition),
         footprint: physical.map(|p| &p.footprint.definition),
         package: physical.map(|p| &p.package.definition),
+        model: models::of(project, physical.map(|p| &p.package.definition)),
     })
 }
 
@@ -1214,7 +1219,10 @@ fn definition_details(
         );
     }
     if let (Some(pa), Some(pb)) = (a.package, b.package) {
-        for line in package_details(pa, pb) {
+        let lines = package_details(pa, pb)
+            .into_iter()
+            .chain(models::model_details(a.model, b.model));
+        for line in lines {
             match packages.iter_mut().find(|(l, _)| *l == line) {
                 Some((_, designators)) => designators.push((designator.to_owned(), instance)),
                 None => packages.push((line, vec![(designator.to_owned(), instance)])),

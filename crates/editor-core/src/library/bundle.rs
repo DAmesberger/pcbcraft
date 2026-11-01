@@ -313,9 +313,10 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                     family_rev: _,
                     materials: GeneratedMaterials { roles: _ },
                 } => {}
-                // D1: a library model names a Model lineage. Packages using
-                // one cannot publish until D1, which also adds it to
-                // `references` and `closure`.
+                // D1: a library model names an exact Model revision, so
+                // `references` and `closure` carry the model with the
+                // package; the lead map names model leads and package
+                // terminals, which are local.
                 PackageModel::Library(library) => {
                     let (id, revision) = exact(
                         map,
@@ -438,7 +439,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
             }
         }
         // D1 / B1: models and rows name no other lineage (model assets are
-        // packed by hash).
+        // named by hash, `named_assets`).
         Definition::Model(_) | Definition::PackageRow(_) => {}
     }
     Ok(())
@@ -609,10 +610,14 @@ fn closure_step(
     Ok(())
 }
 
-/// Content hashes a body names: the attached copies of a Part's references,
-/// sorted and without repeats. A hash that is not 64 lower-case hex digits
-/// is `invalid_input`.
+/// Content hashes a body names: the attached copies of a Part's references
+/// and a 3D model's asset and appearance pair (D1), sorted and without
+/// repeats. A hash that is not 64 lower-case hex digits is `invalid_input`.
 pub fn named_assets(definition: &Definition) -> Result<Vec<ContentHash>> {
+    if let Definition::Model(model) = definition {
+        let hashes: BTreeSet<ContentHash> = model.assets().map(|a| a.hash).collect();
+        return Ok(hashes.into_iter().collect());
+    }
     let Definition::Part(part) = definition else {
         return Ok(Vec::new());
     };
@@ -1078,7 +1083,8 @@ pub fn encoded_len(n: usize) -> usize {
 /// once, and project and source lineages correspond one to one (so import
 /// and promote always agree on where a lineage lives). A revision may have
 /// origins in several libraries (imported from one, promoted to another).
-/// Assets are well formed.
+/// Assets are well formed, and every 3D model's assets are packed and every
+/// package's library model resolves (`model3d::snapshot_problems`).
 pub fn validate_snapshot(library: &Library) -> Result<()> {
     let mut locals = BTreeSet::new();
     let mut sources = BTreeSet::new();
@@ -1119,7 +1125,8 @@ pub fn validate_snapshot(library: &Library) -> Result<()> {
             )));
         }
     }
-    validate_assets(&library.assets)
+    validate_assets(&library.assets)?;
+    super::model3d::snapshot_problems(library)
 }
 
 /// Advisory findings of the asset store (D7): `asset.missing` for each Part
