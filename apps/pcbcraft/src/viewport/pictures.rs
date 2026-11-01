@@ -10,7 +10,7 @@
 //! evidence of the look.
 use super::*;
 use egui_wgpu::wgpu;
-use pcbcraft_core::{Fabrication, MaskColour, PadFinish, Project};
+use pcbcraft_core::{Fabrication, Layer, MaskColour, PadFinish, Project};
 use pcbcraft_solidcraft::material::BodyKind;
 use solidcraft_ui_egui::gpu::StudioPreset;
 
@@ -291,6 +291,51 @@ fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std:
     assert!(lowest >= 0.10, "darkest view {lowest}");
     assert!(median >= 0.18, "median {median}");
     assert!(highest >= 0.30, "no view catches a softbox: {highest}");
+    Ok(())
+}
+
+/// The default overview of the showcase board is not flat: the studio's
+/// strip light lies on part of the gloss mask as a lacquer sheen, so the
+/// brightest board pixels stand well above the typical ones, while almost
+/// nothing clips to white.
+#[test]
+fn the_overview_shows_a_sheen_on_the_mask_without_clipping()
+-> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        if std::env::var_os("PCBCRAFT_REQUIRE_GPU").is_some() {
+            return Err("PCBCRAFT_REQUIRE_GPU is set but no GPU adapter was found".into());
+        }
+        eprintln!("no GPU adapter: skipped");
+        return Ok(());
+    };
+    let mut v = viewport(&showcase_project()?)?;
+    let (w, h) = (320, 240);
+    let rgba = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+    let bg = |c: u8, b: f64| (f64::from(c) / 255.0 - b).abs() < 0.06;
+    let mut board: Vec<f64> = rgba
+        .chunks_exact(4)
+        .filter(|p| !(bg(p[0], BACKGROUND.r) && bg(p[1], BACKGROUND.g) && bg(p[2], BACKGROUND.b)))
+        .filter(|p| p[1] > p[0] && p[1] > p[2])
+        .map(luminance)
+        .collect();
+    board.sort_by(f64::total_cmp);
+    assert!(
+        board.len() > 5_000,
+        "the mask covers the frame: {}",
+        board.len()
+    );
+    let at = |q: f64| board[((board.len() - 1) as f64 * q) as usize];
+    let (median, bright) = (at(0.5), at(0.95));
+    let clipped = rgba
+        .chunks_exact(4)
+        .filter(|p| p[..3].iter().all(|c| *c >= 254))
+        .count();
+    eprintln!("overview mask luminance: median {median:.4}, 95th {bright:.4}, clipped {clipped}");
+    assert!(bright >= 2.0 * median, "a flat board: {median} .. {bright}");
+    assert!(
+        clipped as f64 <= 0.002 * f64::from(w * h),
+        "{clipped} pixels clip"
+    );
     Ok(())
 }
 
@@ -614,5 +659,318 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
         aim(&mut v, chip, 9.0, 30.0, 35.0);
         save(&mut v, "model-board-chip-closeup")?;
     }
+    Ok(())
+}
+
+/// The showcase board: [`pcbcraft_core::Engine::showcase`] once the core
+/// builds it, otherwise an interim board of the generated sample packages
+/// (SOIC-8, QFN-16, 2×5 header, 0603 and 0805, one 0805 on the bottom)
+/// with top and bottom tracks, built through the public commands.
+fn showcase_project() -> Result<Project, Box<dyn std::error::Error>> {
+    if let Ok(engine) = pcbcraft_core::Engine::showcase() {
+        return Ok(engine.project().clone());
+    }
+    use pcbcraft_core::library::samples::{self, Preset, SampleRefs};
+    use pcbcraft_core::library::{Definition, DefinitionMeta};
+    use pcbcraft_core::{
+        BindingRef, ComponentRef, DefinitionKind, Engine, FootprintRef, InstanceCommand,
+        LibraryCommand, Operation, Outcome, PackageRef, PhysicalChoice, Revision, SymbolRef,
+        UnitId, instances::NewInstance,
+    };
+    let mut engine = Engine::default();
+    // (preset, board position, rotation, side).
+    let parts = [
+        (Preset::Soic8, [14.0, 24.0], 0.0, Layer::Top),
+        (Preset::Qfn16, [30.0, 24.0], 0.0, Layer::Top),
+        (Preset::Header2x5, [46.0, 24.0], 0.0, Layer::Top),
+        (Preset::Chip0603, [12.0, 12.0], 0.0, Layer::Top),
+        (Preset::Chip0805, [20.0, 12.0], 90.0, Layer::Top),
+        (Preset::Chip0805, [36.0, 12.0], 0.0, Layer::Bottom),
+    ];
+    let mut published: Vec<(Preset, SampleRefs)> = Vec::new();
+    for (preset, ..) in parts {
+        if published.iter().any(|(p, _)| *p == preset) {
+            continue;
+        }
+        let mut ids = Vec::new();
+        for kind in [
+            DefinitionKind::Component,
+            DefinitionKind::Symbol,
+            DefinitionKind::Package,
+            DefinitionKind::Footprint,
+            DefinitionKind::Binding,
+        ] {
+            if let Outcome::DraftCreated { id } = engine.apply(
+                engine.revision(),
+                Operation::Library(LibraryCommand::NewDraft {
+                    meta: DefinitionMeta::default(),
+                    definition: Definition::empty(kind),
+                }),
+            )? {
+                ids.push(id);
+            }
+        }
+        let [component, symbol, package, footprint, binding] = ids[..] else {
+            return Err("draft reservation failed".into());
+        };
+        let first = Revision::FIRST;
+        let refs = SampleRefs {
+            component,
+            symbol: SymbolRef::new(symbol, first),
+            package: PackageRef::new(package, first),
+            footprint: FootprintRef::new(footprint, first),
+            binding: BindingRef::new(binding, first),
+        };
+        let edits = samples::packaged(preset.label(), preset, refs);
+        engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::Edit { edits }),
+        )?;
+        engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::Publish {
+                drafts: vec![component, symbol, package, footprint, binding],
+            }),
+        )?;
+        published.push((preset, refs));
+    }
+    let mut placed = Vec::new();
+    for (k, (preset, at, rotation, layer)) in parts.into_iter().enumerate() {
+        let Some((_, refs)) = published.iter().find(|(p, _)| *p == preset) else {
+            continue;
+        };
+        let outcome = engine.apply(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                component: ComponentRef::new(refs.component, Revision::FIRST),
+                designator: None,
+                properties: vec![],
+                representation: refs.symbol.id,
+                unit: UnitId(1),
+                position: [25.0 * k as f64, 0.0],
+                physical: Some(PhysicalChoice {
+                    binding: refs.binding.id,
+                    footprint: refs.footprint.id,
+                }),
+            })),
+        )?;
+        if let Outcome::InstancePlaced { instance, .. } = outcome {
+            placed.push((instance, at, rotation, layer));
+        }
+    }
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(pcbcraft_core::layout::LayoutCommand::Sync),
+    )?;
+    let mut project = engine.project().clone();
+    for (instance, at, rotation, layer) in placed {
+        if let Some(p) = project
+            .placements
+            .iter_mut()
+            .find(|p| p.instance == instance)
+        {
+            p.position = at;
+            p.rotation_deg = rotation;
+            p.layer = layer;
+        }
+    }
+    if let Some(net) = project.nets.first().map(|n| n.id) {
+        for (start, end, width, layer) in [
+            (
+                [4.0, 4.0],
+                [56.0, 4.0],
+                0.5,
+                pcbcraft_core::CopperLayer::Top,
+            ),
+            (
+                [4.0, 34.0],
+                [56.0, 34.0],
+                0.25,
+                pcbcraft_core::CopperLayer::Top,
+            ),
+            (
+                [4.0, 6.0],
+                [56.0, 6.0],
+                0.8,
+                pcbcraft_core::CopperLayer::Bottom,
+            ),
+            (
+                [4.0, 30.0],
+                [56.0, 30.0],
+                0.3,
+                pcbcraft_core::CopperLayer::Bottom,
+            ),
+        ] {
+            let id = project.allocate()?;
+            project.tracks.push(pcbcraft_core::Track {
+                id,
+                net,
+                start,
+                end,
+                width,
+                layer,
+                locked: false,
+            });
+        }
+    }
+    Ok(project)
+}
+
+/// Where on the board the first part matching `wanted` stands (its
+/// placement and side), by its package form.
+fn part_at(
+    project: &Project,
+    wanted: impl Fn(&pcbcraft_core::library::PackageForm) -> bool,
+) -> Option<(Vec3, Layer)> {
+    project.placements.iter().find_map(|p| {
+        let instance = project.instance(p.instance)?;
+        let physical = pcbcraft_core::instances::resolve(&project.library, instance)
+            .ok()?
+            .physical?;
+        wanted(&physical.package.definition.form)
+            .then(|| (Vec3::new(p.position[0], p.position[1], 0.0), p.layer))
+    })
+}
+
+/// The showcase picture set for the founder's look review: the default
+/// overview, close-ups of the SOIC, QFN, header and passives, tented and
+/// open vias (when the board has them), the edge stackup and the bottom
+/// side. Each picture's share of clipped pixels is printed.
+#[test]
+#[ignore = "writes showcase pictures"]
+fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    use pcbcraft_core::library::{LeadSides, PackageForm};
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1280, 960);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let clipped = rgba
+                .chunks_exact(4)
+                .filter(|p| p[..3].iter().all(|c| *c >= 254))
+                .count();
+            eprintln!(
+                "{name}: {:.3} % of pixels at white",
+                100.0 * clipped as f64 / f64::from(w * h)
+            );
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    let project = showcase_project()?;
+    let mut v = viewport(&project)?;
+    // The board's faces: the mask's top and the substrate's underside.
+    let face = |kind: BodyKind, upper: bool| {
+        v.model.as_ref().and_then(|m| {
+            m.geometry
+                .iter()
+                .filter(|g| g.kind == kind)
+                .map(|g| if upper { g.max[2] } else { g.min[2] })
+                .reduce(if upper { f64::max } else { f64::min })
+        })
+    };
+    let top = face(BodyKind::MaskTop, true).unwrap_or(1.6);
+    let underside = face(BodyKind::Substrate, false).unwrap_or(0.0);
+    save(&mut v, "01-overview")?;
+    let b = v.bounds;
+    aim(&mut v, b.center(), 0.75 * b.diagonal(), 25.0, 40.0);
+    save(&mut v, "02-overview-turned")?;
+    // Aim at a part; from far off the target rises off the board so a tall
+    // part (the header's pins) stays in frame.
+    let close = |v: &mut Viewport, at: Option<(Vec3, Layer)>, distance: f64, yaw: f64| {
+        let (p, layer) = at?;
+        let below = layer == Layer::Bottom;
+        let lift = if distance > 20.0 {
+            0.12 * distance
+        } else {
+            0.0
+        };
+        let z = if below { underside - lift } else { top + lift };
+        aim(
+            v,
+            Vec3::new(p.x, p.y, z),
+            distance,
+            yaw,
+            if below { -35.0 } else { 35.0 },
+        );
+        Some(())
+    };
+    type Wanted = Box<dyn Fn(&PackageForm) -> bool>;
+    let shots: [(&str, Wanted, f64, f64); 5] = [
+        (
+            "03-soic",
+            Box::new(|f| matches!(f, PackageForm::GullWing(g) if g.sides == LeadSides::Two)),
+            14.0,
+            30.0,
+        ),
+        (
+            "04-qfn",
+            Box::new(|f| matches!(f, PackageForm::NoLead(n) if n.sides == LeadSides::Four)),
+            9.0,
+            35.0,
+        ),
+        (
+            "05-header",
+            Box::new(|f| matches!(f, PackageForm::Header(_))),
+            34.0,
+            30.0,
+        ),
+        (
+            "06-passive-0603",
+            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length < 1.8)),
+            6.0,
+            30.0,
+        ),
+        (
+            "07-passive-0805",
+            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length >= 1.8)),
+            7.0,
+            210.0,
+        ),
+    ];
+    for (name, wanted, distance, yaw) in shots {
+        if close(&mut v, part_at(&project, wanted), distance, yaw).is_some() {
+            save(&mut v, name)?;
+        } else {
+            eprintln!("{name}: the board has no such part");
+        }
+    }
+    for (tented, name) in [(true, "08-via-tented"), (false, "09-via-open")] {
+        match project.vias.iter().find(|via| via.tented == tented) {
+            Some(via) => {
+                aim(
+                    &mut v,
+                    Vec3::new(via.position[0], via.position[1], top),
+                    4.0,
+                    30.0,
+                    40.0,
+                );
+                save(&mut v, name)?;
+            }
+            None => eprintln!("{name}: the board has no such via yet"),
+        }
+    }
+    // The board edge face on, low, so the stackup bands fill the frame.
+    let mid = (underside + top) / 2.0;
+    aim(
+        &mut v,
+        Vec3::new(b.min.x + 6.0, b.min.y, mid),
+        3.5,
+        20.0,
+        5.0,
+    );
+    save(&mut v, "10-edge-stackup")?;
+    aim(&mut v, Vec3::new(b.min.x, b.min.y, mid), 6.0, 45.0, 20.0);
+    save(&mut v, "11-edge-corner")?;
+    aim(&mut v, b.center(), 0.75 * b.diagonal(), 200.0, -35.0);
+    save(&mut v, "12-bottom-side")?;
     Ok(())
 }

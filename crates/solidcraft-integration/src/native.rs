@@ -331,6 +331,24 @@ impl Native {
         Ok(())
     }
 
+    /// Round the edges of `body` passing through `edges` (one point on
+    /// each, in the active component's frame) to `radius`. The edges are
+    /// kept by the engine's naming history, so the round follows the
+    /// body's driving parameters.
+    pub fn fillet(
+        &mut self,
+        name: &str,
+        body: &str,
+        edges: &[[f64; 3]],
+        radius: Expr,
+    ) -> Result<()> {
+        self.call(
+            "solid.fillet",
+            json!({"name": name, "body": body, "edges": edges, "radius": radius.0}),
+        )?;
+        Ok(())
+    }
+
     /// The component named `name` and its first occurrence.
     pub fn find_component(&self, name: &str) -> Option<Created> {
         let doc = &self.session.doc;

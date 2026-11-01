@@ -280,6 +280,19 @@ impl Build<'_> {
         Ok(name.to_owned())
     }
 
+    /// Round the edges of `body` through `edges` (a point on each) by a
+    /// new length parameter `<stem>_<param>` of `radius`, so the round is
+    /// named and editable and follows the body's own parameters. A zero
+    /// radius adds nothing.
+    fn round(&mut self, param: &str, body: &str, edges: &[[f64; 3]], radius: f64) -> Result<()> {
+        if !(radius.is_finite() && radius > 0.0) {
+            return Ok(());
+        }
+        let r = self.length(param, radius)?;
+        let feature = self.name(&param.replace('_', " "));
+        self.native.fillet(&feature, body, edges, Expr::from(r))
+    }
+
     /// Record bodies a pattern added (its originals are already recorded).
     fn push_copies(&mut self, all: &[String], role: BodyRole, material: MaterialId) {
         for name in all {
@@ -360,6 +373,29 @@ impl Build<'_> {
         }
         Ok(())
     }
+}
+
+/// A point on each of the four edges round the top face of the box
+/// `lo`..`hi`.
+fn top_edges(lo: [f64; 3], hi: [f64; 3]) -> [[f64; 3]; 4] {
+    let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    [
+        [mid[0], lo[1], hi[2]],
+        [hi[0], mid[1], hi[2]],
+        [mid[0], hi[1], hi[2]],
+        [lo[0], mid[1], hi[2]],
+    ]
+}
+
+/// A point on each of the four upright edges of the box `lo`..`hi`.
+fn upright_edges(lo: [f64; 3], hi: [f64; 3]) -> [[f64; 3]; 4] {
+    let z = (lo[2] + hi[2]) / 2.0;
+    [
+        [lo[0], lo[1], z],
+        [hi[0], lo[1], z],
+        [hi[0], hi[1], z],
+        [lo[0], hi[1], z],
+    ]
 }
 
 /// Bounds of a lead count.

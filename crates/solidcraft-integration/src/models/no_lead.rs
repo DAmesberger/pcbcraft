@@ -2,7 +2,7 @@
 //! whose underside holds the leadframe's side terminals, flush with the
 //! body's bottom and its side faces, and an optional exposed pad. The body
 //! is cut around them, so terminals and moulding stay disjoint.
-use super::{Build, check_count, check_positive, mm, require};
+use super::{Build, check_count, check_positive, mm, require, top_edges};
 use crate::Result;
 use crate::native::{BoxBody, Expr, Pattern};
 use pcbcraft_core::library::{BodyRole, LeadSides, NoLeadForm};
@@ -10,6 +10,9 @@ use pcbcraft_core::library::{BodyRole, LeadSides, NoLeadForm};
 /// Leadframe thickness (est.: 0.2 mm is the common QFN frame), at most a
 /// third of the body height.
 const FRAME_MM: f64 = 0.2;
+/// Round of the sawn body's top edges (est.: a saw-singulated moulding
+/// keeps nearly sharp edges; a small round only catches the light).
+const TOP_EDGE_MM: f64 = 0.06;
 /// Pin-1 dimple depth (est.).
 const DIMPLE_DEPTH_MM: f64 = 0.03;
 
@@ -184,6 +187,14 @@ pub(super) fn build(b: &mut Build<'_>, f: &NoLeadForm) -> Result<()> {
     b.native
         .cut_keeping(&b.name("frame pockets"), &body, &tools)?;
     b.number(&numbered);
+    let edge = TOP_EDGE_MM.min(0.1 * f.body_height);
+    let (hl, hw) = (f.body_length / 2.0, f.body_width / 2.0);
+    b.round(
+        "edge_round",
+        &body,
+        &top_edges([-hl, -hw, 0.0], [hl, hw, f.body_height]),
+        edge,
+    )?;
 
     let short = f.body_length.min(f.body_width);
     let radius = (0.08 * short).clamp(0.1, 0.4);
