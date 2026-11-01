@@ -125,6 +125,44 @@ fn bounds(geometry: &Geometry, min: [f64; 3], max: [f64; 3]) {
     }
 }
 
+/// A track's copper outline in plan: its box (min, max) and area. Round
+/// end caps of `TRACK_CAP_SEGMENTS` chords each.
+fn track_plan(start: Point, end: Point, width: f64) -> ([f64; 2], [f64; 2], f64) {
+    let outline = track_outline(start, end, width);
+    let n = outline.len();
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for p in &outline {
+        for k in 0..2 {
+            min[k] = min[k].min(p[k]);
+            max[k] = max[k].max(p[k]);
+        }
+    }
+    let area = (0..n)
+        .map(|i| {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        / 2.0;
+    (min, max, area)
+}
+
+#[test]
+fn track_outlines_are_stadiums_with_round_caps() {
+    // Axis-aligned: the caps reach half the width past each end.
+    let (min, max, area) = track_plan([5.0, 10.0], [15.0, 10.0], 0.4);
+    for (a, b) in min.iter().zip([4.8, 9.8]) {
+        near(*a, b);
+    }
+    for (a, b) in max.iter().zip([15.2, 10.2]) {
+        near(*a, b);
+    }
+    // The rectangle and a 16-gon inscribed in the cap circle.
+    let disc = 8.0 * 0.2 * 0.2 * (std::f64::consts::PI / 8.0).sin();
+    near(area, 10.0 * 0.4 + disc);
+}
+
 #[test]
 fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() -> Result<()> {
     let project = fixture()?;
@@ -194,12 +232,14 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
         } else {
             [-0.035, 0.0]
         };
+        // Round caps reach half the width past both ends.
         bounds(
             geometry,
-            [5.0, track.start[1] - 0.2, z[0]],
-            [15.0, track.start[1] + 0.2, z[1]],
+            [4.8, track.start[1] - 0.2, z[0]],
+            [15.2, track.start[1] + 0.2, z[1]],
         );
-        near(geometry.volume, 10.0 * 0.4 * 0.035);
+        let (_, _, area) = track_plan(track.start, track.end, track.width);
+        near(geometry.volume, area * 0.035);
         let source = model
             .sources
             .iter()
@@ -212,7 +252,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
 }
 
 #[test]
-fn diagonal_traces_have_analytic_butt_caps_on_both_copper_layers() -> Result<()> {
+fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
     let mut project = fixture()?;
     for track in &mut project.tracks {
         track.start = [5.0, 25.0];
@@ -223,15 +263,19 @@ fn diagonal_traces_have_analytic_butt_caps_on_both_copper_layers() -> Result<()>
         let geometry = source_geometry(&model, BodyKind::CopperTrack, |source| {
             source.track == Some(track.id)
         })?;
-        // The 4:3 direction has length 5 and unit normal (-3/5, 4/5).
-        // At half-width 0.2, butt-cap corners extend 0.12 in X and 0.16 in Y.
+        // The 4:3 direction has length 5; the round caps' chords reach
+        // within 2 % of half the width past each end, in every direction.
         let z = if track.layer == Layer::Top {
             [1.6, 1.635]
         } else {
             [-0.035, 0.0]
         };
-        bounds(geometry, [4.88, 24.84, z[0]], [9.12, 28.16, z[1]]);
-        near(geometry.volume, 5.0 * 0.4 * 0.035);
+        let (min, max, area) = track_plan(track.start, track.end, track.width);
+        for k in 0..2 {
+            assert!(min[k] < [5.0, 25.0][k] - 0.19 && max[k] > [9.0, 28.0][k] + 0.19);
+        }
+        bounds(geometry, [min[0], min[1], z[0]], [max[0], max[1], z[1]]);
+        near(geometry.volume, area * 0.035);
     }
     Ok(())
 }
@@ -309,7 +353,8 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         let geometry = source_geometry(&changed, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
         })?;
-        near(geometry.volume, 10.0 * 0.4 * 0.07);
+        let (_, _, area) = track_plan([5.0, 0.0], [15.0, 0.0], 0.4);
+        near(geometry.volume, area * 0.07);
         near(
             geometry.min[2],
             if source.layer == Some(CopperLayer::Top) {
@@ -594,10 +639,10 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         let track = source_geometry(&model, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
         })?;
-        // Free ends are round: the cap overhangs the copper by its margin
-        // along the sides and by half its width at the ends.
-        near(cap.min[0], track.min[0] - 0.21);
-        near(cap.max[0], track.max[0] + 0.21);
+        // Free ends are round, like the copper's: the cap overhangs the
+        // copper by its margin all round.
+        near(cap.min[0], track.min[0] - 0.01);
+        near(cap.max[0], track.max[0] + 0.01);
         near(cap.min[1], track.min[1] - 0.01);
         near(cap.max[1], track.max[1] + 0.01);
     }
@@ -812,7 +857,9 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
     let expected = 60.0 * 40.0 * 1.6
         + 2.0 * (2.0 * 1.2 * 0.6)
         + 4.0 * (1.0 * 1.4 * 0.035)
-        + (2.0 * 10.0 * 0.4 + 6.0 * 0.25) * 0.035;
+        + (2.0 * track_plan([0.0, 0.0], [10.0, 0.0], 0.4).2
+            + track_plan([0.0, 0.0], [6.0, 0.0], 0.25).2)
+            * 0.035;
     near(volume, expected);
     Ok(())
 }

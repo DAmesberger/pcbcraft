@@ -286,8 +286,9 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
             LayoutCommand::Route {
                 request: RouteRequest {
                     // R1.1's land ends at 9.7 (pad at 9.2, 1 mm wide): a
-                    // 0.3 mm track starting here is 0.04 mm from it.
-                    start: [9.89, 10.0],
+                    // 0.3 mm track's round cap reaches 0.15 mm before its
+                    // start, so starting here it is 0.19 mm from the land.
+                    start: [10.04, 10.0],
                     ..request()
                 }
             }
@@ -295,11 +296,12 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
         .is_err()
     );
     assert_eq!(project, before);
+    // Exactly 0.2 mm: the cap is measured exactly, not flattened.
     apply(
         &mut project,
         LayoutCommand::Route {
             request: RouteRequest {
-                start: [9.9, 10.0],
+                start: [10.05, 10.0],
                 ..request()
             },
         },
@@ -639,9 +641,10 @@ fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
 
 #[test]
 fn connectivity_follows_the_pad_outline_into_corners() -> Result<()> {
-    // The track ends at R1 pad 2's corner region (11.25, 10.3–10.6): inside
-    // a square land, 0.041 mm outside a round one.
-    let route = shared_track([24.2, 10.45], [11.25, 10.45]);
+    // The track's round cap reaches R1 pad 2's corner region (tip at
+    // (11.25, 10.45)): inside a square land (to 11.3, 10.5), 0.1 mm outside
+    // a round one (r 0.5 about (10.8, 10); the cap's centre is 0.75 away).
+    let route = shared_track([24.2, 10.45], [11.4, 10.45]);
     let mut square_board = with_pad_shape(fixture()?, square());
     apply(&mut square_board, route.clone())?;
     assert!(airwires(&square_board).is_empty());
@@ -930,7 +933,9 @@ fn track_set_refusals_change_nothing() -> Result<()> {
         Some(Error::Conflict(_))
     ));
     assert_eq!(project, before);
-    apply(&mut project, track_set(id, Some(3.0), None))?;
+    // 2.6 mm fits: its round start cap stops 0.2 mm short of R1 pad 1's
+    // land at x = 9.7 (11.2 − 1.3).
+    apply(&mut project, track_set(id, Some(2.6), None))?;
     apply(
         &mut project,
         LayoutCommand::SetTrackLock { id, locked: true },
