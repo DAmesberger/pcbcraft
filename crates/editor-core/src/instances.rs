@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod part;
+pub mod pins;
 pub use part::{MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, requirements};
 
 pub const MAX_INSTANCES: usize = 4096;
@@ -611,6 +612,8 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         no_connect: BTreeSet::new(),
         functions: FunctionSelections::new(),
         part: None,
+        pin_config: Default::default(),
+        marking: Default::default(),
     });
     let occurrence = add_occurrence(project, id, request.unit, request.position)?;
     apply_properties(project, id, &request.properties)?;

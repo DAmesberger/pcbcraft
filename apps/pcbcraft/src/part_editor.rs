@@ -12,6 +12,7 @@ mod details_card;
 mod drawing;
 #[cfg(test)]
 mod drawing_tests;
+mod family_rows;
 mod footprint_canvas;
 mod footprint_card;
 mod footprint_dims;
@@ -27,16 +28,23 @@ mod footprint_tools;
 mod footprint_tools_canvas;
 #[cfg(test)]
 mod footprint_tools_tests;
+mod identity;
 mod mapping_card;
+mod marking_props;
 mod model_body;
 mod model_card;
+mod model_import;
 mod model_place;
 mod model_props;
 #[cfg(test)]
 mod model_tests;
 mod model_view;
 mod part_props;
+mod pins_tab;
+mod pins_table;
+mod rules_editor;
 mod snap;
+mod start;
 mod svg_import;
 pub use svg_import::IMPORT_SVG;
 mod symbol_canvas;
@@ -108,6 +116,9 @@ enum View {
     #[default]
     Details,
     Symbol,
+    /// C5: the pin table, peripherals and rule scripts; offered only when
+    /// `pins_tab::AVAILABLE`.
+    Pins,
     Footprint,
     Mapping,
     Model,
@@ -207,6 +218,17 @@ pub struct PartEditor {
     model: model_place::ModelTab,
     /// A running Import SVG….
     svg: svg_import::SvgImport,
+    /// A1: the identity bar's history and recents.
+    identity: identity::Identity,
+    /// C5: the Pins tab.
+    pins: pins_tab::PinsTab,
+    /// B4: the New-from-template gallery sheet.
+    gallery: crate::template_gallery::TemplateGallery,
+    /// D3: the model chooser sheet and import wizard.
+    model_chooser: crate::model_library::ModelChooser,
+    model_import: model_import::ModelImport,
+    /// D6: the 3D tab's Marking section.
+    marking: marking_props::MarkingProps,
 }
 
 impl Default for PartEditor {
@@ -255,6 +277,12 @@ impl Default for PartEditor {
             parts: Default::default(),
             model: Default::default(),
             svg: Default::default(),
+            identity: Default::default(),
+            pins: Default::default(),
+            gallery: Default::default(),
+            model_chooser: Default::default(),
+            model_import: Default::default(),
+            marking: Default::default(),
         }
     }
 }
@@ -425,11 +453,13 @@ impl PartEditor {
         let tabs = [
             ("details", "Details", View::Details),
             ("symbol", "Symbol", View::Symbol),
+            ("pins", "Pins", View::Pins),
             ("footprint", "Footprint", View::Footprint),
             ("mapping", "Mapping", View::Mapping),
             ("model", "3D", View::Model),
         ]
         .into_iter()
+        .filter(|(_, _, view)| *view != View::Pins || pins_tab::AVAILABLE)
         .map(|(id, label, view)| Tab {
             id,
             label,
@@ -692,6 +722,7 @@ impl PartEditor {
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
             "details" => View::Details,
+            "pins" if pins_tab::AVAILABLE => View::Pins,
             "footprint" => View::Footprint,
             "mapping" => View::Mapping,
             "model" => View::Model,
@@ -891,6 +922,7 @@ impl PartEditor {
         let tab = match self.view {
             View::Details => "details",
             View::Symbol => "symbol",
+            View::Pins => "pins",
             View::Footprint => "footprint",
             View::Mapping => "mapping",
             View::Model => "3d",
@@ -899,7 +931,7 @@ impl PartEditor {
             View::Symbol => !self.selection.is_empty() || self.terminal_card.is_some(),
             View::Footprint => self.selected_pad.is_some(),
             View::Mapping => self.selected.is_some(),
-            View::Details | View::Model => true,
+            View::Details | View::Model | View::Pins => true,
         };
         (tab, selected)
     }
@@ -1408,6 +1440,7 @@ impl PartEditor {
             }
             Inspected::Tab(View::Details) => self.details_card(ui, engine),
             Inspected::Tab(View::Symbol) => self.symbol_card(ui, engine),
+            Inspected::Tab(View::Pins) => self.pins_card(ui, engine),
             Inspected::Tab(View::Footprint) => self.footprint_card(ui),
             Inspected::Tab(View::Mapping) => {
                 self.mapping_card(ui);
@@ -1571,6 +1604,7 @@ impl PartEditor {
                 (objects, "on this component")
             }
             Inspected::Tab(View::Symbol) => (vec![definition(ids.symbol)], "on this symbol"),
+            Inspected::Tab(View::Pins) => (vec![definition(ids.component)], "on these pins"),
             Inspected::Tab(View::Footprint) => {
                 (vec![definition(ids.footprint)], "on this footprint")
             }
@@ -1641,6 +1675,16 @@ impl PartEditor {
         if self.update.is_open() {
             ui.disable();
         }
+        // Contract call sites (C0): each slice fills its own module.
+        let sheet = self.gallery.show(ui.ctx(), engine);
+        let chooser = self.model_chooser.show(ui.ctx(), engine);
+        if sheet.is_some() || chooser.is_some() {
+            return sheet.or(chooser);
+        }
+        self.identity_bar(ui, engine);
+        if self.draft.is_none() && self.start_page(ui, engine) {
+            return None;
+        }
         if self.view == View::Model {
             ui.label("Native Solidcraft package preview");
             return None;
@@ -1652,6 +1696,9 @@ impl PartEditor {
         if self.view == View::Mapping {
             self.mapping_canvas(ui, rect);
             return None;
+        }
+        if self.view == View::Pins {
+            return self.pins_canvas(ui, rect, engine);
         }
         if self.draft.is_none() {
             ui.put(rect, egui::Label::new("No component draft"));
@@ -1990,7 +2037,7 @@ impl crate::issues::Locate for PartEditor {
             View::Footprint => return self.locate_footprint(refs),
             View::Mapping => return self.locate_mapping(refs),
             View::Model => return self.locate_model(refs),
-            View::Details => return true,
+            View::Details | View::Pins => return true,
             View::Symbol => {
                 self.drawing.arm(drawing::Tool::Select);
                 self.gesture = None;

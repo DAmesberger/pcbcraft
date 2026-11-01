@@ -329,6 +329,12 @@ fn form(ui: &mut Ui, template: &mut FootprintTemplate) {
         "A length in mm; an expression over parameters and pkg_L, pkg_W, pkg_H, pkg_n";
     const COUNT: &str = "A whole count; an expression over pkg_n is allowed";
     match template {
+        // B2: the later families' rows arrive with their templates; the
+        // picker does not offer them before (`TemplateKind::available`).
+        FootprintTemplate::Tabbed(_)
+        | FootprintTemplate::Molded(_)
+        | FootprintTemplate::Grid(_)
+        | FootprintTemplate::Tht(_) => {}
         FootprintTemplate::Chip(t) => {
             expr_row(ui, "Land length", &mut t.pad_l, LEN);
             expr_row(ui, "Land width", &mut t.pad_w, LEN);
@@ -563,6 +569,7 @@ impl PartEditor {
             let mut kind = template.kind();
             let options: Vec<(TemplateKind, String)> = TemplateKind::ALL
                 .into_iter()
+                .filter(|k| k.available())
                 .map(|k| (k, k.label().to_owned()))
                 .collect();
             if kit::choice_row(ui, "Family", &mut kind, &options) {

@@ -117,7 +117,10 @@ impl SchematicEditor {
         }
         output = output.or(self.property_rows(ui, project, instance));
         output = output.or(self.part_section(ui, engine, instance));
-        output.or(self.function_section(ui, project, instance))
+        output = output.or(self.function_section(ui, project, instance));
+        // C6 and D6 (contract C0): Pin assignment… and the Marking row.
+        output = output.or(crate::pin_mux::entry(ui, engine, instance));
+        output.or(super::marking_row::row(ui, engine, instance))
     }
 
     /// The designator field: `instance.set_designator` on Enter or focus

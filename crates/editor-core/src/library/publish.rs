@@ -38,7 +38,10 @@ fn local_scope(body: &Definition) -> Option<(Vec<u32>, u32)> {
         Definition::Footprint(d) => Some((d.local_ids(), d.next_local)),
         Definition::Field(d) => Some((d.local_ids(), d.next_local)),
         Definition::Part(d) => Some((d.local_ids(), d.next_local)),
-        Definition::Binding(_) | Definition::QuantityKind(_) => None,
+        Definition::Binding(_)
+        | Definition::QuantityKind(_)
+        | Definition::Model(_)
+        | Definition::PackageRow(_) => None,
     }
 }
 
@@ -136,6 +139,8 @@ pub fn publish_findings(library: &Library, r: DefinitionRef) -> Vec<Finding> {
         Definition::Binding(d) => d.findings(r.id, library, &mut out),
         Definition::QuantityKind(d) => out.extend(fields::kind_findings(r.id, d)),
         Definition::Part(d) => d.findings(r.id, library, &mut out),
+        Definition::Model(d) => d.findings(r.id, &mut out),
+        Definition::PackageRow(d) => d.findings(r.id, &mut out),
         Definition::Field(d) => {
             let kind = d.value_type.kind().map(|k| (k, library.quantity_kind(k)));
             if let Some((k, None)) = kind {

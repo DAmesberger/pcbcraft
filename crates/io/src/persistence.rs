@@ -7,6 +7,8 @@ use std::{
     path::Path,
 };
 
+pub mod container;
+
 pub fn check_project_path(path: &Path) -> Result<()> {
     if path.extension().is_none_or(|e| e != format::EXTENSION) {
         return Err(Error::Invalid("use a .pcbcraft project filename".into()));

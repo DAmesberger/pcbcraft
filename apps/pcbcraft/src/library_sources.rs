@@ -1542,6 +1542,8 @@ fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
         K::QuantityKind => "Quantity kind",
         K::Field => "Field",
         K::Part => "Part",
+        K::Model => "3D model",
+        K::PackageRow => "Package template row",
     }
 }
 

@@ -31,6 +31,9 @@ pub enum Family {
     GullWing,
     NoLead,
     Header,
+    /// A later family (B2), edited through `family_rows`; not offered in
+    /// the family list.
+    Later,
 }
 
 const FAMILIES: [(Family, &str); 5] = [
@@ -48,6 +51,10 @@ pub fn family(form: &PackageForm) -> Family {
         PackageForm::GullWing(_) => Family::GullWing,
         PackageForm::NoLead(_) => Family::NoLead,
         PackageForm::Header(_) => Family::Header,
+        PackageForm::Tabbed(_)
+        | PackageForm::Molded(_)
+        | PackageForm::Grid(_)
+        | PackageForm::Tht(_) => Family::Later,
     }
 }
 
@@ -60,6 +67,7 @@ pub fn starting_form(family: Family, envelope: [f64; 3]) -> PackageForm {
         Family::GullWing => Preset::Soic8.form(),
         Family::NoLead => Preset::Qfn16.form(),
         Family::Header => Preset::Header2x5.form(),
+        Family::Later => PackageForm::Generic,
     }
 }
 
@@ -210,6 +218,10 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
             changed |= length(ui, "Pin above body", &mut h.pin_above);
             changed |= length(ui, "Pin below board", &mut h.pin_below);
         }
+        PackageForm::Tabbed(_)
+        | PackageForm::Molded(_)
+        | PackageForm::Grid(_)
+        | PackageForm::Tht(_) => changed |= super::family_rows::rows(ui, form),
     }
     changed
 }
@@ -264,7 +276,10 @@ fn model_hint(model: &PackageModel) -> (&'static str, &'static str) {
             "Generated; check the datasheet",
             "Generated from the typed outline values with physical materials; verify it against the datasheet",
         ),
-        PackageModel::Imported(_) => ("Imported model (not supported yet)", ""),
+        PackageModel::Library(_) => (
+            "Library model (not supported yet)",
+            "3D library models arrive with the model library",
+        ),
     }
 }
 

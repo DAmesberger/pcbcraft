@@ -38,6 +38,16 @@ pub struct ComponentDefinition {
     /// Selected fields, at most one revision per field lineage, with
     /// component defaults.
     pub fields: Vec<FieldSelection>,
+    /// C1: sandboxed Rhai pin rules, part of the revision (F2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pin_rules: Vec<functions::PinRule>,
+    /// D4: the generic marking of every instance (an exact Part's top mark
+    /// takes precedence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marking: Option<Box<super::marking::MarkingSpec>>,
+    /// C3/C5: import review state (F8); `None` when nothing is pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<Box<super::pinout::ImportReview>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -120,6 +130,8 @@ impl ComponentDefinition {
                 t.name.len() <= MAX_LABEL && t.functions().is_none_or(|f| f.within_bounds())
             })
             && functions::declarations_within_bounds(&self.resources, &self.constraints)
+            && functions::rules::within_bounds(&self.pin_rules)
+            && self.marking.as_ref().is_none_or(|m| m.within_bounds())
             && self
                 .fields
                 .iter()
@@ -139,6 +151,7 @@ impl ComponentDefinition {
             ids.extend(terminal.functions().into_iter().flat_map(|f| f.ids()));
         }
         ids.extend(self.resources.iter().flat_map(|r| r.ids()));
+        ids.extend(self.pin_rules.iter().map(|r| r.id.0));
         ids
     }
 
@@ -156,7 +169,7 @@ impl ComponentDefinition {
         if !(1..=MAX_TERMINALS).contains(&self.terminals.len()) {
             out.push(issue(
                 "component.terminal_count",
-                "A component needs 1–256 electrical terminals.".into(),
+                format!("A component needs 1–{MAX_TERMINALS} electrical terminals."),
                 vec![this],
             ));
         }
@@ -177,6 +190,10 @@ impl ComponentDefinition {
             &self.resources,
             &self.constraints,
         ));
+        out.extend(functions::rules::declaration_findings(id, &self.pin_rules));
+        if let Some(marking) = &self.marking {
+            out.extend(super::marking::spec_findings(id, marking));
+        }
         if self.representations.is_empty() {
             out.push(issue(
                 "component.no_representation",

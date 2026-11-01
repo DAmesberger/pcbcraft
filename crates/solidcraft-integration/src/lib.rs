@@ -6,6 +6,7 @@
 
 pub mod appearance;
 pub mod footprint;
+pub mod marking;
 pub mod material;
 pub mod models;
 pub mod native;

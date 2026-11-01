@@ -3,6 +3,10 @@
 //! domain rules. The engine reconciles nets and validates afterwards.
 mod instance;
 mod library;
+pub(crate) mod marking;
+pub(crate) mod model3d;
+pub(crate) mod pinout;
+pub(crate) mod templates;
 
 pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
@@ -92,6 +96,18 @@ pub enum Outcome {
     LeadsFitted {
         fit: crate::library::package_fit::LeadFit,
         applied: bool,
+    },
+    /// B1 `library.new_from_template`: the new drafts, component first.
+    DraftsCreated {
+        ids: Vec<DefinitionId>,
+    },
+    /// B1 `library.package_from_template`: what changed.
+    PackageReplaced {
+        plan: crate::library::templates::catalog::PackagePlan,
+    },
+    /// C3 `library.pinout_apply`.
+    PinoutApplied {
+        report: crate::library::pinout::PinoutApplied,
     },
 }
 

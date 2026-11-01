@@ -120,6 +120,8 @@ fn push(
         Definition::QuantityKind(d) => put!(quantity_kinds, d),
         Definition::Field(d) => put!(fields, d),
         Definition::Part(d) => put!(parts, *d),
+        Definition::Model(d) => put!(models, *d),
+        Definition::PackageRow(d) => put!(package_rows, *d),
     }
 }
 

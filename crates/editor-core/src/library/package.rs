@@ -175,11 +175,9 @@ impl PackageDefinition {
             ));
         }
         match &self.model {
-            PackageModel::Imported(_) => out.push(issue(
-                "package.model_unsupported",
-                "Imported package models are not supported yet.".into(),
-                vec![this],
-            )),
+            PackageModel::Library(model) => {
+                super::model3d::package_findings(self, model, id, out);
+            }
             PackageModel::Generated { materials, .. } => {
                 if self.form == PackageForm::Generic {
                     out.push(issue(
@@ -347,7 +345,7 @@ mod tests {
         };
         assert!(!p.within_bounds(), "too many role entries is a refusal");
         let mut p = chip(ChipKind::Resistor);
-        p.model = PackageModel::Imported(Default::default());
+        p.model = PackageModel::Library(Default::default());
         assert_eq!(codes(&p), ["package.model_unsupported"]);
         let mut p = chip(ChipKind::Resistor);
         p.placement.rotation_deg[0] = f64::INFINITY;

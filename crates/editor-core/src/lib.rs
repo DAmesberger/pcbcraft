@@ -9,6 +9,7 @@ pub mod completeness;
 pub mod diagnostics;
 pub mod erc;
 pub mod fields;
+pub mod firmware;
 pub mod format;
 pub mod functions;
 pub mod geometry;
@@ -20,6 +21,7 @@ pub mod library;
 pub mod materials;
 pub mod model;
 pub mod nets;
+pub mod pins;
 pub mod quantity;
 pub mod schematic;
 pub mod scripting;
@@ -138,6 +140,55 @@ pub enum Query {
     /// findings merged into one row and every finding kept.
     #[serde(rename = "project.issues")]
     Issues { scope: issues::IssueScope },
+    /// B1: template rows (project, sources and each family's custom entry)
+    /// for a one-line query with `pins:`, `pitch:`, `body:` and `pkg:`
+    /// filters. At most 500 hits; 50 when omitted.
+    #[serde(rename = "library.templates")]
+    Templates {
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// B1: what `library.package_from_template` would change.
+    #[serde(rename = "library.package_plan")]
+    PackagePlan {
+        request: Box<library::templates::catalog::PackageFromTemplate>,
+    },
+    /// D1: 3D library models (and generated families) for a query, ranked
+    /// by fit when `fits` names the package draft the chooser serves.
+    #[serde(rename = "library.models")]
+    Models {
+        query: String,
+        #[serde(default)]
+        fits: Option<DefinitionId>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// C3: the plan `library.pinout_apply` would apply: changes, findings
+    /// and review items.
+    #[serde(rename = "library.pinout_preview")]
+    PinoutPreview {
+        target: library::pinout::PinoutTarget,
+        document: Box<library::pinout::PinoutDocument>,
+    },
+    /// C2: ranked complete assignments that enable peripherals on one
+    /// instance, or the rules that block them. Never applies anything.
+    #[serde(rename = "functions.suggest")]
+    SuggestPins {
+        instance: Id,
+        request: functions::suggest::SuggestRequest,
+    },
+    /// C2: per terminal of one instance: pads, GPIO, active function,
+    /// peripheral and role, mux code, pin config, net and every other
+    /// endpoint on the net.
+    #[serde(rename = "project.pin_report")]
+    PinReport { instance: Id },
+    /// C4: the firmware pin-configuration IR of one instance.
+    #[serde(rename = "project.pin_config")]
+    PinConfig { instance: Id },
+    /// D4: one instance's resolved marking layout (none when unmarked).
+    #[serde(rename = "instance.marking")]
+    Marking { instance: Id },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -155,6 +206,14 @@ pub enum QueryResult {
     UpdatesAvailable(Vec<catalog::UpdateAvailable>),
     Promote(Box<library::import::PromotePlan>),
     Issues(issues::IssueReport),
+    Templates(catalog::templates::TemplateReport),
+    PackagePlan(library::templates::catalog::PackagePlan),
+    Models(catalog::models::ModelReport),
+    PinoutPlan(Box<library::pinout::PinoutPlan>),
+    SuggestPins(functions::suggest::SuggestReport),
+    PinReport(Box<pins::PinReport>),
+    PinConfig(Box<firmware::PinConfigReport>),
+    Marking(Option<library::marking::MarkingLayout>),
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -659,6 +718,48 @@ impl Engine {
                 &self.document.drafts,
                 &scope,
             )?)),
+            Query::Templates { query, limit } => {
+                Ok(QueryResult::Templates(catalog::templates::search(
+                    &self.document.project,
+                    &self.document.drafts,
+                    context,
+                    &query,
+                    limit
+                        .unwrap_or(catalog::DEFAULT_LIMIT)
+                        .min(catalog::templates::MAX_TEMPLATE_HITS),
+                )?))
+            }
+            Query::PackagePlan { request } => Ok(QueryResult::PackagePlan(
+                commands::templates::package_plan(&self.document, &request, evaluator)?,
+            )),
+            Query::Models { query, fits, limit } => {
+                Ok(QueryResult::Models(catalog::models::search(
+                    &self.document.project,
+                    &self.document.drafts,
+                    context,
+                    &query,
+                    fits,
+                    limit
+                        .unwrap_or(catalog::DEFAULT_LIMIT)
+                        .min(catalog::models::MAX_MODEL_HITS),
+                )?))
+            }
+            Query::PinoutPreview { target, document } => Ok(QueryResult::PinoutPlan(Box::new(
+                commands::pinout::preview(&self.document, &target, &document)?,
+            ))),
+            Query::SuggestPins { instance, request } => Ok(QueryResult::SuggestPins(
+                pins::suggest(&self.document.project, instance, &request)?,
+            )),
+            Query::PinReport { instance } => Ok(QueryResult::PinReport(Box::new(
+                pins::pin_report(&self.document.project, instance)?,
+            ))),
+            Query::PinConfig { instance } => Ok(QueryResult::PinConfig(Box::new(
+                firmware::pin_config(&self.document.project, instance)?,
+            ))),
+            Query::Marking { instance } => Ok(QueryResult::Marking(commands::marking::layout(
+                &self.document.project,
+                instance,
+            )?)),
         }
     }
 
@@ -738,5 +839,7 @@ pub fn schemas() -> serde_json::Value {
         "editor_file": schemars::schema_for!(format::EditorFile),
         "finding": schemars::schema_for!(Finding),
         "diagnostic": schemars::schema_for!(Diagnostic),
+        "pinout": library::pinout::schema(),
+        "pin_config": firmware::schema(),
     })
 }

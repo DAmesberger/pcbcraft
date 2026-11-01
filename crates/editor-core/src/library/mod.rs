@@ -12,12 +12,15 @@ pub mod footprint_edit;
 pub mod footprint_source;
 pub mod graphics;
 pub mod import;
+pub mod marking;
+pub mod model3d;
 pub mod names;
 mod package;
 pub mod package_fit;
 pub mod package_form;
 pub mod package_model;
 mod part;
+pub mod pinout;
 mod publish;
 pub mod samples;
 mod symbol;
@@ -42,13 +45,14 @@ pub use graphics::{
     PinDirection, PinText, PlacedText, Polarity, Rotation, Side, SymbolHit, Text, TextContent,
     TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint,
 };
+pub use model3d::{LibraryModel, ModelDefinition};
 pub use package::{PackageDefinition, PackageTerminal};
 pub use package_form::{
     ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm,
 };
 pub use package_model::{
-    Axis, BodyRole, GeneratedMaterials, ImportedModel, ModelPlacement, PackageEdit, PackageModel,
-    QuickAction, RoleMaterial, model_frame,
+    Axis, BodyRole, GeneratedMaterials, ModelPlacement, PackageEdit, PackageModel, QuickAction,
+    RoleMaterial, model_frame,
 };
 pub use part::{
     Basis, DistributorOffer, MAX_OFFERS, MAX_REFERENCES, MAX_URL, Origin, PartDefinition,
@@ -56,12 +60,13 @@ pub use part::{
 };
 pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
 pub use symbol::{SymbolDefinition, Unit};
+pub use templates::catalog::PackageRowDefinition;
 
 use crate::diagnostics::{Error, Result};
 use crate::fields::{FieldDefinition, QuantityKind};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, FieldRef, FootprintRef,
-    PackageRef, PartRef, QuantityKindRef, Revision, SymbolRef,
+    ModelRef, PackageRef, PackageRowRef, PartRef, QuantityKindRef, Revision, SymbolRef,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -73,10 +78,11 @@ pub const MAX_REVISIONS_PER_KIND: usize = 4096;
 pub use crate::ids::MAX_LABEL;
 /// Descriptions and provenance notes.
 pub const MAX_NOTE: usize = 4096;
-pub const MAX_TERMINALS: usize = 256;
+/// Terminals of one component (raised for MCUs, slice C0; a target).
+pub const MAX_TERMINALS: usize = 2048;
 pub const MAX_UNITS: usize = 64;
-pub const MAX_PACKAGE_TERMINALS: usize = 512;
-pub const MAX_PADS: usize = 1024;
+pub const MAX_PACKAGE_TERMINALS: usize = 2048;
+pub const MAX_PADS: usize = 4096;
 pub const MAX_FOOTPRINTS_PER_BINDING: usize = 16;
 /// Representations or implementations listed by one component revision.
 pub const MAX_COMPONENT_LISTS: usize = 64;
@@ -105,6 +111,10 @@ pub enum Definition {
     Field(FieldDefinition),
     /// Boxed: a Part body is several times larger than the others.
     Part(Box<PartDefinition>),
+    /// D1: a 3D library model.
+    Model(Box<ModelDefinition>),
+    /// B1: a package-family dimension-table row.
+    PackageRow(Box<PackageRowDefinition>),
 }
 
 impl Definition {
@@ -118,6 +128,8 @@ impl Definition {
             Self::QuantityKind(_) => DefinitionKind::QuantityKind,
             Self::Field(_) => DefinitionKind::Field,
             Self::Part(_) => DefinitionKind::Part,
+            Self::Model(_) => DefinitionKind::Model,
+            Self::PackageRow(_) => DefinitionKind::PackageRow,
         }
     }
     /// An empty body of `kind`, for a new lineage authored step by step.
@@ -131,6 +143,8 @@ impl Definition {
             DefinitionKind::QuantityKind => Self::QuantityKind(Default::default()),
             DefinitionKind::Field => Self::Field(Default::default()),
             DefinitionKind::Part => Self::Part(Default::default()),
+            DefinitionKind::Model => Self::Model(Default::default()),
+            DefinitionKind::PackageRow => Self::PackageRow(Default::default()),
         }
     }
 }
@@ -161,6 +175,12 @@ pub struct Library {
     /// Manufacturer parts (S2), published after the components they pin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<Published<PartDefinition>>,
+    /// D1: 3D library models, published before the packages that use them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<Published<ModelDefinition>>,
+    /// B1: package-family dimension-table rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub package_rows: Vec<Published<PackageRowDefinition>>,
     /// Where imported or promoted revisions came from or went to (S3, D1).
     /// Outside revision bodies: recording an origin is not a new revision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -220,6 +240,12 @@ impl Library {
     pub fn part(&self, r: PartRef) -> Option<&Published<PartDefinition>> {
         find(&self.parts, r.id, r.revision)
     }
+    pub fn model(&self, r: ModelRef) -> Option<&Published<ModelDefinition>> {
+        find(&self.models, r.id, r.revision)
+    }
+    pub fn package_row(&self, r: PackageRowRef) -> Option<&Published<PackageRowDefinition>> {
+        find(&self.package_rows, r.id, r.revision)
+    }
     /// The latest published revision of each Part lineage, oldest lineage
     /// first.
     pub fn latest_parts(&self) -> Vec<&Published<PartDefinition>> {
@@ -274,6 +300,14 @@ impl Library {
                 DefinitionKind::Part,
                 latest_of(&self.parts, id).map(|p| p.revision),
             ),
+            (
+                DefinitionKind::Model,
+                latest_of(&self.models, id).map(|p| p.revision),
+            ),
+            (
+                DefinitionKind::PackageRow,
+                latest_of(&self.package_rows, id).map(|p| p.revision),
+            ),
         ]
         .into_iter()
         .find_map(|(kind, revision)| revision.map(|r| (kind, r)))
@@ -323,6 +357,12 @@ impl Library {
             DefinitionKind::Part => take(find(&self.parts, r.id, r.revision), |d| {
                 Definition::Part(Box::new(d))
             }),
+            DefinitionKind::Model => take(find(&self.models, r.id, r.revision), |d| {
+                Definition::Model(Box::new(d))
+            }),
+            DefinitionKind::PackageRow => take(find(&self.package_rows, r.id, r.revision), |d| {
+                Definition::PackageRow(Box::new(d))
+            }),
         }
     }
 
@@ -346,6 +386,8 @@ impl Library {
         all.extend(refs(&self.quantity_kinds, DefinitionKind::QuantityKind));
         all.extend(refs(&self.fields, DefinitionKind::Field));
         all.extend(refs(&self.parts, DefinitionKind::Part));
+        all.extend(refs(&self.models, DefinitionKind::Model));
+        all.extend(refs(&self.package_rows, DefinitionKind::PackageRow));
         all
     }
 
@@ -406,6 +448,18 @@ impl Library {
                 meta,
                 definition: *definition,
             }),
+            Definition::Model(definition) => self.models.push(Published {
+                id,
+                revision,
+                meta,
+                definition: *definition,
+            }),
+            Definition::PackageRow(definition) => self.package_rows.push(Published {
+                id,
+                revision,
+                meta,
+                definition: *definition,
+            }),
         }
     }
 
@@ -419,6 +473,8 @@ impl Library {
             DefinitionKind::QuantityKind => self.quantity_kinds.len(),
             DefinitionKind::Field => self.fields.len(),
             DefinitionKind::Part => self.parts.len(),
+            DefinitionKind::Model => self.models.len(),
+            DefinitionKind::PackageRow => self.package_rows.len(),
         }
     }
 }
@@ -447,6 +503,8 @@ pub fn check_bounds(meta: &DefinitionMeta, definition: &Definition) -> Result<()
         Definition::QuantityKind(d) => d.within_bounds(),
         Definition::Field(d) => d.within_bounds(),
         Definition::Part(d) => d.within_bounds(),
+        Definition::Model(d) => d.within_bounds(),
+        Definition::PackageRow(d) => d.within_bounds(),
     };
     if !within {
         return Err(Error::Limit(
@@ -462,6 +520,8 @@ pub fn check_bounds(meta: &DefinitionMeta, definition: &Definition) -> Result<()
         Definition::Symbol(d) => d.geometry_finite(),
         Definition::Package(d) => d.geometry_finite(),
         Definition::Footprint(d) => d.geometry_finite(),
+        Definition::Model(d) => d.values_finite(),
+        Definition::PackageRow(d) => d.values_finite(),
     };
     if !finite {
         return Err(Error::Invalid(
@@ -476,12 +536,15 @@ pub(crate) fn publish_rank(kind: DefinitionKind) -> u8 {
     match kind {
         DefinitionKind::QuantityKind => 0,
         DefinitionKind::Field => 1,
-        DefinitionKind::Package => 2,
-        DefinitionKind::Footprint => 3,
-        DefinitionKind::Binding => 4,
-        DefinitionKind::Symbol => 5,
-        DefinitionKind::Component => 6,
-        DefinitionKind::Part => 7,
+        // D1: models rank before the packages that use them; B1: rows name
+        // no lineage.
+        DefinitionKind::PackageRow | DefinitionKind::Model => 2,
+        DefinitionKind::Package => 3,
+        DefinitionKind::Footprint => 4,
+        DefinitionKind::Binding => 5,
+        DefinitionKind::Symbol => 6,
+        DefinitionKind::Component => 7,
+        DefinitionKind::Part => 8,
     }
 }
 
@@ -500,6 +563,8 @@ pub fn validate(library: &Library) -> Result<()> {
         DefinitionKind::QuantityKind,
         DefinitionKind::Field,
         DefinitionKind::Part,
+        DefinitionKind::Model,
+        DefinitionKind::PackageRow,
     ] {
         if library.count(kind) > MAX_REVISIONS_PER_KIND {
             return Err(Error::Invalid(format!(

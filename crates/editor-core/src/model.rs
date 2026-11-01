@@ -52,6 +52,16 @@ pub struct ComponentInstance {
     /// `instances`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<PartRef>,
+    /// C2: per-terminal pin configuration (pull, speed, initial level,
+    /// firmware name). Never changes ERC.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub pin_config: crate::functions::PinConfigs,
+    /// D4: the instance's marking choices.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::library::marking::InstanceMarking::is_default"
+    )]
+    pub marking: crate::library::marking::InstanceMarking,
 }
 
 /// One unit of one instance drawn on the sheet. Each (instance, unit) has at

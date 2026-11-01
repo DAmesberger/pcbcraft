@@ -28,8 +28,9 @@ pub enum PackageModel {
         family_rev: u16,
         materials: GeneratedMaterials,
     },
-    /// Placeholder for M4 (STEP/glTF assets): always refused for now.
-    Imported(ImportedModel),
+    /// A revisioned 3D library model (slice D1) with an explicit lead map.
+    /// Refused with `package.model_unsupported` until D1.
+    Library(super::model3d::LibraryModel),
 }
 
 impl QuickAction {
@@ -56,7 +57,7 @@ impl PackageModel {
                     .map_or_else(|_| "unknown material".into(), |m| m.name)
             ),
             Self::Generated { family_rev, .. } => format!("generated (builder rev {family_rev})"),
-            Self::Imported(_) => "imported".into(),
+            Self::Library(library) => format!("library model {}", library.model),
         }
     }
 }
@@ -149,12 +150,6 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
         (_, BodyRole::Body | BodyRole::Other) => MaterialId::EpoxyMould,
     }
 }
-
-/// M4 placeholder for an imported asset (STEP, glTF, native). Holds nothing
-/// yet; any package using it is refused with `package.model_unsupported`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ImportedModel {}
 
 /// The model's rigid placement in the package datum frame: translation in
 /// mm, then rotation in degrees, intrinsic X → Y → Z. Quarter turns are

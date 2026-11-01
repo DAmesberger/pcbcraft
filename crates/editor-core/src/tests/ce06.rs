@@ -61,6 +61,8 @@ fn function(
             resource: ResourceId(resource),
             role: RoleId(role),
         }),
+        mux: None,
+        source: None,
     }
 }
 
@@ -89,6 +91,8 @@ fn electrical(functions: Vec<Function>, default: Option<u32>) -> TerminalClass {
     TerminalClass::Electrical(TerminalFunctions {
         functions,
         design_default: default.map(FunctionId),
+        gpio: None,
+        options: Vec::new(),
     })
 }
 
@@ -98,6 +102,7 @@ fn role(id: u32, label: &str, required_when_used: bool) -> Role {
         label: label.into(),
         capacity: 1,
         required_when_used,
+        signal: None,
     }
 }
 
@@ -244,16 +249,19 @@ fn mcu_component(lineages: &Mcu) -> ComponentDefinition {
             Resource {
                 id: ResourceId(UART0),
                 label: "uart0".into(),
+                kind: None,
                 roles: vec![role(TX, "tx", true), role(RX, "rx", false)],
             },
             Resource {
                 id: ResourceId(ADC0),
                 label: "adc0".into(),
+                kind: None,
                 roles: vec![role(CH0, "ch0", false)],
             },
             Resource {
                 id: ResourceId(BUS0),
                 label: "bus0".into(),
+                kind: None,
                 roles: vec![role(SDA, "sda", false)],
             },
         ],
@@ -267,6 +275,9 @@ fn mcu_component(lineages: &Mcu) -> ComponentDefinition {
             BindingRef::new(lineages.b2, Revision::FIRST),
         ],
         fields: vec![],
+        pin_rules: Vec::new(),
+        marking: None,
+        review: None,
     }
 }
 
@@ -887,6 +898,7 @@ fn small(engine: &mut Engine) -> Result<Fixture> {
         c.resources = vec![Resource {
             id: ResourceId(20),
             label: "r".into(),
+            kind: None,
             roles: vec![role(21, "role", false)],
         }];
     })?;

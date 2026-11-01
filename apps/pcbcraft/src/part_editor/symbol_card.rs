@@ -301,6 +301,8 @@ pub(super) fn add_function(
         signal: SignalKind::Unspecified,
         drive: Drive::None,
         resource_role: None,
+        mux: None,
+        source: None,
     });
     Ok(function)
 }

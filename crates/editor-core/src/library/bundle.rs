@@ -11,7 +11,7 @@
 //! revisions and records an [`OriginRecord`] for every copy.
 use super::graphics::{FootprintGraphic, Item, TextContent};
 use super::package_form::PackageForm;
-use super::package_model::{GeneratedMaterials, ImportedModel, ModelPlacement, PackageModel};
+use super::package_model::{GeneratedMaterials, ModelPlacement, PackageModel};
 use super::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, FootprintDefinition,
     Library, PackageDefinition, PartDefinition, SymbolDefinition, Unit,
@@ -232,7 +232,13 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 representations,
                 implementations,
                 fields,
+                pin_rules: _,
+                marking,
+                review: _,
             } = component;
+            if let Some(marking) = marking {
+                marking_refs(marking, map)?;
+            }
             for r in representations {
                 let (id, revision) = exact(map, DefinitionKind::Symbol, r.id, r.revision)?;
                 *r = SymbolRef::new(id, revision);
@@ -290,7 +296,11 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 | PackageForm::Chip(_)
                 | PackageForm::GullWing(_)
                 | PackageForm::NoLead(_)
-                | PackageForm::Header(_) => {}
+                | PackageForm::Header(_)
+                | PackageForm::Tabbed(_)
+                | PackageForm::Molded(_)
+                | PackageForm::Grid(_)
+                | PackageForm::Tht(_) => {}
             }
             match model {
                 PackageModel::Envelope { material: _ } => {}
@@ -298,7 +308,18 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                     family_rev: _,
                     materials: GeneratedMaterials { roles: _ },
                 } => {}
-                PackageModel::Imported(ImportedModel {}) => {}
+                // D1: a library model names a Model lineage. Packages using
+                // one cannot publish until D1, which also adds it to
+                // `references` and `closure`.
+                PackageModel::Library(library) => {
+                    let (id, revision) = exact(
+                        map,
+                        DefinitionKind::Model,
+                        library.model.id,
+                        library.model.revision,
+                    )?;
+                    library.model = crate::ids::ModelRef::new(id, revision);
+                }
             }
             let ModelPlacement {
                 translation: _,
@@ -387,7 +408,11 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 references: _,
                 offers: _,
                 provenance: _,
+                top_mark,
             } = part.as_mut();
+            if let Some(marking) = top_mark {
+                marking_refs(marking, map)?;
+            }
             let (id, revision) = exact(
                 map,
                 DefinitionKind::Component,
@@ -406,6 +431,31 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
                 *field = FieldRef::new(id, revision);
             }
+        }
+        // D1 / B1: models and rows name no other lineage (model assets are
+        // packed by hash).
+        Definition::Model(_) | Definition::PackageRow(_) => {}
+    }
+    Ok(())
+}
+
+/// The field references of a marking spec (D4). Artwork names an asset by
+/// hash, not a lineage.
+fn marking_refs(spec: &mut super::marking::MarkingSpec, map: &mut dyn RefMap) -> Result<()> {
+    use super::marking::MarkingItem;
+    for item in &mut spec.items {
+        let fields: Vec<&mut FieldRef> = match item {
+            MarkingItem::Code { field, .. } => vec![field],
+            MarkingItem::Bands { value, tolerance } => {
+                std::iter::once(value).chain(tolerance.as_mut()).collect()
+            }
+            MarkingItem::Text { .. }
+            | MarkingItem::Artwork { .. }
+            | MarkingItem::Polarity { .. } => Vec::new(),
+        };
+        for field in fields {
+            let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
+            *field = FieldRef::new(id, revision);
         }
     }
     Ok(())

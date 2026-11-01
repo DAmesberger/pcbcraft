@@ -118,6 +118,9 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
             id: refs.component,
             meta: meta(name),
             definition: Definition::Component(ComponentDefinition {
+                pin_rules: Vec::new(),
+                marking: None,
+                review: None,
                 // Terminals 1–2, then their fixed passive functions 3–4.
                 next_local: 5,
                 designator_prefix: kind.prefix.into(),
@@ -481,7 +484,11 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
                 let d = h.pin_side * std::f64::consts::SQRT_2 + 0.8;
                 [d, d]
             }
-            PackageForm::Generic => [1.0, 1.0],
+            PackageForm::Generic
+            | PackageForm::Tabbed(_)
+            | PackageForm::Molded(_)
+            | PackageForm::Grid(_)
+            | PackageForm::Tht(_) => [1.0, 1.0],
         }
     };
     let mut pads = Vec::with_capacity(terminals.len());
@@ -587,6 +594,9 @@ pub fn packaged_form(
             id: refs.component,
             meta: meta(name),
             definition: Definition::Component(ComponentDefinition {
+                pin_rules: Vec::new(),
+                marking: None,
+                review: None,
                 next_local: 2 * count + 1,
                 designator_prefix: prefix.into(),
                 terminals: terminals

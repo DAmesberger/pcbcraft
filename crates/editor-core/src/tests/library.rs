@@ -450,7 +450,8 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     });
     assert_eq!(nan.err().map(|e| e.code()), Some("invalid_input"));
     let oversize = with(&mut engine, f.component, component_body, |c| {
-        c.terminals = (1..=257)
+        let over = u32::try_from(crate::library::MAX_TERMINALS + 1).unwrap_or(u32::MAX);
+        c.terminals = (1..=over)
             .map(|i| crate::library::Terminal {
                 id: TerminalId(i),
                 name: i.to_string(),

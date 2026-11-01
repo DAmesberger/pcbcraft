@@ -32,6 +32,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod instance_card;
+mod marking_row;
 mod net_card;
 mod sheet_card;
 
@@ -2260,6 +2261,8 @@ mod tests {
                     signal: SignalKind::Unspecified,
                     drive: Drive::None,
                     resource_role: None,
+                    mux: None,
+                    source: None,
                 },
                 Function {
                     id: FunctionId(first + 1),
@@ -2268,9 +2271,13 @@ mod tests {
                     signal: SignalKind::Analog,
                     drive: Drive::None,
                     resource_role: None,
+                    mux: None,
+                    source: None,
                 },
             ],
             design_default: Some(FunctionId(first)),
+            gpio: None,
+            options: Vec::new(),
         });
         engine.apply(
             engine.revision(),

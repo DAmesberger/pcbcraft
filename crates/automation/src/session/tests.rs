@@ -175,7 +175,7 @@ fn native_export_writes_a_new_solidcraft_file_only() -> TestResult {
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();
-    assert_eq!(catalog.len(), 23);
+    assert_eq!(catalog.len(), 28);
     let schema = serde_json::to_string(&schemas())?;
     for command in &catalog {
         assert!(

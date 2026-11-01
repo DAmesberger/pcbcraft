@@ -109,7 +109,10 @@ impl<'a> Names<'a> {
                 .map_or_else(|| "a graphic".into(), |n| format!("unit {n}")),
             Definition::Part(_) => "a reference or offer".into(),
             Definition::Field(_) => "a choice".into(),
-            Definition::Binding(_) | Definition::QuantityKind(_) => "an object".into(),
+            Definition::Model(_) => "a body or lead".into(),
+            Definition::Binding(_) | Definition::QuantityKind(_) | Definition::PackageRow(_) => {
+                "an object".into()
+            }
         }
     }
 

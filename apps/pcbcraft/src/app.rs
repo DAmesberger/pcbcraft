@@ -5,6 +5,7 @@
 //! path the CLI and MCP use. Long work (3D builds, file I/O, recovery) runs on
 //! background threads and reports back with the input it was made from.
 mod browser;
+mod browser_catalog;
 mod chrome;
 
 use crate::file_ui::{self, Effect, FileUi};

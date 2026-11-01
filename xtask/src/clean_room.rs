@@ -28,6 +28,15 @@ const EXTENSIONS: &[&str] = &[
     "dcm",
 ];
 
+/// 3D model formats (D1/D2, FD11): vendor and EDA models carry their own
+/// licences, so a model file is refused unless it is an original fixture
+/// listed in [`ORIGINAL_MODELS`].
+const MODEL_EXTENSIONS: &[&str] = &["step", "stp", "glb", "gltf", "wrl"];
+
+/// Repository paths of original model fixtures (authored for Pcbcraft),
+/// each reviewed when added.
+const ORIGINAL_MODELS: &[&str] = &[];
+
 /// Leading markers of EDA library and design files. Spelled in two parts so this source
 /// file does not match itself.
 const MARKERS: &[(&str, &str)] = &[
@@ -74,6 +83,16 @@ pub fn check() -> Result<()> {
             .find(|e| lower.ends_with(&format!(".{e}")))
         {
             violations.push(format!("{path}: EDA library/design file type `.{ext}`"));
+            continue;
+        }
+        if let Some(ext) = MODEL_EXTENSIONS
+            .iter()
+            .find(|e| lower.ends_with(&format!(".{e}")))
+            && !ORIGINAL_MODELS.contains(&path.as_str())
+        {
+            violations.push(format!(
+                "{path}: 3D model file `.{ext}` that is not a listed original fixture (xtask/src/clean_room.rs ORIGINAL_MODELS)"
+            ));
             continue;
         }
         let full = root.join(&path);

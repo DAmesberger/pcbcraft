@@ -100,6 +100,8 @@ fn push(library: &mut Library, edit: DraftEdit) {
         Definition::QuantityKind(d) => library.quantity_kinds.push(first(id, meta, d)),
         Definition::Field(d) => library.fields.push(first(id, meta, d)),
         Definition::Part(d) => library.parts.push(first(id, meta, *d)),
+        Definition::Model(d) => library.models.push(first(id, meta, *d)),
+        Definition::PackageRow(d) => library.package_rows.push(first(id, meta, *d)),
     }
 }
 
@@ -550,6 +552,7 @@ fn exact_part(
             packaging: Some("cut tape".into()),
         }],
         provenance: Provenance::default(),
+        top_mark: None,
     }
 }
 

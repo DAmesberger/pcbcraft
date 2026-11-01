@@ -8,8 +8,11 @@
 //! loaded ([`SourceCatalog`], tagged by [`Source`]). Nothing
 //! here branches on a component category, field name or unit: filters come
 //! from the field definitions and quantity kinds the data carries.
+pub mod models;
+pub mod preview;
 mod query;
 pub mod synthetic;
+pub mod templates;
 
 pub use query::{
     Badge, CatalogQuery, FieldTest, MAX_QUERY, MAX_TERMS, Op, QueryError, RESERVED, Term, Test,

@@ -343,6 +343,9 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
             vec![]
         },
         fields: vec![],
+        pin_rules: Vec::new(),
+        marking: None,
+        review: None,
     };
     let symbol = SymbolDefinition {
         component: f.component,
@@ -627,7 +630,9 @@ pub fn retarget(engine: &mut Engine, f: &Fixture) -> Result<()> {
             | Definition::Package(_)
             | Definition::QuantityKind(_)
             | Definition::Field(_)
-            | Definition::Part(_) => {}
+            | Definition::Part(_)
+            | Definition::Model(_)
+            | Definition::PackageRow(_) => {}
         }
         edits.push(DraftEdit {
             id,

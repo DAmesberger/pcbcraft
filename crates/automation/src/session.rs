@@ -243,6 +243,21 @@ pub enum Request {
     /// `library.edit_graphics`: one atomic undo step.
     #[serde(rename = "library.import_svg")]
     ImportSvg(ImportSvgParams),
+    /// A2: inspect a folder item without importing it.
+    #[serde(rename = "library.open_preview")]
+    OpenPreview(BundleParams),
+    /// C3: the typed pinout document schema.
+    #[serde(rename = "library.pinout_schema")]
+    PinoutSchema(NoParams),
+    /// C4: the emitted firmware pin-configuration text.
+    #[serde(rename = "firmware.export_preview")]
+    FirmwarePreview(firmware::FirmwareParams),
+    /// C4: write the emitted text to a new file.
+    #[serde(rename = "firmware.export")]
+    FirmwareExport(firmware::FirmwareParams),
+    /// D2: inspect a STEP, GLB or .solidcraft model file.
+    #[serde(rename = "library.inspect_model_file")]
+    InspectModelFile(models::ModelFileParams),
 }
 
 impl Request {
@@ -339,6 +354,26 @@ impl Request {
             info::<ImportSvgParams>(
                 "library.import_svg",
                 "Read a .svg file (at most 1 MiB) and add its drawing to a symbol unit or a footprint's silkscreen or assembly layer as editable graphics, centred at `at` and scaled from the SVG's declared millimetre size: circles, circular arcs and axis-aligned rectangles stay exact, tangent arcs become corner radii, Béziers and ellipses flatten within tolerance_mm, filled closed shapes become solid fills and strokes keep their width. Filled regions with holes are imported as outlines; text, images and use references are skipped and listed in import.notes. Applied as one library.edit_graphics step at expected_revision: atomic and one undo step; the outcome lists the new graphic IDs.",
+            ),
+            info::<BundleParams>(
+                "library.open_preview",
+                "Inspect one revision of a folder lineage (default the newest) without importing it: the same report library.inspect gives a project item. Not a document change.",
+            ),
+            info::<NoParams>(
+                "library.pinout_schema",
+                "The JSON schema of the typed pinout document (format 1) an agent fills from a datasheet: device, package variants, peripherals with roles, pins with explicit numbers per variant, GPIO, options, functions with explicit peripheral, role and mux code, source page, uncertain flags, and Rhai pin-rule scripts. Preview with project.query library.pinout_preview, show the review items to the user, then apply with project.apply library.pinout_apply; never publish without the user seeing the unreviewed count.",
+            ),
+            info::<firmware::FirmwareParams>(
+                "firmware.export_preview",
+                "Emit one instance's firmware pin configuration (project.pin_config) as JSON, a C header, a Zephyr overlay skeleton, Rust consts or a user template. Pin configuration only; a starting point, never a claim to configure clocks or registers.",
+            ),
+            info::<firmware::FirmwareParams>(
+                "firmware.export",
+                "Write firmware.export_preview's text atomically to a new file at path. Not a document change.",
+            ),
+            info::<models::ModelFileParams>(
+                "library.inspect_model_file",
+                "Read a STEP AP214/242, GLB or .solidcraft model file and report its bodies (keys, source colours, glTF materials), bounds and whether it has textures, for the import wizard's explicit mapping. Not a document change.",
             ),
         ]
     }
@@ -521,6 +556,11 @@ impl Session {
             }
             Request::Publish(params) => return self.publish(params),
             Request::ImportSvg(params) => return self.import_svg(params),
+            Request::OpenPreview(params) => return self.open_preview(params),
+            Request::PinoutSchema(_) => return self.pinout_schema(),
+            Request::FirmwarePreview(params) => return self.firmware(params, false),
+            Request::FirmwareExport(params) => return self.firmware(params, true),
+            Request::InspectModelFile(params) => return self.inspect_model_file(params),
         }
         Ok(self.snapshot())
     }
@@ -735,17 +775,29 @@ pub fn schemas() -> Value {
     })
 }
 
+mod firmware;
+mod models;
+mod pinout;
+mod preview;
 pub mod sources;
 
+#[cfg(test)]
+mod firmware_tests;
 #[cfg(test)]
 mod folder_tests;
 #[cfg(test)]
 mod issues_tests;
 #[cfg(test)]
+mod models_tests;
+#[cfg(test)]
 mod package_tests;
 #[cfg(test)]
 mod parts_tests;
 #[cfg(test)]
+mod pinout_tests;
+#[cfg(test)]
 mod svg_tests;
+#[cfg(test)]
+mod templates_tests;
 #[cfg(test)]
 mod tests;

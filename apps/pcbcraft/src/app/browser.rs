@@ -246,6 +246,11 @@ pub fn show(
 ) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
+    // A2 (contract C0): the Component workspace's catalog replaces the
+    // tree once it draws.
+    if super::browser_catalog::Catalog::default().show(ui, engine) {
+        return pick;
+    }
     ui.spacing_mut().item_spacing.y = 0.0;
     if !folder(ui, "project", 0, &project.name, None, false, true) {
         return pick;

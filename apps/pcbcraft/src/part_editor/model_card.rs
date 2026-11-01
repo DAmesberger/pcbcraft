@@ -10,7 +10,10 @@ impl PartEditor {
     pub(super) fn model_card(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let operation = self.body_inspector(ui);
         let placement = self.placement_inspector(ui, engine);
-        operation.or(placement)
+        // D3 and D6 (contract C0): the import wizard and the Marking section.
+        let wizard = self.import_wizard(ui, engine);
+        let marking = self.marking_section(ui, engine);
+        operation.or(placement).or(wizard).or(marking)
     }
 
     /// `Locate` target of the 3D tab: a reference to the package draft

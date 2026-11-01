@@ -17,6 +17,20 @@ pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub const FILE_VERSION: u32 = 1;
 pub const EXTENSION: &str = "pcbcraft";
 
+/// D0 (founder decision F5; contract C0): the ZIP container `.pcbcraft`
+/// becomes, holding [`CONTAINER_DOCUMENT`] and raw assets under
+/// [`CONTAINER_ASSET_PREFIX`]`<sha256>`. Targets until D0 measures them;
+/// unused until D0 switches the format (one pre-release version, no
+/// migration).
+pub const CONTAINER_DOCUMENT: &str = "project.json";
+pub const CONTAINER_ASSET_PREFIX: &str = "assets/sha256/";
+/// Bytes of one container asset (target).
+pub const CONTAINER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+/// Bytes of one container, uncompressed (target).
+pub const CONTAINER_MAX_BYTES: u64 = 512 * 1024 * 1024;
+/// Entries one container holds.
+pub const CONTAINER_MAX_ENTRIES: usize = 4096;
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EditorFile {

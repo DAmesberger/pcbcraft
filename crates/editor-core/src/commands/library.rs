@@ -10,8 +10,11 @@ use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
 use crate::library::import::{self, OtherRevision, PlaceSource};
+use crate::library::model3d::ImportModel;
 use crate::library::package_fit::{self, FitRotation, LeadPair};
 use crate::library::package_model::PackageEdit;
+use crate::library::pinout::PinoutApply;
+use crate::library::templates::catalog::{NewFromTemplate, PackageFromTemplate, SavePackageRow};
 use crate::library::templates::footprint_family::{self, FootprintTemplate};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
@@ -161,6 +164,29 @@ pub enum LibraryCommand {
         rotation: FitRotation,
         confirm: bool,
     },
+    /// B1: create component, symbol, package, footprint and binding drafts
+    /// from a template row (or custom family values) and a skeleton, as
+    /// one undo step. Needs the host's footprint evaluator.
+    #[serde(rename = "library.new_from_template")]
+    NewFromTemplate(Box<NewFromTemplate>),
+    /// B1: replace the package, footprint and generated model of a working
+    /// set from a template row, as one undo step; a non-empty footprint is
+    /// refused unless `replace`. Terminal mappings change only through
+    /// `library.assign_terminals`. Needs the host's footprint evaluator.
+    #[serde(rename = "library.package_from_template")]
+    PackageFromTemplate(Box<PackageFromTemplate>),
+    /// B1: save a package's form (or explicit values) as a new package-row
+    /// draft.
+    #[serde(rename = "library.save_package_row")]
+    SavePackageRow(Box<SavePackageRow>),
+    /// C3: apply a pinout document as previewed by `library.pinout_preview`,
+    /// atomically, as one undo step; refused when the target changed since
+    /// `base`. Imported rows stay unreviewed.
+    #[serde(rename = "library.pinout_apply")]
+    PinoutApply(Box<PinoutApply>),
+    /// D1: pack a model's asset bytes and create a Model draft.
+    #[serde(rename = "library.import_model")]
+    ImportModel(Box<ImportModel>),
 }
 
 fn package_draft(
@@ -686,5 +712,16 @@ pub(crate) fn apply_library(
                 applied: confirm,
             })
         }
+        LibraryCommand::NewFromTemplate(request) => {
+            super::templates::new_from_template(document, *request, evaluator)
+        }
+        LibraryCommand::PackageFromTemplate(request) => {
+            super::templates::package_from_template(document, *request, evaluator)
+        }
+        LibraryCommand::SavePackageRow(request) => {
+            super::templates::save_package_row(document, *request)
+        }
+        LibraryCommand::PinoutApply(request) => super::pinout::apply(document, *request),
+        LibraryCommand::ImportModel(request) => super::model3d::import_model(document, *request),
     }
 }
