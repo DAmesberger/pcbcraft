@@ -1,7 +1,10 @@
-//! The Footprint tab's two command dialogs, docked in the subject slot
-//! (docs/sidebar-ia.md, "Dialogs and reviews"):
+//! The Footprint tab's From template and its two command dialogs, docked
+//! in the subject slot (docs/sidebar-ia.md, "Dialogs and reviews"):
 //!
-//! - **New footprint from template** (slice F5): pick a family, review its
+//! - **From template** (the ribbon tool, slice B4) opens the searchable
+//!   New-from-template gallery (`template_gallery`) in package scope: one
+//!   `library.package_from_template` for package, footprint and model.
+//! - **Footprint only from template** (slice F5): pick a family, review its
 //!   prefilled form and send one `library.footprint_from_template`, so the
 //!   result is an ordinary editable sketch with named parameters. The form
 //!   edits the template's expressions as text; the core and the evaluator
@@ -25,6 +28,7 @@ use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::library::footprint_edit::{self, AssignRule, TerminalChange};
 use pcbcraft_core::library::footprint_source::{Expr, NumberingScheme};
+use pcbcraft_core::library::templates::catalog::FamilyKind;
 use pcbcraft_core::library::templates::footprint_family::{
     self, ExposedPad, ExposedVias, FootprintTemplate, MAX_PASTE_GRID, TemplateKind,
 };
@@ -470,10 +474,42 @@ fn form(ui: &mut Ui, template: &mut FootprintTemplate) {
 }
 
 impl PartEditor {
-    /// The ribbon's "From template" tool: open the dialog for the
-    /// footprint draft's package.
+    /// The ribbon's "From template" tool: the New-from-template gallery in
+    /// package scope (slice B4), on the working set's package draft. One
+    /// `library.package_from_template` replaces the package, footprint and
+    /// generated model; a footprint with pads is replaced in the same
+    /// atomic step. The chip starts on the package's own family.
     pub(super) fn open_template_picker(&mut self) {
         if let Some(set) = &self.draft {
+            self.template_picker.close();
+            self.gallery.open_package(
+                set.ids.package,
+                set.footprint.pads.len(),
+                FamilyKind::of(&set.package.form),
+                String::new(),
+                Some(super::model_body::form_rows),
+            );
+        }
+    }
+
+    /// New component ▾ › From template… (⌘N): the gallery in new-component
+    /// scope. The ribbon's New menu (slice A1) and the catalog's Templates
+    /// folder (slice A2) call it.
+    #[allow(dead_code, reason = "the New ▾ menu of slice A1 calls it")]
+    pub(super) fn open_template_gallery(&mut self) {
+        self.gallery.open_new(Some(super::model_body::form_rows));
+    }
+
+    /// The footprint-only "Footprint from template" dialog (named
+    /// expressions over the package's `pkg_*` values, slice F5): the
+    /// package stays, only the footprint is built.
+    #[allow(
+        dead_code,
+        reason = "offered as From template ▾ › Footprint only… by slice A1"
+    )]
+    pub(super) fn open_footprint_expressions(&mut self) {
+        if let Some(set) = &self.draft {
+            self.gallery.close();
             let kind = suggested(&set.package);
             self.template_picker.open(kind, &set.package);
         }
@@ -713,5 +749,41 @@ impl PartEditor {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::template_gallery::Scope;
+    use pcbcraft_core::Engine;
+
+    /// The Footprint tab's From template opens the gallery in package scope
+    /// on the working set's package draft (not the footprint-only dialog),
+    /// starting on the package's own family; the footprint-only dialog
+    /// stays one call away and closes the gallery.
+    #[test]
+    fn from_template_opens_the_gallery_on_the_package() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.commit(&ctx, &engine);
+        editor.on_tab("footprint");
+        let set = editor.draft.as_ref().ok_or("a working set")?;
+        let (package, pads) = (set.ids.package, set.footprint.pads.len());
+        editor.on_tool(TOOL, &engine);
+        assert_eq!(
+            editor.gallery.scope(),
+            Some(&Scope::Package {
+                draft: package,
+                pads
+            })
+        );
+        assert!(!editor.template_picker.is_open());
+        editor.open_footprint_expressions();
+        assert!(editor.template_picker.is_open());
+        assert!(!editor.gallery.is_open());
+        Ok(())
     }
 }
