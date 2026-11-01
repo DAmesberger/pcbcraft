@@ -88,6 +88,9 @@ struct State {
     alternatives: Option<Alternatives>,
     /// What the last suggestion could not do, as the core words it.
     blockers: Vec<String>,
+    /// The way out the core found for a blocked peripheral: its wording
+    /// and the edits it stages over the base.
+    way_out: Option<(String, Suggestion, Staged)>,
     /// Why the last suggestion did not run.
     suggest_note: Option<String>,
     focus: Option<TerminalId>,
@@ -235,6 +238,7 @@ enum Action {
     Place(ResourceId, RoleId, Option<Candidate>),
     Suggest,
     CancelSuggest,
+    StageWayOut,
     Cycle(isize),
     Focus(TerminalId),
     ShowAllPeripherals,
@@ -262,6 +266,7 @@ pub fn entry(ui: &mut Ui, engine: &Engine, instance: &ComponentInstance) -> Opti
         state.alternatives = None;
         state.pending = None;
         state.blockers.clear();
+        state.way_out = None;
         state.suggest_note = None;
         if state.revision != 0 {
             state.refusal = None;
@@ -335,6 +340,13 @@ fn handle(
             }));
         }
         Action::Close => *state = State::default(),
+        Action::StageWayOut => {
+            if let Some((_, suggestion, base)) = state.way_out.take() {
+                state.staged = model::stage_suggestion(&base, &suggestion.edits);
+                state.blockers.clear();
+                state.alternatives = None;
+            }
+        }
         Action::CancelSuggest => {
             state.pending = None;
             state.suggest_note = Some("Suggestion cancelled".into());
@@ -348,6 +360,7 @@ fn handle(
         Action::Tick(peripheral, false) => {
             state.alternatives = None;
             state.blockers.clear();
+            state.way_out = None;
             state.expanded.remove(&peripheral);
             model::disable(model, preview, peripheral, &mut state.staged);
         }
@@ -420,6 +433,7 @@ fn suggest(
     base: Staged,
 ) {
     state.blockers.clear();
+    state.way_out = None;
     state.suggest_note = None;
     state.pending = None;
     if enable.is_empty() {
@@ -497,11 +511,36 @@ fn poll(state: &mut State, wait: bool) -> bool {
 fn receive(state: &mut State, result: Result<SuggestReport, String>, base: Staged) {
     match result {
         Ok(report) => {
-            state.blockers = report
-                .blockers
-                .iter()
-                .map(|b| refusal::clip(&b.message, pcbcraft_core::issues::MAX_TITLE))
-                .collect();
+            // The core words a blocker as the reason, then the selection
+            // in the way, then a way out: one line each, so none is cut off.
+            state.blockers.clear();
+            state.way_out = None;
+            for blocker in &report.blockers {
+                let (reason, rest) = blocker
+                    .message
+                    .split_once(" It conflicts with ")
+                    .map_or((blocker.message.as_str(), None), |(r, c)| (r, Some(c)));
+                state
+                    .blockers
+                    .push(refusal::clip(reason, pcbcraft_core::issues::MAX_TITLE));
+                let Some(rest) = rest else { continue };
+                let (conflict, alternative) = rest
+                    .split_once(" Alternative: ")
+                    .map_or((rest, None), |(c, a)| (c, Some(a)));
+                state.blockers.push(refusal::clip(
+                    &format!("Conflicts with {conflict}"),
+                    pcbcraft_core::issues::MAX_TITLE,
+                ));
+                if let (Some(text), Some(suggestion), None) =
+                    (alternative, &blocker.alternative, &state.way_out)
+                {
+                    state.way_out = Some((
+                        format!("Way out: {}", text.trim_end_matches('.')),
+                        suggestion.clone(),
+                        base.clone(),
+                    ));
+                }
+            }
             if let Some(first) = report.suggestions.first() {
                 state.staged = model::stage_suggestion(&base, &first.edits);
                 state.alternatives = Some(Alternatives {
@@ -651,6 +690,11 @@ fn parts(
             line(ui, Some(Level::Warning), blocker, None)
         });
     }
+    if let Some((text, _, _)) = &state.way_out
+        && line(ui, Some(Level::Info), text, Some("Stage"))
+    {
+        action = Some(Action::StageWayOut);
+    }
     if let Some(note) = &state.suggest_note {
         line(ui, Some(Level::Info), note, None);
     }
@@ -658,6 +702,7 @@ fn parts(
         || state.pending.is_some()
         || state.alternatives.is_some()
         || !state.blockers.is_empty()
+        || state.way_out.is_some()
         || state.suggest_note.is_some()
     {
         kit::rule(ui);

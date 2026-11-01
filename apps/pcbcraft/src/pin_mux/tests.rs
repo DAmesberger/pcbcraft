@@ -891,3 +891,38 @@ fn a_component_without_peripherals_offers_no_pin_assignment() -> TestResult {
     );
     Ok(())
 }
+
+/// A blocker's way out stages its edits over the base it was found for.
+#[test]
+fn staging_the_way_out_applies_its_edits_over_the_base() -> TestResult {
+    let (engine, ids) = setup()?;
+    let (instance, model) = built(&engine, ids)?;
+    let preview = model::preview(engine.project(), &instance, &model, &Staged::new())?;
+    let base: Staged = [(T2, Some(ids.uart_rx))].into_iter().collect();
+    let way_out = Suggestion {
+        edits: vec![FunctionEdit {
+            terminal: T1,
+            function: Some(ids.uart_tx),
+        }],
+        changed: vec![T1],
+        optional: vec![],
+        unplaced: vec![],
+    };
+    let mut state = State {
+        blockers: vec!["blocked".into()],
+        way_out: Some(("Way out: move it".into(), way_out, base)),
+        ..State::default()
+    };
+    handle(
+        &mut state,
+        &engine,
+        &instance,
+        &model,
+        &preview,
+        Action::StageWayOut,
+    );
+    assert_eq!(state.staged.get(&T1), Some(&Some(ids.uart_tx)));
+    assert_eq!(state.staged.get(&T2), Some(&Some(ids.uart_rx)));
+    assert!(state.blockers.is_empty() && state.way_out.is_none());
+    Ok(())
+}
