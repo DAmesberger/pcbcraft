@@ -291,7 +291,20 @@ fn inconsistent_records_are_refused() -> Result<()> {
     assert!(tamper(
         &|v| v["records"][0]["sources"]["layers"] = json!("0,999")
     )?);
+    // A column longer than the record's picks is refused, however long.
+    assert!(tamper(
+        &|v| v["records"][0]["sources"]["nets"] = json!("0*1000000")
+    )?);
     assert!(!tamper(&|_| {})?);
+    // An identity of the current version without its records (an older
+    // pre-release layout) says so.
+    let mut older = Map::new();
+    older.insert(METADATA_KEY.into(), json!({"version": VERSION}));
+    older.insert("org.pcbcraft.electronics.bodies.0".into(), json!({}));
+    assert!(matches!(
+        read_values(&older),
+        Err(Error::Verification(why)) if why.contains("older pre-release")
+    ));
     Ok(())
 }
 
@@ -312,11 +325,11 @@ fn columns_are_lossless_and_short_for_runs_and_periods() -> Result<()> {
         .collect();
     for values in [&noisy, &periodic, &mixed, &Vec::new(), &vec![3]] {
         assert_eq!(
-            &Column::values(values.iter().copied()).read_values()?,
+            &Column::values(values.iter().copied()).read_values(MAX_ROWS)?,
             values
         );
         assert_eq!(
-            &Column::deltas(values.iter().copied()).read_deltas()?,
+            &Column::deltas(values.iter().copied()).read_deltas(MAX_ROWS)?,
             values
         );
     }
@@ -331,7 +344,12 @@ fn columns_are_lossless_and_short_for_runs_and_periods() -> Result<()> {
         "x",
         "1,,2",
     ] {
-        assert!(Column(bad.into()).read_values().is_err(), "{bad}");
+        assert!(Column(bad.into()).read_values(MAX_ROWS).is_err(), "{bad}");
     }
+    // A column claiming more values than its record has rows is refused
+    // before it is expanded.
+    assert!(Column("7*3".into()).read_values(3).is_ok());
+    assert!(Column("7*4".into()).read_values(3).is_err());
+    assert!(Column("(1 2)*2".into()).read_values(3).is_err());
     Ok(())
 }

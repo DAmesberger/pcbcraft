@@ -399,7 +399,7 @@ fn the_list_is_uncapped_and_builds_only_visible_rows() {
     );
     assert!(find(&painted, "Clearance").is_some());
     assert!(
-        find(&painted, "10000").is_some(),
+        find(&painted, "10,000").is_some(),
         "the group count is shown"
     );
     assert!(find(&painted, "Row 0.0").is_some());

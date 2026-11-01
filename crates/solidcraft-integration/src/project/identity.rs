@@ -158,8 +158,9 @@ impl Column {
         }))
     }
 
-    /// The values [`Self::values`] wrote, at most [`MAX_ROWS`].
-    fn read_values(&self) -> Result<Vec<i128>> {
+    /// The values [`Self::values`] wrote, at most `limit` of them (a
+    /// column claiming more is broken, refused before it is expanded).
+    fn read_values(&self, limit: usize) -> Result<Vec<i128>> {
         let mut out = Vec::new();
         if self.0.is_empty() {
             return Ok(out);
@@ -172,7 +173,7 @@ impl Column {
             Ok((value.parse::<i128>().map_err(|_| broken())?, count))
         };
         let push = |out: &mut Vec<i128>, (value, count): (i128, usize)| {
-            if count == 0 || count > MAX_ROWS.saturating_sub(out.len()) {
+            if count == 0 || count > limit.min(MAX_ROWS).saturating_sub(out.len()) {
                 return Err(broken());
             }
             out.extend(std::iter::repeat_n(value, count));
@@ -198,9 +199,9 @@ impl Column {
         Ok(out)
     }
 
-    fn read_deltas(&self) -> Result<Vec<i128>> {
+    fn read_deltas(&self, limit: usize) -> Result<Vec<i128>> {
         let mut last = 0i128;
-        self.read_values()?
+        self.read_values(limit)?
             .into_iter()
             .map(|d| {
                 last = last.checked_add(d).ok_or_else(broken)?;
@@ -306,11 +307,14 @@ impl Sources {
         }
     }
 
-    fn read(&self) -> Result<Vec<Source>> {
-        let picks = self.picks.read_deltas()?;
+    /// The sources, at most `budget` of them: every other column holds
+    /// as many values as there are picks, so a record decodes to a bounded
+    /// size whatever it claims.
+    fn read(&self, budget: usize) -> Result<Vec<Source>> {
+        let picks = self.picks.read_deltas(budget)?;
         let rows = picks.len();
         let column = |c: &Column| -> Result<Vec<i128>> {
-            let values = c.read_deltas()?;
+            let values = c.read_deltas(rows)?;
             if values.len() != rows {
                 return Err(broken());
             }
@@ -322,12 +326,12 @@ impl Sources {
         let pads = column(&self.pads)?;
         let tracks = column(&self.tracks)?;
         let vias = column(&self.vias)?;
-        let nets = self.nets.read_values()?;
-        let layers = self.layers.read_values()?;
+        let nets = self.nets.read_values(rows)?;
+        let layers = self.layers.read_values(rows)?;
         if nets.len() != rows || layers.len() != rows {
             return Err(broken());
         }
-        let labels = self.labels.read_values()?;
+        let labels = self.labels.read_values(rows)?;
         if labels.len() != rows {
             return Err(broken());
         }
@@ -336,11 +340,14 @@ impl Sources {
             .iter()
             .map(|t| Ok((t.as_str(), placeholders(t)?)))
             .collect::<Result<Vec<_>>>()?;
+        if self.label_numbers.len() > MAX_NAME_NUMBERS {
+            return Err(broken());
+        }
         let numbers = self
             .label_numbers
             .iter()
             .map(|c| {
-                c.read_deltas()?
+                c.read_deltas(rows)?
                     .into_iter()
                     .map(exact)
                     .collect::<Result<Vec<u64>>>()
@@ -479,15 +486,16 @@ impl Bodies {
         }
     }
 
-    fn read(&self, into: &mut BTreeMap<String, BodyKind>) -> Result<()> {
-        if self.count > MAX_ROWS {
+    /// The body names, at most `budget` of them.
+    fn read(&self, into: &mut BTreeMap<String, BodyKind>, budget: usize) -> Result<()> {
+        if self.count > budget.min(MAX_ROWS) || self.columns.len() > MAX_NAME_NUMBERS {
             return Err(broken());
         }
         let columns = self
             .columns
             .iter()
             .map(|c| {
-                let values = c.read_deltas()?;
+                let values = c.read_deltas(self.count)?;
                 if values.len() != self.count {
                     return Err(broken());
                 }
@@ -640,6 +648,13 @@ fn read_values(metadata: &Map<String, Value>) -> Result<(Vec<Source>, BTreeMap<S
     }
     let mut sources = Vec::new();
     let mut bodies = BTreeMap::new();
+    if !metadata.contains_key(&format!("{RECORDS_KEY}0")) {
+        return Err(Error::Verification(
+            "native model's Pcbcraft identity was saved by an older pre-release build; \
+             build its model again from the board"
+                .into(),
+        ));
+    }
     for index in 0..MAX_VALUES {
         let Some(value) = metadata.get(&format!("{RECORDS_KEY}{index}")) else {
             break;
@@ -648,8 +663,13 @@ fn read_values(metadata: &Map<String, Value>) -> Result<(Vec<Source>, BTreeMap<S
             serde_json::from_value(value.get("records").cloned().ok_or_else(broken)?)?;
         for record in records {
             match record {
-                Record::Sources(columns) => sources.extend(columns.read()?),
-                Record::Bodies(names) => names.read(&mut bodies)?,
+                Record::Sources(columns) => {
+                    sources.extend(columns.read(MAX_ROWS.saturating_sub(sources.len()))?)
+                }
+                Record::Bodies(names) => {
+                    let budget = MAX_ROWS.saturating_sub(bodies.len());
+                    names.read(&mut bodies, budget)?
+                }
             }
             if sources.len() > MAX_ROWS || bodies.len() > MAX_ROWS {
                 return Err(broken());

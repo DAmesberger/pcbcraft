@@ -138,23 +138,45 @@ impl Instanced {
         out
     }
 
-    /// The highlighted placements, drawn again flat in the selection colour
-    /// (palette entry 0 of the highlight scene). A large unplaced body
-    /// highlights from its own block instead ([`ModelScene::highlight`]).
+    /// The highlighted placements, drawn again flat: the selected object's
+    /// in the strong selection colour (palette entry 1 of the highlight
+    /// scene), the rest of its net's in the lighter net colour (entry 0),
+    /// so the picked via stands out among thousands on its net. A via's
+    /// display-only bore shadow and tent dome are left out: drawn flat
+    /// they would cover its open drill. A large unplaced body highlights
+    /// from its own block instead ([`ModelScene::highlight`]).
     pub fn highlight(
         &self,
         geometry: &[Geometry],
         display: Option<&Place>,
         highlighted: &std::collections::HashSet<u64>,
+        selected: &std::collections::HashSet<u64>,
     ) -> Option<InstancedMesh> {
-        let mesh = self.placed(
-            geometry,
-            display,
-            InstanceLook::Opaque,
-            PaletteIndex(0),
-            |g| g.place.is_some() && g.item.is_some_and(|i| highlighted.contains(&i)),
-        );
-        (mesh.count() > 0).then_some(mesh)
+        let mut out = InstancedMesh {
+            key: self.mesh.key,
+            tris: self.mesh.tris.clone(),
+            instances: Vec::new(),
+            look: InstanceLook::Opaque,
+            levels: Vec::new(),
+        };
+        for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
+            let (Some(place), Some(item)) = (g.place, g.item) else {
+                continue;
+            };
+            if matches!(g.kind, BodyKind::ViaBore | BodyKind::MaskCap) {
+                continue;
+            }
+            let color = if selected.contains(&item) {
+                PaletteIndex(1)
+            } else if highlighted.contains(&item) {
+                PaletteIndex(0)
+            } else {
+                continue;
+            };
+            let place = display.map_or(place, |d| d.then(&place));
+            out.place(place.rows_f32(), color);
+        }
+        (out.count() > 0).then_some(out)
     }
 }
 
@@ -889,16 +911,21 @@ pub(crate) mod tests {
         let shown: usize = scene
             .instanced
             .iter()
-            .filter_map(|i| i.highlight(&scene.geometry, None, &highlighted))
+            .filter_map(|i| i.highlight(&scene.geometry, None, &highlighted, &highlighted))
             .map(|m| m.count())
             .sum();
-        let bodies = scene
+        let placed = |g: &&Geometry| g.item == Some(via) && g.place.is_some();
+        let bodies = scene.geometry.iter().filter(placed).count();
+        assert!(bodies >= 2, "a via has its barrel and bore at least");
+        // Its display-only bore shadow and tent dome are not drawn over.
+        let copper = scene
             .geometry
             .iter()
-            .filter(|g| g.item == Some(via) && g.place.is_some())
+            .filter(placed)
+            .filter(|g| !matches!(g.kind, BodyKind::ViaBore | BodyKind::MaskCap))
             .count();
-        assert!(bodies >= 2, "a via has its barrel and bore at least");
-        assert_eq!(shown, bodies);
+        assert!(copper >= 1 && copper < bodies);
+        assert_eq!(shown, copper);
         Ok(())
     }
 

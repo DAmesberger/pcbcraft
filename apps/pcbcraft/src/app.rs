@@ -750,7 +750,7 @@ impl App {
         let pick = if self.workspace == Workspace::Part {
             // Component 3D shows every layer of its package.
             self.scene.viewport.set_layers(Default::default());
-            self.scene.highlight(None, None, None);
+            self.scene.highlight(None, None, None, None);
             // A read-only library item builds from its scratch engine and
             // never sends an operation to the project.
             let preview = self.part.lend_preview();
@@ -773,6 +773,7 @@ impl App {
             self.scene.highlight(
                 self.pcb.selected_instance(),
                 self.pcb.selected_track(),
+                self.pcb.selected_via(),
                 self.pcb.highlighted_net(),
             );
             let pick = self.scene.viewport.show(ui, viewport::NavCaps::BOARD);

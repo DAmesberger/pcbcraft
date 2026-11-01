@@ -413,6 +413,23 @@ impl Native {
         Ok(())
     }
 
+    /// [`Self::profile_body`] for contours that do not nest (a track's
+    /// stadium): every profile is extruded whole (`profiles: "all"`), so in
+    /// a batch of put-off evaluation ([`Self::defer_evaluation`]) the
+    /// sketch and its extrusion are evaluated with the rest of the board
+    /// at its end instead of evaluating the pending design each. A contour
+    /// inside another would be filled, not a hole: use
+    /// [`Self::profile_body`] for those.
+    pub fn whole_profile_body(&mut self, body: ProfileBody<'_>) -> Result<()> {
+        let sketch = self.sketch(body.name, body.offset, body.contours)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "profiles": "all", "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(())
+    }
+
     /// [`Self::profile_body`] for many contours (a laminate slab and its
     /// thousands of drills): the contours go into the sketch in one
     /// command, so building it does not grow with the square of their

@@ -253,32 +253,52 @@ from the GUI. The core warning that restated them is no longer shown twice.
 via boards are `via_board` in `project/tests.rs`: the showcase on 4 layers with that many
 vias on a 1.27 mm grid and about 260 tracks (200 inner).
 
-| Board | Native bodies | Before | Phase 1 | Phase 2 (butt-capped tracks) | Integrated (round caps) |
-| --- | --- | --- | --- | --- | --- |
-| Demo | 13 | 117 ms | 93 ms | 45 ms | 45 ms |
-| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s | 1.0 s | 1.0 s |
-| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s | 0.14 s | 0.15 s |
-| Demo, 400 tracks | 413 | 13.5 s | 3.8 s | 0.39 s | 2.2 s |
-| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s | 1.6 s | 2.4 s |
-| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s | 2.3 s | 2.9 s |
-| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s | 2.7–3.5 s | 4.0 s |
+| Board | Native bodies | Before | Phase 1 | Phase 2 (butt-capped tracks) | Integrated (round caps) | Tracks put off |
+| --- | --- | --- | --- | --- | --- | --- |
+| Demo | 13 | 117 ms | 93 ms | 45 ms | 45 ms | 45 ms |
+| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s | 1.0 s | 1.0 s | 0.96 s |
+| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s | 0.14 s | 0.15 s | 0.15 s |
+| Demo, 400 tracks | 413 | 13.5 s | 3.8 s | 0.39 s | 2.2 s | 0.60 s |
+| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s | 1.6 s | 2.4 s | 1.6 s |
+| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s | 2.3 s | 2.9 s | 2.0 s |
+| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s | 2.7–3.5 s | 4.0 s | 2.8 s |
+| Showcase, 4 layers, 10,000 vias, 2,000 tracks | 52,186 | | | | | 8.5 s |
 
 "Before" is the pinned `pcbcraft-product-look` build (the showcase with 50 vias took 607 s
 there). Phase 1 and phase 2 were measured at a load average of about 5–40 from other builds;
 the phase 2 10,000-via cell is the range of best-of-3 runs over several minutes
 (`via_build_profile` in `project/tests.rs`, `PCBCRAFT_VIAS=10000`). The integrated column is
 the merged branch (fork branch `pcbcraft-via2`), best of two runs at a load average of 5–8.
+"Tracks put off" is the same branch after the review fixes, best of three runs (one for
+4,096 vias) at a load average of about 6; the 2,000-track board is the 10,000-via board with
+tracks added on the outer layers between its via rows up to the layout's 2,000
+(`with_tracks` in `project/tests.rs`; `PCBCRAFT_TRACKS=2000` for `via_build_profile`).
+`build_timings` fails when the 10,000-via benchmark board takes 3 s or more (best of three).
 
 The integrated build draws each track as its round-capped stadium (component-model's
 `layout::track_shape`), a sketch and an extrusion per track instead of a parametric box.
-A box is one command Solidcraft puts off in a batch; a sketch's finish and its extrusion
-each evaluate the whole pending design first, so every track costs about 5 ms on these
-boards: about 1.2 s for the via boards' 260 tracks and 2 s for 400 tracks. The fork puts
-off the sketch and its polyline (`deferrable` in the engine), which took the 10,000-via board
-from 4.6 s to 4.0 s; the finish and the extrusion read the sketch's profiles, so they still
-evaluate. Without the tracks, a 10,000-via board builds in 2.8 s (the `via_display_timings`
-board below, measured on the same branch). The 3 s target for 10,000 vias is met for vias
-alone, not with 260 round-capped tracks; see Open.
+Each track's sketch finish and extrusion used to evaluate the whole pending design first,
+about 5 ms a track. The track's extrusion now takes every profile of its sketch whole
+(`profiles: "all"`, `Native::whole_profile_body`), and the fork puts off finishing such a
+sketch and extruding it in a batch (`deferrable` in the engine), so all the tracks are
+evaluated once, with the rest of the board. Putting them off showed what each command cost
+in a design of thousands of features and occurrences, which the fork no longer pays:
+
+- drawing a sketch and creating it evaluated every parameter (a sketch with no
+  dimension, expression point or pattern reads none, and a plane that names no parameter
+  is resolved without them);
+- a sketch held a copy of the design to cancel back to, and each line drawn copied the
+  design again (in a batch the edit is made in place, as the batch goes back to its start
+  should it fail; Cancel Sketch is refused there);
+- the active component's frame rebuilt the placement index of every occurrence's bodies;
+- each evaluated feature compared every body with every body of the state before it;
+- placing the components looked up every body, sketch and occurrence for each placement.
+
+The 10,000-via benchmark board (about 260 tracks) now builds in 2.8 s, under the 3 s
+target. At the layout's 2,000 tracks it takes 8.5 s, about 3 ms a track: the extrusions
+themselves (Solidcraft's B-rep extrude, one by one, about 1.2 ms each), each track's
+component and joint, and features added to a timeline of thousands. The target is not met
+there; see Open.
 
 What made vias expensive, and what changed in phase 1:
 
@@ -418,6 +438,11 @@ change.
 Measured on the integrated branch at a load average of about 5, `ci` profile. (Before the
 phase 2 meshing was merged, a via moved on the 10,000-via board took 72 s.)
 
+An update takes the kept model (`kept.board.take()` in `apps/pcbcraft/src/scene.rs`): a
+replay that fails consumes it, and a build anew that a newer edit cancels leaves none. The
+next edit then builds the board anew (about 3 s on the 10,000-via board) instead of
+updating it, until a build finishes. An update in place is not cancelled.
+
 Moving a via redraws the holes of all five slabs and evaluates and meshes them again,
 now about 0.3 s a slab, plus Solidcraft's `sketch.delete`, which looks up each named
 entity by a linear search. Splitting the laminate into tiles cut along gaps between holes
@@ -442,6 +467,10 @@ a GPU) measures the same steps offscreen:
 
 Integrated branch, load average about 5, 1600 × 1000, best of five openings (each a new
 viewport; the frame is read back, which the window does not do).
+
+In the running app (`PCBCRAFT_TIMINGS=1`, the integrated branch, a 10,000-via 4-layer
+board added over `pcbcraft-cli stdio`, PCB 3D opened on its finished background build),
+eight openings drew their first frame in 8.2–37.4 ms (median about 23 ms).
 
 Board checks and saved identity scale with the vias too. The copper, via and routing checks
 file every shape in a grid by its bounds and compare only shapes within the largest rule of
@@ -472,14 +501,17 @@ purpose:
 
 - There is no stackup editor in the app; stackups are set through commands, the CLI or MCP.
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
-- The GUI could not be checked live: the screen was locked during both runs, so windows drew
-  nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- 10,000 vias build in about 2.8 s and the 3D view then shows them in about 0.1 s and
-  orbits at interactive rates, but the benchmark board with its 260 round-capped tracks
-  builds in 4.0 s: each track is a sketch and an extrusion, about 5 ms each (Build cost).
-  Making them as cheap as boxes needs Solidcraft to evaluate a batch's sketches and
-  extrusions without re-reading every parameter and feature (`param_values` and
-  `chain_fingerprint` per command), or a stadium primitive a batch can put off.
+- The 10,000-via benchmark board builds in 2.8 s and the 3D view then shows it in a frame,
+  but at the layout's 2,000 tracks the board builds in 8.5 s, about 3 ms a track (Build
+  cost): the 3 s target is not met with that many tracks. Making tracks as cheap as vias
+  needs their extrusions evaluated together (on all cores, or several stadia of a layer in
+  one extrusion with each body's track identity kept), and fewer commands per track (its
+  own component and joint).
+- Tiling the laminate, so that a via edit remakes one tile per slab instead of all five
+  slabs, is not done (a via moved on the 10,000-via board takes 2.0 s).
+- Automation builds a large board slowly: every `project.apply` reply carries the whole
+  document and every board check, so 10,000 single `layout.add_via` requests over
+  `pcbcraft-cli stdio` took 230 s and wrote 14.9 GB; there is no batched via add.
 - Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
   whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
   its moiré at overview distance are in Solidcraft's shader. Seen from below, the key

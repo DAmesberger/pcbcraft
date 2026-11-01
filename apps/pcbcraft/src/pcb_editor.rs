@@ -473,6 +473,9 @@ impl PcbEditor {
     pub fn selected_track(&self) -> Option<Id> {
         self.track
     }
+    pub fn selected_via(&self) -> Option<Id> {
+        self.via
+    }
     pub fn highlighted_net(&self) -> Option<Id> {
         self.highlighted
     }

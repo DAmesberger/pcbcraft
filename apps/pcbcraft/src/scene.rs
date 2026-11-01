@@ -418,19 +418,29 @@ impl SceneController {
         }
     }
 
-    /// Highlight every body of the selected instance, track or net.
-    pub fn highlight(&mut self, instance: Option<Id>, track: Option<Id>, net: Option<Id>) {
-        let ids = self
-            .sources
-            .iter()
-            .filter(|s| {
-                s.instance.is_some() && s.instance == instance
-                    || s.track.is_some() && s.track == track
-                    || s.net.is_some() && s.net == net
-            })
-            .map(|s| s.pick_id)
-            .collect();
-        self.viewport.highlight(ids);
+    /// Highlight every body of the selected instance, track, via or net;
+    /// the selected object's in a stronger tint than its net's.
+    pub fn highlight(
+        &mut self,
+        instance: Option<Id>,
+        track: Option<Id>,
+        via: Option<Id>,
+        net: Option<Id>,
+    ) {
+        let mut ids = Vec::new();
+        let mut selected = Vec::new();
+        for s in &self.sources {
+            let picked = s.instance.is_some() && s.instance == instance
+                || s.track.is_some() && s.track == track
+                || s.via.is_some() && s.via == via;
+            if picked {
+                selected.push(s.pick_id);
+            }
+            if picked || s.net.is_some() && s.net == net {
+                ids.push(s.pick_id);
+            }
+        }
+        self.viewport.highlight_selected(ids, selected);
     }
 
     /// The electronics object a pick identifies.

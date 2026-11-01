@@ -1649,7 +1649,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
         let contour = polygon(&track_outline([0.0, 0.0], [length, 0.0], track.width))
             .ok_or_else(|| Error::Invalid(format!("track {} has no length", track.id)))?;
-        b.native.profile_body(ProfileBody {
+        b.native.whole_profile_body(ProfileBody {
             name: &prefix,
             offset: 0.into(),
             contours: &[contour],

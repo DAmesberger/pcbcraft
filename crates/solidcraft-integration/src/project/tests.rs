@@ -525,6 +525,8 @@ fn build_timings() -> Result<()> {
     // The showcase on 4 layers with 1000, 4096 and 10000 vias and about
     // 250 inner and outer tracks (`via_board`).
     let (v1000, v4096, v10000) = (via_board(1000)?, via_board(4096)?, via_board(10_000)?);
+    // The 10,000-via board at the layout's track limit.
+    let v10000_tracks = with_tracks(10_000, 2_000)?;
     for (name, project, runs) in [
         ("demo", &demo, 15),
         ("400 tracks", &tracks, 3),
@@ -532,7 +534,12 @@ fn build_timings() -> Result<()> {
         ("4 layers, 50 vias, 25 inner tracks", &vias, 3),
         ("showcase, 4 layers, 1000 vias", &v1000, 3),
         ("showcase, 4 layers, 4096 vias", &v4096, 1),
-        ("showcase, 4 layers, 10000 vias", &v10000, 1),
+        ("showcase, 4 layers, 10000 vias", &v10000, 3),
+        (
+            "showcase, 4 layers, 10000 vias, 2000 tracks",
+            &v10000_tracks,
+            3,
+        ),
     ] {
         let mut times = vec![];
         let mut bodies = (0, 0);
@@ -545,17 +552,66 @@ fn build_timings() -> Result<()> {
         times.sort_by(f64::total_cmp);
         let at = |q: f64| times[((times.len() - 1) as f64 * q).round() as usize];
         println!(
-            "{name}: {} native bodies, {} drawn, build p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
+            "{name}: {} native bodies, {} drawn, build best {:.0} ms, p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
             bodies.0,
             bodies.1,
+            at(0.0),
             at(0.5),
             at(0.95)
         );
+        // The founder's bar: 10,000 vias in a few seconds; the target is
+        // 3 s, best of the runs, for the benchmark board (about 260
+        // tracks). At the layout's 2,000 tracks it is not met yet
+        // (docs/pcb-realism.md, Build cost): that case is measured only.
+        if name == "showcase, 4 layers, 10000 vias" {
+            assert!(at(0.0) < 3000.0, "{name}: best {:.0} ms", at(0.0));
+        }
     }
     Ok(())
 }
 
-/// One via board's build, for profiling: `PCBCRAFT_VIAS=10000 cargo test
+/// [`via_board`]`(count)` with tracks added on the outer layers, between
+/// its via rows, until it has `total` tracks.
+fn with_tracks(count: usize, total: usize) -> Result<Project> {
+    let mut project = via_board(count)?;
+    let net = project.nets[0].id;
+    // The grid's first via (the showcase has vias of its own before it).
+    let base = project
+        .vias
+        .len()
+        .checked_sub(count)
+        .and_then(|first| project.vias.get(first))
+        .map(|v| v.position)
+        .ok_or_else(|| Error::Verification("a via board has vias".into()))?;
+    let mut k = 0usize;
+    while project.tracks.len() < total {
+        let id = project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        let start = [
+            base[0] + (k % 63) as f64 * 1.27 + 0.135,
+            base[1] + (k / 63) as f64 * 1.27 + 0.635,
+        ];
+        project.tracks.push(Track {
+            id,
+            net,
+            start,
+            end: [start[0] + 1.0, start[1]],
+            width: 0.15,
+            layer: if k.is_multiple_of(2) {
+                CopperLayer::Top
+            } else {
+                CopperLayer::Bottom
+            },
+            locked: false,
+        });
+        k += 1;
+    }
+    Ok(project)
+}
+
+/// One via board's build, for profiling (`PCBCRAFT_TRACKS` tracks in all,
+/// [`with_tracks`]): `PCBCRAFT_VIAS=10000 cargo test
 /// --profile ci -p pcbcraft-solidcraft via_build_profile -- --ignored --nocapture`.
 #[test]
 #[ignore = "benchmark"]
@@ -568,12 +624,17 @@ fn via_build_profile() -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let project = via_board(count)?;
+    let tracks = std::env::var("PCBCRAFT_TRACKS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let project = with_tracks(count, tracks)?;
     for _ in 0..runs {
         let start = std::time::Instant::now();
         let model = build(&project)?;
         println!(
-            "{count} vias: {} native bodies, build {:.0} ms",
+            "{count} vias, {} tracks: {} native bodies, build {:.0} ms",
+            project.tracks.len(),
             native(&model).count(),
             start.elapsed().as_secs_f64() * 1e3
         );

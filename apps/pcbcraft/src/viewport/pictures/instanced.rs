@@ -141,6 +141,88 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// Seen from above, a picked open via keeps its drill dark under the
+/// selection (the bore shadow is not drawn over), its copper turns the
+/// strong selection tint, and the other vias of its net turn the lighter
+/// net tint, so the picked via is told from the rest.
+#[test]
+fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = gpu()? else {
+        return Ok(());
+    };
+    let model = pcbcraft_solidcraft::project::build(&crate::model_scene::tests::via_project(64)?)?;
+    let scene = crate::model_scene::build(model.geometry)?;
+    // An open (untented) via: it has a bore shadow and no dome.
+    let picked = scene
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::ViaBore && g.place.is_some())
+        .filter_map(|g| g.item)
+        .find(|item| {
+            !scene
+                .geometry
+                .iter()
+                .any(|g| g.item == Some(*item) && g.kind == BodyKind::MaskCap)
+        })
+        .ok_or("no open via")?;
+    let net: Vec<u64> = scene
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::ViaCopper)
+        .filter_map(|g| g.item)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut b = Aabb3::EMPTY;
+    for g in scene.geometry.iter().filter(|g| g.item == Some(picked)) {
+        b.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+        b.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+    }
+    let target = Vec3::new(b.center().x, b.center().y, b.max.z);
+    let mut v = shown(scene);
+    aim(&mut v, target, 3.0, 0.0, 90.0);
+    let (w, h) = (300, 300);
+    let plain = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+    v.highlight_selected(net.clone(), vec![picked]);
+    let picked_shown = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+    v.highlight_selected(net, Vec::new());
+    let net_shown = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+    if let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)?;
+        for (name, rgba) in [
+            ("plain", &plain),
+            ("picked", &picked_shown),
+            ("net", &net_shown),
+        ] {
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba.clone())
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("via-select-{name}.png")), png)?;
+        }
+    }
+    let at = |rgba: &[u8], x: u32, y: u32| -> [u8; 4] {
+        let i = ((y * w + x) * 4) as usize;
+        rgba.get(i..i + 4)
+            .and_then(|p| p.try_into().ok())
+            .unwrap_or([0; 4])
+    };
+    // The drill at the centre stays as it was.
+    let (cx, cy) = (w / 2, h / 2);
+    let (before, after) = (at(&plain, cx, cy), at(&picked_shown, cx, cy));
+    assert!(
+        before
+            .iter()
+            .zip(after)
+            .take(3)
+            .all(|(a, b)| a.abs_diff(b) <= 12),
+        "{before:?} {after:?}"
+    );
+    // The picked via differs between its own tint and the net's.
+    let changed = differing(&picked_shown, &net_shown, 8);
+    assert!(changed > 50, "{changed}");
+    Ok(())
+}
+
 /// A layer toggle publishes the same shared via triangles again: the
 /// renderer keeps their buffers and uploads only the stream and the
 /// placements.
