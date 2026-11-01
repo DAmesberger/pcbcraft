@@ -124,10 +124,13 @@ impl App {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
-        match self.engine.apply_with(
+        match self.engine.apply_hosted(
             self.engine.revision(),
             operation,
-            &pcbcraft_solidcraft::footprint::SketchEvaluator,
+            pcbcraft_core::Evaluators {
+                footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
+                board: crate::pcb_editor::board_shape::host_evaluator(),
+            },
         ) {
             Ok(_) => self.clear_error(),
             Err(error) => self.refuse(ctx, origin, error),

@@ -146,7 +146,11 @@ impl PcbEditor {
             action = self.placement_commit(placement);
         }
         self.editing = focused;
+        let edge = self.edge_section(ui, self.cached_revision.unwrap_or(0), project, placement);
         self.connections_section(ui, project, placement.instance);
+        if action.is_none() {
+            return edge;
+        }
         let (command, field) = action?;
         let origin = field.map_or(Origin::Command, |f| Origin::Field(f.id()));
         refusal::mark(ui.ctx(), origin);
