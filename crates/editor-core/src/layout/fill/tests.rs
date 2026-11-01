@@ -17,6 +17,15 @@ use crate::{Engine, Operation, Outcome, Query, QueryResult, format};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// The showcase board without its pours: the expected values here were
+/// measured on the board the fills are added to, so the showcase's own
+/// bottom pour and ground plane are taken out first.
+fn showcase() -> Fallible<Engine> {
+    let mut file = Engine::showcase()?.to_file();
+    file.project.fills.clear();
+    Ok(Engine::from_file(file)?)
+}
+
 fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Outline {
     Outline {
         start: [x0, y0],
@@ -78,7 +87,7 @@ fn fill(project: &Project, id: Id) -> Fallible<&Fill> {
 
 /// A whole-board GND fill on `layer` of the showcase.
 fn showcase_with(layer: CopperLayer) -> Fallible<(Engine, Id, Id)> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let id = add(
         &mut engine,
@@ -355,7 +364,7 @@ fn edit(engine: &mut Engine, fill: Fill) -> Fallible<()> {
 
 #[test]
 fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
-    let engine = Engine::showcase()?;
+    let engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let strap = engine
         .project()
@@ -418,7 +427,7 @@ fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
 
 #[test]
 fn higher_priority_fills_claim_overlap_and_lower_ones_keep_clear() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let (gnd, vcc) = (net(&engine, "GND")?, net(&engine, "VCC")?);
     let low = add(
         &mut engine,
@@ -458,7 +467,7 @@ fn higher_priority_fills_claim_overlap_and_lower_ones_keep_clear() -> Fallible<(
 
 #[test]
 fn islands_without_a_connection_are_removed_unless_kept() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     // A corner of the top layer away from every ground object.
     let mut s = spec(Some(gnd), CopperLayer::Top, rect(40.0, 24.0, 44.0, 28.0));
@@ -502,7 +511,7 @@ fn islands_without_a_connection_are_removed_unless_kept() -> Fallible<()> {
 
 #[test]
 fn copper_narrower_than_the_minimum_width_is_removed() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     // A dumbbell: two pads of copper joined by a 0.15 mm neck.
     let outline = Outline {
@@ -540,7 +549,7 @@ fn copper_narrower_than_the_minimum_width_is_removed() -> Fallible<()> {
 
 #[test]
 fn keepouts_clear_fill_copper_and_flag_tracks() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let id = add(
         &mut engine,
@@ -619,7 +628,7 @@ fn stale_copper_is_checked_for_clearance() -> Fallible<()> {
 
 #[test]
 fn hatched_fills_keep_a_border_and_grid() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let solid = add(
         &mut engine,
@@ -722,7 +731,7 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
 
 #[test]
 fn the_cache_key_ignores_edits_out_of_reach() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let id = add(
         &mut engine,
@@ -766,7 +775,7 @@ fn the_cache_key_ignores_edits_out_of_reach() -> Fallible<()> {
 
 #[test]
 fn store_commits_only_current_copper_and_refill_is_one_undo_step() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     let id = add(
         &mut engine,
@@ -834,7 +843,7 @@ fn computed_copper_persists_and_reloads_fresh() -> Fallible<()> {
 
 #[test]
 fn starved_thermals_are_reported() -> Fallible<()> {
-    let mut engine = Engine::showcase()?;
+    let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
     // A thin fill strip through one ground via reaches it from two sides.
     let via = engine
@@ -882,7 +891,7 @@ fn starved_thermals_are_reported() -> Fallible<()> {
 /// one full fill is printed; the bound is generous for debug builds.
 #[test]
 fn a_large_board_fills_in_seconds() -> Fallible<()> {
-    let mut project = Engine::showcase()?.project().clone();
+    let mut project = showcase()?.project().clone();
     let gnd = project
         .nets
         .iter()

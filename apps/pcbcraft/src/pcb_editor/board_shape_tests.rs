@@ -773,3 +773,57 @@ fn the_placement_card_constrains_a_part_to_its_nearest_edge_in_place() -> Fallib
     assert!(engine.project().edge_constraints.is_empty());
     Ok(())
 }
+
+/// The app's host evaluator is SolidCraft's board sketch engine: on a real
+/// engine, Shape's start and a Cutout gesture each solve as one board step,
+/// the cutout lands in the solved board and one undo removes it.
+#[test]
+fn the_host_evaluator_solves_a_cutout_gesture_on_the_engine() -> Fallible {
+    let evaluator = host_evaluator().ok_or("no host board evaluator")?;
+    let hosted = || pcbcraft_core::Evaluators {
+        footprint: None,
+        board: Some(evaluator),
+    };
+    let mut engine = Engine::showcase()?;
+    engine.apply_hosted(
+        engine.revision(),
+        Operation::Board(BoardCommand::StartSketch),
+        hosted(),
+    )?;
+    let BoardShape::Sketch(board) = engine.project().board_shape.clone() else {
+        return Err("the board did not become a sketch".into());
+    };
+    let view = scene_view(&board)?;
+    let scene = Scene {
+        board: &board,
+        view: &view,
+        evaluator,
+        tolerance: 0.3,
+    };
+    let options = ShapeOptions::default();
+    let mut gesture = Gesture::default();
+    press(
+        ShapeTool::Cutout,
+        &options,
+        &mut gesture,
+        [10.0, 10.0],
+        &scene,
+    )?;
+    let Step::Commit(commit) = press(
+        ShapeTool::Cutout,
+        &options,
+        &mut gesture,
+        [14.0, 13.0],
+        &scene,
+    )?
+    else {
+        return Err("the cutout did not commit".into());
+    };
+    let before = engine.revision();
+    engine.apply_hosted(before, operation(commit.edits), hosted())?;
+    assert_eq!(engine.revision(), before + 1, "one step");
+    assert_eq!(engine.project().board().cutouts.len(), 1);
+    engine.undo()?;
+    assert!(engine.project().board().cutouts.is_empty());
+    Ok(())
+}

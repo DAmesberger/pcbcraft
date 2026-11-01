@@ -468,6 +468,7 @@ fn impact_text_counts_changes_and_issues() {
         dropped_overrides: vec![RuleKey::MaskWebMin],
         new_issues: vec!["Clearance R1 ↔ R2".into()],
         resolved_issues: Vec::new(),
+        refusal: None,
     };
     let summary = impact_summary("Fine 4/4", &impact);
     assert!(summary.starts_with("Fine 4/4 · "), "{summary}");

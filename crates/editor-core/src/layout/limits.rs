@@ -225,6 +225,7 @@ mod tests {
             id: NetClassId(id),
             name: name.into(),
             track_width: None,
+            track_width_min: None,
             clearance,
             via_drill: None,
             via_diameter: None,

@@ -5,11 +5,17 @@ use crate::{Error, Result};
 use pcbcraft_core::model::fill::{FilledCopper, FilledRegion};
 use pcbcraft_core::{CopperLayer, Engine, Id, Point, Project};
 
+/// The showcase with its pours unfilled: the showcase refills them, and
+/// these tests give the pours known copper of their own.
 fn showcase() -> Result<Project> {
-    Ok(Engine::showcase()
+    let mut project = Engine::showcase()
         .map_err(|e| Error::Verification(e.to_string()))?
         .project()
-        .clone())
+        .clone();
+    for fill in &mut project.fills {
+        fill.computed = None;
+    }
+    Ok(project)
 }
 
 /// A counter-clockwise rectangle.

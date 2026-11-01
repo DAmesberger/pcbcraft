@@ -166,13 +166,17 @@ mod tests {
             .and_then(|f| f.computed.clone())
             .ok_or("not stored")?;
         // The same copper `fill.refill` stores.
-        let mut direct = engine.project().clone();
-        let fresh = pcbcraft_core::layout::fill::refill(&direct, RefillTarget::All)?;
-        direct.fills[0].computed = fresh.into_iter().next().map(|(_, c)| c);
-        assert_eq!(direct.fills[0].computed.as_ref(), Some(&computed));
+        // The showcase has pours of its own, so the added fill is looked
+        // up by its id.
+        let fresh = pcbcraft_core::layout::fill::refill(engine.project(), RefillTarget::All)?;
+        let direct = fresh
+            .into_iter()
+            .find(|(id, _)| *id == fill)
+            .map(|(_, c)| c);
+        assert_eq!(direct.as_ref(), Some(&computed));
         // Undo goes back over the fill add, not the refill.
         engine.undo()?;
-        assert!(engine.project().fills.is_empty());
+        assert!(engine.project().fill(fill).is_none());
         Ok(())
     }
 }

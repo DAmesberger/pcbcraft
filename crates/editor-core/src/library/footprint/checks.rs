@@ -813,6 +813,8 @@ mod rules_tests {
         let mut profile = builtin::default_profile();
         profile.id = "fine-test".into();
         profile.name = "Fine Test".into();
+        // Changed values are a user profile; built-ins keep shipped values.
+        profile.provenance.origin = crate::rules::ProfileOrigin::User;
         profile.rules.mask.web_min = 0.25;
         crate::rules::apply(
             &mut fine,

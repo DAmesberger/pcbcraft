@@ -30,11 +30,11 @@ use pcbcraft_core::model::board::{BoardSketch, CutoutKind, EdgeName};
 use pcbcraft_solidcraft::footprint::view::{self, SketchView, ViewGeometry};
 
 /// The host's board sketch engine, which `board.start_sketch` and
-/// `board.edit` need. `None` until the integration crate's
-/// `SketchBoardEvaluator` (docs/board-contract.md, task 7) is linked here;
-/// the app's apply path and the Board shape mode both read it.
+/// `board.edit` need: the integration crate's `SketchBoardEvaluator`, the
+/// same one the automation session passes. The app's apply path and the
+/// Board shape mode both read it.
 pub(crate) fn host_evaluator() -> Option<&'static dyn BoardShapeEvaluator> {
-    None
+    Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator)
 }
 
 /// One ribbon tool of the Board shape mode.

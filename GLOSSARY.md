@@ -151,7 +151,7 @@ A courtyard graphic a footprint source computes from its pad and body extents gr
 The board check that two placements on the same side have courtyards sharing interior area. Touching edges is not overlap; a part without a courtyard is not checked.
 
 **Mask web**:
-The strip of solder mask between two neighbouring pad openings. A web below the estimated 0.1 mm default is an advisory lint.
+The strip of solder mask between two neighbouring pad openings. A web below the design rules' minimum mask web (0.1 mm in the default profile, an estimate) is an advisory lint.
 
 **Footprint source**:
 How a footprint's solved pads and drawings were derived: an opaque sketch, parameters, pad roles and arrays, interpreted only by a footprint evaluator outside the core. Consumers read only the solved data.
@@ -312,6 +312,35 @@ A named layer of the stackup that carries copper: Top, Inner 1…n or Bottom. Tr
 
 **Board via**:
 A plated hole that joins its net's copper on every copper layer it spans, placed on the board (distinct from a pad via inside a footprint pad). It is tented (covered by mask) or open, and it is real copper in the native model. Only through vias exist yet.
+
+**Design rules**:
+The limits a board is checked and routed against: clearances between copper objects, board edges and holes, hole and via sizes, mask, silkscreen, paste, courtyard, fill and land-estimator values. A project's effective rules are its rule profile, then its rule overrides, then net classes and class-to-class clearances. Every finding names the rule, its value and where it came from.
+
+**Rule profile**:
+A named, complete set of design rules with its provenance: built in (generic estimates), made by the user or imported. A project keeps a snapshot of its profile, so a changed library profile does not change the project until it is switched. A user profile holds fabricator numbers only when the user enters them.
+_Avoid_: Fab preset
+
+**Rule override**:
+A project's own value for one rule, kept above its profile. A profile switch may keep or drop overrides; one that would break the new profile is refused.
+
+**Net class**:
+A named group of nets with their own track width, minimum width, clearance, via size and fill connection. A net is in a class by explicit assignment or by the first matching name pattern, never by any other inference.
+
+**Copper fill**:
+A copper region of one net on one copper layer, drawn as an outline and computed by the core from the board around it: it keeps its clearances, joins its net's pads with solid or thermal connections and yields to higher-priority fills. Its computed copper is stored with the key of its inputs, and it is stale when they change.
+_Avoid_: Zone
+
+**Keepout**:
+An outline on chosen copper layers where tracks, vias, pads or fill copper are not allowed.
+
+**Board shape**:
+The board's outline: a rectangle or a parametric sketch whose dimensions are bound to board parameters, with cutouts, milled slots and mounting holes. The 3D laminate, fills and board-edge checks all use the solved shape.
+
+**Named edge**:
+An edge of the board shape with a name (bottom, right, top and left for a rectangle) that edge constraints refer to.
+
+**Edge constraint**:
+A placement, fill or keepout tied to a named edge by an anchor, a distance along the edge and an offset from it (expressions over board parameters), so it follows the edge when the board shape changes.
 
 **Display-only layer**:
 A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations, solder and marking decals. The saved native model holds only the physical bodies.

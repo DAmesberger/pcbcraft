@@ -1,4 +1,4 @@
-//! The board contract (docs/board-contract.md): default rules equal the
+//! The board contract (docs/board-rules-and-shape.md): default rules equal the
 //! limits the checks used before rules were configurable, the new
 //! operations are atomic and undoable, the new fields stay out of existing
 //! files, and their schemas are served. Each slice tests its behaviour.

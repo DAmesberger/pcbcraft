@@ -79,6 +79,9 @@ fn profile(name: &str, edit: impl FnOnce(&mut crate::rules::DesignRules)) -> Rul
     let mut p = builtin::default_profile();
     p.id = name.to_lowercase().replace(' ', "-");
     p.name = name.into();
+    // Changed values make a user profile: `rules.set_profile` refuses a
+    // built-in profile whose values differ from the shipped ones.
+    p.provenance.origin = crate::rules::ProfileOrigin::User;
     edit(&mut p.rules);
     p
 }

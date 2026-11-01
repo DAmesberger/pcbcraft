@@ -30,6 +30,13 @@ fn copper(regions: Vec<FilledRegion>) -> FilledCopper {
 fn filled_showcase() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
     let engine = Engine::showcase()?;
     let mut project = engine.project().clone();
+    // The showcase refills its pours; the inner plane is left unfilled
+    // here so its dashed outline shows.
+    for fill in &mut project.fills {
+        if fill.layer != CopperLayer::Bottom {
+            fill.computed = None;
+        }
+    }
     let pour = project
         .fills
         .iter_mut()

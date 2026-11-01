@@ -1,5 +1,5 @@
 //! Design rules: the docked panel the Board card opens (docs/sidebar-ia.md,
-//! "Dialogs and reviews"; docs/board-contract.md task 4).
+//! "Dialogs and reviews"; docs/board-rules-and-shape.md).
 //!
 //! The panel shows the project's profile snapshot with its provenance, a
 //! picker of the built-in and user profiles, and every rule grouped as the
@@ -96,10 +96,14 @@ impl RuleTopic {
 const TOPICS: &[(&str, RuleTopic)] = &[
     ("board.clearance", RuleTopic::Clearance),
     ("board.outside_outline", RuleTopic::BoardEdge),
+    ("board.edge_clearance", RuleTopic::BoardEdge),
     ("board.via_annular_ring", RuleTopic::ViaAnnularRing),
     ("board.via_drill_clearance", RuleTopic::DrillToCopper),
+    ("board.hole_clearance", RuleTopic::DrillToCopper),
     ("board.via_hole_spacing", RuleTopic::HoleSpacing),
     ("board.courtyard_overlap", RuleTopic::Courtyard),
+    ("board.courtyard_clearance", RuleTopic::Courtyard),
+    ("fill.clearance", RuleTopic::Clearance),
 ];
 
 /// The rule behind a finding code, for the Issues row's "Show rule".
@@ -1213,10 +1217,21 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
     };
     let stale = preview.at != engine.revision();
     let (summary, groups, blockers) = match &preview.impact {
+        // A switch the engine would refuse is previewed with its reason
+        // as the blocker, so Apply is not offered.
         Ok(impact) => (
             impact_summary(&preview.profile.name, impact),
             impact_groups(impact),
-            Vec::new(),
+            impact
+                .refusal
+                .iter()
+                .map(|reason| ReviewLine {
+                    level: Level::Error,
+                    title: reason.clone(),
+                    ack: None,
+                    locate: false,
+                })
+                .collect(),
         ),
         Err(error) => (
             preview.profile.name.clone(),
