@@ -6,20 +6,70 @@ use crate::geometry::{polygon_self_intersects, signed_area2, size_valid};
 use crate::ids::DefinitionId;
 use crate::library::graphics::{self, DrawingLayer, Fill, Item, MAX_POLARITY_MARKERS, TextContent};
 use crate::library::publish::{issue, object};
+use crate::rules::{DesignRules, ProjectRules, RuleKey};
 use std::collections::BTreeSet;
 
-/// Smallest solder-mask web between two openings the lint accepts, in mm
-/// (an estimated prototype default, not a fabricator qualification).
+/// The default profile's smallest solder-mask web between two openings, in
+/// mm (an estimated prototype default, not a fabricator qualification);
+/// the lint reads the `min mask web` design rule.
 pub const MIN_MASK_WEB_MM: f64 = 0.1;
 /// Rounding allowance of the mask-web comparison, in mm (1 nm, far below
 /// any fabrication tolerance).
 const WEB_TOLERANCE_MM: f64 = 1e-6;
-/// Thinnest silkscreen stroke the lint accepts (`footprint.silk_width`),
-/// in mm (an estimated prototype default; fabricators state their own).
+/// The default profile's thinnest silkscreen stroke
+/// (`footprint.silk_width`), in mm (an estimated prototype default;
+/// fabricators state their own); the lint reads `min silkscreen width`.
 pub const MIN_SILK_WIDTH_MM: f64 = 0.1;
-/// Smallest silkscreen text height the lint accepts
-/// (`footprint.text_height`), in mm (an estimated prototype default).
+/// The default profile's smallest silkscreen text height
+/// (`footprint.text_height`), in mm (estimated); the lint reads `min
+/// silkscreen text height`.
 pub const MIN_SILK_TEXT_HEIGHT_MM: f64 = 0.6;
+
+/// The limits the footprint lint applies, each with the text naming its
+/// rule and source (`Fine 4/4: min mask web`).
+struct LintLimits {
+    mask_web: (f64, String),
+    silk_width: (f64, String),
+    text_height: (f64, String),
+    silk_pad: (f64, String),
+}
+
+impl LintLimits {
+    fn of(rules: &ProjectRules) -> Self {
+        let effective: DesignRules = rules.effective();
+        let pick = |key: RuleKey, mm: f64| {
+            (
+                mm,
+                format!("{}: {}", rules.source_of(key).describe(), key.label()),
+            )
+        };
+        Self {
+            mask_web: pick(RuleKey::MaskWebMin, effective.mask.web_min),
+            silk_width: pick(
+                RuleKey::SilkLineWidthMin,
+                effective.silkscreen.line_width_min,
+            ),
+            text_height: pick(
+                RuleKey::SilkTextHeightMin,
+                effective.silkscreen.text_height_min,
+            ),
+            silk_pad: pick(
+                RuleKey::SilkPadClearance,
+                effective.silkscreen.pad_clearance,
+            ),
+        }
+    }
+}
+
+/// `needs 0.1 mm (Pcbcraft default: min mask web)`.
+fn needs((mm, cite): &(f64, String)) -> String {
+    let text = format!("{mm:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!(
+        "needs {} mm ({cite})",
+        if text.is_empty() { "0" } else { text }
+    )
+}
 /// Pads on which the lint expects an authored pin-1 polarity.
 pub(super) const POLARITY_LINT_PADS: usize = 2;
 
@@ -446,12 +496,21 @@ impl FootprintDefinition {
         source_findings(self, id, out);
     }
 
-    /// Advisory footprint lint: missing courtyard, missing pin-1 polarity
-    /// on more than two pads, solder-mask webs below [`MIN_MASK_WEB_MM`],
-    /// pads outside the courtyard, silkscreen over pads, and silkscreen
-    /// strokes and text below [`MIN_SILK_WIDTH_MM`] and
-    /// [`MIN_SILK_TEXT_HEIGHT_MM`].
+    /// [`Self::lint_with`] under the default profile, for a footprint
+    /// outside any project.
     pub fn lint(&self, id: DefinitionId) -> Vec<Finding> {
+        self.lint_with(id, &ProjectRules::default())
+    }
+
+    /// Advisory footprint lint: missing courtyard, missing pin-1 polarity
+    /// on more than two pads, solder-mask webs below the `min mask web`
+    /// rule, pads outside the courtyard, silkscreen over (or within the
+    /// `silkscreen to pad clearance` of) pads, and silkscreen strokes and
+    /// text below the `min silkscreen width` and `min silkscreen text
+    /// height` rules, all from `rules` (the project's, or the default
+    /// profile in a library context).
+    pub fn lint_with(&self, id: DefinitionId, rules: &ProjectRules) -> Vec<Finding> {
+        let limits = LintLimits::of(rules);
         let this = ObjectRef::Definition { id };
         let mut out = Vec::new();
         if !self
@@ -476,19 +535,20 @@ impl FootprintDefinition {
                 vec![this],
             ));
         }
-        self.mask_web_lint(id, &mut out);
+        self.mask_web_lint(id, &limits, &mut out);
         self.courtyard_lint(id, &mut out);
-        self.silk_lint(id, &mut out);
-        self.silk_size_lint(id, &mut out);
+        self.silk_lint(id, &limits, &mut out);
+        self.silk_size_lint(id, &limits, &mut out);
         out
     }
 
-    /// Silkscreen strokes thinner than [`MIN_SILK_WIDTH_MM`]
+    /// Silkscreen strokes thinner than the silkscreen width rule
     /// (`footprint.silk_width`; a filled shape prints its area, so only
-    /// unfilled strokes count) and visible text shorter than
-    /// [`MIN_SILK_TEXT_HEIGHT_MM`] (`footprint.text_height`).
-    fn silk_size_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+    /// unfilled strokes count) and visible text shorter than the text
+    /// height rule (`footprint.text_height`).
+    fn silk_size_lint(&self, id: DefinitionId, limits: &LintLimits, out: &mut Vec<Finding>) {
         let mut reported = 0usize;
+        let (min_width, min_height) = (limits.silk_width.0, limits.text_height.0);
         for graphic in self
             .graphics
             .iter()
@@ -499,26 +559,26 @@ impl FootprintDefinition {
             }
             let finding = match &graphic.item {
                 Item::Shape { width, fill, .. }
-                    if *fill == Fill::None && width.is_finite() && *width < MIN_SILK_WIDTH_MM =>
+                    if *fill == Fill::None && width.is_finite() && *width < min_width =>
                 {
                     Finding::new(
                         "footprint.silk_width",
                         format!(
-                            "A silkscreen line is {width:.3} mm wide, below {MIN_SILK_WIDTH_MM} mm (estimated default); it may not print."
+                            "A silkscreen line is {width:.3} mm wide and may not print; {}.",
+                            needs(&limits.silk_width)
                         ),
                         vec![object(id, graphic.id.0)],
                     )
                 }
                 Item::Text(text)
-                    if text.visible
-                        && text.height.is_finite()
-                        && text.height < MIN_SILK_TEXT_HEIGHT_MM =>
+                    if text.visible && text.height.is_finite() && text.height < min_height =>
                 {
                     Finding::new(
                         "footprint.text_height",
                         format!(
-                            "A silkscreen text is {:.3} mm high, below {MIN_SILK_TEXT_HEIGHT_MM} mm (estimated default); it may not be legible.",
-                            text.height
+                            "A silkscreen text is {:.3} mm high and may not be legible; {}.",
+                            text.height,
+                            needs(&limits.text_height)
                         ),
                         vec![object(id, graphic.id.0)],
                     )
@@ -566,11 +626,13 @@ impl FootprintDefinition {
         }
     }
 
-    /// Silkscreen strokes over copper on the same side
+    /// Silkscreen strokes over copper on the same side, or closer to it
+    /// than the `silkscreen to pad clearance` rule
     /// (`footprint.silk_over_pad`): fabricators clip them, so the legend
     /// would not print as drawn. Sampled every 0.05 mm, within a budget.
-    fn silk_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+    fn silk_lint(&self, id: DefinitionId, limits: &LintLimits, out: &mut Vec<Finding>) {
         const STEP_MM: f64 = 0.05;
+        let gap = limits.silk_pad.0.max(0.0);
         let mut budget = 1_000_000usize;
         let lands: Vec<_> = self
             .pads
@@ -601,7 +663,7 @@ impl FootprintDefinition {
             let Some(extent) = crate::geometry::Bounds::of(points.iter().copied()) else {
                 continue;
             };
-            let extent = extent.inflated(half);
+            let extent = extent.inflated(half + gap);
             let opposite = graphic.side == graphics::Side::Opposite;
             for (pad, land, bounds) in &lands {
                 let same_side =
@@ -609,6 +671,7 @@ impl FootprintDefinition {
                 if !same_side || flagged.contains(&pad.id) || !bounds.intersects(&extent) {
                     continue;
                 }
+                let mut overlaps = false;
                 let over = points.windows(2).any(|w| {
                     let length = crate::geometry::distance(w[0], w[1]);
                     let steps = ((length / STEP_MM).ceil() as usize).clamp(1, 4096);
@@ -622,17 +685,28 @@ impl FootprintDefinition {
                             w[0][0] + (w[1][0] - w[0][0]) * t,
                             w[0][1] + (w[1][1] - w[0][1]) * t,
                         ];
-                        land.distance(p, true) < half - 1e-9
+                        let d = land.distance(p, true);
+                        overlaps |= d < half - 1e-9;
+                        overlaps || d < half + gap - 1e-9
                     })
                 });
                 if over && flagged.len() < 64 {
                     flagged.insert(pad.id);
-                    out.push(Finding::new(
-                        "footprint.silk_over_pad",
+                    let message = if overlaps {
                         format!(
                             "Silkscreen lies over pad {}; it would be clipped at fabrication.",
                             pad_label(pad)
-                        ),
+                        )
+                    } else {
+                        format!(
+                            "Silkscreen is too close to pad {}; {}.",
+                            pad_label(pad),
+                            needs(&limits.silk_pad)
+                        )
+                    };
+                    out.push(Finding::new(
+                        "footprint.silk_over_pad",
+                        message,
                         vec![object(id, pad.id.0), object(id, graphic.id.0)],
                     ));
                 }
@@ -640,9 +714,10 @@ impl FootprintDefinition {
         }
     }
 
-    /// Pairs of mask openings on a shared copper side closer than
-    /// [`MIN_MASK_WEB_MM`] (merged openings included).
-    fn mask_web_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
+    /// Pairs of mask openings on a shared copper side closer than the
+    /// `min mask web` rule (merged openings included).
+    fn mask_web_lint(&self, id: DefinitionId, limits: &LintLimits, out: &mut Vec<Finding>) {
+        let min_web = limits.mask_web.0;
         let openings: Vec<_> = self
             .pads
             .iter()
@@ -660,26 +735,139 @@ impl FootprintDefinition {
         for (i, (a, ga, ra, ba)) in openings.iter().enumerate() {
             for (b, gb, rb, bb) in openings.iter().skip(i + 1) {
                 let shared = a.kind.through_hole() || b.kind.through_hole() || a.side == b.side;
-                if !shared || !ba.inflated(ga + gb + MIN_MASK_WEB_MM).intersects(bb) {
+                if !shared || !ba.inflated(ga + gb + min_web).intersects(bb) {
                     continue;
                 }
                 let web = ring_gap(ra, rb) - ga - gb;
                 // A web of exactly the minimum passes: sums of decimal
                 // sizes and positions land a few ulps either side of it.
-                if web < MIN_MASK_WEB_MM - WEB_TOLERANCE_MM && reported < 64 {
+                if web < min_web - WEB_TOLERANCE_MM && reported < 64 {
                     reported += 1;
                     out.push(Finding::new(
                         "footprint.mask_web",
                         format!(
-                            "The solder-mask web between pads {} and {} is {:.3} mm, below {MIN_MASK_WEB_MM} mm (estimated default).",
+                            "The solder-mask web between pads {} and {} is {:.3} mm; {}.",
                             pad_label(a),
                             pad_label(b),
-                            web.max(0.0)
+                            web.max(0.0),
+                            needs(&limits.mask_web)
                         ),
                         vec![object(id, a.id.0), object(id, b.id.0)],
                     ));
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod rules_tests {
+    use super::*;
+    use crate::ids::{GraphicId, PackageTerminalId, PadId};
+    use crate::library::graphics::{FootprintGraphic, Side};
+    use crate::rules::{RuleValue, RulesCommand, builtin};
+
+    /// Two 0.5 mm square lands 0.3 mm apart (copper), each opening grown
+    /// by the default 0.05 mm: a 0.2 mm mask web; and a 0.12 mm silk line.
+    fn footprint() -> FootprintDefinition {
+        FootprintDefinition {
+            pads: vec![
+                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [0.0, 0.0], [0.5, 0.5]),
+                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", [0.8, 0.0], [0.5, 0.5]),
+            ],
+            graphics: vec![FootprintGraphic {
+                id: GraphicId(10),
+                layer: DrawingLayer::Silkscreen,
+                side: Side::Component,
+                item: Item::Shape {
+                    shape: crate::geometry::Shape::polyline(vec![[-1.0, 1.0], [2.0, 1.0]]),
+                    width: 0.12,
+                    fill: Fill::None,
+                },
+            }],
+            next_local: 11,
+            ..FootprintDefinition::default()
+        }
+    }
+
+    fn messages(f: &FootprintDefinition, rules: &ProjectRules, code: &str) -> Vec<String> {
+        f.lint_with(DefinitionId(1), rules)
+            .into_iter()
+            .filter(|x| x.code == code)
+            .map(|x| x.message)
+            .collect()
+    }
+
+    #[test]
+    fn the_lint_reads_the_project_rules_and_names_them() -> crate::diagnostics::Result<()> {
+        let f = footprint();
+        let default = ProjectRules::default();
+        assert!(messages(&f, &default, "footprint.mask_web").is_empty());
+        assert!(messages(&f, &default, "footprint.silk_width").is_empty());
+        assert_eq!(
+            f.lint(DefinitionId(1)),
+            f.lint_with(DefinitionId(1), &default)
+        );
+
+        let mut fine = default.clone();
+        let mut profile = builtin::default_profile();
+        profile.id = "fine-test".into();
+        profile.name = "Fine Test".into();
+        profile.rules.mask.web_min = 0.25;
+        crate::rules::apply(
+            &mut fine,
+            RulesCommand::SetProfile {
+                profile: Box::new(profile),
+                keep_overrides: false,
+            },
+        )?;
+        assert_eq!(
+            messages(&f, &fine, "footprint.mask_web"),
+            vec![
+                "The solder-mask web between pads 1 and 2 is 0.200 mm; needs 0.25 mm (Fine Test: min mask web)."
+                    .to_string()
+            ]
+        );
+
+        let mut strict = default.clone();
+        for (key, mm) in [
+            (RuleKey::SilkLineWidthMin, 0.15),
+            (RuleKey::SilkPadClearance, 0.6),
+        ] {
+            crate::rules::apply(
+                &mut strict,
+                RulesCommand::SetOverride {
+                    key,
+                    value: RuleValue::Length(mm),
+                },
+            )?;
+        }
+        assert_eq!(
+            messages(&f, &strict, "footprint.silk_width"),
+            vec![
+                "A silkscreen line is 0.120 mm wide and may not print; needs 0.15 mm (project override: min silkscreen width)."
+                    .to_string()
+            ]
+        );
+        // The stroke's lower edge (y 1.0 less its 0.06 mm half-width) is
+        // 0.69 mm above the lands' copper (top at y 0.25): clear of 0.6 mm.
+        assert!(messages(&f, &strict, "footprint.silk_over_pad").is_empty());
+        let mut closer = f.clone();
+        if let Some(FootprintGraphic {
+            item: Item::Shape { shape, .. },
+            ..
+        }) = closer.graphics.first_mut()
+        {
+            *shape = crate::geometry::Shape::polyline(vec![[-1.0, 0.7], [2.0, 0.7]]);
+        }
+        // At y 0.7 the edge is 0.39 mm from the copper: under 0.6 mm.
+        let near = messages(&closer, &strict, "footprint.silk_over_pad");
+        assert_eq!(near.len(), 2, "{near:?}");
+        assert!(
+            near[0].ends_with("needs 0.6 mm (project override: silkscreen to pad clearance)."),
+            "{near:?}"
+        );
+        assert!(messages(&closer, &default, "footprint.silk_over_pad").is_empty());
+        Ok(())
     }
 }

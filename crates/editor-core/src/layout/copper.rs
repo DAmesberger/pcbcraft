@@ -13,6 +13,8 @@
 //! before it is truly under the rule, and is never missed. A track's round
 //! caps are exact instead: its gaps are measured from its centre line less
 //! its half-width.
+use super::board_edge::{BoardEdges, EdgeVerdict};
+use super::limits::{BoardRules, mm};
 use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{
@@ -22,6 +24,7 @@ use crate::geometry::{
 use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
 use crate::model::{CopperLayer, Project, Track, Via};
+use crate::rules::CopperObject;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The chord tolerance curved copper edges are flattened at, in mm, and so
@@ -87,7 +90,8 @@ impl CopperRing {
         Self::of_circle(via.position, via.drill)
     }
 
-    fn of_circle(center: Point, diameter: f64) -> Self {
+    /// A circle of `diameter` at `center` (a drilled hole).
+    pub fn of_circle(center: Point, diameter: f64) -> Self {
         Self::of_shape(
             &Shape::Circle {
                 center,
@@ -161,8 +165,10 @@ impl CopperRing {
         self.gap(other, EPS + slack + EPS) <= EPS + slack
     }
 
-    /// Whether the two outlines are closer than the clearance rule (an
-    /// exact boundary passes; curved edges are judged conservatively).
+    /// Whether the two outlines are closer than the default profile's
+    /// copper clearance (an exact boundary passes; curved edges are judged
+    /// conservatively). The board checks take the project's rules through
+    /// [`Self::closer_than`] instead.
     pub fn violates_clearance(&self, other: &CopperRing) -> bool {
         self.closer_than(other, CLEARANCE_MM)
     }
@@ -210,6 +216,7 @@ pub struct BoardCopper {
 
 /// One copper shape the checks compare: a pad, a via or a track.
 struct Copper<'a> {
+    kind: CopperObject,
     net: Id,
     layer: CopperLayer,
     through: bool,
@@ -274,6 +281,7 @@ impl BoardCopper {
             .zip(&self.rings)
             .enumerate()
             .map(|(i, (pad, ring))| Copper {
+                kind: CopperObject::Pad,
                 net: pad.net,
                 layer: pad.layer.into(),
                 through: pad.through,
@@ -290,6 +298,7 @@ impl BoardCopper {
             .iter()
             .zip(&self.via_rings)
             .map(|(v, ring)| Copper {
+                kind: CopperObject::Via,
                 net: v.net,
                 layer: CopperLayer::Top,
                 through: true,
@@ -298,6 +307,7 @@ impl BoardCopper {
                 pad: None,
             });
         let tracks = tracks.iter().zip(track_rings).map(|(t, ring)| Copper {
+            kind: CopperObject::Track,
             net: t.net,
             layer: t.layer,
             through: false,
@@ -347,13 +357,41 @@ impl BoardCopper {
         let mut parents = (0..shapes.len()).collect::<Vec<_>>();
         let mut joined = vec![false; shapes.len()];
         let mut pairs = 0usize;
+        let limits = BoardRules::of(project);
+        let edges = BoardEdges::of(project);
         for (i, a) in shapes.iter().enumerate() {
-            if !a.ring.inside(project.board_size) {
-                issues.push(Finding::new(
+            let edge = || limits.clearance(a.kind, Some(a.net), CopperObject::BoardEdge, None);
+            match edges.verdict(a.ring, edge()) {
+                EdgeVerdict::Clear => {}
+                EdgeVerdict::Outside => issues.push(Finding::new(
                     "board.outside_outline",
                     format!("{} extends beyond board outline", label(a)),
                     vec![a.object],
-                ));
+                )),
+                EdgeVerdict::Inside(kind) => issues.push(Finding::new(
+                    "board.outside_outline",
+                    format!(
+                        "{} extends into {}",
+                        label(a),
+                        super::board_edge::EdgeLoopKind::Cutout(kind).describe()
+                    ),
+                    vec![a.object],
+                )),
+                EdgeVerdict::TooClose { gap, near } => {
+                    let need =
+                        limits.clearance_need(a.kind, Some(a.net), CopperObject::BoardEdge, None);
+                    issues.push(Finding::new(
+                        "board.edge_clearance",
+                        format!(
+                            "{} is {} mm from {}; {}",
+                            crate::library::names::capitalised(&label(a)),
+                            mm(gap),
+                            near.describe(),
+                            need.text()
+                        ),
+                        vec![a.object],
+                    ));
+                }
             }
             for (j, b) in shapes.iter().enumerate().skip(i + 1) {
                 pairs += 1;
@@ -373,10 +411,20 @@ impl BoardCopper {
                             }
                         }
                     }
-                } else if a.ring.violates_clearance(b.ring) {
+                } else if a.ring.closer_than(
+                    b.ring,
+                    limits.clearance(a.kind, Some(a.net), b.kind, Some(b.net)),
+                ) {
+                    let need = limits.clearance_need(a.kind, Some(a.net), b.kind, Some(b.net));
                     issues.push(Finding::new(
                         "board.clearance",
-                        format!("Clearance < 0.2 mm: {} / {}", label(a), label(b)),
+                        format!(
+                            "Clearance < {} mm: {} / {} ({})",
+                            mm(need.mm),
+                            label(a),
+                            label(b),
+                            need.cite()
+                        ),
                         vec![a.object, b.object],
                     ));
                 }

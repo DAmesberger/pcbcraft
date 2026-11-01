@@ -722,6 +722,22 @@ pub fn new_from_template(
     request: &NewFromTemplate,
     refs: SampleRefs,
 ) -> Result<Vec<DraftEdit>> {
+    new_from_template_with(
+        library,
+        request,
+        refs,
+        &crate::rules::DesignRules::default(),
+    )
+}
+
+/// [`new_from_template`] with estimated lands following `rules` (the
+/// project's effective design rules).
+pub fn new_from_template_with(
+    library: &Library,
+    request: &NewFromTemplate,
+    refs: SampleRefs,
+    rules: &crate::rules::DesignRules,
+) -> Result<Vec<DraftEdit>> {
     if !printable(&request.name) {
         return Err(Error::Invalid(
             "template.name: a new component needs a printable name of 1–256 bytes".into(),
@@ -746,7 +762,7 @@ pub fn new_from_template(
     };
     let provenance = provenance(&resolved, as_row);
     let lands = resolved.row.lands.as_ref().filter(|_| as_row);
-    let edits = samples::from_template(
+    let edits = samples::from_template_with(
         &TemplateSpec {
             name: request.name.trim(),
             form,
@@ -756,6 +772,7 @@ pub fn new_from_template(
             provenance: &provenance,
         },
         refs,
+        rules,
     )?;
     if edits.len() != NEW_FROM_TEMPLATE_DRAFTS {
         return Err(Error::Invalid(

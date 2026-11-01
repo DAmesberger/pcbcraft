@@ -20,9 +20,11 @@ const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
 
+pub mod board_edge;
 mod copper;
 pub mod courtyard;
 pub mod fill;
+pub mod limits;
 pub mod outline;
 mod placed;
 pub mod showcase;
@@ -603,8 +605,10 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     }
     validate(project)?;
     let copper = BoardCopper::of(project);
+    let limits = limits::BoardRules::of(project);
     let track_rings: Vec<CopperRing> = project.tracks.iter().map(CopperRing::of_track).collect();
     let mut check_pairs = 0usize;
+    use crate::rules::CopperObject::{Pad, Track as TrackObject};
     for (track, ring) in project
         .tracks
         .iter()
@@ -621,11 +625,17 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             if other.id != track.id
                 && other.layer == track.layer
                 && other.net != track.net
-                && ring.violates_clearance(other_ring)
+                && ring.closer_than(
+                    other_ring,
+                    limits.clearance(TrackObject, Some(track.net), TrackObject, Some(other.net)),
+                )
             {
                 return Err(Error::Conflict(format!(
-                    "Too close to a track on {}: needs 0.2 mm",
-                    project.net_name(other.net)
+                    "Too close to a track on {}: {}",
+                    project.net_name(other.net),
+                    limits
+                        .clearance_need(TrackObject, Some(track.net), TrackObject, Some(other.net))
+                        .short()
                 )));
             }
         }
@@ -635,10 +645,11 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                 "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
             ));
         }
-        if let Some(via) = via::track_violates_via(project, track, ring) {
+        if let Some((via, need)) = via::track_violates_via(project, &limits, track, ring) {
             return Err(Error::Conflict(format!(
-                "Too close to a via on {}: needs 0.2 mm",
-                project.net_name(via.net)
+                "Too close to a via on {}: {}",
+                project.net_name(via.net),
+                need.short()
             )));
         }
         for (index, pad) in copper.pads().iter().enumerate() {
@@ -650,9 +661,12 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             }
             if pad.on(track.layer)
                 && pad.net != track.net
-                && copper
-                    .ring(index)
-                    .is_some_and(|pad_ring| ring.violates_clearance(pad_ring))
+                && copper.ring(index).is_some_and(|pad_ring| {
+                    ring.closer_than(
+                        pad_ring,
+                        limits.clearance(TrackObject, Some(track.net), Pad, Some(pad.net)),
+                    )
+                })
             {
                 let label = pad_labels(project)
                     .get(&(pad.instance, pad.pad))
@@ -662,8 +676,11 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                     .instance(pad.instance)
                     .map_or("a part", |i| i.designator.as_str());
                 return Err(Error::Conflict(format!(
-                    "Too close to {designator} pad {label} ({}): needs 0.2 mm",
-                    project.net_name(pad.net)
+                    "Too close to {designator} pad {label} ({}): {}",
+                    project.net_name(pad.net),
+                    limits
+                        .clearance_need(TrackObject, Some(track.net), Pad, Some(pad.net))
+                        .short()
                 )));
             }
         }

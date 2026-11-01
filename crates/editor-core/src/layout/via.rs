@@ -1,7 +1,12 @@
 //! Board via commands, the document rules over vias, routing through a
-//! layer change, and the via manufacturing checks (annular ring, drill to
-//! copper, hole to hole). Connectivity through vias lives in
-//! [`BoardCopper`], which treats a through via as copper on every layer.
+//! layer change, and the via manufacturing checks (drill size, annular
+//! ring, aspect ratio, drill to copper, hole to hole, drill to board edge,
+//! and mounting holes against vias and copper). Every limit comes from the
+//! project's design rules and net classes ([`BoardRules`]); the constants
+//! here are the default profile's values. Connectivity through vias lives
+//! in [`BoardCopper`], which treats a through via as copper on every layer.
+use super::board_edge::{BoardEdges, EdgeVerdict};
+use super::limits::{BoardRules, Need, mm};
 use super::{
     BoardCopper, CopperRing, EPS, Error, MAX_CHECK_PAIRS, Result, RouteEditSet, RouteRequest,
     WorldPad, distance, invalid,
@@ -10,6 +15,7 @@ use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};
 use crate::ids::Id;
 use crate::model::{CopperLayer, Project, Stackup, Track, Via, ViaSpan};
+use crate::rules::{CopperObject, RuleKey};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -22,15 +28,16 @@ pub const DEFAULT_VIA_DRILL_MM: f64 = 0.3;
 pub const DEFAULT_VIA_DIAMETER_MM: f64 = 0.6;
 const MIN_DRILL_MM: f64 = 0.1;
 const MAX_DIAMETER_MM: f64 = 6.0;
-/// Smallest annular ring the check accepts, in mm. Like
-/// [`super::CLEARANCE_MM`], an estimated prototype default until a rules
-/// document replaces it, not a fabricator qualification.
+/// The default profile's smallest via annular ring, in mm (an estimated
+/// prototype default, not a fabricator qualification); the check reads
+/// the project's `min via annular ring`.
 pub const MIN_ANNULAR_RING_MM: f64 = 0.1;
-/// Smallest gap from a via's drilled hole to another net's copper on any
-/// layer, in mm (estimated prototype default).
+/// The default profile's least gap from a drilled hole to another net's
+/// copper on any layer, in mm (estimated); the check reads the `hole`
+/// pairs of the project's clearance matrix.
 pub const DRILL_TO_COPPER_MM: f64 = 0.25;
-/// Smallest gap between two vias' drilled holes, any nets, in mm
-/// (estimated prototype default).
+/// The default profile's least gap between two drilled holes, any nets,
+/// in mm (estimated); the check reads `hole to hole clearance`.
 pub const HOLE_TO_HOLE_MM: f64 = 0.25;
 
 /// A via to add: everything but its identity.
@@ -233,63 +240,88 @@ fn check_clearance(project: &Project, id: Id) -> Result<()> {
         .via(id)
         .ok_or_else(|| Error::NotFound("unknown via".into()))?;
     let layers = project.stackup.layers();
+    let limits = BoardRules::of(project);
     let ring = CopperRing::of_via(via);
+    let me = (CopperObject::Via, Some(via.net));
+    let refuse = |kind: &str, object: CopperObject, net: Id| {
+        Err(Error::Conflict(format!(
+            "Too close to a {kind} on {}: {}",
+            project.net_name(net),
+            limits.clearance_need(me.0, me.1, object, Some(net)).short()
+        )))
+    };
     let mut pairs = 0usize;
     for track in project.tracks.iter().filter(|t| t.net != via.net) {
         budget(&mut pairs)?;
-        if via.on(track.layer, &layers) && ring.violates_clearance(&CopperRing::of_track(track)) {
-            return Err(Error::Conflict(format!(
-                "Too close to a track on {}: needs 0.2 mm",
-                project.net_name(track.net)
-            )));
+        let need = limits.clearance(me.0, me.1, CopperObject::Track, Some(track.net));
+        if via.on(track.layer, &layers) && ring.closer_than(&CopperRing::of_track(track), need) {
+            return refuse("track", CopperObject::Track, track.net);
         }
     }
     for pad in super::pads(project).iter().filter(|p| p.net != via.net) {
         budget(&mut pairs)?;
-        if via_pad_clearance_conflict(via, pad, &layers) {
-            return Err(Error::Conflict(format!(
-                "Too close to a pad on {}: needs 0.2 mm",
-                project.net_name(pad.net)
-            )));
+        let need = limits.clearance(me.0, me.1, CopperObject::Pad, Some(pad.net));
+        if shares_layer(via, pad, &layers) && ring.closer_than(&CopperRing::of_pad(pad), need) {
+            return refuse("pad", CopperObject::Pad, pad.net);
         }
     }
     for other in project.vias.iter().filter(|v| v.net != via.net) {
         budget(&mut pairs)?;
+        let need = limits.clearance(me.0, me.1, CopperObject::Via, Some(other.net));
         if layers
             .iter()
             .any(|l| via.on(*l, &layers) && other.on(*l, &layers))
-            && ring.violates_clearance(&CopperRing::of_via(other))
+            && ring.closer_than(&CopperRing::of_via(other), need)
         {
-            return Err(Error::Conflict(format!(
-                "Too close to a via on {}: needs 0.2 mm",
-                project.net_name(other.net)
-            )));
+            return refuse("via", CopperObject::Via, other.net);
         }
     }
     Ok(())
 }
 
-/// The first via on another net whose clearance rule the track breaks:
-/// the via side of routing's clearance check.
+/// The first via on another net whose clearance the track breaks, with
+/// the clearance it needs: the via side of routing's clearance check.
 pub(super) fn track_violates_via<'a>(
     project: &'a Project,
+    limits: &BoardRules<'_>,
     track: &Track,
     ring: &CopperRing,
-) -> Option<&'a Via> {
+) -> Option<(&'a Via, Need)> {
     let layers = project.stackup.layers();
-    project.vias.iter().find(|via| {
-        via.net != track.net
-            && via.on(track.layer, &layers)
-            && ring.violates_clearance(&CopperRing::of_via(via))
-    })
+    let (t, v) = (CopperObject::Track, CopperObject::Via);
+    project
+        .vias
+        .iter()
+        .find(|via| {
+            via.net != track.net
+                && via.on(track.layer, &layers)
+                && ring.closer_than(
+                    &CopperRing::of_via(via),
+                    limits.clearance(t, Some(track.net), v, Some(via.net)),
+                )
+        })
+        .map(|via| {
+            (
+                via,
+                limits.clearance_need(t, Some(track.net), v, Some(via.net)),
+            )
+        })
 }
 
-/// The via manufacturing checks over `copper`'s vias: annular ring, drilled
-/// hole to another net's copper on any layer, and hole to hole. Copper
-/// clearance and connectivity through vias are part of
-/// [`BoardCopper::checks`].
+/// The via manufacturing checks over `copper`'s vias: drill size, annular
+/// ring, aspect ratio, drilled hole to another net's copper on any layer,
+/// hole to hole and drill to board edge; then each mounting hole of the
+/// board shape against via drills and all copper. Every limit is the
+/// project's ([`BoardRules`]). Copper clearance and connectivity through
+/// vias are part of [`BoardCopper::checks`].
 pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> {
     let tracks = &project.tracks;
+    let limits = BoardRules::of(project);
+    let edges = BoardEdges::of(project);
+    let drill_min = limits.need(RuleKey::DrillMin);
+    let ring_min = limits.need(RuleKey::ViaAnnularRingMin);
+    let aspect_max = limits.rules().holes.aspect_ratio_max;
+    let thickness = project.stackup.thickness_mm();
     let mut issues = Vec::new();
     let track_rings: Vec<CopperRing> = tracks.iter().map(CopperRing::of_track).collect();
     let vias = copper.vias();
@@ -307,24 +339,13 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
         }
         over
     };
-    for (i, (via, drill)) in vias.iter().zip(&drills).enumerate() {
-        let me = ObjectRef::Via { id: via.id };
-        if via.annular_ring() < MIN_ANNULAR_RING_MM - EPS {
-            issues.push(Finding::new(
-                "board.via_annular_ring",
-                format!(
-                    "A via on {}: annular ring {:.3} mm is under {MIN_ANNULAR_RING_MM} mm",
-                    project.net_name(via.net),
-                    via.annular_ring()
-                ),
-                vec![me],
-            ));
-        }
+    // Other-net copper of every kind a drill is measured against.
+    let others = |net: Option<Id>| {
         let pads = copper
             .pads()
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.net != via.net)
+            .filter(move |(_, p)| Some(p.net) != net)
             .filter_map(|(k, p)| {
                 Some((
                     copper.ring(k)?,
@@ -332,56 +353,189 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
                         instance: p.instance,
                         pad: p.pad,
                     },
-                    "pad",
+                    CopperObject::Pad,
                     p.net,
                 ))
             });
-        let others = vias
+        let vias = vias
             .iter()
             .enumerate()
-            .filter(|(_, v)| v.net != via.net)
+            .filter(move |(_, v)| Some(v.net) != net)
             .filter_map(|(k, v)| {
                 Some((
                     copper.via_ring(k)?,
                     ObjectRef::Via { id: v.id },
-                    "via",
+                    CopperObject::Via,
                     v.net,
                 ))
             });
         let wires = tracks
             .iter()
             .zip(&track_rings)
-            .filter(|(t, _)| t.net != via.net)
-            .map(|(t, ring)| (ring, ObjectRef::Track { id: t.id }, "track", t.net));
-        for (ring, object, kind, net) in pads.chain(others).chain(wires) {
+            .filter(move |(t, _)| Some(t.net) != net)
+            .map(|(t, ring)| {
+                (
+                    ring,
+                    ObjectRef::Track { id: t.id },
+                    CopperObject::Track,
+                    t.net,
+                )
+            });
+        pads.chain(vias).chain(wires)
+    };
+    let hole = CopperObject::Hole;
+    for (i, (via, drill)) in vias.iter().zip(&drills).enumerate() {
+        let me = ObjectRef::Via { id: via.id };
+        let name = project.net_name(via.net);
+        if via.drill < drill_min.mm - EPS {
+            issues.push(Finding::new(
+                "board.via_drill_size",
+                format!(
+                    "A via on {name}: drill {} mm is under the minimum; {}",
+                    mm(via.drill),
+                    drill_min.text()
+                ),
+                vec![me],
+            ));
+        }
+        if via.annular_ring() < ring_min.mm - EPS {
+            issues.push(Finding::new(
+                "board.via_annular_ring",
+                format!(
+                    "A via on {name}: annular ring {:.3} mm is under the minimum; {}",
+                    via.annular_ring(),
+                    ring_min.text()
+                ),
+                vec![me],
+            ));
+        }
+        if let Some(max) = aspect_max
+            && via.drill > 0.0
+            && thickness / via.drill > max + 1e-9
+        {
+            issues.push(Finding::new(
+                "board.via_aspect_ratio",
+                format!(
+                    "A via on {name}: aspect ratio {:.1}:1 ({} mm board, {} mm drill) is over the maximum; needs at most {}:1 ({})",
+                    thickness / via.drill,
+                    mm(thickness),
+                    mm(via.drill),
+                    mm(max),
+                    super::limits::cite(limits.project(), RuleKey::AspectRatioMax)
+                ),
+                vec![me],
+            ));
+        }
+        let edge = limits.clearance(hole, None, CopperObject::BoardEdge, None);
+        if let EdgeVerdict::TooClose { gap, near } = edges.verdict(drill, edge) {
+            let need = limits.clearance_need(hole, None, CopperObject::BoardEdge, None);
+            issues.push(Finding::new(
+                "board.edge_clearance",
+                format!(
+                    "A via on {name}: drill is {} mm from {}; {}",
+                    mm(gap),
+                    near.describe(),
+                    need.text()
+                ),
+                vec![me],
+            ));
+        }
+        for (ring, object, kind, net) in others(Some(via.net)) {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
-            if drill.closer_than(ring, DRILL_TO_COPPER_MM) {
+            let need = limits.clearance(hole, Some(via.net), kind, Some(net));
+            if drill.closer_than(ring, need) {
+                let need = limits.clearance_need(hole, Some(via.net), kind, Some(net));
                 issues.push(Finding::new(
                     "board.via_drill_clearance",
                     format!(
-                        "A via on {}: drill is within {DRILL_TO_COPPER_MM} mm of a {kind} on {}",
-                        project.net_name(via.net),
-                        project.net_name(net)
+                        "A via on {name}: drill is {} mm from a {} on {}; {}",
+                        mm(drill.gap(ring, need.mm + 1.0)),
+                        kind.label(),
+                        project.net_name(net),
+                        need.text()
                     ),
                     vec![me, object],
                 ));
             }
         }
+        let spacing = limits.clearance(hole, None, hole, None);
         for (other, other_drill) in vias.iter().zip(&drills).skip(i + 1) {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
-            if drill.closer_than(other_drill, HOLE_TO_HOLE_MM) {
+            if drill.closer_than(other_drill, spacing) {
+                let need = limits.clearance_need(hole, None, hole, None);
                 issues.push(Finding::new(
                     "board.via_hole_spacing",
                     format!(
-                        "Vias on {} and {}: drills are closer than {HOLE_TO_HOLE_MM} mm",
-                        project.net_name(via.net),
-                        project.net_name(other.net)
+                        "Vias on {name} and {}: drills are {} mm apart; {}",
+                        project.net_name(other.net),
+                        mm(drill.gap(other_drill, need.mm + 1.0)),
+                        need.text()
                     ),
                     vec![me, ObjectRef::Via { id: other.id }],
+                ));
+            }
+        }
+    }
+    // Mounting holes have no net: every copper object and via drill is
+    // measured against them.
+    let board = project.board();
+    for mount in &board.holes {
+        let ring = CopperRing::of_circle(mount.at, mount.drill);
+        let edge = limits.clearance(hole, None, CopperObject::BoardEdge, None);
+        if let EdgeVerdict::TooClose { gap, near } = edges.verdict(&ring, edge) {
+            let need = limits.clearance_need(hole, None, CopperObject::BoardEdge, None);
+            issues.push(Finding::new(
+                "board.edge_clearance",
+                format!(
+                    "A mounting hole is {} mm from {}; {}",
+                    mm(gap),
+                    near.describe(),
+                    need.text()
+                ),
+                vec![ObjectRef::Board],
+            ));
+        }
+        // Its own plated ring (if any) is not board copper here.
+        for (other, object, kind, net) in others(None) {
+            if over(&mut pairs, &mut issues) {
+                return issues;
+            }
+            let need = limits.clearance(hole, None, kind, Some(net));
+            if ring.closer_than(other, need) {
+                let need = limits.clearance_need(hole, None, kind, Some(net));
+                issues.push(Finding::new(
+                    "board.hole_clearance",
+                    format!(
+                        "A mounting hole is {} mm from a {} on {}; {}",
+                        mm(ring.gap(other, need.mm + 1.0)),
+                        kind.label(),
+                        project.net_name(net),
+                        need.text()
+                    ),
+                    vec![ObjectRef::Board, object],
+                ));
+            }
+        }
+        let spacing = limits.clearance(hole, None, hole, None);
+        for (via, drill) in vias.iter().zip(&drills) {
+            if over(&mut pairs, &mut issues) {
+                return issues;
+            }
+            if ring.closer_than(drill, spacing) {
+                let need = limits.clearance_need(hole, None, hole, None);
+                issues.push(Finding::new(
+                    "board.hole_clearance",
+                    format!(
+                        "A mounting hole and a via on {}: drills are {} mm apart; {}",
+                        project.net_name(via.net),
+                        mm(ring.gap(drill, need.mm + 1.0)),
+                        need.text()
+                    ),
+                    vec![ObjectRef::Board, ObjectRef::Via { id: via.id }],
                 ));
             }
         }
