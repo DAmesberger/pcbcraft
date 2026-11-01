@@ -1,26 +1,21 @@
-//! Slice C7 (contract C0): JSON-only scenario tests of the 3D model library (D1, D2). The
-//! contract test pins the request surface and the explicit refusal of
-//! the stubs; C7 replaces it with the scenario (import EXM-48 → review →
-//! apply → assign → report → export).
+//! Slice C7: the 3D model library (D1) over JSON. Staged as `pinout_tests`
+//! explains: the D1 stub's explicit refusal (nothing changed) ends the
+//! step until slice I sets `REQUIRE_COMPLETE`.
+use super::pinout_tests::{Fallible, Scenario, finish};
 use super::*;
 
-type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-/// The diagnostic code of a refused reply.
-fn refused(reply: &Value) -> Option<String> {
-    (reply["ok"] == false).then(|| {
-        reply["error"]["code"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
-    })
-}
-
 #[test]
-fn the_model_queries_refuse_until_d1() -> Fallible<()> {
-    let mut session = Session::new(Engine::demo()?);
-    let reply = session.dispatch(json!({"command": "project.query",
-        "params": {"query": "library.models", "params": {"query": "kind:model pins:8"}}}));
-    assert_eq!(refused(&reply).as_deref(), Some("unsupported"), "{reply}");
-    Ok(())
+fn the_model_query_answers_a_bounded_report() -> Fallible<()> {
+    finish((|| -> Fallible<()> {
+        let mut s = Scenario::demo()?;
+        let report = s.query(
+            "models",
+            "library.models",
+            json!({"query": "kind:model pins:8", "limit": 4}),
+        )?;
+        let hits = report["hits"].as_array().ok_or("hits")?;
+        assert!(hits.len() <= 4, "the limit holds: {report}");
+        assert!(report["more"].is_u64(), "{report}");
+        Ok(())
+    })())
 }
