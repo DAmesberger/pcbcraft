@@ -2,7 +2,7 @@
 //! uses, while Route is armed in Layout (docs/sidebar-ia.md, "Tool card").
 //! The route in progress shows as a canvas pill; view toggles live in the
 //! view popover.
-use super::{PcbEditor, Tool, layer_options};
+use super::{PcbEditor, layer_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
 use pcbcraft_core::{Operation, Project, schematic};
@@ -48,14 +48,13 @@ impl PcbEditor {
                     );
                     if kit::choice_row(ui, "Net", &mut self.net, &nets) {
                         self.route_start = None;
-                        self.highlighted = self.net;
+                        self.route_highlight(self.net);
                     }
                 })
             })
             .inner;
         if response.done {
-            self.tool = Tool::Select;
-            self.route_start = None;
+            self.end_route();
             self.discard_staged();
         }
         None

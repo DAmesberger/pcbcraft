@@ -509,3 +509,194 @@ fn the_pill_keeps_clear_of_the_badge() -> Fallible<()> {
     }
     Ok(())
 }
+
+/// Every kind of object an issue can name locates: routed through
+/// `issues::route` with no workspace preferred over the one that shows it,
+/// it opens that workspace (and tab) and selects or frames the object.
+#[test]
+fn every_object_kind_locates_in_the_workspace_that_shows_it() -> Fallible<()> {
+    use pcbcraft_core::layout::{LayoutCommand, RouteRequest};
+    use pcbcraft_core::{Endpoint, Layer, Operation, TerminalId};
+    let mut engine = Engine::demo()?;
+    let r1 = engine
+        .project()
+        .instance_by_designator("R1")
+        .ok_or("R1")?
+        .id;
+    let net = engine
+        .project()
+        .net_of(Endpoint {
+            instance: r1,
+            terminal: TerminalId(2),
+        })
+        .ok_or("R1 pin 2's net")?
+        .id;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: RouteRequest {
+                net,
+                start: [9.2, 8.0],
+                end: [14.8, 8.0],
+                width: 0.3,
+                layer: Layer::Top,
+            },
+        }),
+    )?;
+    let project = engine.project();
+    let track = project.tracks.first().ok_or("a track")?.id;
+    let pad = pcbcraft_core::layout::BoardCopper::of(project)
+        .pads()
+        .iter()
+        .find(|p| p.instance == r1)
+        .ok_or("an R1 pad")?
+        .pad;
+    let occurrence = project.occurrences_of(r1).next().ok_or("R1's symbol")?;
+    let set = crate::part_editor::WorkingSet::find(engine.drafts(), None).ok_or("a draft")?;
+    let ids = set.ids;
+    let terminal = set.component.terminals.first().ok_or("a terminal")?.id;
+    let footprint_pad = set.footprint.pads.first().ok_or("a footprint pad")?.id;
+    let package_terminal = set
+        .package
+        .terminals
+        .first()
+        .ok_or("a package terminal")?
+        .id;
+    let local = |definition, local| ObjectRef::LibraryObject { definition, local };
+    // (object, workspace, tab or what is selected)
+    let cases: Vec<(ObjectRef, Workspace, &str)> = vec![
+        (ObjectRef::Instance { id: r1 }, Workspace::Schematic, "R1"),
+        (
+            ObjectRef::Terminal {
+                endpoint: Endpoint {
+                    instance: r1,
+                    terminal: TerminalId(1),
+                },
+            },
+            Workspace::Schematic,
+            "R1",
+        ),
+        (
+            ObjectRef::Occurrence { id: occurrence.id },
+            Workspace::Schematic,
+            "R1",
+        ),
+        (
+            ObjectRef::Unit {
+                instance: r1,
+                unit: occurrence.unit,
+            },
+            Workspace::Schematic,
+            "R1",
+        ),
+        (
+            ObjectRef::Property {
+                instance: r1,
+                field: ids.component,
+            },
+            Workspace::Schematic,
+            "R1",
+        ),
+        (ObjectRef::Net { id: net }, Workspace::Schematic, "net"),
+        (ObjectRef::Pad { instance: r1, pad }, Workspace::Pcb, "R1"),
+        (ObjectRef::Track { id: track }, Workspace::Pcb, "track"),
+        (ObjectRef::Board, Workspace::Pcb, "board"),
+        (
+            ObjectRef::Definition { id: ids.component },
+            Workspace::Part,
+            "details",
+        ),
+        (
+            ObjectRef::Definition { id: ids.symbol },
+            Workspace::Part,
+            "symbol",
+        ),
+        (local(ids.component, terminal.0), Workspace::Part, "symbol"),
+        (
+            ObjectRef::Definition { id: ids.footprint },
+            Workspace::Part,
+            "footprint",
+        ),
+        (
+            local(ids.footprint, footprint_pad.0),
+            Workspace::Part,
+            "footprint",
+        ),
+        (
+            ObjectRef::Definition { id: ids.binding },
+            Workspace::Part,
+            "mapping",
+        ),
+        (
+            local(ids.package, package_terminal.0),
+            Workspace::Part,
+            "mapping",
+        ),
+        (
+            ObjectRef::Definition { id: ids.package },
+            Workspace::Part,
+            "3d",
+        ),
+    ];
+    for (object, expected, what) in cases {
+        let mut part = crate::part_editor::PartEditor::default();
+        let mut schematic = crate::schematic_editor::SchematicEditor::default();
+        let mut pcb = crate::pcb_editor::PcbEditor::default();
+        let shown = {
+            let mut editors = Editors {
+                part: &mut part,
+                schematic: &mut schematic,
+                pcb: &mut pcb,
+            };
+            route(&mut editors, &engine, &[object], expected)
+        };
+        assert_eq!(shown, Some(expected), "{object:?}");
+        match (expected, what) {
+            (Workspace::Schematic, "net") => {
+                assert_eq!(schematic.selected_net(&engine), Some(net), "{object:?}");
+            }
+            (Workspace::Schematic, _) => {
+                assert_eq!(schematic.selected_instance(), Some(r1), "{object:?}");
+            }
+            (Workspace::Pcb, "track") => assert_eq!(pcb.selected_track(), Some(track)),
+            (Workspace::Pcb, "board") => {
+                assert_eq!(pcb.selected_instance(), None);
+                assert!(pcb.has_frame_request(), "the board is framed");
+            }
+            (Workspace::Pcb, _) => assert_eq!(pcb.selected_instance(), Some(r1), "{object:?}"),
+            (Workspace::Part, tab) => {
+                let (shown, selected) = part.located();
+                assert_eq!(shown, tab, "{object:?}");
+                // A definition is its tab's subject; its objects are selected.
+                if matches!(object, ObjectRef::LibraryObject { .. }) {
+                    assert!(selected, "{object:?}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A clearance issue between two parts selects both and frames them, at a
+/// zoom that keeps the parts and their neighbours on screen.
+#[test]
+fn a_two_part_issue_selects_and_frames_both() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let project = engine.project();
+    let id = |d: &str| {
+        project
+            .instance_by_designator(d)
+            .map(|i| i.id)
+            .ok_or_else(|| d.to_owned())
+    };
+    let (r1, r2) = (id("R1")?, id("R2")?);
+    let mut pcb = crate::pcb_editor::PcbEditor::default();
+    let refs = [
+        ObjectRef::Instance { id: r1 },
+        ObjectRef::Instance { id: r2 },
+    ];
+    assert!(Locate::locate(&mut pcb, &engine, &refs));
+    assert_eq!(pcb.selected_instance(), Some(r1));
+    assert!(pcb.is_located(r2), "the second part is selected too");
+    Ok(())
+}

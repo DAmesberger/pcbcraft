@@ -884,6 +884,26 @@ impl PartEditor {
     }
 
     /// The component lineage being authored.
+    /// The tab shown and whether it selects anything, for locate tests:
+    /// ("symbol", true) after a pin was located.
+    #[cfg(test)]
+    pub fn located(&self) -> (&'static str, bool) {
+        let tab = match self.view {
+            View::Details => "details",
+            View::Symbol => "symbol",
+            View::Footprint => "footprint",
+            View::Mapping => "mapping",
+            View::Model => "3d",
+        };
+        let selected = match self.view {
+            View::Symbol => !self.selection.is_empty() || self.terminal_card.is_some(),
+            View::Footprint => self.selected_pad.is_some(),
+            View::Mapping => self.selected.is_some(),
+            View::Details | View::Model => true,
+        };
+        (tab, selected)
+    }
+
     pub fn lineage(&self) -> Option<DefinitionId> {
         self.lineage
     }
@@ -1599,7 +1619,13 @@ impl PartEditor {
         }) {
             Ok(QueryResult::Issues(report)) => kit::card::IssueSlot {
                 counts: report.counts,
-                label: label.to_owned(),
+                // A tab's slot says where its issues are; an object's
+                // slot speaks of that object.
+                label: if matches!(inspected, Inspected::Tab(_)) {
+                    slot_label(&report, label)
+                } else {
+                    label.to_owned()
+                },
             },
             _ => kit::card::IssueSlot {
                 counts: Default::default(),
@@ -1692,14 +1718,19 @@ impl PartEditor {
                     Stroke::new(2.0, ink),
                 );
             }
-            let pad_ids = set
+            // Pads by their numbers, as the footprint shows them.
+            let numbers: Vec<&str> = set
                 .footprint
                 .pads
                 .iter()
                 .filter(|p| p.terminal == Some(physical.id))
-                .map(|p| p.id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+                .map(|p| p.number.as_str())
+                .collect();
+            let pad_ids = match numbers.as_slice() {
+                [] => "no pad".to_owned(),
+                [one] => format!("pad {one}"),
+                many => format!("pads {}", many.join(", ")),
+            };
             painter.text(
                 Pos2::new(left, y),
                 Align2::LEFT_CENTER,
@@ -1710,7 +1741,7 @@ impl PartEditor {
             painter.text(
                 Pos2::new(right, y),
                 Align2::RIGHT_CENTER,
-                format!("{}  ·  pads {}", physical.designation, pad_ids),
+                format!("{}  ·  {pad_ids}", physical.designation),
                 FontId::proportional(t.font_label),
                 t.text,
             );
@@ -1750,8 +1781,13 @@ pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<Optio
                 .map(|c| c.meta.name.clone())
                 .unwrap_or_default();
             Ok((created > 0).then(|| {
+                // The toast shows the first line; Messages keeps both.
+                let next = component
+                    .revision
+                    .next()
+                    .map_or_else(String::new, |r| format!(" · {r} on publish"));
                 format!(
-                    "Draft created for {name} {}: edits are saved with the project until you publish or discard them",
+                    "Draft created{next}\nDraft of {name} {}: edits are saved with the project until you publish or discard them",
                     component.revision
                 )
             }))
@@ -1884,6 +1920,33 @@ fn target(set: &WorkingSet, parts: &[DefinitionId], object: &ObjectRef) -> Optio
                 .then_some(Target::Tab(View::Details))
         }
         _ => None,
+    }
+}
+
+/// The words after the slot's counts: where the issues are when they all
+/// sit in another definition than the tab's ("1 on the mapping" on the 3D
+/// tab, for a package terminal with no mapping), else `label`.
+fn slot_label(report: &pcbcraft_core::issues::IssueReport, label: &str) -> String {
+    let place = |code: &str| match code.split('.').next().unwrap_or_default() {
+        "binding" => Some("on the mapping"),
+        "footprint" => Some("on the footprint"),
+        "package" => Some("on the package"),
+        "symbol" => Some("on the symbol"),
+        "part" => Some("on the Part"),
+        _ => None,
+    };
+    let mut places = report.rows.iter().map(|r| place(&r.group.code));
+    match places.next() {
+        Some(Some(first)) if places.all(|p| p == Some(first)) => {
+            // "on this footprint" already says it on its own tab.
+            let tab = label.rsplit(' ').next().unwrap_or_default();
+            if first.ends_with(tab) {
+                label.to_owned()
+            } else {
+                first.to_owned()
+            }
+        }
+        _ => label.to_owned(),
     }
 }
 
@@ -2349,7 +2412,8 @@ mod draft_tests {
         let said = run(&mut engine, Request::Draft(open))?.ok_or("nothing said")?;
         assert!(engine.revision() > before, "a real, undoable change");
         assert!(engine.drafts().get(component).is_some());
-        assert!(said.starts_with("Draft created for "), "{said}");
+        assert!(said.starts_with("Draft created · r"), "{said}");
+        assert!(said.lines().next().is_some_and(|l| l.chars().count() <= 80));
         let after = engine.revision();
         assert_eq!(run(&mut engine, Request::Draft(open))?, None);
         assert_eq!(engine.revision(), after);

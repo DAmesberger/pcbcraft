@@ -48,8 +48,13 @@ pub struct ReviewPanel<'a> {
     /// The document changed since the preview: offer Recompute.
     pub stale: bool,
     pub blockers: &'a [ReviewLine],
+    /// What applying leaves behind (new errors), under the blockers: shown
+    /// with Show, counted beside Apply, never gating it.
+    pub after: &'a [ReviewLine],
     pub groups: &'a [ReviewGroup],
     pub apply: &'a str,
+    /// The primary removes work ("Remove R1"): the destructive variant.
+    pub destructive: bool,
 }
 
 /// What the review's controls did.
@@ -63,6 +68,8 @@ pub enum ReviewAction {
     Acknowledge(usize),
     /// Show blocker `n`'s objects on the canvas.
     Locate(usize),
+    /// Show the objects of `after[n]`.
+    LocateAfter(usize),
 }
 
 /// Why Apply is disabled, or `None` when it may run: the preview is
@@ -111,12 +118,25 @@ impl ReviewPanel<'_> {
     ) -> Option<ReviewAction> {
         let mut action = None;
         let gate = apply_gate(self.stale, self.blockers, acked);
+        let new_errors = self
+            .after
+            .iter()
+            .filter(|l| l.level == Level::Error)
+            .count();
+        let leaves = match new_errors {
+            0 => None,
+            1 => Some("Leaves 1 new error".to_owned()),
+            n => Some(format!("Leaves {n} new errors")),
+        };
         let mut panel = DialogPanel::new(self.id, self.icon, self.title, self.apply);
         panel.kind = "Review";
+        if self.destructive {
+            panel.primary_kind = super::dialog::PrimaryKind::Destructive;
+        }
         // The review owns the subject slot: its body takes the slot's height.
         panel.body_rows = f32::INFINITY;
         panel.primary_disabled = gate;
-        panel.status = gate;
+        panel.status = gate.or(leaves.as_deref());
         panel.refusal = refusal;
         let footer = panel.show(ui, |ui| {
             let t = Tokens::get();
@@ -149,6 +169,18 @@ impl ReviewPanel<'_> {
                                 action = Some(ReviewAction::Acknowledge(n));
                             }
                         });
+                    }
+                });
+            }
+            for (n, line) in self.after.iter().enumerate() {
+                ui.push_id(("after", n), |ui| {
+                    if glyph_line(
+                        ui,
+                        Some(line.level),
+                        &line.title,
+                        line.locate.then_some("Show"),
+                    ) {
+                        action = Some(ReviewAction::LocateAfter(n));
                     }
                 });
             }
@@ -304,8 +336,10 @@ mod tests {
                 summary: "Adds 6 placements: R17–R22",
                 stale: stale.get(),
                 blockers: &blockers,
+                after: &[],
                 groups: &groups,
                 apply: "Apply update",
+                destructive: false,
             };
             action.set(panel.show(ui, &mut acked.borrow_mut()[..]));
         };

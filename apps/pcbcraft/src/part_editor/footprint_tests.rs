@@ -773,7 +773,7 @@ fn the_template_dialog_replaces_a_footprint_in_one_undo_step()
         "Footprint from template",
         "Replace footprint",
         "Cancel",
-        "Builds 2 pads for 2 terminals",
+        "Builds 2 pads; assign them to terminals afterwards",
     ] {
         assert!(texts.contains(&text), "{text} in {texts:?}");
     }

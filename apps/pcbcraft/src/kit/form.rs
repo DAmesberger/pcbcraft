@@ -185,8 +185,9 @@ pub fn parse_number(text: &str, unit: &str) -> Option<f64> {
 }
 
 /// A number with its unit in the text (`"6 mm"`), like Solidcraft's
-/// expression fields. Out-of-range or malformed text shows the error look and
-/// leaves `value` unchanged; leaving the field restores the value's text.
+/// expression fields. Out-of-range or malformed text shows the error look
+/// and leaves `value` unchanged; it stays in the field after focus leaves,
+/// still marked, until it is fixed or Esc restores the value's text.
 /// Returns whether `value` changed.
 pub fn number_field(
     ui: &mut Ui,
@@ -195,6 +196,28 @@ pub fn number_field(
     unit: &str,
     range: std::ops::RangeInclusive<f64>,
 ) -> bool {
+    number_input(ui, id, value, unit, range).changed
+}
+
+/// What [`number_input`] did this frame.
+pub struct NumberInput {
+    /// The value changed (one commit per change).
+    pub changed: bool,
+    /// The field's response.
+    pub response: Response,
+    /// Why the shown text is not stored, while it is invalid.
+    pub invalid: Option<String>,
+}
+
+/// [`number_field`] with its response and why its text is invalid, so a
+/// row can mark it with [`super::field_error`].
+pub fn number_input(
+    ui: &mut Ui,
+    id: &str,
+    value: &mut f64,
+    unit: &str,
+    range: std::ops::RangeInclusive<f64>,
+) -> NumberInput {
     let key = ui.id().with(("number", id));
     let shown = || {
         if unit.is_empty() {
@@ -206,25 +229,65 @@ pub fn number_field(
     let mut text = ui.data(|d| d.get_temp::<String>(key)).unwrap_or_else(shown);
     let parsed = parse_number(&text, unit).filter(|v| range.contains(v));
     let mut response = ui_kit::cell_editor(ui, key.with("edit"), &mut text, "", parsed.is_none());
-    if parsed.is_none() {
-        response = not_stored(response);
-    }
+    let parsed = parse_number(&text, unit).filter(|v| range.contains(v));
+    let escaped = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape));
     let mut changed = false;
+    if escaped {
+        ui.data_mut(|d| d.remove::<String>(key));
+        return NumberInput {
+            changed,
+            response,
+            invalid: None,
+        };
+    }
     if response.has_focus() {
-        if let Some(v) = parse_number(&text, unit).filter(|v| range.contains(v))
+        if let Some(v) = parsed
             && (v - *value).abs() > f64::EPSILON
         {
             *value = v;
             changed = true;
         }
-        ui.data_mut(|d| d.insert_temp(key, text));
-    } else {
+        ui.data_mut(|d| d.insert_temp(key, text.clone()));
+    } else if parsed.is_some() {
         ui.data_mut(|d| d.remove::<String>(key));
+    } else {
+        // Invalid text is kept and marked, never silently replaced.
+        ui.data_mut(|d| d.insert_temp(key, text.clone()));
     }
-    changed
+    let invalid = parsed
+        .is_none()
+        .then(|| number_message(&text, unit, &range));
+    if invalid.is_some() {
+        response = not_stored(response);
+    }
+    NumberInput {
+        changed,
+        response,
+        invalid,
+    }
 }
 
-/// One labelled number row.
+/// Why `text` is not a number of `range`, short enough for the line under
+/// a half-width field: "Enter a number in mm", or "Enter 0 to 1000 mm".
+fn number_message(text: &str, unit: &str, range: &std::ops::RangeInclusive<f64>) -> String {
+    let gap = unit_gap(unit);
+    if parse_number(text, unit).is_none() {
+        if unit.is_empty() {
+            "Enter a number".to_owned()
+        } else {
+            format!("Enter a number in {unit}")
+        }
+    } else {
+        format!(
+            "Enter {} to {}{gap}{unit}",
+            number_text(*range.start()),
+            number_text(*range.end())
+        )
+    }
+}
+
+/// One labelled number row. Invalid text is marked with one error line
+/// under the row ([`super::field_error`]) and never committed.
 pub fn number_row(
     ui: &mut Ui,
     label: &str,
@@ -232,7 +295,11 @@ pub fn number_row(
     unit: &str,
     range: std::ops::RangeInclusive<f64>,
 ) -> bool {
-    row(ui, label, |ui| number_field(ui, label, value, unit, range))
+    let input = row(ui, label, |ui| number_input(ui, label, value, unit, range));
+    if let Some(message) = &input.invalid {
+        super::field_error(ui, &input.response, message, true);
+    }
+    input.changed
 }
 
 /// X and Y of one point in one row, each half of the control column.
@@ -398,6 +465,32 @@ pub fn section<R>(
     count: Option<usize>,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> Option<R> {
+    section_with(ui, id, title, default_open, count, None, add)
+}
+
+/// A [`section`] that shows `summary` (one dim line, such as "0, 0, 0 mm ·
+/// 0°") after its caption while folded, so a folded section still says
+/// what it holds.
+pub fn summary_section<R>(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    default_open: bool,
+    summary: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    section_with(ui, id, title, default_open, None, Some(summary), add)
+}
+
+fn section_with<R>(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    default_open: bool,
+    count: Option<usize>,
+    summary: Option<&str>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
     let t = Tokens::get();
     ui.add_space(t.space_2);
     let id = ui.make_persistent_id(("section", id));
@@ -448,6 +541,22 @@ pub fn section<R>(
             rule_left = badge.right() + t.space_12;
         }
     }
+    if let Some(summary) = summary.filter(|s| !open && !s.is_empty()) {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            summary.to_owned(),
+            egui::FontId::proportional(t.font_small),
+            t.form_dim,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - rule_left).max(0.0));
+        let galley = ui.painter().layout_job(job);
+        let width = galley.size().x;
+        ui.painter().galley(
+            egui::pos2(rule_left, rect.center().y - galley.size().y / 2.0),
+            galley,
+            t.form_dim,
+        );
+        rule_left += width + t.space_12;
+    }
     if rule_left < rect.right() {
         t.secondary_hline(
             ui.painter(),
@@ -457,7 +566,11 @@ pub fn section<R>(
         );
     }
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, title)
+        let name = match summary.filter(|s| !open && !s.is_empty()) {
+            Some(summary) => format!("{title}: {summary}"),
+            None => title.to_owned(),
+        };
+        egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, &name)
     });
     if response.clicked() {
         open = !open;

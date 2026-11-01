@@ -340,7 +340,8 @@ impl App {
     /// whole slot: its Properties card, a tool card, a docked dialog or a
     /// docked review.
     fn column(&mut self, ctx: &egui::Context, rect: Rect) {
-        let column = kit::card::column(rect, self.issues.expanded());
+        let wants = kit::card::wants(ctx, 2.0 * f32::from(shell::COLUMN_CARD_INSET));
+        let column = kit::card::column(rect, self.issues.expanded(), wants);
         let slot = shell::column_card(
             ctx,
             "properties",
@@ -716,7 +717,7 @@ mod tests {
                 BrowserMode::Auto,
             );
             for expanded in [false, true] {
-                let c = kit::card::column(l.inspector, expanded);
+                let c = kit::card::column(l.inspector, expanded, Default::default());
                 assert!(
                     c.issues.height() >= kit::issues::ISSUES_BAR_HEIGHT,
                     "{w}x{h}"

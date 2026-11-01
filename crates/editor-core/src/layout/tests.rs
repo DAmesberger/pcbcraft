@@ -912,11 +912,14 @@ fn track_set_refusals_change_nothing() -> Result<()> {
         )?;
     }
     let before = project.clone();
-    // 3.5 mm wide, its edge is 0.1 mm from the top track.
-    assert!(matches!(
-        refused(&mut project, track_set(id, Some(3.5), None)),
-        Some(Error::Conflict(_))
-    ));
+    // 3.5 mm wide, its edge is 0.1 mm from the top track. The refusal
+    // names what is too close in the message style.
+    let Some(Error::Conflict(text)) = refused(&mut project, track_set(id, Some(3.5), None)) else {
+        return Err(Error::Invalid("a clearance conflict expected".into()));
+    };
+    assert!(text.starts_with("Too close to "), "{text}");
+    assert!(text.ends_with(": needs 0.2 mm"), "{text}");
+    assert_eq!(crate::issues::style::check(&text), vec![], "{text}");
     // On the bottom it would overlap the other net's track.
     assert!(matches!(
         refused(&mut project, track_set(id, None, Some(Layer::Bottom))),

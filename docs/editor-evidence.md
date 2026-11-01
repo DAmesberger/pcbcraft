@@ -140,6 +140,28 @@ The copper sample (an adapter test fixture since the restructuring, no longer a 
 
 No large-board speed claim is made. Current native construction rebuilds the project in a worker; it is not incremental or cancellable within a build. It creates separate envelope definitions per instance, although the earlier native fixture proves shared definition reuse. The 1k/10k/100k benchmark, GPU draw/upload metrics, spatial indexing and local cache invalidation remain open. Current safeguards bound the layout to 2,000 tracks and 4,096 placed pads, and stop pair checks at 100,000 comparisons with an explicit incomplete-check message.
 
+## Sidebar wave 4 review fixes
+
+1 November 2026, macOS arm64, `ci` profile, an 860 × 1081 pt window, the demo project, `PCBCRAFT_RECOVERY_DIR` set. Before: the audit screenshots of the wave-4 review (`ux-after/`, scratchpad). After: the same screens retaken in the running app. Measurements read off the screenshots (1.45 px per pt).
+
+| Screen | Before | After |
+| --- | --- | --- |
+| Component 3D tab, default | content 1023 pt in 780 visible; Quick actions clipped at "Pin 1 → pad 1"; slot "1 on this package" for a mapping issue | Model offset and Quick actions folded with one-line summaries ("0, 0, 0 mm · 0°", "Turn, flip, seat, centre"); content about 650 pt in about 860 visible, nothing clipped; the slot names where its issues are ("on the mapping") |
+| 3D Length = "abc", Enter | "2 mm" put back, no mark | the text stays with a red ring and "Enter a number in mm" under it; nothing sent; Esc restores "2 mm" |
+| Schematic R1 with Issues expanded | subject 382 pt in a 317 pt half: PART row and Choose… cut | Issues takes the height its list uses; the R1 card shows Part, Choose… and Pin functions whole |
+| PCB board with Issues expanded | Issues fixed at half the column | Issues grows with its list (one group, then group and row); the board card keeps the rest |
+| Issue titles | "R1 terminal ‘1’ is not conn…", "No Part cho…" (cut by its Fix) | "R1 pin 1 unconnected", "No Part chosen" in full; ×n, locate and Fix appear on hover; a group's Fix has its own line while open |
+| Issues bar with blockers elsewhere | "2 blocking i…" | the word "Issues" gives way first: "✓ No issues · 2 blocking in Schematic" |
+| Update PCB review | summary "Adds 6 placements, 12 pads"; canvas unchanged; "New: Unrouted: R16 pad 2 (N32)" | "Adds 2 placements: R3 and R4"; the planned placements drawn as ghosts where they land; one line per placement; Issues titles ("Resolved: R3 not placed"); new errors as error rows with Show and "Leaves N new errors" beside Apply |
+| Remove R1 review | "Apply update"; "Removes 1 instance, 1 placement, 1 wi…"; R1 drawn selected | destructive "Remove R1"; "Removes R1, 1 wire and its PCB placement"; R1 dimmed on the sheet (unit test; not retaken in the app) |
+| PCB placement header | "R13" | "R1 · 10 kΩ · Resistor package" (clipped at 860 pt) |
+| Canvas hint | drawn under the fit and view buttons | ends with "…" before them (PCB, schematic, Component 3D) |
+| Place palette | "Find a part: …"; "No component matches." while folders load | "Find a component: …"; "Searching…" while a library folder loads |
+
+Covered by tests rather than retaken in the app: the content-aware column split (`kit::card` tests), board check limits as counted errors that locate the board (`issues::tests`), locate for every object kind including the board and a two-part issue selecting both parts at a bounded zoom (`issues_tests.rs`), route highlight ending with the route, the route refusal naming the pad and net ("Too close to R6 pad 1 (N3): needs 0.2 mm"), "Not published: N issues block publishing", review rows from Issues titles, dragging across an issue row selecting no text, and the message-style checks for code quoting, snake-case API names and "R1.2". `cargo xtask ci` passed.
+
+Not done: refusal toasts still offer Details, not a Show that locates the blocker; the instance card's rating warning stays a legacy status line (it is a warning, and `kit::field_error` draws an error); Part drafts are not in the locate table; the core message test covers the fixtures listed in [sidebar IA](sidebar-ia.md), not one fixture per finding code.
+
 ## Remaining release work
 
 The initial editors are intentionally narrow: traces only (board checks and copper connectivity use each pad's exact outline, with curved edges flattened within 2 µm); two copper layers; fixed 1.6 mm substrate and 35 µm copper; manual routes; basic electrical/clearance checks. The copper sample's vias and zone cannot yet be authored in the PCB editor. No manufacturing-ready DRC claim follows from zero basic-check messages.

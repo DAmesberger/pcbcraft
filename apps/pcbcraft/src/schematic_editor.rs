@@ -1097,6 +1097,7 @@ impl SchematicEditor {
 
         let mut pin_hits = Vec::new();
         let mut body_hits = Vec::new();
+        let removing = self.update.marks().map(|m| m.removed).unwrap_or_default();
         let mut hit_wire = None;
         let selected_net = self
             .wire_from
@@ -1178,17 +1179,21 @@ impl SchematicEditor {
             // Picking uses the cached resolved drawing, so what is drawn
             // is what is picked and nothing re-resolves per frame.
             body_hits.push((occurrence.instance, occurrence.id, placed, delta));
-            let selected = self.selected == Some(occurrence.instance);
+            // A review that removes the instance previews the result: the
+            // symbol is dimmed, not drawn as selected.
+            let removed = removing.contains(&occurrence.instance);
+            let selected = !removed && self.selected == Some(occurrence.instance);
+            let dim = |c: egui::Color32| if removed { c.gamma_multiply(0.3) } else { c };
             symbol_view::paint(
                 &painter,
                 view,
                 placed,
                 symbol_view::Ink {
-                    stroke: if selected { t.accent } else { t.text },
+                    stroke: dim(if selected { t.accent } else { t.text }),
                     body: t.panel,
-                    text: if selected { t.accent } else { t.text },
-                    pin: t.form_success,
-                    pin_text: t.text_dim,
+                    text: dim(if selected { t.accent } else { t.text }),
+                    pin: dim(t.form_success),
+                    pin_text: dim(t.text_dim),
                 },
             );
             for pin in &placed.pins {
@@ -1531,18 +1536,9 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
 }
 
 /// Paint `text` as one dim line at the canvas's bottom-left corner, cut
-/// short of the centred fit button.
+/// short of the centred canvas buttons.
 fn paint_canvas_hint(painter: &egui::Painter, rect: Rect, text: &str) {
-    let t = Tokens::get();
-    let mut clip = rect;
-    clip.max.x = (rect.center().x - 3.0 * t.space_12).max(rect.left());
-    painter.with_clip_rect(clip).text(
-        rect.left_bottom() + Vec2::new(t.space_12, -t.space_12),
-        egui::Align2::LEFT_BOTTOM,
-        text,
-        egui::FontId::proportional(t.font_small),
-        t.text_dim,
-    );
+    crate::kit::canvas_hint(painter, rect, Tokens::get().space_12, text);
 }
 
 impl crate::issues::Locate for SchematicEditor {
@@ -1731,10 +1727,10 @@ fn focus_left(ui: &egui::Ui, key: egui::Id, rect: Rect) -> Option<bool> {
 }
 
 /// A terminal as people name it: the instance's designator and the
-/// terminal's name ("R1.2", "U3.VOUT").
+/// terminal's name ("R1 pin 2", "U3 pin VOUT").
 fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
     let Some(instance) = project.instance(endpoint.instance) else {
-        return format!("?.{}", endpoint.terminal);
+        return format!("pin {}", endpoint.terminal);
     };
     let name = instances::resolve(&project.library, instance)
         .ok()
@@ -1745,7 +1741,7 @@ fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
                 .map(|t| t.name.clone())
         })
         .unwrap_or_else(|| endpoint.terminal.to_string());
-    format!("{}.{name}", instance.designator)
+    format!("{} pin {name}", instance.designator)
 }
 
 #[cfg(test)]

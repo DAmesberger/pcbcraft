@@ -165,6 +165,10 @@ pub enum ObjectRef {
         instance: Id,
         field: DefinitionId,
     },
+    /// The board as a whole, for a finding about the board rather than any
+    /// one object on it (a check that stopped at its limit). Locating it
+    /// frames the board.
+    Board,
 }
 
 /// A derived completeness state a finding can block. Nothing stores these

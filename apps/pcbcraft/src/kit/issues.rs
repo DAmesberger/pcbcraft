@@ -125,15 +125,19 @@ fn row_at(ui: &mut Ui, id: egui::Id, row: &IssueRowView, indent: f32) -> IssueRo
     x += t.space_14 + t.space_6;
 
     let mut right = rect.right() - t.space_6;
-    if locate_button(ui, id.with("locate"), &mut right, cy).clicked() {
-        out.locate = true;
-    }
-    if let Some(fix) = &row.fix {
-        let fix = trailing_button(ui, rect, x, &mut right, fix);
-        out.fix = fix.clicked();
-    }
-    if row.count > 1 {
-        right = count_pill(ui, right, cy, row.count);
+    // Locate, Fix and the ×n pill show only while the row is hovered, so
+    // the title has the row's width the rest of the time.
+    if ui.rect_contains_pointer(rect) {
+        if locate_button(ui, id.with("locate"), &mut right, cy).clicked() {
+            out.locate = true;
+        }
+        if let Some(fix) = &row.fix {
+            let fix = trailing_button(ui, rect, x, &mut right, fix);
+            out.fix = fix.clicked();
+        }
+        if row.count > 1 {
+            right = count_pill(ui, right, cy, row.count);
+        }
     }
     let title = clipped(
         ui,
@@ -328,7 +332,8 @@ pub fn issues_list(
         ui.spacing_mut().item_spacing.y = 0.0;
         let mut skip = 0.0_f32;
         for (g, group) in groups.iter().enumerate() {
-            if shown(ui, skip, ISSUE_ROW_HEIGHT) {
+            let header = group_height(group);
+            if shown(ui, skip, header) {
                 flush(ui, &mut skip);
                 let (toggle, fix) = group_header(ui, id.with(("group", g)), group);
                 if toggle {
@@ -337,7 +342,7 @@ pub fn issues_list(
                     event = Some(IssueListEvent::GroupFix(g));
                 }
             } else {
-                skip += ISSUE_ROW_HEIGHT;
+                skip += header;
             }
             if !group.open {
                 continue;
@@ -389,8 +394,20 @@ fn flush(ui: &mut Ui, skip: &mut f32) {
     }
 }
 
+/// The height a group header takes: one row, and a second for the group's
+/// Fix while the group is open.
+fn group_height(group: &IssueGroupView) -> f32 {
+    if group.open && group.fix.is_some() {
+        2.0 * ISSUE_ROW_HEIGHT
+    } else {
+        ISSUE_ROW_HEIGHT
+    }
+}
+
 /// A group header: disclosure, glyph, title and row count, and the group's
-/// Fix. A click anywhere but Fix folds or unfolds it.
+/// Fix: on its own line under the header while the group is open, and at
+/// the header's end on hover while it is folded, so the title keeps the
+/// row's width. A click anywhere but Fix folds or unfolds it.
 fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, bool) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(
@@ -416,10 +433,12 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
     );
     x += t.space_14 + t.space_6;
     let mut right = rect.right() - t.space_6;
-    let fix = group
-        .fix
-        .as_ref()
-        .is_some_and(|fix| trailing_button(ui, rect, x, &mut right, fix).clicked());
+    let mut fix = !group.open
+        && ui.rect_contains_pointer(rect)
+        && group
+            .fix
+            .as_ref()
+            .is_some_and(|fix| trailing_button(ui, rect, x, &mut right, fix).clicked());
     let count = galley(
         ui,
         &group.rows.to_string(),
@@ -449,6 +468,20 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
     } else {
         response
     };
+    if group.open
+        && let Some(label) = &group.fix
+    {
+        let (line, _) = ui.allocate_exact_size(
+            vec2(ui.available_width().max(0.0), ISSUE_ROW_HEIGHT),
+            Sense::hover(),
+        );
+        let mut child = ui.new_child(
+            UiBuilder::new()
+                .max_rect(Rect::from_min_max(pos2(x, line.top()), line.max))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        fix = ui_kit::button(&mut child, label, ui_kit::Button::Small).clicked();
+    }
     (response.clicked(), fix)
 }
 
@@ -588,11 +621,33 @@ pub fn issues_bar(
     let title = galley(ui, "Issues", fonts::semibold(t.font_label), t.text);
     let mut x = disclosure.right() + t.space_6;
     let title_width = title.size().x;
-    ui.painter()
-        .galley(pos2(x, cy - title.size().y / 2.0), title, t.text);
-    x += title_width + t.space_10;
     let segs = segments(counts, true, true);
     let font = FontId::proportional(t.font_label);
+    // A narrow column drops the word "Issues" before it clips the
+    // blockers elsewhere; the counts and the note always show.
+    let note = elsewhere.filter(|e| !e.is_empty()).map_or(0.0, |e| {
+        galley(ui, e, FontId::proportional(t.font_small), t.text_dim)
+            .size()
+            .x
+            + t.space_16
+            + t.space_10
+    });
+    // With nothing to count the bar says "No issues" after the glyph.
+    let none_width = if segs.is_empty() {
+        t.space_4
+            + galley(ui, &Level::Ok.count_words(0), font.clone(), t.text_dim)
+                .size()
+                .x
+    } else {
+        0.0
+    };
+    let fits = x + title_width + t.space_10 + counts_width(ui, &segs, &font) + none_width + note
+        <= rect.right() - t.space_8;
+    if fits || note == 0.0 {
+        ui.painter()
+            .galley(pos2(x, cy - title.size().y / 2.0), title, t.text);
+        x += title_width + t.space_10;
+    }
     x = paint_counts(ui, x, cy, &segs, &font);
     if segs.is_empty() {
         let none = galley(ui, &Level::Ok.count_words(0), font, t.text_dim);

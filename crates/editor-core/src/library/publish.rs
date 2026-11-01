@@ -284,7 +284,15 @@ pub fn publish(
     }
     if !blocking.is_empty() {
         let shown = blocking.len().min(16);
-        let mut message = format!("Nothing was published. {}", blocking[..shown].join(" "));
+        let count = if blocking.len() == 1 {
+            "1 issue blocks".to_owned()
+        } else {
+            format!("{} issues block", blocking.len())
+        };
+        let mut message = format!(
+            "Not published: {count} publishing. {}",
+            blocking[..shown].join(" ")
+        );
         if blocking.len() > shown {
             message.push_str(&format!(" ({} more findings)", blocking.len() - shown));
         }

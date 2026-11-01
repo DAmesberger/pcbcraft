@@ -656,6 +656,9 @@ impl Session {
             "drafts": drafts,
             "can_undo": self.engine.can_undo(),
             "can_redo": self.engine.can_redo(),
+            // Raw rule output for scripts that read rule codes directly.
+            // The findings view people and agents act on is
+            // `project.issues` (severity, wording, merging, locating).
             "erc": erc::checks(project),
             "board_checks": layout::checks(project),
         })

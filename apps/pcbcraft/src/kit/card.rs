@@ -101,20 +101,41 @@ fn gap() -> f32 {
     Tokens::get().space_8
 }
 
-/// Split the column: collapsed, Issues is a [`ISSUES_BAR_HEIGHT`] bar at the
-/// bottom; expanded, the subject keeps its header and [`SUBJECT_ROWS`] rows,
-/// or half the column if that is more, and Issues takes the rest. The
-/// Issues bar always keeps its full height, however short the column; the
-/// subject gives way first.
-pub fn column(rect: Rect, issues_expanded: bool) -> Column {
+/// The heights the two cards' content asked for last frame, in points;
+/// `None` while unmeasured (taken as "as much as there is").
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Wants {
+    pub subject: Option<f32>,
+    pub issues: Option<f32>,
+}
+
+/// The subject card's least height while Issues is expanded: its header
+/// and [`SUBJECT_ROWS`] rows (upstream `stack_first_bounds`).
+pub fn subject_rows_height() -> f32 {
     let t = Tokens::get();
+    t.form_header_height + SUBJECT_ROWS * t.control_height + 2.0 * t.space_8
+}
+
+/// Split the column: collapsed, Issues is a [`ISSUES_BAR_HEIGHT`] bar at the
+/// bottom and the subject has the rest. Expanded, Issues takes only the
+/// height its content uses and the subject the rest, but the subject
+/// keeps its header and [`SUBJECT_ROWS`] rows (or its whole content, when
+/// that is shorter), so a short card gives Issues the room. The Issues bar
+/// always keeps its full height, however short the column; the subject
+/// gives way first.
+pub fn column(rect: Rect, issues_expanded: bool, wants: Wants) -> Column {
     let height = rect.height().max(0.0);
     let bar = ISSUES_BAR_HEIGHT.min(height);
     // Room above the bar for the subject; never negative.
     let room = (height - bar - gap()).max(0.0);
     let subject_height = if issues_expanded {
-        let rows = t.form_header_height + SUBJECT_ROWS * t.control_height + 2.0 * t.space_8;
-        rows.max((height / 2.0).floor()).min(room)
+        let usable = |h: Option<f32>| h.filter(|h| h.is_finite() && *h >= 0.0);
+        let issues = usable(wants.issues).unwrap_or(f32::INFINITY).max(bar);
+        let keep = usable(wants.subject)
+            .unwrap_or(f32::INFINITY)
+            .min(subject_rows_height())
+            .min(room);
+        (height - gap() - issues).clamp(keep, room)
     } else {
         room
     };
@@ -123,6 +144,43 @@ pub fn column(rect: Rect, issues_expanded: bool) -> Column {
     Column {
         subject: Rect::from_min_max(rect.min, pos2(rect.right(), split)),
         issues: Rect::from_min_max(pos2(rect.left(), issues_top), rect.max),
+    }
+}
+
+const SUBJECT_WANTS: &str = "column-subject-wants";
+const ISSUES_WANTS: &str = "column-issues-wants";
+
+/// Keep the height a card's content wants for the next frame's
+/// [`column`], repainting when it changed.
+fn remember_wants(ctx: &egui::Context, key: &str, height: f32) {
+    let id = egui::Id::new(key);
+    let pass = ctx.cumulative_pass_nr();
+    let previous = ctx.data(|d| d.get_temp::<(u64, f32)>(id));
+    if previous.is_none_or(|(_, h)| (h - height).abs() > 0.5) {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|d| d.insert_temp(id, (pass, height)));
+}
+
+/// The Issues card's content height this frame (bar, toolbar, list and
+/// footer), for the next frame's [`column`].
+pub fn remember_issues_wants(ctx: &egui::Context, height: f32) {
+    remember_wants(ctx, ISSUES_WANTS, height);
+}
+
+/// What the cards asked for in the last frame that drew them, plus each
+/// card's frame margin (`margin`, vertical, in points); a card that was not
+/// drawn last frame (a dialog took the slot) asks for nothing.
+pub fn wants(ctx: &egui::Context, margin: f32) -> Wants {
+    let pass = ctx.cumulative_pass_nr();
+    let read = |key: &str| {
+        ctx.data(|d| d.get_temp::<(u64, f32)>(egui::Id::new(key)))
+            .filter(|(at, _)| at.saturating_add(1) >= pass)
+            .map(|(_, h)| h + margin)
+    };
+    Wants {
+        subject: read(SUBJECT_WANTS),
+        issues: read(ISSUES_WANTS),
     }
 }
 
@@ -146,6 +204,7 @@ pub fn card<R>(
     mut content: impl FnMut(&mut Ui, Region) -> Option<R>,
 ) -> CardResponse<R> {
     let t = Tokens::get();
+    let top = ui.max_rect().top();
     let header = &inspector.header;
     super::inspector_header(ui, header.icon, &header.title, header.kind);
     let slot_height = t.control_height + ui.spacing().item_spacing.y;
@@ -160,17 +219,22 @@ pub fn card<R>(
     if reset_scroll(ui, key, inspector.subject) {
         scroll = scroll.vertical_scroll_offset(0.0);
     }
-    let mut output = scroll
-        .show(ui, |ui| {
-            ui.add_space(t.space_4);
-            let inner = egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(t.space_8 as i8, 0))
-                .show(ui, |ui| super::form(ui, |ui| content(ui, Region::Body)))
-                .inner;
-            ui.add_space(t.space_8);
-            inner
-        })
-        .inner;
+    let body_top = ui.cursor().top();
+    let shown = scroll.show(ui, |ui| {
+        ui.add_space(t.space_4);
+        let inner = egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(t.space_8 as i8, 0))
+            .show(ui, |ui| super::form(ui, |ui| content(ui, Region::Body)))
+            .inner;
+        ui.add_space(t.space_8);
+        inner
+    });
+    remember_wants(
+        ui.ctx(),
+        SUBJECT_WANTS,
+        body_top - top + shown.content_size.y + slot_height + footer_height,
+    );
+    let mut output = shown.inner;
     let slot = inspector.issues.clone().unwrap_or_default();
     let line = ui
         .scope(|ui| {
@@ -216,7 +280,7 @@ mod tests {
     #[test]
     fn collapsed_issues_is_a_bar_under_the_subject() {
         let rect = column_rect(1000.0);
-        let c = column(rect, false);
+        let c = column(rect, false, Wants::default());
         assert_eq!(c.issues.height(), ISSUES_BAR_HEIGHT);
         assert_eq!(c.issues.bottom(), rect.bottom());
         assert_eq!(c.subject.top(), rect.top());
@@ -227,16 +291,65 @@ mod tests {
 
     #[test]
     fn expanded_issues_shares_the_column_and_the_subject_keeps_its_rows() {
-        let t = Tokens::get();
-        let rows = t.form_header_height + SUBJECT_ROWS * t.control_height + 2.0 * t.space_8;
-        // Tall: half the column is more than the rows.
-        let tall = column(column_rect(1081.0), true);
-        assert!((tall.subject.height() - 540.0).abs() < 1e-3);
+        let rows = subject_rows_height();
+        // Unmeasured: the subject keeps its rows and Issues takes the rest.
+        let tall = column(column_rect(1081.0), true, Wants::default());
+        assert!((tall.subject.height() - rows).abs() < 1e-3);
         assert!(tall.issues.height() > 500.0);
-        // Short: the subject keeps its header and ten rows.
-        let short = column(column_rect(rows + 200.0), true);
+        // A short column: the subject keeps its header and ten rows.
+        let short = column(column_rect(rows + 200.0), true, Wants::default());
         assert!((short.subject.height() - rows).abs() < 1e-3);
         assert!(short.issues.height() >= ISSUES_BAR_HEIGHT);
+    }
+
+    /// Issues gets only the height its list uses and the subject the rest;
+    /// a tall list leaves the subject its rows; a short subject gives way.
+    #[test]
+    fn expanded_issues_takes_only_what_its_content_uses() {
+        let rows = subject_rows_height();
+        let rect = column_rect(780.0);
+        // A three-row list beside a tall instance card (sch-09).
+        let c = column(
+            rect,
+            true,
+            Wants {
+                subject: Some(900.0),
+                issues: Some(200.0),
+            },
+        );
+        assert!((c.issues.height() - 200.0).abs() < 1e-3, "{c:?}");
+        assert!((c.subject.height() - (780.0 - 200.0 - gap())).abs() < 1e-3);
+        // A long list: the subject keeps its rows; Issues scrolls the rest.
+        let c = column(
+            rect,
+            true,
+            Wants {
+                subject: Some(900.0),
+                issues: Some(5000.0),
+            },
+        );
+        assert!((c.subject.height() - rows).abs() < 1e-3);
+        // A short board card shrinks to its content to give Issues room.
+        let c = column(
+            rect,
+            true,
+            Wants {
+                subject: Some(150.0),
+                issues: Some(5000.0),
+            },
+        );
+        assert!((c.subject.height() - 150.0).abs() < 1e-3);
+        assert_eq!(c.issues.bottom(), rect.bottom());
+        // An Issues card shorter than its bar still keeps the bar.
+        let c = column(
+            rect,
+            true,
+            Wants {
+                subject: None,
+                issues: Some(0.0),
+            },
+        );
+        assert!(c.issues.height() >= ISSUES_BAR_HEIGHT);
     }
 
     /// However short the window, the bar never shrinks or leaves the
@@ -246,7 +359,7 @@ mod tests {
         for height in [0.0, 10.0, ISSUES_BAR_HEIGHT, 40.0, 120.0, 400.0] {
             for expanded in [false, true] {
                 let rect = column_rect(height);
-                let c = column(rect, expanded);
+                let c = column(rect, expanded, Wants::default());
                 assert!(c.subject.height() >= 0.0, "{height} {expanded}");
                 assert!(c.issues.top() >= rect.top(), "{height} {expanded}");
                 assert_eq!(c.issues.bottom(), rect.bottom());

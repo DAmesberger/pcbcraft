@@ -223,9 +223,15 @@ pub struct PcbEditor {
     view_3d: bool,
     tool: Tool,
     instance: Option<Id>,
+    /// Further parts a Locate selected with `instance` (both parts of a
+    /// clearance issue); cleared by any other selection.
+    also: Vec<Id>,
     track: Option<Id>,
     net: Option<Id>,
     highlighted: Option<Id>,
+    /// The net the Route tool highlighted, so ending the route turns off a
+    /// highlight it made (and leaves one the user turned on).
+    route_lit: Option<Id>,
     layer: Layer,
     width: f64,
     route_start: Option<Point>,
@@ -281,9 +287,11 @@ impl Default for PcbEditor {
             view_3d: false,
             tool: Tool::Select,
             instance: None,
+            also: Vec::new(),
             track: None,
             net: None,
             highlighted: None,
+            route_lit: None,
             layer: Layer::Top,
             width: 0.3,
             route_start: None,
@@ -331,7 +339,7 @@ impl PcbEditor {
         self.view_3d = enabled;
         self.route_start = None;
         if enabled {
-            self.tool = Tool::Select;
+            self.end_route();
         }
         self.cancel_drag();
     }
@@ -351,8 +359,46 @@ impl PcbEditor {
             self.connections_all = false;
         }
         self.instance = instance;
+        self.also.clear();
         self.track = track;
         self.discard_staged();
+    }
+
+    /// Leave the Route tool for Select: the route in progress ends and the
+    /// net highlight the route made goes with it.
+    fn end_route(&mut self) {
+        self.tool = Tool::Select;
+        self.route_start = None;
+        if let Some(net) = self.route_lit.take()
+            && self.highlighted == Some(net)
+        {
+            self.highlighted = None;
+        }
+    }
+
+    /// The Route tool lights `net`; [`Self::end_route`] turns it off.
+    fn route_highlight(&mut self, net: Option<Id>) {
+        if self.highlighted != net {
+            self.route_lit = net;
+        }
+        self.highlighted = net;
+    }
+
+    /// Whether a Locate asked the next frame to frame something.
+    #[cfg(test)]
+    pub fn has_frame_request(&self) -> bool {
+        self.frame_request.is_some()
+    }
+
+    /// Whether `id` is selected, inspected or located with the inspected.
+    #[cfg(test)]
+    pub fn is_located(&self, id: Id) -> bool {
+        self.is_selected(id)
+    }
+
+    /// Whether `id` is selected: the inspected part or one located with it.
+    fn is_selected(&self, id: Id) -> bool {
+        self.instance == Some(id) || self.also.contains(&id)
     }
 
     /// Drop uncommitted field edits and their refusals; the next sync
@@ -578,14 +624,10 @@ impl PcbEditor {
         match tool {
             "update" => {
                 self.update.begin(engine, Change::SyncPcb {});
-                self.tool = Tool::Select;
-                self.route_start = None;
+                self.end_route();
                 self.cancel_drag();
             }
-            "select" => {
-                self.tool = Tool::Select;
-                self.route_start = None;
-            }
+            "select" => self.end_route(),
             "route" => self.tool = Tool::Route,
             _ => {}
         }
@@ -619,9 +661,24 @@ impl PcbEditor {
         match self.inspected(project) {
             Inspected::Review => Header::new("component", "Update PCB", "Review"),
             Inspected::Placement(id) | Inspected::Unplaced(id) => {
-                let designator = project
-                    .instance(id)
-                    .map_or_else(String::new, |i| i.designator.clone());
+                // "R13 · 10 kΩ · R0603": designator, shown value, package.
+                let designator = project.instance(id).map_or_else(String::new, |i| {
+                    let value = instances::effective_fields(&project.library, i)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|f| f.show_on_symbol)
+                        .and_then(|f| f.text);
+                    let package = instances::resolve(&project.library, i)
+                        .ok()
+                        .and_then(|r| r.physical)
+                        .map(|p| p.package.meta.name.clone())
+                        .filter(|n| !n.trim().is_empty());
+                    std::iter::once(i.designator.clone())
+                        .chain(value)
+                        .chain(package)
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                });
                 let kind = if matches!(self.inspected(project), Inspected::Placement(_)) {
                     "Placement"
                 } else {
@@ -835,9 +892,8 @@ impl PcbEditor {
         let tolerance = f64::from(4.0 / scale);
         let mut operation = None;
         if response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.route_start = None;
+            self.end_route();
             self.cancel_drag();
-            self.tool = Tool::Select;
             self.discard_staged();
         }
         if self.tool == Tool::Select
@@ -902,7 +958,7 @@ impl PcbEditor {
                 } else {
                     if let Some((_, Some(net))) = snapped {
                         self.net = Some(net);
-                        self.highlighted = self.net;
+                        self.route_highlight(self.net);
                     }
                     if self.net.is_some() {
                         self.route_start = Some(destination);
@@ -916,10 +972,17 @@ impl PcbEditor {
         self.paint_board(&painter, view, project);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
-            crate::update_preview::paint_board(&painter, project, &marks, screen, |id| {
-                let placement = project.placements.iter().find(|p| p.instance == id)?;
-                body_polygon(project, placement)
-            });
+            crate::update_preview::paint_board(
+                &painter,
+                project,
+                &marks,
+                screen,
+                |id| {
+                    let placement = project.placements.iter().find(|p| p.instance == id)?;
+                    body_polygon(project, placement)
+                },
+                |placement| body_polygon(project, placement),
+            );
         }
         if let (Some(start), Some(at)) = (self.route_start, cursor) {
             let end = self
@@ -932,10 +995,11 @@ impl PcbEditor {
             );
             painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
         }
-        painter.text(
-            rect.left_bottom() + egui::vec2(t.space_16, -t.space_16),
-            Align2::LEFT_BOTTOM,
-            format!(
+        kit::canvas_hint(
+            &painter,
+            rect,
+            t.space_16,
+            &format!(
                 "{} · {} copper · grid 0.5 mm · {} airwires{}",
                 if self.tool == Tool::Route {
                     "Route"
@@ -950,8 +1014,6 @@ impl PcbEditor {
                     ""
                 }
             ),
-            FontId::proportional(t.font_small),
-            t.text_dim,
         );
         self.pills(ui, rect, project);
         operation
@@ -1176,7 +1238,7 @@ impl PcbEditor {
             }
         }
         for placement in &project.placements {
-            let selected = self.instance == Some(placement.instance);
+            let selected = self.is_selected(placement.instance);
             let mut shown = placement.clone();
             let delta = self.drag_delta(placement.instance);
             shown.position = [shown.position[0] + delta[0], shown.position[1] + delta[1]];
@@ -1276,7 +1338,7 @@ impl PcbEditor {
             if !self.layers.pad(placed) {
                 continue;
             }
-            let selected = self.instance == Some(placed.instance)
+            let selected = self.is_selected(placed.instance)
                 || (placed.net.is_some() && self.highlighted == placed.net);
             let shape = view.shape(&pad.outline, self.drag_delta(placed.instance));
             if placed.pad.kind == PadKind::NonPlatedHole {
@@ -1364,7 +1426,7 @@ impl PcbEditor {
             {
                 continue;
             }
-            let mut color = if self.instance == Some(graphic.instance) {
+            let mut color = if self.is_selected(graphic.instance) {
                 selected_ink
             } else {
                 match graphic.layer {
@@ -1506,18 +1568,24 @@ fn snap(p: Point) -> Point {
 /// An (instance, track, net) selection, as `PcbEditor::set_selection` takes.
 type Selection = (Option<Id>, Option<Id>, Option<Id>);
 
-/// The object a finding row locates: the first part (directly, or through
-/// a pad or terminal) it names, else its first track, else its first net.
-fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Selection> {
-    use pcbcraft_core::diagnostics::ObjectRef;
-    let instance = objects.iter().find_map(|o| match o {
+/// Every part `refs` names, directly or through a pad, unit, property or
+/// terminal, in order and with repeats.
+fn located_parts(refs: &[ObjectRef]) -> impl Iterator<Item = Id> + '_ {
+    refs.iter().filter_map(|o| match o {
         ObjectRef::Instance { id }
         | ObjectRef::Pad { instance: id, .. }
         | ObjectRef::Unit { instance: id, .. }
         | ObjectRef::Property { instance: id, .. } => Some(*id),
         ObjectRef::Terminal { endpoint } => Some(endpoint.instance),
         _ => None,
-    });
+    })
+}
+
+/// The object a finding row locates: the first part (directly, or through
+/// a pad or terminal) it names, else its first track, else its first net.
+fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Selection> {
+    use pcbcraft_core::diagnostics::ObjectRef;
+    let instance = located_parts(objects).next();
     let track = || {
         objects.iter().find_map(|o| match o {
             ObjectRef::Track { id } => Some(*id),
@@ -1642,16 +1710,24 @@ fn bounds_of(editor: &PcbEditor, project: &Project, refs: &[ObjectRef]) -> Optio
     }))
 }
 
-/// The zoom and pan that frame `bounds` in the canvas `rect`: centred, at
-/// about a third of the canvas, never zoomed out past the fitted board.
+/// The furthest a Locate zooms in, as a multiple of the fitted board, so
+/// small parts keep their neighbours and readable designators in view.
+const LOCATE_MAX_ZOOM: f32 = 4.0;
+
+/// The margin a Locate keeps around the located objects, in millimetres.
+const LOCATE_MARGIN_MM: f64 = 2.0;
+
+/// The zoom and pan that frame `bounds` in the canvas `rect`: centred, the
+/// bounds plus a margin filling about two thirds of the canvas, never
+/// zoomed out past the fitted board nor in past [`LOCATE_MAX_ZOOM`].
 fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
     let fit = fit_scale(rect, board);
     let size = [
-        (bounds[1][0] - bounds[0][0]).max(1.0) as f32,
-        (bounds[1][1] - bounds[0][1]).max(1.0) as f32,
+        (bounds[1][0] - bounds[0][0] + 2.0 * LOCATE_MARGIN_MM).max(1.0) as f32,
+        (bounds[1][1] - bounds[0][1] + 2.0 * LOCATE_MARGIN_MM).max(1.0) as f32,
     ];
-    let wanted = (rect.width() / (3.0 * size[0])).min(rect.height() / (3.0 * size[1]));
-    let zoom = (wanted / fit).clamp(1.0, *ZOOM_RANGE.end());
+    let wanted = (rect.width() / (1.5 * size[0])).min(rect.height() / (1.5 * size[1]));
+    let zoom = (wanted / fit).clamp(1.0, LOCATE_MAX_ZOOM.min(*ZOOM_RANGE.end()));
     let centre = [
         (bounds[0][0] + bounds[1][0]) / 2.0,
         (bounds[0][1] + bounds[1][1]) / 2.0,
@@ -1661,13 +1737,19 @@ fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -
 }
 
 impl crate::issues::Locate for PcbEditor {
-    /// Select the first board object of `refs` (a part, else a track, else
-    /// a net) and frame all of them on the next Layout frame. Selection
-    /// and camera only: the tool, document and geometry stay as they are.
+    /// Select every part `refs` names (else its track, else its net), the
+    /// first one inspected, and frame all of them on the next Layout
+    /// frame; the board ref frames the whole board. Selection and camera
+    /// only: the tool, document and geometry stay as they are.
     fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
         self.sync(engine);
         let project = engine.project();
         let Some((instance, track, net)) = locate(refs) else {
+            if refs.contains(&ObjectRef::Board) {
+                self.set_selection(None, None, None);
+                self.frame_request = Some([[0.0, 0.0], project.board_size]);
+                return true;
+            }
             return false;
         };
         let exists = instance.is_some_and(|id| project.instance(id).is_some())
@@ -1679,6 +1761,12 @@ impl crate::issues::Locate for PcbEditor {
             return false;
         }
         self.set_selection(instance, track, net);
+        if instance.is_some() {
+            let mut seen: BTreeSet<Id> = instance.into_iter().collect();
+            self.also = located_parts(refs)
+                .filter(|id| project.instance(*id).is_some() && seen.insert(*id))
+                .collect();
+        }
         self.frame_request = bounds_of(self, project, refs);
         true
     }
@@ -1734,6 +1822,29 @@ mod tests {
             }),
         )?;
         Ok(engine)
+    }
+
+    /// A route's net highlight is temporary: it ends with the route (Select,
+    /// Update PCB), while a highlight the user turned on stays.
+    #[test]
+    fn a_routes_net_highlight_ends_with_the_route() -> pcbcraft_core::Result<()> {
+        let engine = Engine::demo()?;
+        let mut editor = PcbEditor::default();
+        editor.on_tool("route", &engine);
+        editor.route_highlight(Some(26));
+        assert_eq!(editor.highlighted_net(), Some(26));
+        editor.on_tool("select", &engine);
+        assert_eq!(editor.highlighted_net(), None, "the route's highlight ends");
+        editor.set_selection(None, None, Some(7));
+        editor.on_tool("route", &engine);
+        editor.route_highlight(Some(7));
+        editor.on_tool("update", &engine);
+        assert_eq!(
+            editor.highlighted_net(),
+            Some(7),
+            "the user's highlight stays"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2029,7 +2140,11 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.set_selection(Some(r3), None, None);
         let header = editor.header(&engine);
-        assert_eq!((header.title.as_str(), header.kind), ("R3", "Not placed"));
+        // Designator · shown value · package, as the schematic header reads.
+        assert_eq!(
+            (header.title.as_str(), header.kind),
+            ("R3 · Resistor package", "Not placed")
+        );
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         let has = |label: &str| {
             output

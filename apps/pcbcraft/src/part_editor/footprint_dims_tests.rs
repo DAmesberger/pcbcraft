@@ -919,7 +919,7 @@ fn a_refused_expression_shows_only_its_own_cause() -> TestResult {
         .panel_error()
         .ok_or("refused")?
         .to_owned();
-    assert_eq!(why, "`pitch`: unexpected end of expression");
+    assert_eq!(why, "pitch: the expression ends with an operator");
     assert!(!send(&mut editor, &mut engine, &ctx)?);
     let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(shown.contains(&why), "{why} in {shown:?}");

@@ -186,26 +186,44 @@ fn purchasing_code(code: &str) -> bool {
 /// Core's issue titles of one group, as glyph level and title.
 pub type GroupIssues = Vec<(Level, String)>;
 
-/// Core's purchasing issues on `instances` (`project.issues` scoped to
-/// them), most severe first as the report orders them.
-pub fn issues_of(engine: &Engine, instances: &[Id]) -> Result<GroupIssues, String> {
-    let objects = instances
-        .iter()
-        .take(pcbcraft_core::issues::MAX_SCOPE_OBJECTS)
-        .map(|id| ObjectRef::Instance { id: *id })
-        .collect();
+/// Core's purchasing issues of each group of instances, from one
+/// `project.issues` query over the schematic (not one per group): a row
+/// belongs to every group whose instance it names, most severe first as
+/// the report orders them.
+pub fn issues_by_group(engine: &Engine, groups: &[&[Id]]) -> Result<Vec<GroupIssues>, String> {
     let report: IssueReport = match engine.query(Query::Issues {
-        scope: IssueScope::Selection { objects },
+        scope: IssueScope::Area {
+            area: pcbcraft_core::issues::IssueArea::Schematic,
+        },
     }) {
         Ok(QueryResult::Issues(report)) => report,
         Ok(_) => return Err("Unexpected answer from the engine".into()),
         Err(error) => return Err(crate::refusal::shown_error(&error)),
     };
-    Ok(report
+    let rows: Vec<_> = report
         .rows
         .iter()
         .filter(|r| purchasing_code(&r.group.code))
-        .map(|r| (Level::from(r.severity), r.title.clone()))
+        .collect();
+    Ok(groups
+        .iter()
+        .map(|instances| {
+            rows.iter()
+                .filter(|r| {
+                    // As the Selection scope does: an instance covers its
+                    // pads, units, fields and terminals.
+                    r.objects().any(|o| match o {
+                        ObjectRef::Instance { id }
+                        | ObjectRef::Pad { instance: id, .. }
+                        | ObjectRef::Unit { instance: id, .. }
+                        | ObjectRef::Property { instance: id, .. } => instances.contains(id),
+                        ObjectRef::Terminal { endpoint } => instances.contains(&endpoint.instance),
+                        _ => false,
+                    })
+                })
+                .map(|r| (Level::from(r.severity), r.title.clone()))
+                .collect()
+        })
         .collect())
 }
 
@@ -461,11 +479,14 @@ impl ResolveParts {
         }
         if self.issues.as_ref().is_none_or(|(r, _)| *r != revision) {
             let issues = match self.groups.as_ref().map(|(_, g)| g) {
-                Some(Ok(report)) => report
-                    .groups
-                    .iter()
-                    .map(|g| issues_of(engine, &g.instances))
-                    .collect::<Result<Vec<_>, _>>(),
+                Some(Ok(report)) => {
+                    let groups: Vec<&[Id]> = report
+                        .groups
+                        .iter()
+                        .map(|g| g.instances.as_slice())
+                        .collect();
+                    issues_by_group(engine, &groups)
+                }
                 _ => Ok(Vec::new()),
             };
             self.issues = Some((revision, issues));

@@ -71,8 +71,8 @@ impl<'a> Names<'a> {
             .filter(|name| !name.is_empty());
         let designator = self.designator(instance);
         name.map_or_else(
-            || format!("{designator} terminal"),
-            |name| format!("{designator} terminal ‘{name}’"),
+            || format!("{designator} pin"),
+            |name| format!("{designator} pin {name}"),
         )
     }
 
@@ -139,6 +139,7 @@ impl<'a> Names<'a> {
                 self.designator(instance),
                 self.project.library.lineage_name(field).unwrap_or("field")
             ),
+            ObjectRef::Board => "the board".into(),
         }
     }
 

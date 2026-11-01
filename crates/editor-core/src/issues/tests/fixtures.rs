@@ -134,7 +134,7 @@ fn the_demo_reports_unrouted_copper_and_missing_parts_as_to_do() -> Fallible<()>
         .filter(|r| r.group.code == rules::NO_PART)
         .map(|r| r.title.as_str())
         .collect();
-    assert_eq!(no_part, ["R1 has no Part chosen", "R2 has no Part chosen"]);
+    assert_eq!(no_part, ["R1: no Part", "R2: no Part"]);
     // Every unrouted pad of one net is one row naming the net.
     let unrouted: Vec<&IssueRow> = report
         .rows
@@ -339,11 +339,7 @@ fn clearance_between_two_placements_is_one_issue() -> Fallible<()> {
     assert!(row.findings() > 1);
     assert_eq!(row.severity, Severity::Error);
     assert!(row.title.starts_with("R1 ↔ R2: "), "{}", row.title);
-    assert!(
-        row.title.ends_with("pads closer than 0.2 mm"),
-        "{}",
-        row.title
-    );
+    assert!(row.title.ends_with("pads too close"), "{}", row.title);
     let courtyards: Vec<&str> = report
         .rows
         .iter()
@@ -351,7 +347,7 @@ fn clearance_between_two_placements_is_one_issue() -> Fallible<()> {
         .map(|r| r.title.as_str())
         .collect();
     assert!(
-        courtyards.is_empty() || courtyards == ["R1 ↔ R2 courtyards overlap on the top side"],
+        courtyards.is_empty() || courtyards == ["R1 ↔ R2 courtyards overlap"],
         "{courtyards:?}"
     );
     Ok(())
@@ -437,18 +433,8 @@ fn a_selection_scope_lists_the_issues_of_those_objects() -> Fallible<()> {
             row.title
         );
     }
-    assert!(
-        selected
-            .rows
-            .iter()
-            .any(|r| r.title == "R1 has no Part chosen")
-    );
-    assert!(
-        !selected
-            .rows
-            .iter()
-            .any(|r| r.title == "R2 has no Part chosen")
-    );
+    assert!(selected.rows.iter().any(|r| r.title == "R1: no Part"));
+    assert!(!selected.rows.iter().any(|r| r.title == "R2: no Part"));
     let too_many = IssueScope::Selection {
         objects: vec![ObjectRef::Instance { id: r1 }; MAX_SCOPE_OBJECTS + 1],
     };

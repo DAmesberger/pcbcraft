@@ -192,6 +192,9 @@ pub struct PlacePalette {
     /// Favourites, recents and folder catalogs, set by the app.
     context: CatalogContext,
     context_generation: u64,
+    /// Library folders are still being read: an empty result says
+    /// "Searching…", not "No component matches".
+    loading: bool,
     /// Bumped by this palette's own favourite and recent changes, so the
     /// ranking follows them before the app reports back.
     local_generation: u64,
@@ -328,6 +331,11 @@ impl PlacePalette {
             self.context = context();
             self.context_generation = generation;
         }
+    }
+
+    /// Whether library folders are still being read.
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
     }
 
     /// What the palette left for the app since the last call.
@@ -618,8 +626,12 @@ impl PlacePalette {
             KEYS_IDLE
         };
         let (hint, empty, heading) = (
-            "Find a part: 10k 0603, res>=10k, tol<=1%",
-            "No component matches.",
+            "Find a component: 10k 0603, res>=10k, tol<=1%",
+            if self.loading {
+                "Searching…"
+            } else {
+                "No component matches"
+            },
             "In this project",
         );
         let groups = self.group_names();

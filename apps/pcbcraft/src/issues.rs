@@ -487,6 +487,7 @@ impl Surface {
         selection: &[ObjectRef],
     ) -> Option<Request> {
         let t = Tokens::get();
+        let top = ui.max_rect().top();
         let summary = self.summary(engine, workspace);
         let zero = IssueCounts::default();
         let (counts, elsewhere, tip) = match &summary {
@@ -516,7 +517,7 @@ impl Surface {
         let footer = Rect::from_min_max(pos2(full.left(), split), full.max);
         let mut request = None;
         let report = answer.report().cloned();
-        ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
+        let listed = ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("issues-body")
                 .auto_shrink([false, false])
@@ -531,8 +532,11 @@ impl Surface {
                                 request = self.list(ui, engine, report, selection);
                             }
                         });
-                });
+                })
+                .content_size
+                .y
         });
+        kit::card::remember_issues_wants(ui.ctx(), body.top() - top + listed.inner + footer_height);
         ui.scope_builder(
             UiBuilder::new()
                 .max_rect(footer.shrink2(vec2(t.space_8, 0.0)))

@@ -455,7 +455,10 @@ pub fn show(
             false,
         ) {
             for net in &project.nets {
-                let members = format!("{} pins", net.terminals.len());
+                let members = match net.terminals.len() {
+                    1 => "1 pin".to_owned(),
+                    n => format!("{n} pins"),
+                };
                 let (issue, tip) = issue_mark(badges.nets.get(&net.id), "");
                 let response = kit::tree_row(
                     ui,

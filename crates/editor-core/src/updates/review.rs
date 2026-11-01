@@ -137,10 +137,19 @@ pub struct PlanLine {
 pub struct FindingsDiff {
     pub new: Vec<Finding>,
     pub resolved: Vec<Finding>,
+    /// `new`, in the same order, as `project.issues` titles them on the
+    /// updated project, with their severity.
+    #[serde(default)]
+    pub new_rows: Vec<FindingRow>,
+    /// `resolved`, in the same order, titled on the current project.
+    #[serde(default)]
+    pub resolved_rows: Vec<FindingRow>,
     /// "4 new issues, 1 resolved", "No new issues", or why the findings
     /// were not checked.
     pub line: String,
 }
+
+pub use crate::issues::FindingRow;
 
 /// Why a track must be removed for the update to apply.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -234,6 +243,36 @@ pub fn summarize<'a>(changes: impl IntoIterator<Item = &'a PlanChange>) -> Strin
     })
 }
 
+/// Designators as a short list: "R17–R22" for a run of one prefix with
+/// consecutive numbers, "R1, R4 and R9", or "R1, R4 and 5 more".
+pub(crate) fn designator_list(names: &[String]) -> String {
+    let split = |name: &str| {
+        let digits = name.len() - name.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        let (prefix, number) = name.split_at(name.len() - digits);
+        number.parse::<u64>().ok().map(|n| (prefix.to_owned(), n))
+    };
+    let parsed: Option<Vec<(String, u64)>> = names.iter().map(|n| split(n)).collect();
+    if let Some(parsed) = parsed
+        && parsed.len() > 2
+        && parsed
+            .windows(2)
+            .all(|w| w[0].0 == w[1].0 && w[1].1 == w[0].1 + 1)
+        && let (Some(first), Some(last)) = (names.first(), names.last())
+    {
+        return format!("{first}–{last}");
+    }
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] if names.len() <= 3 => format!("{} and {last}", init.join(", ")),
+        _ => format!(
+            "{} and {} more",
+            names.get(..2).unwrap_or_default().join(", "),
+            names.len() - 2
+        ),
+    }
+}
+
 /// The identity of a finding for [`findings_diff`]: its code and objects.
 fn finding_key(finding: &Finding) -> (String, String) {
     (finding.code.clone(), format!("{:?}", finding.objects))
@@ -274,6 +313,8 @@ pub(crate) fn findings_diff(before: Vec<Finding>, after: Vec<Finding>) -> Findin
     FindingsDiff {
         new,
         resolved,
+        new_rows: Vec::new(),
+        resolved_rows: Vec::new(),
         line,
     }
 }

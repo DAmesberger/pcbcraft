@@ -280,6 +280,32 @@ fn counts<'a>(rows: impl Iterator<Item = &'a IssueRow>) -> IssueCounts {
     counts
 }
 
+/// One finding as an Issues row titles it: its severity and one line that
+/// names objects (`project.issues`' wording, never the raw message).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FindingRow {
+    pub severity: Severity,
+    pub title: String,
+    pub refs: Vec<ObjectRef>,
+}
+
+/// Each finding of `project` as an Issues row would title it, one row per
+/// finding: the update review lists what an update adds and resolves in
+/// the same words as Issues.
+pub(crate) fn finding_rows(project: &Project, findings: &[Finding]) -> Vec<FindingRow> {
+    let drafts = Drafts::default();
+    let names = names::Names::new(project, &drafts);
+    findings
+        .iter()
+        .map(|finding| FindingRow {
+            severity: rules::severity(finding),
+            title: rules::title(&names, &[finding]),
+            refs: finding.objects.clone(),
+        })
+        .collect()
+}
+
 /// Whether a row is in scope. A selected instance also selects its pads,
 /// terminals, units, properties and symbols; a selected definition its
 /// local objects.

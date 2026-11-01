@@ -36,7 +36,7 @@
           "title": "Unconnected terminals"
         },
         "severity": "error",
-        "title": "R1 terminal ‘1’ is not connected or marked no-connect"
+        "title": "R1 pin 1 unconnected"
       },
       {
         "area": "schematic",
@@ -64,11 +64,12 @@
           "title": "Unconnected terminals"
         },
         "severity": "error",
-        "title": "R2 terminal ‘2’ is not connected or marked no-connect"
+        "title": "R2 pin 2 unconnected"
       },
       {
         "area": "schematic",
         "detail": {
+          "cause": "R1 has no Part chosen",
           "fix": "Choose a Part with Resolve parts"
         },
         "finding": {
@@ -88,11 +89,12 @@
           "title": "No Part chosen"
         },
         "severity": "to_do",
-        "title": "R1 has no Part chosen"
+        "title": "R1: no Part"
       },
       {
         "area": "schematic",
         "detail": {
+          "cause": "R2 has no Part chosen",
           "fix": "Choose a Part with Resolve parts"
         },
         "finding": {
@@ -112,7 +114,7 @@
           "title": "No Part chosen"
         },
         "severity": "to_do",
-        "title": "R2 has no Part chosen"
+        "title": "R2: no Part"
       },
       {
         "also": [

@@ -143,11 +143,8 @@ fn a_removal_is_listed_by_area_kind_and_object_with_refs() -> Result<()> {
             .iter()
             .any(|c| c.area == ChangeArea::Nets && c.object == ChangeObject::Net)
     );
-    assert!(
-        plan.summary.starts_with("Removes 1 instance"),
-        "{}",
-        plan.summary
-    );
+    // The summary names the instance and what goes with it a user knows.
+    assert_eq!(plan.summary, "Removes R1, 1 wire and its PCB placement");
     // The conflicting track names its net, layer and length.
     let [conflict] = plan.conflicts.as_slice() else {
         return Err(invalid("one conflict expected"));
@@ -430,4 +427,73 @@ fn a_plan_without_the_review_fields_still_reads() -> Result<()> {
     assert_eq!(read.changes, plan.changes);
     assert!(read.items.is_empty());
     Ok(())
+}
+
+/// Update PCB names the placements it adds, folds their pads into them, and
+/// titles what it adds and resolves as Issues does.
+#[test]
+fn update_pcb_names_its_placements_and_titles_findings_as_issues() -> Result<()> {
+    let mut engine = crate::Engine::demo()?;
+    let first = engine.project().instances[0].clone();
+    for (designator, x) in [("R3", 30.0), ("R4", 34.0), ("R5", 38.0)] {
+        engine.apply(
+            engine.revision(),
+            crate::Operation::Instance(crate::InstanceCommand::Place(
+                crate::instances::NewInstance {
+                    component: first.component,
+                    designator: Some(designator.into()),
+                    properties: vec![],
+                    representation: first.representation,
+                    unit: crate::UnitId(1),
+                    position: [x, 0.0],
+                    physical: first.physical,
+                },
+            )),
+        )?;
+    }
+    let plan = engine.preview_update(Change::SyncPcb {});
+    assert!(
+        plan.summary.starts_with("Adds 3 placements: R3–R5"),
+        "{}",
+        plan.summary
+    );
+    assert!(!plan.summary.contains("pad"), "{}", plan.summary);
+    assert_eq!(plan.planned_placements.len(), 3);
+    let folded: Vec<_> = folded_items(&plan, engine.project()).collect();
+    assert!(
+        folded.iter().all(|i| i.object != ChangeObject::Pad),
+        "{folded:#?}"
+    );
+    assert_eq!(plan.findings.new_rows.len(), plan.findings.new.len());
+    assert_eq!(
+        plan.findings.resolved_rows.len(),
+        plan.findings.resolved.len()
+    );
+    for row in plan
+        .findings
+        .new_rows
+        .iter()
+        .chain(&plan.findings.resolved_rows)
+    {
+        assert_style("finding row", &row.title);
+    }
+    Ok(())
+}
+
+#[test]
+fn designator_lists_read_as_a_range_or_a_short_list() {
+    let names = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        review::designator_list(&names(&["R17", "R18", "R19"])),
+        "R17–R19"
+    );
+    assert_eq!(review::designator_list(&names(&["R1", "R4"])), "R1 and R4");
+    assert_eq!(
+        review::designator_list(&names(&["R1", "R4", "C2"])),
+        "R1, R4 and C2"
+    );
+    assert_eq!(
+        review::designator_list(&names(&["R1", "R4", "C2", "C9"])),
+        "R1, R4 and 2 more"
+    );
 }

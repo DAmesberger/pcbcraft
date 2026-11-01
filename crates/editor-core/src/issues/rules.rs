@@ -24,6 +24,8 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.outside_outline"
         | "erc.driver_conflict"
         | "erc.open_drain_contention"
+        // Geometry past the limit is unchecked, so errors may be uncounted.
+        | "board.check_limit"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal" | "library.update_available" => Severity::Info,
@@ -39,7 +41,7 @@ pub(super) fn group_title(code: &str) -> String {
         "board.outside_outline" => "Outside the board outline",
         "board.unrouted" => "Unrouted connections",
         "board.unplaced" => "Not placed",
-        "board.check_limit" => "Check limit reached",
+        "board.check_limit" => "Board checks incomplete",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -232,22 +234,23 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
             let pads = names_of(names, findings, is_pad);
             match parties(names, findings).as_slice() {
                 [a, b] if findings.len() > 1 => {
-                    format!("{a} ↔ {b}: {} pads closer than 0.2 mm", pads.len())
+                    format!("{a} ↔ {b}: {} pads too close", pads.len())
                 }
                 _ => {
                     let objects = names_of(names, findings, |_| true);
-                    format!("{} closer than 0.2 mm", objects.join(" ↔ "))
+                    format!("{} too close", objects.join(" ↔ "))
                 }
             }
         }
         "board.courtyard_overlap" => {
+            // The top side is the usual case; only the bottom is named.
             let side = if message.contains("bottom") {
-                "bottom"
+                " (bottom)"
             } else {
-                "top"
+                ""
             };
             format!(
-                "{} courtyards overlap on the {side} side",
+                "{} courtyards overlap{side}",
                 parties(names, findings).join(" ↔ ")
             )
         }
@@ -263,28 +266,25 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
                 _ => format!("{}: {} pads unrouted", list(&nets), pads.len()),
             }
         }
-        "board.unplaced" => format!(
-            "{} not placed on the board",
-            list(&names_of(names, findings, |_| true))
-        ),
+        "board.unplaced" => format!("{} not placed", list(&names_of(names, findings, |_| true))),
         "instance.unit_unplaced" => format!(
             "{} is neither placed nor marked unused",
             names_of(names, findings, |_| true).join(", ")
         ),
         "instance.terminal_unaccounted" => format!(
-            "{} is not connected or marked no-connect",
+            "{} unconnected",
             names_of(names, findings, |_| true).join(", ")
         ),
         "config.function_unresolved" => format!(
-            "{} has no pin function chosen",
+            "{}: no pin function",
             names_of(names, findings, |_| true).join(", ")
         ),
         "instance.no_physical_choice" => format!(
-            "{} has no footprint chosen",
+            "{}: no footprint",
             names_of(names, findings, |_| true).join(", ")
         ),
         NO_PART => format!(
-            "{} has no Part chosen",
+            "{}: no Part",
             names_of(names, findings, |_| true).join(", ")
         ),
         "component.mapping_missing" if findings.len() > 1 => {

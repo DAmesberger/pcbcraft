@@ -45,7 +45,8 @@ impl PartEditor {
             let revision = match published {
                 None => "Draft · new".to_owned(),
                 Some(r) if unpublished => format!("r{r} · unpublished edits"),
-                Some(r) => format!("r{r} · published"),
+                // The editor works on a draft of r{r}; nothing changed yet.
+                Some(r) => format!("r{r} · draft"),
             };
             kit::value_row(ui, "Revision", &revision);
         });

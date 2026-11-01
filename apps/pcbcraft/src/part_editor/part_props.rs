@@ -502,7 +502,16 @@ fn identity_section(
             |c| format!("{} \u{b7} {}", c.meta.name, edit.part.component.revision),
         );
         kit::value_row(ui, "Implements", &component);
-        let footprint = if library.binding(edit.part.binding).is_some() {
+        // The row names the footprint people chose, by its own name.
+        let footprint_name = library
+            .binding(edit.part.binding)
+            .and_then(|b| b.definition.footprints.first().copied())
+            .and_then(|f| library.footprint(f))
+            .map(|f| f.meta.name.trim().to_owned())
+            .filter(|name| !name.is_empty());
+        let footprint = if let Some(name) = footprint_name {
+            format!("{name} {}", edit.part.binding.revision)
+        } else if library.binding(edit.part.binding).is_some() {
             pcbcraft_core::instances::binding_name(library, edit.part.binding)
         } else {
             format!("{} \u{b7} pending", edit.part.binding.revision)

@@ -241,18 +241,17 @@ fn landing(pads: &[Pad]) -> usize {
 pub fn count_warning(pads: &[Pad], package: &PackageDefinition) -> Option<String> {
     let lands = landing(pads);
     let terminals = package.terminals.len();
-    (lands != terminals).then(|| {
-        format!("Builds {lands} pads for {terminals} terminals; spare pads block publishing")
-    })
+    (lands != terminals)
+        .then(|| format!("{lands} pads for {terminals} terminals: spares block publishing"))
 }
 
-/// The footer's one line: what Build gives.
-pub fn build_status(pads: &[Pad], package: &PackageDefinition) -> String {
-    format!(
-        "Builds {} pads for {} terminals",
-        landing(pads),
-        package.terminals.len()
-    )
+/// The footer's one line: what Build gives. Build leaves pads without a
+/// package terminal, so the line says they are assigned afterwards.
+pub fn build_status(pads: &[Pad], _package: &PackageDefinition) -> String {
+    match landing(pads) {
+        1 => "Builds 1 pad; assign it to a terminal afterwards".to_owned(),
+        n => format!("Builds {n} pads; assign them to terminals afterwards"),
+    }
 }
 
 /// The one operation that builds `template` into footprint `draft`;

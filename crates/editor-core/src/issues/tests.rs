@@ -26,7 +26,7 @@ fn rewritten_titles_follow_the_style() {
         "After this update: 4 new issues, 0 resolved",
         "1 track on N22 would join two nets",
         "R13 must stay inside the board (60 × 40 mm)",
-        "R3 ↔ R6: 4 pads closer than 0.2 mm",
+        "R3 ↔ R6: 4 pads too close",
         "N7: 3 of 4 pads unrouted",
         "Too close to R6 pad 1 (N3): needs 0.2 mm",
         "Track · N22",
@@ -57,6 +57,12 @@ fn audited_messages_break_the_style() {
             Problem::NetNumber,
         ),
         ("Missing reference Id(3)", Problem::DebugText),
+        ("`pad_l`: unexpected end of expression", Problem::CodeQuote),
+        (
+            "Preview the change with project.preview_update first",
+            Problem::ApiName,
+        ),
+        ("Net N3: R1.2, R2.1", Problem::PinDot),
         ("Conflict { tracks: 2 } on N22", Problem::DebugText),
         ("Some(Smd) lands no terminal", Problem::DebugText),
         ("Part needs a name.", Problem::FullStop),
@@ -81,6 +87,10 @@ fn names_that_resemble_ids_pass() {
         "IDC header has 10 pins",
         "Footprint [left] side",
         "R13 · 10 kΩ · R0603",
+        "Too close to R6 pad 1 (N3): needs 0.2 mm",
+        "R1 pin 2 unconnected",
+        "Pitch 0.5 mm, e.g. SOIC",
+        "Version 1.2 of the library",
     ] {
         assert_eq!(check(text), Vec::<Problem>::new(), "{text}");
     }
@@ -105,4 +115,32 @@ fn severity_sorts_most_severe_first() {
             Severity::Info
         ]
     );
+}
+
+/// A board check that stopped at its limit leaves geometry unchecked, so
+/// errors may be uncounted: it is an error itself, counted on the bar, and
+/// it names the board so its row locates.
+#[test]
+fn an_incomplete_board_check_is_a_counted_error_that_locates() {
+    let project = crate::model::Project::default();
+    let drafts = crate::library::Drafts::default();
+    let names = names::Names::new(&project, &drafts);
+    for layout in [
+        crate::layout::courtyard_limit_finding(),
+        crate::layout::copper_limit_finding(),
+    ] {
+        assert_eq!(rules::severity(&layout), Severity::Error);
+        let row = row(&names, IssueArea::Board, vec![layout]);
+        assert_eq!(counts(std::iter::once(&row)).error, 1);
+        assert_eq!(
+            row.objects().copied().collect::<Vec<_>>(),
+            [ObjectRef::Board]
+        );
+        assert_eq!(check(&row.title), Vec::<Problem>::new(), "{}", row.title);
+        assert!(
+            row.title.starts_with("Board checks incomplete"),
+            "{}",
+            row.title
+        );
+    }
 }

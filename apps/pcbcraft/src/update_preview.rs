@@ -72,8 +72,16 @@ pub struct Content {
     /// Which of `lines` are conflicting tracks: their acknowledgements
     /// together confirm removing the tracks.
     pub conflicts: Vec<usize>,
+    /// The errors applying leaves behind, with their objects in
+    /// `after_refs`.
+    pub after: Vec<ReviewLine>,
+    pub after_refs: Vec<Vec<ObjectRef>>,
     pub groups: Vec<ReviewGroup>,
     pub report: String,
+    /// The primary's label ("Apply update", "Remove R1").
+    pub apply: String,
+    /// The primary removes work.
+    pub destructive: bool,
 }
 
 /// The objects the canvas outlines while a review is open.
@@ -90,6 +98,9 @@ pub struct Marks {
     pub issues: BTreeSet<Id>,
     /// What the last "Show" named.
     pub focus: Vec<ObjectRef>,
+    /// The placements the update adds or moves, as they will be: drawn as
+    /// ghosts so the canvas previews the result.
+    pub ghosts: Vec<pcbcraft_core::Placement>,
 }
 
 impl UpdatePreview {
@@ -221,7 +232,12 @@ impl UpdatePreview {
             post(ctx, Level::Ok, applied_line(plan), vec![ToastAction::Undo]);
             let new = plan.findings.new.len();
             if new > 0 {
-                post(ctx, Level::Warning, new_issues_line(new), Vec::new());
+                post(
+                    ctx,
+                    Level::Warning,
+                    new_issues_line(new),
+                    vec![ToastAction::Show],
+                );
             }
         }
         self.close(Closed::Applied);
@@ -240,8 +256,10 @@ impl UpdatePreview {
             summary: &content.summary,
             stale,
             blockers: &content.lines,
+            after: &content.after,
             groups: &content.groups,
-            apply: "Apply update",
+            apply: &content.apply,
+            destructive: content.destructive,
         };
         let mut chose = false;
         let choices = &mut self.choices;
@@ -293,6 +311,10 @@ impl UpdatePreview {
             }
             ReviewAction::Locate(n) => {
                 self.focus = content.refs.get(n).cloned().unwrap_or_default();
+                None
+            }
+            ReviewAction::LocateAfter(n) => {
+                self.focus = content.after_refs.get(n).cloned().unwrap_or_default();
                 None
             }
             ReviewAction::Apply => {
@@ -520,28 +542,56 @@ pub fn content(
         ChangeArea::Nets,
         ChangeArea::Board,
     ] {
-        let items: Vec<_> = plan.items.iter().filter(|i| i.area == area).collect();
+        // A new placement's pads fold into its one line.
+        let items: Vec<_> = pcbcraft_core::updates::folded_items(plan, project)
+            .filter(|i| i.area == area)
+            .collect();
         if items.is_empty() {
             continue;
         }
+        let group_summary = summarize(items.iter().copied());
         groups.push(ReviewGroup {
             title: area.title().to_owned(),
-            summary: summarize(items.iter().copied()),
+            summary: group_summary,
             lines: items.iter().map(|i| i.line.clone()).collect(),
         });
     }
+    // A lone group's summary only repeats the review's summary.
+    if let [group] = groups.as_mut_slice() {
+        group.summary.clear();
+    }
+    let mut after = Vec::new();
+    let mut after_refs = Vec::new();
+    for row in &plan.findings.new_rows {
+        if row.severity == pcbcraft_core::issues::Severity::Error {
+            after.push(ReviewLine {
+                level: Level::Error,
+                title: refusal::clip(&format!("New error: {}", row.title), MAX_LINE),
+                ack: None,
+                locate: !row.refs.is_empty(),
+            });
+            after_refs.push(row.refs.clone());
+        }
+    }
     let findings = &plan.findings;
     if !findings.line.is_empty() || !findings.new.is_empty() || !findings.resolved.is_empty() {
-        let mut lines: Vec<String> = findings
-            .new
-            .iter()
-            .map(|f| refusal::clip(&format!("New: {}", finding_line(f)), MAX_LINE))
+        // Issues' own titles, as core words them; the raw message only
+        // for a plan made without them.
+        let titled = |rows: &[pcbcraft_core::updates::FindingRow], raw: &[Finding]| {
+            if rows.len() == raw.len() {
+                rows.iter().map(|r| r.title.clone()).collect::<Vec<_>>()
+            } else {
+                raw.iter().map(finding_line).collect()
+            }
+        };
+        let mut lines: Vec<String> = titled(&findings.new_rows, &findings.new)
+            .into_iter()
+            .map(|t| refusal::clip(&format!("New: {t}"), MAX_LINE))
             .collect();
         lines.extend(
-            findings
-                .resolved
-                .iter()
-                .map(|f| refusal::clip(&format!("Resolved: {}", finding_line(f)), MAX_LINE)),
+            titled(&findings.resolved_rows, &findings.resolved)
+                .into_iter()
+                .map(|t| refusal::clip(&format!("Resolved: {t}"), MAX_LINE)),
         );
         groups.push(ReviewGroup {
             title: "After this update".into(),
@@ -550,14 +600,29 @@ pub fn content(
         });
     }
     let report = report(plan, &title, &summary);
+    let destructive = matches!(
+        plan.change,
+        Change::Instance {
+            edit: InstanceChange::Remove { .. }
+        }
+    );
+    let apply = if destructive {
+        title.clone()
+    } else {
+        "Apply update".to_owned()
+    };
     Content {
         title,
         summary,
         lines,
         refs,
         conflicts,
+        after,
+        after_refs,
         groups,
         report,
+        apply,
+        destructive,
     }
 }
 
@@ -636,6 +701,7 @@ pub fn marks(plan: &UpdatePlan) -> Marks {
     }
     marks.tracks.extend(plan.conflicts.iter().map(|c| c.track));
     marks.tracks.extend(plan.conflicting_tracks.iter().copied());
+    marks.ghosts.clone_from(&plan.planned_placements);
     marks
 }
 
@@ -649,8 +715,35 @@ pub fn paint_board(
     marks: &Marks,
     screen: impl Fn(Point) -> Pos2,
     outline: impl Fn(Id) -> Option<[Point; 4]>,
+    ghost: impl Fn(&pcbcraft_core::Placement) -> Option<[Point; 4]>,
 ) {
     let t = Tokens::get();
+    // The result first, under the outlines: each added or moved placement
+    // as a translucent body with its designator.
+    for placement in &marks.ghosts {
+        let Some(corners) = ghost(placement) else {
+            continue;
+        };
+        let points: Vec<Pos2> = corners.iter().map(|p| screen(*p)).collect();
+        painter.add(egui::Shape::convex_polygon(
+            points.clone(),
+            t.accent.gamma_multiply(0.18),
+            Stroke::new(1.5, t.accent.gamma_multiply(0.8)),
+        ));
+        if let Some(name) = project.instance(placement.instance).map(|i| &i.designator) {
+            let centre = points
+                .iter()
+                .fold(egui::Vec2::ZERO, |sum, p| sum + p.to_vec2())
+                / points.len().max(1) as f32;
+            painter.text(
+                centre.to_pos2(),
+                egui::Align2::CENTER_CENTER,
+                name,
+                egui::FontId::proportional(t.font_small),
+                t.accent,
+            );
+        }
+    }
     let focused = |object: &ObjectRef| marks.focus.contains(object);
     // A halo a few points outside the corners, so it reads over copper.
     let ring = |corners: [Point; 4], color: egui::Color32, width: f32| {
@@ -784,7 +877,10 @@ mod tests {
         texts.extend(content.lines.iter().filter_map(|l| l.ack.clone()));
         for group in &content.groups {
             texts.push(group.title.clone());
-            texts.push(group.summary.clone());
+            // An empty group summary is not shown.
+            if !group.summary.is_empty() {
+                texts.push(group.summary.clone());
+            }
             texts.extend(group.lines.iter().cloned());
         }
         for text in texts {
@@ -802,10 +898,12 @@ mod tests {
         let content = content(&plan, engine.project(), None, &[]);
         assert_eq!(content.title, "Update PCB");
         assert!(
-            content.summary.starts_with("Adds 1 placement"),
+            content.summary.starts_with("Adds 1 placement: R3"),
             "{}",
             content.summary
         );
+        assert_eq!(content.apply, "Apply update");
+        assert!(!content.destructive);
         assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
         let pcb = content
             .groups
@@ -833,6 +931,29 @@ mod tests {
             .ok_or("R3")?
             .id;
         assert!(marks.changed.contains(&r3), "{marks:?}");
+        // The canvas previews the result: R3 drawn where it will land.
+        assert!(marks.ghosts.iter().any(|p| p.instance == r3), "{marks:?}");
+        // New errors are error rows above the changes, with their objects.
+        let errors = plan
+            .findings
+            .new_rows
+            .iter()
+            .filter(|r| r.severity == pcbcraft_core::issues::Severity::Error)
+            .count();
+        assert_eq!(content.after.len(), errors);
+        assert!(
+            content
+                .after
+                .iter()
+                .all(|l| l.level == Level::Error && l.title.starts_with("New error: "))
+        );
+        // Pads of a new placement fold into its line.
+        assert!(
+            !pcb.lines
+                .iter()
+                .any(|l| l.contains("is added on the board")),
+            "{pcb:?}"
+        );
         // Placed parts that a new finding names are outlined too.
         for finding in &plan.findings.new {
             for object in &finding.objects {
@@ -843,6 +964,38 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// A removal's review says what it removes in a user's words, and its
+    /// primary is the destructive "Remove R1"; the removed part is marked.
+    #[test]
+    fn a_removal_review_is_destructive_and_names_what_goes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let r1 = engine
+            .project()
+            .instance_by_designator("R1")
+            .ok_or("R1")?
+            .id;
+        let plan = engine.preview_update(Change::Instance {
+            edit: InstanceChange::Remove { instance: r1 },
+        });
+        let content = content(&plan, engine.project(), None, &[]);
+        assert_eq!(content.apply, "Remove R1");
+        assert!(content.destructive);
+        assert!(
+            content.summary.starts_with("Removes R1"),
+            "{}",
+            content.summary
+        );
+        assert!(
+            !content.summary.contains("sheet symbol"),
+            "{}",
+            content.summary
+        );
+        check_style(&content);
+        assert!(marks(&plan).removed.contains(&r1));
         Ok(())
     }
 

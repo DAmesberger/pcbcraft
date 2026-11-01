@@ -205,11 +205,19 @@ fn the_issue_line_is_reserved_and_inert_while_empty() {
 fn a_row_click_locates_and_its_controls_do_only_their_own_thing() {
     let mut h = Harness::new(360.0);
     let id = egui::Id::new("row");
-    let mut view = row_view("R3 ↔ R6: 4 pads closer than 0.2 mm");
+    let mut view = row_view("R3 ↔ R6: 4 pads too close");
     view.fix = Some("Assign…".to_owned());
     view.count = 3;
     view.detail.cause = Some("Pads of different nets are too close.".to_owned());
-    let (_, painted) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
+    // At rest the title has the row: no Fix, pill or locate beside it.
+    let (_, rest) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
+    let at_rest = rect_of(&rest, &view.title);
+    assert!(find(&rest, "Assign…").is_none(), "{rest:?}");
+    assert!(find(&rest, "×3").is_none(), "{rest:?}");
+    // Hovered, the row shows them.
+    let (_, painted) = h.frame(vec![Event::PointerMoved(at_rest.center())], |ui| {
+        issue_row(ui, id, &view)
+    });
     let (title, fix) = (rect_of(&painted, &view.title), rect_of(&painted, "Assign…"));
     assert!(find(&painted, "×3").is_some(), "{painted:?}");
     let row = Rect::from_min_size(pos2(0.0, title.top() - 4.0), vec2(360.0, ISSUE_ROW_HEIGHT));
@@ -251,6 +259,60 @@ fn a_row_click_locates_and_its_controls_do_only_their_own_thing() {
             locate: true,
             ..Default::default()
         }
+    );
+}
+
+/// A row is a button: dragging across its title selects no text, so Copy
+/// afterwards copies nothing (B-b).
+#[test]
+fn dragging_across_a_row_selects_no_text() {
+    let mut h = Harness::new(360.0);
+    let id = egui::Id::new("drag");
+    let view = row_view("R1 pin 1 unconnected");
+    let (_, painted) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
+    let title = rect_of(&painted, &view.title);
+    let (from, to) = (title.left_center(), title.right_center());
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let mut copied = Vec::new();
+    for events in [
+        vec![Event::PointerMoved(from)],
+        vec![press(from, true)],
+        vec![Event::PointerMoved(title.center())],
+        vec![Event::PointerMoved(to)],
+        vec![press(to, false)],
+        vec![Event::Copy],
+    ] {
+        h.time += 0.05;
+        let output = h.ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(360.0, 400.0))),
+                time: Some(h.time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                issue_row(ui, id, &view);
+            },
+        );
+        copied.extend(
+            output
+                .platform_output
+                .commands
+                .into_iter()
+                .filter_map(|c| match c {
+                    egui::OutputCommand::CopyText(text) => Some(text),
+                    _ => None,
+                }),
+        );
+    }
+    assert!(
+        copied.iter().all(String::is_empty),
+        "a drag selected text: {copied:?}"
     );
 }
 

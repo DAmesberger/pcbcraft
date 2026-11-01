@@ -31,13 +31,19 @@ pub enum Problem {
     CodePrefix,
     /// `Some(…)`, `Id(3)`, `Conflict { tracks: … }`: Rust debug output.
     DebugText,
+    /// `` `pad_l` ``: code quoting.
+    CodeQuote,
+    /// `project.preview_update`: an API or command name.
+    ApiName,
+    /// `R1.2`: a pin as designator-dot-terminal instead of "R1 pin 2".
+    PinDot,
 }
 
 /// Every style problem of `text`, in [`Problem`] order; empty when the text
 /// follows the style.
 pub fn check(text: &str) -> Vec<Problem> {
     let mut found = Vec::new();
-    let tests: [(Problem, bool); 10] = [
+    let tests: [(Problem, bool); 13] = [
         (Problem::Empty, text.trim().is_empty()),
         (Problem::TooLong, text.chars().count() > MAX_TITLE),
         (Problem::MultiLine, text.contains(['\n', '\r'])),
@@ -48,6 +54,9 @@ pub fn check(text: &str) -> Vec<Problem> {
         (Problem::DefinitionId, definition_id(text)),
         (Problem::CodePrefix, code_prefix(text)),
         (Problem::DebugText, debug_text(text)),
+        (Problem::CodeQuote, text.contains('`')),
+        (Problem::ApiName, api_name(text)),
+        (Problem::PinDot, pin_dot(text)),
     ];
     for (problem, hit) in tests {
         if hit {
@@ -178,4 +187,39 @@ fn debug_text(text: &str) -> bool {
             && text[at + word.len() + field.len()..].starts_with(':')
     });
     glued || literal
+}
+
+/// `\b[a-z][a-z_]*\.[a-z][a-z_]*\b` with an underscore: a dotted
+/// snake-case name such as `project.preview_update` or `library.set_part`.
+fn api_name(text: &str) -> bool {
+    let ident = |c: char| c.is_ascii_lowercase() || c == '_';
+    text.match_indices('.').any(|(at, _)| {
+        let before: String = text[..at].chars().rev().take_while(|c| ident(*c)).collect();
+        let after: String = text[at + 1..].chars().take_while(|c| ident(*c)).collect();
+        let start = at - before.len();
+        !before.is_empty()
+            && !after.is_empty()
+            && starts_word(text, start)
+            && ends_word(text, at + 1 + after.len())
+            && (before.contains('_') || after.contains('_'))
+    })
+}
+
+/// `\b[A-Z]+\d+\.[A-Za-z0-9]+\b`: "R1.2", "U3.VOUT".
+fn pin_dot(text: &str) -> bool {
+    text.match_indices('.').any(|(at, _)| {
+        let head = &text[..at];
+        let digits = head.chars().rev().take_while(char::is_ascii_digit).count();
+        let letters = head[..head.len() - digits]
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_uppercase)
+            .count();
+        let start = at - digits - letters;
+        let tail = text[at + 1..]
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .count();
+        digits > 0 && letters > 0 && tail > 0 && starts_word(text, start)
+    })
 }

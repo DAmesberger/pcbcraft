@@ -26,8 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod review;
 pub use review::{
-    ChangeArea, ChangeKind, ChangeObject, ConflictReason, FindingsDiff, PlanChange, PlanLine,
-    TrackConflict, summarize,
+    ChangeArea, ChangeKind, ChangeObject, ConflictReason, FindingRow, FindingsDiff, PlanChange,
+    PlanLine, TrackConflict, summarize,
 };
 use review::{ChangeArea as A, ChangeKind as K, ChangeObject as O, clip, layer_label};
 
@@ -224,6 +224,10 @@ pub struct UpdatePlan {
     /// the conflicting tracks are removed.
     #[serde(default)]
     pub findings: FindingsDiff,
+    /// The placements the update adds or moves, as they will be, for a
+    /// canvas preview of the result.
+    #[serde(default)]
+    pub planned_placements: Vec<crate::model::Placement>,
 }
 
 /// Area, kind, objects and title of one change; see [`UpdatePlan::detail`].
@@ -272,6 +276,7 @@ impl UpdatePlan {
             warning_lines: vec![],
             conflicts: vec![],
             findings: FindingsDiff::default(),
+            planned_placements: vec![],
         }
     }
 
@@ -2719,6 +2724,20 @@ pub(crate) fn preview(
         );
     }
     plan.findings = review::findings_diff(findings(project), findings(&next));
+    plan.findings.new_rows = crate::issues::finding_rows(&next, &plan.findings.new);
+    plan.findings.resolved_rows = crate::issues::finding_rows(project, &plan.findings.resolved);
+    plan.planned_placements = next
+        .placements
+        .iter()
+        .filter(|p| {
+            project
+                .placements
+                .iter()
+                .find(|q| q.instance == p.instance)
+                .is_none_or(|q| q != *p)
+        })
+        .cloned()
+        .collect();
     plan.affected_wires.sort_unstable();
     plan.affected_wires.dedup();
     plan.affected_placements.sort_unstable();
@@ -2731,7 +2750,107 @@ pub(crate) fn preview(
         );
     }
     plan.finish();
+    plan.summary = summarize(folded_items(&plan, project));
+    name_added_placements(&mut plan, project, &next);
+    name_removal(&mut plan, project, &next);
     (plan, Some(next))
+}
+
+/// The instances whose placement the plan adds.
+fn added_placements(plan: &UpdatePlan) -> Vec<Id> {
+    plan.items
+        .iter()
+        .filter(|i| i.kind == K::Add && i.object == O::Placement)
+        .flat_map(|i| i.refs.iter())
+        .filter_map(|r| match r {
+            ObjectRef::Instance { id } => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The plan's items with each new placement's "pad is added" items folded
+/// into the placement's own line: the pads arrive with it. The summary and
+/// the review's lists read these; `items` keeps every change.
+pub fn folded_items<'a>(
+    plan: &'a UpdatePlan,
+    project: &Project,
+) -> impl Iterator<Item = &'a PlanChange> {
+    let added: BTreeSet<Id> = added_placements(plan)
+        .into_iter()
+        .filter(|id| !project.placements.iter().any(|p| p.instance == *id))
+        .collect();
+    plan.items.iter().filter(move |i| {
+        !(i.kind == K::Add
+            && i.object == O::Pad
+            && !i.refs.is_empty()
+            && i.refs
+                .iter()
+                .all(|r| matches!(r, ObjectRef::Pad { instance, .. } if added.contains(instance))))
+    })
+}
+
+/// "Removes R1, 1 wire and its PCB placement": a removal's summary names
+/// the instance and what goes with it a user knows, not every sheet symbol
+/// and pad (those stay in the change list).
+fn name_removal(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    let Change::Instance {
+        edit: InstanceChange::Remove { instance },
+    } = plan.change
+    else {
+        return;
+    };
+    let removes = |object: ChangeObject| {
+        plan.items
+            .iter()
+            .filter(|i| i.kind == K::Remove && i.object == object)
+            .count()
+    };
+    let mut parts = vec![format!(
+        "Removes {}",
+        designator_of(project, next, instance)
+    )];
+    match removes(O::Wire) {
+        0 => {}
+        1 => parts.push("1 wire".into()),
+        n => parts.push(format!("{n} wires")),
+    }
+    if removes(O::Placement) > 0 {
+        parts.push("its PCB placement".into());
+    }
+    let named = match parts.as_slice() {
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        [] => return,
+    };
+    if named.chars().count() <= crate::issues::MAX_TITLE {
+        plan.summary = named;
+    }
+}
+
+/// "Adds 6 placements: R17–R22": the summary names the placements it adds
+/// when that still fits one line.
+fn name_added_placements(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    let added = added_placements(plan);
+    if added.is_empty() {
+        return;
+    }
+    let names: Vec<String> = added
+        .iter()
+        .map(|id| designator_of(project, next, *id))
+        .collect();
+    let noun = if added.len() == 1 {
+        "placement"
+    } else {
+        "placements"
+    };
+    let lead = format!("Adds {} {noun}", added.len());
+    if let Some(rest) = plan.summary.strip_prefix(&lead) {
+        let named = format!("{lead}: {}{rest}", review::designator_list(&names));
+        if named.chars().count() <= crate::issues::MAX_TITLE {
+            plan.summary = named;
+        }
+    }
 }
 
 pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -> Result<Project> {

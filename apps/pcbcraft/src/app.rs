@@ -291,6 +291,8 @@ impl App {
         self.schematic
             .palette_mut()
             .set_context(sources.generation(), || sources.context());
+        let loading = sources.loading();
+        self.schematic.palette_mut().set_loading(loading);
     }
 
     /// What the palette, the Schematic instance properties and the

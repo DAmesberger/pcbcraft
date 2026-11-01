@@ -77,7 +77,7 @@ These are rules for every slice. [pcbcraft-ui](../skills/pcbcraft-ui/SKILL.md) c
 ```
 
 - `app/chrome.rs` `workspace_area` owns the column. The subject slot holds exactly one of: Properties card, tool card, dialog panel or review panel.
-- Collapsed, Issues is a 28 pt bar. Expanded, the subject keeps its header and 10 rows, or half the column if that is more, after upstream `stack_first_bounds`.
+- Collapsed, Issues is a 28 pt bar. Expanded, Issues takes only the height its content uses (bar, toolbar, list, footer) and the subject the rest; the subject keeps its header and 10 rows (after upstream `stack_first_bounds`), or its whole content when that is shorter, so a short board card gives Issues the room. Both heights are measured on the previous frame.
 - The column is a fixed layout, not a docking framework, as [the product plan](pcbcraft-plan.md) asks ("Initial panel layouts should be fixed and coherent").
 - Toasts sit bottom-centre of the canvas, clear of the bottom-left hint line. The canvas count badge sits top-right.
 
@@ -197,11 +197,11 @@ Glyphs are drawn by `kit::severity_glyph`, never typed.
 - a `rule.code:` prefix;
 - Debug shapes such as `Some(…)`, `Id(3)` or `Name { field: … }`.
 
-Its tests pin the rewrite table of the design (`issues/tests.rs`). C1 runs it over every finding code's fixtures and every `Error` display. K3 runs it over the refusal wording (`refusal.rs`). K4 extends `cargo xtask ui-forms` so feature modules show `Error`/`Warning` text only through `kit::field_error` or `kit::refusal`.
+Its tests pin the rewrite table of the design (`issues/tests.rs`). C1 runs it over every row of the demo and of the broken-draft and board fixtures in `issues/tests/fixtures.rs` (not yet one fixture per finding code), and over the refusal texts listed there; it also flags code quoting, snake-case API names and designator-dot-pin text (`R1.2`). K3 runs it over the refusal wording (`refusal.rs`). K4 extends `cargo xtask ui-forms` so feature modules show `Error`/`Warning` text only through `kit::field_error` or `kit::refusal`.
 
 ## Contract (slice S0)
 
-These signatures are fixed. Bodies are minimal and not yet wired, so behaviour is unchanged. A slice may extend a type; it changes a signature only together with every slice that depends on it.
+These signatures are fixed and wired: every surface above runs on them. A slice may extend a type; it changes a signature only together with every slice that depends on it.
 
 **Core** (`crates/editor-core/src/issues.rs`, module 16a of the [module map](component-model.md#d-module-map)):
 
@@ -221,7 +221,7 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 
 | Item | File | Signature |
 | --- | --- | --- |
-| Inspector return type | `kit/card.rs` | `Inspector { header: shell::Header, subject: egui::Id, footer: bool, issues: Option<IssueSlot> }`; `card(ui, &Inspector, FnMut(&mut Ui, Region) -> Option<R>) -> CardResponse<R>`; `Region { Body, Footer }`; `column(rect, issues_expanded) -> Column { subject, issues }`; `Subject { Properties, Tool, Dialog, Review }`; `FOOTER_HEIGHT = 48` |
+| Inspector return type | `kit/card.rs` | `Inspector { header: shell::Header, subject: egui::Id, footer: bool, issues: Option<IssueSlot> }`; `card(ui, &Inspector, FnMut(&mut Ui, Region) -> Option<R>) -> CardResponse<R>`; `Region { Body, Footer }`; `column(rect, issues_expanded, Wants) -> Column { subject, issues }`; `Subject { Properties, Tool, Dialog, Review }`; `FOOTER_HEIGHT = 48` |
 | Severity | `kit/severity.rs` | `Level { Error, Warning, ToDo, Info, Ok }` (`From<Severity>`), `ink(level)`, `severity_glyph(painter, center, size, level)` |
 | Issues widgets | `kit/issues.rs` | `issue_row(ui, id, &IssueRowView) -> IssueRowResponse`, `issues_list(ui, id, &[IssueGroupView], row) -> Option<IssueListEvent>`, `issue_line(ui, &IssueCounts, label)`, `issues_bar(ui, &IssueCounts, expanded, elsewhere)`, `count_badge(ui, &IssueCounts, hide_to_do_with_errors)`, `detail(ui, &IssueDetail)`, `ISSUES_BAR_HEIGHT = 28` |
 | Toasts and pills | `kit/toast.rs` | `Toasts::{push(level, text, actions, now), expire(now), show(ctx, canvas, now) -> Option<ToastEvent>}`, `ToastAction { Undo, Show, Details }`, `pill(ui, level, text) -> PillResponse { clicked, closed }`; K3 added `Toasts::{get, is_empty, withdraw(action), dismiss_errors}`, `toast_text` and, for editors without app access, `post(ctx, level, text, actions)` (the app drains it each frame into toasts and Messages) |

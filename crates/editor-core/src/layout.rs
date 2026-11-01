@@ -21,7 +21,11 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 mod copper;
 pub mod courtyard;
 mod placed;
+#[cfg(test)]
+pub(crate) use copper::limit_finding as copper_limit_finding;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
+#[cfg(test)]
+pub(crate) use courtyard::limit_finding as courtyard_limit_finding;
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
@@ -565,9 +569,10 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                 && other.net != track.net
                 && ring.violates_clearance(other_ring)
             {
-                return Err(Error::Conflict(
-                    "route violates 0.2 mm clearance to another net's track".into(),
-                ));
+                return Err(Error::Conflict(format!(
+                    "Too close to a track on {}: needs 0.2 mm",
+                    project.net_name(other.net)
+                )));
             }
         }
         for (index, pad) in copper.pads().iter().enumerate() {
@@ -583,9 +588,17 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                     .ring(index)
                     .is_some_and(|pad_ring| ring.violates_clearance(pad_ring))
             {
-                return Err(Error::Conflict(
-                    "route violates 0.2 mm clearance to another net's pad".into(),
-                ));
+                let label = pad_labels(project)
+                    .get(&(pad.instance, pad.pad))
+                    .cloned()
+                    .unwrap_or_else(|| pad.pad.to_string());
+                let designator = project
+                    .instance(pad.instance)
+                    .map_or("a part", |i| i.designator.as_str());
+                return Err(Error::Conflict(format!(
+                    "Too close to {designator} pad {label} ({}): needs 0.2 mm",
+                    project.net_name(pad.net)
+                )));
             }
         }
     }

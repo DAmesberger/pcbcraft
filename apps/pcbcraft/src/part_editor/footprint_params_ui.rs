@@ -75,7 +75,7 @@ enum Change {
 fn name_of(text: &str) -> Result<ParamName, String> {
     let name = ParamName(text.trim().to_string());
     if !name.valid() {
-        return Err(format!("`{}` is not a parameter name", name.0));
+        return Err(format!("{} is not a parameter name", name.0));
     }
     if name.is_package() {
         return Err("Names starting pkg_ are the package's values".into());
@@ -361,7 +361,7 @@ impl PartEditor {
                 .as_ref()
                 .is_some_and(|l| l.rows.iter().any(|r| r.name == *name))
         {
-            self.footprint_dims.panel.error = Some((None, format!("`{}` already exists", name.0)));
+            self.footprint_dims.panel.error = Some((None, format!("{} already exists", name.0)));
             return;
         }
         match self.try_footprint_edits(&edits) {
@@ -383,7 +383,9 @@ impl PartEditor {
                 let why = match edits.first() {
                     Some(FootprintEdit::SetParameter { name, expr, unit }) => self
                         .own_parameter_error(name, expr, *unit)
-                        .map_or(why, |own| format!("`{}`: {own}", name.0)),
+                        .map_or(why, |own| {
+                            format!("{}: {}", name.0, plain_expression_error(&own))
+                        }),
                     _ => why,
                 };
                 self.footprint_dims.panel.error = Some((row, why));
@@ -441,5 +443,15 @@ impl PartEditor {
     /// The row's remove button.
     pub(super) fn remove_parameter_for_test(&mut self, name: &str) {
         self.apply_parameter_change(Change::Remove(ParamName(name.into())));
+    }
+}
+
+/// The evaluator's wording for a syntax error, in plain words ("pad_l: the
+/// expression ends with an operator", rewrite #3 of docs/sidebar-ia.md);
+/// other causes are shown as they are.
+fn plain_expression_error(cause: &str) -> String {
+    match cause.trim().trim_end_matches('.') {
+        "unexpected end of expression" => "the expression ends with an operator".to_owned(),
+        other => other.replace('`', ""),
     }
 }

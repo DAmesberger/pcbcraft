@@ -301,6 +301,7 @@ fn escape_cancels_a_triad_drag() -> TestResult {
 #[test]
 fn quick_actions_and_fit_are_one_command_each() -> TestResult {
     let mut h = Harness::new()?;
+    h.click_label("QUICK ACTIONS")?;
     h.click_label("Z +90°")?;
     assert!(matches!(
         h.sent.as_slice(),
@@ -341,6 +342,7 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
 #[test]
 fn typed_values_commit_once_when_the_field_is_left() -> TestResult {
     let mut h = Harness::new()?;
+    h.click_label("MODEL OFFSET")?;
     let texts = h.inspector(vec![]);
     // Placement X, Y and Z are the last three millimetre fields at zero.
     let x = texts
@@ -375,6 +377,82 @@ fn typed_values_commit_once_when_the_field_is_left() -> TestResult {
     h.inspector(vec![]);
     assert_eq!(h.apply_sent()?, 1);
     assert_eq!(h.placement()?.translation, [0.25, 0.0, 0.0]);
+    Ok(())
+}
+
+/// The tab's default state fits one screen: Model offset and Quick actions
+/// start folded, each saying what it holds on its caption line.
+#[test]
+fn offset_and_quick_actions_start_folded_with_a_summary() -> TestResult {
+    let mut h = Harness::new()?;
+    let texts = h.inspector(vec![]);
+    let has = |text: &str| texts.iter().any(|(t, _)| t == text);
+    assert!(has("MODEL OFFSET") && has("QUICK ACTIONS"), "{texts:?}");
+    assert!(has("0, 0, 0 mm · 0°"), "{texts:?}");
+    assert!(!has("Rotate X"), "the offset rows are folded");
+    assert!(!has("Pin 1 → pad 1"), "the quick actions are folded");
+    h.click_label("MODEL OFFSET")?;
+    let texts = h.inspector(vec![]);
+    assert!(texts.iter().any(|(t, _)| t == "Rotate X"));
+    assert!(!texts.iter().any(|(t, _)| t == "0, 0, 0 mm · 0°"));
+    Ok(())
+}
+
+/// Invalid text in a body field is never committed and never silently
+/// replaced: it stays, marked with one error line, until Esc restores it.
+#[test]
+fn an_invalid_body_length_stays_marked_until_esc() -> TestResult {
+    let mut h = Harness::new()?;
+    let texts = h.inspector(vec![]);
+    let length = texts
+        .iter()
+        .find(|(t, _)| t == "Length")
+        .map(|(_, p)| *p)
+        .ok_or("no Length row")?;
+    // The field is right of its label, on the same row.
+    let field = texts
+        .iter()
+        .filter(|(t, p)| t.ends_with(" mm") && (p.y - length.y).abs() < 4.0)
+        .map(|(_, p)| *p)
+        .next()
+        .ok_or("no Length field")?;
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    h.time += 1.0;
+    h.inspector(vec![egui::Event::PointerMoved(field)]);
+    h.inspector(vec![Harness::button(field, true)]);
+    h.inspector(vec![Harness::button(field, false)]);
+    h.inspector(vec![
+        key(egui::Key::A, egui::Modifiers::COMMAND),
+        egui::Event::Text("abc".into()),
+    ]);
+    h.inspector(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    let texts = h.inspector(vec![]);
+    let has = |texts: &[(String, Pos2)], text: &str| texts.iter().any(|(t, _)| t == text);
+    assert!(
+        h.sent.is_empty(),
+        "invalid text never commits: {:?}",
+        h.sent
+    );
+    assert!(has(&texts, "abc"), "the bad text stays: {texts:?}");
+    assert!(
+        texts.iter().any(|(t, _)| t.starts_with("Enter a number")),
+        "one error line: {texts:?}"
+    );
+    // Esc in the field restores the stored value's text.
+    h.inspector(vec![egui::Event::PointerMoved(field)]);
+    h.inspector(vec![Harness::button(field, true)]);
+    h.inspector(vec![Harness::button(field, false)]);
+    h.inspector(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+    let texts = h.inspector(vec![]);
+    assert!(!has(&texts, "abc"), "{texts:?}");
+    assert!(!texts.iter().any(|(t, _)| t.starts_with("Enter a number")));
+    assert!(h.sent.is_empty());
     Ok(())
 }
 
