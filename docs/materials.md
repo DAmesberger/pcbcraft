@@ -16,7 +16,7 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 |---|---|---|---|---|---|---|
 | `copper_track`, `pad_copper` | Bare copper | (0.955, 0.638, 0.538) | 1 | 0.30 | – | Cu F0 from Johnson & Christy 1972 (Hoffman's table). Exposed only with Hide substrate; under the mask it is covered by the mask cap. |
 | `pad_finish` | Per pad finish | see [pad finishes](#pad-finishes) | 1 | 0.16–0.35 | – | The board's pad finish; ENIG by default. |
-| `termination` | Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | **est.** Plated tin near polished Sn (≈ 0.75–0.8 across the visible); a satin finish. Raised from 0.64 / 0.28 after the M1–M3 visual review found terminations reading as grey plastic. |
+| `termination` | Matte tin | (0.78, 0.78, 0.80) | 1 | 0.28 | – | **est.** Plated tin near polished Sn (≈ 0.75–0.8 across the visible); a satin finish. Raised from 0.64 / 0.28 after the M1–M3 visual review found terminations reading as grey plastic; roughness lowered from 0.40 to 0.28 in the founder's live look review (1 Nov 2026), because 0.40 blurred every reflection into flat grey. |
 | `solder` | Reflowed solder fillet | (0.78, 0.78, 0.80) | 1 | 0.38 | – | **est.** SAC alloys are about 96 % Sn, so the Sn F0. Lead-free joints freeze satin; at 0.14 the fillet mirrored the studio's dark walls and read as black chrome. |
 | `chip_resistor` | Alumina ceramic | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | **est.** 96 % alumina thick-film substrates reflect 0.75–0.85 across 400–700 nm (published substrate data); n from sapphire (n_o = 1.77, handbook). |
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
@@ -82,8 +82,8 @@ Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman
 | 96 % alumina | (0.78, 0.77, 0.73) | 0 | 0.55 | 1.77 | – | 3720 | **est.** colour as `chip_resistor` above; n from sapphire. |
 | Barium titanate | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | – | 6020 | **est.** colour as `chip_capacitor`; n and density handbook. |
 | Ferrite | (0.045, 0.045, 0.047) | 0 | 0.60 | 2.0 | – | 4800 | **est.** Dark grey sintered Mn-Zn/Ni-Zn ferrite. |
-| Matte tin | (0.78, 0.78, 0.80) | 1 | 0.40 | – | – | 7265 | **est.** F0 as `termination`; β-tin density. |
-| Bright tin | (0.78, 0.78, 0.80) | 1 | 0.22 | – | – | 7265 | **est.** A smoother brightened deposit. |
+| Matte tin | (0.78, 0.78, 0.80) | 1 | 0.28 | – | – | 7265 | **est.** F0 as `termination`; β-tin density; roughness 0.28 after the founder's look review (was 0.40). |
+| Bright tin | (0.78, 0.78, 0.80) | 1 | 0.15 | – | – | 7265 | **est.** A smoother brightened deposit (0.22 before the founder's look review). |
 | SAC solder | (0.78, 0.78, 0.80) | 1 | 0.38 | – | – | 7400 | **est.** As `solder` above. |
 | Gold plating | (1.000, 0.782, 0.344) | 1 | 0.22 | – | – | 19300 | Au F0, Johnson & Christy via Hoffman; roughness **est.** Hard gold is thick enough that the nickel does not show (unlike ENIG pads). |
 | Nickel | (0.660, 0.609, 0.526) | 1 | 0.30 | – | – | 8908 | Ni F0, Rakić 1998; roughness **est.** |

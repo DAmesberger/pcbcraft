@@ -29,11 +29,14 @@ pub const MAX_LIGHTS: usize = 21;
 pub const EXPOSURE: f32 = 1.0;
 /// The studio's share of the light against the rig below.
 pub const STUDIO_INTENSITY: f32 = 1.0;
-/// The studio the look reflects, and its turn about +Z: a quarter turn
+/// The studio the look reflects: the high-contrast strip-light studio, so
+/// metal shows dark faces with bright edge streaks and gloss mask a crisp
+/// streak instead of a smear (chosen in the founder's look review,
+/// 1 Nov 2026). Its turn about +Z: a quarter turn
 /// puts a softbox in the mirror direction of the default view, so the mask
 /// shows a lacquer sheen over part of the board and gold reads as gold,
 /// with the rest of the mask saturated (tuned by screenshot).
-pub const STUDIO: StudioPreset = StudioPreset::Product;
+pub const STUDIO: StudioPreset = StudioPreset::Contrast;
 const STUDIO_TURN_DEG: f32 = 90.0;
 /// Scale of the direct lights' records.
 const DIRECT: f64 = 1.0;

@@ -303,11 +303,11 @@ fn values(id: MaterialId) -> Values {
         Ferrite => dielectric("Ferrite", [0.045, 0.045, 0.047], 0.60, 2.0)
             .density(4800.0)
             .cite("est", "dark grey sintered Mn-Zn/Ni-Zn ferrite; n and density estimated"),
-        TinMatte => metal("Matte tin", TIN, 0.40)
+        TinMatte => metal("Matte tin", TIN, 0.28)
             .density(7265.0)
             .cite("palik-crc", "density of beta tin; Palik's Sn n, k to confirm the F0")
             .cite("est", "F0 below polished tin for its oxide film; electroplated matte tin is rough"),
-        TinBright => metal("Bright tin", TIN, 0.22)
+        TinBright => metal("Bright tin", TIN, 0.15)
             .density(7265.0)
             .cite("palik-crc", "density of beta tin")
             .cite("est", "same F0 as matte tin, a smoother brightened deposit"),
@@ -506,7 +506,7 @@ mod tests {
         let mlcc = builtin(MaterialId::BariumTitanate)?;
         assert_eq!((mlcc.base_linear, mlcc.ior), ([0.32, 0.25, 0.15], 2.4));
         let tin = builtin(MaterialId::TinMatte)?;
-        assert_eq!((tin.base_linear, tin.roughness), ([0.78, 0.78, 0.80], 0.40));
+        assert_eq!((tin.base_linear, tin.roughness), ([0.78, 0.78, 0.80], 0.28));
         assert_eq!(builtin(MaterialId::SolderSac)?.roughness, 0.38);
         // n = 1.55 gives F0 ≈ 0.047 (docs/materials.md conventions).
         assert!((epoxy.dielectric_f0() - 0.0465).abs() < 5e-4);
