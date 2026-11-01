@@ -194,6 +194,9 @@ impl ComponentDefinition {
         if let Some(marking) = &self.marking {
             out.extend(super::marking::spec_findings(id, marking));
         }
+        if let Some(review) = &self.review {
+            out.extend(super::pinout::review_findings(id, review));
+        }
         if self.representations.is_empty() {
             out.push(issue(
                 "component.no_representation",
