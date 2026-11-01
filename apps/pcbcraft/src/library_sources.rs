@@ -508,6 +508,9 @@ pub enum BundlePurpose {
     Place(OtherRevision),
     /// "Update project copy", for these instances only when given.
     Update(Option<Vec<pcbcraft_core::Id>>),
+    /// A folder package row the New-from-template gallery builds from
+    /// (`RowSource::Bundle`).
+    Template,
 }
 
 /// A finished bundle read.
@@ -517,68 +520,8 @@ pub struct ReadBundle {
     pub result: Result<Bundle, String>,
 }
 
-/// A folder item opened read-only from the catalog (A2): its bundle and
-/// `catalog::preview::inspect_bundle` report, read and inspected on a
-/// worker. Nothing is imported; "Edit a copy in this project" (A1) imports
-/// `bundle` with `library.import`.
-#[derive(Clone, Debug)]
-pub struct FolderPreview {
-    /// Distinguishes two reads of the same pick.
-    pub ticket: u64,
-    pub pick: FolderPick,
-    pub state: PreviewState,
-}
-
-#[derive(Clone, Debug)]
-pub enum PreviewState {
-    Reading,
-    Ready {
-        /// What A1's read-only canvas shows and Edit a copy imports.
-        #[allow(
-            dead_code,
-            reason = "A1 reads it for the read-only canvas and Edit a copy"
-        )]
-        bundle: Arc<Bundle>,
-        report: Arc<pcbcraft_core::catalog::ItemReport>,
-    },
-    Failed(String),
-}
-
-impl FolderPreview {
-    /// The finished report, if the read succeeded.
-    pub fn report(&self) -> Option<&pcbcraft_core::catalog::ItemReport> {
-        match &self.state {
-            PreviewState::Ready { report, .. } => Some(report),
-            _ => None,
-        }
-    }
-}
-
-/// Read and inspect a folder item: io's `read_bundle`, then the pure
-/// `inspect_bundle` of its root.
-fn read_preview(folder: &Folder, pick: &FolderPick) -> PreviewState {
-    let bundle = match folder::read_bundle(
-        folder,
-        SourceRevision {
-            lineage: pick.lineage,
-            revision: pick.revision,
-        },
-    ) {
-        Ok(bundle) => bundle,
-        Err(e) => return PreviewState::Failed(format!("Reading {} failed: {e}", pick.name)),
-    };
-    match pcbcraft_core::catalog::preview::inspect_bundle(&bundle, None, None) {
-        Ok(report) => PreviewState::Ready {
-            bundle: Arc::new(bundle),
-            report: Arc::new(report),
-        },
-        Err(e) => PreviewState::Failed(format!("{} cannot be previewed: {e}", pick.name)),
-    }
-}
-
 enum Event {
     Bundle(ReadBundle),
-    Preview(FolderPreview),
     Scan(Scan),
     Written(Written),
     Picked(Picked),
@@ -640,9 +583,6 @@ pub struct LibrarySources {
     session_recent: Vec<EntryKey>,
     /// Finished bundle reads.
     bundles: Vec<ReadBundle>,
-    /// The folder item the catalog opened read-only, while it is open.
-    preview: Option<Arc<FolderPreview>>,
-    previews: u64,
     /// `library.updates_available` at (project, document revision, generation).
     updates: Option<(usize, u64, u64, Arc<Vec<UpdateAvailable>>)>,
 }
@@ -701,8 +641,6 @@ impl LibrarySources {
             session_favourites: Vec::new(),
             session_recent: Vec::new(),
             bundles: Vec::new(),
-            preview: None,
-            previews: 0,
             updates: None,
         }
     }
@@ -975,7 +913,6 @@ impl LibrarySources {
             Event::Scan(_) => {}
             Event::Written(written) => self.written(written),
             Event::Bundle(read) => self.bundles.push(read),
-            Event::Preview(preview) => self.previewed(preview),
             Event::Picked(picked) => self.picked(picked),
             Event::Saved(sequence, result) => self.saved(sequence, result),
         }
@@ -998,7 +935,6 @@ impl LibrarySources {
                 Ok(Event::Written(written)) => self.written(written),
                 Ok(Event::Saved(sequence, result)) => self.saved(sequence, result),
                 Ok(Event::Bundle(read)) => self.bundles.push(read),
-                Ok(Event::Preview(preview)) => self.previewed(preview),
                 Ok(_) => {}
                 Err(error) => return Err(error.to_string()),
             }
@@ -1087,84 +1023,6 @@ impl LibrarySources {
     /// Bundles read since the last call, in the order they finished.
     pub fn take_bundles(&mut self) -> Vec<ReadBundle> {
         std::mem::take(&mut self.bundles)
-    }
-
-    /// Open a folder item read-only (the catalog's click on it): read its
-    /// bundle and inspect it on a worker. [`Self::preview`] says `Reading`
-    /// until it finishes; a newer open replaces an older one, whose result
-    /// is dropped when it arrives.
-    pub fn open_preview(&mut self, pick: FolderPick) {
-        self.previews = self.previews.wrapping_add(1);
-        let ticket = self.previews;
-        let folder = match self.folder(pick.library) {
-            Ok(folder) => folder.clone(),
-            Err(error) => {
-                self.preview = Some(Arc::new(FolderPreview {
-                    ticket,
-                    pick,
-                    state: PreviewState::Failed(error),
-                }));
-                return;
-            }
-        };
-        self.preview = Some(Arc::new(FolderPreview {
-            ticket,
-            pick: pick.clone(),
-            state: PreviewState::Reading,
-        }));
-        let sender = self.sender.clone();
-        let repaint = self.repaint.clone();
-        std::thread::spawn(move || {
-            let state = read_preview(&folder, &pick);
-            let _ = sender.send(Event::Preview(FolderPreview {
-                ticket,
-                pick,
-                state,
-            }));
-            if let Some(ctx) = repaint {
-                ctx.request_repaint();
-            }
-        });
-    }
-
-    fn previewed(&mut self, preview: FolderPreview) {
-        if self
-            .preview
-            .as_ref()
-            .is_some_and(|p| p.ticket == preview.ticket)
-        {
-            self.preview = Some(Arc::new(preview));
-        }
-    }
-
-    /// The folder item open read-only, if any.
-    pub fn preview(&self) -> Option<&Arc<FolderPreview>> {
-        self.preview.as_ref()
-    }
-
-    /// Close the read-only folder item (a project item was opened, or the
-    /// item was copied into the project).
-    pub fn close_preview(&mut self) {
-        self.preview = None;
-    }
-
-    /// Block until the open preview finished reading.
-    #[cfg(test)]
-    pub fn wait_preview(&mut self) -> Result<(), String> {
-        while self
-            .preview
-            .as_ref()
-            .is_some_and(|p| matches!(p.state, PreviewState::Reading))
-        {
-            match self
-                .receiver
-                .recv_timeout(std::time::Duration::from_secs(20))
-            {
-                Ok(event) => self.handle(event),
-                Err(error) => return Err(error.to_string()),
-            }
-        }
-        Ok(())
     }
 
     /// Ready sources `library.promote` may write to.
@@ -2145,19 +2003,16 @@ mod tests {
         }
     }
 
-    /// A folder item opens read-only: its bundle is read and inspected on
-    /// a worker, nothing is imported, and a newer open replaces it. A
-    /// source that is not available reports why.
+    /// A folder item opens read-only through the Component workspace: the
+    /// part editor asks for the read, the bundle is read and inspected on a
+    /// worker into a scratch engine, and nothing reaches the project. The
+    /// inspect report is what the catalog strip summarises.
     #[test]
     fn a_folder_item_opens_as_a_read_only_preview() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("sample");
         let created = folder::create_folder(&path, "Sample Parts")?;
-        let author = Engine::from_file(pcbcraft_core::format::EditorFile {
-            version: pcbcraft_core::format::FILE_VERSION,
-            project: pcbcraft_core::catalog::synthetic::project(3)?,
-            drafts: Default::default(),
-        })?;
+        let author = Engine::demo()?;
         let component = *author
             .project()
             .library
@@ -2191,34 +2046,43 @@ mod tests {
             .and_then(|c| c.entries.iter().find(|e| e.name == name).cloned())
             .ok_or("folder entry")?;
         let pick = FolderPick::of(&entry).ok_or("pick")?;
+        let ready = sources
+            .sources()
+            .iter()
+            .find_map(|s| match &s.status {
+                Status::Ready { folder, .. } => Some(folder.clone()),
+                _ => None,
+            })
+            .ok_or("a ready source")?;
         let designer = Engine::default();
         let before = designer.document().clone();
-        sources.open_preview(pick.clone());
-        assert!(matches!(
-            sources.preview().map(|p| &p.state),
-            Some(PreviewState::Reading)
-        ));
-        sources.wait_preview()?;
-        let preview = sources.preview().ok_or("preview")?;
-        assert_eq!(preview.pick, pick);
-        let report = preview.report().ok_or("report")?;
+        let mut editor = crate::part_editor::PartEditor::default();
+        editor.open_folder(pick.clone());
+        assert_eq!(
+            editor
+                .folder_subject()
+                .map(|(p, r)| (p.clone(), r.is_some())),
+            Some((pick.clone(), false)),
+            "reading"
+        );
+        let receiver =
+            crate::part_editor::spawn_preview(ready, pick.clone(), egui::Context::default());
+        editor.preview_loading(&pick, receiver);
+        for _ in 0..2000 {
+            editor.tick();
+            if editor.is_read_only() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(editor.is_read_only(), "the preview was built");
+        let (shown, report) = editor.folder_subject().ok_or("a folder subject")?;
+        assert_eq!(shown, &pick);
+        let report = report.ok_or("an inspect report")?;
         assert_eq!(report.entry.name, name);
         assert_eq!(report.entry.source_lineage, Some(pick.lineage));
         assert_eq!(designer.document(), &before);
-        assert!(sources.take_bundles().is_empty());
-
-        // A source that is gone: the preview says why instead of reading.
-        let missing = FolderPick {
-            library: LibraryId(1),
-            ..pick
-        };
-        sources.open_preview(missing);
-        assert!(matches!(
-            sources.preview().map(|p| &p.state),
-            Some(PreviewState::Failed(_))
-        ));
-        sources.close_preview();
-        assert!(sources.preview().is_none());
+        assert!(sources.take_bundles().is_empty(), "nothing was imported");
         Ok(())
     }
 }

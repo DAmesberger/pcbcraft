@@ -10,11 +10,13 @@
 //! one undo step.
 use super::working_set::{self, WorkingSet};
 use crate::library_sources::FolderPick;
+use pcbcraft_core::catalog::ItemReport;
 use pcbcraft_core::library::Bundle;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, LibraryCommand, Operation, Outcome, PartRef,
 };
 use pcbcraft_io::library_folder::{self as folder, Folder};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 
 /// A folder item shown read-only.
@@ -26,6 +28,9 @@ pub struct Preview {
     pub bundle: Bundle,
     /// The component lineage in the scratch engine.
     pub root: DefinitionId,
+    /// `catalog::preview::inspect_bundle` of the bundle: what the catalog
+    /// strip summarises (`library.open_preview` gives agents the same).
+    pub report: Option<Arc<ItemReport>>,
 }
 
 /// What a finished preview read reports.
@@ -34,6 +39,9 @@ pub type Built = (FolderPick, Result<Box<Preview>, String>);
 /// Import `bundle` into a scratch engine and draft its root component, so
 /// the workspace can show it with its usual views.
 pub fn build(pick: FolderPick, bundle: Bundle) -> Result<Preview, String> {
+    let report = pcbcraft_core::catalog::preview::inspect_bundle(&bundle, None, None)
+        .ok()
+        .map(Arc::new);
     let mut engine = Engine::default();
     let component = import(&mut engine, bundle.clone())?;
     working_set::draft_closure(&mut engine, component).map_err(|e| e.to_string())?;
@@ -48,6 +56,7 @@ pub fn build(pick: FolderPick, bundle: Bundle) -> Result<Preview, String> {
         pick,
         bundle,
         root: component.id,
+        report,
     })
 }
 

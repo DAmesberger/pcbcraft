@@ -60,6 +60,12 @@ pub struct GridForm {
 }
 
 impl GridForm {
+    /// Original typical values (a synthetic 4 × 5 ball grid in round
+    /// numbers): the family's custom entry in the template gallery.
+    pub fn typical() -> Self {
+        Self::ball_grid(4, 5, 0.8, [5.0, 4.0, 0.8], [0.4, 0.3])
+    }
+
     /// A fully populated `rows` × `cols` ball grid at `pitch` on a body of
     /// `body` (length, width, height above the balls), with JEDEC row
     /// letters.

@@ -60,12 +60,7 @@ use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
 #[cfg(test)]
 pub use folder_preview::sample_item;
 pub use folder_preview::{edit_copy, spawn as spawn_preview};
-pub use identity::{FolderAction, take_open_request};
-#[allow(
-    unused_imports,
-    reason = "the catalog Browser (slice A2) opens subjects with these"
-)]
-pub use identity::{Subject, request_open};
+pub use identity::FolderAction;
 pub use model_view::reset_model_view;
 pub use part_props::{PartReturn, meaning_label, spec_text};
 use pcbcraft_core::functions::{Direction, TerminalFunctions};
@@ -84,7 +79,9 @@ use pcbcraft_core::{
 };
 use solidcraft_ui_egui::{fonts, theme::Tokens};
 use std::sync::Arc;
-pub use working_set::{Template, WorkingSet};
+#[cfg(test)]
+pub use working_set::Template;
+pub use working_set::WorkingSet;
 
 /// One selected object of the Symbol view: a pin by its terminal or a
 /// graphic by its stable ID.
@@ -139,7 +136,10 @@ enum View {
 /// through the engine with public commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// Reserve five new lineages and fill them from a template.
+    /// Tests: reserve five new lineages and fill them from a sample
+    /// template (people use the template gallery's
+    /// `library.new_from_template`).
+    #[cfg(test)]
     Create(Template),
     /// Draft the lineages of a published component revision.
     Draft(ComponentRef),
@@ -345,6 +345,7 @@ impl PartEditor {
             return;
         }
         self.awaiting = false;
+        #[cfg(test)]
         self.open_created(engine);
         // Only the lineage opened explicitly; never another draft.
         let set = self
@@ -589,7 +590,11 @@ impl PartEditor {
     fn component_group(&self, engine: &Engine) -> crate::shell::Group {
         use crate::shell::{Group, Tool};
         let mut tools = vec![
-            Tool::new("component-new", "new", "New").tip("Start a new component from a template"),
+            Tool::new("component-new", "new", "New")
+                .selected(
+                    self.gallery.scope() == Some(&crate::template_gallery::Scope::NewComponent),
+                )
+                .tip("Start a new component from a package template"),
             Tool::new("component-open", "open", "Open")
                 .tip("Open a component of this project or a library source"),
         ];
@@ -668,10 +673,20 @@ impl PartEditor {
     /// "From template", first in whichever Pads group the Footprint tab
     /// shows (a template builds into an empty, sketched footprint).
     fn template_tool(&self, has_draft: bool) -> crate::shell::Tool {
-        crate::shell::Tool::new(footprint_template_picker::TOOL, "component", "From template")
-            .enabled(has_draft)
-            .selected(self.template_picker.is_open())
-            .tip("Build the footprint from a family template (chip, SOIC, QFN/DFN, header) with named parameters")
+        crate::shell::Tool::new(
+            footprint_template_picker::TOOL,
+            "component",
+            "From template",
+        )
+        .enabled(has_draft)
+        .selected(
+            self.template_picker.is_open()
+                || matches!(
+                    self.gallery.scope(),
+                    Some(crate::template_gallery::Scope::Package { .. })
+                ),
+        )
+        .tip("Build the package, footprint and model from a package row or family template")
     }
 
     /// The Symbol tab's drawing ribbon: Select; Draw; Pins; Arrange; Grid
@@ -799,7 +814,11 @@ impl PartEditor {
 
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         match tool {
-            "component-new" | "component-open" => {
+            "component-new" => {
+                self.open_template_gallery();
+                return None;
+            }
+            "component-open" => {
                 self.show_start();
                 return None;
             }
@@ -1754,6 +1773,10 @@ impl PartEditor {
         }
         // Contract call sites (C0): each slice fills its own module.
         let sheet = self.gallery.show(ui.ctx(), engine);
+        if let Some(id) = self.gallery.take_created() {
+            // The gallery's create applied: open what it made.
+            self.open(id, engine);
+        }
         let chooser = self.model_chooser.show(ui.ctx(), engine);
         if sheet.is_some() || chooser.is_some() {
             return sheet.or(chooser);
@@ -1900,6 +1923,7 @@ impl PartEditor {
 /// project, so the project becomes modified and says why.
 pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<Option<String>> {
     match request {
+        #[cfg(test)]
         Request::Create(template) => working_set::create(engine, template).map(|_| None),
         Request::Draft(component) => {
             let created = working_set::draft_closure(engine, component)?;

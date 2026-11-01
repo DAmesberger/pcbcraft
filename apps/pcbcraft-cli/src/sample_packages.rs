@@ -624,8 +624,16 @@ mod tests {
         for row in starter_rows()?.iter().filter(|r| r.held.is_none()) {
             let leads = row.definition.values.lead_count();
             let name = &row.name;
-            if name.starts_with("Chip") {
+            let family = row.definition.family.map(|f| f.family);
+            // Outlines whose names carry no lead count: the registered
+            // counts (a tab counts as a lead).
+            let named = [("SOT-223", 4), ("DPAK (TO-252)", 3), ("D2PAK (TO-263)", 3)];
+            if let Some((_, count)) = named.iter().find(|(n, _)| n == name) {
+                assert_eq!(leads, *count, "{name}");
+            } else if name.starts_with("Chip") || family == Some(FamilyKind::Molded) {
                 assert_eq!(leads, 2, "{name}");
+            } else if let Some(rest) = name.strip_prefix("SOT-23-") {
+                assert_eq!(digits(rest), Some(leads), "{name}");
             } else if let Some((rows_text, rest)) = name
                 .strip_prefix("Pin header ")
                 .and_then(|s| s.split_once('×'))

@@ -63,6 +63,21 @@ pub struct MoldedForm {
 }
 
 impl MoldedForm {
+    /// Original typical values (a SOD-123-sized body in round numbers, from
+    /// no drawing): the family's custom entry in the template gallery.
+    pub fn typical() -> Self {
+        Self {
+            lead: MoldedLead::Bent,
+            body_length: 2.7,
+            body_width: 1.6,
+            body_height: 1.1,
+            span: 3.7,
+            terminal_length: 0.3,
+            terminal_width: 0.6,
+            polarised: true,
+        }
+    }
+
     /// The lead (leadframe) thickness the model and the rules use; 0 for a
     /// MELF.
     pub fn lead_thickness(&self) -> f64 {

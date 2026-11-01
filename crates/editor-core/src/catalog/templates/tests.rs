@@ -148,9 +148,14 @@ fn rows_engine() -> Fallible<Engine> {
 fn rows_and_custom_entries_are_listed_with_their_provenance() -> Fallible<()> {
     let engine = rows_engine()?;
     let all = templates(&engine, "")?;
-    // Five project rows first, then the four built families' custom
+    // Five project rows first, then the eight built families' custom
     // entries.
-    assert_eq!(all.hits.len(), 9, "{:?}", names(&all));
+    assert_eq!(
+        all.hits.len(),
+        5 + FamilyKind::ALL.len(),
+        "{:?}",
+        names(&all)
+    );
     assert!(all.hits[..5].iter().all(|h| h.row.is_some()));
     assert!(all.hits[5..].iter().all(TemplateHit::is_custom));
     let qfn = all
@@ -262,7 +267,11 @@ fn template_queries_refuse_component_filters_and_bad_values() -> Fallible<()> {
     let QueryResult::Templates(limited) = limited else {
         return Err("templates".into());
     };
-    assert_eq!((limited.hits.len(), limited.more), (2, 7));
+    // Five project rows and one custom entry per family match.
+    assert_eq!(
+        (limited.hits.len(), limited.more),
+        (2, 5 + FamilyKind::ALL.len() - 2)
+    );
     Ok(())
 }
 
@@ -522,6 +531,7 @@ fn refused_template_requests_leave_the_document_unchanged() -> Fallible<()> {
             row: RowSource::Custom {
                 family: FamilyKind::Grid,
             },
+            values: Some(Preset::Header2x5.form()),
             ..base.clone()
         },
     ];

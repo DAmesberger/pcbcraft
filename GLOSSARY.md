@@ -117,7 +117,26 @@ How a footprint's solved pads and drawings were derived: an opaque sketch, param
 The host component that interprets a footprint source: it applies sketch edits and solves the source into typed pads, drawings and the datum. The core never interprets a sketch; the desktop, CLI and MCP pass Solidcraft's sketch evaluator.
 
 **Footprint template**:
-A parametric footprint family (2-terminal chip, gull-wing SOIC/SOP, QFN/DFN, pin header/DIP) that builds into an empty footprint draft as ordinary sketch edits, with dimensions bound to named parameters, in one undo step. Its values are estimated defaults, not a standard's table.
+A parametric footprint family (2-terminal chip, gull-wing SOIC/SOP, QFN/DFN, pin header, tabbed SOT/DPAK, molded SOD/SMA/MELF, BGA/LGA, through-hole) that builds into an empty footprint draft as ordinary sketch edits, with dimensions bound to named parameters, in one undo step. Its land defaults are estimated unless a package row cites a land pattern.
+
+**Package row**:
+A revisioned library record holding one typed package form of a family, with aliases, a size code, a suggested skeleton, optional lands, provenance and a citation of the public outline drawing its values were typed from. A row without a citation is *estimated*. New from template and From template build from an exact published row revision.
+_Avoid_: Preset (test and sample data only), wizard
+
+**Custom entry**:
+A family's built-in template entry of original typical values (estimated) that the author edits; listed with the rows, never a citation.
+
+**Template gallery**:
+The one searchable "New from template" sheet over package rows and custom entries (`library.templates`): new-component scope from New and the start page, package scope from the Footprint tab's From template.
+
+**Start page**:
+What the Component workspace shows when no component is open: catalog search, Recent and New from template…. The workspace never opens a component the user did not choose.
+
+**Identity bar**:
+The strip above every Component workspace view naming the open component (source › name), its state (published, draft, new, read-only) and origin, with back, forward and Switch.
+
+**Read-only preview**:
+A library-folder item opened in the Component workspace from a scratch engine; nothing it does reaches the project until Edit a copy in this project imports and drafts it as one undo step.
 _Avoid_: Footprint wizard, generator (the Rhai generator is a different seam)
 
 **Driving dimension**:

@@ -86,6 +86,23 @@ pub struct ThtForm {
 }
 
 impl ThtForm {
+    /// Original typical values (an 8-pin DIP in round numbers, from no
+    /// drawing): the family's custom entry in the template gallery.
+    pub fn typical() -> Self {
+        Self::new(
+            ThtKind::Dip {
+                pins: 8,
+                row_pitch: 7.5,
+                body_length: 9.5,
+                body_width: 6.5,
+                body_height: 3.5,
+            },
+            2.5,
+            0.5,
+            3.0,
+        )
+    }
+
     /// A form of `kind` with straight leads and estimated standoff and
     /// bends.
     pub fn new(kind: ThtKind, lead_pitch: f64, lead_diameter: f64, lead_below: f64) -> Self {

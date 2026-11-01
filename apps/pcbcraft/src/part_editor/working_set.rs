@@ -1,6 +1,7 @@
 //! The five drafts the component editor authors together: a component, one
 //! symbol, its package, one footprint and the binding between them. Every
 //! change reaches the engine as public library commands.
+#[cfg(test)]
 use pcbcraft_core::library::samples::{self, SampleRefs};
 use pcbcraft_core::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit, Drafts,
@@ -8,7 +9,7 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Engine, Error,
-    FootprintRef, LibraryCommand, Operation, Outcome, PackageRef, Result, Revision, SymbolRef,
+    FootprintRef, LibraryCommand, Operation, PackageRef, Result, Revision, SymbolRef,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,7 @@ struct Revisions {
     binding: Revision,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
     TwoTerminal,
@@ -69,6 +71,7 @@ pub enum Template {
     Package(samples::Preset),
 }
 
+#[cfg(test)]
 impl Template {
     pub fn name(self) -> &'static str {
         match self {
@@ -325,8 +328,10 @@ impl WorkingSet {
     }
 }
 
-/// Start a new component from a template in a project without a working
-/// set: five `library.new_draft` reservations, then one `library.edit`.
+/// Tests: start a new component from a sample template in a project
+/// without a working set: five `library.new_draft` reservations, then one
+/// `library.edit`.
+#[cfg(test)]
 pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
     let mut ids = Vec::new();
     for kind in [
@@ -336,7 +341,7 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
         DefinitionKind::Footprint,
         DefinitionKind::Binding,
     ] {
-        if let Outcome::DraftCreated { id } = engine.apply(
+        if let pcbcraft_core::Outcome::DraftCreated { id } = engine.apply(
             engine.revision(),
             Operation::Library(LibraryCommand::NewDraft {
                 meta: DefinitionMeta::default(),

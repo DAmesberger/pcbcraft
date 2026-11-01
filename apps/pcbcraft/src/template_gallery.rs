@@ -47,7 +47,7 @@ use pcbcraft_core::catalog::templates::{TemplateHit, TemplateReport};
 use pcbcraft_core::catalog::{CatalogContext, MAX_QUERY, Source};
 use pcbcraft_core::library::footprint_source::ParamValue;
 use pcbcraft_core::library::templates::catalog::{
-    FamilyKind, NewFromTemplate, PackageFromTemplate, PackagePlan, RowFrom, RowSource,
+    FamilyKind, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation, RowFrom, RowSource,
     SavePackageRow, SkeletonHint,
 };
 use pcbcraft_core::library::templates::footprint_family::{self, FootprintTemplate, TemplateKind};
@@ -114,7 +114,7 @@ impl Chip {
         match self {
             Self::All => true,
             Self::Family(family) => hit.family == family,
-            Self::Project => hit.source == Source::Project && hit.row.is_some(),
+            Self::Project => hit.source == Source::Project && !hit.is_custom(),
         }
     }
 
@@ -151,35 +151,8 @@ pub fn family_label(family: FamilyKind) -> &'static str {
 
 /// The footprint template that lands a family's package, if one is built.
 pub fn template_kind(family: FamilyKind) -> Option<TemplateKind> {
-    let kind = match family {
-        FamilyKind::Chip => TemplateKind::Chip,
-        FamilyKind::GullWing => TemplateKind::GullWing,
-        FamilyKind::NoLead => TemplateKind::Qfn,
-        FamilyKind::Header => TemplateKind::PinHeader,
-        FamilyKind::Tabbed => TemplateKind::Tabbed,
-        FamilyKind::Molded => TemplateKind::Molded,
-        FamilyKind::Grid => TemplateKind::Grid,
-        FamilyKind::Tht => TemplateKind::Tht,
-    };
+    let kind = family.template_kind();
     kind.available().then_some(kind)
-}
-
-/// The skeleton a row starts as unless the author picks another: a chip
-/// or molded body is a 2-terminal part (molded ones polarised), a header
-/// a connector, anything else an IC box. Never a category guess beyond
-/// the family.
-pub fn default_skeleton(form: &PackageForm) -> SkeletonHint {
-    match form {
-        PackageForm::Chip(_) => SkeletonHint::TwoTerminal { polarised: false },
-        PackageForm::Molded(_) => SkeletonHint::TwoTerminal { polarised: true },
-        PackageForm::Header(_) => SkeletonHint::Connector,
-        PackageForm::Generic => SkeletonHint::Blank,
-        PackageForm::GullWing(_)
-        | PackageForm::NoLead(_)
-        | PackageForm::Tabbed(_)
-        | PackageForm::Grid(_)
-        | PackageForm::Tht(_) => SkeletonHint::IcBox,
-    }
 }
 
 /// The designator prefix a skeleton starts with: a chip's kind names its
@@ -276,10 +249,10 @@ pub fn summary(hit: &TemplateHit, form: &PackageForm) -> Vec<(&'static str, Stri
 
 /// A row's second line: family, source, and cited or estimated values.
 pub fn detail(hit: &TemplateHit, source: &str) -> String {
-    let basis = match (hit.row.is_some(), hit.cited) {
-        (false, _) => "custom values",
-        (true, true) => "cited",
-        (true, false) => "estimated",
+    let basis = match (hit.is_custom(), hit.cited) {
+        (true, _) => "custom values",
+        (false, true) => "cited",
+        (false, false) => "estimated",
     };
     let mut line = format!("{} · {source} · {basis}", family_label(hit.family));
     if let Some(code) = &hit.size_code {
@@ -292,28 +265,40 @@ pub fn detail(hit: &TemplateHit, source: &str) -> String {
     line
 }
 
+/// A row citation as one line: document, revision and page.
+pub fn citation_text(citation: &RowCitation) -> String {
+    let mut text = citation.document.clone();
+    if let Some(revision) = &citation.document_revision {
+        text.push_str(&format!(" rev. {revision}"));
+    }
+    if let Some(page) = citation.page {
+        text.push_str(&format!(", p. {page}"));
+    }
+    text
+}
+
 /// Where a hit's row comes from, when the engine can take it directly:
 /// a project row by reference, the family's custom entry by family. A
 /// folder row needs its bundle read first (`None`).
 pub fn direct_source(hit: &TemplateHit) -> Option<RowSource> {
+    if hit.is_custom() {
+        return Some(RowSource::Custom { family: hit.family });
+    }
     match (hit.row, &hit.source) {
-        (None, _) => Some(RowSource::Custom { family: hit.family }),
         (Some(row), Source::Project) => Some(RowSource::Project { row }),
-        (Some(_), Source::Library(_)) => None,
+        _ => None,
     }
 }
 
-/// The folder record a hit's row stands for, resolved through the
-/// source's catalog-local ids.
-pub fn folder_pick(hit: &TemplateHit, context: &CatalogContext) -> Option<FolderPick> {
-    let (Some(row), Source::Library(library)) = (hit.row, &hit.source) else {
+/// The folder record a folder row stands for: its source and the row's
+/// own revision (`TemplateHit::source_row`).
+pub fn folder_pick(hit: &TemplateHit) -> Option<FolderPick> {
+    let (Some(row), Source::Library(library)) = (hit.source_row, &hit.source) else {
         return None;
     };
-    let catalog = context.sources.iter().find(|s| s.library == *library)?;
-    let link = catalog.lineages.iter().find(|l| l.local == row.id)?;
     Some(FolderPick {
         library: *library,
-        lineage: link.lineage,
+        lineage: row.lineage,
         revision: row.revision,
         name: hit.name.clone(),
     })
@@ -324,7 +309,7 @@ pub fn folder_pick(hit: &TemplateHit, context: &CatalogContext) -> Option<Folder
 fn request_values(hit: &TemplateHit, edited: Option<&PackageForm>) -> Option<PackageForm> {
     match edited {
         Some(form) if *form != hit.values => Some(form.clone()),
-        _ if hit.row.is_none() => Some(hit.values.clone()),
+        _ if hit.is_custom() => Some(hit.values.clone()),
         _ => None,
     }
 }
@@ -621,38 +606,18 @@ impl TemplateGallery {
         self.open = None;
     }
 
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
+    #[cfg(test)]
     pub fn is_open(&self) -> bool {
         self.open.is_some()
     }
 
     /// The scope the open sheet serves.
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
     pub fn scope(&self) -> Option<&Scope> {
         self.open.as_ref().map(|o| &o.scope)
     }
 
-    /// The search text.
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
-    pub fn query(&self) -> Option<&str> {
-        self.open.as_ref().map(|o| o.query.as_str())
-    }
-
     /// Library folder catalogs to search with the project, re-read when
     /// `generation` moves (as the Place palette takes them).
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
     pub fn set_context(&mut self, generation: u64, context: impl FnOnce() -> CatalogContext) {
         if generation != self.context_generation || self.context.sources.is_empty() {
             self.context = context();
@@ -662,20 +627,12 @@ impl TemplateGallery {
 
     /// Folder rows the host reads off the UI thread
     /// (`library_folder::read_bundle`), then hands to [`Self::bundle_read`].
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
     pub fn take_reads(&mut self) -> Vec<FolderPick> {
         std::mem::take(&mut self.reads)
     }
 
     /// A folder row's bundle, read for `pick`. The waiting submit goes out
     /// on the next frame; a failed read shows on the refusal line.
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
     pub fn bundle_read(&mut self, pick: FolderPick, result: Result<Bundle, String>) {
         match result {
             Ok(bundle) => {
@@ -698,10 +655,6 @@ impl TemplateGallery {
 
     /// The component draft the last create made, once: the host opens it
     /// explicitly in the Component workspace.
-    #[allow(
-        dead_code,
-        reason = "host hook: the app wires it at integration (slice I)"
-    )]
     pub fn take_created(&mut self) -> Option<DefinitionId> {
         self.created.take()
     }
@@ -709,7 +662,7 @@ impl TemplateGallery {
     /// The row source of `hit`: direct, or a folder bundle already read.
     fn source_of(&self, hit: &TemplateHit) -> Option<RowSource> {
         direct_source(hit).or_else(|| {
-            let pick = folder_pick(hit, &self.context)?;
+            let pick = folder_pick(hit)?;
             self.bundles
                 .iter()
                 .find(|(p, _)| *p == pick)
@@ -927,7 +880,7 @@ impl TemplateGallery {
         let Some(source) = source else {
             // A folder row: read its bundle first; the request goes out
             // once the host hands it back.
-            if let Some(pick) = folder_pick(&hit, &self.context) {
+            if let Some(pick) = folder_pick(&hit) {
                 if open.waiting.is_none() {
                     self.reads.push(pick.clone());
                 }
@@ -939,9 +892,7 @@ impl TemplateGallery {
         let edited = open.edited.clone();
         match open.scope.clone() {
             Scope::NewComponent => {
-                let skeleton = open
-                    .skeleton
-                    .unwrap_or_else(|| default_skeleton(&hit.values));
+                let skeleton = open.skeleton.unwrap_or(hit.skeleton);
                 let prefix = open
                     .prefix
                     .clone()
@@ -1190,14 +1141,14 @@ impl TemplateGallery {
                                             for (i, h) in hits.iter().enumerate() {
                                                 let line = detail(h, &source_name(&h.source));
                                                 let badges = [kit::SearchBadge {
-                                                    label: if h.row.is_none() {
+                                                    label: if h.is_custom() {
                                                         "custom"
                                                     } else if h.cited {
                                                         "cited"
                                                     } else {
                                                         "est."
                                                     },
-                                                    present: h.cited || h.row.is_none(),
+                                                    present: h.cited || h.is_custom(),
                                                 }];
                                                 let row = kit::SearchRow {
                                                     icon: "component",
@@ -1312,14 +1263,17 @@ fn preview(
     );
     kit::note(
         ui,
-        &match (hit.row.is_some(), hit.cited, edited) {
+        &match (hit.is_custom(), hit.cited, edited) {
             (_, _, true) => "Custom values: not from a drawing".to_owned(),
-            (false, _, _) => format!(
+            (true, _, _) => format!(
                 "{} custom entry: enter the values",
                 family_label(hit.family)
             ),
-            (true, true, _) => "Values cited from a public outline drawing".to_owned(),
-            (true, false, _) => "Values estimated: no outline drawing cited".to_owned(),
+            (false, true, _) => match &hit.citation {
+                Some(citation) => format!("Values cited from {}", citation_text(citation)),
+                None => "Values cited from a public outline drawing".to_owned(),
+            },
+            (false, false, _) => "Values estimated: no outline drawing cited".to_owned(),
         },
     );
     ui.add_space(t.space_4);
@@ -1406,9 +1360,7 @@ fn preview(
     let mut cancel = false;
     match open.scope.clone() {
         Scope::NewComponent => {
-            let mut skeleton = open
-                .skeleton
-                .unwrap_or_else(|| default_skeleton(&hit.values));
+            let mut skeleton = open.skeleton.unwrap_or(hit.skeleton);
             if kit::choice_row(ui, "Start as", &mut skeleton, &skeletons()) {
                 open.skeleton = Some(skeleton);
                 open.prefix = None;
@@ -1456,7 +1408,7 @@ fn preview(
                     kit::refusal(ui, error);
                 }
                 None => {
-                    if hit.row.is_some() && hit.source != Source::Project {
+                    if folder_pick(hit).is_some() {
                         kit::note(ui, "The change is previewed once the library row is read");
                     }
                 }
@@ -1636,11 +1588,8 @@ fn bounded_row(ui: &mut Ui, label: &str, value: &mut String, limit: usize) -> eg
 mod tests {
     use super::*;
     use crate::refusal::Refused;
-    use pcbcraft_core::catalog::SourceCatalog;
-    use pcbcraft_core::library::bundle::Link;
     use pcbcraft_core::library::{ChipForm, DefinitionMeta, LeadSides, NoLeadForm, SourceRevision};
     use pcbcraft_core::{LibraryId, PackageRowRef, Revision, SourceLineageId};
-    use std::sync::Arc;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1663,6 +1612,7 @@ mod tests {
     }
 
     fn hit(family: FamilyKind, name: &str, values: PackageForm) -> TemplateHit {
+        let skeleton = FamilyKind::default_skeleton(&values);
         TemplateHit {
             family,
             row: None,
@@ -1673,6 +1623,11 @@ mod tests {
             size_code: None,
             cited: false,
             lands_cited: false,
+            source_row: None,
+            skeleton,
+            citation: None,
+            shape: None,
+            tier: pcbcraft_core::catalog::MatchTier::Substring,
         }
     }
 
@@ -1693,7 +1648,11 @@ mod tests {
                 revision: engine.revision(),
                 context,
                 query: open.query.clone(),
-                report: Ok(TemplateReport { hits, more: 0 }),
+                report: Ok(TemplateReport {
+                    hits,
+                    more: 0,
+                    chips: Vec::new(),
+                }),
             });
             open.highlighted = 0;
             open.moved();
@@ -1755,8 +1714,8 @@ mod tests {
     }
 
     /// A project row goes by reference, a custom entry by family with its
-    /// values, and a folder row resolves through its source's catalog-local
-    /// ids to the folder record the host reads.
+    /// values, and a folder row names the folder record the host reads by
+    /// its own source revision.
     #[test]
     fn row_sources_are_explicit() {
         let custom = hit(FamilyKind::Chip, "Chip (custom)", chip(ChipKind::Resistor));
@@ -1777,20 +1736,21 @@ mod tests {
         let lineage = SourceLineageId(0xdef);
         let folder = TemplateHit {
             source: Source::Library(library),
+            row: None,
+            source_row: Some(SourceRevision {
+                lineage,
+                revision: Revision(1),
+            }),
             ..project_row(FamilyKind::NoLead, "QFN-16", qfn16(), 3)
         };
+        assert!(!folder.is_custom());
         assert_eq!(
             direct_source(&folder),
             None,
             "a folder row needs its bundle"
         );
-        let mut context = CatalogContext::default();
-        assert_eq!(folder_pick(&folder, &context), None, "unknown source");
-        context
-            .sources
-            .push(Arc::new(source_catalog(library, 3, lineage)));
         assert_eq!(
-            folder_pick(&folder, &context),
+            folder_pick(&folder),
             Some(FolderPick {
                 library,
                 lineage,
@@ -1798,21 +1758,7 @@ mod tests {
                 name: "QFN-16".into(),
             })
         );
-    }
-
-    fn source_catalog(library: LibraryId, local: u64, lineage: SourceLineageId) -> SourceCatalog {
-        SourceCatalog {
-            library,
-            name: "Pcbcraft Packages".into(),
-            lineages: vec![Link {
-                local: DefinitionId(local),
-                lineage,
-            }],
-            entries: Vec::new(),
-            fields: Default::default(),
-            revisions: Vec::new(),
-            ratings: Vec::new(),
-        }
+        assert_eq!(folder_pick(&row), None, "a project row is no folder item");
     }
 
     /// Edited values travel only when they differ from the row's; a custom
@@ -1900,11 +1846,11 @@ mod tests {
     #[test]
     fn skeletons_and_prefixes_follow_the_family_only() {
         let resistor = chip(ChipKind::Resistor);
-        let skeleton = default_skeleton(&resistor);
+        let skeleton = FamilyKind::default_skeleton(&resistor);
         assert_eq!(skeleton, SkeletonHint::TwoTerminal { polarised: false });
         assert_eq!(default_prefix(&resistor, skeleton), "R");
         assert_eq!(default_prefix(&chip(ChipKind::Capacitor), skeleton), "C");
-        assert_eq!(default_skeleton(&qfn16()), SkeletonHint::IcBox);
+        assert_eq!(FamilyKind::default_skeleton(&qfn16()), SkeletonHint::IcBox);
         assert_eq!(default_prefix(&qfn16(), SkeletonHint::IcBox), "U");
         assert_eq!(default_prefix(&qfn16(), SkeletonHint::Connector), "J");
         let summary = summary(&hit(FamilyKind::NoLead, "QFN", qfn16()), &qfn16());
@@ -1915,8 +1861,9 @@ mod tests {
         assert_eq!(terminals, Some("16 + 1  (pitch 0.5 mm)"));
     }
 
-    /// Without template rows in the core (slice B1 still refuses), the
-    /// sheet shows the refusal as its message and sends nothing.
+    /// A query `library.templates` refuses (a component-only filter) shows
+    /// as the sheet's message and sends nothing; the plain search lists
+    /// every family's custom entry.
     #[test]
     fn a_refused_search_is_a_message() -> TestResult {
         let ctx = context();
@@ -1925,12 +1872,26 @@ mod tests {
         gallery.open_new(None);
         assert!(frame(&ctx, &mut gallery, &engine, vec![]).is_none());
         let open = gallery.open.as_ref().ok_or("open")?;
+        let Some(Ok(report)) = open.results.as_ref().map(|r| &r.report) else {
+            return Err("the empty search lists entries".into());
+        };
+        for family in FamilyKind::ALL {
+            assert!(
+                report
+                    .hits
+                    .iter()
+                    .any(|h| h.family == family && h.is_custom()),
+                "{family:?} has a custom entry"
+            );
+        }
+        if let Some(open) = gallery.open.as_mut() {
+            open.query = "kind:component".into();
+        }
+        assert!(frame(&ctx, &mut gallery, &engine, vec![]).is_none());
+        let open = gallery.open.as_ref().ok_or("open")?;
         assert!(
-            matches!(
-                open.results.as_ref().map(|r| &r.report),
-                Some(Err(_)) | Some(Ok(_))
-            ),
-            "searched once"
+            matches!(open.results.as_ref().map(|r| &r.report), Some(Err(_))),
+            "kind: is refused"
         );
         assert!(frame(&ctx, &mut gallery, &engine, vec![key(egui::Key::Enter)]).is_none());
         assert!(gallery.is_open());
@@ -2114,15 +2075,15 @@ mod tests {
         let library = LibraryId(0x51);
         let lineage = SourceLineageId(0x52);
         let mut gallery = TemplateGallery::default();
-        let mut context_value = CatalogContext::default();
-        context_value
-            .sources
-            .push(Arc::new(source_catalog(library, 8, lineage)));
-        gallery.set_context(1, || context_value);
         gallery.open_new(None);
         frame(&ctx, &mut gallery, &engine, vec![]);
         let folder = TemplateHit {
             source: Source::Library(library),
+            row: None,
+            source_row: Some(SourceRevision {
+                lineage,
+                revision: Revision(1),
+            }),
             ..project_row(FamilyKind::NoLead, "QFN-16 3×3", qfn16(), 8)
         };
         results(&mut gallery, &engine, vec![folder]);

@@ -145,9 +145,15 @@ fn the_component_group_is_new_open_and_publish() -> TestResult {
         let labels: Vec<_> = group.tools.iter().map(|t| t.label).collect();
         assert_eq!(labels, ["New", "Open", "Publish"], "{tab}");
     }
-    // New and Open lead to the start page; nothing is edited.
+    // New opens the template gallery, Open the start page; nothing is
+    // edited.
     let before = engine.revision();
     assert!(editor.on_tool("component-new", &engine).is_none());
+    assert_eq!(
+        editor.gallery.scope(),
+        Some(&crate::template_gallery::Scope::NewComponent)
+    );
+    assert!(editor.on_tool("component-open", &engine).is_none());
     assert!(editor.lineage().is_none() && editor.draft.is_none());
     assert_eq!(engine.revision(), before);
     Ok(())
@@ -282,16 +288,4 @@ fn a_folder_item_opens_read_only_and_edit_a_copy_drafts_it() -> TestResult {
     }
     assert_eq!((project.project().clone(), project.drafts().clone()), kept);
     Ok(())
-}
-
-/// An open request from another surface (the catalog) is taken once.
-#[test]
-fn open_requests_are_taken_once() {
-    let ctx = context();
-    request_open(&ctx, Subject::Project(DefinitionId(3)));
-    assert_eq!(
-        take_open_request(&ctx),
-        Some(Subject::Project(DefinitionId(3)))
-    );
-    assert_eq!(take_open_request(&ctx), None);
 }

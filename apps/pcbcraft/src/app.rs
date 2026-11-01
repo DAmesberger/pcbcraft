@@ -471,6 +471,9 @@ impl App {
                     match read.purpose {
                         BundlePurpose::Place(_) => self.schematic.palette_mut().refuse(error),
                         BundlePurpose::Update(_) => self.say(Level::Error, error),
+                        BundlePurpose::Template => {
+                            self.part.template_row_read(read.pick, Err(error))
+                        }
                     }
                     continue;
                 }
@@ -482,6 +485,7 @@ impl App {
                 BundlePurpose::Update(only) => {
                     self.update_project_copy(read.pick, bundle, only.as_deref());
                 }
+                BundlePurpose::Template => self.part.template_row_read(read.pick, Ok(bundle)),
             }
         }
     }
@@ -610,10 +614,6 @@ impl App {
     /// The Component workspace's subject requests: open requests from
     /// other surfaces, and folder previews, Edit a copy and Place.
     fn component_subject(&mut self, ctx: &egui::Context) {
-        if let Some(subject) = part_editor::take_open_request(ctx) {
-            self.workspace = Workspace::Part;
-            self.part.open_subject(subject, &self.engine);
-        }
         let names = self
             .sources
             .sources()
@@ -626,6 +626,9 @@ impl App {
         let sources = &self.sources;
         self.part
             .set_sources(names, sources.generation(), || sources.context());
+        for pick in self.part.take_template_reads() {
+            self.sources.read_bundle(pick, BundlePurpose::Template);
+        }
         for action in self.part.take_folder_actions() {
             match action {
                 part_editor::FolderAction::Preview(pick) => {

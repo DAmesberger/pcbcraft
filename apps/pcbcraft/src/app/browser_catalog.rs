@@ -5,11 +5,11 @@
 //! open and place actions.
 //!
 //! - Clicking a project item opens it (`PartEditor::open`).
-//! - Clicking a folder item opens it read-only: its bundle is read and
-//!   inspected on a worker (`catalog::preview::inspect_bundle`) and nothing
-//!   is imported (F4). A1's identity bar and canvas show it from
-//!   [`LibrarySources::preview`](crate::library_sources::LibrarySources::preview)
-//!   and offer Edit a copy in this project.
+//! - Clicking a folder item opens it read-only in the Component workspace
+//!   (`PartEditor::open_folder`): its bundle is read on a worker into a
+//!   scratch engine and inspected (`catalog::preview::inspect_bundle`);
+//!   nothing reaches the project (F4). The identity bar offers Edit a copy
+//!   in this project; the strip under the tree shows the inspect summary.
 //! - Place in schematic is `library.place_from`: a project revision in
 //!   place, a folder item through the bundle read the Place palette uses.
 //!
@@ -21,10 +21,10 @@
 //! the next frame through the one engine.
 use super::{App, Level, ToastAction};
 use crate::kit::{self, Row};
-use crate::library_sources::{self, BundlePurpose, FolderPick, FolderPreview, PreviewState};
+use crate::library_sources::{self, BundlePurpose, FolderPick};
 use crate::shell::Workspace;
 use pcbcraft_core::catalog::{
-    CatalogContext, CatalogEntry, EntryKey, MAX_QUERY, MAX_RESULTS, Source,
+    CatalogContext, CatalogEntry, EntryKey, ItemReport, MAX_QUERY, MAX_RESULTS, Source,
 };
 use pcbcraft_core::ids::LibraryId;
 use pcbcraft_core::{ComponentRef, DefinitionId, DefinitionKind, Engine, Query, QueryResult};
@@ -81,8 +81,16 @@ pub struct Feed {
     pub loading: bool,
     /// The project lineage open in the workspace.
     pub open: Option<DefinitionId>,
-    /// The folder item open read-only.
-    pub preview: Option<Arc<FolderPreview>>,
+    /// The folder item open read-only (or being read).
+    pub folder: Option<OpenFolder>,
+}
+
+/// The folder item the Component workspace shows read-only, with its
+/// `inspect_bundle` report once read.
+#[derive(Clone, Debug)]
+pub struct OpenFolder {
+    pub pick: FolderPick,
+    pub report: Option<Arc<ItemReport>>,
 }
 
 /// A catalog item an action names.
@@ -371,7 +379,7 @@ impl Catalog {
             let items = group(found, Some(library));
             let secondary = format!("{} · {}", source.state, items.len());
             let lit = feed
-                .preview
+                .folder
                 .as_ref()
                 .is_some_and(|p| p.pick.library == library);
             if super::browser::folder_labelled(
@@ -445,8 +453,8 @@ impl Catalog {
 
 /// Whether `entry` is the item open in the workspace.
 fn is_open(entry: &CatalogEntry, feed: &Feed) -> bool {
-    match (&feed.preview, Item::of(entry)) {
-        (Some(preview), Some(Item::Folder { pick, .. })) => preview.pick == pick,
+    match (&feed.folder, Item::of(entry)) {
+        (Some(folder), Some(Item::Folder { pick, .. })) => folder.pick == pick,
         (Some(_), _) => false,
         (None, Some(Item::Project { lineage, .. })) => {
             entry.kind == DefinitionKind::Component && feed.open == Some(lineage)
@@ -513,28 +521,27 @@ fn entries(
 /// The open item's strip under the tree: what it is, and Place in
 /// schematic and Favourite.
 fn details(ui: &mut egui::Ui, engine: &Engine, found: &Found, feed: &Feed) -> Option<Action> {
-    let (title, lines, item) = match &feed.preview {
-        Some(preview) => {
+    let (title, lines, item) = match &feed.folder {
+        Some(folder) => {
             let key = EntryKey::Library {
-                library: preview.pick.library,
-                lineage: preview.pick.lineage,
+                library: folder.pick.library,
+                lineage: folder.pick.lineage,
             };
             let source = feed
                 .sources
                 .iter()
-                .find(|s| s.library == Some(preview.pick.library))
-                .map_or_else(|| preview.pick.library.to_string(), |s| s.name.clone());
-            let mut lines = vec![format!("Read-only · {source} {}", preview.pick.revision)];
-            match (&preview.state, preview.report()) {
-                (_, Some(report)) => lines.push(summary(report)),
-                (PreviewState::Failed(error), None) => lines.push(error.clone()),
-                (_, None) => lines.push("Reading…".into()),
+                .find(|s| s.library == Some(folder.pick.library))
+                .map_or_else(|| folder.pick.library.to_string(), |s| s.name.clone());
+            let mut lines = vec![format!("Read-only · {source} {}", folder.pick.revision)];
+            match &folder.report {
+                Some(report) => lines.push(summary(report)),
+                None => lines.push("Reading…".into()),
             }
             let item = Item::Folder {
-                pick: preview.pick.clone(),
+                pick: folder.pick.clone(),
                 key,
             };
-            (preview.pick.name.clone(), lines, Some(item))
+            (folder.pick.name.clone(), lines, Some(item))
         }
         None => {
             let lineage = feed.open?;
@@ -646,7 +653,10 @@ impl App {
                 sources,
                 loading: self.sources.loading(),
                 open: self.part.lineage(),
-                preview: self.sources.preview().cloned(),
+                folder: self.part.folder_subject().map(|(pick, report)| OpenFolder {
+                    pick: pick.clone(),
+                    report: report.cloned(),
+                }),
             }),
         );
     }
@@ -654,14 +664,15 @@ impl App {
     fn catalog_action(&mut self, action: Action) {
         match action {
             Action::Open(Item::Project { lineage, key, .. }) => {
-                self.sources.close_preview();
                 self.workspace = Workspace::Part;
                 self.part.open(lineage, &self.engine);
                 self.sources.used(key);
             }
-            Action::Open(Item::Folder { pick, key }) => {
-                self.sources.open_preview(pick);
-                self.sources.used(key);
+            Action::Open(Item::Folder { pick, .. }) => {
+                // The part editor asks the app to read it
+                // (`FolderAction::Preview`), which also marks it used.
+                self.workspace = Workspace::Part;
+                self.part.open_folder(pick);
             }
             Action::Place(_) if self.files.busy() => {
                 self.say(Level::Info, "Wait for the file operation to finish");
@@ -806,7 +817,7 @@ mod tests {
             ]),
             loading: false,
             open: None,
-            preview: None,
+            folder: None,
         }
     }
 
@@ -989,11 +1000,7 @@ mod tests {
         let ctx = context();
         let mut feed = feed(&catalog, &[entry.key()]);
         let pick = FolderPick::of(entry).ok_or("pick")?;
-        feed.preview = Some(Arc::new(FolderPreview {
-            ticket: 1,
-            pick,
-            state: PreviewState::Reading,
-        }));
+        feed.folder = Some(OpenFolder { pick, report: None });
         publish(&ctx, Some(feed));
         ctx.data_mut(|d| {
             d.insert_persisted(egui::Id::new(("browser-open", "catalog-favourites")), true);

@@ -17,21 +17,6 @@
    "document": "JEDEC TO-261, SOT-223 package",
    "document_revision": null,
    "page": null
-  },
-  "to-243": {
-   "document": "JEDEC TO-243, SOT-89 package",
-   "document_revision": null,
-   "page": null
-  },
-  "to-252": {
-   "document": "JEDEC TO-252, DPAK",
-   "document_revision": null,
-   "page": null
-  },
-  "to-263": {
-   "document": "JEDEC TO-263, D2PAK",
-   "document_revision": null,
-   "page": null
   }
  },
  "rows": [
@@ -53,7 +38,7 @@
      2,
      1
     ],
-    "pitch": 1.9,
+    "pitch": 0.95,
     "body_length": 2.9,
     "body_width": 1.3,
     "body_height": 0.95,
@@ -62,7 +47,11 @@
     "lead_width": 0.4,
     "lead_thickness": 0.12,
     "foot_length": 0.4,
-    "tab": null
+    "tab": null,
+    "lead_step": [
+     2,
+     1
+    ]
    }
   },
   {
@@ -128,38 +117,6 @@
    }
   },
   {
-   "name": "SOT-89",
-   "description": "SOT-89, 3 leads at 1.50 mm and a tab opposite, body 4.50 \u00d7 2.50 mm.",
-   "aliases": [
-    "SOT-89",
-    "TO-243AA"
-   ],
-   "skeleton": {
-    "skeleton": "ic_box"
-   },
-   "cite": "to-243",
-   "values": {
-    "family": "tabbed",
-    "leads_per_side": [
-     3,
-     0
-    ],
-    "pitch": 1.5,
-    "body_length": 4.5,
-    "body_width": 2.5,
-    "body_height": 1.5,
-    "standoff": 0.0,
-    "span": 4.1,
-    "lead_width": 0.44,
-    "lead_thickness": 0.4,
-    "foot_length": 0.8,
-    "tab": {
-     "width": 1.7,
-     "length": 0.8
-    }
-   }
-  },
-  {
    "name": "DPAK (TO-252)",
    "description": "DPAK, 2 leads at 4.57 mm and a tab opposite, body 6.60 \u00d7 6.10 mm.",
    "aliases": [
@@ -169,27 +126,33 @@
    "skeleton": {
     "skeleton": "ic_box"
    },
-   "cite": "to-252",
+   "cite": null,
    "values": {
     "family": "tabbed",
     "leads_per_side": [
      2,
      0
     ],
-    "pitch": 4.57,
+    "pitch": 2.285,
     "body_length": 6.6,
     "body_width": 6.1,
     "body_height": 2.3,
     "standoff": 0.0,
-    "span": 9.9,
+    "span": 11.7,
     "lead_width": 0.76,
     "lead_thickness": 0.5,
     "foot_length": 1.5,
     "tab": {
      "width": 5.3,
-     "length": 1.5
-    }
-   }
+     "length": 5.3,
+     "flange": 1.0
+    },
+    "lead_step": [
+     2,
+     1
+    ]
+   },
+   "note": "Estimated: H 9.9, D 6.1 and the 4.57 mm lead spacing follow TO-252; the flange (1.0 mm past the body), its 5.3 \u00d7 5.3 mm solderable area and the span (2 \u00d7 (H \u2212 D/2 \u2212 flange)) are estimated for the centred-body model."
   },
   {
    "name": "D2PAK (TO-263)",
@@ -201,28 +164,33 @@
    "skeleton": {
     "skeleton": "ic_box"
    },
-   "cite": "to-263",
+   "cite": null,
    "values": {
     "family": "tabbed",
     "leads_per_side": [
      2,
      0
     ],
-    "pitch": 5.08,
+    "pitch": 2.54,
     "body_length": 10.2,
     "body_width": 9.1,
     "body_height": 4.4,
     "standoff": 0.0,
-    "span": 15.2,
+    "span": 18.7,
     "lead_width": 0.8,
     "lead_thickness": 0.5,
     "foot_length": 2.0,
     "tab": {
      "width": 8.0,
-     "length": 2.0
-    }
-   }
+     "length": 8.0,
+     "flange": 1.3
+    },
+    "lead_step": [
+     2,
+     1
+    ]
+   },
+   "note": "Estimated: H 15.2, D 9.1 and the 5.08 mm lead spacing follow TO-263; the flange (1.3 mm past the body), its 8.0 \u00d7 8.0 mm solderable area and the span (2 \u00d7 (H \u2212 D/2 \u2212 flange)) are estimated for the centred-body model."
   }
- ],
- "family_note": "Held until the tabbed family (B2a) is built; its owner confirms the field meanings (tab, span) before the rows are published."
+ ]
 }

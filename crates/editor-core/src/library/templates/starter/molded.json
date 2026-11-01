@@ -232,14 +232,15 @@
    "values": {
     "family": "molded",
     "lead": "j_lead",
-    "body_length": 3.2,
+    "body_length": 2.6,
     "body_width": 1.6,
     "body_height": 1.6,
     "span": 3.2,
     "terminal_length": 0.8,
     "terminal_width": 1.2,
     "polarised": true
-   }
+   },
+   "note": "Body length estimated as L \u2212 0.6 mm: EIA-535 gives the overall length L; the J-lead terminations fold over the body ends."
   },
   {
    "name": "Tantalum case B (3528-21)",
@@ -257,14 +258,15 @@
    "values": {
     "family": "molded",
     "lead": "j_lead",
-    "body_length": 3.5,
+    "body_length": 2.9,
     "body_width": 2.8,
     "body_height": 1.9,
     "span": 3.5,
     "terminal_length": 0.8,
     "terminal_width": 2.2,
     "polarised": true
-   }
+   },
+   "note": "Body length estimated as L \u2212 0.6 mm: EIA-535 gives the overall length L; the J-lead terminations fold over the body ends."
   },
   {
    "name": "Tantalum case C (6032-28)",
@@ -282,14 +284,15 @@
    "values": {
     "family": "molded",
     "lead": "j_lead",
-    "body_length": 6.0,
+    "body_length": 5.4,
     "body_width": 3.2,
     "body_height": 2.5,
     "span": 6.0,
     "terminal_length": 1.3,
     "terminal_width": 2.2,
     "polarised": true
-   }
+   },
+   "note": "Body length estimated as L \u2212 0.6 mm: EIA-535 gives the overall length L; the J-lead terminations fold over the body ends."
   },
   {
    "name": "Tantalum case D (7343-31)",
@@ -307,14 +310,15 @@
    "values": {
     "family": "molded",
     "lead": "j_lead",
-    "body_length": 7.3,
+    "body_length": 6.7,
     "body_width": 4.3,
     "body_height": 2.8,
     "span": 7.3,
     "terminal_length": 1.3,
     "terminal_width": 2.4,
     "polarised": true
-   }
+   },
+   "note": "Body length estimated as L \u2212 0.6 mm: EIA-535 gives the overall length L; the J-lead terminations fold over the body ends."
   },
   {
    "name": "Tantalum case E (7343-43)",
@@ -332,15 +336,15 @@
    "values": {
     "family": "molded",
     "lead": "j_lead",
-    "body_length": 7.3,
+    "body_length": 6.7,
     "body_width": 4.3,
     "body_height": 4.0,
     "span": 7.3,
     "terminal_length": 1.3,
     "terminal_width": 2.4,
     "polarised": true
-   }
+   },
+   "note": "Body length estimated as L \u2212 0.6 mm: EIA-535 gives the overall length L; the J-lead terminations fold over the body ends."
   }
- ],
- "family_note": "Held until the molded two-terminal family (B2b) is built; its owner confirms the field meanings before the rows are published."
+ ]
 }

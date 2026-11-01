@@ -492,10 +492,8 @@ impl PartEditor {
         }
     }
 
-    /// New component ▾ › From template… (⌘N): the gallery in new-component
-    /// scope. The ribbon's New menu (slice A1) and the catalog's Templates
-    /// folder (slice A2) call it.
-    #[allow(dead_code, reason = "the New ▾ menu of slice A1 calls it")]
+    /// The gallery in new-component scope: the ribbon's New and the start
+    /// page's New from template… open it.
     pub(super) fn open_template_gallery(&mut self) {
         self.gallery.open_new(Some(super::model_body::form_rows));
     }
@@ -768,6 +766,7 @@ mod tests {
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         editor.on_tab("footprint");
         let set = editor.draft.as_ref().ok_or("a working set")?;

@@ -10,7 +10,9 @@
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{DefinitionId, MAX_LABEL, PackageRowRef, printable};
 use crate::library::bundle::Bundle;
-use crate::library::package_form::{ChipKind, PackageForm};
+use crate::library::package_form::{
+    ChipKind, GridForm, MoldedForm, PackageForm, TabbedForm, ThtForm,
+};
 use crate::library::part::{Basis, Provenance};
 use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
 use crate::library::templates::footprint_family::TemplateKind;
@@ -115,14 +117,20 @@ impl FamilyKind {
             Self::GullWing => Preset::Soic8.form(),
             Self::NoLead => Preset::Qfn16.form(),
             Self::Header => Preset::Header2x5.form(),
-            Self::Tabbed | Self::Molded | Self::Grid | Self::Tht => return None,
+            Self::Tabbed => PackageForm::Tabbed(Box::new(TabbedForm::typical())),
+            Self::Molded => PackageForm::Molded(Box::new(MoldedForm::typical())),
+            Self::Grid => PackageForm::Grid(Box::new(GridForm::typical())),
+            Self::Tht => PackageForm::Tht(Box::new(ThtForm::typical())),
         })
     }
 
-    /// The skeleton a new row of `form` starts from.
+    /// The skeleton a new row of `form` starts from: a chip or molded body
+    /// is a 2-terminal part (molded ones polarised), a header a connector,
+    /// anything else an IC box. Never a category guess beyond the family.
     pub fn default_skeleton(form: &PackageForm) -> SkeletonHint {
         match form {
             PackageForm::Chip(_) => SkeletonHint::TwoTerminal { polarised: false },
+            PackageForm::Molded(_) => SkeletonHint::TwoTerminal { polarised: true },
             PackageForm::Header(_) => SkeletonHint::Connector,
             PackageForm::Generic => SkeletonHint::Blank,
             _ => SkeletonHint::IcBox,

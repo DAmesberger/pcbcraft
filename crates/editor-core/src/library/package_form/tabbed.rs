@@ -74,6 +74,25 @@ pub struct TabbedForm {
 }
 
 impl TabbedForm {
+    /// Original typical values (a SOT-23-3 in round numbers, from no
+    /// drawing): the family's custom entry in the template gallery.
+    pub fn typical() -> Self {
+        Self {
+            leads_per_side: [2, 1],
+            pitch: 0.95,
+            body_length: 2.9,
+            body_width: 1.3,
+            body_height: 1.0,
+            standoff: 0.05,
+            span: 2.4,
+            lead_width: 0.4,
+            lead_thickness: 0.12,
+            foot_length: 0.4,
+            tab: None,
+            lead_step: [2, 1],
+        }
+    }
+
     /// Share of the body height above the standoff at which the leads
     /// leave the moulding (as `GullWingForm::LEAD_EXIT_SHARE`).
     pub const LEAD_EXIT_SHARE: f64 = 0.5;

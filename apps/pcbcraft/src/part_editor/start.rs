@@ -2,13 +2,14 @@
 //! workspace has no subject: a catalog search (the same `library.search`
 //! as the Place palette, project and every ready library source), Recent,
 //! New from a template, and Import pinout….
+use super::PartEditor;
 use super::identity::Subject;
-use super::{PartEditor, Request, Template};
+#[cfg(test)]
+use super::{Request, Template};
 use crate::kit;
 use crate::library_sources::FolderPick;
 use egui::{RichText, Ui};
 use pcbcraft_core::catalog::{CatalogEntry, Source};
-use pcbcraft_core::library::samples::Preset;
 use pcbcraft_core::{DefinitionKind, Engine, Query, QueryResult};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use solidcraft_ui_egui::{fonts, theme::Tokens};
@@ -19,16 +20,6 @@ const SHOWN: usize = 8;
 const ALL: usize = 50;
 /// The longest query, in bytes.
 const MAX_QUERY: usize = 256;
-
-/// The starter templates offered until the template gallery (slice B4)
-/// takes over New from template….
-const STARTERS: [Template; 5] = [
-    Template::TwoTerminal,
-    Template::Header,
-    Template::Package(Preset::Soic8),
-    Template::Package(Preset::Qfn16),
-    Template::Package(Preset::Header2x5),
-];
 
 /// The page's state: the search text and its last answer.
 #[derive(Default)]
@@ -86,14 +77,16 @@ impl PartEditor {
             .inner;
         if let Some(subject) = open {
             self.open_subject(subject, engine);
-        } else if let Some(template) = new {
-            self.create_new(template);
+        } else if new {
+            self.open_template_gallery();
         }
         true
     }
 
-    /// Start a new component from `template` in new lineages; it opens
-    /// once the app has created it.
+    /// Tests: start a new component from a sample `template` in new
+    /// lineages; it opens once the app has created it. People start one
+    /// from the New-from-template gallery.
+    #[cfg(test)]
     pub(super) fn create_new(&mut self, template: Template) {
         self.identity.expect_new = true;
         self.request = Some(Request::Create(template));
@@ -205,19 +198,15 @@ impl PartEditor {
     }
 }
 
-/// New from a starter template, and Import pinout….
-fn start_new(ui: &mut Ui) -> Option<Template> {
-    kit::search_heading(ui, "New from template", STARTERS.len());
-    let mut chosen = None;
+/// New from template… (the one searchable gallery of package rows and
+/// family entries), and Import pinout….
+fn start_new(ui: &mut Ui) -> bool {
+    kit::search_heading(ui, "New", 1);
+    let mut chosen = false;
     ui.horizontal_wrapped(|ui| {
-        for template in STARTERS {
-            if ui_kit::button(ui, template.name(), Button::Normal)
-                .on_hover_text("Start a new component from this template")
-                .clicked()
-            {
-                chosen = Some(template);
-            }
-        }
+        chosen = ui_kit::button(ui, "New from template…", Button::Normal)
+            .on_hover_text("Search package rows by name, size code, pins, pitch or body")
+            .clicked();
         ui.add_enabled_ui(false, |ui| {
             ui_kit::button(ui, "Import pinout…", Button::Normal)
         })

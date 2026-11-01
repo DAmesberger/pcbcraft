@@ -63,6 +63,9 @@ pub struct Identity {
     /// The folder item shown read-only, kept while its engine is lent out.
     pub(super) previewing: Option<FolderPick>,
     pub(super) preview: Option<Box<Preview>>,
+    /// The shown folder item's inspect report, kept while the preview is
+    /// lent out.
+    report: Option<std::sync::Arc<pcbcraft_core::catalog::ItemReport>>,
     /// A preview being read.
     loading: Option<(FolderPick, Option<Receiver<folder_preview::Built>>)>,
     /// Bumped on every subject change; a lent preview whose subject
@@ -74,10 +77,13 @@ pub struct Identity {
     /// The catalog context the start page searches with, and its
     /// generation.
     pub(super) context: (u64, CatalogContext),
-    /// A New request left: the first component lineage that appears
-    /// opens.
+    /// Tests: a sample-template New request left; the first component
+    /// lineage that appears opens. (The gallery names what it created:
+    /// `TemplateGallery::take_created`.)
+    #[cfg(test)]
     pub(super) expect_new: bool,
     /// The component draft lineages at the last sync.
+    #[cfg(test)]
     pub(super) known: std::collections::BTreeSet<DefinitionId>,
 }
 
@@ -134,26 +140,6 @@ impl Identity {
             .find(|(l, _, _)| *l == library)
             .map_or_else(|| library.to_string(), |(_, n, _)| n.clone())
     }
-}
-
-/// Ask the app to open `subject` in the Component workspace: the catalog
-/// Browser and other surfaces without the editor at hand call this.
-#[allow(dead_code, reason = "the catalog Browser (slice A2) calls it")]
-pub fn request_open(ctx: &egui::Context, subject: Subject) {
-    ctx.data_mut(|d| d.insert_temp(open_slot(), subject));
-}
-
-/// The last open request, once.
-pub fn take_open_request(ctx: &egui::Context) -> Option<Subject> {
-    ctx.data_mut(|d| {
-        let subject = d.get_temp::<Subject>(open_slot());
-        d.remove::<Subject>(open_slot());
-        subject
-    })
-}
-
-fn open_slot() -> egui::Id {
-    egui::Id::new("component-workspace-open")
 }
 
 impl PartEditor {
@@ -227,6 +213,7 @@ impl PartEditor {
         self.leave_subject();
         self.lineage = Some(preview.root);
         self.identity.previewing = Some(preview.pick.clone());
+        self.identity.report = preview.report.clone();
         self.identity.preview = Some(preview);
         self.view = super::View::Details;
     }
@@ -236,8 +223,12 @@ impl PartEditor {
         self.identity.epoch = self.identity.epoch.wrapping_add(1);
         self.identity.preview = None;
         self.identity.previewing = None;
+        self.identity.report = None;
         self.identity.loading = None;
-        self.identity.expect_new = false;
+        #[cfg(test)]
+        {
+            self.identity.expect_new = false;
+        }
         self.lineage = None;
         self.source = None;
         self.draft = None;
@@ -262,6 +253,21 @@ impl PartEditor {
     /// The folder item shown read-only, if any.
     pub fn previewing(&self) -> Option<&FolderPick> {
         self.identity.previewing.as_ref()
+    }
+
+    /// The folder item shown read-only or being read, with its
+    /// `inspect_bundle` report once read (the catalog strip's summary).
+    pub fn folder_subject(
+        &self,
+    ) -> Option<(
+        &FolderPick,
+        Option<&std::sync::Arc<pcbcraft_core::catalog::ItemReport>>,
+    )> {
+        match (&self.identity.previewing, &self.identity.loading) {
+            (Some(pick), _) => Some((pick, self.identity.report.as_ref())),
+            (None, Some((pick, _))) => Some((pick, None)),
+            (None, None) => None,
+        }
     }
 
     /// The bundle of the previewed folder item, for Edit a copy.
@@ -298,6 +304,23 @@ impl PartEditor {
         if self.identity.context.0 != generation {
             self.identity.context = (generation, context());
         }
+        let shared = &self.identity.context.1;
+        self.gallery.set_context(generation, || shared.clone());
+    }
+
+    /// Folder template rows the gallery needs read (io `read_bundle`, off
+    /// the UI thread); hand each back with [`Self::template_row_read`].
+    pub fn take_template_reads(&mut self) -> Vec<FolderPick> {
+        self.gallery.take_reads()
+    }
+
+    /// A folder template row's bundle, read for `pick`.
+    pub fn template_row_read(
+        &mut self,
+        pick: FolderPick,
+        result: Result<pcbcraft_core::library::Bundle, String>,
+    ) {
+        self.gallery.bundle_read(pick, result);
     }
 
     pub(super) fn go_back(&mut self, engine: &Engine) {
@@ -536,8 +559,9 @@ impl PartEditor {
         }
     }
 
-    /// Open the first component lineage created since a New request, and
-    /// remember the component drafts for the next comparison.
+    /// Tests: open the first component lineage created since a sample New
+    /// request, and remember the component drafts for the next comparison.
+    #[cfg(test)]
     pub(super) fn open_created(&mut self, engine: &Engine) {
         let now: std::collections::BTreeSet<DefinitionId> = engine
             .drafts()
