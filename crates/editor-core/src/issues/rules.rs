@@ -32,11 +32,16 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.via_hole_spacing"
         | "erc.driver_conflict"
         | "erc.open_drain_contention"
+        | "fill.clearance"
+        | "keepout.track"
+        | "keepout.via"
+        | "keepout.pad"
         // Geometry past the limit is unchecked, so errors may be uncounted.
         | "board.check_limit"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
+        | "fill.stale"
         | "library.update_available"
         | "marking.unrepresentable"
         | "marking.does_not_fit" => Severity::Info,
@@ -62,6 +67,15 @@ pub(super) fn group_title(code: &str) -> String {
         "board.edge_clearance" => "Too close to the board edge",
         "board.hole_clearance" => "Mounting holes too close",
         "board.courtyard_clearance" => "Courtyards too close",
+        "fill.clearance" => "Fill clearance",
+        "fill.empty" => "Empty fills",
+        "fill.island_unconnected" => "Unconnected fill islands",
+        "fill.net_missing" => "Fills on missing nets",
+        "fill.stale" => "Fills to refill",
+        "fill.thermal_starved" => "Starved thermal reliefs",
+        "keepout.track" => "Tracks in keepouts",
+        "keepout.via" => "Vias in keepouts",
+        "keepout.pad" => "Pads in keepouts",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -155,6 +169,12 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.edge_clearance" => "Move it away from the edge",
         "board.hole_clearance" => "Move the copper away from the hole",
         "board.courtyard_clearance" => "Move the parts apart",
+        "fill.clearance" | "fill.stale" => "Refill the fill",
+        "fill.empty" => "Enlarge the fill outline or lower its priority",
+        "fill.island_unconnected" => "Remove unconnected islands or connect them",
+        "fill.net_missing" => "Choose the fill's net",
+        "fill.thermal_starved" => "Clear room around the pad or use more spokes",
+        "keepout.track" | "keepout.via" | "keepout.pad" => "Move it out of the keepout",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -416,6 +436,12 @@ pub const KNOWN_CODES: &[&str] = &[
     "erc.open_drain_contention",
     "erc.unchecked_terminal",
     "erc.undriven_power_input",
+    "fill.clearance",
+    "fill.empty",
+    "fill.island_unconnected",
+    "fill.net_missing",
+    "fill.stale",
+    "fill.thermal_starved",
     "field.choice_label",
     "field.default_invalid",
     "field.required_stage",
@@ -474,6 +500,9 @@ pub const KNOWN_CODES: &[&str] = &[
     "instance.required_terminal_no_connect",
     "instance.terminal_unaccounted",
     "instance.unit_unplaced",
+    "keepout.pad",
+    "keepout.track",
+    "keepout.via",
     "library.source_modified",
     "library.update_available",
     "marking.artwork",

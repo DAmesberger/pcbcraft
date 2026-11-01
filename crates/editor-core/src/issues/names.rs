@@ -146,6 +146,20 @@ impl<'a> Names<'a> {
                 .project
                 .via(id)
                 .map_or_else(|| "a via".into(), |v| format!("via on {}", self.net(v.net))),
+            ObjectRef::Fill { id } => self.project.fill(id).map_or_else(
+                || "a fill".into(),
+                |f| crate::layout::fill::fill_label(self.project, f),
+            ),
+            ObjectRef::Keepout { id } => self.project.keepout(id).map_or_else(
+                || "a keepout".into(),
+                |k| {
+                    if k.name.is_empty() {
+                        "a keepout".into()
+                    } else {
+                        format!("keepout {}", k.name)
+                    }
+                },
+            ),
             ObjectRef::Board => "the board".into(),
         }
     }

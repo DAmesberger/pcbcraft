@@ -1,6 +1,7 @@
 //! Pcbcraft desktop editor.
 mod app;
 mod file_ui;
+mod fill_worker;
 mod issues;
 mod kit;
 mod layer_view;

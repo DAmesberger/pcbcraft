@@ -169,6 +169,14 @@ pub enum ObjectRef {
     Via {
         id: Id,
     },
+    /// A copper fill (zone).
+    Fill {
+        id: Id,
+    },
+    /// A keepout region.
+    Keepout {
+        id: Id,
+    },
     /// The board as a whole, for a finding about the board rather than any
     /// one object on it (a check that stopped at its limit). Locating it
     /// frames the board.

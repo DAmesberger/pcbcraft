@@ -11,12 +11,22 @@ use crate::geometry::point_valid;
 use crate::ids::Id;
 use crate::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use crate::model::fill::{
-    FillSettings, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, MAX_FILLS, MAX_KEEPOUTS,
+    FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, MAX_FILLS, MAX_KEEPOUTS,
 };
 use crate::model::{Fill, Keepout, Project};
 use crate::rules::MAX_RULE_MM;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
+
+mod checks;
+mod compute;
+mod geom;
+#[cfg(test)]
+mod tests;
+
+pub(crate) use checks::links;
+pub use checks::{fill_label, findings};
 
 /// The chord tolerance computed fill copper is flattened at, mm.
 pub const FILL_CHORD_MM: f64 = 0.005;
@@ -99,23 +109,12 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             Ok(None)
         }
         FillCommand::Refill { target } => {
-            let ids: Vec<Id> = project
-                .fills
-                .iter()
-                .filter(|f| match target {
-                    RefillTarget::All => true,
-                    RefillTarget::Stale => is_stale(project, f),
-                    RefillTarget::One(id) => f.id == id,
-                })
-                .map(|f| f.id)
-                .collect();
             if let RefillTarget::One(id) = target
-                && ids.is_empty()
+                && project.fill(id).is_none()
             {
                 return Err(missing("fill", id));
             }
-            for id in ids {
-                let copper = compute(project, id)?;
+            for (id, copper) in refill(project, target)? {
                 if let Some(f) = project.fills.iter_mut().find(|f| f.id == id) {
                     f.computed = Some(copper);
                 }
@@ -163,14 +162,119 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
 /// clearance, other-net copper and holes at the effective clearances
 /// (rules and net classes), higher-priority fills and keepouts, with
 /// thermal reliefs, minimum-width erosion and island removal. Pure and
-/// deterministic.
+/// deterministic; fresh stored copper of higher-ranking fills is reused.
+/// See [`compute`](self) for the steps.
 pub fn compute(project: &Project, id: Id) -> Result<FilledCopper> {
-    project
-        .fill(id)
-        .ok_or_else(|| Error::NotFound(format!("fill.missing: no fill {id}")))?;
-    Err(Error::Unsupported(
-        "fill.compute: copper fill computation is not available in this build yet".into(),
-    ))
+    compute::Ctx::new(project).copper(id, false)
+}
+
+/// The fills `target` names, in rank order (highest priority first).
+fn ranked(project: &Project, target: RefillTarget) -> Result<Vec<Id>> {
+    let mut fills: Vec<&Fill> = project.fills.iter().collect();
+    fills.sort_by(|a, b| {
+        if compute::outranks(a, b) {
+            std::cmp::Ordering::Less
+        } else if compute::outranks(b, a) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    let mut ctx = compute::Ctx::new(project);
+    let mut out = Vec::new();
+    for f in fills {
+        let wanted = match target {
+            RefillTarget::All => true,
+            RefillTarget::One(id) => f.id == id,
+            RefillTarget::Stale => f.computed.as_ref().map(|c| &c.key) != Some(&ctx.key(f.id)?),
+        };
+        if wanted {
+            out.push(f.id);
+        }
+    }
+    Ok(out)
+}
+
+/// Compute the copper of the `target` fills in one pass (rank order, so a
+/// fill sees the new copper of the fills above it). Pure: the caller
+/// stores the results, as `fill.refill` does.
+pub fn refill(project: &Project, target: RefillTarget) -> Result<Vec<(Id, FilledCopper)>> {
+    let ids = ranked(project, target)?;
+    let mut ctx = compute::Ctx::new(project);
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        out.push((id, ctx.copper(id, false)?));
+    }
+    Ok(out)
+}
+
+/// Computed copper by input key, kept by a host across revisions so that
+/// undo, redo and repeated edits reuse earlier results instead of
+/// recomputing them. Bounded: the oldest entries go first.
+#[derive(Debug, Default)]
+pub struct FillCache {
+    entries: BTreeMap<String, FilledCopper>,
+    order: VecDeque<String>,
+}
+
+impl FillCache {
+    /// Most results kept.
+    pub const CAPACITY: usize = 64;
+
+    pub fn get(&self, key: &str) -> Option<&FilledCopper> {
+        self.entries.get(key)
+    }
+
+    pub fn insert(&mut self, copper: FilledCopper) {
+        if self.entries.contains_key(&copper.key) {
+            return;
+        }
+        while self.order.len() >= Self::CAPACITY {
+            if let Some(old) = self.order.pop_front() {
+                self.entries.remove(&old);
+            }
+        }
+        self.order.push_back(copper.key.clone());
+        self.entries.insert(copper.key.clone(), copper);
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// The copper of every stale fill, for a host to compute off the UI
+/// thread and commit with [`crate::Engine::store_fills`] (or `fill.store`).
+/// Only fills whose inputs changed are computed; results already in
+/// `cache` are reused, and new ones are added to it.
+pub fn compute_stale(project: &Project, cache: &mut FillCache) -> Result<Vec<(Id, FilledCopper)>> {
+    let ids = ranked(project, RefillTarget::All)?;
+    let mut ctx = compute::Ctx::new(project);
+    let mut out = Vec::new();
+    for id in ids {
+        let key = ctx.key(id)?;
+        let stored = project.fill(id).and_then(|f| f.computed.as_ref());
+        if stored.is_some_and(|c| c.key == key) {
+            continue;
+        }
+        let copper = match cache.get(&key) {
+            Some(hit) => {
+                ctx.seed(id, hit.clone());
+                hit.clone()
+            }
+            None => {
+                let c = ctx.copper(id, true)?;
+                cache.insert(c.clone());
+                c
+            }
+        };
+        out.push((id, copper));
+    }
+    Ok(out)
 }
 
 /// FNV-1a over bytes, as 16 hex digits.
@@ -183,52 +287,23 @@ fn fnv_hex(bytes: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-/// Everything [`compute`] reads for one fill.
-#[derive(Serialize)]
-struct Inputs<'a> {
-    fill: (
-        &'a Option<Id>,
-        &'a crate::model::CopperLayer,
-        &'a Outline,
-        u32,
-        &'a FillSettings,
-    ),
-    rules: &'a crate::rules::ProjectRules,
-    board: (&'a crate::geometry::Point, &'a crate::model::BoardShape),
-    stackup: &'a crate::model::Stackup,
-    placements: &'a [crate::model::Placement],
-    tracks: &'a [crate::model::Track],
-    vias: &'a [crate::model::Via],
-    nets: &'a [crate::model::Net],
-    others: Vec<(Id, &'a crate::model::CopperLayer, &'a Outline, u32)>,
-    keepouts: &'a [Keepout],
+/// The cache key of fill `id`'s inputs: the fill's definition, the
+/// rules, the board shape and stackup, and only the pads, vias, tracks,
+/// keepouts and higher-ranking other-net fills within its reach. An edit
+/// out of that reach (another layer, far away, a fill it does not clear)
+/// leaves the key, so only affected fills go stale.
+pub fn inputs_key(project: &Project, id: Id) -> Result<String> {
+    compute::Ctx::new(project).key(id)
 }
 
-/// The cache key of fill `id`'s inputs. Conservative: any change to
-/// copper, rules, board, placements, nets, keepouts or another fill's
-/// outline makes it stale (incremental refill narrows this later).
-pub fn inputs_key(project: &Project, id: Id) -> Result<String> {
-    let f = project
-        .fill(id)
-        .ok_or_else(|| Error::NotFound(format!("fill.missing: no fill {id}")))?;
-    let inputs = Inputs {
-        fill: (&f.net, &f.layer, &f.outline, f.priority, &f.settings),
-        rules: &project.rules,
-        board: (&project.board_size, &project.board_shape),
-        stackup: &project.stackup,
-        placements: &project.placements,
-        tracks: &project.tracks,
-        vias: &project.vias,
-        nets: &project.nets,
-        others: project
-            .fills
-            .iter()
-            .filter(|o| o.id != id)
-            .map(|o| (o.id, &o.layer, &o.outline, o.priority))
-            .collect(),
-        keepouts: &project.keepouts,
-    };
-    Ok(fnv_hex(&serde_json::to_vec(&inputs)?))
+/// [`inputs_key`] of every fill, sharing one pass.
+pub fn inputs_keys(project: &Project) -> Result<BTreeMap<Id, String>> {
+    let mut ctx = compute::Ctx::new(project);
+    project
+        .fills
+        .iter()
+        .map(|f| Ok((f.id, ctx.key(f.id)?)))
+        .collect()
 }
 
 /// Whether a fill has no computed copper or copper of other inputs.
@@ -248,12 +323,13 @@ pub struct FillStatus {
 }
 
 pub fn status(project: &Project) -> Vec<FillStatus> {
+    let keys = inputs_keys(project).unwrap_or_default();
     project
         .fills
         .iter()
         .map(|f| FillStatus {
             fill: f.id,
-            stale: is_stale(project, f),
+            stale: f.computed.as_ref().map(|c| &c.key) != keys.get(&f.id),
             regions: f.computed.as_ref().map_or(0, |c| c.regions.len()),
         })
         .collect()
@@ -304,6 +380,21 @@ pub fn validate(project: &Project) -> Result<()> {
                 .map(|r| r.outer.len() + r.holes.iter().map(Vec::len).sum::<usize>())
                 .sum()
         });
+        let copper_ok = f.computed.as_ref().is_none_or(|c| {
+            c.key.len() <= 64
+                && c.regions.iter().all(|r| {
+                    r.outer.len() >= 3
+                        && r.holes.iter().all(|h| h.len() >= 3)
+                        && r.outer
+                            .iter()
+                            .chain(r.holes.iter().flatten())
+                            .all(|p| point_valid(*p))
+                })
+                && c.joins.iter().all(|j| {
+                    j.joined_region()
+                        .is_none_or(|r| (r as usize) < c.regions.len())
+                })
+        });
         if !outline_ok(&f.outline)
             || !project.stackup.has(f.layer)
             || f.name.len() > crate::rules::MAX_PROFILE_TEXT
@@ -312,6 +403,7 @@ pub fn validate(project: &Project) -> Result<()> {
             || !thermal_ok
             || !hatch_ok
             || vertices > MAX_FILL_VERTICES
+            || !copper_ok
         {
             return Err(Error::Invalid(
                 "fill.bounds: a fill needs a closed finite outline on a stackup layer and settings within bounds"
