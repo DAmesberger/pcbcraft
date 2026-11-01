@@ -109,6 +109,33 @@ const MAP: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "pins",
+        &[
+            "ids",
+            "diagnostics",
+            "library",
+            "model",
+            "instances",
+            "functions",
+            "nets",
+            "completeness",
+        ],
+    ),
+    (
+        "firmware",
+        &[
+            "ids",
+            "diagnostics",
+            "library",
+            "model",
+            "instances",
+            "functions",
+            "nets",
+            "completeness",
+            "pins",
+        ],
+    ),
+    (
         "catalog",
         &[
             "ids",
@@ -196,6 +223,8 @@ const BELOW_COMMANDS: &[&str] = &[
     "layout",
     "erc",
     "completeness",
+    "pins",
+    "firmware",
     "catalog",
     "scripting",
     "validate",

@@ -83,6 +83,7 @@ fn footprint_editor(
 ) -> Result<PartEditor, Box<dyn std::error::Error>> {
     fonts::setup_bundled_fonts(ctx);
     let mut editor = PartEditor::default();
+    editor.open_first(engine);
     editor.commit(ctx, engine);
     editor.on_tab("footprint");
     canvas_frame(&mut editor, engine, ctx, vec![]);
@@ -128,6 +129,39 @@ fn committed_pads(engine: &Engine, editor: &PartEditor) -> Option<Vec<Pad>> {
         pcbcraft_core::library::Definition::Footprint(f) => Some(f.pads.clone()),
         _ => None,
     }
+}
+
+/// Two fingers pan the footprint without zooming; a pinch zooms about the
+/// pointer, which keeps its footprint point.
+#[test]
+fn two_fingers_pan_the_footprint_and_a_pinch_zooms_it() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::navigation::tests::swipe;
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let at = Pos2::new(380.0, 150.0);
+    canvas_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(at)],
+    );
+    let before = editor.footprint_view.ok_or("not fitted")?;
+    canvas_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        swipe(egui::vec2(-3.0, 5.0), egui::Modifiers::NONE, 3),
+    );
+    let panned = editor.footprint_view.ok_or("not fitted")?;
+    assert_eq!(panned.scale, before.scale, "two fingers must not zoom");
+    assert!((panned.pan - before.pan - egui::vec2(-9.0, 15.0)).length() < 1e-3);
+    let local = |v: super::symbol_canvas::ViewState| (at - CANVAS.center() - v.pan) / v.scale;
+    canvas_frame(&mut editor, &engine, &ctx, vec![egui::Event::Zoom(1.5)]);
+    let zoomed = editor.footprint_view.ok_or("not fitted")?;
+    assert!((zoomed.scale - 1.5 * panned.scale).abs() < 1e-3);
+    assert!((local(zoomed) - local(panned)).length() < 1e-4);
+    Ok(())
 }
 
 /// The view draws every pad's number and picks a pad by its land: a

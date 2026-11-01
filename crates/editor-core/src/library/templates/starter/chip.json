@@ -1,0 +1,600 @@
+{
+ "format": 1,
+ "family": "chip",
+ "family_rev": 1,
+ "citations": {
+  "yageo-rc": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table",
+   "document_revision": null,
+   "page": null
+  },
+  "murata-grm": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code",
+   "document_revision": null,
+   "page": null
+  },
+  "murata-blm": {
+   "document": "Murata, BLM series chip ferrite beads: dimensions by size code",
+   "document_revision": null,
+   "page": null
+  }
+ },
+ "rows": [
+  {
+   "name": "Chip resistor 01005 (0402 metric)",
+   "description": "Thick-film chip resistor, 0.40 \u00d7 0.20 \u00d7 0.13 mm, nominal values.",
+   "aliases": [
+    "01005",
+    "0402 metric",
+    "R01005"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 0.4,
+    "width": 0.2,
+    "height": 0.13,
+    "termination": 0.1
+   },
+   "size_code": {
+    "imperial": "01005",
+    "metric": "0402"
+   }
+  },
+  {
+   "name": "Chip resistor 0201 (0603 metric)",
+   "description": "Thick-film chip resistor, 0.60 \u00d7 0.30 \u00d7 0.23 mm, nominal values.",
+   "aliases": [
+    "0201",
+    "0603 metric",
+    "R0201"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 0.6,
+    "width": 0.3,
+    "height": 0.23,
+    "termination": 0.15
+   },
+   "size_code": {
+    "imperial": "0201",
+    "metric": "0603"
+   }
+  },
+  {
+   "name": "Chip resistor 0402 (1005 metric)",
+   "description": "Thick-film chip resistor, 1.00 \u00d7 0.50 \u00d7 0.35 mm, nominal values.",
+   "aliases": [
+    "0402",
+    "1005 metric",
+    "R0402"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 1.0,
+    "width": 0.5,
+    "height": 0.35,
+    "termination": 0.25
+   },
+   "size_code": {
+    "imperial": "0402",
+    "metric": "1005"
+   }
+  },
+  {
+   "name": "Chip resistor 0603 (1608 metric)",
+   "description": "Thick-film chip resistor, 1.60 \u00d7 0.80 \u00d7 0.45 mm, nominal values.",
+   "aliases": [
+    "0603",
+    "1608 metric",
+    "R0603"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 1.6,
+    "width": 0.8,
+    "height": 0.45,
+    "termination": 0.3
+   },
+   "size_code": {
+    "imperial": "0603",
+    "metric": "1608"
+   }
+  },
+  {
+   "name": "Chip resistor 0805 (2012 metric)",
+   "description": "Thick-film chip resistor, 2.00 \u00d7 1.25 \u00d7 0.50 mm, nominal values.",
+   "aliases": [
+    "0805",
+    "2012 metric",
+    "R0805"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 2.0,
+    "width": 1.25,
+    "height": 0.5,
+    "termination": 0.35
+   },
+   "size_code": {
+    "imperial": "0805",
+    "metric": "2012"
+   }
+  },
+  {
+   "name": "Chip resistor 1206 (3216 metric)",
+   "description": "Thick-film chip resistor, 3.10 \u00d7 1.60 \u00d7 0.55 mm, nominal values.",
+   "aliases": [
+    "1206",
+    "3216 metric",
+    "R1206"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 3.1,
+    "width": 1.6,
+    "height": 0.55,
+    "termination": 0.45
+   },
+   "size_code": {
+    "imperial": "1206",
+    "metric": "3216"
+   }
+  },
+  {
+   "name": "Chip resistor 1210 (3225 metric)",
+   "description": "Thick-film chip resistor, 3.10 \u00d7 2.60 \u00d7 0.55 mm, nominal values.",
+   "aliases": [
+    "1210",
+    "3225 metric",
+    "R1210"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 3.1,
+    "width": 2.6,
+    "height": 0.55,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "1210",
+    "metric": "3225"
+   }
+  },
+  {
+   "name": "Chip resistor 2010 (5025 metric)",
+   "description": "Thick-film chip resistor, 5.00 \u00d7 2.50 \u00d7 0.55 mm, nominal values.",
+   "aliases": [
+    "2010",
+    "5025 metric",
+    "R2010"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 5.0,
+    "width": 2.5,
+    "height": 0.55,
+    "termination": 0.55
+   },
+   "size_code": {
+    "imperial": "2010",
+    "metric": "5025"
+   }
+  },
+  {
+   "name": "Chip resistor 2512 (6332 metric)",
+   "description": "Thick-film chip resistor, 6.35 \u00d7 3.20 \u00d7 0.55 mm, nominal values.",
+   "aliases": [
+    "2512",
+    "6332 metric",
+    "R2512"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "yageo-rc",
+   "values": {
+    "family": "chip",
+    "kind": "resistor",
+    "length": 6.35,
+    "width": 3.2,
+    "height": 0.55,
+    "termination": 0.6
+   },
+   "size_code": {
+    "imperial": "2512",
+    "metric": "6332"
+   }
+  },
+  {
+   "name": "Chip capacitor 01005 (0402 metric)",
+   "description": "Multilayer ceramic chip capacitor, 0.40 \u00d7 0.20 mm, thickness 0.20 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "01005",
+    "0402 metric",
+    "C01005"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 0.4,
+    "width": 0.2,
+    "height": 0.2,
+    "termination": 0.1
+   },
+   "size_code": {
+    "imperial": "01005",
+    "metric": "0402"
+   }
+  },
+  {
+   "name": "Chip capacitor 0201 (0603 metric)",
+   "description": "Multilayer ceramic chip capacitor, 0.60 \u00d7 0.30 mm, thickness 0.30 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "0201",
+    "0603 metric",
+    "C0201"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 0.6,
+    "width": 0.3,
+    "height": 0.3,
+    "termination": 0.15
+   },
+   "size_code": {
+    "imperial": "0201",
+    "metric": "0603"
+   }
+  },
+  {
+   "name": "Chip capacitor 0402 (1005 metric)",
+   "description": "Multilayer ceramic chip capacitor, 1.00 \u00d7 0.50 mm, thickness 0.50 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "0402",
+    "1005 metric",
+    "C0402"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 1.0,
+    "width": 0.5,
+    "height": 0.5,
+    "termination": 0.25
+   },
+   "size_code": {
+    "imperial": "0402",
+    "metric": "1005"
+   }
+  },
+  {
+   "name": "Chip capacitor 0603 (1608 metric)",
+   "description": "Multilayer ceramic chip capacitor, 1.60 \u00d7 0.80 mm, thickness 0.80 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "0603",
+    "1608 metric",
+    "C0603"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 1.6,
+    "width": 0.8,
+    "height": 0.8,
+    "termination": 0.35
+   },
+   "size_code": {
+    "imperial": "0603",
+    "metric": "1608"
+   }
+  },
+  {
+   "name": "Chip capacitor 0805 (2012 metric)",
+   "description": "Multilayer ceramic chip capacitor, 2.00 \u00d7 1.25 mm, thickness 1.25 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "0805",
+    "2012 metric",
+    "C0805"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 2.0,
+    "width": 1.25,
+    "height": 1.25,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "0805",
+    "metric": "2012"
+   }
+  },
+  {
+   "name": "Chip capacitor 1206 (3216 metric)",
+   "description": "Multilayer ceramic chip capacitor, 3.20 \u00d7 1.60 mm, thickness 1.60 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "1206",
+    "3216 metric",
+    "C1206"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 3.2,
+    "width": 1.6,
+    "height": 1.6,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "1206",
+    "metric": "3216"
+   }
+  },
+  {
+   "name": "Chip capacitor 1210 (3225 metric)",
+   "description": "Multilayer ceramic chip capacitor, 3.20 \u00d7 2.50 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "1210",
+    "3225 metric",
+    "C1210"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 3.2,
+    "width": 2.5,
+    "height": 2.5,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "1210",
+    "metric": "3225"
+   }
+  },
+  {
+   "name": "Chip capacitor 1812 (4532 metric)",
+   "description": "Multilayer ceramic chip capacitor, 4.50 \u00d7 3.20 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "1812",
+    "4532 metric",
+    "C1812"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 4.5,
+    "width": 3.2,
+    "height": 2.5,
+    "termination": 0.6
+   },
+   "size_code": {
+    "imperial": "1812",
+    "metric": "4532"
+   }
+  },
+  {
+   "name": "Chip capacitor 2220 (5750 metric)",
+   "description": "Multilayer ceramic chip capacitor, 5.70 \u00d7 5.00 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+   "aliases": [
+    "2220",
+    "5750 metric",
+    "C2220"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-grm",
+   "values": {
+    "family": "chip",
+    "kind": "capacitor",
+    "length": 5.7,
+    "width": 5.0,
+    "height": 2.5,
+    "termination": 0.6
+   },
+   "size_code": {
+    "imperial": "2220",
+    "metric": "5750"
+   }
+  },
+  {
+   "name": "Chip ferrite bead 0402 (1005 metric)",
+   "description": "Chip ferrite bead or inductor, 1.00 \u00d7 0.50 \u00d7 0.50 mm.",
+   "aliases": [
+    "0402",
+    "1005 metric",
+    "L0402",
+    "FB0402"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-blm",
+   "values": {
+    "family": "chip",
+    "kind": "inductor",
+    "length": 1.0,
+    "width": 0.5,
+    "height": 0.5,
+    "termination": 0.25
+   },
+   "size_code": {
+    "imperial": "0402",
+    "metric": "1005"
+   }
+  },
+  {
+   "name": "Chip ferrite bead 0603 (1608 metric)",
+   "description": "Chip ferrite bead or inductor, 1.60 \u00d7 0.80 \u00d7 0.80 mm.",
+   "aliases": [
+    "0603",
+    "1608 metric",
+    "L0603",
+    "FB0603"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-blm",
+   "values": {
+    "family": "chip",
+    "kind": "inductor",
+    "length": 1.6,
+    "width": 0.8,
+    "height": 0.8,
+    "termination": 0.3
+   },
+   "size_code": {
+    "imperial": "0603",
+    "metric": "1608"
+   }
+  },
+  {
+   "name": "Chip ferrite bead 0805 (2012 metric)",
+   "description": "Chip ferrite bead or inductor, 2.00 \u00d7 1.25 \u00d7 0.85 mm.",
+   "aliases": [
+    "0805",
+    "2012 metric",
+    "L0805",
+    "FB0805"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-blm",
+   "values": {
+    "family": "chip",
+    "kind": "inductor",
+    "length": 2.0,
+    "width": 1.25,
+    "height": 0.85,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "0805",
+    "metric": "2012"
+   }
+  },
+  {
+   "name": "Chip ferrite bead 1206 (3216 metric)",
+   "description": "Chip ferrite bead or inductor, 3.20 \u00d7 1.60 \u00d7 1.10 mm.",
+   "aliases": [
+    "1206",
+    "3216 metric",
+    "L1206",
+    "FB1206"
+   ],
+   "skeleton": {
+    "skeleton": "two_terminal",
+    "polarised": false
+   },
+   "cite": "murata-blm",
+   "values": {
+    "family": "chip",
+    "kind": "inductor",
+    "length": 3.2,
+    "width": 1.6,
+    "height": 1.1,
+    "termination": 0.5
+   },
+   "size_code": {
+    "imperial": "1206",
+    "metric": "3216"
+   }
+  }
+ ]
+}

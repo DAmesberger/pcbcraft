@@ -1,4 +1,5 @@
 //! Synthetic fixtures built through public commands only.
+use crate::WireEnd;
 use crate::completeness::{CheckTarget, DefinitionReport, InstanceReport};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::instances::NewInstance;
@@ -343,6 +344,9 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
             vec![]
         },
         fields: vec![],
+        pin_rules: Vec::new(),
+        marking: None,
+        review: None,
     };
     let symbol = SymbolDefinition {
         component: f.component,
@@ -529,7 +533,10 @@ pub fn place_ref(
 pub fn connect(engine: &mut Engine, from: Endpoint, to: Endpoint) -> Result<()> {
     apply(
         engine,
-        Operation::Schematic(crate::schematic::SchematicCommand::Connect { from, to }),
+        Operation::Schematic(crate::schematic::SchematicCommand::Connect {
+            from: from.into(),
+            to: to.into(),
+        }),
     )
     .map(|_| ())
 }
@@ -539,7 +546,10 @@ pub fn wire_between(engine: &Engine, a: Endpoint, b: Endpoint) -> Result<Id> {
         .project()
         .wires
         .iter()
-        .find(|w| (w.from == a && w.to == b) || (w.from == b && w.to == a))
+        .find(|w| {
+            let (a, b) = (WireEnd::from(a), WireEnd::from(b));
+            (w.from == a && w.to == b) || (w.from == b && w.to == a)
+        })
         .map(|w| w.id)
         .ok_or_else(|| Error::NotFound("wire".into()))
 }
@@ -627,7 +637,9 @@ pub fn retarget(engine: &mut Engine, f: &Fixture) -> Result<()> {
             | Definition::Package(_)
             | Definition::QuantityKind(_)
             | Definition::Field(_)
-            | Definition::Part(_) => {}
+            | Definition::Part(_)
+            | Definition::Model(_)
+            | Definition::PackageRow(_) => {}
         }
         edits.push(DraftEdit {
             id,

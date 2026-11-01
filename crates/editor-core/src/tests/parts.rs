@@ -160,6 +160,7 @@ fn part_body(
             basis: Basis::FromReference(1),
             ..Provenance::default()
         },
+        top_mark: None,
     }
 }
 

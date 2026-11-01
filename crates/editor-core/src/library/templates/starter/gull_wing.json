@@ -1,0 +1,1589 @@
+{
+ "format": 1,
+ "family": "gull_wing",
+ "family_rev": 1,
+ "citations": {
+  "ms-012": {
+   "document": "JEDEC MS-012, plastic dual small outline gull-wing, 1.27 mm pitch, 3.90 mm body (SOIC narrow)",
+   "document_revision": null,
+   "page": null
+  },
+  "ms-013": {
+   "document": "JEDEC MS-013, plastic dual small outline gull-wing, 1.27 mm pitch, 7.50 mm body (SOIC wide)",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-150": {
+   "document": "JEDEC MO-150, plastic shrink small outline, 0.65 mm pitch, 5.30 mm body (SSOP)",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-137": {
+   "document": "JEDEC MO-137, plastic shrink small outline, 0.635 mm pitch, 3.90 mm body (QSOP)",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-153": {
+   "document": "JEDEC MO-153, plastic thin shrink small outline (TSSOP)",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-187": {
+   "document": "JEDEC MO-187, plastic micro small outline, 3.00 mm body (MSOP)",
+   "document_revision": null,
+   "page": null
+  },
+  "ms-026": {
+   "document": "JEDEC MS-026, low-profile and thin plastic quad flat packages (LQFP, TQFP)",
+   "document_revision": null,
+   "page": null
+  }
+ },
+ "rows": [
+  {
+   "name": "SOIC-8 3.9 mm",
+   "description": "Small outline, 8 gull-wing leads at 1.27 mm, body 4.90 \u00d7 3.90 mm.",
+   "aliases": [
+    "SOIC-8",
+    "SO-8",
+    "8-SOIC"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-012",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     4,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 4.9,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-14 3.9 mm",
+   "description": "Small outline, 14 gull-wing leads at 1.27 mm, body 8.65 \u00d7 3.90 mm.",
+   "aliases": [
+    "SOIC-14",
+    "SO-14",
+    "14-SOIC"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-012",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     7,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 8.65,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-16 3.9 mm",
+   "description": "Small outline, 16 gull-wing leads at 1.27 mm, body 9.90 \u00d7 3.90 mm.",
+   "aliases": [
+    "SOIC-16",
+    "SO-16",
+    "16-SOIC"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-012",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     8,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 9.9,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-16 7.5 mm wide",
+   "description": "Wide small outline, 16 gull-wing leads at 1.27 mm, body 10.30 \u00d7 7.50 mm.",
+   "aliases": [
+    "SOIC-16W",
+    "SO-16W",
+    "16-SOIC wide"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-013",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     8,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 10.3,
+    "body_width": 7.5,
+    "body_height": 2.25,
+    "standoff": 0.2,
+    "span": [
+     10.3,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.27,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-18 7.5 mm wide",
+   "description": "Wide small outline, 18 gull-wing leads at 1.27 mm, body 11.55 \u00d7 7.50 mm.",
+   "aliases": [
+    "SOIC-18W",
+    "SO-18W",
+    "18-SOIC wide"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-013",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     9,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 11.55,
+    "body_width": 7.5,
+    "body_height": 2.25,
+    "standoff": 0.2,
+    "span": [
+     10.3,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.27,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-20 7.5 mm wide",
+   "description": "Wide small outline, 20 gull-wing leads at 1.27 mm, body 12.80 \u00d7 7.50 mm.",
+   "aliases": [
+    "SOIC-20W",
+    "SO-20W",
+    "20-SOIC wide"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-013",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     10,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 12.8,
+    "body_width": 7.5,
+    "body_height": 2.25,
+    "standoff": 0.2,
+    "span": [
+     10.3,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.27,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-24 7.5 mm wide",
+   "description": "Wide small outline, 24 gull-wing leads at 1.27 mm, body 15.40 \u00d7 7.50 mm.",
+   "aliases": [
+    "SOIC-24W",
+    "SO-24W",
+    "24-SOIC wide"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-013",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     12,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 15.4,
+    "body_width": 7.5,
+    "body_height": 2.25,
+    "standoff": 0.2,
+    "span": [
+     10.3,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.27,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SOIC-28 7.5 mm wide",
+   "description": "Wide small outline, 28 gull-wing leads at 1.27 mm, body 17.90 \u00d7 7.50 mm.",
+   "aliases": [
+    "SOIC-28W",
+    "SO-28W",
+    "28-SOIC wide"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-013",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     14,
+     0
+    ],
+    "pitch": 1.27,
+    "body_length": 17.9,
+    "body_width": 7.5,
+    "body_height": 2.25,
+    "standoff": 0.2,
+    "span": [
+     10.3,
+     0.0
+    ],
+    "lead_width": 0.41,
+    "lead_thickness": 0.27,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "SSOP-14 5.3 mm",
+   "description": "Shrink small outline, 14 leads at 0.65 mm, body 6.20 \u00d7 5.30 mm.",
+   "aliases": [
+    "SSOP-14",
+    "14-SSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-150",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     7,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 6.2,
+    "body_width": 5.3,
+    "body_height": 1.75,
+    "standoff": 0.1,
+    "span": [
+     7.8,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.17,
+    "foot_length": 0.75
+   }
+  },
+  {
+   "name": "SSOP-16 5.3 mm",
+   "description": "Shrink small outline, 16 leads at 0.65 mm, body 6.20 \u00d7 5.30 mm.",
+   "aliases": [
+    "SSOP-16",
+    "16-SSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-150",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     8,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 6.2,
+    "body_width": 5.3,
+    "body_height": 1.75,
+    "standoff": 0.1,
+    "span": [
+     7.8,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.17,
+    "foot_length": 0.75
+   }
+  },
+  {
+   "name": "SSOP-20 5.3 mm",
+   "description": "Shrink small outline, 20 leads at 0.65 mm, body 7.20 \u00d7 5.30 mm.",
+   "aliases": [
+    "SSOP-20",
+    "20-SSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-150",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     10,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 7.2,
+    "body_width": 5.3,
+    "body_height": 1.75,
+    "standoff": 0.1,
+    "span": [
+     7.8,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.17,
+    "foot_length": 0.75
+   }
+  },
+  {
+   "name": "SSOP-24 5.3 mm",
+   "description": "Shrink small outline, 24 leads at 0.65 mm, body 8.20 \u00d7 5.30 mm.",
+   "aliases": [
+    "SSOP-24",
+    "24-SSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-150",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     12,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 8.2,
+    "body_width": 5.3,
+    "body_height": 1.75,
+    "standoff": 0.1,
+    "span": [
+     7.8,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.17,
+    "foot_length": 0.75
+   }
+  },
+  {
+   "name": "SSOP-28 5.3 mm",
+   "description": "Shrink small outline, 28 leads at 0.65 mm, body 10.20 \u00d7 5.30 mm.",
+   "aliases": [
+    "SSOP-28",
+    "28-SSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-150",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     14,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 10.2,
+    "body_width": 5.3,
+    "body_height": 1.75,
+    "standoff": 0.1,
+    "span": [
+     7.8,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.17,
+    "foot_length": 0.75
+   }
+  },
+  {
+   "name": "QSOP-16",
+   "description": "Quarter-size outline, 16 leads at 0.635 mm, body 4.90 \u00d7 3.90 mm.",
+   "aliases": [
+    "QSOP-16",
+    "SSOP-16 0.635"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-137",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     8,
+     0
+    ],
+    "pitch": 0.635,
+    "body_length": 4.9,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "QSOP-20",
+   "description": "Quarter-size outline, 20 leads at 0.635 mm, body 8.65 \u00d7 3.90 mm.",
+   "aliases": [
+    "QSOP-20",
+    "SSOP-20 0.635"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-137",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     10,
+     0
+    ],
+    "pitch": 0.635,
+    "body_length": 8.65,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "QSOP-24",
+   "description": "Quarter-size outline, 24 leads at 0.635 mm, body 8.65 \u00d7 3.90 mm.",
+   "aliases": [
+    "QSOP-24",
+    "SSOP-24 0.635"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-137",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     12,
+     0
+    ],
+    "pitch": 0.635,
+    "body_length": 8.65,
+    "body_width": 3.9,
+    "body_height": 1.45,
+    "standoff": 0.175,
+    "span": [
+     6.0,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.2,
+    "foot_length": 0.835
+   }
+  },
+  {
+   "name": "TSSOP-8 4.4 mm",
+   "description": "Thin shrink small outline, 8 leads at 0.65 mm, body 3.00 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-8",
+    "8-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     4,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 3.0,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-14 4.4 mm",
+   "description": "Thin shrink small outline, 14 leads at 0.65 mm, body 5.00 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-14",
+    "14-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     7,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 5.0,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-16 4.4 mm",
+   "description": "Thin shrink small outline, 16 leads at 0.65 mm, body 5.00 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-16",
+    "16-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     8,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 5.0,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-20 4.4 mm",
+   "description": "Thin shrink small outline, 20 leads at 0.65 mm, body 6.50 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-20",
+    "20-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     10,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 6.5,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-24 4.4 mm",
+   "description": "Thin shrink small outline, 24 leads at 0.65 mm, body 7.80 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-24",
+    "24-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     12,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 7.8,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-28 4.4 mm",
+   "description": "Thin shrink small outline, 28 leads at 0.65 mm, body 9.70 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-28",
+    "28-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     14,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 9.7,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.25,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-38 4.4 mm",
+   "description": "Thin shrink small outline, 38 leads at 0.5 mm, body 9.70 \u00d7 4.40 mm.",
+   "aliases": [
+    "TSSOP-38",
+    "38-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     19,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 9.7,
+    "body_width": 4.4,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     6.4,
+     0.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-48 6.1 mm",
+   "description": "Thin shrink small outline, 48 leads at 0.5 mm, body 12.50 \u00d7 6.10 mm.",
+   "aliases": [
+    "TSSOP-48",
+    "48-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     24,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 12.5,
+    "body_width": 6.1,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     8.1,
+     0.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TSSOP-56 6.1 mm",
+   "description": "Thin shrink small outline, 56 leads at 0.5 mm, body 14.00 \u00d7 6.10 mm.",
+   "aliases": [
+    "TSSOP-56",
+    "56-TSSOP"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-153",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     28,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 14.0,
+    "body_width": 6.1,
+    "body_height": 0.9,
+    "standoff": 0.1,
+    "span": [
+     8.1,
+     0.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "MSOP-8",
+   "description": "Micro small outline, 8 leads at 0.65 mm, body 3.00 \u00d7 3.00 mm.",
+   "aliases": [
+    "MSOP-8",
+    "VSSOP-8",
+    "\u00b5MAX-8"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-187",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     4,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.85,
+    "standoff": 0.1,
+    "span": [
+     4.9,
+     0.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "MSOP-10",
+   "description": "Micro small outline, 10 leads at 0.5 mm, body 3.00 \u00d7 3.00 mm.",
+   "aliases": [
+    "MSOP-10",
+    "VSSOP-10"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-187",
+   "values": {
+    "family": "gull_wing",
+    "sides": "two",
+    "leads_per_side": [
+     5,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.85,
+    "standoff": 0.1,
+    "span": [
+     4.9,
+     0.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.15,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-32 7\u00d77 0.8",
+   "description": "Low-profile quad flat package, 32 leads at 0.8 mm, body 7 \u00d7 7 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-32",
+    "QFP-32"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     8,
+     8
+    ],
+    "pitch": 0.8,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     9.0,
+     9.0
+    ],
+    "lead_width": 0.37,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-44 10\u00d710 0.8",
+   "description": "Low-profile quad flat package, 44 leads at 0.8 mm, body 10 \u00d7 10 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-44",
+    "QFP-44"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     11,
+     11
+    ],
+    "pitch": 0.8,
+    "body_length": 10.0,
+    "body_width": 10.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     12.0,
+     12.0
+    ],
+    "lead_width": 0.37,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-48 7\u00d77 0.5",
+   "description": "Low-profile quad flat package, 48 leads at 0.5 mm, body 7 \u00d7 7 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-48",
+    "QFP-48"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     12,
+     12
+    ],
+    "pitch": 0.5,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     9.0,
+     9.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-52 10\u00d710 0.65",
+   "description": "Low-profile quad flat package, 52 leads at 0.65 mm, body 10 \u00d7 10 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-52",
+    "QFP-52"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     13,
+     13
+    ],
+    "pitch": 0.65,
+    "body_length": 10.0,
+    "body_width": 10.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     12.0,
+     12.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-64 7\u00d77 0.4",
+   "description": "Low-profile quad flat package, 64 leads at 0.4 mm, body 7 \u00d7 7 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-64",
+    "QFP-64"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     16,
+     16
+    ],
+    "pitch": 0.4,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     9.0,
+     9.0
+    ],
+    "lead_width": 0.18,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-64 10\u00d710 0.5",
+   "description": "Low-profile quad flat package, 64 leads at 0.5 mm, body 10 \u00d7 10 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-64",
+    "QFP-64"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     16,
+     16
+    ],
+    "pitch": 0.5,
+    "body_length": 10.0,
+    "body_width": 10.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     12.0,
+     12.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-64 14\u00d714 0.8",
+   "description": "Low-profile quad flat package, 64 leads at 0.8 mm, body 14 \u00d7 14 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-64",
+    "QFP-64"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     16,
+     16
+    ],
+    "pitch": 0.8,
+    "body_length": 14.0,
+    "body_width": 14.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     16.0
+    ],
+    "lead_width": 0.37,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-80 12\u00d712 0.5",
+   "description": "Low-profile quad flat package, 80 leads at 0.5 mm, body 12 \u00d7 12 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-80",
+    "QFP-80"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     20,
+     20
+    ],
+    "pitch": 0.5,
+    "body_length": 12.0,
+    "body_width": 12.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     14.0,
+     14.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-80 14\u00d714 0.65",
+   "description": "Low-profile quad flat package, 80 leads at 0.65 mm, body 14 \u00d7 14 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-80",
+    "QFP-80"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     20,
+     20
+    ],
+    "pitch": 0.65,
+    "body_length": 14.0,
+    "body_width": 14.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     16.0
+    ],
+    "lead_width": 0.3,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-100 14\u00d714 0.5",
+   "description": "Low-profile quad flat package, 100 leads at 0.5 mm, body 14 \u00d7 14 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-100",
+    "QFP-100"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     25,
+     25
+    ],
+    "pitch": 0.5,
+    "body_length": 14.0,
+    "body_width": 14.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     16.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-120 14\u00d714 0.4",
+   "description": "Low-profile quad flat package, 120 leads at 0.4 mm, body 14 \u00d7 14 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-120",
+    "QFP-120"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     30,
+     30
+    ],
+    "pitch": 0.4,
+    "body_length": 14.0,
+    "body_width": 14.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     16.0
+    ],
+    "lead_width": 0.18,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-144 20\u00d720 0.5",
+   "description": "Low-profile quad flat package, 144 leads at 0.5 mm, body 20 \u00d7 20 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-144",
+    "QFP-144"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     36,
+     36
+    ],
+    "pitch": 0.5,
+    "body_length": 20.0,
+    "body_width": 20.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     22.0,
+     22.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-176 24\u00d724 0.5",
+   "description": "Low-profile quad flat package, 176 leads at 0.5 mm, body 24 \u00d7 24 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-176",
+    "QFP-176"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     44,
+     44
+    ],
+    "pitch": 0.5,
+    "body_length": 24.0,
+    "body_width": 24.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     26.0,
+     26.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-208 28\u00d728 0.5",
+   "description": "Low-profile quad flat package, 208 leads at 0.5 mm, body 28 \u00d7 28 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-208",
+    "QFP-208"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     52,
+     52
+    ],
+    "pitch": 0.5,
+    "body_length": 28.0,
+    "body_width": 28.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     30.0,
+     30.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "LQFP-128 14\u00d720 0.5",
+   "description": "Low-profile quad flat package, 128 leads at 0.5 mm (38 on each long side, 26 on each short side), body 20 \u00d7 14 \u00d7 1.40 mm.",
+   "aliases": [
+    "LQFP-128",
+    "QFP-128"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     38,
+     26
+    ],
+    "pitch": 0.5,
+    "body_length": 20.0,
+    "body_width": 14.0,
+    "body_height": 1.4,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     22.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-32 7\u00d77 0.8",
+   "description": "Thin quad flat package, 32 leads at 0.8 mm, body 7 \u00d7 7 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-32",
+    "QFP-32"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     8,
+     8
+    ],
+    "pitch": 0.8,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     9.0,
+     9.0
+    ],
+    "lead_width": 0.37,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-44 10\u00d710 0.8",
+   "description": "Thin quad flat package, 44 leads at 0.8 mm, body 10 \u00d7 10 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-44",
+    "QFP-44"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     11,
+     11
+    ],
+    "pitch": 0.8,
+    "body_length": 10.0,
+    "body_width": 10.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     12.0,
+     12.0
+    ],
+    "lead_width": 0.37,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-48 7\u00d77 0.5",
+   "description": "Thin quad flat package, 48 leads at 0.5 mm, body 7 \u00d7 7 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-48",
+    "QFP-48"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     12,
+     12
+    ],
+    "pitch": 0.5,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     9.0,
+     9.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-64 10\u00d710 0.5",
+   "description": "Thin quad flat package, 64 leads at 0.5 mm, body 10 \u00d7 10 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-64",
+    "QFP-64"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     16,
+     16
+    ],
+    "pitch": 0.5,
+    "body_length": 10.0,
+    "body_width": 10.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     12.0,
+     12.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-100 14\u00d714 0.5",
+   "description": "Thin quad flat package, 100 leads at 0.5 mm, body 14 \u00d7 14 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-100",
+    "QFP-100"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     25,
+     25
+    ],
+    "pitch": 0.5,
+    "body_length": 14.0,
+    "body_width": 14.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     16.0,
+     16.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  },
+  {
+   "name": "TQFP-144 20\u00d720 0.5",
+   "description": "Thin quad flat package, 144 leads at 0.5 mm, body 20 \u00d7 20 \u00d7 1.00 mm.",
+   "aliases": [
+    "TQFP-144",
+    "QFP-144"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "ms-026",
+   "values": {
+    "family": "gull_wing",
+    "sides": "four",
+    "leads_per_side": [
+     36,
+     36
+    ],
+    "pitch": 0.5,
+    "body_length": 20.0,
+    "body_width": 20.0,
+    "body_height": 1.0,
+    "standoff": 0.1,
+    "span": [
+     22.0,
+     22.0
+    ],
+    "lead_width": 0.22,
+    "lead_thickness": 0.145,
+    "foot_length": 0.6
+   }
+  }
+ ]
+}

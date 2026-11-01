@@ -2,8 +2,11 @@ use super::Outcome;
 use crate::diagnostics::Result;
 use crate::fields::PropertyEdit;
 use crate::functions::FunctionEdit;
+use crate::functions::pin_config::PinConfigEdit;
 use crate::ids::{Id, PartRef, TerminalId, UnitId};
+use crate::instances::pins::AssignPeripheral;
 use crate::instances::{self, NewInstance};
+use crate::library::marking::InstanceMarking;
 use crate::model::{EditPolicy, PhysicalChoice, Project};
 use crate::updates::{self, InstanceChange};
 use schemars::JsonSchema;
@@ -65,6 +68,25 @@ pub enum InstanceCommand {
         instances: Vec<Id>,
         part: Option<PartRef>,
     },
+    /// C2: enable (or clear) one peripheral: its roles placed explicitly
+    /// or by the solver, compiled to one `select_functions` batch, one
+    /// undo step.
+    #[serde(rename = "instance.assign_peripheral")]
+    AssignPeripheral(AssignPeripheral),
+    /// C2: set or clear 1–256 terminals' pin configuration, validated
+    /// against their declared options. Never changes function ERC
+    /// directly; pin rules may read it through `option(…)`.
+    #[serde(rename = "instance.set_pin_config")]
+    SetPinConfig {
+        instance: Id,
+        edits: Vec<PinConfigEdit>,
+    },
+    /// D4: the instance's marking choices (hide, variables, replace).
+    #[serde(rename = "instance.set_marking")]
+    SetMarking {
+        instance: Id,
+        marking: InstanceMarking,
+    },
 }
 
 pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) -> Result<Outcome> {
@@ -116,6 +138,16 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
             &InstanceChange::SetPhysical { instance, choice },
             EditPolicy::Direct,
         )?,
+        InstanceCommand::AssignPeripheral(request) => {
+            let resolution = instances::pins::assign_peripheral(project, &request)?;
+            return Ok(Outcome::FunctionsSelected { resolution });
+        }
+        InstanceCommand::SetPinConfig { instance, edits } => {
+            instances::pins::set_pin_config(project, instance, &edits)?
+        }
+        InstanceCommand::SetMarking { instance, marking } => {
+            return super::marking::set_marking(project, instance, marking);
+        }
     }
     Ok(Outcome::None)
 }

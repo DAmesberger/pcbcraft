@@ -23,6 +23,7 @@ impl Harness {
         fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
+        editor.open_first(&engine);
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let mut h = Self {
@@ -150,6 +151,37 @@ impl Harness {
         let id = tool.id();
         self.editor.on_tool(id, &self.engine);
     }
+}
+
+/// The symbol canvas moves as the other canvases do: two fingers pan it
+/// without zooming, a pinch zooms about the pointer.
+#[test]
+fn two_fingers_pan_the_symbol_and_a_pinch_zooms_it() -> TestResult {
+    use crate::navigation::tests::swipe;
+    let mut h = Harness::new()?;
+    let at = h.at([4.0, 3.0]);
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    let before = h.editor.symbol_view.ok_or("no view")?;
+    h.frame(swipe(egui::vec2(6.0, -2.0), egui::Modifiers::NONE, 2));
+    let panned = h.editor.symbol_view.ok_or("no view")?;
+    assert_eq!(panned.scale, before.scale, "two fingers must not zoom");
+    assert!((panned.pan - before.pan - egui::vec2(12.0, -4.0)).length() < 1e-3);
+    let mm = |h: &Harness| {
+        let v = h.editor.symbol_view.unwrap_or(panned);
+        let local = at - Pos2::new(300.0, 200.0) - v.pan;
+        (local.x / v.scale, -local.y / v.scale)
+    };
+    let under = mm(&h);
+    h.frame(vec![egui::Event::Zoom(2.0)]);
+    let zoomed = h.editor.symbol_view.ok_or("no view")?;
+    assert!(
+        (zoomed.scale - 2.0 * panned.scale).abs() < 1e-4,
+        "{}",
+        zoomed.scale
+    );
+    let after = mm(&h);
+    assert!((after.0 - under.0).abs() < 1e-4 && (after.1 - under.1).abs() < 1e-4);
+    Ok(())
 }
 
 /// Every drawing tool is on the Symbol ribbon with an icon, in the Select,

@@ -8,21 +8,31 @@
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
-use crate::material::{self, BodyKind};
+use crate::material::{self, BodyKind, Detail};
+use crate::models::imported::{LibraryDefinition, SourceCache};
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
-use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
+use pcbcraft_core::library::model3d::{LibraryModel, ModelDefinition as LibraryModelDefinition};
+use pcbcraft_core::library::{
+    ModelPlacement, PackageDefinition, PackageModel, Pad, PadDefaults, PadShape,
+};
 use pcbcraft_core::{
     CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, ViaSpan,
     instances, layout,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use solidcraft_engine::render::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Chords of each round end cap of a track's 3D copper. The core checks
+/// measure the exact cap; 8 chords keep the native model's vertex count
+/// bounded (within 2 % of the radius) on boards of thousands of tracks.
+const TRACK_CAP_SEGMENTS: usize = 8;
 
 /// Which Pcbcraft object a native body came from. Stored in the native file's
 /// metadata so identity survives reopening, compactly ([`identity`]).
@@ -54,8 +64,12 @@ pub struct NativeModel {
     native: Native,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
-    /// The generated package-model definitions, one per package revision.
+    /// The generated package-model definitions, one per package revision
+    /// (a library model's bodies with built-in materials among them).
     pub models: Vec<ModelDefinition>,
+    /// The library-model definitions, each with a digest of the model and
+    /// use it was built from, for an update to reuse.
+    libraries: Vec<(u64, LibraryDefinition)>,
     /// What an update can reuse of this model's native geometry.
     reuse: Reused,
     /// Commands the update that made this model ran; `None` when it was
@@ -132,6 +146,17 @@ struct Builder {
     placed: BTreeSet<String>,
     /// Replaying: the definitions the previous build made.
     known: Vec<ModelDefinition>,
+    /// Library-model definitions built so far, by digest of their model
+    /// and use ([`NativeModel::libraries`]).
+    libraries: Vec<(u64, LibraryDefinition)>,
+    /// Replaying: the library-model definitions the previous build made.
+    known_libraries: Vec<(u64, LibraryDefinition)>,
+    /// Library-model bodies with one of the model's own materials, by body
+    /// name: drawn with that material's look (the file keeps its opaque
+    /// projection).
+    custom_looks: BTreeMap<String, (OpaqueSurface, Detail)>,
+    /// Library model files read by earlier builds.
+    sources: SourceCache,
     /// Each laminate slab's input digest, by body name.
     slabs: BTreeMap<String, u64>,
     /// Replaying: the previous model's geometry.
@@ -141,7 +166,7 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(name: &str) -> Result<Self> {
+    fn new(name: &str, sources: &SourceCache) -> Result<Self> {
         let mut native = Native::new(name)?;
         native.record();
         Ok(Self {
@@ -150,6 +175,10 @@ impl Builder {
             models: Vec::new(),
             placed: BTreeSet::new(),
             known: Vec::new(),
+            libraries: Vec::new(),
+            known_libraries: Vec::new(),
+            custom_looks: BTreeMap::new(),
+            sources: sources.clone(),
             slabs: BTreeMap::new(),
             previous: None,
             display: appearance::Memo::default(),
@@ -161,8 +190,10 @@ impl Builder {
     fn replaying(
         native: Native,
         known: Vec<ModelDefinition>,
+        known_libraries: Vec<(u64, LibraryDefinition)>,
         previous: Previous,
         display: appearance::Memo,
+        sources: &SourceCache,
     ) -> Self {
         Self {
             native,
@@ -170,6 +201,10 @@ impl Builder {
             models: Vec::new(),
             placed: BTreeSet::new(),
             known,
+            libraries: Vec::new(),
+            known_libraries,
+            custom_looks: BTreeMap::new(),
+            sources: sources.clone(),
             slabs: BTreeMap::new(),
             previous: Some(previous),
             display,
@@ -205,11 +240,83 @@ impl Builder {
         Ok(())
     }
 
+    /// Build the library-model definition `stem` (`model` with its asset
+    /// `bytes`, used as `use_`) unless it is built; bounds and lead contacts
+    /// are rechecked when built. Replaying, the previous build's definition
+    /// of the same model and use is taken as it is.
+    fn define_library(
+        &mut self,
+        stem: &str,
+        (model, use_, bytes): (&LibraryModelDefinition, &LibraryModel, &[u8]),
+    ) -> Result<()> {
+        if self.models.iter().any(|d| d.component == stem) {
+            return Ok(());
+        }
+        let key = digest(&(stem, model, use_));
+        let built = if self.native.is_replaying() {
+            match self
+                .known_libraries
+                .iter()
+                .find(|(k, d)| *k == key && d.component == stem)
+                .map(|(_, d)| d.clone())
+            {
+                Some(built) if self.native.pass(stem) => built,
+                _ => {
+                    return Err(Error::Verification(format!(
+                        "the board's library model {stem} is new"
+                    )));
+                }
+            }
+        } else {
+            let start = self.native.step();
+            let built = models::imported::build_library_model_cached(
+                &mut self.native,
+                stem,
+                model,
+                use_,
+                bytes,
+                &self.sources,
+            )?;
+            self.native.mark(stem, start);
+            built
+        };
+        for body in &built.bodies {
+            self.record(&body.name, body.kind())?;
+            if matches!(
+                body.material,
+                pcbcraft_core::library::model3d::ModelMaterial::Custom(_)
+            ) {
+                let look = models::imported::surface(model, body.material)?;
+                self.custom_looks.insert(body.name.clone(), look);
+            }
+        }
+        self.models.push(built.generated());
+        self.libraries.push((key, built));
+        Ok(())
+    }
+
     /// An occurrence of the generated definition `stem` of `package`,
     /// unmoved: the definition is built on first use (its first occurrence
     /// returned), then every further call places it once more.
     fn model(&mut self, stem: &str, package: &PackageDefinition) -> Result<Created> {
         self.define(stem, package)?;
+        self.model_occurrence(stem)
+    }
+
+    /// [`Self::model`] for the library-model definition `stem`
+    /// ([`Self::define_library`]).
+    fn library_model(
+        &mut self,
+        stem: &str,
+        library: (&LibraryModelDefinition, &LibraryModel, &[u8]),
+    ) -> Result<Created> {
+        self.define_library(stem, library)?;
+        self.model_occurrence(stem)
+    }
+
+    /// The first occurrence of the built definition `stem` the first time
+    /// it is asked for, a new copy every time after.
+    fn model_occurrence(&mut self, stem: &str) -> Result<Created> {
         let created = self.native.find_component(stem).ok_or_else(|| {
             Error::Verification(format!("model definition {stem} has no occurrence"))
         })?;
@@ -286,10 +393,12 @@ impl Builder {
             self.native,
             sources,
             self.models,
+            &self.custom_looks,
             self.previous,
             &self.slabs,
         )?;
         model.updated = updated;
+        model.libraries = self.libraries;
         Ok(model)
     }
 }
@@ -378,7 +487,14 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
 
 #[cfg(test)]
 fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
-    finish_with(native, sources, Vec::new(), None, &BTreeMap::new())
+    finish_with(
+        native,
+        sources,
+        Vec::new(),
+        &BTreeMap::new(),
+        None,
+        &BTreeMap::new(),
+    )
 }
 
 /// A definition body's measure at one placement: volume, box (low, high)
@@ -388,13 +504,15 @@ type Measured = (Volume, [f64; 3], [f64; 3], [f64; 3]);
 /// Via definitions by drill and diameter (their bits).
 type ViaKey = (u64, u64);
 
-/// [`finish`] for a model whose generated definitions are `models`. The
+/// [`finish`] for a model whose generated definitions are `models` and
+/// whose library-model bodies with their own materials look `custom`. The
 /// geometry of a body `previous` holds (the same evaluated body where it
 /// was, or a laminate slab of the same inputs `slabs`) is taken from it.
 fn finish_with(
     native: Native,
     sources: Vec<Source>,
     models: Vec<ModelDefinition>,
+    custom: &BTreeMap<String, (OpaqueSurface, Detail)>,
     previous: Option<Previous>,
     slabs: &BTreeMap<String, u64>,
 ) -> Result<NativeModel> {
@@ -489,7 +607,9 @@ fn finish_with(
             .ok_or_else(|| Error::Verification(format!("body {name} has no physical look")))?;
         // A generated body is drawn with its material's full product look
         // (coat, pattern); the file keeps the opaque projection.
-        let (surface, detail) = if kind.is_generated() {
+        let (surface, detail) = if let Some(look) = custom.get(name) {
+            *look
+        } else if kind.is_generated() {
             let body = generated.get(name).ok_or_else(|| {
                 Error::Verification(format!("generated body {name} has no recorded material"))
             })?;
@@ -591,6 +711,7 @@ fn finish_with(
         geometry,
         sources,
         models,
+        libraries: Vec::new(),
         reuse,
         updated: None,
         display: appearance::Memo::default(),
@@ -953,24 +1074,168 @@ fn polygon(points: &[Point]) -> Option<Contour> {
     }))
 }
 
-/// A track's copper rectangle on the board.
+/// Points sampled on each circle's boundary when testing whether it lies
+/// inside another hole (sagitta below 0.1 µm at a 1 mm radius).
+const NESTED_SAMPLES: usize = 128;
+
+/// A hole's boundary: a circle, or an outline's vertices (arcs flattened).
+#[derive(Clone)]
+enum HoleShape {
+    Circle(Point, f64),
+    Ring(Vec<Point>),
+}
+
+impl HoleShape {
+    fn of(contour: &Contour) -> Self {
+        match contour {
+            Contour::Circle { center, radius } => Self::Circle(*center, *radius),
+            Contour::Outline(outline) => Self::Ring(outline.flatten(FLATTEN_TOLERANCE_MM)),
+        }
+    }
+
+    /// The box round the hole: low corner, high corner.
+    fn bounds(&self) -> (Point, Point) {
+        match self {
+            Self::Circle(c, r) => ([c[0] - r, c[1] - r], [c[0] + r, c[1] + r]),
+            Self::Ring(points) => {
+                points
+                    .iter()
+                    .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| {
+                        (
+                            [lo[0].min(p[0]), lo[1].min(p[1])],
+                            [hi[0].max(p[0]), hi[1].max(p[1])],
+                        )
+                    })
+            }
+        }
+    }
+
+    fn boundary(&self) -> Vec<Point> {
+        match self {
+            Self::Circle(c, r) => (0..NESTED_SAMPLES)
+                .map(|k| {
+                    let a = std::f64::consts::TAU * k as f64 / NESTED_SAMPLES as f64;
+                    [c[0] + r * a.cos(), c[1] + r * a.sin()]
+                })
+                .collect(),
+            Self::Ring(points) => points.clone(),
+        }
+    }
+
+    /// Whether `p` lies inside the hole or on its edge.
+    fn holds(&self, p: Point) -> bool {
+        const ON: f64 = 1e-9;
+        match self {
+            Self::Circle(c, r) => (p[0] - c[0]).hypot(p[1] - c[1]) <= r + ON,
+            Self::Ring(ring) => {
+                let n = ring.len();
+                let mut inside = false;
+                for i in 0..n {
+                    let (a, b) = (ring[i], ring[(i + 1) % n]);
+                    let along = [b[0] - a[0], b[1] - a[1]];
+                    let length = along[0].hypot(along[1]);
+                    if length > 0.0 {
+                        let t = (((p[0] - a[0]) * along[0] + (p[1] - a[1]) * along[1])
+                            / (length * length))
+                            .clamp(0.0, 1.0);
+                        let q = [a[0] + t * along[0], a[1] + t * along[1]];
+                        if (p[0] - q[0]).hypot(p[1] - q[1]) <= ON {
+                            return true;
+                        }
+                    }
+                    if (a[1] > p[1]) != (b[1] > p[1])
+                        && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * along[0]
+                    {
+                        inside = !inside;
+                    }
+                }
+                inside
+            }
+        }
+    }
+}
+
+/// `holes` without each one lying wholly inside another (of two alike,
+/// the first stays). A sketch takes a loop inside a loop as an island, so
+/// a via ring under a wide track's copper would leave laminate standing in
+/// the track's cut. Holes are looked up by a 1 mm grid of their boxes.
+fn without_nested(holes: Vec<Contour>) -> Vec<Contour> {
+    const CELL_MM: f64 = 1.0;
+    const MAX_CELLS: i64 = 64;
+    let shapes: Vec<HoleShape> = holes.iter().map(HoleShape::of).collect();
+    let bounds: Vec<(Point, Point)> = shapes.iter().map(HoleShape::bounds).collect();
+    let cell = |v: f64| (v / CELL_MM).floor() as i64;
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    let mut large = Vec::new();
+    for (index, (lo, hi)) in bounds.iter().enumerate() {
+        let (x0, y0, x1, y1) = (cell(lo[0]), cell(lo[1]), cell(hi[0]), cell(hi[1]));
+        if (x1 - x0 + 1).saturating_mul(y1 - y0 + 1) > MAX_CELLS {
+            large.push(index);
+            continue;
+        }
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                grid.entry((x, y)).or_default().push(index);
+            }
+        }
+    }
+    let inside = |a: usize, b: usize| {
+        let ((alo, ahi), (blo, bhi)) = (bounds[a], bounds[b]);
+        blo[0] <= alo[0] + 1e-9
+            && blo[1] <= alo[1] + 1e-9
+            && bhi[0] >= ahi[0] - 1e-9
+            && bhi[1] >= ahi[1] - 1e-9
+            && shapes[a].boundary().iter().all(|p| shapes[b].holds(*p))
+    };
+    let mut kept = Vec::with_capacity(holes.len());
+    for (a, hole) in holes.into_iter().enumerate() {
+        let (lo, hi) = bounds[a];
+        let centre = (cell((lo[0] + hi[0]) / 2.0), cell((lo[1] + hi[1]) / 2.0));
+        let nested = grid
+            .get(&centre)
+            .into_iter()
+            .flatten()
+            .chain(&large)
+            .any(|&b| b != a && inside(a, b) && (b < a || !inside(b, a)));
+        if !nested {
+            kept.push(hole);
+        }
+    }
+    kept
+}
+
+/// A track's copper stadium ([`layout::track_shape`]): round end caps of
+/// `TRACK_CAP_SEGMENTS` chords each, vertices on the true arc,
+/// counter-clockwise. The track body and an inner layer's laminate cut
+/// share it, so the two meet exactly.
 fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
     let d = [end[0] - start[0], end[1] - start[1]];
     let length = d[0].hypot(d[1]);
     if length <= 0.0 {
         return Vec::new();
     }
-    let n = [-d[1] / length * width / 2.0, d[0] / length * width / 2.0];
-    vec![
-        [start[0] - n[0], start[1] - n[1]],
-        [end[0] - n[0], end[1] - n[1]],
-        [end[0] + n[0], end[1] + n[1]],
-        [start[0] + n[0], start[1] + n[1]],
-    ]
+    let r = width / 2.0;
+    let u = [d[0] / length, d[1] / length];
+    let mut out = Vec::with_capacity(2 * TRACK_CAP_SEGMENTS + 2);
+    // Each cap turns half a circle about its end, from the right side of
+    // the direction it faces to the left.
+    for (center, toward) in [(end, u), (start, [-u[0], -u[1]])] {
+        let side = [-toward[1], toward[0]];
+        for k in 0..=TRACK_CAP_SEGMENTS {
+            let a = std::f64::consts::PI * (k as f64 / TRACK_CAP_SEGMENTS as f64 - 0.5);
+            let (s, c) = a.sin_cos();
+            out.push([
+                center[0] + (toward[0] * c + side[0] * s) * r,
+                center[1] + (toward[1] * c + side[1] * s) * r,
+            ]);
+        }
+    }
+    out
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
-    build_with(project, None)
+    build_with(project, &SourceCache::default(), None)
 }
 
 /// [`build`] that stops with [`Error::Cancelled`] at its next native
@@ -979,7 +1244,28 @@ pub fn build_cancellable(
     project: &Project,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<NativeModel> {
-    build_with(project, Some(cancel))
+    build_with(project, &SourceCache::default(), Some(cancel))
+}
+
+/// [`build`] reading library model files through `sources`, which the
+/// caller keeps between builds (the model worker), so an unchanged model is
+/// neither re-hashed nor re-read (entries this build did not use are
+/// dropped), and stopping with [`Error::Cancelled`] at its next native
+/// command once `cancel` is set.
+pub fn build_with(
+    project: &Project,
+    sources: &SourceCache,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<NativeModel> {
+    sources.begin();
+    let built = Builder::new(&project.name, sources).and_then(|mut b| {
+        if let Some(cancel) = cancel {
+            b.native.cancel_with(cancel);
+        }
+        build_on(b, project)
+    });
+    sources.sweep();
+    built
 }
 
 /// The model of `project`, made from `previous` (a model of an earlier
@@ -994,20 +1280,32 @@ pub fn build_cancellable(
 pub fn update(
     previous: NativeModel,
     project: &Project,
+    sources: &SourceCache,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(NativeModel, Rebuilt)> {
     let NativeModel {
         native,
         geometry,
         models,
+        libraries,
         reuse,
         display,
         ..
     } = previous;
     let mut why = None;
     if let Some(native) = native.replaying() {
-        let b = Builder::replaying(native, models, Previous::of(geometry, reuse), display);
-        match build_on(b, project) {
+        let b = Builder::replaying(
+            native,
+            models,
+            libraries,
+            Previous::of(geometry, reuse),
+            display,
+            sources,
+        );
+        sources.begin();
+        let updated = build_on(b, project);
+        sources.sweep();
+        match updated {
             Ok(model) => {
                 let ran = model.updated.unwrap_or(0);
                 return Ok((model, Rebuilt::InPlace(ran)));
@@ -1018,18 +1316,7 @@ pub fn update(
             Err(error) => why = Some(error.to_string()),
         }
     }
-    Ok((build_with(project, cancel)?, Rebuilt::Anew(why)))
-}
-
-fn build_with(
-    project: &Project,
-    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<NativeModel> {
-    let mut b = Builder::new(&project.name)?;
-    if let Some(cancel) = cancel {
-        b.native.cancel_with(cancel);
-    }
-    build_on(b, project)
+    Ok((build_with(project, sources, cancel)?, Rebuilt::Anew(why)))
 }
 
 /// Build `project` with `b`: a new design, or one replayed.
@@ -1051,18 +1338,25 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let pads = placed_pads(project)?;
     b.params(&object_params(project, &pads)?)?;
     // What an edit rarely changes comes first in the design's history, so
-    // evaluating an edit reuses it: the generated package models and the
-    // via definitions, then the parts and copper. The laminate comes last
-    // (see there).
+    // evaluating an edit reuses it: the generated and library package
+    // models and the via definitions, then the parts and copper. The
+    // laminate comes last (see there).
     for placement in &project.placements {
-        if let Some(physical) = project
+        let Some(physical) = project
             .instance(placement.instance)
             .and_then(|instance| instances::resolve(&project.library, instance).ok())
             .and_then(|r| r.physical)
-            .filter(|p| models::is_generated(&p.package.definition))
-        {
-            let stem = models::definition_name(physical.package.id, physical.package.revision.0);
-            b.define(&stem, &physical.package.definition)?;
+        else {
+            continue;
+        };
+        let package = &physical.package.definition;
+        let stem = models::definition_name(physical.package.id, physical.package.revision.0);
+        match &package.model {
+            PackageModel::Library(use_) => {
+                b.define_library(&stem, library_model(project, use_)?)?
+            }
+            _ if models::is_generated(package) => b.define(&stem, package)?,
+            _ => {}
         }
     }
     let mut styles = via_styles(&mut b, project)?;
@@ -1085,14 +1379,21 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         let package = &physical.package.definition;
         let footprint = &physical.footprint.definition;
         let prefix = format!("instance_{}", instance.id);
-        if models::is_generated(package) {
+        let library = match &package.model {
+            PackageModel::Library(use_) => Some(library_model(project, use_)?),
+            _ => None,
+        };
+        if library.is_some() || models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
-            let created = b.model(&stem, package)?;
+            let created = match library {
+                Some(library) => b.library_model(&stem, library)?,
+                None => b.model(&stem, package)?,
+            };
             let frame = datum_frame(package);
             let pick = next_pick(&sources);
             // Display-only solder fillets of a chip, while its placement
             // does not turn it out of the package frame they draw in.
-            if package.chip_kind().is_some() && package_frame(&frame) {
+            if library.is_none() && package.chip_kind().is_some() && package_frame(&frame) {
                 parts.push(Part {
                     pick: Some(pick),
                     package,
@@ -1343,20 +1644,18 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         };
         let prefix = format!("trace_{}", track.id);
         let created = b.native.component(&prefix, false)?;
-        let length = format!("sqrt(({prefix}_x1-{prefix}_x0)^2 + ({prefix}_y1-{prefix}_y0)^2)");
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
-        b.body(
-            BodyKind::CopperTrack,
-            BoxBody {
-                name: &prefix,
-                corner: [0.into(), format!("-{prefix}_width / 2").into(), 0.into()],
-                size: [
-                    length.into(),
-                    format!("{prefix}_width").into(),
-                    copper_param(track.layer).into(),
-                ],
-            },
-        )?;
+        // The stadium in the track's frame: start at the origin, along +x.
+        let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
+        let contour = polygon(&track_outline([0.0, 0.0], [length, 0.0], track.width))
+            .ok_or_else(|| Error::Invalid(format!("track {} has no length", track.id)))?;
+        b.native.profile_body(ProfileBody {
+            name: &prefix,
+            offset: 0.into(),
+            contours: &[contour],
+            height: copper_param(track.layer).into(),
+        })?;
+        b.record(&prefix, BodyKind::CopperTrack)?;
         joints.push((
             BoardJoint {
                 board,
@@ -1537,6 +1836,34 @@ fn via_styles(b: &mut Builder, project: &Project) -> Result<BTreeMap<ViaKey, Via
     Ok(styles)
 }
 
+/// The published model a package's library model names, how it is used and
+/// its packed asset bytes; refused, naming them, when the project does not
+/// hold them.
+pub fn library_model<'a>(
+    project: &'a Project,
+    use_: &'a LibraryModel,
+) -> Result<(&'a LibraryModelDefinition, &'a LibraryModel, &'a [u8])> {
+    let model = project.library.model(use_.model).ok_or_else(|| {
+        Error::Invalid(format!(
+            "model.asset: the library model {} is not in the project",
+            use_.model
+        ))
+    })?;
+    let definition = &model.definition;
+    let asset = project
+        .library
+        .assets
+        .iter()
+        .find(|a| a.hash == definition.asset.hash)
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "model.asset: the packed asset {} ({}) is not in the project",
+                definition.asset.file_name, definition.asset.hash
+            ))
+        })?;
+    Ok((definition, use_, asset.data.as_slice()))
+}
+
 /// Every board via as saved copper: an occurrence of its size's definition
 /// (`styles`, from [`via_styles`]) moved to the via. Like the drills, a via
 /// sits where it is now. Returns what the display layers draw of each.
@@ -1683,7 +2010,6 @@ fn object_params(
             ("y0", track.start[1]),
             ("x1", track.end[0]),
             ("y1", track.end[1]),
-            ("width", track.width),
         ] {
             out.push((format!("{prefix}_{suffix}"), value, "mm"));
         }
@@ -1738,6 +2064,7 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
     // ([`Native::board_slab`]); the contours are its holes.
     let mut dielectric = pad_drills.clone();
     dielectric.extend(via_drills);
+    let dielectric = without_nested(dielectric);
     let layers = stackup.layers();
     let count = stackup.dielectrics.len();
     let mut slab = 0usize;
@@ -1799,6 +2126,9 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
                     radius: v.diameter / 2.0,
                 }),
         );
+        // A via ring or drill inside a wide track's copper is already cut
+        // with it; drawn too, it would be an island of laminate.
+        let level = without_nested(level);
         let foil_name = name();
         let foil_height = copper_param(layer);
         extrude(
@@ -1847,7 +2177,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
             "package envelope dimensions must be finite and positive".into(),
         ));
     }
-    let mut b = Builder::new("Package envelope")?;
+    let mut b = Builder::new("Package envelope", &SourceCache::default())?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
         .zip(package.envelope)
@@ -1917,7 +2247,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
             "package.placement: placement values must be finite and within ±10000".into(),
         ));
     }
-    let mut b = Builder::new("Package model")?;
+    let mut b = Builder::new("Package model", &SourceCache::default())?;
     let created = b.model(DRAFT_MODEL, package)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
     b.finish(vec![])

@@ -83,6 +83,12 @@ pub enum DefinitionKind {
     /// A manufacturer part: one exact orderable item pinning a component and
     /// a binding revision (S2).
     Part,
+    /// A 3D model: an imported or parametric body shared by packages
+    /// (slice D1). Contract only until D1: publishing one is refused.
+    Model,
+    /// A named dimension-table row of one package family (slice B1).
+    /// Contract only until B1: publishing one is refused.
+    PackageRow,
 }
 
 /// Any exact revision, tagged with its kind.
@@ -168,6 +174,16 @@ exact_ref!(
     PartRef,
     Part
 );
+exact_ref!(
+    /// An exact 3D-model revision (slice D1).
+    ModelRef,
+    Model
+);
+exact_ref!(
+    /// An exact package-row revision (slice B1).
+    PackageRowRef,
+    PackageRow
+);
 
 macro_rules! local_id {
     ($(#[$doc:meta])* $name:ident) => {
@@ -224,6 +240,11 @@ local_id!(
 local_id!(
     /// A role within one resource, with a capacity.
     RoleId
+);
+local_id!(
+    /// A pin rule script of one component lineage (slice C1), stable
+    /// across its revisions. Shares the lineage's local namespace.
+    RuleId
 );
 
 /// One function of one terminal. A `FunctionId` is unique per component, so

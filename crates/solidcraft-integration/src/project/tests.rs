@@ -125,6 +125,44 @@ fn bounds(geometry: &Geometry, min: [f64; 3], max: [f64; 3]) {
     }
 }
 
+/// A track's copper outline in plan: its box (min, max) and area. Round
+/// end caps of `TRACK_CAP_SEGMENTS` chords each.
+fn track_plan(start: Point, end: Point, width: f64) -> ([f64; 2], [f64; 2], f64) {
+    let outline = track_outline(start, end, width);
+    let n = outline.len();
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for p in &outline {
+        for k in 0..2 {
+            min[k] = min[k].min(p[k]);
+            max[k] = max[k].max(p[k]);
+        }
+    }
+    let area = (0..n)
+        .map(|i| {
+            let (a, b) = (outline[i], outline[(i + 1) % n]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        / 2.0;
+    (min, max, area)
+}
+
+#[test]
+fn track_outlines_are_stadiums_with_round_caps() {
+    // Axis-aligned: the caps reach half the width past each end.
+    let (min, max, area) = track_plan([5.0, 10.0], [15.0, 10.0], 0.4);
+    for (a, b) in min.iter().zip([4.8, 9.8]) {
+        near(*a, b);
+    }
+    for (a, b) in max.iter().zip([15.2, 10.2]) {
+        near(*a, b);
+    }
+    // The rectangle and a 16-gon inscribed in the cap circle.
+    let disc = 8.0 * 0.2 * 0.2 * (std::f64::consts::PI / 8.0).sin();
+    near(area, 10.0 * 0.4 + disc);
+}
+
 #[test]
 fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() -> Result<()> {
     let project = fixture()?;
@@ -194,12 +232,14 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
         } else {
             [-0.035, 0.0]
         };
+        // Round caps reach half the width past both ends.
         bounds(
             geometry,
-            [5.0, track.start[1] - 0.2, z[0]],
-            [15.0, track.start[1] + 0.2, z[1]],
+            [4.8, track.start[1] - 0.2, z[0]],
+            [15.2, track.start[1] + 0.2, z[1]],
         );
-        near(geometry.volume(), 10.0 * 0.4 * 0.035);
+        let (_, _, area) = track_plan(track.start, track.end, track.width);
+        near(geometry.volume(), area * 0.035);
         let source = model
             .sources
             .iter()
@@ -212,7 +252,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
 }
 
 #[test]
-fn diagonal_traces_have_analytic_butt_caps_on_both_copper_layers() -> Result<()> {
+fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
     let mut project = fixture()?;
     for track in &mut project.tracks {
         track.start = [5.0, 25.0];
@@ -223,15 +263,19 @@ fn diagonal_traces_have_analytic_butt_caps_on_both_copper_layers() -> Result<()>
         let geometry = source_geometry(&model, BodyKind::CopperTrack, |source| {
             source.track == Some(track.id)
         })?;
-        // The 4:3 direction has length 5 and unit normal (-3/5, 4/5).
-        // At half-width 0.2, butt-cap corners extend 0.12 in X and 0.16 in Y.
+        // The 4:3 direction has length 5; the round caps' chords reach
+        // within 2 % of half the width past each end, in every direction.
         let z = if track.layer == Layer::Top {
             [1.6, 1.635]
         } else {
             [-0.035, 0.0]
         };
-        bounds(geometry, [4.88, 24.84, z[0]], [9.12, 28.16, z[1]]);
-        near(geometry.volume(), 5.0 * 0.4 * 0.035);
+        let (min, max, area) = track_plan(track.start, track.end, track.width);
+        for k in 0..2 {
+            assert!(min[k] < [5.0, 25.0][k] - 0.19 && max[k] > [9.0, 28.0][k] + 0.19);
+        }
+        bounds(geometry, [min[0], min[1], z[0]], [max[0], max[1], z[1]]);
+        near(geometry.volume(), area * 0.035);
     }
     Ok(())
 }
@@ -307,7 +351,8 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         let geometry = source_geometry(&changed, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
         })?;
-        near(geometry.volume(), 10.0 * 0.4 * 0.07);
+        let (_, _, area) = track_plan([5.0, 0.0], [15.0, 0.0], 0.4);
+        near(geometry.volume(), area * 0.07);
         near(
             geometry.min[2],
             if source.layer == Some(CopperLayer::Top) {
@@ -621,10 +666,10 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         let track = source_geometry(&model, BodyKind::CopperTrack, |s| {
             s.pick_id == source.pick_id
         })?;
-        // Free ends are round: the cap overhangs the copper by its margin
-        // along the sides and by half its width at the ends.
-        near(cap.min[0], track.min[0] - 0.21);
-        near(cap.max[0], track.max[0] + 0.21);
+        // Free ends are round, like the copper's: the cap overhangs the
+        // copper by its margin all round.
+        near(cap.min[0], track.min[0] - 0.01);
+        near(cap.max[0], track.max[0] + 0.01);
         near(cap.min[1], track.min[1] - 0.01);
         near(cap.max[1], track.max[1] + 0.01);
     }
@@ -839,7 +884,9 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
     let expected = 60.0 * 40.0 * 1.6
         + 2.0 * (2.0 * 1.2 * 0.6)
         + 4.0 * (1.0 * 1.4 * 0.035)
-        + (2.0 * 10.0 * 0.4 + 6.0 * 0.25) * 0.035;
+        + (2.0 * track_plan([0.0, 0.0], [10.0, 0.0], 0.4).2
+            + track_plan([0.0, 0.0], [6.0, 0.0], 0.25).2)
+            * 0.035;
     near(volume, expected);
     Ok(())
 }
@@ -1766,5 +1813,166 @@ fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
     }
     assert_eq!(count(&again, &|s| s.via.is_some()).0, project.vias.len());
     assert_eq!(count(&again, &|s| s.track.is_some()).0, 1_500);
+    Ok(())
+}
+
+/// D2's board hook: a package with a library model (an original GLB with
+/// its own clear-coated material) builds one shared definition its
+/// instances occur in, its bodies carrying their instance's pick, the
+/// lead bound to its terminal, and the model material's full look drawn.
+#[test]
+fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> {
+    use crate::models::imported::tests::{fixture_glb, lead_key, model, use_lead};
+    use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset};
+    use pcbcraft_core::library::model3d::{LeadTag, ModelFormat};
+    use pcbcraft_core::library::{DefinitionMeta, Published};
+    use pcbcraft_core::{DefinitionId, ModelRef, Revision};
+    let bytes = fixture_glb();
+    let seen = crate::models::inspect::inspect(&bytes, ModelFormat::Gltf)?;
+    let mut definition = model(ModelFormat::Gltf, &bytes, &seen);
+    definition.leads = vec![LeadTag {
+        key: lead_key(&seen)?,
+        designation: "1".into(),
+        contact: [0.0; 3],
+    }];
+    definition.leads[0].contact = models::imported::lead_contacts(&definition, &bytes)?[0];
+    definition.provenance.record.licence = Some("CC0-1.0".into());
+    let mut project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    let id = DefinitionId(
+        project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?,
+    );
+    let reference = ModelRef::new(id, Revision(1));
+    project.library.assets.push(PackedAsset {
+        hash: definition.asset.hash,
+        media_type: definition.asset.media_type.clone(),
+        data: AssetBytes::new(bytes.clone()),
+    });
+    project.library.models.push(Published {
+        id,
+        revision: Revision(1),
+        meta: DefinitionMeta {
+            name: "Original fixture".into(),
+            ..DefinitionMeta::default()
+        },
+        definition,
+    });
+    let package = &mut project.library.packages[0];
+    let terminal = package
+        .definition
+        .terminals
+        .first()
+        .map(|t| t.id.0)
+        .ok_or_else(|| Error::Verification("demo package has no terminal".into()))?;
+    package.definition.model = PackageModel::Library(pcbcraft_core::library::LibraryModel {
+        model: reference,
+        ..use_lead(terminal)
+    });
+    let (r1, r2) = instances(&project)?;
+    let built = build(&project)?;
+    assert_eq!(built.models.len(), 1, "one definition per package revision");
+    for instance in [r1, r2] {
+        let pick = built
+            .sources
+            .iter()
+            .find(|s| s.instance == Some(instance) && s.occurrence.is_some())
+            .map(|s| s.pick_id)
+            .ok_or_else(|| Error::Verification(format!("{instance} has no model")))?;
+        let bodies: Vec<&Geometry> = built
+            .geometry
+            .iter()
+            .filter(|g| g.item == Some(pick))
+            .collect();
+        assert!(bodies.iter().any(|g| g.kind == BodyKind::ModelLead));
+        let moulding = bodies
+            .iter()
+            .find(|g| g.kind == BodyKind::ModelBody)
+            .ok_or_else(|| Error::Verification("no model body".into()))?;
+        assert!(
+            moulding.surface.clear_coat().is_some(),
+            "the model material's coat is drawn"
+        );
+    }
+    // The model worker's source cache: a rebuild neither re-hashes nor
+    // re-reads the model file, and draws the same; a build that no longer
+    // uses it drops it.
+    let sources = models::imported::SourceCache::default();
+    let start = std::time::Instant::now();
+    let cold = build_with(&project, &sources, None)?;
+    let cold_time = start.elapsed();
+    assert_eq!(sources.counts(), (0, 1));
+    let start = std::time::Instant::now();
+    let warm = build_with(&project, &sources, None)?;
+    let warm_time = start.elapsed();
+    assert_eq!(sources.counts(), (1, 1), "the second build reads nothing");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(warm.geometry.len(), cold.geometry.len());
+    for (a, b) in cold.geometry.iter().zip(&warm.geometry) {
+        assert_eq!(
+            (a.kind, a.item, a.min, a.max),
+            (b.kind, b.item, b.min, b.max)
+        );
+    }
+    eprintln!("library-model board build: cold {cold_time:?}, cached {warm_time:?}");
+    // A model or asset the project does not hold refuses the build,
+    // naming it; nothing falls back to an envelope.
+    let mut no_model = project.clone();
+    no_model.library.models.clear();
+    let refused = build_with(&no_model, &sources, None)
+        .err()
+        .map(|e| e.to_string());
+    assert!(sources.is_empty(), "an unused model file is dropped");
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|e| e.contains("3D model") && e.contains("missing")),
+        "{refused:?}"
+    );
+    project.library.assets.clear();
+    let refused = build(&project).err().map(|e| e.to_string());
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|e| e.contains("fixture.glb") && e.contains("not packed")),
+        "{refused:?}"
+    );
+    Ok(())
+}
+
+/// A laminate level drops a hole lying wholly inside another (a via ring
+/// under a wide track's copper; one of two alike) and keeps holes that
+/// only overlap, so the sketch leaves no island of laminate in a cut.
+#[test]
+fn nested_holes_are_dropped_and_overlapping_ones_kept() -> Result<()> {
+    let circle = |center: Point, radius: f64| Contour::Circle { center, radius };
+    let wide = polygon(&track_outline([0.0, 0.0], [3.0, 0.0], 1.0))
+        .ok_or_else(|| Error::Verification("no track".into()))?;
+    let narrow = polygon(&track_outline([5.0, 0.0], [8.0, 0.0], 0.2))
+        .ok_or_else(|| Error::Verification("no track".into()))?;
+    let kept = without_nested(vec![
+        wide,
+        circle([3.0, 0.0], 0.3),
+        narrow,
+        circle([8.0, 0.0], 0.3),
+        circle([20.0, 0.0], 0.3),
+        circle([20.0, 0.0], 0.3),
+    ]);
+    let circles: Vec<Point> = kept
+        .iter()
+        .filter_map(|c| match c {
+            Contour::Circle { center, .. } => Some(*center),
+            Contour::Outline(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        kept.len(),
+        4,
+        "both tracks, the overlapping ring, one of the twins"
+    );
+    assert_eq!(circles, vec![[8.0, 0.0], [20.0, 0.0]]);
     Ok(())
 }

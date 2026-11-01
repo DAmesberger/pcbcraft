@@ -10,8 +10,11 @@ use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
 use crate::library::import::{self, OtherRevision, PlaceSource};
+use crate::library::model3d::ImportModel;
 use crate::library::package_fit::{self, FitRotation, LeadPair};
 use crate::library::package_model::PackageEdit;
+use crate::library::pinout::PinoutApply;
+use crate::library::templates::catalog::{NewFromTemplate, PackageFromTemplate, SavePackageRow};
 use crate::library::templates::footprint_family::{self, FootprintTemplate};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
 use crate::model::Document;
@@ -33,6 +36,19 @@ pub enum LibraryCommand {
     /// Draft an existing lineage starting from one of its revisions.
     #[serde(rename = "library.draft_from")]
     DraftFrom { revision: DefinitionRef },
+    /// Draft a published component revision's working set (the component,
+    /// its first symbol, its first binding with that binding's package and
+    /// first footprint) wherever a lineage has no draft yet, as one undo
+    /// step (`Outcome::DraftsCreated`, possibly empty: nothing changes).
+    #[serde(rename = "library.draft_closure")]
+    DraftClosure { component: ComponentRef },
+    /// "Edit a copy in this project": import a folder bundle whose root is
+    /// a component or a Part (revisions the project holds are reused, as
+    /// `library.import` does) and draft the component's working set as
+    /// `library.draft_closure` does, as one undo step. A refusal leaves the
+    /// document unchanged.
+    #[serde(rename = "library.edit_copy")]
+    EditCopy { bundle: Box<Bundle> },
     /// Replace 1–16 draft bodies atomically, as one undo step.
     #[serde(rename = "library.edit")]
     Edit { edits: Vec<DraftEdit> },
@@ -160,6 +176,40 @@ pub enum LibraryCommand {
         pairs: Vec<LeadPair>,
         rotation: FitRotation,
         confirm: bool,
+    },
+    /// B1: create component, symbol, package, footprint and binding drafts
+    /// from a template row (or custom family values) and a skeleton, as
+    /// one undo step. Needs the host's footprint evaluator.
+    #[serde(rename = "library.new_from_template")]
+    NewFromTemplate(Box<NewFromTemplate>),
+    /// B1: replace the package, footprint and generated model of a working
+    /// set from a template row, as one undo step; a non-empty footprint is
+    /// refused unless `replace`. Terminal mappings change only through
+    /// `library.assign_terminals`. Needs the host's footprint evaluator.
+    #[serde(rename = "library.package_from_template")]
+    PackageFromTemplate(Box<PackageFromTemplate>),
+    /// B1: save a package's form (or explicit values) as a new package-row
+    /// draft.
+    #[serde(rename = "library.save_package_row")]
+    SavePackageRow(Box<SavePackageRow>),
+    /// C3: apply a pinout document as previewed by `library.pinout_preview`,
+    /// atomically, as one undo step; refused when the target changed since
+    /// `base`. Imported rows stay unreviewed.
+    #[serde(rename = "library.pinout_apply")]
+    PinoutApply(Box<PinoutApply>),
+    /// D1: pack a model's asset bytes and create a Model draft; with
+    /// `assign`, also use it in a package draft, one undo step.
+    #[serde(rename = "library.import_model")]
+    ImportModel(Box<ImportModel>),
+    /// D4: apply `library.edit`'s 1–16 draft edits and pack the 1–8 SVG
+    /// artwork files their markings name (`image/svg+xml` text of at most
+    /// 1 MiB, each named by an `Artwork` item of an edited component
+    /// marking or Part top mark), as one undo step; any refusal changes
+    /// nothing.
+    #[serde(rename = "library.pack_artwork")]
+    PackArtwork {
+        edits: Vec<DraftEdit>,
+        artwork: Vec<library::PackedAsset>,
     },
 }
 
@@ -364,6 +414,76 @@ fn place_request(
     ))
 }
 
+/// `library.import` of `bundle` into the candidate `document`. The
+/// library is taken out so lineages can be allocated while it is edited; a
+/// failure discards the whole candidate. Imported on a copy, so a bundle
+/// whose revisions are all in the project already leaves the document
+/// (revision, undo) alone.
+fn import_bundle(document: &mut Document, bundle: &Bundle) -> Result<import::ImportReport> {
+    library::bundle::validate_bundle(bundle)?;
+    let mut project = (*document.project).clone();
+    let mut library = std::mem::take(&mut project.library);
+    let mut allocate = || project.allocate().map(DefinitionId);
+    let report = import::import(&mut library, bundle, &mut allocate);
+    project.library = library;
+    let report = report?;
+    if report.revisions.iter().any(|r| !r.reused) {
+        document.project = Arc::new(project);
+    }
+    Ok(report)
+}
+
+/// Draft every lineage of `component`'s working set that has no draft:
+/// the component, its first symbol, its first binding, that binding's
+/// package and first footprint, each from the revision the component
+/// names. Returns the drafted lineages, component first.
+fn draft_closure(document: &mut Document, component: ComponentRef) -> Result<Vec<DefinitionId>> {
+    let library = &document.project.library;
+    let body = &library
+        .component(component)
+        .ok_or_else(|| {
+            Error::NotFound(format!(
+                "component {} r{} is not in the project library",
+                component.id, component.revision
+            ))
+        })?
+        .definition;
+    let mut wanted = vec![component.erased()];
+    if let Some(symbol) = body.representations.first() {
+        wanted.push(symbol.erased());
+    }
+    if let Some(binding_ref) = body.implementations.first() {
+        wanted.push(binding_ref.erased());
+        if let Some(binding) = library.binding(*binding_ref) {
+            wanted.push(binding.definition.package.erased());
+            if let Some(footprint) = binding.definition.footprints.first() {
+                wanted.push(footprint.erased());
+            }
+        }
+    }
+    let mut drafted = Vec::new();
+    for revision in wanted {
+        if document.drafts.get(revision.id).is_some() {
+            continue;
+        }
+        let (meta, definition) = document
+            .project
+            .library
+            .definition(revision)
+            .ok_or_else(|| Error::NotFound("that revision is not in the project library".into()))?;
+        drafts::create(
+            Arc::make_mut(&mut document.drafts),
+            &document.project.library,
+            revision.id,
+            Some(revision.revision),
+            meta,
+            definition,
+        )?;
+        drafted.push(revision.id);
+    }
+    Ok(drafted)
+}
+
 /// `evaluator` is the host's footprint evaluator (`Engine::apply_with`);
 /// footprint-source edits refuse without one.
 pub(crate) fn apply_library(
@@ -400,12 +520,48 @@ pub(crate) fn apply_library(
             )?;
             Ok(Outcome::DraftCreated { id: revision.id })
         }
+        LibraryCommand::DraftClosure { component } => {
+            let ids = draft_closure(document, component)?;
+            Ok(Outcome::DraftsCreated { ids })
+        }
+        LibraryCommand::EditCopy { bundle } => {
+            let report = import_bundle(document, &bundle)?;
+            let root = report.root;
+            let component = match root.kind {
+                DefinitionKind::Component => ComponentRef::new(root.id, root.revision),
+                DefinitionKind::Part => document
+                    .project
+                    .library
+                    .part(PartRef::new(root.id, root.revision))
+                    .map(|part| part.definition.component)
+                    .ok_or_else(|| Error::NotFound("the imported Part is missing".into()))?,
+                _ => {
+                    return Err(Error::Invalid(
+                        "library.edit_copy: only a component or a Part opens as a copy".into(),
+                    ));
+                }
+            };
+            let drafted = draft_closure(document, component)?;
+            Ok(Outcome::Copied {
+                component,
+                import: report,
+                drafted,
+            })
+        }
         LibraryCommand::Edit { edits } => {
+            let before =
+                super::assets::named_by_drafts(&document.drafts, edits.iter().map(|e| e.id));
             drafts::edit(Arc::make_mut(&mut document.drafts), edits)?;
+            super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
+        LibraryCommand::PackArtwork { edits, artwork } => {
+            super::marking::pack_artwork(document, edits, artwork)
+        }
         LibraryCommand::DiscardDraft { id } => {
+            let before = super::assets::named_by_drafts(&document.drafts, [id]);
             drafts::discard(Arc::make_mut(&mut document.drafts), id)?;
+            super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
         LibraryCommand::Publish { drafts } => {
@@ -559,20 +715,7 @@ pub(crate) fn apply_library(
             })
         }
         LibraryCommand::Import { bundle } => {
-            library::bundle::validate_bundle(&bundle)?;
-            // The library is taken out so lineages can be allocated while it
-            // is edited; a failure discards the whole candidate.
-            // Imported on a copy, so a bundle whose revisions are all in the
-            // project already leaves the document (revision, undo) alone.
-            let mut project = (*document.project).clone();
-            let mut library = std::mem::take(&mut project.library);
-            let mut allocate = || project.allocate().map(DefinitionId);
-            let report = import::import(&mut library, &bundle, &mut allocate);
-            project.library = library;
-            let report = report?;
-            if report.revisions.iter().any(|r| !r.reused) {
-                document.project = Arc::new(project);
-            }
+            let report = import_bundle(document, &bundle)?;
             Ok(Outcome::Imported { report })
         }
         LibraryCommand::PlaceFrom {
@@ -685,6 +828,41 @@ pub(crate) fn apply_library(
                 fit,
                 applied: confirm,
             })
+        }
+        LibraryCommand::NewFromTemplate(request) => {
+            super::templates::new_from_template(document, *request, evaluator)
+        }
+        LibraryCommand::PackageFromTemplate(request) => {
+            super::templates::package_from_template(document, *request, evaluator)
+        }
+        LibraryCommand::SavePackageRow(request) => {
+            super::templates::save_package_row(document, *request)
+        }
+        LibraryCommand::PinoutApply(request) => super::pinout::apply(document, *request),
+        LibraryCommand::ImportModel(request) => {
+            let assign = request.assign.clone();
+            let outcome = super::model3d::import_model(document, *request)?;
+            if let (Some(assign), Outcome::DraftCreated { id }) = (assign, &outcome) {
+                // The new model used by the package draft through
+                // `library.edit_package`'s own path: one undo step.
+                let revision = document
+                    .drafts
+                    .get(*id)
+                    .and_then(|d| d.pending())
+                    .ok_or_else(|| Error::NotFound("The new model draft is missing".into()))?;
+                let edits = [PackageEdit::SetModel(library::PackageModel::Library(
+                    library::model3d::LibraryModel {
+                        model: crate::ids::ModelRef::new(*id, revision),
+                        lead_map: assign.lead_map,
+                    },
+                ))];
+                let (current, package) = package_draft(document, assign.package)?;
+                let footprint = landing_footprint(document, assign.package).ok();
+                let edited = package_fit::edit_package_in(package, footprint, &edits)?;
+                let meta = current.meta.clone();
+                store_package(document, assign.package, meta, edited)?;
+            }
+            Ok(outcome)
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Board copper as exact outlines: every connected pad is its core pad
 //! outline ([`WorldPad::outline`], built on `library/footprint/geometry.rs`)
-//! and every track its butt-capped rectangle. Connectivity, clearance,
+//! and every track its round-capped stadium ([`super::track_shape`]).
+//! Connectivity, clearance,
 //! airwires and routing checks all measure these rings. A [`BoardCopper`]
 //! is built once per document revision and reused, including for the
 //! placement drag preview ([`BoardCopper::moved`]).
@@ -9,12 +10,17 @@
 //! that slack, so the checks stay exact for straight-sided copper. On
 //! curved edges, touching is accepted within the slack, and clearance is
 //! reported conservatively: a curved gap may be flagged up to the slack
-//! before it is truly under the rule, and is never missed.
+//! before it is truly under the rule, and is never missed. A track's round
+//! caps are exact instead: its gaps are measured from its centre line less
+//! its half-width.
 use super::grid::BoundsGrid;
 use super::via::{DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM};
 use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance};
+use crate::geometry::{
+    Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance, segment_distance,
+    segments_cross,
+};
 use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
 use crate::model::{CopperLayer, Project, Track, Via};
@@ -43,6 +49,22 @@ pub struct CopperRing {
     /// 0 for straight edges; [`CURVE_SLACK_MM`] when the ring flattens a
     /// curve.
     pub slack: f64,
+    /// A track's centre line and half-width: its copper is exactly the
+    /// points within that distance of the segment, so gaps to it are
+    /// measured from the segment, not from the flattened ring (whose
+    /// slack is then 0).
+    pub spine: Option<(Point, Point, f64)>,
+}
+
+/// The distance between segments `a`–`b` and `c`–`d` (0 when they cross).
+fn segments_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
+    if segments_cross(a, b, c, d) {
+        return 0.0;
+    }
+    segment_distance(a, c, d)
+        .min(segment_distance(b, c, d))
+        .min(segment_distance(c, a, b))
+        .min(segment_distance(d, a, b))
 }
 
 impl CopperRing {
@@ -55,6 +77,7 @@ impl CopperRing {
             ring,
             bounds,
             slack: if curved { CURVE_SLACK_MM } else { 0.0 },
+            spine: None,
         }
     }
 
@@ -83,13 +106,13 @@ impl CopperRing {
         )
     }
 
-    /// A track's rectangle with butt end caps.
+    /// A track's stadium, round end caps included. Its gaps are exact:
+    /// measured from the centre line less the half-width.
     pub fn of_track(track: &Track) -> Self {
-        let ring = super::track_polygon(track).to_vec();
         Self {
-            bounds: Bounds::of(ring.iter().copied()),
-            ring,
             slack: 0.0,
+            spine: Some((track.start, track.end, track.width / 2.0)),
+            ..Self::of_shape(&super::track_shape(track), true)
         }
     }
 
@@ -102,6 +125,7 @@ impl CopperRing {
                 max: shift(b.max),
             }),
             slack: self.slack,
+            spine: self.spine.map(|(a, b, r)| (shift(a), shift(b), r)),
         }
     }
 
@@ -117,6 +141,18 @@ impl CopperRing {
         let lower = dx.hypot(dy);
         if lower >= limit {
             return lower;
+        }
+        match (self.spine, other.spine) {
+            (Some((a, b, r)), Some((c, d, s))) => {
+                return (segments_distance(a, b, c, d) - r - s).max(0.0);
+            }
+            (Some((a, b, r)), None) => {
+                return (polyline_polygon_distance(&[a, b], &other.ring) - r).max(0.0);
+            }
+            (None, Some((c, d, s))) => {
+                return (polyline_polygon_distance(&[c, d], &self.ring) - s).max(0.0);
+            }
+            (None, None) => {}
         }
         if polygons_overlap(&self.ring, &other.ring) {
             return 0.0;

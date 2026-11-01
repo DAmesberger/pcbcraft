@@ -43,6 +43,7 @@ fn project_except_library(p: &Project) -> Result<()> {
         .chain(p.instances.iter().map(|i| i.id))
         .chain(p.occurrences.iter().map(|o| o.id))
         .chain(p.wires.iter().map(|w| w.id))
+        .chain(p.junctions.iter().map(|j| j.id))
         .chain(p.tracks.iter().map(|t| t.id))
         .chain(p.vias.iter().map(|v| v.id))
     {
@@ -82,6 +83,7 @@ pub fn drafts_only(p: &Project, drafts: &Drafts) -> Result<()> {
         .map(|i| i.id)
         .chain(p.occurrences.iter().map(|o| o.id))
         .chain(p.wires.iter().map(|w| w.id))
+        .chain(p.junctions.iter().map(|j| j.id))
         .chain(p.tracks.iter().map(|t| t.id))
         .chain(p.vias.iter().map(|v| v.id))
         .collect();

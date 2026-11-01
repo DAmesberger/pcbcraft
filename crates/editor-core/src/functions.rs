@@ -17,14 +17,23 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub mod pin_config;
+pub mod rules;
+pub mod suggest;
+
+pub use pin_config::{GpioRef, Level, MuxCode, PinConfig, PinConfigs, PinOption, Pull, SourceSpan};
+pub use rules::{PinRule, PinRuleScript, RuleFailure, RuleNote};
+
 /// Alternative functions of one terminal.
 pub const MAX_FUNCTIONS: usize = 32;
-/// Resources one component declares.
-pub const MAX_RESOURCES: usize = 64;
+/// Resources (peripheral instances) one component declares.
+pub const MAX_RESOURCES: usize = 256;
 /// Roles of one resource.
 pub const MAX_ROLES: usize = 16;
 /// Constraints one component declares.
-pub const MAX_CONSTRAINTS: usize = 256;
+pub const MAX_CONSTRAINTS: usize = 1024;
+/// Bytes of a peripheral kind or role signal name.
+pub const MAX_KIND: usize = 32;
 /// Edits one `instance.select_functions` applies.
 pub const MAX_FUNCTION_EDITS: usize = 256;
 /// Functions one binding marks unavailable.
@@ -41,6 +50,12 @@ pub struct TerminalFunctions {
     /// The function used without an explicit selection. A reset-state
     /// description is never a default.
     pub design_default: Option<FunctionId>,
+    /// C2: the terminal's GPIO identity, stated explicitly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpio: Option<GpioRef>,
+    /// C2: settable non-electrical options and their allowed values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<PinOption>,
 }
 
 /// One function a terminal can take.
@@ -54,6 +69,12 @@ pub struct Function {
     pub drive: Drive,
     /// The role of a shared resource this function takes while active.
     pub resource_role: Option<ResourceRole>,
+    /// C2: the vendor's alternate-function selector, opaque data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux: Option<MuxCode>,
+    /// C3: where an imported function came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceSpan>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -99,6 +120,10 @@ pub struct ResourceRole {
 pub struct Resource {
     pub id: ResourceId,
     pub label: String,
+    /// C2: free grouping text ("uart", "spi", "timer") for search and
+    /// firmware templates; never used for compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     /// 1–16 roles.
     pub roles: Vec<Role>,
 }
@@ -112,6 +137,9 @@ pub struct Role {
     pub capacity: u16,
     /// Once any role of the resource is active, this role must be too.
     pub required_when_used: bool,
+    /// C2: the datasheet signal name ("TX", "SCK", "CH1N"), data only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
 }
 
 /// A rule between functions of one instance.
@@ -195,6 +223,12 @@ pub enum Conflict {
         function: FunctionKey,
         message: String,
     },
+    /// C1: a pin rule script's `forbid` verdict.
+    Rule {
+        rule: crate::ids::RuleId,
+        terminals: Vec<TerminalId>,
+        message: String,
+    },
 }
 
 impl Conflict {
@@ -202,7 +236,8 @@ impl Conflict {
         match self {
             Self::Capacity { message, .. }
             | Self::Excluded { message, .. }
-            | Self::Unavailable { message, .. } => message,
+            | Self::Unavailable { message, .. }
+            | Self::Rule { message, .. } => message,
         }
     }
 }
@@ -227,12 +262,20 @@ pub enum Requirement {
         requires: FunctionKey,
         message: String,
     },
+    /// C1: a pin rule script's `require` verdict.
+    Rule {
+        rule: crate::ids::RuleId,
+        terminals: Vec<TerminalId>,
+        message: String,
+    },
 }
 
 impl Requirement {
     pub fn message(&self) -> &str {
         match self {
-            Self::RoleMissing { message, .. } | Self::Requires { message, .. } => message,
+            Self::RoleMissing { message, .. }
+            | Self::Requires { message, .. }
+            | Self::Rule { message, .. } => message,
         }
     }
     /// The terminals whose functions take part.
@@ -242,6 +285,10 @@ impl Requirement {
             Self::Requires {
                 selected, requires, ..
             } => vec![*selected, *requires],
+            Self::Rule { terminals, .. } => {
+                let set: BTreeSet<TerminalId> = terminals.iter().copied().collect();
+                return set.into_iter().collect();
+            }
         };
         let set: BTreeSet<TerminalId> = keys.into_iter().map(|k| k.terminal).collect();
         set.into_iter().collect()
@@ -257,6 +304,14 @@ pub struct Resolution {
     pub unresolved: Vec<TerminalId>,
     pub conflicts: Vec<Conflict>,
     pub incomplete: Vec<Requirement>,
+    /// C1: `warn` verdicts of pin rule scripts; never blocking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<RuleNote>,
+    /// C1: pin rules that gave no verdict (compile error, runtime error,
+    /// exhausted budget). Each is a finding that blocks electrical
+    /// resolution; it never rejects an edit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_failures: Vec<RuleFailure>,
 }
 
 impl Resolution {
@@ -348,8 +403,12 @@ impl TerminalFunctions {
                 signal,
                 drive,
                 resource_role: None,
+                mux: None,
+                source: None,
             }],
             design_default: None,
+            gpio: None,
+            options: Vec::new(),
         }
     }
 
@@ -372,7 +431,11 @@ impl TerminalFunctions {
     /// Persistence bounds a draft must satisfy.
     pub fn within_bounds(&self) -> bool {
         self.functions.len() <= MAX_FUNCTIONS
-            && self.functions.iter().all(|f| f.label.len() <= MAX_LABEL)
+            && self.functions.iter().all(|f| {
+                f.label.len() <= MAX_LABEL
+                    && pin_config::function_within_bounds(f.mux.as_ref(), f.source.as_ref())
+            })
+            && pin_config::terminal_within_bounds(self.gpio.as_ref(), &self.options)
     }
 
     pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
@@ -387,8 +450,11 @@ impl Resource {
     /// Persistence bounds a draft must satisfy.
     pub fn within_bounds(&self) -> bool {
         self.label.len() <= MAX_LABEL
+            && self.kind.as_ref().is_none_or(|k| k.len() <= MAX_KIND)
             && self.roles.len() <= MAX_ROLES
-            && self.roles.iter().all(|r| r.label.len() <= MAX_LABEL)
+            && self.roles.iter().all(|r| {
+                r.label.len() <= MAX_LABEL && r.signal.as_ref().is_none_or(|s| s.len() <= MAX_KIND)
+            })
     }
     pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
         std::iter::once(self.id.0).chain(self.roles.iter().map(|r| r.id.0))
@@ -865,4 +931,49 @@ pub fn resolve(
     resolution.conflicts = conflicts;
     resolution.incomplete = incomplete;
     Ok(resolution)
+}
+
+/// [`resolve`] followed by the component's pin rules (founder decision
+/// F2): every rule is evaluated over the resolved assignment and the
+/// instance's pin configuration within the default [`rules::RuleBudget`],
+/// and its verdict lands in the buckets (`forbid` → conflicts, `require`
+/// → incomplete, `warn` → notes, failures → `rule_failures`). Rules
+/// compile once per distinct source set ([`rules::compile`]).
+pub fn resolve_with_rules(
+    terminals: &[TerminalDeclaration<'_>],
+    resources: &[Resource],
+    constraints: &[FunctionConstraint],
+    unavailable: Option<&[FunctionKey]>,
+    selections: &FunctionSelections,
+    pin_rules: &[PinRule],
+    config: &PinConfigs,
+) -> Result<Resolution> {
+    let mut resolution = resolve(terminals, resources, constraints, unavailable, selections)?;
+    if pin_rules.is_empty() {
+        return Ok(resolution);
+    }
+    let compiled = rules::compile(pin_rules)?;
+    let view = rules::view(terminals, resources, &resolution, config);
+    let evaluation = rules::evaluate(&compiled, &view, rules::RuleBudget::default())?;
+    rules::apply(&mut resolution, &compiled, &evaluation);
+    Ok(resolution)
+}
+
+/// The explain/test panel: resolve a scratch `selections` with the rules
+/// as [`resolve_with_rules`] does and report each rule's own verdict or
+/// failure next to the resolution.
+pub fn explain_rules(
+    terminals: &[TerminalDeclaration<'_>],
+    resources: &[Resource],
+    constraints: &[FunctionConstraint],
+    selections: &FunctionSelections,
+    pin_rules: &[PinRule],
+    config: &PinConfigs,
+) -> Result<(Resolution, rules::RuleExplanations)> {
+    let mut resolution = resolve(terminals, resources, constraints, None, selections)?;
+    let compiled = rules::compile(pin_rules)?;
+    let view = rules::view(terminals, resources, &resolution, config);
+    let evaluation = rules::evaluate(&compiled, &view, rules::RuleBudget::default())?;
+    rules::apply(&mut resolution, &compiled, &evaluation);
+    Ok((resolution, rules::explanations(&compiled, &evaluation)))
 }

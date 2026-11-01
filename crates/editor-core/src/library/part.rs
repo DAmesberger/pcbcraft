@@ -41,6 +41,10 @@ pub struct PartDefinition {
     /// D3: offers are part of the revision.
     pub offers: Vec<DistributorOffer>,
     pub provenance: Provenance,
+    /// D4: the exact top mark of this Part, over the component's generic
+    /// marking. The datasheet marking code is often not the MPN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_mark: Option<Box<super::marking::MarkingSpec>>,
 }
 
 impl Default for PartDefinition {
@@ -55,6 +59,7 @@ impl Default for PartDefinition {
             references: Vec::new(),
             offers: Vec::new(),
             provenance: Provenance::default(),
+            top_mark: None,
         }
     }
 }
@@ -159,6 +164,7 @@ impl PartDefinition {
                     && text_ok(&o.packaging, MAX_LABEL)
             })
             && self.provenance.within_bounds()
+            && self.top_mark.as_ref().is_none_or(|m| m.within_bounds())
     }
 
     pub(super) fn values_finite(&self) -> bool {
@@ -184,6 +190,10 @@ impl PartDefinition {
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
         let named = |r: crate::ids::DefinitionRef| super::names::capitalised(&library.describe(r));
+        if let Some(mark) = &self.top_mark {
+            out.extend(super::marking::spec_findings(id, mark));
+            out.extend(super::marking::artwork_findings(library, id, mark));
+        }
         if !printable(&self.manufacturer) || !printable(&self.mpn) {
             out.push(issue(
                 "part.identity",

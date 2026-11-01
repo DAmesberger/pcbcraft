@@ -1,0 +1,819 @@
+{
+ "format": 1,
+ "family": "no_lead",
+ "family_rev": 1,
+ "citations": {
+  "mo-220": {
+   "document": "JEDEC MO-220, thermally enhanced plastic very thin quad flat no-lead (QFN)",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-229": {
+   "document": "JEDEC MO-229, thermally enhanced plastic very thin dual flat no-lead (DFN)",
+   "document_revision": null,
+   "page": null
+  }
+ },
+ "rows": [
+  {
+   "name": "QFN-12 3\u00d73 0.5 EP 1.65",
+   "description": "Quad flat no-lead, 12 terminals at 0.5 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 1.65 mm.",
+   "aliases": [
+    "QFN-12",
+    "VQFN-12",
+    "12-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     3,
+     3
+    ],
+    "pitch": 0.5,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     1.65,
+     1.65
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-16 3\u00d73 0.5 EP 1.7",
+   "description": "Quad flat no-lead, 16 terminals at 0.5 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 1.7 mm.",
+   "aliases": [
+    "QFN-16",
+    "VQFN-16",
+    "16-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     4,
+     4
+    ],
+    "pitch": 0.5,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     1.7,
+     1.7
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-20 3\u00d73 0.4 EP 1.7",
+   "description": "Quad flat no-lead, 20 terminals at 0.4 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 1.7 mm.",
+   "aliases": [
+    "QFN-20",
+    "VQFN-20",
+    "20-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     5,
+     5
+    ],
+    "pitch": 0.4,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.2,
+    "exposed_pad": [
+     1.7,
+     1.7
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-16 4\u00d74 0.65 EP 2.1",
+   "description": "Quad flat no-lead, 16 terminals at 0.65 mm, body 4 \u00d7 4 \u00d7 0.90 mm, exposed pad 2.1 mm.",
+   "aliases": [
+    "QFN-16",
+    "VQFN-16",
+    "16-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     4,
+     4
+    ],
+    "pitch": 0.65,
+    "body_length": 4.0,
+    "body_width": 4.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.3,
+    "exposed_pad": [
+     2.1,
+     2.1
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-20 4\u00d74 0.5 EP 2.6",
+   "description": "Quad flat no-lead, 20 terminals at 0.5 mm, body 4 \u00d7 4 \u00d7 0.90 mm, exposed pad 2.6 mm.",
+   "aliases": [
+    "QFN-20",
+    "VQFN-20",
+    "20-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     5,
+     5
+    ],
+    "pitch": 0.5,
+    "body_length": 4.0,
+    "body_width": 4.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     2.6,
+     2.6
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-24 4\u00d74 0.5 EP 2.6",
+   "description": "Quad flat no-lead, 24 terminals at 0.5 mm, body 4 \u00d7 4 \u00d7 0.90 mm, exposed pad 2.6 mm.",
+   "aliases": [
+    "QFN-24",
+    "VQFN-24",
+    "24-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     6,
+     6
+    ],
+    "pitch": 0.5,
+    "body_length": 4.0,
+    "body_width": 4.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     2.6,
+     2.6
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-28 4\u00d74 0.4 EP 2.6",
+   "description": "Quad flat no-lead, 28 terminals at 0.4 mm, body 4 \u00d7 4 \u00d7 0.90 mm, exposed pad 2.6 mm.",
+   "aliases": [
+    "QFN-28",
+    "VQFN-28",
+    "28-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     7,
+     7
+    ],
+    "pitch": 0.4,
+    "body_length": 4.0,
+    "body_width": 4.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.2,
+    "exposed_pad": [
+     2.6,
+     2.6
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-20 5\u00d75 0.65 EP 3.1",
+   "description": "Quad flat no-lead, 20 terminals at 0.65 mm, body 5 \u00d7 5 \u00d7 0.90 mm, exposed pad 3.1 mm.",
+   "aliases": [
+    "QFN-20",
+    "VQFN-20",
+    "20-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     5,
+     5
+    ],
+    "pitch": 0.65,
+    "body_length": 5.0,
+    "body_width": 5.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.3,
+    "exposed_pad": [
+     3.1,
+     3.1
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-28 5\u00d75 0.5 EP 3.25",
+   "description": "Quad flat no-lead, 28 terminals at 0.5 mm, body 5 \u00d7 5 \u00d7 0.90 mm, exposed pad 3.25 mm.",
+   "aliases": [
+    "QFN-28",
+    "VQFN-28",
+    "28-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     7,
+     7
+    ],
+    "pitch": 0.5,
+    "body_length": 5.0,
+    "body_width": 5.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     3.25,
+     3.25
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-32 5\u00d75 0.5 EP 3.45",
+   "description": "Quad flat no-lead, 32 terminals at 0.5 mm, body 5 \u00d7 5 \u00d7 0.90 mm, exposed pad 3.45 mm.",
+   "aliases": [
+    "QFN-32",
+    "VQFN-32",
+    "32-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     8,
+     8
+    ],
+    "pitch": 0.5,
+    "body_length": 5.0,
+    "body_width": 5.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     3.45,
+     3.45
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-40 5\u00d75 0.4 EP 3.5",
+   "description": "Quad flat no-lead, 40 terminals at 0.4 mm, body 5 \u00d7 5 \u00d7 0.90 mm, exposed pad 3.5 mm.",
+   "aliases": [
+    "QFN-40",
+    "VQFN-40",
+    "40-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     10,
+     10
+    ],
+    "pitch": 0.4,
+    "body_length": 5.0,
+    "body_width": 5.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.2,
+    "exposed_pad": [
+     3.5,
+     3.5
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-36 6\u00d76 0.5 EP 4.1",
+   "description": "Quad flat no-lead, 36 terminals at 0.5 mm, body 6 \u00d7 6 \u00d7 0.90 mm, exposed pad 4.1 mm.",
+   "aliases": [
+    "QFN-36",
+    "VQFN-36",
+    "36-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     9,
+     9
+    ],
+    "pitch": 0.5,
+    "body_length": 6.0,
+    "body_width": 6.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     4.1,
+     4.1
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-40 6\u00d76 0.5 EP 4.5",
+   "description": "Quad flat no-lead, 40 terminals at 0.5 mm, body 6 \u00d7 6 \u00d7 0.90 mm, exposed pad 4.5 mm.",
+   "aliases": [
+    "QFN-40",
+    "VQFN-40",
+    "40-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     10,
+     10
+    ],
+    "pitch": 0.5,
+    "body_length": 6.0,
+    "body_width": 6.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     4.5,
+     4.5
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-48 6\u00d76 0.4 EP 4.4",
+   "description": "Quad flat no-lead, 48 terminals at 0.4 mm, body 6 \u00d7 6 \u00d7 0.90 mm, exposed pad 4.4 mm.",
+   "aliases": [
+    "QFN-48",
+    "VQFN-48",
+    "48-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     12,
+     12
+    ],
+    "pitch": 0.4,
+    "body_length": 6.0,
+    "body_width": 6.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.2,
+    "exposed_pad": [
+     4.4,
+     4.4
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-44 7\u00d77 0.5 EP 5.15",
+   "description": "Quad flat no-lead, 44 terminals at 0.5 mm, body 7 \u00d7 7 \u00d7 0.90 mm, exposed pad 5.15 mm.",
+   "aliases": [
+    "QFN-44",
+    "VQFN-44",
+    "44-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     11,
+     11
+    ],
+    "pitch": 0.5,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     5.15,
+     5.15
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-48 7\u00d77 0.5 EP 5.3",
+   "description": "Quad flat no-lead, 48 terminals at 0.5 mm, body 7 \u00d7 7 \u00d7 0.90 mm, exposed pad 5.3 mm.",
+   "aliases": [
+    "QFN-48",
+    "VQFN-48",
+    "48-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     12,
+     12
+    ],
+    "pitch": 0.5,
+    "body_length": 7.0,
+    "body_width": 7.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     5.3,
+     5.3
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-56 8\u00d78 0.5 EP 6.0",
+   "description": "Quad flat no-lead, 56 terminals at 0.5 mm, body 8 \u00d7 8 \u00d7 0.90 mm, exposed pad 6.0 mm.",
+   "aliases": [
+    "QFN-56",
+    "VQFN-56",
+    "56-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     14,
+     14
+    ],
+    "pitch": 0.5,
+    "body_length": 8.0,
+    "body_width": 8.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     6.0,
+     6.0
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-68 8\u00d78 0.4 EP 6.4",
+   "description": "Quad flat no-lead, 68 terminals at 0.4 mm, body 8 \u00d7 8 \u00d7 0.90 mm, exposed pad 6.4 mm.",
+   "aliases": [
+    "QFN-68",
+    "VQFN-68",
+    "68-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     17,
+     17
+    ],
+    "pitch": 0.4,
+    "body_length": 8.0,
+    "body_width": 8.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.2,
+    "exposed_pad": [
+     6.4,
+     6.4
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "QFN-64 9\u00d79 0.5 EP 7.15",
+   "description": "Quad flat no-lead, 64 terminals at 0.5 mm, body 9 \u00d7 9 \u00d7 0.90 mm, exposed pad 7.15 mm.",
+   "aliases": [
+    "QFN-64",
+    "VQFN-64",
+    "64-QFN"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-220",
+   "values": {
+    "family": "no_lead",
+    "sides": "four",
+    "terminals_per_side": [
+     16,
+     16
+    ],
+    "pitch": 0.5,
+    "body_length": 9.0,
+    "body_width": 9.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     7.15,
+     7.15
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-6 2\u00d72 0.65",
+   "description": "Dual flat no-lead, 6 terminals at 0.65 mm, body 2 \u00d7 2 \u00d7 0.90 mm, exposed pad 1.6 \u00d7 1.0 mm.",
+   "aliases": [
+    "DFN-6",
+    "SON-6",
+    "WSON-6"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     3,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 2.0,
+    "body_width": 2.0,
+    "body_height": 0.9,
+    "terminal_length": 0.3,
+    "terminal_width": 0.3,
+    "exposed_pad": [
+     1.6,
+     1.0
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-8 2\u00d72 0.5",
+   "description": "Dual flat no-lead, 8 terminals at 0.5 mm, body 2 \u00d7 2 \u00d7 0.90 mm, exposed pad 1.6 \u00d7 0.9 mm.",
+   "aliases": [
+    "DFN-8",
+    "SON-8",
+    "WSON-8"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     4,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 2.0,
+    "body_width": 2.0,
+    "body_height": 0.9,
+    "terminal_length": 0.3,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     1.6,
+     0.9
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-8 2\u00d73 0.5",
+   "description": "Dual flat no-lead, 8 terminals at 0.5 mm, body 2 \u00d7 3 \u00d7 0.90 mm, exposed pad 1.6 \u00d7 1.3 mm.",
+   "aliases": [
+    "DFN-8",
+    "SON-8",
+    "WSON-8"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     4,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 2.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     1.6,
+     1.3
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-6 3\u00d73 0.95",
+   "description": "Dual flat no-lead, 6 terminals at 0.95 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 2.4 \u00d7 1.6 mm.",
+   "aliases": [
+    "DFN-6",
+    "SON-6",
+    "WSON-6"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     3,
+     0
+    ],
+    "pitch": 0.95,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.4,
+    "exposed_pad": [
+     2.4,
+     1.6
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-8 3\u00d73 0.65",
+   "description": "Dual flat no-lead, 8 terminals at 0.65 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 2.4 \u00d7 1.6 mm.",
+   "aliases": [
+    "DFN-8",
+    "SON-8",
+    "WSON-8"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     4,
+     0
+    ],
+    "pitch": 0.65,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.3,
+    "exposed_pad": [
+     2.4,
+     1.6
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  },
+  {
+   "name": "DFN-10 3\u00d73 0.5",
+   "description": "Dual flat no-lead, 10 terminals at 0.5 mm, body 3 \u00d7 3 \u00d7 0.90 mm, exposed pad 2.4 \u00d7 1.65 mm.",
+   "aliases": [
+    "DFN-10",
+    "SON-10",
+    "WSON-10"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-229",
+   "values": {
+    "family": "no_lead",
+    "sides": "two",
+    "terminals_per_side": [
+     5,
+     0
+    ],
+    "pitch": 0.5,
+    "body_length": 3.0,
+    "body_width": 3.0,
+    "body_height": 0.9,
+    "terminal_length": 0.4,
+    "terminal_width": 0.25,
+    "exposed_pad": [
+     2.4,
+     1.65
+    ]
+   },
+   "note": "The exposed pad is one typical size for this body; it varies between devices, so confirm it against the device's drawing."
+  }
+ ]
+}

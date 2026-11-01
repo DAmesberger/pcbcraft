@@ -170,7 +170,7 @@ fn folder(
 
 /// A folder row with its secondary text; returns whether it is open after
 /// this frame.
-fn folder_labelled(
+pub(super) fn folder_labelled(
     ui: &mut egui::Ui,
     key: &str,
     depth: usize,
@@ -246,6 +246,11 @@ pub fn show(
 ) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
+    // A2: the Component workspace's catalog replaces the
+    // tree once it draws.
+    if super::browser_catalog::Catalog::default().show(ui, engine) {
+        return pick;
+    }
     ui.spacing_mut().item_spacing.y = 0.0;
     if !folder(ui, "project", 0, &project.name, None, false, true) {
         return pick;
@@ -600,6 +605,11 @@ pub fn show_sources(
     sources: &[crate::library_sources::SourceView],
 ) -> Option<SourcePick> {
     let mut pick = None;
+    // The catalog lists the sources with their items in the Component
+    // workspace.
+    if super::browser_catalog::active(ui.ctx()) {
+        return pick;
+    }
     ui.spacing_mut().item_spacing.y = 0.0;
     let ready = sources.iter().filter(|s| s.ready()).count();
     let count = if ready == sources.len() {

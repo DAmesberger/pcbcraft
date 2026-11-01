@@ -1,0 +1,374 @@
+{
+ "format": 1,
+ "family": "tabbed",
+ "family_rev": 1,
+ "citations": {
+  "to-236": {
+   "document": "JEDEC TO-236, SOT-23 3-lead small outline transistor package",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-178": {
+   "document": "JEDEC MO-178, small outline transistor plastic package, 5 and 6 leads (SOT-23-5/6)",
+   "document_revision": null,
+   "page": null
+  },
+  "to-261": {
+   "document": "JEDEC TO-261, SOT-223 package",
+   "document_revision": null,
+   "page": null
+  },
+  "mo-203": {
+   "document": "JEDEC MO-203, plastic small outline transistor package, 3, 5 and 6 leads (SC-70)",
+   "document_revision": null,
+   "page": null
+  }
+ },
+ "rows": [
+  {
+   "name": "SOT-23-3",
+   "description": "Small outline transistor, 3 leads (two at 1.90 mm on one side, one opposite), body 2.90 \u00d7 1.30 mm.",
+   "aliases": [
+    "SOT-23",
+    "SOT23-3",
+    "TO-236AB"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "to-236",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     2,
+     1
+    ],
+    "pitch": 0.95,
+    "body_length": 2.9,
+    "body_width": 1.3,
+    "body_height": 0.95,
+    "standoff": 0.05,
+    "span": 2.4,
+    "lead_width": 0.4,
+    "lead_thickness": 0.12,
+    "foot_length": 0.4,
+    "tab": null,
+    "lead_step": [
+     2,
+     1
+    ]
+   }
+  },
+  {
+   "name": "SOT-23-6",
+   "description": "Small outline transistor, 6 leads at 0.95 mm, body 2.90 \u00d7 1.60 mm.",
+   "aliases": [
+    "SOT-23-6",
+    "SOT23-6",
+    "SC-74"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-178",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     3
+    ],
+    "pitch": 0.95,
+    "body_length": 2.9,
+    "body_width": 1.6,
+    "body_height": 1.1,
+    "standoff": 0.075,
+    "span": 2.8,
+    "lead_width": 0.4,
+    "lead_thickness": 0.15,
+    "foot_length": 0.4,
+    "tab": null
+   }
+  },
+  {
+   "name": "SOT-223",
+   "description": "SOT-223, 3 leads at 2.30 mm and a tab opposite, body 6.50 \u00d7 3.50 mm.",
+   "aliases": [
+    "SOT-223",
+    "TO-261AA"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "to-261",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     0
+    ],
+    "pitch": 2.3,
+    "body_length": 6.5,
+    "body_width": 3.5,
+    "body_height": 1.6,
+    "standoff": 0.06,
+    "span": 7.0,
+    "lead_width": 0.7,
+    "lead_thickness": 0.3,
+    "foot_length": 0.9,
+    "tab": {
+     "width": 3.0,
+     "length": 0.9
+    }
+   }
+  },
+  {
+   "name": "DPAK (TO-252)",
+   "description": "DPAK, 2 leads at 4.57 mm and a tab opposite, body 6.60 \u00d7 6.10 mm.",
+   "aliases": [
+    "DPAK",
+    "TO-252AA"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": null,
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     2,
+     0
+    ],
+    "pitch": 2.285,
+    "body_length": 6.6,
+    "body_width": 6.1,
+    "body_height": 2.3,
+    "standoff": 0.0,
+    "span": 11.7,
+    "lead_width": 0.76,
+    "lead_thickness": 0.5,
+    "foot_length": 1.5,
+    "tab": {
+     "width": 5.3,
+     "length": 5.3,
+     "flange": 1.0
+    },
+    "lead_step": [
+     2,
+     1
+    ]
+   },
+   "note": "Estimated: H 9.9, D 6.1 and the 4.57 mm lead spacing follow TO-252; the flange (1.0 mm past the body), its 5.3 \u00d7 5.3 mm solderable area and the span (2 \u00d7 (H \u2212 D/2 \u2212 flange)) are estimated for the centred-body model."
+  },
+  {
+   "name": "D2PAK (TO-263)",
+   "description": "D2PAK, 2 leads at 5.08 mm and a tab opposite, body 10.20 \u00d7 9.10 mm.",
+   "aliases": [
+    "D2PAK",
+    "TO-263AB"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": null,
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     2,
+     0
+    ],
+    "pitch": 2.54,
+    "body_length": 10.2,
+    "body_width": 9.1,
+    "body_height": 4.4,
+    "standoff": 0.0,
+    "span": 18.7,
+    "lead_width": 0.8,
+    "lead_thickness": 0.5,
+    "foot_length": 2.0,
+    "tab": {
+     "width": 8.0,
+     "length": 8.0,
+     "flange": 1.3
+    },
+    "lead_step": [
+     2,
+     1
+    ]
+   },
+   "note": "Estimated: H 15.2, D 9.1 and the 5.08 mm lead spacing follow TO-263; the flange (1.3 mm past the body), its 8.0 \u00d7 8.0 mm solderable area and the span (2 \u00d7 (H \u2212 D/2 \u2212 flange)) are estimated for the centred-body model."
+  },
+  {
+   "name": "SOT-23-5",
+   "description": "Small outline transistor, 5 leads (three at 0.95 mm, two opposite at 1.90 mm), body 2.90 \u00d7 1.60 mm.",
+   "aliases": [
+    "SOT-23-5",
+    "SOT23-5",
+    "SOT-25",
+    "SC-74A"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-178",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     2
+    ],
+    "pitch": 0.95,
+    "body_length": 2.9,
+    "body_width": 1.6,
+    "body_height": 1.1,
+    "standoff": 0.075,
+    "span": 2.8,
+    "lead_width": 0.4,
+    "lead_thickness": 0.15,
+    "foot_length": 0.4,
+    "tab": null,
+    "lead_step": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "name": "SC-70-3 (SOT-323)",
+   "description": "SC-70 small outline transistor, 3 leads (two at 1.30 mm, one opposite), body 2.00 \u00d7 1.25 mm.",
+   "aliases": [
+    "SC-70",
+    "SOT-323",
+    "SOT323",
+    "SC70-3"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-203",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     2,
+     1
+    ],
+    "pitch": 0.65,
+    "body_length": 2.0,
+    "body_width": 1.25,
+    "body_height": 0.9,
+    "standoff": 0.05,
+    "span": 2.1,
+    "lead_width": 0.3,
+    "lead_thickness": 0.12,
+    "foot_length": 0.3,
+    "tab": null,
+    "lead_step": [
+     2,
+     1
+    ]
+   }
+  },
+  {
+   "name": "SC-70-5 (SOT-353)",
+   "description": "SC-70 small outline transistor, 5 leads at 0.65 mm, body 2.00 \u00d7 1.25 mm.",
+   "aliases": [
+    "SC-70-5",
+    "SOT-353",
+    "SOT353",
+    "SC70-5"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-203",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     2
+    ],
+    "pitch": 0.65,
+    "body_length": 2.0,
+    "body_width": 1.25,
+    "body_height": 0.9,
+    "standoff": 0.05,
+    "span": 2.1,
+    "lead_width": 0.25,
+    "lead_thickness": 0.12,
+    "foot_length": 0.3,
+    "tab": null,
+    "lead_step": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "name": "SC-70-6 (SOT-363)",
+   "description": "SC-70 small outline transistor, 6 leads at 0.65 mm, body 2.00 \u00d7 1.25 mm.",
+   "aliases": [
+    "SC-70-6",
+    "SOT-363",
+    "SOT363",
+    "SC70-6",
+    "SC-88"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": "mo-203",
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     3
+    ],
+    "pitch": 0.65,
+    "body_length": 2.0,
+    "body_width": 1.25,
+    "body_height": 0.9,
+    "standoff": 0.05,
+    "span": 2.1,
+    "lead_width": 0.25,
+    "lead_thickness": 0.12,
+    "foot_length": 0.3,
+    "tab": null
+   }
+  },
+  {
+   "name": "SOT-89",
+   "description": "SOT-89 power transistor, 3 leads at 1.50 mm and the collector tab opposite, body 4.50 \u00d7 2.30 mm.",
+   "aliases": [
+    "SOT-89",
+    "SOT89",
+    "SOT-89-3",
+    "TO-243AA",
+    "SC-62"
+   ],
+   "skeleton": {
+    "skeleton": "ic_box"
+   },
+   "cite": null,
+   "values": {
+    "family": "tabbed",
+    "leads_per_side": [
+     3,
+     0
+    ],
+    "pitch": 1.5,
+    "body_length": 4.5,
+    "body_width": 2.3,
+    "body_height": 1.5,
+    "standoff": 0.0,
+    "span": 4.25,
+    "lead_width": 0.44,
+    "lead_thickness": 0.35,
+    "foot_length": 0.6,
+    "tab": {
+     "width": 1.7,
+     "length": 0.6
+    }
+   },
+   "note": "Estimated: the nominal lead pitch, body and span of the TO-243 (SOT-89) outline; its flat leads are modelled as short gull-wing feet and the centre lead's wide tab under the body as a tab foot opposite the leads. Confirm against the device's drawing."
+  }
+ ]
+}

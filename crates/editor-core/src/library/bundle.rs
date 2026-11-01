@@ -11,7 +11,7 @@
 //! revisions and records an [`OriginRecord`] for every copy.
 use super::graphics::{FootprintGraphic, Item, TextContent};
 use super::package_form::PackageForm;
-use super::package_model::{GeneratedMaterials, ImportedModel, ModelPlacement, PackageModel};
+use super::package_model::{GeneratedMaterials, ModelPlacement, PackageModel};
 use super::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, FootprintDefinition,
     Library, PackageDefinition, PartDefinition, SymbolDefinition, Unit,
@@ -29,6 +29,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 /// Revision records one bundle carries (a root and its closure).
 pub const MAX_BUNDLE_RECORDS: usize = 1024;
@@ -36,15 +37,20 @@ pub const MAX_BUNDLE_RECORDS: usize = 1024;
 pub const MAX_LINKS: usize = 256;
 /// Assets one bundle or project snapshot packs.
 pub const MAX_ASSETS: usize = 256;
-/// Bytes of one packed asset.
-pub const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
+/// Bytes of one packed asset: the container's per-asset target (D0).
+pub const MAX_ASSET_BYTES: usize = 64 * 1024 * 1024;
+const _: () = assert!(MAX_ASSET_BYTES as u64 == crate::format::CONTAINER_MAX_ASSET_BYTES);
 /// Encoded bytes all packed assets of one bundle or project snapshot may
-/// take together: their base64 text, 4 bytes per 3 (padded). The project
-/// file is bounded at 16 MiB, so this leaves 5 MiB for everything else; an
-/// import that would exceed it is refused instead of leaving a project
-/// that can no longer be saved. One asset of [`MAX_ASSET_BYTES`] fits.
-pub const MAX_PACKED_BYTES: usize = 11 * 1024 * 1024;
+/// take together: their base64 text, 4 bytes per 3 (padded), as bundles
+/// and automation payloads carry them. The project file stores assets as
+/// raw container entries (D0), so this no longer competes with the 16 MiB
+/// document. It stays well below the 512 MiB container target because the
+/// document's asset bytes are still copied by every command and kept by
+/// every undo step; one asset of [`MAX_ASSET_BYTES`] fits. Raising it
+/// toward the container target waits for shared asset bytes.
+pub const MAX_PACKED_BYTES: usize = 96 * 1024 * 1024;
 const _: () = assert!(MAX_ASSET_BYTES.div_ceil(3) * 4 <= MAX_PACKED_BYTES);
+const _: () = assert!((MAX_PACKED_BYTES as u64) < crate::format::CONTAINER_MAX_BYTES);
 /// Bytes of a media type.
 pub const MAX_MEDIA_TYPE: usize = 128;
 
@@ -121,13 +127,97 @@ pub struct RevisionRecord {
     pub assets: Vec<ContentHash>,
 }
 
-/// Asset bytes, written as standard base64 with padding.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AssetBytes(pub Vec<u8>);
+/// Asset bytes, written as standard base64 with padding. Immutable and
+/// shared: cloning a project (each command's candidate, each undo
+/// snapshot, each save) shares the bytes instead of copying up to
+/// [`MAX_PACKED_BYTES`], and the bytes' [`asset_hash`] is computed once
+/// per allocation and remembered with them, so revalidating an unchanged
+/// asset never hashes it again. Equality is by identity first, then by
+/// content.
+#[derive(Clone, Default)]
+pub struct AssetBytes(Arc<SharedBytes>);
+
+#[derive(Clone, Default)]
+struct SharedBytes {
+    bytes: Vec<u8>,
+    hash: OnceLock<ContentHash>,
+}
+
+impl AssetBytes {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Arc::new(SharedBytes {
+            bytes,
+            hash: OnceLock::new(),
+        }))
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0.bytes
+    }
+
+    /// [`asset_hash`] of the bytes, computed on first use only.
+    pub fn hash(&self) -> ContentHash {
+        *self.0.hash.get_or_init(|| asset_hash(&self.0.bytes))
+    }
+
+    /// Whether `self` and `other` share one allocation (no bytes copied).
+    pub fn shares(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// The bytes to change, copied first when shared; the remembered hash
+    /// is dropped.
+    pub fn make_mut(&mut self) -> &mut Vec<u8> {
+        let inner = Arc::make_mut(&mut self.0);
+        inner.hash = OnceLock::new();
+        &mut inner.bytes
+    }
+
+    /// The bytes, copied only when shared.
+    pub fn into_vec(self) -> Vec<u8> {
+        match Arc::try_unwrap(self.0) {
+            Ok(inner) => inner.bytes,
+            Err(shared) => shared.bytes.clone(),
+        }
+    }
+}
+
+impl From<Vec<u8>> for AssetBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl std::ops::Deref for AssetBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0.bytes
+    }
+}
+
+impl AsRef<[u8]> for AssetBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.bytes
+    }
+}
+
+impl PartialEq for AssetBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.shares(other) || self.0.bytes == other.0.bytes
+    }
+}
+
+impl Eq for AssetBytes {}
+
+impl std::fmt::Debug for AssetBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AssetBytes({} bytes)", self.0.bytes.len())
+    }
+}
 
 impl Serialize for AssetBytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&base64_encode(&self.0))
+        s.serialize_str(&base64_encode(&self.0.bytes))
     }
 }
 
@@ -135,7 +225,7 @@ impl<'de> Deserialize<'de> for AssetBytes {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let text = String::deserialize(d)?;
         base64_decode(&text)
-            .map(Self)
+            .map(Self::new)
             .ok_or_else(|| serde::de::Error::custom("asset data must be standard base64"))
     }
 }
@@ -232,7 +322,13 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 representations,
                 implementations,
                 fields,
+                pin_rules: _,
+                marking,
+                review: _,
             } = component;
+            if let Some(marking) = marking {
+                marking_refs(marking, map)?;
+            }
             for r in representations {
                 let (id, revision) = exact(map, DefinitionKind::Symbol, r.id, r.revision)?;
                 *r = SymbolRef::new(id, revision);
@@ -290,7 +386,11 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 | PackageForm::Chip(_)
                 | PackageForm::GullWing(_)
                 | PackageForm::NoLead(_)
-                | PackageForm::Header(_) => {}
+                | PackageForm::Header(_)
+                | PackageForm::Tabbed(_)
+                | PackageForm::Molded(_)
+                | PackageForm::Grid(_)
+                | PackageForm::Tht(_) => {}
             }
             match model {
                 PackageModel::Envelope { material: _ } => {}
@@ -298,7 +398,19 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                     family_rev: _,
                     materials: GeneratedMaterials { roles: _ },
                 } => {}
-                PackageModel::Imported(ImportedModel {}) => {}
+                // D1: a library model names an exact Model revision, so
+                // `references` and `closure` carry the model with the
+                // package; the lead map names model leads and package
+                // terminals, which are local.
+                PackageModel::Library(library) => {
+                    let (id, revision) = exact(
+                        map,
+                        DefinitionKind::Model,
+                        library.model.id,
+                        library.model.revision,
+                    )?;
+                    library.model = crate::ids::ModelRef::new(id, revision);
+                }
             }
             let ModelPlacement {
                 translation: _,
@@ -387,7 +499,11 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 references: _,
                 offers: _,
                 provenance: _,
+                top_mark,
             } = part.as_mut();
+            if let Some(marking) = top_mark {
+                marking_refs(marking, map)?;
+            }
             let (id, revision) = exact(
                 map,
                 DefinitionKind::Component,
@@ -406,6 +522,31 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
                 *field = FieldRef::new(id, revision);
             }
+        }
+        // D1 / B1: models and rows name no other lineage (model assets are
+        // named by hash, `named_assets`).
+        Definition::Model(_) | Definition::PackageRow(_) => {}
+    }
+    Ok(())
+}
+
+/// The field references of a marking spec (D4). Artwork names an asset by
+/// hash, not a lineage.
+fn marking_refs(spec: &mut super::marking::MarkingSpec, map: &mut dyn RefMap) -> Result<()> {
+    use super::marking::MarkingItem;
+    for item in &mut spec.items {
+        let fields: Vec<&mut FieldRef> = match item {
+            MarkingItem::Code { field, .. } => vec![field],
+            MarkingItem::Bands { value, tolerance } => {
+                std::iter::once(value).chain(tolerance.as_mut()).collect()
+            }
+            MarkingItem::Text { .. }
+            | MarkingItem::Artwork { .. }
+            | MarkingItem::Polarity { .. } => Vec::new(),
+        };
+        for field in fields {
+            let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
+            *field = FieldRef::new(id, revision);
         }
     }
     Ok(())
@@ -555,13 +696,23 @@ fn closure_step(
 }
 
 /// Content hashes a body names: the attached copies of a Part's references,
-/// sorted and without repeats. A hash that is not 64 lower-case hex digits
-/// is `invalid_input`.
+/// a 3D model's asset and appearance pair (D1), and the SVG artwork of a
+/// component's marking or a Part's top mark (D4), sorted and without
+/// repeats. A hash that is not 64 lower-case hex digits is `invalid_input`.
 pub fn named_assets(definition: &Definition) -> Result<Vec<ContentHash>> {
+    if let Definition::Model(model) = definition {
+        let hashes: BTreeSet<ContentHash> = model.assets().map(|a| a.hash).collect();
+        return Ok(hashes.into_iter().collect());
+    }
+    if let Definition::Component(component) = definition {
+        let hashes: BTreeSet<ContentHash> =
+            component.marking.iter().flat_map(|m| m.artwork()).collect();
+        return Ok(hashes.into_iter().collect());
+    }
     let Definition::Part(part) = definition else {
         return Ok(Vec::new());
     };
-    let mut out = BTreeSet::new();
+    let mut out: BTreeSet<ContentHash> = part.top_mark.iter().flat_map(|m| m.artwork()).collect();
     for reference in &part.references {
         if let Some(text) = &reference.asset {
             let hash = ContentHash::parse(text).ok_or_else(|| {
@@ -973,7 +1124,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
     let mut encoded: usize = 0;
     for asset in assets {
         encoded = encoded
-            .checked_add(encoded_len(asset.data.0.len()))
+            .checked_add(encoded_len(asset.data.len()))
             .filter(|n| *n <= MAX_PACKED_BYTES)
             .ok_or_else(|| {
                 Error::Limit(format!(
@@ -981,7 +1132,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
                     MAX_PACKED_BYTES / (1024 * 1024)
                 ))
             })?;
-        if asset.data.0.len() > MAX_ASSET_BYTES {
+        if asset.data.len() > MAX_ASSET_BYTES {
             return Err(Error::Limit(format!(
                 "asset {} exceeds {MAX_ASSET_BYTES} bytes",
                 asset.hash
@@ -996,7 +1147,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
                 asset.hash
             )));
         }
-        if asset_hash(&asset.data.0) != asset.hash {
+        if asset.data.hash() != asset.hash {
             return Err(Error::Invalid(format!(
                 "asset {} does not match its content hash",
                 asset.hash
@@ -1023,7 +1174,8 @@ pub fn encoded_len(n: usize) -> usize {
 /// once, and project and source lineages correspond one to one (so import
 /// and promote always agree on where a lineage lives). A revision may have
 /// origins in several libraries (imported from one, promoted to another).
-/// Assets are well formed.
+/// Assets are well formed, and every 3D model's assets are packed and every
+/// package's library model resolves (`model3d::snapshot_problems`).
 pub fn validate_snapshot(library: &Library) -> Result<()> {
     let mut locals = BTreeSet::new();
     let mut sources = BTreeSet::new();
@@ -1064,7 +1216,9 @@ pub fn validate_snapshot(library: &Library) -> Result<()> {
             )));
         }
     }
-    validate_assets(&library.assets)
+    validate_assets(&library.assets)?;
+    super::model3d::snapshot_problems(library)?;
+    super::marking::snapshot_problems(library)
 }
 
 /// Advisory findings of the asset store (D7): `asset.missing` for each Part

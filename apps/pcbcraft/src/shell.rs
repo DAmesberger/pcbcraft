@@ -870,6 +870,17 @@ fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
 }
 
 pub fn icon_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {
+    icon_button_help(ui, icon, label, "", enabled)
+}
+
+/// An [`icon_button`] whose hover help adds `help` (lines) under its label.
+pub fn icon_button_help(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    help: &str,
+    enabled: bool,
+) -> Response {
     let t = Tokens::get();
     let (r, response) = ui.allocate_exact_size(
         vec2(t.control_height, t.control_height),
@@ -889,7 +900,14 @@ pub fn icon_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Respo
         if enabled { 1.0 } else { 0.35 },
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    response.on_hover_text(label)
+    if help.is_empty() {
+        response.on_hover_text(label)
+    } else {
+        response.on_hover_ui(|ui| {
+            ui.strong(label);
+            ui.label(help);
+        })
+    }
 }
 
 /// A floating card at `rect`: `header` draws its title band, `add` its

@@ -99,7 +99,20 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
             .ok_or_else(|| invalid("no span"))?;
         near(g.min[2], low);
         near(g.max[2], high);
-        near(g.volume(), 10.0 * 0.3 * (high - low));
+        let track = project
+            .tracks
+            .iter()
+            .find(|t| t.id == *id)
+            .ok_or_else(|| invalid("no track"))?;
+        let outline = track_outline(track.start, track.end, track.width);
+        let n = outline.len();
+        let area = (0..n)
+            .map(|i| {
+                outline[i][0] * outline[(i + 1) % n][1] - outline[(i + 1) % n][0] * outline[i][1]
+            })
+            .sum::<f64>()
+            / 2.0;
+        near(g.volume(), area * (high - low));
     }
     for id in vias {
         let source = model

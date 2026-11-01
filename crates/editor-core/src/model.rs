@@ -52,6 +52,17 @@ pub struct ComponentInstance {
     /// `instances`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part: Option<PartRef>,
+    /// C2: per-terminal pin configuration (pull, speed, initial level,
+    /// firmware name). Never changes function ERC directly;
+    /// pin rules may read it through `option(…)`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub pin_config: crate::functions::PinConfigs,
+    /// D4: the instance's marking choices.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::library::marking::InstanceMarking::is_default"
+    )]
+    pub marking: crate::library::marking::InstanceMarking,
 }
 
 /// One unit of one instance drawn on the sheet. Each (instance, unit) has at
@@ -72,12 +83,73 @@ pub struct SymbolOccurrence {
     pub mirror: bool,
 }
 
+/// A wire between two connection points. It is drawn as the
+/// horizontal-first route `schematic::wire_route` gives. Crossing another
+/// wire never connects; a wire joins another only through a shared
+/// [`Junction`] or terminal.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Wire {
     pub id: Id,
-    pub from: Endpoint,
-    pub to: Endpoint,
+    pub from: WireEnd,
+    pub to: WireEnd,
+}
+
+/// One end of a wire: an instance terminal or a junction. A terminal end is
+/// written as the terminal itself, `{"instance", "terminal"}`; a junction
+/// end as `{"junction"}`.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(untagged)]
+pub enum WireEnd {
+    Terminal(Endpoint),
+    Junction(JunctionRef),
+}
+
+/// A wire end on a junction.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
+pub struct JunctionRef {
+    pub junction: Id,
+}
+
+impl WireEnd {
+    pub fn junction(id: Id) -> Self {
+        Self::Junction(JunctionRef { junction: id })
+    }
+    /// The terminal this end lands on, if it is a terminal end.
+    pub fn terminal(self) -> Option<Endpoint> {
+        match self {
+            Self::Terminal(endpoint) => Some(endpoint),
+            Self::Junction(_) => None,
+        }
+    }
+    pub fn junction_id(self) -> Option<Id> {
+        match self {
+            Self::Terminal(_) => None,
+            Self::Junction(j) => Some(j.junction),
+        }
+    }
+}
+
+impl From<Endpoint> for WireEnd {
+    fn from(endpoint: Endpoint) -> Self {
+        Self::Terminal(endpoint)
+    }
+}
+
+/// A connection point on the sheet where wires meet away from a terminal:
+/// made where a wire end lands on another wire's segment. It carries
+/// connectivity, not drawing; the junction dot is derived where three or
+/// more conductors meet. A junction always has at least two wires.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Junction {
+    pub id: Id,
+    pub position: Point,
 }
 
 /// A persistent electrical net. Its ID survives renaming, unrelated edits and
@@ -200,6 +272,9 @@ pub struct Project {
     pub instances: Vec<ComponentInstance>,
     pub occurrences: Vec<SymbolOccurrence>,
     pub wires: Vec<Wire>,
+    /// Wire-to-wire connection points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub junctions: Vec<Junction>,
     /// Net IDs have their own allocation space, independent of object IDs.
     pub next_net: Id,
     pub nets: Vec<Net>,
@@ -228,6 +303,7 @@ impl Default for Project {
             instances: vec![],
             occurrences: vec![],
             wires: vec![],
+            junctions: vec![],
             next_net: 1,
             nets: vec![],
             placements: vec![],
@@ -273,11 +349,18 @@ impl Project {
             .iter()
             .filter(move |o| o.instance == instance)
     }
-    /// Wires with an endpoint on `terminal`.
-    pub fn wires_at(&self, terminal: Endpoint) -> impl Iterator<Item = &Wire> {
+    /// Wires with an end on `end` (a terminal or a junction).
+    pub fn wires_at(&self, end: impl Into<WireEnd>) -> impl Iterator<Item = &Wire> {
+        let end = end.into();
         self.wires
             .iter()
-            .filter(move |w| w.from == terminal || w.to == terminal)
+            .filter(move |w| w.from == end || w.to == end)
+    }
+    pub fn wire(&self, id: Id) -> Option<&Wire> {
+        self.wires.iter().find(|w| w.id == id)
+    }
+    pub fn junction(&self, id: Id) -> Option<&Junction> {
+        self.junctions.iter().find(|j| j.id == id)
     }
     pub fn placement_of(&self, instance: Id) -> Option<&Placement> {
         self.placements.iter().find(|p| p.instance == instance)

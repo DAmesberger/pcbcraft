@@ -1,7 +1,11 @@
 //! Solidcraft's GPU renderer and camera over cached geometry. Solidcraft's full
-//! navigation handler is private to its app, so this applies the same camera
-//! operations (middle-drag pan, right-drag orbit about the surface under the
-//! pointer, scroll zoom toward the pointer) directly.
+//! navigation handler is private to its app, so [`Viewport::navigate`]
+//! reproduces its default bindings (Fusion, two-finger panning on): two
+//! fingers pan, Shift+two fingers orbit, a pinch or the wheel zooms toward
+//! the point under the pointer, middle-drag pans, right-drag and Shift+middle
+//! orbit about the surface under the pointer, Space+drag pans, Cmd/Ctrl+drag
+//! on empty space orbits, the arrows turn the view and a middle double-click
+//! fits (see [`crate::navigation`]).
 //!
 //! The model is drawn through Solidcraft's PBR path with its opt-in product
 //! look (a studio environment reflected and lighting from all around, clear
@@ -108,8 +112,16 @@ pub struct Viewport {
     aspect: f64,
     /// Fit again once the view's shape is known (the next draw).
     fit_pending: bool,
-    /// The point a right-drag orbits about.
-    pivot: Option<Vec3>,
+    /// While an orbit runs: the point it turns about (none: the target).
+    pivot: Option<Option<Vec3>>,
+    /// Two-finger scrolling across frames.
+    trackpad: crate::navigation::Trackpad,
+    /// What the left button's drag does, chosen when it was pressed.
+    primary_nav: Option<NavMode>,
+    /// The right button is past being a click and orbits.
+    right_drag: bool,
+    /// The last click was the middle button's (a middle double-click fits).
+    middle_clicked: bool,
     /// The layers drawn and picked.
     layers: LayerView,
     /// Rigid display transform of the shown model (the Component 3D
@@ -194,6 +206,10 @@ impl Viewport {
             aspect: 1.6,
             fit_pending: false,
             pivot: None,
+            trackpad: Default::default(),
+            primary_nav: None,
+            right_drag: false,
+            middle_clicked: false,
             layers: LayerView::default(),
             display: pcbcraft_core::geometry::Transform3::IDENTITY,
             model_bounds: Self::initial_bounds(),
@@ -491,7 +507,7 @@ impl Viewport {
                 .highlight
                 .iter()
                 .filter(|(item, layer, _)| {
-                    self.highlighted.contains(item) && self.layers.visible(*layer)
+                    self.highlighted.contains(item) && self.layers.draws(*layer)
                 })
                 .map(|(_, _, block)| block.clone())
                 .collect();
@@ -643,8 +659,9 @@ impl Viewport {
         }
     }
 
-    /// Draw the view; `Some(pick)` when it was clicked.
-    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<Option<u64>> {
+    /// Draw the view; `Some(pick)` when it was clicked. `caps` says what
+    /// the left button and the keys may do to the camera there.
+    pub fn show(&mut self, ui: &mut egui::Ui, caps: NavCaps) -> Option<Option<u64>> {
         let (rect, response) =
             ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         if rect.width() < 1.0 || rect.height() < 1.0 {
@@ -662,37 +679,7 @@ impl Viewport {
                 .request_repaint_after(std::time::Duration::from_millis(16));
         }
         let local = |p: egui::Pos2| (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()));
-        if response.dragged_by(egui::PointerButton::Middle) {
-            let d = ui.input(|i| i.pointer.delta());
-            self.camera.pan(f64::from(d.x), f64::from(d.y), h);
-        }
-        if response.drag_started_by(egui::PointerButton::Secondary) {
-            self.pivot = ui.input(|i| i.pointer.press_origin()).and_then(|p| {
-                let (x, y) = local(p);
-                self.surface_point(x, y, w, h)
-            });
-        }
-        if response.dragged_by(egui::PointerButton::Secondary) {
-            let d = ui.input(|i| i.pointer.delta());
-            let (dx, dy) = (f64::from(d.x), f64::from(d.y));
-            match self.pivot {
-                Some(pivot) => self.camera.orbit_about(dx, dy, pivot),
-                None => self.camera.orbit(dx, dy),
-            }
-        }
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let anchor = response.hover_pos().and_then(|p| {
-                    let (x, y) = local(p);
-                    self.surface_point(x, y, w, h)
-                });
-                // Scrolling up zooms in, as in Solidcraft and the 2D
-                // canvases: the camera distance shrinks.
-                self.camera
-                    .zoom_at((-f64::from(scroll) * 0.002).exp(), anchor);
-            }
-        }
+        self.navigate(ui, rect, &response, caps);
         if self.shadow_view != Some(self.current_shadow_view()) {
             self.publish_shadows();
         }
@@ -708,12 +695,307 @@ impl Viewport {
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
         if response.clicked()
+            && self.primary_nav != Some(NavMode::Pan)
             && let Some(p) = response.interact_pointer_pos()
         {
             let (x, y) = local(p);
             return Some(self.pick(x, y, w, h));
         }
         None
+    }
+}
+
+/// What a camera drag does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavMode {
+    Pan,
+    Orbit,
+}
+
+/// What the left button and the keys may do to a 3D view's camera. The
+/// trackpad, the wheel, the middle and right buttons always navigate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NavCaps {
+    /// Space+drag pans and Cmd/Ctrl+drag on empty space orbits. Off where
+    /// the left button drags something of its own (the placement triad).
+    pub primary: bool,
+    /// The arrows turn the view and Cmd/Ctrl+arrows pan it. Off where the
+    /// arrows nudge something.
+    pub keys: bool,
+}
+
+impl NavCaps {
+    /// PCB 3D: everything navigates.
+    pub const BOARD: NavCaps = NavCaps {
+        primary: true,
+        keys: true,
+    };
+    /// Component 3D: the left button and the arrows place the model.
+    pub const PLACEMENT: NavCaps = NavCaps {
+        primary: false,
+        keys: false,
+    };
+}
+
+/// How far a tap of an arrow turns the view (degrees; Shift: a quarter turn).
+const KEY_TURN_DEGREES: f64 = 15.0;
+/// How far Cmd/Ctrl+arrow pans, as a share of the view's height.
+const KEY_PAN_SHARE: f32 = 0.1;
+
+impl Viewport {
+    /// The model point under a screen position of the view at `rect`.
+    fn surface_at(&self, rect: egui::Rect, p: egui::Pos2) -> Option<Vec3> {
+        self.surface_point(
+            f64::from(p.x - rect.left()),
+            f64::from(p.y - rect.top()),
+            f64::from(rect.width()),
+            f64::from(rect.height()),
+        )
+    }
+
+    /// Orbit by a pointer or finger motion about the surface point under
+    /// `at`, chosen when the orbit begins.
+    fn orbit_by(&mut self, rect: egui::Rect, d: egui::Vec2, at: Option<egui::Pos2>) {
+        let pivot = match self.pivot {
+            Some(pivot) => pivot,
+            None => {
+                let pivot = at.and_then(|p| self.surface_at(rect, p));
+                self.pivot = Some(pivot);
+                pivot
+            }
+        };
+        let (dx, dy) = (f64::from(d.x), f64::from(d.y));
+        match pivot {
+            Some(pivot) => self.camera.orbit_about(dx, dy, pivot),
+            None => self.camera.orbit(dx, dy),
+        }
+    }
+
+    /// One frame of camera input over the view at `rect` (Solidcraft's
+    /// `navigation::handle` with its default bindings).
+    fn navigate(
+        &mut self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        response: &egui::Response,
+        caps: NavCaps,
+    ) {
+        let h = f64::from(rect.height());
+        let wheel = self.trackpad.read(ui, true);
+        let (hover, mods, middle, secondary_down) = ui.input(|i| {
+            (
+                i.pointer.hover_pos(),
+                i.modifiers,
+                i.pointer.middle_down(),
+                i.pointer.secondary_down(),
+            )
+        });
+        let (primary_down, primary_pressed, primary_released) = ui.input(|i| {
+            (
+                i.pointer.primary_down(),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_released(),
+            )
+        });
+        let (delta, press, latest, could_click) = ui.input(|i| {
+            (
+                i.pointer.delta(),
+                i.pointer.press_origin(),
+                i.pointer.latest_pos(),
+                i.pointer.could_any_button_be_click(),
+            )
+        });
+        let inside = ui.is_enabled()
+            && response.contains_pointer()
+            && hover.is_some_and(|p| rect.contains(p));
+        let pressed_here = press.is_some_and(|p| rect.contains(p));
+        self.middle_double_click(ui, inside);
+        let mut orbiting = false;
+        // Pinch and the wheel zoom toward the point under the pointer; two
+        // fingers pan, and with Shift they orbit.
+        if inside && wheel.moves() {
+            let anchor = hover.and_then(|p| self.surface_at(rect, p));
+            if wheel.pinch != 1.0 {
+                self.camera.zoom_at(1.0 / f64::from(wheel.pinch), anchor);
+            }
+            if wheel.zoom != 0.0 {
+                let per_point = f64::from(crate::navigation::ZOOM_PER_POINT);
+                self.camera
+                    .zoom_at((-f64::from(wheel.zoom) * per_point).exp(), anchor);
+            }
+            if wheel.pan != egui::Vec2::ZERO {
+                self.camera
+                    .pan(f64::from(wheel.pan.x), f64::from(wheel.pan.y), h);
+            }
+            if wheel.orbit != egui::Vec2::ZERO {
+                self.orbit_by(rect, wheel.orbit, hover);
+                orbiting = true;
+            }
+        }
+        // A left press with Space held pans, and with Cmd/Ctrl on empty
+        // space orbits, until the button is let go (kept through the release
+        // frame, so the end of the drag selects nothing). A Cmd/Ctrl+click
+        // that does not move still selects.
+        let typing = ui.ctx().egui_wants_keyboard_input();
+        let space = caps.primary && !typing && ui.input(|i| i.key_down(egui::Key::Space));
+        if primary_pressed && inside {
+            let command = (mods.command || mods.ctrl) && !mods.shift && !mods.alt;
+            let empty = |viewport: &Self| {
+                press.is_some_and(|p| {
+                    let (x, y) = (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()));
+                    viewport.pick(x, y, f64::from(rect.width()), h).is_none()
+                })
+            };
+            self.primary_nav = if space {
+                Some(NavMode::Pan)
+            } else if caps.primary && command && empty(self) {
+                Some(NavMode::Orbit)
+            } else {
+                None
+            };
+        } else if !primary_down && !primary_released {
+            self.primary_nav = None;
+        }
+        if space && (inside || primary_down) {
+            ui.ctx().set_cursor_icon(if primary_down {
+                egui::CursorIcon::Grabbing
+            } else {
+                egui::CursorIcon::Grab
+            });
+        }
+        // The right button also clicks, so it orbits only once the press can
+        // no longer be one; that frame catches up with the whole way from
+        // the press.
+        let right_drag = secondary_down && pressed_here && !could_click;
+        let delta = match (press, latest) {
+            (Some(from), Some(to)) if right_drag && !self.right_drag && !middle => to - from,
+            _ => delta,
+        };
+        self.right_drag = right_drag;
+        let mode = if middle && pressed_here {
+            let shift = mods.shift && !mods.command && !mods.ctrl && !mods.alt;
+            Some(if shift { NavMode::Orbit } else { NavMode::Pan })
+        } else if right_drag {
+            Some(NavMode::Orbit)
+        } else if primary_down && pressed_here {
+            if space {
+                Some(NavMode::Pan)
+            } else {
+                self.primary_nav
+            }
+        } else {
+            None
+        };
+        if delta.is_finite() && delta != egui::Vec2::ZERO {
+            match mode {
+                Some(NavMode::Pan) => self.camera.pan(f64::from(delta.x), f64::from(delta.y), h),
+                Some(NavMode::Orbit) => self.orbit_by(rect, delta, press),
+                None => {}
+            }
+        }
+        orbiting |= mode == Some(NavMode::Orbit);
+        if !orbiting && !self.trackpad.in_gesture() {
+            self.pivot = None;
+        }
+        if caps.keys && inside {
+            self.view_keys(ui, rect);
+        }
+        if !self.camera.is_valid() {
+            self.camera = Camera {
+                fov: FIELD_OF_VIEW,
+                ..Camera::default()
+            };
+            self.fit();
+        }
+    }
+
+    /// A middle-button double-click fits the view. Only clicks count: a
+    /// press that moved (a pan) is not one, and both clicks must be the
+    /// middle button's.
+    fn middle_double_click(&mut self, ui: &egui::Ui, inside: bool) {
+        use egui::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
+        let (double, releases, middle, other, dragging) = ui.input(|i| {
+            (
+                i.pointer.button_double_clicked(Middle),
+                i.events
+                    .iter()
+                    .filter(|e| {
+                        matches!(
+                            e,
+                            egui::Event::PointerButton {
+                                button: Middle,
+                                pressed: false,
+                                ..
+                            }
+                        )
+                    })
+                    .count(),
+                i.pointer.button_clicked(Middle),
+                [Primary, Secondary, Extra1, Extra2]
+                    .into_iter()
+                    .any(|b| i.pointer.button_clicked(b)),
+                i.pointer.is_decidedly_dragging(),
+            )
+        });
+        let go = double && inside && !other && (self.middle_clicked || releases >= 2);
+        self.middle_clicked = !(other || dragging || go) && (middle || self.middle_clicked);
+        if go {
+            self.fit();
+        }
+    }
+
+    /// The view keys while the pointer is over the view and nothing else
+    /// has the keyboard: an arrow turns the view 15° (Shift: a quarter
+    /// turn), Cmd/Ctrl+arrow pans it a tenth of its height.
+    fn view_keys(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        let ctx = ui.ctx();
+        if ctx.egui_wants_keyboard_input()
+            || ctx.memory(|m| m.focused().is_some())
+            || ctx.any_popup_open()
+        {
+            return;
+        }
+        let keys: Vec<(egui::Key, egui::Modifiers)> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (key, mods) in keys {
+            if mods.alt {
+                continue;
+            }
+            let (dx, dy) = match key {
+                egui::Key::ArrowLeft => (-1.0, 0.0),
+                egui::Key::ArrowRight => (1.0, 0.0),
+                egui::Key::ArrowUp => (0.0, -1.0),
+                egui::Key::ArrowDown => (0.0, 1.0),
+                _ => continue,
+            };
+            if mods.command || mods.ctrl {
+                // The model moves with the arrow, as under a pan drag.
+                let step = rect.height() * KEY_PAN_SHARE;
+                self.camera.pan(
+                    f64::from(dx * step),
+                    f64::from(dy * step),
+                    f64::from(rect.height()),
+                );
+            } else {
+                let degrees = if mods.shift { 90.0 } else { KEY_TURN_DEGREES };
+                let (sin, cos) = f64::to_radians(degrees).sin_cos();
+                let (right, up, back) = self.camera.basis();
+                let toward = right * f64::from(dx) - up * f64::from(dy);
+                self.camera = self.camera.looking_from(back * cos + toward * sin);
+            }
+        }
     }
 }
 
@@ -741,6 +1023,8 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 }
 
 mod display;
+#[cfg(test)]
+mod navigation_tests;
 #[cfg(test)]
 mod pictures;
 

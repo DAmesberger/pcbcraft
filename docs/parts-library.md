@@ -1,6 +1,6 @@
 # Parts library
 
-Design, decisions and slice plan, 30 October 2026. Condensed from the reviewed design proposal. **Slice S1 is implemented** (see [S1 as built](#s1-as-built)). **Slice S2 is implemented** (see [S2 as built](#s2-as-built)). **Slice S3 is implemented** (see [S3 as built](#s3-as-built)); S4–S5 are plans. Every estimate and performance figure is labelled a target, an estimate or a measurement. Nothing here is legal advice.
+Design, decisions and slice plan, 30 October 2026. Condensed from the reviewed design proposal. **Slice S1 is implemented** (see [S1 as built](#s1-as-built)). **Slice S2 is implemented** (see [S2 as built](#s2-as-built)). **Slice S3 is implemented** (see [S3 as built](#s3-as-built)); S4–S5 are plans. Package rows, the Model kind and pin data were added on 1 November 2026 (see [package rows, pin functions and 3D models](#package-rows-pin-functions-and-3d-models)). Every estimate and performance figure is labelled a target, an estimate or a measurement. Nothing here is legal advice.
 
 ## Summary
 
@@ -27,6 +27,7 @@ A Library row is a **lineage**: one identity with many immutable revisions.
 
 - **Component lineage** (exists): the generic electrical interface with its symbols and bindings.
 - **Package and footprint variants** (exist).
+- **Package row** and **Model** (exist): a cited package form a template builds from, and a 3D model file shared by packages; both are revisioned kinds published before packages.
 - **`Part`** (S2): a revisioned lineage holding the manufacturer, the complete MPN, a pinned `ComponentRef` and `BindingRef`, rated specs as typed field values with a comparison meaning, references and provenance. The publish cascade grows to footprint → binding → component → Part. An instance's `PartRef` must agree with its own component and physical choice; a component update that leaves a Part pinned to the old revision raises a finding and an update choice and is never re-pointed silently. An "atomic part" in other tools is a component plus exactly one Part.
 - **Reference** (S2): datasheet or application note link with stable local ID, kind, title, URL, optional document revision, optional asset hash, licence and provenance. A link is not a copy.
 - **Distributor offer** (S2): distributor name, SKU, product URL, optional packaging. No price or stock.
@@ -50,14 +51,14 @@ A Library row is a **lineage**: one identity with many immutable revisions.
 | D4 | No built-in category tree: shelves, tags and data-derived facets; at most ten original starter shelves | Default, revisit if needed |
 | D5 | **Generic and exact parts.** `Part` is its own lineage pinning a component and a binding; the longer cascade is accepted. Atomic = component + one Part. | **Decided** |
 | D6 | Generic symbol reuse by `library.duplicate` with origin now; true shared symbols later | Default, revisit if needed |
-| D7 | Asset bytes for offline reopen: **packed into the project file by content hash** (`Library.assets`); a folder stores them under `assets/sha256/<hash>` | **Decided** |
+| D7 | Asset bytes for offline reopen: **packed into the project file by content hash** (`Library.assets`); a folder stores them under `assets/sha256/<hash>`, and the `.pcbcraft` ZIP container does the same (64 MiB per asset, 512 MiB per project; [D0](component-model.md#3d-model-library-project-container-and-markings-d0d6-as-built)). Library models (3D) are a revisioned kind whose files are packed assets | **Decided** |
 | D8 | The library appears first in the Place palette and Browser (S1); the Library workspace follows (S4) | Default, revisit if needed |
 | D9 | **Supplier connectors come after the first edition.** Files store only identity the user chose: manufacturer, MPN, distributor, SKU, link. Specs are authored from the manufacturer's datasheet. | **Decided** |
 | D10 | Lifecycle: authored or user-CSV observations with date and source; obsolete parts hidden in Place by default and counted as "N hidden" | Default, revisit if needed |
 | D11 | Alternates and approval deferred; the model leaves room for an ordered Part list per BOM line | Default, revisit if needed |
 | D13 | Shelves and tags live with the owning source (folder `catalog.json`, project label map); not revisioned, never copied into projects | Default, revisit if needed |
 
-**Open question O1:** where library-folder items are authored. Proposed: author in a project (the design or a scratch "library project"), promote to a folder, and open folder items as an import into a scratch project. A library-only document type is the larger alternative.
+**O1 (closed by decision F4):** library-folder items are authored in a project and promoted to a folder; a folder item opens read-only as an import into a scratch engine, and Edit a copy in this project drafts it (`library.edit_copy`). No library-only document type.
 
 Engineering defaults (not founder decisions): a JSON index per source in the user cache directory (SQLite only if measurement demands it), `MAX_*` bounds and the ranking tiers below.
 
@@ -92,6 +93,14 @@ Equal inputs always give the same order, whatever the entry order. Hidden entrie
 | S5 — Connectors (after the first edition) | `pcbcraft-catalog-net` with a policy table and one per-user-key supplier; nothing from a supplier enters a project, folder or index | D9 | ~2 weeks (estimate) |
 
 Supplier terms reviewed for S5 forbid redistributing data or building a database from it, several cap caching at 24–48 h, and one could not be verified; re-check the live terms before building, and keys stay per user.
+
+## Package rows, pin functions and 3D models
+
+1 November 2026. The catalog, templates, pin functions and 3D library work ([integration](component-model.md#catalog-templates-pin-functions-and-3d-library-integration)) adds two library kinds and pin data, all ordinary revisioned definitions that bundles, imports and the D1 ref rewrite carry like the rest:
+
+- **Package rows** (`PackageRowDefinition`): one typed package form of one of eight families, with aliases, a size code, optional cited lands and a per-row citation or none (*estimated*). `library.templates` searches project rows, every loaded source's rows, 196 built-in starter rows and each family's custom entry with `pins:`, `pitch:`, `body:` and the size-code rule. A folder row is read with its bundle and carried inline; a row is never resolved through a folder after the build ([libui as built](component-model.md#component-workspace-catalog-and-package-templates-libui-as-built)).
+- **Models** (`ModelDefinition`): a GLB, STEP or `.solidcraft` asset packed by hash, its frame, bodies mapped to materials, lead tags and licence. `library.models` searches them with the generated families and ranks by fit to a package; a package names an exact revision with an explicit lead map ([D0–D6 as built](component-model.md#3d-model-library-project-container-and-markings-d0d6-as-built)). Its redistribution field travels with the model into folders.
+- **Pin data** on components (peripherals with kinds and signals, mux codes, GPIO, pin options and Rhai pin rules) is part of the component revision, so it is part of snapshot identity and of the impact preview of a library update; per-instance pin configuration is carried through updates and an update lists the configurations it drops ([pins as built](component-model.md#pin-functions-peripherals-rules-pinout-import-and-firmware-c1c7-as-built)).
 
 ## S3 as built
 

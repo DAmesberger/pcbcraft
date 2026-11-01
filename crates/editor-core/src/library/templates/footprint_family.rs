@@ -38,7 +38,17 @@ use crate::library::footprint_source::{
 };
 use crate::library::graphics::{DrawingLayer, Fill, Polarity, Side};
 use schemars::JsonSchema;
+
+pub mod grid;
+pub mod molded;
+pub mod tabbed;
+pub mod tht;
+
+pub use grid::GridTemplate;
+pub use molded::MoldedTemplate;
 use serde::{Deserialize, Serialize};
+pub use tabbed::TabbedTemplate;
+pub use tht::ThtTemplate;
 
 /// The courtyard excess a template's `Derived` courtyard role uses unless
 /// the author changes its parameter, in mm (estimated default).
@@ -70,10 +80,38 @@ pub enum TemplateKind {
     Qfn,
     /// Through-hole pin header or DIP.
     PinHeader,
+    /// B2a: SOT / DPAK.
+    Tabbed,
+    /// B2b: SOD / SMA / tantalum / MELF.
+    Molded,
+    /// B2c: BGA / LGA / WLCSP.
+    Grid,
+    /// B2d: axial, radial, DIP, TO.
+    Tht,
 }
 
 impl TemplateKind {
-    pub const ALL: [Self; 4] = [Self::Chip, Self::GullWing, Self::Qfn, Self::PinHeader];
+    pub const ALL: [Self; 8] = [
+        Self::Chip,
+        Self::GullWing,
+        Self::Qfn,
+        Self::PinHeader,
+        Self::Tabbed,
+        Self::Molded,
+        Self::Grid,
+        Self::Tht,
+    ];
+
+    /// Whether the family's template is built; pickers list only these.
+    pub fn available(self) -> bool {
+        match self {
+            Self::Chip | Self::GullWing | Self::Qfn | Self::PinHeader => true,
+            Self::Tabbed => tabbed::AVAILABLE,
+            Self::Molded => molded::AVAILABLE,
+            Self::Grid => grid::AVAILABLE,
+            Self::Tht => tht::AVAILABLE,
+        }
+    }
 
     /// The picker label.
     pub fn label(self) -> &'static str {
@@ -82,6 +120,10 @@ impl TemplateKind {
             Self::GullWing => "SOIC / SOP",
             Self::Qfn => "QFN / DFN",
             Self::PinHeader => "Pin header",
+            Self::Tabbed => "SOT / DPAK",
+            Self::Molded => "SOD / SMA / MELF",
+            Self::Grid => "BGA / LGA",
+            Self::Tht => "Through-hole",
         }
     }
 }
@@ -194,6 +236,10 @@ pub enum FootprintTemplate {
     GullWing(GullWingTemplate),
     Qfn(QfnTemplate),
     PinHeader(HeaderTemplate),
+    Tabbed(TabbedTemplate),
+    Molded(MoldedTemplate),
+    Grid(GridTemplate),
+    Tht(ThtTemplate),
 }
 
 fn e(text: &str) -> Expr {
@@ -221,6 +267,10 @@ impl FootprintTemplate {
             Self::GullWing(_) => TemplateKind::GullWing,
             Self::Qfn(_) => TemplateKind::Qfn,
             Self::PinHeader(_) => TemplateKind::PinHeader,
+            Self::Tabbed(_) => TemplateKind::Tabbed,
+            Self::Molded(_) => TemplateKind::Molded,
+            Self::Grid(_) => TemplateKind::Grid,
+            Self::Tht(_) => TemplateKind::Tht,
         }
     }
 
@@ -309,6 +359,10 @@ impl FootprintTemplate {
                 numbering: NumberingScheme::Sequential,
                 square_pin1: true,
             }),
+            TemplateKind::Tabbed => Self::Tabbed(TabbedTemplate::defaults(package)),
+            TemplateKind::Molded => Self::Molded(MoldedTemplate::defaults(package)),
+            TemplateKind::Grid => Self::Grid(GridTemplate::defaults(package)),
+            TemplateKind::Tht => Self::Tht(ThtTemplate::defaults(package)),
         }
     }
 
@@ -351,6 +405,10 @@ impl FootprintTemplate {
                 &t.drill,
                 &t.land,
             ],
+            Self::Tabbed(t) => t.exprs(),
+            Self::Molded(t) => t.exprs(),
+            Self::Grid(t) => t.exprs(),
+            Self::Tht(t) => t.exprs(),
         }
     }
 
@@ -416,12 +474,20 @@ pub fn build(
         FootprintTemplate::GullWing(t) => gull_wing(&mut b, t)?,
         FootprintTemplate::Qfn(t) => qfn(&mut b, t)?,
         FootprintTemplate::PinHeader(t) => header(&mut b, t)?,
+        FootprintTemplate::Tabbed(t) => tabbed::build(&mut b, t)?,
+        FootprintTemplate::Molded(t) => molded::build(&mut b, t)?,
+        FootprintTemplate::Grid(t) => grid::build(&mut b, t)?,
+        FootprintTemplate::Tht(t) => tht::build(&mut b, t)?,
     };
     let excess = match template {
         FootprintTemplate::Chip(t) => t.courtyard_excess.clone(),
         FootprintTemplate::GullWing(t) => t.courtyard_excess.clone(),
         FootprintTemplate::Qfn(t) => t.courtyard_excess.clone(),
         FootprintTemplate::PinHeader(_) => e(TEMPLATE_COURTYARD_EXCESS),
+        FootprintTemplate::Tabbed(t) => t.courtyard_excess.clone(),
+        FootprintTemplate::Molded(t) => t.courtyard_excess.clone(),
+        FootprintTemplate::Grid(t) => t.courtyard_excess.clone(),
+        FootprintTemplate::Tht(t) => t.courtyard_excess.clone(),
     };
     let mut last = vec![param("courtyard_excess", excess, ParamUnit::Mm)];
     last.extend(derived_roles());

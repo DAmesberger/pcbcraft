@@ -6,6 +6,7 @@
 //! there are no migrations. Any other version is refused, never guessed at.
 use crate::diagnostics::{Error, Result};
 use crate::library::Drafts;
+use crate::library::bundle::AssetBytes;
 use crate::model::{Document, Project};
 use crate::validate;
 use schemars::JsonSchema;
@@ -16,6 +17,59 @@ use std::sync::Arc;
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub const FILE_VERSION: u32 = 1;
 pub const EXTENSION: &str = "pcbcraft";
+
+/// The `.pcbcraft` file is a ZIP container (D0, founder decision F5). It
+/// holds [`CONTAINER_DOCUMENT`], the editor file with every packed asset's
+/// bytes left out, and one raw entry per asset at
+/// [`CONTAINER_ASSET_PREFIX`]`<sha256>`. Recovery snapshots use the same
+/// container with one more entry, [`CONTAINER_RECOVERY`]. Nothing else may
+/// appear in a container: an unknown entry is refused, never dropped.
+pub const CONTAINER_DOCUMENT: &str = "project.json";
+pub const CONTAINER_ASSET_PREFIX: &str = "assets/sha256/";
+/// The recovery metadata entry of a recovery snapshot.
+pub const CONTAINER_RECOVERY: &str = "recovery.json";
+/// Bytes of one container asset (target).
+pub const CONTAINER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+/// Bytes of one container, uncompressed (target).
+pub const CONTAINER_MAX_BYTES: u64 = 512 * 1024 * 1024;
+/// Entries one container holds.
+pub const CONTAINER_MAX_ENTRIES: usize = 4096;
+/// Bytes of the recovery metadata entry.
+pub const CONTAINER_MAX_RECOVERY_BYTES: usize = 64 * 1024;
+const _: () = assert!(crate::library::bundle::MAX_ASSETS + 2 <= CONTAINER_MAX_ENTRIES);
+
+/// Validate `file` and encode the container's document: the editor file
+/// with every packed asset's bytes empty, since each asset is an entry of
+/// its own. The document stays bounded by [`MAX_FILE_BYTES`].
+pub fn encode_container_document(file: &EditorFile) -> Result<Vec<u8>> {
+    file.validate()?;
+    let mut stripped = file.clone();
+    for asset in &mut stripped.project.library.assets {
+        asset.data = AssetBytes::default();
+    }
+    encode_bounded(&stripped)
+}
+
+/// Parse the container's document, refusing any other format version. It
+/// is not validated: its packed assets have no bytes until the container's
+/// asset entries fill them in, after which the caller validates the whole
+/// file. A document that carries asset bytes inline is refused.
+pub fn decode_container_document(bytes: &[u8]) -> Result<EditorFile> {
+    let file = parse_versioned(bytes)?;
+    if let Some(asset) = file
+        .project
+        .library
+        .assets
+        .iter()
+        .find(|a| !a.data.is_empty())
+    {
+        return Err(Error::Invalid(format!(
+            "{CONTAINER_DOCUMENT} carries the bytes of asset {} inline; asset bytes belong in {CONTAINER_ASSET_PREFIX}{}",
+            asset.hash, asset.hash
+        )));
+    }
+    Ok(file)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -53,6 +107,13 @@ impl EditorFile {
 
 /// Parse and validate a document of the current format version.
 pub fn decode(bytes: &[u8]) -> Result<EditorFile> {
+    let file = parse_versioned(bytes)?;
+    file.validate()?;
+    Ok(file)
+}
+
+/// Parse a bounded document of the current format version, unvalidated.
+fn parse_versioned(bytes: &[u8]) -> Result<EditorFile> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(Error::Limit("editor file exceeds 16 MiB".into()));
     }
@@ -66,9 +127,7 @@ pub fn decode(bytes: &[u8]) -> Result<EditorFile> {
             "unsupported editor file version {version}; this build reads version {FILE_VERSION}"
         )));
     }
-    let file: EditorFile = serde_json::from_value(value)?;
-    file.validate()?;
-    Ok(file)
+    Ok(serde_json::from_value(value)?)
 }
 
 /// Validate and serialize a document.

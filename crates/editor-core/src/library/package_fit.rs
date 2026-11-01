@@ -320,6 +320,13 @@ fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
             0.0,
             h.body_height,
         ),
+        PackageForm::Tabbed(_)
+        | PackageForm::Molded(_)
+        | PackageForm::Grid(_)
+        | PackageForm::Tht(_) => {
+            let s = package.form.envelope().unwrap_or(package.envelope);
+            centred(s[0], s[1], 0.0, s[2])
+        }
     }
 }
 

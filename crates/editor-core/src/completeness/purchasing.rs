@@ -318,7 +318,7 @@ pub fn resolve_groups(project: &Project) -> Result<ResolveReport> {
 /// Reserved catalog filter keys. They mirror `catalog::RESERVED`, which this
 /// module may not name; a catalog test keeps the two equal.
 const RESERVED_KEYS: &[&str] = &[
-    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life",
+    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life", "pins", "pitch", "body",
 ];
 /// Terms and bytes of one catalog query (`catalog::MAX_TERMS`, `MAX_QUERY`).
 const QUERY_TERMS: usize = 16;

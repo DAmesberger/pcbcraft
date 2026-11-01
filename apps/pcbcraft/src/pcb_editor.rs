@@ -35,6 +35,8 @@ use std::collections::BTreeSet;
 
 mod board_card;
 mod placement_card;
+#[cfg(test)]
+mod raster_tests;
 mod route_card;
 mod track_card;
 mod via_card;
@@ -68,6 +70,8 @@ struct Layers {
     silk_top: bool,
     silk_bottom: bool,
     courtyard: bool,
+    /// The assembly drawing; hidden by default, since its outline and
+    /// designator repeat the silkscreen's in the same place.
     assembly: bool,
     holes: bool,
 }
@@ -82,7 +86,7 @@ impl Default for Layers {
             silk_top: true,
             silk_bottom: true,
             courtyard: true,
-            assembly: true,
+            assembly: false,
             holes: true,
         }
     }
@@ -266,6 +270,8 @@ struct DragAirwires {
 }
 
 pub struct PcbEditor {
+    /// Two-finger scrolling across frames.
+    trackpad: crate::navigation::Trackpad,
     view_3d: bool,
     tool: Tool,
     instance: Option<Id>,
@@ -347,6 +353,7 @@ pub struct PcbEditor {
 impl Default for PcbEditor {
     fn default() -> Self {
         Self {
+            trackpad: Default::default(),
             view_3d: false,
             tool: Tool::Select,
             instance: None,
@@ -1036,12 +1043,13 @@ impl PcbEditor {
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
-        if response.hovered() {
-            // Scroll, or a pinch (and Ctrl+scroll), zooms about the hovered
-            // board point: it stays under the cursor.
-            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch)
-                .clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
+        // The wheel, or a pinch (and Cmd/Ctrl+wheel), zooms about the
+        // hovered board point: it stays under the cursor. Two fingers pan.
+        let wheel = self.trackpad.read(ui, false);
+        if response.contains_pointer() && wheel.moves() {
+            self.pan += wheel.pan;
+            let zoom =
+                (self.zoom * wheel.scale_factor()).clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
             if zoom != self.zoom
                 && let Some(p) = response.hover_pos()
             {
@@ -1199,8 +1207,14 @@ impl PcbEditor {
                 .unwrap_or_else(|| self.route_point(at, scale));
             let width = (self.width as f32 * scale).max(1.0);
             let leg = |from: Point, to: Point, layer: CopperLayer| {
-                let color = crate::palette::board().copper_layer(layer);
-                painter.line_segment([screen(from), screen(to)], Stroke::new(width, color));
+                // The copper the segment will add: round caps, opaque.
+                let color =
+                    BoardInk::get().on_board(crate::palette::board().copper_layer(layer), 1.0);
+                painter.add(Shape::convex_polygon(
+                    capsule(screen(from), screen(to), width / 2.0),
+                    color,
+                    Stroke::NONE,
+                ));
                 painter.line_segment(
                     [screen(from), screen(to)],
                     Stroke::new(1.0, t.body_selected),
@@ -1400,7 +1414,7 @@ impl PcbEditor {
                     .rev()
                     .find(|t| {
                         layers.copper_layer(t.layer)
-                            && (layout::point_in_polygon(at, &layout::track_polygon(t))
+                            && (layout::track_contains(t, at, 0.0)
                                 || t.start == position
                                 || t.end == position)
                     })
@@ -1447,8 +1461,7 @@ impl PcbEditor {
             let (id, net) = (via.id, via.net);
             self.select_via(id, Some(net));
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
-            layers.copper_layer(track.layer)
-                && layout::point_in_polygon(at, &layout::track_polygon(track))
+            layers.copper_layer(track.layer) && layout::track_contains(track, at, 0.0)
         }) {
             self.set_selection(None, Some(track.id), Some(track.net));
         } else {
@@ -1521,7 +1534,7 @@ impl PcbEditor {
         ];
         painter.add(Shape::convex_polygon(
             board.map(screen).to_vec(),
-            t.panel.gamma_multiply(0.35),
+            ink.board,
             Stroke::new(1.5, t.body_edge),
         ));
         let grid_step = if scale < 6.0 { 5 } else { 1 };
@@ -1561,7 +1574,7 @@ impl PcbEditor {
         let routing_inner =
             (self.tool == Tool::Route && self.layer.side().is_none()).then_some(self.layer);
         for layer in &inner {
-            self.paint_tracks(painter, view, project, *layer, 0.6);
+            self.paint_tracks(painter, view, project, *layer, INNER_SHADE);
         }
         let assembly = |l: BoardDrawing| matches!(l, BoardDrawing::Assembly(_));
         self.paint_drawings(painter, view, &ink, near, false, assembly);
@@ -1678,15 +1691,15 @@ impl PcbEditor {
         side: Option<Layer>,
         dim: bool,
     ) {
-        let shade = |c: Color32| if dim { c.gamma_multiply(0.45) } else { c };
+        let ink = BoardInk::get();
+        let factor = if dim { FAR_SHADE } else { 1.0 };
+        let shade = |c: Color32| ink.on_board(c, factor);
         if let Some(layer) = side {
             if !self.layers.copper(layer) {
                 return;
             }
-            let factor = if dim { 0.45 } else { 1.0 };
             self.paint_tracks(painter, view, project, layer.into(), factor);
         }
-        let ink = BoardInk::get();
         for pad in &self.board_pads {
             let placed = &pad.placed;
             let through = placed.pad.kind.through_hole();
@@ -1732,8 +1745,11 @@ impl PcbEditor {
         }
     }
 
-    /// The tracks on one copper layer in its colour, times `shade`; the
-    /// selected track and the highlighted net in the selection colour.
+    /// The tracks on one copper layer in its colour, `shade` of the way
+    /// from the board; the selected track and the highlighted net in the
+    /// selection colour. Each track is its round-capped copper outline
+    /// ([`layout::track_shape`]) in an opaque colour, so joins at any
+    /// angle are seamless and overlapping copper of a layer reads as one.
     fn paint_tracks(
         &self,
         painter: &egui::Painter,
@@ -1746,22 +1762,18 @@ impl PcbEditor {
             return;
         }
         let colors = crate::palette::board();
+        let ink = BoardInk::get();
+        let plain = ink.on_board(colors.copper_layer(layer), shade);
+        let selected = ink.on_board(colors.selected, shade);
         for track in project.tracks.iter().filter(|t| t.layer == layer) {
-            let selected = self.track == Some(track.id) || self.highlighted == Some(track.net);
-            let color = if selected {
-                colors.selected
-            } else {
-                colors.copper_layer(layer)
-            };
+            let chosen = self.track == Some(track.id) || self.highlighted == Some(track.net);
             painter.add(Shape::convex_polygon(
-                layout::track_polygon(track)
-                    .map(|p| view.screen(p))
-                    .to_vec(),
-                if shade < 1.0 {
-                    color.gamma_multiply(shade)
-                } else {
-                    color
-                },
+                capsule(
+                    view.screen(track.start),
+                    view.screen(track.end),
+                    track.width as f32 * view.view.scale / 2.0,
+                ),
+                if chosen { selected } else { plain },
                 Stroke::NONE,
             ));
         }
@@ -1794,9 +1806,19 @@ impl PcbEditor {
             let outer = (via.diameter as f32 * scale / 2.0).max(2.5);
             let drill = (via.drill as f32 * scale / 2.0).max(1.0).min(outer - 0.5);
             if via.tented {
-                painter.circle(at, outer, ring.gamma_multiply(0.55), Stroke::new(1.0, ring));
+                painter.circle(
+                    at,
+                    outer,
+                    ink.on_board(ring, TENTED_SHADE),
+                    Stroke::new(1.0, ink.on_board(ring, 1.0)),
+                );
             } else {
-                painter.circle(at, outer, ring, Stroke::new(1.0, ink.unplated));
+                painter.circle(
+                    at,
+                    outer,
+                    ink.on_board(ring, 1.0),
+                    Stroke::new(1.0, ink.unplated),
+                );
             }
             painter.circle(at, drill, ink.drill, Stroke::new(0.75, ink.plated));
         }
@@ -1866,7 +1888,7 @@ impl PcbEditor {
                 }
             };
             if dim {
-                color = color.gamma_multiply(0.45);
+                color = ink.on_board(color, FAR_SHADE);
             }
             let delta = self.drag_delta(graphic.instance);
             match &graphic.item {
@@ -1913,13 +1935,90 @@ struct BoardInk {
     unplated: Color32,
     /// A plated barrel's edge.
     plated: Color32,
+    /// The bare board, opaque: copper colours are mixed over it.
+    board: Color32,
+}
+
+/// How much of its colour the far side's copper keeps over the board.
+const FAR_SHADE: f32 = 0.45;
+/// Inner layers' share, unless Route draws on one.
+const INNER_SHADE: f32 = 0.6;
+/// A tented via's ring under its mask.
+const TENTED_SHADE: f32 = 0.55;
+
+/// `top` (premultiplied, maybe translucent) composited over opaque `under`.
+fn over(under: Color32, top: Color32) -> Color32 {
+    let keep = 1.0 - f32::from(top.a()) / 255.0;
+    let mix = |t: u8, u: u8| {
+        (f32::from(t) + f32::from(u) * keep)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(
+        mix(top.r(), under.r()),
+        mix(top.g(), under.g()),
+        mix(top.b(), under.b()),
+    )
+}
+
+/// The opaque colour `share` of the way from `under` to `color`.
+fn mixed(under: Color32, color: Color32, share: f32) -> Color32 {
+    let color = over(under, color);
+    let share = share.clamp(0.0, 1.0);
+    let mix = |c: u8, u: u8| {
+        (f32::from(u) + (f32::from(c) - f32::from(u)) * share)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(
+        mix(color.r(), under.r()),
+        mix(color.g(), under.g()),
+        mix(color.b(), under.b()),
+    )
+}
+
+/// The outline of a round-capped stroke from `a` to `b` of `radius`
+/// points, in screen space: each cap's chords stay within a quarter point
+/// of the true arc. A zero-length stroke is a disc.
+fn capsule(a: Pos2, b: Pos2, radius: f32) -> Vec<Pos2> {
+    let radius = radius.max(0.5);
+    let d = b - a;
+    let length = d.length();
+    let u = if length > 1e-4 {
+        d / length
+    } else {
+        egui::vec2(1.0, 0.0)
+    };
+    // Chord error r·(1 − cos(step / 2)) ≤ ¼ point.
+    let step = (1.0 - (0.25 / radius).min(1.0)).acos() * 2.0;
+    let chords = (std::f32::consts::PI / step.max(1e-3))
+        .ceil()
+        .clamp(2.0, 64.0) as usize;
+    let mut out = Vec::with_capacity(2 * chords + 2);
+    for (center, toward) in [(b, u), (a, -u)] {
+        let side = egui::vec2(-toward.y, toward.x);
+        for k in 0..=chords {
+            let angle = std::f32::consts::PI * (k as f32 / chords as f32 - 0.5);
+            let (s, c) = angle.sin_cos();
+            out.push(center + (toward * c + side * s) * radius);
+        }
+    }
+    out
 }
 
 impl BoardInk {
+    /// `color`, `share` of the way from the bare board, opaque: copper (or
+    /// a far-side drawing) of one layer reads as one colour where its
+    /// items overlap, instead of darkening as translucent layers would.
+    fn on_board(&self, color: Color32, share: f32) -> Color32 {
+        mixed(self.board, color, share)
+    }
+
     fn get() -> Self {
         let t = Tokens::get();
         let dark = theme::is_dark();
         Self {
+            board: over(t.viewport_bottom, t.panel.gamma_multiply(0.35)),
             silkscreen: if dark {
                 Color32::from_rgb(232, 232, 224)
             } else {
@@ -2129,13 +2228,13 @@ fn bounds_of(editor: &PcbEditor, project: &Project, refs: &[ObjectRef]) -> Optio
             }
             ObjectRef::Track { id } => {
                 for track in project.tracks.iter().filter(|t| t.id == id) {
-                    points.extend(layout::track_polygon(track));
+                    points.extend(layout::track_outline(track));
                 }
             }
             ObjectRef::Net { id } => {
                 pads_where(&|p| p.net == Some(id), &mut points);
                 for track in project.tracks.iter().filter(|t| t.net == id) {
-                    points.extend(layout::track_polygon(track));
+                    points.extend(layout::track_outline(track));
                 }
             }
             ObjectRef::Via { id } => {
@@ -2885,9 +2984,12 @@ mod tests {
         let board = crate::palette::board();
         let all = painted(&output);
         for (what, color) in [
-            ("top copper", board.copper_top),
+            ("top copper", ink.on_board(board.copper_top, 1.0)),
             // Seen from the top, bottom copper is the dimmed far side.
-            ("bottom copper", board.copper_bottom.gamma_multiply(0.45)),
+            (
+                "bottom copper",
+                ink.on_board(board.copper_bottom, FAR_SHADE),
+            ),
             ("drill", ink.drill),
             ("silkscreen", ink.silkscreen),
             ("courtyard", ink.courtyard),
@@ -2897,10 +2999,13 @@ mod tests {
         // Courtyard and silkscreen are drawn above the copper (spec order).
         let last = |c: Color32| all.colors.iter().rposition(|x| *x == c);
         let first = |c: Color32| all.colors.iter().position(|x| *x == c);
-        assert!(first(ink.courtyard) > last(board.copper_top));
-        assert!(first(ink.silkscreen) > last(board.copper_top));
+        assert!(first(ink.courtyard) > last(ink.on_board(board.copper_top, 1.0)));
+        assert!(first(ink.silkscreen) > last(ink.on_board(board.copper_top, 1.0)));
         // R2 is on the bottom: its silkscreen is the dimmed far side.
-        assert!(all.colors.contains(&ink.silkscreen.gamma_multiply(0.45)));
+        assert!(
+            all.colors
+                .contains(&ink.on_board(ink.silkscreen, FAR_SHADE))
+        );
         // The designator graphics label the parts; no extra label is drawn.
         assert_eq!(all.texts.iter().filter(|t| *t == "R1").count(), 1);
         assert_eq!(all.texts.iter().filter(|t| *t == "R2").count(), 1);
@@ -2930,10 +3035,10 @@ mod tests {
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
         let hidden = painted(&output);
         for (what, color) in [
-            ("bottom copper", board.copper_bottom),
+            ("bottom copper", ink.on_board(board.copper_bottom, 1.0)),
             (
                 "dimmed bottom copper",
-                board.copper_bottom.gamma_multiply(0.45),
+                ink.on_board(board.copper_bottom, FAR_SHADE),
             ),
             ("drill", ink.drill),
             ("silkscreen", ink.silkscreen),
@@ -3143,6 +3248,34 @@ mod tests {
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
         let after = pad_label(&output).ok_or("pad number 1 not drawn after zoom")?;
         assert!((after - before).length() < 0.5, "{before:?} → {after:?}");
+        Ok(())
+    }
+
+    /// Two fingers pan the board with the fingers and never zoom; a mouse
+    /// wheel notch zooms.
+    #[test]
+    fn two_fingers_pan_the_canvas_and_the_wheel_zooms() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::navigation::tests::{notch, swipe};
+        let engine = shaped_board()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let (zoom, pan) = (editor.zoom, editor.pan);
+        let mut events = vec![egui::Event::PointerMoved(Pos2::new(300.0, 300.0))];
+        events.extend(swipe(egui::vec2(4.0, -6.0), egui::Modifiers::NONE, 3));
+        canvas_frame(&mut editor, &engine, &ctx, events);
+        assert_eq!(editor.zoom, zoom, "two fingers must not zoom");
+        assert_eq!(editor.pan - pan, egui::vec2(12.0, -18.0));
+        for _ in 0..20 {
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        }
+        assert_eq!(editor.zoom, zoom, "nor their smoothing tail");
+        canvas_frame(&mut editor, &engine, &ctx, vec![notch(1.0)]);
+        for _ in 0..20 {
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        }
+        assert!(editor.zoom > zoom, "{zoom} → {}", editor.zoom);
         Ok(())
     }
 

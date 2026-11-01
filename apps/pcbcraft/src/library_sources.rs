@@ -93,10 +93,17 @@ impl SourceView {
     pub fn secondary(&self) -> String {
         match &self.status {
             Status::Loading => "loading…".into(),
-            Status::Ready { catalog, .. } => match catalog.entries.len() {
-                1 => "1 entry".into(),
-                n => format!("{n} entries"),
-            },
+            Status::Ready { catalog, .. } => {
+                let entries = match catalog.entries.len() {
+                    1 => "1 entry".to_owned(),
+                    n => format!("{n} entries"),
+                };
+                match catalog.rows.len() {
+                    0 => entries,
+                    1 => format!("{entries} · 1 package row"),
+                    n => format!("{entries} · {n} package rows"),
+                }
+            }
             _ => self.reason().unwrap_or_default(),
         }
     }
@@ -227,10 +234,31 @@ pub fn place(
     position: Point,
     other_revision: OtherRevision,
 ) -> Result<Placed, String> {
+    let source = PlaceSource::Bundle {
+        bundle: Box::new(bundle),
+    };
+    place_source(engine, source, position, other_revision)
+}
+
+/// `library.place_from` of a component revision the project holds (the
+/// catalog's Place in schematic), one undo step.
+pub fn place_project(
+    engine: &mut Engine,
+    component: ComponentRef,
+    position: Point,
+) -> Result<Placed, String> {
+    let source = PlaceSource::Project { component };
+    place_source(engine, source, position, OtherRevision::default())
+}
+
+fn place_source(
+    engine: &mut Engine,
+    source: PlaceSource,
+    position: Point,
+    other_revision: OtherRevision,
+) -> Result<Placed, String> {
     let operation = Operation::Library(LibraryCommand::PlaceFrom {
-        source: PlaceSource::Bundle {
-            bundle: Box::new(bundle),
-        },
+        source,
         position,
         designator: None,
         other_revision,
@@ -487,6 +515,9 @@ pub enum BundlePurpose {
     Place(OtherRevision),
     /// "Update project copy", for these instances only when given.
     Update(Option<Vec<pcbcraft_core::Id>>),
+    /// A folder package row the New-from-template gallery builds from
+    /// (`RowSource::Bundle`).
+    Template,
 }
 
 /// A finished bundle read.
@@ -685,6 +716,7 @@ impl LibrarySources {
                     _ => None,
                 })
                 .collect(),
+            without_starter_rows: false,
         }
     }
 
@@ -878,16 +910,20 @@ impl LibrarySources {
         let mut changed = false;
         while let Ok(event) = self.receiver.try_recv() {
             changed = true;
-            match event {
-                Event::Scan(scan) if scan.ticket == self.scan => self.scanned(scan.sources),
-                Event::Scan(_) => {}
-                Event::Written(written) => self.written(written),
-                Event::Bundle(read) => self.bundles.push(read),
-                Event::Picked(picked) => self.picked(picked),
-                Event::Saved(sequence, result) => self.saved(sequence, result),
-            }
+            self.handle(event);
         }
         changed
+    }
+
+    fn handle(&mut self, event: Event) {
+        match event {
+            Event::Scan(scan) if scan.ticket == self.scan => self.scanned(scan.sources),
+            Event::Scan(_) => {}
+            Event::Written(written) => self.written(written),
+            Event::Bundle(read) => self.bundles.push(read),
+            Event::Picked(picked) => self.picked(picked),
+            Event::Saved(sequence, result) => self.saved(sequence, result),
+        }
     }
 
     /// Block until the current scan and every settings save reported.
@@ -1542,6 +1578,8 @@ fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
         K::QuantityKind => "Quantity kind",
         K::Field => "Field",
         K::Part => "Part",
+        K::Model => "3D model",
+        K::PackageRow => "Package template row",
     }
 }
 
@@ -1971,5 +2009,88 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// A folder item opens read-only through the Component workspace: the
+    /// part editor asks for the read, the bundle is read and inspected on a
+    /// worker into a scratch engine, and nothing reaches the project. The
+    /// inspect report is what the catalog strip summarises.
+    #[test]
+    fn a_folder_item_opens_as_a_read_only_preview() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("sample");
+        let created = folder::create_folder(&path, "Sample Parts")?;
+        let author = Engine::demo()?;
+        let component = *author
+            .project()
+            .library
+            .latest_components()
+            .first()
+            .ok_or("component")?;
+        let name = component.meta.name.clone();
+        let root = ComponentRef::new(component.id, component.revision).erased();
+        let fresh: Vec<SourceLineageId> = (1..=64u128).map(|n| SourceLineageId(n << 8)).collect();
+        let QueryResult::Promote(plan) = author.query(Query::PromotePreview {
+            root,
+            library: created.manifest.library,
+            name: "Sample Parts".into(),
+            fresh,
+        })?
+        else {
+            return Err("not a promote plan".into());
+        };
+        folder::write_bundle(&created, &plan.bundle)?;
+
+        let mut sources = LibrarySources::new(Some(UserDirs {
+            config: dir.path().join("config"),
+            cache: dir.path().join("cache"),
+        }));
+        sources.add(path)?;
+        sources.wait()?;
+        let entry = sources
+            .context()
+            .sources
+            .first()
+            .and_then(|c| c.entries.iter().find(|e| e.name == name).cloned())
+            .ok_or("folder entry")?;
+        let pick = FolderPick::of(&entry).ok_or("pick")?;
+        let ready = sources
+            .sources()
+            .iter()
+            .find_map(|s| match &s.status {
+                Status::Ready { folder, .. } => Some(folder.clone()),
+                _ => None,
+            })
+            .ok_or("a ready source")?;
+        let designer = Engine::default();
+        let before = designer.document().clone();
+        let mut editor = crate::part_editor::PartEditor::default();
+        editor.open_folder(pick.clone());
+        assert_eq!(
+            editor
+                .folder_subject()
+                .map(|(p, r)| (p.clone(), r.is_some())),
+            Some((pick.clone(), false)),
+            "reading"
+        );
+        let receiver =
+            crate::part_editor::spawn_preview(ready, pick.clone(), egui::Context::default());
+        editor.preview_loading(&pick, receiver);
+        for _ in 0..2000 {
+            editor.tick();
+            if editor.is_read_only() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(editor.is_read_only(), "the preview was built");
+        let (shown, report) = editor.folder_subject().ok_or("a folder subject")?;
+        assert_eq!(shown, &pick);
+        let report = report.ok_or("an inspect report")?;
+        assert_eq!(report.entry.name, name);
+        assert_eq!(report.entry.source_lineage, Some(pick.lineage));
+        assert_eq!(designer.document(), &before);
+        assert!(sources.take_bundles().is_empty(), "nothing was imported");
+        Ok(())
     }
 }

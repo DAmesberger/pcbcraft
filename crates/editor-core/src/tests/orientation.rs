@@ -143,7 +143,7 @@ fn orienting_moves_pins_and_their_wires_in_one_undo_step() -> Result<()> {
         .iter()
         .find(|w| w.id == wired)
         .ok_or_else(|| Error::NotFound("wire".into()))?;
-    assert_eq!((wire.from, wire.to), (ep(r1, 2), ep(r2, 1)));
+    assert_eq!((wire.from, wire.to), (ep(r1, 2).into(), ep(r2, 1).into()));
     assert_eq!(engine.project().nets, nets_before);
     let placed = schematic::placed_unit(engine.project(), o.id)?;
     for p in &placed.pins {

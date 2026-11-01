@@ -6,11 +6,18 @@
 //! walks a mesh. It keeps the last board model it made, and a board edited
 //! only in values (a part, track or via moved, a size changed) updates it
 //! in place ([`pcbcraft_solidcraft::project::update`]) instead of building
-//! the board again.
+//! the board again. A board's instance marking decals are made there too
+//! and appended to the drawn geometry (display only, never the native
+//! model); the worker keeps their per-instance cache between builds, and
+//! the read and checked library model files ([`SourceCache`]), so a board
+//! rebuild never re-hashes or re-reads an unchanged STEP or glTF.
 use crate::model_scene::{self, ModelScene};
 use crate::viewport::Viewport;
-use pcbcraft_core::library::PackageDefinition;
-use pcbcraft_core::{Id, Project};
+use pcbcraft_core::library::model3d::ModelDefinition;
+use pcbcraft_core::library::{Definition, ModelPlacement, PackageDefinition, PackageModel};
+use pcbcraft_core::{Engine, Id, Project};
+use pcbcraft_solidcraft::marking::board::BoardMarkings;
+use pcbcraft_solidcraft::models::imported::SourceCache;
 use pcbcraft_solidcraft::project::Source;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,11 +52,116 @@ impl ModelKey {
     }
 }
 
+/// A package's library model as its preview builds it: the definition (a
+/// published revision or the open draft's pending one) and its packed
+/// asset bytes.
+#[derive(Clone)]
+pub struct LibraryAsset {
+    pub model: ModelDefinition,
+    pub bytes: pcbcraft_core::library::bundle::AssetBytes,
+}
+
+/// The library model `package` uses, resolved in `engine`'s published
+/// library or, for a model draft just imported, its pending revision.
+/// `Err` names what is missing; `Ok(None)` for a package without one.
+pub fn library_asset(
+    engine: &Engine,
+    package: &PackageDefinition,
+) -> Result<Option<LibraryAsset>, String> {
+    let PackageModel::Library(use_) = &package.model else {
+        return Ok(None);
+    };
+    let library = &engine.project().library;
+    let model = match library.model(use_.model) {
+        Some(published) => published.definition.clone(),
+        None => engine
+            .drafts()
+            .get(use_.model.id)
+            .filter(|d| d.pending() == Some(use_.model.revision))
+            .and_then(|d| match &d.definition {
+                Definition::Model(model) => Some(model.as_ref().clone()),
+                _ => None,
+            })
+            .ok_or_else(|| format!("The model {} is not in the library", use_.model))?,
+    };
+    let bytes = library
+        .assets
+        .iter()
+        .find(|a| a.hash == model.asset.hash)
+        .map(|a| a.data.clone())
+        .ok_or_else(|| format!("The model file {} is not packed", model.asset.file_name))?;
+    Ok(Some(LibraryAsset { model, bytes }))
+}
+
 enum Job {
     /// A board, with the flag that stops its build once a newer request
     /// replaces it.
     Project(u64, Arc<Project>, Arc<AtomicBool>),
-    Package(u64, Box<PackageDefinition>),
+    Package(u64, Box<PackageDefinition>, Option<Box<LibraryAsset>>),
+}
+
+/// A built job's display geometry and pick sources.
+type BuiltGeometry = Result<(Vec<pcbcraft_solidcraft::scene::Geometry>, Vec<Source>), String>;
+
+/// What the worker keeps between builds.
+#[derive(Default)]
+struct Kept {
+    /// The last board model, for the next board to update in place.
+    board: Option<pcbcraft_solidcraft::project::NativeModel>,
+    markings: BoardMarkings,
+    sources: SourceCache,
+}
+
+/// Build one job's display geometry and pick sources.
+fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
+    match job {
+        Job::Project(ticket, project, cancel) => {
+            let made = match kept.board.take() {
+                Some(previous) => pcbcraft_solidcraft::project::update(
+                    previous,
+                    &project,
+                    &kept.sources,
+                    Some(cancel),
+                )
+                .map(|(model, _)| model),
+                None => {
+                    pcbcraft_solidcraft::project::build_with(&project, &kept.sources, Some(cancel))
+                }
+            };
+            let built = made.map(|model| {
+                // The drawn geometry shares the meshes; the model stays
+                // for the next edit to update, without the decals.
+                let mut geometry = model.geometry.clone();
+                geometry.extend(
+                    kept.markings
+                        .decals(&project, &model.geometry, &model.sources),
+                );
+                for (instance, why) in kept.markings.failures() {
+                    eprintln!("pcbcraft: instance {instance} shows no marking: {why}");
+                }
+                let sources = model.sources.clone();
+                kept.board = Some(model);
+                (geometry, sources)
+            });
+            (ticket, built.map_err(|e| e.to_string()))
+        }
+        Job::Package(ticket, package, library) => {
+            let built = match (&package.model, library) {
+                (PackageModel::Library(use_), Some(asset)) => {
+                    pcbcraft_solidcraft::models::imported::preview(
+                        &asset.model,
+                        use_,
+                        &asset.bytes,
+                        &ModelPlacement::default(),
+                    )
+                    .map(|geometry| (geometry, Vec::new()))
+                }
+                _ => pcbcraft_solidcraft::project::preview(&package)
+                    .map(|model| (model.geometry, model.sources)),
+            };
+            (ticket, built.map_err(|e| e.to_string()))
+        }
+    }
 }
 
 struct Built {
@@ -71,44 +183,15 @@ impl Worker {
         let (sender, jobs) = mpsc::channel::<Job>();
         let (results, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut board: Option<pcbcraft_solidcraft::project::NativeModel> = None;
+            let mut kept = Kept::default();
             while let Ok(mut job) = jobs.recv() {
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
-                let (ticket, result) = match job {
-                    Job::Project(ticket, project, cancel) => {
-                        let made = match board.take() {
-                            Some(previous) => pcbcraft_solidcraft::project::update(
-                                previous,
-                                &project,
-                                Some(cancel),
-                            )
-                            .map(|(model, _)| model),
-                            None => {
-                                pcbcraft_solidcraft::project::build_cancellable(&project, cancel)
-                            }
-                        };
-                        // The scene shares the meshes; the model stays for
-                        // the next edit to update.
-                        let result = made.map_err(|e| e.to_string()).and_then(|model| {
-                            let scene = model_scene::build(model.geometry.clone());
-                            let sources = model.sources.clone();
-                            board = Some(model);
-                            scene.map(|scene| (scene, sources))
-                        });
-                        (ticket, result)
-                    }
-                    Job::Package(ticket, package) => {
-                        let result = pcbcraft_solidcraft::project::preview(&package)
-                            .map_err(|e| e.to_string())
-                            .and_then(|model| {
-                                model_scene::build(model.geometry)
-                                    .map(|scene| (scene, model.sources))
-                            });
-                        (ticket, result)
-                    }
-                };
+                let (ticket, result) = build(job, &mut kept);
+                let result = result.and_then(|(geometry, sources)| {
+                    model_scene::build(geometry).map(|scene| (scene, sources))
+                });
                 if results.send(Built { ticket, result }).is_err() {
                     break;
                 }
@@ -242,8 +325,16 @@ impl SceneController {
         )
     }
 
-    /// Ask for a model of `key` unless it is already requested.
-    pub fn request(&mut self, key: ModelKey, package: Option<&PackageDefinition>) {
+    /// Ask for a model of `key` unless it is already requested. A package
+    /// preview of a library model needs its `library` asset
+    /// ([`library_asset`]), resolved only for a new request; a missing one
+    /// is shown as the failure.
+    pub fn request(
+        &mut self,
+        key: ModelKey,
+        package: Option<&PackageDefinition>,
+        library: impl FnOnce() -> Result<Option<LibraryAsset>, String>,
+    ) {
         if self.key.as_ref() == Some(&key) {
             return;
         }
@@ -256,9 +347,17 @@ impl SceneController {
             (ModelKey::Project(project), _) => {
                 Job::Project(ticket, Arc::clone(project), Arc::clone(&cancel))
             }
-            (ModelKey::Package(_), Some(package)) => {
-                Job::Package(ticket, Box::new(package.clone()))
-            }
+            (ModelKey::Package(_), Some(package)) => match library() {
+                Ok(library) => {
+                    Job::Package(ticket, Box::new(package.clone()), library.map(Box::new))
+                }
+                Err(error) => {
+                    self.ticket = ticket;
+                    self.key = Some(key);
+                    self.status = Status::Failed(error);
+                    return;
+                }
+            },
             (ModelKey::Package(_), None) => return,
         };
         match self.worker.sender.send(job) {
@@ -282,7 +381,7 @@ impl SceneController {
         match self.prefetch.due(&key, now, self.key.as_ref()) {
             Due::Nothing => None,
             Due::Build => {
-                self.request(key, None);
+                self.request(key, None, || Ok(None));
                 None
             }
             Due::Wait(wait) => Some(wait),
@@ -514,7 +613,7 @@ mod tests {
         ))?;
         worker
             .sender
-            .send(Job::Package(2, Box::new(demo_package()?)))?;
+            .send(Job::Package(2, Box::new(demo_package()?), None))?;
         let mut last = None;
         while let Ok(built) = worker
             .receiver

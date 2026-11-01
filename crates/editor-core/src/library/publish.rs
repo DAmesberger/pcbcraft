@@ -38,7 +38,10 @@ fn local_scope(body: &Definition) -> Option<(Vec<u32>, u32)> {
         Definition::Footprint(d) => Some((d.local_ids(), d.next_local)),
         Definition::Field(d) => Some((d.local_ids(), d.next_local)),
         Definition::Part(d) => Some((d.local_ids(), d.next_local)),
-        Definition::Binding(_) | Definition::QuantityKind(_) => None,
+        Definition::Binding(_)
+        | Definition::QuantityKind(_)
+        | Definition::Model(_)
+        | Definition::PackageRow(_) => None,
     }
 }
 
@@ -136,6 +139,8 @@ pub fn publish_findings(library: &Library, r: DefinitionRef) -> Vec<Finding> {
         Definition::Binding(d) => d.findings(r.id, library, &mut out),
         Definition::QuantityKind(d) => out.extend(fields::kind_findings(r.id, d)),
         Definition::Part(d) => d.findings(r.id, library, &mut out),
+        Definition::Model(d) => d.findings(r.id, &mut out),
+        Definition::PackageRow(d) => d.findings(r.id, &mut out),
         Definition::Field(d) => {
             let kind = d.value_type.kind().map(|k| (k, library.quantity_kind(k)));
             if let Some((k, None)) = kind {
@@ -298,6 +303,28 @@ pub fn publish(
         }
         return Err(Error::Conflict(message));
     }
+    // Import review state (F8) is draft bookkeeping: it gates publishing
+    // (an uncertain row blocks above) but never becomes revision content,
+    // so a revision's identity does not depend on it. The published drafts
+    // drop it too, staying equal to their new revisions.
+    let reviewed = set.iter().any(|r| {
+        drafts.get(r.id).is_some_and(
+            |d| matches!(&d.definition, Definition::Component(c) if c.review.is_some()),
+        )
+    });
+    let (staged, set) = if reviewed {
+        let mut cleared = drafts.clone();
+        for draft in cleared.items.iter_mut().filter(|d| ids.contains(&d.id)) {
+            if let Definition::Component(component) = &mut draft.definition {
+                component.review = None;
+            }
+        }
+        let restaged = candidate(library, &cleared, ids)?;
+        *drafts = cleared;
+        restaged
+    } else {
+        (staged, set)
+    };
     *library = staged;
     for r in &set {
         drafts.set_base(r.id, r.revision);

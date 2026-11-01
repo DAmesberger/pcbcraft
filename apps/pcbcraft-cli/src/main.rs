@@ -1,5 +1,9 @@
 //! Command-line access to Pcbcraft's command engine. Every subcommand is a
 //! thin transport over `pcbcraft_automation::Session`.
+mod firmware;
+mod pinout;
+mod sample_packages;
+
 use pcbcraft_automation::{Session, lines, mcp, session};
 use pcbcraft_core::Engine;
 use serde_json::{Value, json};
@@ -28,6 +32,14 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// [`USAGE`] with the slice subcommands that are available.
+fn usage() -> String {
+    [pinout::USAGE, sample_packages::USAGE, firmware::USAGE]
+        .into_iter()
+        .filter(|u| !u.is_empty())
+        .fold(USAGE.to_owned(), |text, line| format!("{text}\n  {line}"))
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -115,7 +127,10 @@ fn run() -> Result<()> {
                 json!({"command": "project.export_native", "params": {"path": target}}),
             )?)
         }
-        _ => Err(USAGE.into()),
+        [command, rest @ ..] if command == "pinout" => pinout::run(rest),
+        [command, rest @ ..] if command == "sample-packages" => sample_packages::run(rest),
+        [command, rest @ ..] if command == "firmware" => firmware::run(rest),
+        _ => Err(usage().into()),
     }
 }
 

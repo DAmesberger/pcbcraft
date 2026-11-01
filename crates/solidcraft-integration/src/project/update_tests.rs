@@ -63,7 +63,7 @@ fn board() -> Result<Project> {
 /// Update `model` to `project`, check it matches a fresh build, and return
 /// it with how it was made.
 fn updated(model: NativeModel, project: &Project) -> Result<(NativeModel, Rebuilt)> {
-    let (model, how) = update(model, project, None)?;
+    let (model, how) = update(model, project, &SourceCache::default(), None)?;
     same_model(&model, &build(project)?)?;
     Ok((model, how))
 }
@@ -169,7 +169,7 @@ fn a_finished_builds_cancel_flag_does_not_stop_its_update() -> Result<()> {
     if let Some(track) = project.tracks.first_mut() {
         track.width += 0.05;
     }
-    let (model, how) = update(model, &project, None)?;
+    let (model, how) = update(model, &project, &SourceCache::default(), None)?;
     assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
     same_model(&model, &build(&project)?)
 }
@@ -182,7 +182,7 @@ fn an_updated_model_saves_the_edited_board() -> Result<()> {
     if let Some(via) = project.vias.get_mut(3) {
         via.position[0] += 0.3;
     }
-    let (model, how) = update(model, &project, None)?;
+    let (model, how) = update(model, &project, &SourceCache::default(), None)?;
     assert!(matches!(how, Rebuilt::InPlace(_)));
     let temporary = tempfile::tempdir()?;
     let path = temporary
@@ -328,7 +328,7 @@ fn update_timings() -> Result<()> {
                 k += 1.0;
                 edit(&mut project, k);
                 let start = std::time::Instant::now();
-                let (next, made) = update(model, &project, None)?;
+                let (next, made) = update(model, &project, &SourceCache::default(), None)?;
                 best = best.min(start.elapsed().as_secs_f64() * 1e3);
                 how = made;
                 model = next;

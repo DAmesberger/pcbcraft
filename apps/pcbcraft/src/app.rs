@@ -5,6 +5,7 @@
 //! path the CLI and MCP use. Long work (3D builds, file I/O, recovery) runs on
 //! background threads and reports back with the input it was made from.
 mod browser;
+mod browser_catalog;
 mod chrome;
 mod open_timing;
 
@@ -259,8 +260,8 @@ impl App {
         }
     }
 
-    /// Requests that need several public commands, such as reserving new
-    /// lineages for a component. Each command is its own undo step.
+    /// Component workspace requests the app runs on the engine (drafting a
+    /// published component: one `library.draft_closure`).
     fn part_requests(&mut self) {
         let Some(request) = self.part.take_request() else {
             return;
@@ -269,7 +270,8 @@ impl App {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
-        match part_editor::run(&mut self.engine, request) {
+        let result = part_editor::run(&mut self.engine, request);
+        match result {
             Ok(None) => self.clear_error(),
             Ok(Some(created)) => self.say(Level::Ok, created),
             Err(error) => self.command_refused(error, true),
@@ -377,6 +379,9 @@ impl App {
                     match read.purpose {
                         BundlePurpose::Place(_) => self.schematic.palette_mut().refuse(error),
                         BundlePurpose::Update(_) => self.say(Level::Error, error),
+                        BundlePurpose::Template => {
+                            self.part.template_row_read(read.pick, Err(error))
+                        }
                     }
                     continue;
                 }
@@ -388,6 +393,7 @@ impl App {
                 BundlePurpose::Update(only) => {
                     self.update_project_copy(read.pick, bundle, only.as_deref());
                 }
+                BundlePurpose::Template => self.part.template_row_read(read.pick, Ok(bundle)),
             }
         }
     }
@@ -505,6 +511,7 @@ impl App {
         self.browser = self.browser.toggled(self.browser_visible);
     }
 
+    /// Undo or redo one engine step.
     fn history(&mut self, redo: bool) {
         let result = if redo {
             self.engine.redo()
@@ -512,8 +519,96 @@ impl App {
             self.engine.undo()
         };
         match result {
-            Ok(_) => self.clear_error(),
+            Ok(()) => self.clear_error(),
             Err(error) => self.command_refused(error, true),
+        }
+    }
+
+    /// The Component workspace's subject requests: open requests from
+    /// other surfaces, and folder previews, Edit a copy and Place.
+    fn component_subject(&mut self, ctx: &egui::Context) {
+        let names = self
+            .sources
+            .sources()
+            .iter()
+            .filter_map(|s| {
+                s.library()
+                    .map(|library| (library, s.name.clone(), s.setting.writable))
+            })
+            .collect();
+        let sources = &self.sources;
+        self.part
+            .set_sources(names, sources.generation(), || sources.context());
+        for pick in self.part.take_template_reads() {
+            self.sources.read_bundle(pick, BundlePurpose::Template);
+        }
+        for action in self.part.take_folder_actions() {
+            match action {
+                part_editor::FolderAction::Preview(pick) => {
+                    let folder = self.sources.sources().iter().find_map(|s| match &s.status {
+                        library_sources::Status::Ready { folder, .. }
+                            if folder.manifest.library == pick.library =>
+                        {
+                            Some(folder.clone())
+                        }
+                        _ => None,
+                    });
+                    match folder {
+                        Some(folder) => {
+                            self.sources
+                                .used(pcbcraft_core::catalog::EntryKey::Library {
+                                    library: pick.library,
+                                    lineage: pick.lineage,
+                                });
+                            let receiver =
+                                part_editor::spawn_preview(folder, pick.clone(), ctx.clone());
+                            self.part.preview_loading(&pick, receiver);
+                        }
+                        None => self.part.preview_failed(
+                            &pick,
+                            format!("{} is not in a ready library source", pick.name),
+                        ),
+                    }
+                }
+                part_editor::FolderAction::EditCopy => self.edit_copy(),
+                part_editor::FolderAction::Place(pick) => self
+                    .sources
+                    .read_bundle(pick, BundlePurpose::Place(Default::default())),
+            }
+        }
+        self.part.tick();
+    }
+
+    /// "Edit a copy in this project": import the previewed folder item and
+    /// draft it, as one undo step, then author the copy.
+    fn edit_copy(&mut self) {
+        if self.files.busy() {
+            self.say(Level::Info, "Wait for the file operation to finish");
+            return;
+        }
+        let (Some(bundle), Some(pick)) =
+            (self.part.preview_bundle(), self.part.previewing().cloned())
+        else {
+            return;
+        };
+        match part_editor::edit_copy(&mut self.engine, bundle) {
+            Ok(copied) => {
+                self.part.open(copied.lineage, &self.engine);
+                let source = self.part.library_name(pick.library);
+                let text = format!(
+                    "Copied {} {} from {source} into the project",
+                    pick.name, pick.revision
+                );
+                if copied.changed {
+                    self.say_with(Level::Ok, text, vec![ToastAction::Undo]);
+                } else {
+                    self.say(
+                        Level::Info,
+                        format!("{} {} is already in the project", pick.name, pick.revision),
+                    );
+                }
+            }
+            Err(error) => self.say(Level::Error, error),
         }
     }
 
@@ -577,8 +672,13 @@ impl App {
     /// switching to 3D shows it at once.
     fn request_model(&mut self, ctx: &egui::Context) {
         if let Some(key) = self.model_key() {
+            let package = self.part.preview_package();
+            let engine = &self.engine;
             self.scene
-                .request(key, self.part.preview_package().as_ref());
+                .request(key, package.as_ref(), || match &package {
+                    Some(package) => crate::scene::library_asset(engine, package),
+                    None => Ok(None),
+                });
         } else if self.workspace == Workspace::Pcb {
             let key = ModelKey::Project(Arc::clone(self.engine.project_arc()));
             if let Some(wait) = self.scene.prefetch(key, self.now) {
@@ -619,6 +719,10 @@ impl App {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
+        if self.workspace == Workspace::Part {
+            // Which component is open, above every view of it.
+            self.part.identity_strip(ui, &self.engine);
+        }
         let Some(key) = self.model_key() else {
             let operation = match self.workspace {
                 Workspace::Part => self.part.canvas(ui, &self.engine),
@@ -647,11 +751,21 @@ impl App {
             // Component 3D shows every layer of its package.
             self.scene.viewport.set_layers(Default::default());
             self.scene.highlight(None, None, None);
+            // A read-only library item builds from its scratch engine and
+            // never sends an operation to the project.
+            let preview = self.part.lend_preview();
+            let engine = preview.as_ref().map_or(&self.engine, |p| &p.engine);
             self.part
-                .model_view_prepare(&mut self.scene.viewport, &self.engine);
-            self.scene.viewport.show(ui);
-            let operation = self.part.model_view(ui, &self.scene.viewport, &self.engine);
-            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
+                .model_view_prepare(&mut self.scene.viewport, engine);
+            self.scene.viewport.show(ui, viewport::NavCaps::PLACEMENT);
+            let operation = self.part.model_view(ui, &self.scene.viewport, engine);
+            let read_only = preview.is_some();
+            self.part.restore_preview(preview);
+            self.apply(
+                &ui.ctx().clone(),
+                Origin::Canvas,
+                operation.filter(|_| !read_only),
+            );
             None
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
@@ -661,7 +775,18 @@ impl App {
                 self.pcb.selected_track(),
                 self.pcb.highlighted_net(),
             );
-            self.scene.viewport.show(ui)
+            let pick = self.scene.viewport.show(ui, viewport::NavCaps::BOARD);
+            // How to move the view; the Fit view button's hover help lists
+            // every binding.
+            if let Some(rect) = self.scene.viewport.rect() {
+                crate::kit::canvas_hint(
+                    &ui.painter_at(rect),
+                    rect,
+                    solidcraft_ui_egui::theme::Tokens::get().space_16,
+                    crate::navigation::hint_3d(),
+                );
+            }
+            pick
         };
         if display == Display::Stale {
             // The last model stays up while a newer one builds, under a
@@ -732,6 +857,9 @@ impl eframe::App for App {
         self.scene.receive();
         self.file_effects(&ctx);
         self.library_sources(&ctx);
+        self.component_subject(&ctx);
+        // A2: the Component workspace catalog's action and feed.
+        self.catalog(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -858,5 +986,33 @@ mod tests {
             shortcut = history_shortcut(ui.ctx());
         });
         assert_eq!(shortcut, Some(false));
+    }
+}
+
+#[cfg(test)]
+mod edit_copy_tests {
+    use pcbcraft_core::Engine;
+
+    /// Edit a copy is one `library.edit_copy`: one engine Undo takes the
+    /// import and the drafts back, one Redo brings them back, and a
+    /// repeat changes nothing.
+    #[test]
+    fn edit_a_copy_is_one_undo_step() -> Result<(), Box<dyn std::error::Error>> {
+        let (_, bundle) = crate::part_editor::sample_item()?;
+        let mut engine = Engine::default();
+        let kept = (engine.project().clone(), engine.drafts().clone());
+        let before = engine.revision();
+        let copied = crate::part_editor::edit_copy(&mut engine, bundle.clone())?;
+        assert!(copied.changed);
+        assert_eq!(engine.revision(), before + 1, "one engine step");
+        let copy = (engine.project().clone(), engine.drafts().clone());
+        engine.undo()?;
+        assert_eq!((engine.project().clone(), engine.drafts().clone()), kept);
+        engine.redo()?;
+        assert_eq!((engine.project().clone(), engine.drafts().clone()), copy);
+        let again = crate::part_editor::edit_copy(&mut engine, bundle)?;
+        assert!(!again.changed);
+        assert_eq!(again.lineage, copied.lineage);
+        Ok(())
     }
 }

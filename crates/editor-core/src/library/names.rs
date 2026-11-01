@@ -16,6 +16,8 @@ pub fn noun(kind: DefinitionKind) -> &'static str {
         DefinitionKind::QuantityKind => "quantity kind",
         DefinitionKind::Field => "field",
         DefinitionKind::Part => "Part",
+        DefinitionKind::Model => "3D model",
+        DefinitionKind::PackageRow => "package template row",
     }
 }
 

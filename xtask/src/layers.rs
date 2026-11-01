@@ -3,6 +3,7 @@
 //! Layers (a crate may depend only on strictly lower workspace layers):
 //! - 0 `pcbcraft-core`: document, commands, engine. Pure: no files, UI or Solidcraft.
 //! - 1 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
+//!   `pcbcraft-firmware`: firmware pin-configuration emitters over the core IR (slice C4).
 //! - 2 `pcbcraft-automation`: headless session, JSON-lines and MCP transports.
 //! - 3 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
 use crate::{Result, root};
@@ -12,6 +13,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("pcbcraft-core", 0),
     ("pcbcraft-io", 1),
     ("pcbcraft-solidcraft", 1),
+    ("pcbcraft-firmware", 1),
     ("pcbcraft-automation", 2),
     ("pcbcraft-cli", 3),
     ("pcbcraft", 3),
@@ -83,9 +85,12 @@ pub fn check() -> Result<()> {
                     "{name} depends on UI crate {dep}; only the desktop app may"
                 ));
             }
-            if name == "pcbcraft-core" && !dev && CORE_FORBIDDEN.contains(&dep) {
+            // The firmware emitters are pure text over the core IR, like
+            // the core itself (slice C4).
+            let pure = matches!(name, "pcbcraft-core" | "pcbcraft-firmware");
+            if pure && !dev && CORE_FORBIDDEN.contains(&dep) {
                 violations.push(format!(
-                    "pcbcraft-core depends on {dep}; file effects belong to pcbcraft-io"
+                    "{name} depends on {dep}; file effects belong to pcbcraft-io"
                 ));
             }
             let solidcraft = dep.starts_with("solidcraft-") || dep.starts_with("truck-");

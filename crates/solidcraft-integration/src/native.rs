@@ -334,6 +334,15 @@ impl Native {
             })
     }
 
+    /// The session itself, for adding an import feature from bytes
+    /// already read (`models::imported`): Solidcraft's import commands
+    /// read files by path, and a packed library asset has none. What it
+    /// changes is not recorded ([`Self::record`]): a replay passes over the
+    /// whole definition built with it ([`Self::pass`]).
+    pub(crate) fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
     pub fn parameter(&mut self, name: &str, expression: impl Into<String>) -> Result<()> {
         self.call(
             "parameters.add",

@@ -138,9 +138,6 @@ fn ink() -> Ink {
     }
 }
 
-/// Scroll pixels per e-fold of zoom: one wheel notch (about 50 px) zooms
-/// by about 13 %.
-const ZOOM_PX: f32 = 400.0;
 /// Share of the canvas the fitted footprint fills.
 const FIT_FILL: f64 = 0.7;
 
@@ -449,23 +446,23 @@ impl PartEditor {
         if typing || !ui.input(|i| i.key_down(egui::Key::Space)) {
             self.space_held = false;
         }
+        let wheel = self.trackpad.read(ui, false);
         let Some(state) = self.footprint_view else {
             return;
         };
+        // The wheel and a pinch zoom about the pointer; two fingers pan.
         if let Some(p) = ui
             .input(|i| i.pointer.hover_pos())
-            .filter(|p| rect.contains(*p))
+            .filter(|p| rect.contains(*p) && response.contains_pointer())
+            && wheel.moves()
         {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.0 {
-                let scale = (state.scale * (scroll / ZOOM_PX).exp()).clamp(0.5, 2000.0);
-                let world = view.world(p);
-                let origin = p - vec2(world[0] as f32 * scale, -(world[1] as f32) * scale);
-                self.footprint_view = Some(ViewState {
-                    pan: origin - rect.center(),
-                    scale,
-                });
-            }
+            let scale = (state.scale * wheel.scale_factor()).clamp(0.5, 2000.0);
+            let world = view.world(p);
+            let origin = p - vec2(world[0] as f32 * scale, -(world[1] as f32) * scale);
+            self.footprint_view = Some(ViewState {
+                pan: origin - rect.center() + wheel.pan,
+                scale,
+            });
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || (self.space_held && response.dragged_by(egui::PointerButton::Primary));

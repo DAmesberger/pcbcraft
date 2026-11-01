@@ -2,11 +2,13 @@
 mod ce04;
 mod ce05;
 mod ce06;
+mod contract;
 mod designators;
 mod drawing;
 mod engine;
 mod fields;
 mod graphics;
+mod junctions;
 mod library;
 mod library_folders;
 mod orientation;

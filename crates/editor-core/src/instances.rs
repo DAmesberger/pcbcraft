@@ -18,12 +18,13 @@ use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
     PackageDefinition, Published, Rotation, SymbolDefinition, designator_prefix_valid,
 };
-use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
+use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence, WireEnd};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod part;
+pub mod pins;
 pub use part::{MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, requirements};
 
 pub const MAX_INSTANCES: usize = 4096;
@@ -169,6 +170,7 @@ pub fn function_resolution(library: &Library, instance: &ComponentInstance) -> R
         &resolved.component.definition,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -176,13 +178,16 @@ fn resolve_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<Resolution> {
-    functions::resolve(
+    functions::resolve_with_rules(
         &component.declarations(),
         &component.resources,
         &component.constraints,
         physical.map(|p| p.binding.definition.unavailable.as_slice()),
         selections,
+        &component.pin_rules,
+        config,
     )
 }
 
@@ -331,11 +336,13 @@ fn check_with<'a>(
             )));
         }
     }
+    pins::check_configs(name, component, &instance.pin_config)?;
     check_functions(
         name,
         component,
         resolved.physical.as_ref(),
         &instance.functions,
+        &instance.pin_config,
     )
 }
 
@@ -347,13 +354,14 @@ fn check_functions(
     component: &ComponentDefinition,
     physical: Option<&PhysicalView<'_>>,
     selections: &FunctionSelections,
+    config: &functions::PinConfigs,
 ) -> Result<()> {
     if selections.len() > component.terminals.len() {
         return Err(invalid(format!(
             "{name}: more function selections than terminals."
         )));
     }
-    let resolution = resolve_functions(component, physical, selections)
+    let resolution = resolve_functions(component, physical, selections, config)
         .map_err(|e| invalid(format!("{name}: {e}")))?;
     if resolution.conflicts.is_empty() {
         return Ok(());
@@ -471,7 +479,11 @@ pub fn check_instance(project: &Project, id: Id) -> Result<()> {
     let instance = project
         .instance(id)
         .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
-    let endpoints = project.wires.iter().flat_map(|w| [w.from, w.to]);
+    let endpoints = project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal);
     check_with(
         project,
         instance,
@@ -492,7 +504,10 @@ pub fn check_all(project: &Project) -> Result<()> {
     }
     let mut endpoints: BTreeMap<Id, Vec<Endpoint>> = BTreeMap::new();
     for wire in &project.wires {
-        for endpoint in [wire.from, wire.to] {
+        for endpoint in [wire.from, wire.to]
+            .into_iter()
+            .filter_map(WireEnd::terminal)
+        {
             endpoints
                 .entry(endpoint.instance)
                 .or_default()
@@ -611,6 +626,8 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         no_connect: BTreeSet::new(),
         functions: FunctionSelections::new(),
         part: None,
+        pin_config: Default::default(),
+        marking: Default::default(),
     });
     let occurrence = add_occurrence(project, id, request.unit, request.position)?;
     apply_properties(project, id, &request.properties)?;
@@ -662,7 +679,9 @@ pub fn remove(project: &mut Project, id: Id) -> Result<()> {
         || project
             .wires
             .iter()
-            .any(|w| w.from.instance == id || w.to.instance == id)
+            .flat_map(|w| [w.from, w.to])
+            .filter_map(WireEnd::terminal)
+            .any(|e| e.instance == id)
     {
         return Err(Error::Conflict(
             "Detach the instance's occurrences, wires and placement before removing it.".into(),
@@ -688,7 +707,8 @@ pub(crate) struct Retarget {
 }
 
 /// Pin an instance to another revision of its lineage. Project no-connect
-/// markers on terminals the target removes or declares NC are dropped; the
+/// markers and pin configurations on terminals the target removes or
+/// declares NC are dropped ([`pins::carry_pin_config`]); the
 /// caller has already unplaced dropped units and removed wires on such
 /// terminals through `schematic`, and checks the instance once its schematic
 /// is regrouped.
@@ -725,6 +745,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.properties = target.properties;
     instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
+    instance.pin_config = pins::carry_pin_config(&instance.pin_config, &component);
     Ok(())
 }
 
@@ -1066,6 +1087,7 @@ pub(crate) fn wired_terminals(project: &Project, id: Id) -> BTreeSet<TerminalId>
         .wires
         .iter()
         .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal)
         .filter(|e| e.instance == id)
         .map(|e| e.terminal)
         .collect()

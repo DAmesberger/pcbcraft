@@ -175,11 +175,9 @@ impl PackageDefinition {
             ));
         }
         match &self.model {
-            PackageModel::Imported(_) => out.push(issue(
-                "package.model_unsupported",
-                "Imported package models are not supported yet.".into(),
-                vec![this],
-            )),
+            PackageModel::Library(model) => {
+                super::model3d::package_findings(self, model, id, out);
+            }
             PackageModel::Generated { materials, .. } => {
                 if self.form == PackageForm::Generic {
                     out.push(issue(
@@ -347,8 +345,21 @@ mod tests {
         };
         assert!(!p.within_bounds(), "too many role entries is a refusal");
         let mut p = chip(ChipKind::Resistor);
-        p.model = PackageModel::Imported(Default::default());
-        assert_eq!(codes(&p), ["package.model_unsupported"]);
+        p.model = PackageModel::Library(Default::default());
+        assert_eq!(codes(&p), Vec::<String>::new(), "an empty lead map");
+        let entry = |lead, terminal| crate::library::model3d::LeadMapEntry {
+            lead,
+            terminal: PackageTerminalId(terminal),
+        };
+        p.model = PackageModel::Library(crate::library::model3d::LibraryModel {
+            model: Default::default(),
+            lead_map: vec![entry(0, 1), entry(0, 2), entry(1, 9), entry(2, 1)],
+        });
+        assert_eq!(
+            codes(&p),
+            ["model.leads", "model.leads", "model.leads"],
+            "a repeated lead, a foreign terminal and a repeated terminal"
+        );
         let mut p = chip(ChipKind::Resistor);
         p.placement.rotation_deg[0] = f64::INFINITY;
         assert!(!p.geometry_finite());

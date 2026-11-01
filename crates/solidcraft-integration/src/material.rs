@@ -64,10 +64,15 @@ pub enum BodyKind {
     /// view computes no occlusion, so a narrow plated bore would otherwise
     /// light up like an open copper face; a real one reads as a dark hole.
     ViaBore,
+    /// An instance marking decal on a package face: top mark, value code,
+    /// polarity mark or colour bands (display-only, founder decision F7;
+    /// never saved, never in fabrication output). Its look is the
+    /// marking finish's, set where the decal is made.
+    Marking,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 21] = [
+    pub const ALL: [BodyKind; 22] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -89,6 +94,7 @@ impl BodyKind {
         BodyKind::EdgeDielectric,
         BodyKind::EdgeCopper,
         BodyKind::ViaBore,
+        BodyKind::Marking,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -134,6 +140,7 @@ impl BodyKind {
                 | BodyKind::EdgeDielectric
                 | BodyKind::EdgeCopper
                 | BodyKind::ViaBore
+                | BodyKind::Marking
         )
     }
 }
@@ -464,6 +471,9 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         BodyKind::Overcoat => {
             dielectric("Resistor overcoat", [0.025, 0.025, 0.027], 0.30, EPOXY_IOR)
         }
+        // A stand-in only: a decal takes its finish's cited look
+        // (`marking::finish_surface`).
+        BodyKind::Marking => dielectric("Laser marking", [0.16, 0.16, 0.17], 0.70, EPOXY_IOR),
     }
 }
 

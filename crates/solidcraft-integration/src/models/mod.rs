@@ -22,11 +22,18 @@
 //!
 //! As built: `docs/component-model.md` (M1–M3).
 mod chip;
+pub mod gltf_ext;
+mod grid;
 mod gull_wing;
 mod header;
+pub mod imported;
+pub mod inspect;
 pub mod look;
+mod molded;
 mod no_lead;
 mod profile;
+mod tabbed;
+mod tht;
 
 use crate::material::BodyKind;
 use crate::native::{BoxBody, Expr, Native};
@@ -64,6 +71,10 @@ pub fn family_rev(form: &PackageForm) -> Option<u16> {
         | PackageForm::GullWing(_)
         | PackageForm::NoLead(_)
         | PackageForm::Header(_) => Some(1),
+        PackageForm::Tabbed(_) => tabbed::FAMILY_REV,
+        PackageForm::Molded(_) => molded::FAMILY_REV,
+        PackageForm::Grid(_) => grid::FAMILY_REV,
+        PackageForm::Tht(_) => tht::FAMILY_REV,
     }
 }
 
@@ -165,6 +176,10 @@ pub fn build_definition(
         PackageForm::GullWing(g) => gull_wing::check(g)?,
         PackageForm::NoLead(n) => no_lead::check(n)?,
         PackageForm::Header(h) => header::check(h)?,
+        PackageForm::Tabbed(f) => tabbed::check(f)?,
+        PackageForm::Molded(f) => molded::check(f)?,
+        PackageForm::Grid(f) => grid::check(f)?,
+        PackageForm::Tht(f) => tht::check(f)?,
         PackageForm::Generic => {}
     }
     native.component(component, false)?;
@@ -180,6 +195,10 @@ pub fn build_definition(
         PackageForm::GullWing(g) => gull_wing::build(&mut b, g)?,
         PackageForm::NoLead(n) => no_lead::build(&mut b, n)?,
         PackageForm::Header(h) => header::build(&mut b, h)?,
+        PackageForm::Tabbed(f) => tabbed::build(&mut b, f)?,
+        PackageForm::Molded(f) => molded::build(&mut b, f)?,
+        PackageForm::Grid(f) => grid::build(&mut b, f)?,
+        PackageForm::Tht(f) => tht::build(&mut b, f)?,
         PackageForm::Generic => {
             return Err(Error::Invalid(
                 "model.unsupported: a generic package has no generated model".into(),

@@ -1,6 +1,7 @@
 //! The five drafts the component editor authors together: a component, one
 //! symbol, its package, one footprint and the binding between them. Every
 //! change reaches the engine as public library commands.
+#[cfg(test)]
 use pcbcraft_core::library::samples::{self, SampleRefs};
 use pcbcraft_core::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit, Drafts,
@@ -8,7 +9,7 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Engine, Error,
-    FootprintRef, LibraryCommand, Operation, Outcome, PackageRef, Result, Revision, SymbolRef,
+    FootprintRef, LibraryCommand, Operation, PackageRef, Result, Revision, SymbolRef,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,7 @@ struct Revisions {
     binding: Revision,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
     TwoTerminal,
@@ -69,6 +71,7 @@ pub enum Template {
     Package(samples::Preset),
 }
 
+#[cfg(test)]
 impl Template {
     pub fn name(self) -> &'static str {
         match self {
@@ -89,17 +92,24 @@ impl Template {
 }
 
 impl WorkingSet {
-    /// The first complete set of drafts, preferring one component lineage.
-    pub fn find(drafts: &Drafts, preferred: Option<DefinitionId>) -> Option<Self> {
-        let mut components: Vec<_> = drafts
-            .items
-            .iter()
-            .filter(|d| d.definition.kind() == DefinitionKind::Component)
-            .collect();
-        components.sort_by_key(|d| Some(d.id) != preferred);
-        components
-            .into_iter()
-            .find_map(|component| Self::around(drafts, component.id))
+    /// The complete set of drafts around exactly the component lineage
+    /// `lineage`; never another one. `None` takes the first complete set,
+    /// which only listings and tests ask for: the Component workspace
+    /// always opens one lineage explicitly ([`Self::of`]).
+    pub fn find(drafts: &Drafts, lineage: Option<DefinitionId>) -> Option<Self> {
+        match lineage {
+            Some(lineage) => Self::of(drafts, lineage),
+            None => drafts
+                .items
+                .iter()
+                .filter(|d| d.definition.kind() == DefinitionKind::Component)
+                .find_map(|component| Self::around(drafts, component.id)),
+        }
+    }
+
+    /// The complete set of drafts around the component lineage `lineage`.
+    pub fn of(drafts: &Drafts, lineage: DefinitionId) -> Option<Self> {
+        Self::around(drafts, lineage)
     }
 
     fn around(drafts: &Drafts, component: DefinitionId) -> Option<Self> {
@@ -158,6 +168,7 @@ impl WorkingSet {
     }
 
     /// The working set the given edits describe, if they are one complete set.
+    #[cfg(test)]
     pub fn from_edits(edits: Vec<DraftEdit>) -> Option<Self> {
         let mut drafts = Drafts::default();
         for edit in edits {
@@ -289,6 +300,7 @@ impl WorkingSet {
 
     /// Replace the bodies with a template, keeping lineages and never lowering
     /// a local-ID counter.
+    #[cfg(test)]
     pub fn load_template(&mut self, template: Template) {
         let first = Revision::FIRST;
         let refs = SampleRefs {
@@ -316,9 +328,11 @@ impl WorkingSet {
     }
 }
 
-/// Start a new component from a template in a project without a working
-/// set: five `library.new_draft` reservations, then one `library.edit`.
-pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
+/// Tests: start a new component from a sample template in a project
+/// without a working set: five `library.new_draft` reservations, then one
+/// `library.edit`.
+#[cfg(test)]
+pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
     let mut ids = Vec::new();
     for kind in [
         DefinitionKind::Component,
@@ -327,7 +341,7 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
         DefinitionKind::Footprint,
         DefinitionKind::Binding,
     ] {
-        if let Outcome::DraftCreated { id } = engine.apply(
+        if let pcbcraft_core::Outcome::DraftCreated { id } = engine.apply(
             engine.revision(),
             Operation::Library(LibraryCommand::NewDraft {
                 meta: DefinitionMeta::default(),
@@ -353,42 +367,22 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<()> {
             engine.revision(),
             Operation::Library(LibraryCommand::Edit { edits }),
         )
-        .map(|_| ())
+        .map(|_| component)
 }
 
 /// Draft every lineage of a published component revision's first symbol and
-/// implementation that has no draft yet.
+/// implementation that has no draft yet: one `library.draft_closure`, so
+/// one undo step (none when everything is drafted already).
 /// Returns how many drafts it created: drafts are project state (saved
 /// with the project and undoable), so creating them is a real change.
 pub fn draft_closure(engine: &mut Engine, component: ComponentRef) -> Result<usize> {
-    let library = &engine.project().library;
-    let body = library
-        .component(component)
-        .ok_or_else(|| Error::NotFound("unknown component revision".into()))?
-        .definition
-        .clone();
-    let mut wanted = vec![component.erased()];
-    if let Some(symbol) = body.representations.first() {
-        wanted.push(symbol.erased());
+    match engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::DraftClosure { component }),
+    )? {
+        pcbcraft_core::Outcome::DraftsCreated { ids } => Ok(ids.len()),
+        _ => Err(Error::Invalid(
+            "library.draft_closure returned an unexpected outcome".into(),
+        )),
     }
-    if let Some(binding_ref) = body.implementations.first() {
-        wanted.push(binding_ref.erased());
-        if let Some(binding) = library.binding(*binding_ref) {
-            wanted.push(binding.definition.package.erased());
-            if let Some(footprint) = binding.definition.footprints.first() {
-                wanted.push(footprint.erased());
-            }
-        }
-    }
-    let mut created = 0;
-    for revision in wanted {
-        if engine.drafts().get(revision.id).is_none() {
-            engine.apply(
-                engine.revision(),
-                Operation::Library(LibraryCommand::DraftFrom { revision }),
-            )?;
-            created += 1;
-        }
-    }
-    Ok(created)
 }

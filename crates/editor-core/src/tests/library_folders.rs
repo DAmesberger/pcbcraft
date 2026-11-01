@@ -120,6 +120,8 @@ fn push(
         Definition::QuantityKind(d) => put!(quantity_kinds, d),
         Definition::Field(d) => put!(fields, d),
         Definition::Part(d) => put!(parts, *d),
+        Definition::Model(d) => put!(models, *d),
+        Definition::PackageRow(d) => put!(package_rows, *d),
     }
 }
 
@@ -195,7 +197,7 @@ fn generated(seed: u64) -> Result<Library> {
                 library.assets.push(PackedAsset {
                     hash,
                     media_type: "application/pdf".into(),
-                    data: bundle::AssetBytes(bytes),
+                    data: bundle::AssetBytes::new(bytes),
                 });
             }
         }
@@ -611,7 +613,7 @@ fn bundle_validation_refuses_dangling_noncanonical_and_unpacked_content() -> Res
     extra.assets.push(PackedAsset {
         hash: bundle::asset_hash(&bytes),
         media_type: "text/plain".into(),
-        data: bundle::AssetBytes(bytes),
+        data: bundle::AssetBytes::new(bytes),
     });
     rejected(&extra, "no record names")?;
 
@@ -650,7 +652,7 @@ fn packed_assets_travel_by_hash_and_unpacked_ones_are_reported() -> Result<()> {
     // Bytes that do not hash to their name are refused.
     let mut forged = plan.bundle.clone();
     if let Some(asset) = forged.assets.first_mut() {
-        asset.data.0.push(0);
+        asset.data.make_mut().push(0);
     }
     rejected(&forged, "content hash")?;
 
@@ -1463,7 +1465,7 @@ fn part_with_asset(library: &Library, index: usize, data: Vec<u8>) -> Result<Bun
     let asset = PackedAsset {
         hash: bundle::asset_hash(&data),
         media_type: "application/pdf".into(),
-        data: bundle::AssetBytes(data),
+        data: bundle::AssetBytes::new(data),
     };
     let record = plan
         .bundle
@@ -1602,5 +1604,117 @@ fn project_copies_are_keyed_per_user_by_their_origin() -> Result<()> {
             .iter()
             .all(|e| e.source == Source::Project && e.user_key().is_none())
     );
+    Ok(())
+}
+
+fn edit_copy(engine: &mut Engine, bundle: &Bundle) -> Result<Outcome> {
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::EditCopy {
+            bundle: Box::new(bundle.clone()),
+        }),
+    )
+}
+
+/// "Edit a copy in this project" is one command: the import and the
+/// working-set drafts undo and redo as one step on every transport, a
+/// repeat changes nothing, and a refused copy leaves the document,
+/// revision and both histories alone.
+#[test]
+fn edit_a_copy_imports_and_drafts_in_one_undo_step() -> Result<()> {
+    let mut author = Engine::demo()?;
+    let root = component_root(&author.project().library)?;
+    let plan = promote(&mut author, root, &fresh(&mut Rng(41), 16))?;
+    let mut design = Engine::demo()?;
+    prime_history(&mut design)?;
+    let before = design.to_file();
+    let revision = design.revision();
+    let Outcome::Copied {
+        component,
+        import,
+        drafted,
+    } = edit_copy(&mut design, &plan.bundle)?
+    else {
+        return Err(Error::Invalid("copied".into()));
+    };
+    assert_eq!(design.revision(), revision + 1, "one step");
+    assert_eq!(import.root.kind, DefinitionKind::Component);
+    assert_eq!(drafted.first(), Some(&component.id), "component first");
+    assert!(drafted.len() >= 4, "{drafted:?}");
+    for id in &drafted {
+        assert!(design.drafts().get(*id).is_some());
+    }
+    let after = design.to_file();
+    design.undo()?;
+    assert_eq!(
+        design.to_file(),
+        before,
+        "one undo removes import and drafts"
+    );
+    design.redo()?;
+    assert_eq!(design.to_file(), after, "one redo restores both");
+    // Copying again reuses every revision and drafts nothing new.
+    let again = design.revision();
+    let Outcome::Copied { drafted, .. } = edit_copy(&mut design, &plan.bundle)? else {
+        return Err(Error::Invalid("copied".into()));
+    };
+    assert!(drafted.is_empty());
+    assert_eq!(design.revision(), again, "a repeat takes no step");
+    // A bundle whose root is not a component or Part is refused whole.
+    let package = plan
+        .bundle
+        .records
+        .iter()
+        .find(|r| r.kind == DefinitionKind::Package)
+        .ok_or_else(|| Error::NotFound("package record".into()))?;
+    let mut wrong = bundle_of(
+        &plan.bundle.records,
+        SourceRevision {
+            lineage: package.lineage,
+            revision: package.revision,
+        },
+    )?;
+    wrong.library = plan.bundle.library;
+    let mut fresh_design = Engine::demo()?;
+    prime_history(&mut fresh_design)?;
+    let kept = Snapshot::of(&fresh_design);
+    assert!(edit_copy(&mut fresh_design, &wrong).is_err());
+    kept.assert_kept(&fresh_design, "refused edit copy");
+    Ok(())
+}
+
+/// `library.draft_closure` drafts the working set once, as one step.
+#[test]
+fn draft_closure_drafts_the_working_set_in_one_step() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let root = component_root(&engine.project().library)?;
+    let component = crate::ids::ComponentRef::new(root.id, root.revision);
+    for draft in engine.drafts().items.clone() {
+        engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::DiscardDraft { id: draft.id }),
+        )?;
+    }
+    let before = engine.to_file();
+    let revision = engine.revision();
+    let close = |engine: &mut Engine| {
+        engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::DraftClosure { component }),
+        )
+    };
+    let Outcome::DraftsCreated { ids } = close(&mut engine)? else {
+        return Err(Error::Invalid("drafts".into()));
+    };
+    assert_eq!(ids.first(), Some(&component.id));
+    assert!(ids.len() >= 4, "{ids:?}");
+    assert_eq!(engine.revision(), revision + 1);
+    let Outcome::DraftsCreated { ids: none } = close(&mut engine)? else {
+        return Err(Error::Invalid("drafts".into()));
+    };
+    assert!(none.is_empty());
+    assert_eq!(engine.revision(), revision + 1, "nothing left to draft");
+    engine.undo()?;
+    assert_eq!(engine.to_file(), before);
     Ok(())
 }
