@@ -22,12 +22,10 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
         .first()
         .map(|i| i.id)
         .ok_or("instance")?;
-    let queries = [
-        Query::Templates {
-            query: "soic pins:8".into(),
-            limit: None,
-        },
-    ];
+    let queries = [Query::Templates {
+        query: "soic pins:8".into(),
+        limit: None,
+    }];
     for query in queries {
         let shown = format!("{query:?}");
         assert!(unsupported(engine.query(query)), "{shown}");
