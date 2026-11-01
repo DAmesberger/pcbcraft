@@ -409,7 +409,11 @@ impl App {
     /// workspace that shows them, or run its Fix.
     fn issue_request(&mut self, ctx: &egui::Context, request: Option<issues::Request>) {
         match request {
-            Some(issues::Request::Locate { refs, area }) => {
+            Some(issues::Request::Locate {
+                refs,
+                area,
+                pin_mux,
+            }) => {
                 let mut editors = issues::Editors {
                     part: &mut self.part,
                     schematic: &mut self.schematic,
@@ -421,6 +425,12 @@ impl App {
                             self.clear_error();
                         }
                         self.workspace = workspace;
+                        // The schematic selected the instance; its card
+                        // draws the panel from the next frame.
+                        if let Some(target) = pin_mux.filter(|_| workspace == Workspace::Schematic)
+                        {
+                            crate::pin_mux::reveal(ctx, target.instance, target.terminal);
+                        }
                     }
                     None => self.say(
                         crate::kit::severity::Level::Info,

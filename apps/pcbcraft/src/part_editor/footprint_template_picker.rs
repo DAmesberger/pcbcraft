@@ -603,7 +603,6 @@ impl PartEditor {
             let mut kind = template.kind();
             let options: Vec<(TemplateKind, String)> = TemplateKind::ALL
                 .into_iter()
-                .filter(|k| k.available())
                 .map(|k| (k, k.label().to_owned()))
                 .collect();
             if kit::choice_row(ui, "Family", &mut kind, &options) {

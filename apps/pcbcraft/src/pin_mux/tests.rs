@@ -926,3 +926,62 @@ fn staging_the_way_out_applies_its_edits_over_the_base() -> TestResult {
     assert!(state.blockers.is_empty() && state.way_out.is_none());
     Ok(())
 }
+
+/// Locating a `config.*` issue in the Issues surface selects the instance
+/// on the sheet and opens its pin-mux panel at the issue's pin.
+#[test]
+fn locating_a_config_issue_opens_the_panel_at_its_pin() -> TestResult {
+    use crate::issues::{PinMuxTarget, pin_mux_target};
+    use pcbcraft_core::ObjectRef;
+    use pcbcraft_core::issues::IssueScope;
+    let (mut engine, ids) = setup()?;
+    // USART1 TX without its required RX: a `config.requirement_unmet`.
+    engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SelectFunctions {
+            instance: ids.u1,
+            edits: vec![FunctionEdit {
+                terminal: T1,
+                function: Some(ids.uart_tx),
+            }],
+        }),
+    )?;
+    let QueryResult::Issues(report) = engine.query(Query::Issues {
+        scope: IssueScope::All,
+    })?
+    else {
+        return Err("issues".into());
+    };
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.finding.code.starts_with("config."))
+        .ok_or("a config.* issue")?;
+    let refs: Vec<ObjectRef> = row.objects().copied().collect();
+    let target = pin_mux_target(&row.finding.code, &refs).ok_or("a pin-mux target")?;
+    assert_eq!(target.instance, ids.u1);
+    assert!(target.terminal.is_some(), "the issue names its pin");
+    // Other codes never open it.
+    assert_eq!(pin_mux_target("erc.unconnected", &refs), None);
+    assert_eq!(
+        pin_mux_target("config.rule_unmet", &[ObjectRef::Instance { id: ids.u1 }]),
+        Some(PinMuxTarget {
+            instance: ids.u1,
+            terminal: None
+        })
+    );
+
+    let mut sheet = crate::schematic_editor::SchematicEditor::default();
+    assert!(crate::issues::Locate::locate(&mut sheet, &engine, &refs));
+    let mut harness = Harness::new();
+    harness.frame(&engine, ids.u1, vec![], false)?;
+    assert!(!is_open(&harness.ctx, ids.u1));
+    reveal(&harness.ctx, target.instance, target.terminal);
+    // A new window sizes itself invisibly on its first frame.
+    harness.frame(&engine, ids.u1, vec![], true)?;
+    let (texts, _) = harness.frame(&engine, ids.u1, vec![], true)?;
+    assert!(names(&texts).contains(&"U1 · Pin assignment"));
+    assert!(is_open(&harness.ctx, ids.u1));
+    assert_eq!(load(&harness.ctx).focus, target.terminal);
+    Ok(())
+}

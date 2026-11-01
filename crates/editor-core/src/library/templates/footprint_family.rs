@@ -102,17 +102,6 @@ impl TemplateKind {
         Self::Tht,
     ];
 
-    /// Whether the family's template is built; pickers list only these.
-    pub fn available(self) -> bool {
-        match self {
-            Self::Chip | Self::GullWing | Self::Qfn | Self::PinHeader => true,
-            Self::Tabbed => tabbed::AVAILABLE,
-            Self::Molded => molded::AVAILABLE,
-            Self::Grid => grid::AVAILABLE,
-            Self::Tht => tht::AVAILABLE,
-        }
-    }
-
     /// The picker label.
     pub fn label(self) -> &'static str {
         match self {

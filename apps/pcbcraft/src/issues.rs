@@ -18,6 +18,7 @@ use crate::kit::{
 };
 use crate::shell::Workspace;
 use egui::{Align, Layout, Rect, Ui, UiBuilder, pos2, vec2};
+use pcbcraft_core::ids::TerminalId;
 use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueReport, IssueRow, IssueScope, Severity};
 use pcbcraft_core::library::Definition;
 use pcbcraft_core::{DefinitionId, Engine, Id, ObjectRef, Operation, Query, QueryResult};
@@ -276,11 +277,42 @@ const BADGE_RESERVE: f32 = 120.0;
 #[derive(Clone, Debug)]
 pub enum Request {
     /// Select and frame these objects, preferring the area's workspace.
+    /// A pin-configuration (`config.*`) issue also opens the pin-mux panel
+    /// of its instance at its pin ([`PinMuxTarget`]).
     Locate {
         refs: Vec<ObjectRef>,
         area: IssueArea,
+        pin_mux: Option<PinMuxTarget>,
     },
     Fix(Fix),
+}
+
+/// The instance whose pin-mux panel a `config.*` issue opens, and the pin
+/// it focuses: the first instance `refs` name, with its first named pin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PinMuxTarget {
+    pub instance: Id,
+    pub terminal: Option<TerminalId>,
+}
+
+/// The pin-mux panel a located issue opens: only `config.*` codes (pin
+/// functions, requirements, rules and pin options) do.
+pub fn pin_mux_target(code: &str, refs: &[ObjectRef]) -> Option<PinMuxTarget> {
+    if !code.starts_with("config.") {
+        return None;
+    }
+    let instance = refs.iter().find_map(|r| match *r {
+        ObjectRef::Instance { id } => Some(id),
+        ObjectRef::Terminal { endpoint } => Some(endpoint.instance),
+        _ => None,
+    })?;
+    let terminal = refs.iter().find_map(|r| match *r {
+        ObjectRef::Terminal { endpoint } if endpoint.instance == instance => {
+            Some(endpoint.terminal)
+        }
+        _ => None,
+    });
+    Some(PinMuxTarget { instance, terminal })
 }
 
 /// The fold key of a row: core's group code and key.
@@ -663,6 +695,7 @@ impl Surface {
                     let refs: Vec<ObjectRef> =
                         issue.objects().copied().skip(object).take(1).collect();
                     return Some(Request::Locate {
+                        pin_mux: pin_mux_target(&issue.finding.code, &refs),
                         refs,
                         area: issue.area,
                     });
@@ -679,8 +712,10 @@ impl Surface {
             title: row.title.clone(),
             level: row.severity.into(),
         });
+        let refs: Vec<ObjectRef> = row.objects().copied().collect();
         Request::Locate {
-            refs: row.objects().copied().collect(),
+            pin_mux: pin_mux_target(&row.finding.code, &refs),
+            refs,
             area: row.area,
         }
     }

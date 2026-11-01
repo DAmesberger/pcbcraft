@@ -142,12 +142,6 @@ fn tabbed(f: TabbedForm) -> PackageDefinition {
 }
 
 #[test]
-fn the_tabbed_templates_are_offered() {
-    assert!(TemplateKind::Tabbed.available());
-    assert!(TemplateKind::Molded.available());
-}
-
-#[test]
 fn sot23_3_lands_follow_the_lead_grid() -> Result<()> {
     let def = built(&tabbed(sot23_3()), TemplateKind::Tabbed)?;
     assert_eq!(def.pads.len(), 3);

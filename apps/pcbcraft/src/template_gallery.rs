@@ -54,7 +54,6 @@ use pcbcraft_core::library::templates::catalog::{
     FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
     RowFrom, RowSource, SavePackageRow, SkeletonHint,
 };
-use pcbcraft_core::library::templates::footprint_family::TemplateKind;
 use pcbcraft_core::library::{
     Bundle, ChipKind, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
     PackageTerminal, Pad, PadKind, Provenance,
@@ -151,12 +150,6 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Grid => "BGA",
         FamilyKind::Tht => "THT",
     }
-}
-
-/// The footprint template that lands a family's package, if one is built.
-pub fn template_kind(family: FamilyKind) -> Option<TemplateKind> {
-    let kind = family.template_kind();
-    kind.available().then_some(kind)
 }
 
 /// The designator prefix a skeleton starts with: a chip's kind names its
@@ -415,8 +408,6 @@ pub fn preview_pads(
     form: &PackageForm,
     lands: Option<&LandValues>,
 ) -> Result<Vec<Pad>, String> {
-    template_kind(family)
-        .ok_or_else(|| format!("{} footprints are not built yet", family_label(family)))?;
     let package = preview_package(form);
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
     samples::template_lands(form, &terminals, lands)
@@ -961,12 +952,6 @@ impl TemplateGallery {
         if open.scope == Scope::NewComponent && open.name.trim().is_empty() {
             return Some("Name the component".into());
         }
-        if template_kind(hit.family).is_none() {
-            return Some(format!(
-                "{} templates are not built yet",
-                family_label(hit.family)
-            ));
-        }
         None
     }
 
@@ -1428,6 +1413,16 @@ fn preview(
                         &format!("{} → {}", plan.terminals_before, plan.terminals_after),
                     );
                     kit::value_row(ui, "Pads after", &plan.pads_after.to_string());
+                    if plan.footprint_created {
+                        kit::note(
+                            ui,
+                            if plan.footprint_bound.is_some() {
+                                "Creates the footprint draft and lists it in the binding"
+                            } else {
+                                "Creates the footprint draft"
+                            },
+                        );
+                    }
                     if plan.terminals_before != plan.terminals_after {
                         kit::note(
                             ui,
@@ -1873,10 +1868,6 @@ mod tests {
         );
         let qfn_pads = preview_pads(FamilyKind::NoLead, &qfn, None)?;
         assert_eq!(landing(&qfn_pads), package.terminals.len());
-        // A family whose template is not built says so instead of guessing.
-        if template_kind(FamilyKind::Grid).is_none() {
-            assert!(preview_pads(FamilyKind::Grid, &PackageForm::Generic, None).is_err());
-        }
         Ok(())
     }
 

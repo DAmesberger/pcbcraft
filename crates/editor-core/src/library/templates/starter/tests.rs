@@ -32,7 +32,6 @@ fn the_tables_parse_into_rows_over_every_family() -> Fallible<()> {
         }
         assert_eq!(row.definition.provenance.licence.as_deref(), Some(LICENCE));
         assert_eq!(row.definition.provenance.origin, None);
-        assert!(row.held.is_none(), "every family is built: {}", row.name);
         assert_eq!(
             row.definition.values.range_problems(),
             Vec::<String>::new(),

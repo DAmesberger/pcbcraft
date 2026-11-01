@@ -458,7 +458,7 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
             r
         }
     }) {
-        for row in rows.iter().filter(|r| r.held.is_none()) {
+        for row in rows {
             if let Some(mut hit) = hit_of(&row.name, &row.definition, Source::Project, None, None) {
                 hit.starter = Some(row.name.clone());
                 out.push(Candidate::new(hit, &row.description));
@@ -483,9 +483,7 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
         }
     }
     for family in FamilyKind::ALL {
-        let Some(values) = family.custom_values() else {
-            continue;
-        };
+        let values = family.custom_values();
         let row = PackageRowDefinition {
             family: None,
             skeleton: FamilyKind::default_skeleton(&values),

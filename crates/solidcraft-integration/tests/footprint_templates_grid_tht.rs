@@ -374,7 +374,6 @@ fn two_lead_and_to_rows_follow_the_form() -> Result<()> {
 #[test]
 fn later_templates_build_from_bare_packages_with_literals() -> Result<()> {
     for (kind, n) in [(TemplateKind::Grid, 16), (TemplateKind::Tht, 3)] {
-        assert!(kind.available());
         let pkg = package(PackageForm::Generic, &numbered(n));
         let template = FootprintTemplate::defaults(kind, &pkg);
         let json = serde_json::to_string(&template).unwrap_or_default();

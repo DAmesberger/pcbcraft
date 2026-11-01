@@ -86,11 +86,9 @@ impl FamilyKind {
         }
     }
 
-    /// The family revision rows are checked against now; `None` while the
-    /// family's generators are not built (its footprint template is not
-    /// available), so no row of it can be published or used.
-    pub fn family_rev(self) -> Option<u16> {
-        self.template_kind().available().then_some(BUILT_FAMILY_REV)
+    /// The family revision rows are checked against now.
+    pub fn family_rev(self) -> u16 {
+        BUILT_FAMILY_REV
     }
 
     /// The gallery's family label.
@@ -108,11 +106,9 @@ impl FamilyKind {
     }
 
     /// The values of the family's built-in "custom" entry: original typical
-    /// values a user then edits (estimated, never a cited row). `None` for a
-    /// family whose generators are not built.
-    pub fn custom_values(self) -> Option<PackageForm> {
-        self.family_rev()?;
-        Some(match self {
+    /// values a user then edits (estimated, never a cited row).
+    pub fn custom_values(self) -> PackageForm {
+        match self {
             Self::Chip => Preset::Chip0603.form(),
             Self::GullWing => Preset::Soic8.form(),
             Self::NoLead => Preset::Qfn16.form(),
@@ -121,7 +117,7 @@ impl FamilyKind {
             Self::Molded => PackageForm::Molded(Box::new(MoldedForm::typical())),
             Self::Grid => PackageForm::Grid(Box::new(GridForm::typical())),
             Self::Tht => PackageForm::Tht(Box::new(ThtForm::typical())),
-        })
+        }
     }
 
     /// The skeleton a new row of `form` starts from: a chip or molded body
@@ -330,15 +326,9 @@ impl PackageRowDefinition {
                     actual.label()
                 ),
             )),
-            (Some(family), Some(_)) => match family.family.family_rev() {
-                None => out.push(block(
-                    "package_row.family",
-                    format!(
-                        "The {} family's generators are not built yet.",
-                        family.family.label()
-                    ),
-                )),
-                Some(rev) if family.family_rev == 0 || family.family_rev > rev => {
+            (Some(family), Some(_)) => {
+                let rev = family.family.family_rev();
+                if family.family_rev == 0 || family.family_rev > rev {
                     out.push(block(
                         "package_row.family",
                         format!(
@@ -348,8 +338,7 @@ impl PackageRowDefinition {
                         ),
                     ));
                 }
-                Some(_) => {}
-            },
+            }
         }
         for problem in self.values.range_problems() {
             out.push(block("package_row.range", problem));
@@ -546,6 +535,18 @@ pub struct PackagePlan {
     pub pads_after: u32,
     /// The generated model's family revision, if the family builds one.
     pub model_family_rev: Option<u16>,
+    /// The footprint draft that lands the package: the one already in the
+    /// working set, or the one the command creates.
+    #[serde(default)]
+    pub footprint: Option<DefinitionId>,
+    /// No footprint draft landed the package, so the command creates one.
+    #[serde(default)]
+    pub footprint_created: bool,
+    /// The binding draft a created footprint is listed in: the one binding
+    /// draft of the package. `None` with `binding.footprint_unbound` when
+    /// there are none or several to choose from.
+    #[serde(default)]
+    pub footprint_bound: Option<DefinitionId>,
     pub findings: Vec<Finding>,
 }
 
@@ -625,12 +626,7 @@ pub fn resolve_row(library: &Library, source: &RowSource) -> Result<ResolvedRow>
             }
         }
         RowSource::Custom { family } => {
-            let values = family.custom_values().ok_or_else(|| {
-                Error::Invalid(format!(
-                    "template.family: the {} family's generators are not built yet",
-                    family.label()
-                ))
-            })?;
+            let values = family.custom_values();
             ResolvedRow {
                 name: format!("Custom {}", family.label().to_lowercase()),
                 row: PackageRowDefinition {
@@ -802,12 +798,7 @@ pub fn row_draft(
             "template.family: a row needs typed family values, not a generic envelope".into(),
         )
     })?;
-    let family_rev = family.family_rev().ok_or_else(|| {
-        Error::Invalid(format!(
-            "template.family: the {} family's generators are not built yet",
-            family.label()
-        ))
-    })?;
+    let family_rev = family.family_rev();
     if let Some(problem) = values.range_problems().into_iter().next() {
         return Err(Error::Invalid(format!("package.form_range: {problem}")));
     }

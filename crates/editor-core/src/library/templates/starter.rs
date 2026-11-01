@@ -11,9 +11,6 @@
 //! records the row's name and the table's format in its provenance
 //! (`RowSource::Starter`). `pcbcraft-cli sample-packages` still writes the
 //! same rows to a library folder for an organisation to replace or extend.
-//!
-//! A row whose family generator is not built yet (`TemplateKind::available`)
-//! is **held**: it is parsed and listed for review but never offered.
 use crate::diagnostics::{Error, Result};
 use crate::ids::MAX_LABEL;
 use crate::library::MAX_NOTE;
@@ -62,19 +59,16 @@ pub struct StarterRow {
     /// Why the row is estimated, or what to check (an exposed pad's size).
     pub note: Option<String>,
     pub definition: PackageRowDefinition,
-    /// Why the row is not offered yet: its family is not built.
-    pub held: Option<String>,
 }
 
 impl StarterRow {
-    /// `held`, `cited` (the citation records revision and page),
+    /// `cited` (the citation records revision and page),
     /// `cited_unverified` (it names only the document) or `estimated`.
     pub fn status(&self) -> &'static str {
-        match (&self.held, &self.definition.citation) {
-            (Some(_), _) => "held",
-            (None, Some(c)) if c.checked() => "cited",
-            (None, Some(_)) => "cited_unverified",
-            (None, None) => "estimated",
+        match &self.definition.citation {
+            Some(c) if c.checked() => "cited",
+            Some(_) => "cited_unverified",
+            None => "estimated",
         }
     }
 
@@ -161,14 +155,7 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
     let root = object(&root, file)?;
     only_keys(
         root,
-        &[
-            "format",
-            "family",
-            "family_rev",
-            "family_note",
-            "citations",
-            "rows",
-        ],
+        &["format", "family", "family_rev", "citations", "rows"],
         file,
     )?;
     if root.get("format").and_then(Value::as_u64) != Some(FORMAT) {
@@ -183,7 +170,6 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
         .and_then(|r| u16::try_from(r).ok())
         .filter(|r| *r >= 1)
         .ok_or_else(|| invalid(format!("{file}: `family_rev` must be 1–65535")))?;
-    let family_note = optional_text(root, "family_note", file)?;
     let mut citations = BTreeMap::new();
     if let Some(list) = root.get("citations") {
         for (key, value) in object(list, file)? {
@@ -200,7 +186,6 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
         .get("rows")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid(format!("{file}: `rows` must be a list")))?;
-    let built = family.template_kind().available();
     let family_text = family_name(family);
     let mut used = BTreeSet::new();
     let mut out = Vec::with_capacity(rows.len());
@@ -270,16 +255,9 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
         let skeleton: SkeletonHint = typed(row.get("skeleton"), &format!("{context}: skeleton"))?;
         let lands = typed(row.get("lands"), &format!("{context}: lands"))?;
         let problems = values.range_problems();
-        let held = if built {
-            if !problems.is_empty() {
-                return Err(invalid(format!("{context}: {}", problems.join(" "))));
-            }
-            None
-        } else {
-            Some(family_note.clone().unwrap_or_else(|| {
-                format!("Held until the {family_text} family generator is built.")
-            }))
-        };
+        if !problems.is_empty() {
+            return Err(invalid(format!("{context}: {}", problems.join(" "))));
+        }
         if !values.within_bounds() {
             return Err(Error::Limit(format!("starter: {context}: too many leads")));
         }
@@ -303,7 +281,6 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
             description,
             note,
             definition,
-            held,
         };
         if row.description.len() > MAX_NOTE || row.provenance_note().len() > MAX_NOTE {
             return Err(invalid(format!(
@@ -350,16 +327,14 @@ pub fn rows() -> std::result::Result<&'static [StarterRow], &'static str> {
     }
 }
 
-/// The offered (not held) built-in row named `name`.
+/// The built-in row named `name`.
 pub fn row(name: &str) -> Result<&'static StarterRow> {
     let rows = rows().map_err(|e| Error::Invalid(e.to_owned()))?;
-    rows.iter()
-        .find(|r| r.held.is_none() && r.name == name)
-        .ok_or_else(|| {
-            Error::NotFound(format!(
-                "template.row_missing: the built-in starter tables hold no row ‘{name}’"
-            ))
-        })
+    rows.iter().find(|r| r.name == name).ok_or_else(|| {
+        Error::NotFound(format!(
+            "template.row_missing: the built-in starter tables hold no row ‘{name}’"
+        ))
+    })
 }
 
 #[cfg(test)]

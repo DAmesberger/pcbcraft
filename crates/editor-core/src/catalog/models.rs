@@ -16,7 +16,6 @@ use crate::library::model3d::{
 };
 use crate::library::package_fit::{self, FitRotation, LeadPair};
 use crate::library::templates::catalog::FamilyKind;
-use crate::library::templates::footprint_family::TemplateKind;
 use crate::library::{
     Definition, Drafts, FootprintDefinition, Library, ModelPlacement, PackageDefinition, PadKind,
     Published,
@@ -374,22 +373,6 @@ fn family_label(family: FamilyKind) -> &'static str {
     }
 }
 
-/// Whether the family's generator is built (it shares its availability
-/// with the family's footprint template).
-fn family_available(family: FamilyKind) -> bool {
-    let kind = match family {
-        FamilyKind::Chip => TemplateKind::Chip,
-        FamilyKind::GullWing => TemplateKind::GullWing,
-        FamilyKind::NoLead => TemplateKind::Qfn,
-        FamilyKind::Header => TemplateKind::PinHeader,
-        FamilyKind::Tabbed => TemplateKind::Tabbed,
-        FamilyKind::Molded => TemplateKind::Molded,
-        FamilyKind::Grid => TemplateKind::Grid,
-        FamilyKind::Tht => TemplateKind::Tht,
-    };
-    kind.available()
-}
-
 /// The latest revision of each model lineage, oldest lineage first.
 fn latest(models: &[Published<ModelDefinition>]) -> Vec<&Published<ModelDefinition>> {
     let mut by: BTreeMap<DefinitionId, &Published<ModelDefinition>> = BTreeMap::new();
@@ -664,12 +647,7 @@ pub fn search(
                 .map(|m| library_candidate(Source::Library(source.library), m)),
         );
     }
-    candidates.extend(
-        FamilyKind::ALL
-            .into_iter()
-            .filter(|f| family_available(*f))
-            .map(generated_candidate),
-    );
+    candidates.extend(FamilyKind::ALL.into_iter().map(generated_candidate));
     if candidates.len() > super::MAX_INDEX_ENTRIES {
         return Err(Error::Limit(format!(
             "models.query: at most {} models are searched",

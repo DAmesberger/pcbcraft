@@ -116,10 +116,6 @@ fn store(ctx: &egui::Context, state: State) {
 
 /// Open the panel for `instance`, with `terminal` as its focus pin. The
 /// instance must be the selected subject by the next frame.
-#[allow(
-    dead_code,
-    reason = "for the Issues locate hook of config.* rows, which is not wired yet"
-)]
 pub fn reveal(ctx: &egui::Context, instance: Id, terminal: Option<TerminalId>) {
     let mut state = load(ctx);
     if state.instance != Some(instance) {
@@ -134,7 +130,7 @@ pub fn reveal(ctx: &egui::Context, instance: Id, terminal: Option<TerminalId>) {
 }
 
 /// Whether the panel is open for `instance`.
-#[allow(dead_code, reason = "the Issues locate hook and tests read it")]
+#[cfg(test)]
 pub fn is_open(ctx: &egui::Context, instance: Id) -> bool {
     let state = load(ctx);
     state.instance == Some(instance) && ctx.cumulative_frame_nr() <= state.frame + 1
