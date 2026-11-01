@@ -47,7 +47,7 @@ mod working_set;
 use crate::kit::{self, Tone, severity::Level};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
 pub use model_view::reset_model_view;
-pub use part_props::{meaning_label, spec_text};
+pub use part_props::{PartReturn, meaning_label, spec_text};
 use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::functions::{Direction, TerminalFunctions};
 use pcbcraft_core::geometry::{Bounds, Shape};
@@ -1377,6 +1377,9 @@ impl PartEditor {
     ) -> Option<Operation> {
         if inspected == Inspected::Review {
             return self.update.show(ui, engine);
+        }
+        if let Some(operation) = self.part_dialog(ui, engine) {
+            return operation;
         }
         // Slice W1b retires the footprint and 3D files' notice text.
         if !self.notice.is_empty() {
