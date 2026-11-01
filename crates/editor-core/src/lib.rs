@@ -23,6 +23,7 @@ pub mod model;
 pub mod nets;
 pub mod pins;
 pub mod quantity;
+pub mod rules;
 pub mod schematic;
 pub mod scripting;
 #[cfg(test)]
@@ -51,6 +52,12 @@ pub enum Operation {
     Instance(InstanceCommand),
     Schematic(schematic::SchematicCommand),
     Layout(layout::LayoutCommand),
+    /// Design rules and net classes (`rules.*`, `net_class.*`).
+    Rules(rules::RulesCommand),
+    /// Copper fills and keepouts (`fill.*`, `keepout.*`).
+    Fill(layout::fill::FillCommand),
+    /// Board shape and edge constraints (`board.*`).
+    Board(layout::outline::BoardCommand),
     Update(Box<updates::ApplyUpdate>),
 }
 
@@ -189,6 +196,27 @@ pub enum Query {
     /// D4: one instance's resolved marking layout (none when unmarked).
     #[serde(rename = "instance.marking")]
     Marking { instance: Id },
+    /// Every effective design rule with its profile value and source,
+    /// and the net classes.
+    #[serde(rename = "rules.effective")]
+    RulesEffective {},
+    /// The built-in rule profiles (hosts append the user library).
+    #[serde(rename = "rules.profiles")]
+    RuleProfiles {},
+    /// What `rules.set_profile` with these arguments would change: rules
+    /// and the board issues that would appear or go.
+    #[serde(rename = "rules.preview_profile")]
+    PreviewProfile {
+        profile: Box<rules::RuleProfile>,
+        #[serde(default)]
+        keep_overrides: bool,
+    },
+    /// The solved board outline, cutouts, holes and named edges.
+    #[serde(rename = "board.shape")]
+    BoardShape {},
+    /// Per fill: whether its computed copper is stale.
+    #[serde(rename = "fill.status")]
+    FillStatus {},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -214,6 +242,19 @@ pub enum QueryResult {
     PinReport(Box<pins::PinReport>),
     PinConfig(Box<firmware::PinConfigReport>),
     Marking(Option<library::marking::MarkingLayout>),
+    Rules(Box<rules::RulesReport>),
+    RuleProfiles(Vec<rules::RuleProfile>),
+    ProfileImpact(Box<rules::ProfileImpact>),
+    BoardShape(Box<model::SolvedBoard>),
+    FillStatus(Vec<layout::fill::FillStatus>),
+}
+
+/// The host engines a command may need. The core never interprets a
+/// sketch; these do, on the candidate only.
+#[derive(Clone, Copy, Default)]
+pub struct Evaluators<'a> {
+    pub footprint: Option<&'a dyn library::FootprintEvaluator>,
+    pub board: Option<&'a dyn layout::outline::BoardShapeEvaluator>,
 }
 
 /// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
@@ -529,7 +570,7 @@ impl Engine {
     /// Apply one operation at an expected revision as one undo step. A
     /// failure leaves document, revision and history unchanged.
     pub fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Outcome> {
-        self.apply_inner(expected_revision, operation, None)
+        self.apply_inner(expected_revision, operation, Evaluators::default())
     }
 
     /// [`apply`](Self::apply) with the host's footprint evaluator, which
@@ -542,15 +583,33 @@ impl Engine {
         operation: Operation,
         evaluator: &dyn library::FootprintEvaluator,
     ) -> Result<Outcome> {
-        self.apply_inner(expected_revision, operation, Some(evaluator))
+        self.apply_inner(
+            expected_revision,
+            operation,
+            Evaluators {
+                footprint: Some(evaluator),
+                board: None,
+            },
+        )
+    }
+
+    /// [`apply`](Self::apply) with every host evaluator given.
+    pub fn apply_hosted(
+        &mut self,
+        expected_revision: u64,
+        operation: Operation,
+        evaluators: Evaluators<'_>,
+    ) -> Result<Outcome> {
+        self.apply_inner(expected_revision, operation, evaluators)
     }
 
     fn apply_inner(
         &mut self,
         expected_revision: u64,
         operation: Operation,
-        evaluator: Option<&dyn library::FootprintEvaluator>,
+        evaluators: Evaluators<'_>,
     ) -> Result<Outcome> {
+        let evaluator = evaluators.footprint;
         if expected_revision != self.revision {
             return Err(Error::Stale {
                 expected: expected_revision,
@@ -589,6 +648,36 @@ impl Engine {
                     None => Outcome::None,
                 }
             }
+            Operation::Rules(command) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                if let rules::RulesCommand::AssignNets { nets, .. } = &command
+                    && let Some(net) = nets.iter().find(|n| project.net(**n).is_none())
+                {
+                    return Err(Error::NotFound(format!(
+                        "net_class.net_missing: no net {net}"
+                    )));
+                }
+                match rules::apply(&mut project.rules, command)? {
+                    Some(class) => Outcome::NetClassAdded { class },
+                    None => Outcome::None,
+                }
+            }
+            Operation::Fill(command) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let adds_keepout = matches!(command, layout::fill::FillCommand::AddKeepout { .. });
+                match layout::fill::apply(project, command)? {
+                    Some(keepout) if adds_keepout => Outcome::KeepoutAdded { keepout },
+                    Some(fill) => Outcome::FillAdded { fill },
+                    None => Outcome::None,
+                }
+            }
+            Operation::Board(command) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                match layout::outline::apply(project, command, evaluators.board)? {
+                    Some(constraint) => Outcome::EdgeConstraintAdded { constraint },
+                    None => Outcome::None,
+                }
+            }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
@@ -602,6 +691,18 @@ impl Engine {
             let project = Arc::make_mut(&mut candidate.project);
             schematic::tidy(project);
             nets::reconcile(project)?;
+            // Explicit net-class assignments follow their nets; a net
+            // that no longer exists takes its assignment with it.
+            if project
+                .rules
+                .assignments
+                .iter()
+                .any(|a| project.net(a.net).is_none())
+            {
+                let live: std::collections::BTreeSet<Id> =
+                    project.nets.iter().map(|n| n.id).collect();
+                project.rules.assignments.retain(|a| live.contains(&a.net));
+            }
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
             }
@@ -716,6 +817,43 @@ impl Engine {
                 &name,
                 &fresh,
             )?))),
+            Query::RulesEffective {} => Ok(QueryResult::Rules(Box::new(rules::report(
+                &self.document.project.rules,
+            )))),
+            Query::RuleProfiles {} => Ok(QueryResult::RuleProfiles(rules::builtin::all())),
+            Query::PreviewProfile {
+                profile,
+                keep_overrides,
+            } => {
+                let current = &self.document.project;
+                let mut candidate = current.as_ref().clone();
+                rules::apply(
+                    &mut candidate.rules,
+                    rules::RulesCommand::SetProfile {
+                        profile,
+                        keep_overrides,
+                    },
+                )?;
+                let mut impact = rules::rule_changes(&current.rules, &candidate.rules);
+                let scope = issues::IssueScope::All;
+                let titles = |p: &Project| -> Result<std::collections::BTreeSet<String>> {
+                    Ok(issues::report(p, &self.document.drafts, &scope)?
+                        .rows
+                        .into_iter()
+                        .map(|r| r.title)
+                        .collect())
+                };
+                let (before, after) = (titles(current)?, titles(&candidate)?);
+                impact.new_issues = after.difference(&before).cloned().collect();
+                impact.resolved_issues = before.difference(&after).cloned().collect();
+                Ok(QueryResult::ProfileImpact(Box::new(impact)))
+            }
+            Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
+                self.document.project.board().into_owned(),
+            ))),
+            Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
+                &self.document.project,
+            ))),
             Query::Issues { scope } => Ok(QueryResult::Issues(issues::report(
                 &self.document.project,
                 &self.document.drafts,

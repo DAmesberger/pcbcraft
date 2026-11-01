@@ -22,6 +22,8 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 
 mod copper;
 pub mod courtyard;
+pub mod fill;
+pub mod outline;
 mod placed;
 pub mod showcase;
 pub mod via;
@@ -771,6 +773,8 @@ pub fn validate(project: &Project) -> Result<()> {
         }
     }
     project.stackup.check()?;
+    fill::validate(project)?;
+    outline::validate(project)?;
     let ids = project.nets.iter().map(|n| n.id).collect::<BTreeSet<_>>();
     via::validate(project, &ids)?;
     let mut track_ids = BTreeSet::new();

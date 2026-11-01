@@ -1,4 +1,5 @@
 //! Engine-level behaviour through public commands and queries.
+mod board_contract;
 mod ce04;
 mod ce05;
 mod ce06;

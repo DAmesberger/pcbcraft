@@ -122,6 +122,22 @@ pub enum Outcome {
     PinoutApplied {
         report: crate::library::pinout::PinoutApplied,
     },
+    /// The class `net_class.add` created.
+    NetClassAdded {
+        class: crate::rules::NetClassId,
+    },
+    /// The fill `fill.add` created.
+    FillAdded {
+        fill: Id,
+    },
+    /// The keepout `keepout.add` created.
+    KeepoutAdded {
+        keepout: Id,
+    },
+    /// The constraint `board.constrain` created.
+    EdgeConstraintAdded {
+        constraint: Id,
+    },
 }
 
 /// A symbol draft's pin, by its terminal, that lies off the authoring grid.

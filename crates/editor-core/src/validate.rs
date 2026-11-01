@@ -46,6 +46,9 @@ fn project_except_library(p: &Project) -> Result<()> {
         .chain(p.junctions.iter().map(|j| j.id))
         .chain(p.tracks.iter().map(|t| t.id))
         .chain(p.vias.iter().map(|v| v.id))
+        .chain(p.fills.iter().map(|f| f.id))
+        .chain(p.keepouts.iter().map(|k| k.id))
+        .chain(p.edge_constraints.iter().map(|c| c.id))
     {
         if id == 0 || id >= p.next_id || !ids.insert(id) {
             return Err(Error::Invalid("invalid global identity allocation".into()));
@@ -54,6 +57,7 @@ fn project_except_library(p: &Project) -> Result<()> {
     if p.instances.len() > MAX_INSTANCES {
         return Err(Error::Invalid("too many component instances".into()));
     }
+    p.rules.validate()?;
     instances::check_all(p)?;
     instances::check_designators(p)?;
     schematic::validate(p)?;

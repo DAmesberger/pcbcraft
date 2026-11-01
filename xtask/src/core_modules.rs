@@ -20,9 +20,11 @@ const MAP: &[(&str, &[&str])] = &[
     ("fields", &["ids", "diagnostics", "quantity"]),
     ("functions", &["ids", "diagnostics"]),
     ("materials", &["diagnostics"]),
+    ("rules", &["ids", "diagnostics"]),
     (
         "library",
         &[
+            "rules",
             "materials",
             "geometry",
             "ids",
@@ -35,6 +37,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "model",
         &[
+            "rules",
             "materials",
             "geometry",
             "ids",
@@ -47,6 +50,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "instances",
         &[
+            "rules",
             "geometry",
             "ids",
             "diagnostics",
@@ -75,6 +79,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "layout",
         &[
+            "rules",
             "geometry",
             "ids",
             "diagnostics",
@@ -150,6 +155,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "validate",
         &[
+            "rules",
             "materials",
             "ids",
             "diagnostics",
@@ -164,6 +170,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "issues",
         &[
+            "rules",
             "geometry",
             "ids",
             "diagnostics",
@@ -187,6 +194,7 @@ const MAP: &[(&str, &[&str])] = &[
 
 const BELOW_UPDATES: &[&str] = &[
     "materials",
+    "rules",
     "geometry",
     "ids",
     "diagnostics",
@@ -209,6 +217,7 @@ const BELOW_UPDATES: &[&str] = &[
 
 const BELOW_COMMANDS: &[&str] = &[
     "materials",
+    "rules",
     "geometry",
     "ids",
     "diagnostics",

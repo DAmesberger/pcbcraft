@@ -10,8 +10,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+pub mod board;
+pub mod fill;
 mod stackup;
 mod via;
+pub use board::{BoardShape, EdgeConstraint, SolvedBoard};
+pub use fill::{Fill, Keepout};
 pub use stackup::{
     COPPER_LAYER_COUNTS, CopperFoil, CopperLayer, Dielectric, DielectricKind, GlassStyle, OUNCE_UM,
     Stackup,
@@ -292,6 +296,23 @@ pub struct Project {
     /// revisions store only `MaterialId`s, so a project of another table
     /// revision is refused rather than reopened with different looks.
     pub material_table: u16,
+    /// Design rules: profile snapshot, overrides and net classes.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::rules::ProjectRules::is_default"
+    )]
+    pub rules: crate::rules::ProjectRules,
+    /// The board outline; a rectangle is `board_size`. A sketch keeps
+    /// `board_size` at its solved bounding box.
+    #[serde(default, skip_serializing_if = "BoardShape::is_rectangle")]
+    pub board_shape: BoardShape,
+    /// Placement constraints relative to named board edges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_constraints: Vec<EdgeConstraint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fills: Vec<Fill>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keepouts: Vec<Keepout>,
 }
 
 impl Default for Project {
@@ -313,6 +334,11 @@ impl Default for Project {
             stackup: Stackup::default(),
             fabrication: Fabrication::default(),
             material_table: crate::materials::BUILTIN_REVISION,
+            rules: crate::rules::ProjectRules::default(),
+            board_shape: BoardShape::Rectangle,
+            edge_constraints: vec![],
+            fills: vec![],
+            keepouts: vec![],
         }
     }
 }
@@ -367,6 +393,22 @@ impl Project {
     }
     pub fn via(&self, id: Id) -> Option<&Via> {
         self.vias.iter().find(|v| v.id == id)
+    }
+    pub fn fill(&self, id: Id) -> Option<&Fill> {
+        self.fills.iter().find(|f| f.id == id)
+    }
+    pub fn keepout(&self, id: Id) -> Option<&Keepout> {
+        self.keepouts.iter().find(|k| k.id == id)
+    }
+    /// The solved board outline: the sketch's last solve, or the
+    /// `board_size` rectangle.
+    pub fn board(&self) -> std::borrow::Cow<'_, SolvedBoard> {
+        match &self.board_shape {
+            BoardShape::Rectangle => {
+                std::borrow::Cow::Owned(SolvedBoard::rectangle(self.board_size))
+            }
+            BoardShape::Sketch(sketch) => std::borrow::Cow::Borrowed(&sketch.solved),
+        }
     }
     pub fn net(&self, id: Id) -> Option<&Net> {
         self.nets.iter().find(|n| n.id == id)
