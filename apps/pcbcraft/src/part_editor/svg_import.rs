@@ -5,6 +5,7 @@
 //! layer); the artwork is then added at the view centre with the core's
 //! `library.edit_graphics` edit code, committed as one undo step, and
 //! selected on the Symbol tab so it can be moved.
+use crate::kit::severity::Level;
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::library::graphics::{DrawingLayer, SILK_STROKE_MM, SYMBOL_STROKE_MM};
 use pcbcraft_solidcraft::svg::{self, Artwork};
@@ -286,7 +287,9 @@ impl super::PartEditor {
                 };
                 self.place_svg(placement, step);
             }
-            Some(Event::Failed(error)) => self.notice = format!("SVG not imported: {error}"),
+            Some(Event::Failed(error)) => {
+                self.tell(Level::Error, format!("SVG not imported: {error}"));
+            }
             None => {}
         }
     }
@@ -329,7 +332,7 @@ impl super::PartEditor {
         let (target, definition) = match placement.target {
             Target::Symbol => {
                 let Some(unit) = unit else {
-                    self.notice = "SVG not imported: the symbol has no unit.".into();
+                    self.tell(Level::Error, "SVG not imported: the symbol has no unit");
                     return;
                 };
                 (
@@ -367,8 +370,12 @@ impl super::PartEditor {
                         .sum::<usize>()
                         > MAX_VERTICES;
                 if full {
-                    self.notice = format!(
-                        "SVG not imported: the unit would exceed {MAX_GRAPHICS_PER_UNIT} graphics or {MAX_VERTICES} points."
+                    self.tell(
+                        Level::Error,
+                        format!(
+                            "SVG not imported: a unit holds {MAX_GRAPHICS_PER_UNIT} graphics, \
+                             {MAX_VERTICES} points"
+                        ),
                     );
                     return;
                 }
@@ -379,15 +386,13 @@ impl super::PartEditor {
             Ok((Definition::Footprint(footprint), _)) => set.footprint = footprint,
             Ok(_) => return,
             Err(error) => {
-                self.notice = format!("SVG not imported: {error}");
+                self.tell(Level::Error, format!("SVG not imported: {error}"));
                 return;
             }
         }
-        let mut notice = format!("Imported {count} graphics from SVG.");
+        self.tell(Level::Ok, format!("Imported {count} graphics from SVG"));
         for note in &placement.notes {
-            notice.push(' ');
-            notice.push_str(note);
+            self.tell(Level::Info, note.clone());
         }
-        self.notice = notice;
     }
 }

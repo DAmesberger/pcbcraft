@@ -1,17 +1,30 @@
-//! The component-level sections of the Component workspace's Properties
-//! card: Definition, Fields, Provenance, placed-instance updates and the
-//! library folder actions. They show on every tab.
+//! The Details tab's Properties card: the component-level data that used
+//! to repeat under every geometry tab (docs/sidebar-ia.md, "Properties card
+//! by subject"). DEFINITION, FIELDS, PARTS, LIBRARY and PROVENANCE, in that
+//! order; the footer's Update placed instances… opens the instance review.
 use super::{FieldText, PartEditor};
-use crate::kit::{self, Tone};
+use crate::kit;
 use egui::Ui;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::library::{
     ComponentDefinition, FieldView, Library, Published, designator_prefix_valid,
 };
-use pcbcraft_core::{DefinitionId, Engine, FieldRef};
+use pcbcraft_core::{DefinitionId, Engine, FieldRef, Id, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 impl PartEditor {
+    /// The Details card body. Every edit commits live through the working
+    /// copy; the Parts section issues its own typed operations.
+    pub(super) fn details_card(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let unpublished = self.unpublished(engine);
+        self.definition_section(ui, engine, unpublished);
+        self.fields_section(ui, engine);
+        let operation = self.part_section(ui, engine, None);
+        self.library_section(ui, engine);
+        self.provenance_section(ui);
+        operation
+    }
+
     /// Name, designator prefix and revision state of the component.
     pub(super) fn definition_section(&mut self, ui: &mut Ui, engine: &Engine, unpublished: bool) {
         let Some(set) = &mut self.draft else {
@@ -42,10 +55,13 @@ impl PartEditor {
     pub(super) fn provenance_section(&mut self, ui: &mut Ui) {
         if let Some(set) = &mut self.draft {
             kit::section(ui, "provenance", "Provenance", false, None, |ui| {
-                kit::text_row(ui, "Source", &mut set.metas.component.provenance);
-                kit::note(
+                kit::text_row(ui, "Source", &mut set.metas.component.provenance)
+                    .on_hover_text("Where the component's data comes from: a datasheet, a URL");
+                kit::hint(
                     ui,
-                    "Structural validation does not replace a datasheet review.",
+                    "Checks do not replace a datasheet review",
+                    "Structural checks confirm the drafts are consistent, not that they \
+                     match the real part",
                 );
             });
         }
@@ -54,86 +70,60 @@ impl PartEditor {
     /// Library folders (S3): Promote to library… and Duplicate of the
     /// published revision; the app runs them.
     pub(super) fn library_section(&mut self, ui: &mut Ui, engine: &Engine) {
-        if let Some(set) = &self.draft
-            && let Some(component) = set.published(engine)
-        {
-            crate::library_sources::component_section(
+        let Some(set) = &self.draft else {
+            return;
+        };
+        match set.published(engine) {
+            Some(component) => crate::library_sources::component_section(
                 ui,
                 engine,
                 component,
                 &set.metas.component.name,
-            );
+            ),
+            // Promote and Duplicate act on a published revision.
+            None => {
+                kit::section(ui, "library-source", "Library", true, None, |ui| {
+                    kit::value_row(ui, "Source", "This project · not published yet");
+                });
+            }
         }
     }
 
-    /// Offer to move placed instances to the published revision.
-    pub(super) fn update_section(&mut self, ui: &mut Ui, engine: &Engine) {
+    /// Placed instances of an older revision that Update placed instances…
+    /// would move to the published one; none while edits are unpublished.
+    pub(super) fn update_candidates(&self, engine: &Engine) -> Vec<Id> {
+        if self.unpublished(engine) {
+            return Vec::new();
+        }
         let Some(target) = self.draft.as_ref().and_then(|s| s.published(engine)) else {
-            return;
+            return Vec::new();
         };
-        let candidates: Vec<_> = engine
+        engine
             .project()
             .instances
             .iter()
             .filter(|i| i.component.id == target.id && i.component.revision != target.revision)
-            .collect();
-        self.update_instances
-            .retain(|id| candidates.iter().any(|i| i.id == *id));
-        if candidates.is_empty() {
+            .map(|i| i.id)
+            .collect()
+    }
+
+    /// Open the instance review for `instances`, each one chosen there.
+    pub(super) fn begin_instance_update(&mut self, engine: &Engine, instances: Vec<Id>) {
+        let Some(target) = self.draft.as_ref().and_then(|s| s.published(engine)) else {
+            return;
+        };
+        if instances.is_empty() {
             return;
         }
-        let selected = &mut self.update_instances;
-        let begin = kit::section(
-            ui,
-            "update-instances",
-            "Update placed instances",
-            true,
-            Some(candidates.len()),
-            |ui| {
-                kit::note(
-                    ui,
-                    &format!(
-                        "Use published revision {} for the selected instances.",
-                        target.revision.0
-                    ),
-                );
-                for instance in &candidates {
-                    let mut checked = selected.contains(&instance.id);
-                    let label = format!(
-                        "{} · revision {}",
-                        instance.designator, instance.component.revision.0
-                    );
-                    if kit::check_row(ui, &label, &mut checked) {
-                        if checked {
-                            selected.insert(instance.id);
-                        } else {
-                            selected.remove(&instance.id);
-                        }
-                    }
-                }
-                let mut begin = false;
-                kit::actions(ui, |ui| {
-                    let style = if selected.is_empty() {
-                        Button::Enabled(false)
-                    } else {
-                        Button::Primary
-                    };
-                    begin = ui_kit::button(ui, "Preview update", style).clicked()
-                        && !selected.is_empty();
-                });
-                begin
+        self.update.begin_choosing(
+            engine,
+            pcbcraft_core::updates::Change::ComponentRevision {
+                instances,
+                target,
+                resolutions: Default::default(),
             },
+            None,
         );
-        if begin == Some(true) {
-            self.update.begin(
-                engine,
-                pcbcraft_core::updates::Change::ComponentRevision {
-                    instances: self.update_instances.iter().copied().collect(),
-                    target,
-                    resolutions: Default::default(),
-                },
-            );
-        }
     }
 
     /// The component's selected fields with their component defaults.
@@ -157,13 +147,10 @@ impl PartEditor {
                     kit::rule(ui);
                 }
                 ui.push_id(("field", lineage), |ui| {
+                    // Issues reports the missing revision; the row only
+                    // says what it is.
                     let Some(view) = library.field_view(selection.field) else {
-                        kit::value_row(ui, "Field", &selection.field.to_string());
-                        kit::status(
-                            ui,
-                            "This field revision is not in the project library.",
-                            Tone::Error,
-                        );
+                        kit::value_row(ui, "Field", "Missing from the project library");
                         return;
                     };
                     let shown = default_text(selection.default.as_ref(), &view);
@@ -207,7 +194,7 @@ impl PartEditor {
                         buffer.text = buffer.loaded.clone();
                     }
                     if let Some(error) = &error {
-                        kit::status(ui, error, Tone::Error);
+                        kit::field_error(ui, &response, error, true);
                     }
                     if let Some(selection) = component.fields.get_mut(index) {
                         kit::check_row(ui, "Show on symbol", &mut selection.show_on_symbol);
@@ -224,9 +211,13 @@ impl PartEditor {
             }
             let addable = addable_fields(component, library);
             if addable.is_empty() {
-                kit::note(ui, "Every published field is selected.");
+                kit::hint(ui, "Every published field is selected", "");
             } else if component.fields.len() >= MAX_FIELDS {
-                kit::note(ui, "Maximum 64 fields per component.");
+                kit::hint(
+                    ui,
+                    &format!("A component selects at most {MAX_FIELDS} fields"),
+                    "",
+                );
             } else {
                 let mut chosen = None;
                 kit::row(ui, "Add field", |ui| {

@@ -237,6 +237,7 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 | Pill width | `kit/toast.rs` | A1: `pill` truncates its text into the room left after ×, so a narrow pill keeps its ×; the Showing pill keeps clear of the badge corner |
 | Fix launchers | `issues.rs` | `Fix { Apply { label, operation }, Open { label, dialog: FixDialog } }`, `fix(&IssueRow) -> Option<Fix>` |
 | Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String`; K3 added `mark(ctx, origin)` (an editor declares the origin of the operation it returns this frame; otherwise the call site's default applies: inspector and draft commits `Command`, canvas `Canvas`), `claim(ctx, origin) -> Option<String>` (on the next frame), `level(&Error) -> Level`, `presentable(text)` and `clip(text, max)` |
+| Component card | `part_editor.rs` | W1a added, for the column to adopt: `PartEditor::{inspector_card(&Engine) -> Inspector, inspector_region(ui, &Engine, Region) -> Option<Operation>, subject(ui, &Engine) -> CardResponse<Operation>, subject_kind() -> Subject}` and `impl issues::Locate for PartEditor`. Until `app/chrome.rs` calls `subject`, `inspector()` draws the body, the issue slot and the footer's actions in the one body it is handed, and the header names the tool while one is armed. |
 
 The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance. After wave 3, `kit/card.rs` keeps one only on `Subject` (Properties is the only subject until R1 and the W slices), and the kit re-exports other than `issues_bar` and `rows` stay allowed until A1, R1 and the W slices use them. A1 removed the allowances on `kit/issues.rs`, `kit/severity.rs` and `pill`; only `issue_row` (no caller outside the list yet) and `Level::ALL` (tests only) keep one.
 
@@ -258,7 +259,7 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | **C3** Core commands (done) | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
 | **A1** Issues surface (done) | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
 | **R1** Review panel (done) | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview; the column hosts a `KIND` subject as a docked review (`app/chrome.rs`), and the PCB canvas outlines the plan (`pcb_editor.rs`, one call) | `update_preview.rs` | K4, C2 |
-| **W1a** Component Details + Symbol | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
+| **W1a** Component Details + Symbol (done) | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
 | **W1b** Component Footprint + Mapping + 3D | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate` targets for its tabs (methods in its own files that W1a's `Locate` calls); `notice` sites | `part_editor/footprint_*.rs` (with `footprint_card.rs`), `part_editor/{mapping,model}_card.rs`, `part_editor/model_{body,props}.rs` | S1, K1, K3, K4 |
 | **W1c** Part dialog | Part as a `DialogPanel` with cascade publish, gated primary and return link | `part_editor/part_props.rs` | S1, K4 |
 | **W2a** Schematic cards | Sheet, Instance (live per field), Net/Wire, Place preview; Checks section removed; `Locate`; `notice` sites | `schematic_editor.rs`, `schematic_editor/{sheet,instance,net}_card.rs`, `place_palette.rs` (preview) | S1, K1, K3 |
@@ -280,9 +281,9 @@ Paths are relative to `apps/pcbcraft/src`. Each editor's `inspector()` stays in 
 
 | File | Holds |
 | --- | --- |
-| `part_editor.rs` | `inspector()`: Findings, the notice, the empty state, then Definition, the open tab's card, Fields, Parts, Provenance, instance updates and library actions |
-| `part_editor/details_card.rs` | Definition, Fields, Provenance, Update placed instances, library folder actions (component-level; shown on every tab today) |
-| `part_editor/symbol_card.rs` | the Symbol tab: tool, selection, unit, grid, terminal list, selected terminal, Functions |
+| `part_editor.rs` | the card dispatch by subject (`Inspected`): header, subject identity, footer and issue slot; the Details and Symbol tabs; `Locate` |
+| `part_editor/details_card.rs` | the Details tab: DEFINITION, FIELDS, PARTS, LIBRARY, PROVENANCE; Update placed instances… |
+| `part_editor/symbol_card.rs` | the Symbol tab: SYMBOL (unit, terminal list), the PIN · Electrical and TERMINAL cards |
 | `part_editor/footprint_card.rs` | the Footprint tab: tool options, template section, footprint and pad sections (bodies in `footprint_*.rs`) |
 | `part_editor/mapping_card.rs` | the Mapping tab: package terminals and their mapping |
 | `part_editor/model_card.rs` | the 3D tab: Body and placement (bodies in `model_body.rs`, `model_props.rs`) |

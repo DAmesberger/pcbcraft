@@ -1,8 +1,9 @@
-//! The Symbol tab's Properties card: tool, selection, unit and grid
-//! sections, the terminal list and the selected terminal with its
-//! functions.
-use super::{PartEditor, sentence};
-use crate::kit;
+//! The Symbol tab's Properties cards: SYMBOL with nothing selected (unit
+//! and terminal list), the PIN card of a selected pin (electrical, then
+//! graphic) and the TERMINAL card of a terminal without a pin on the drawn
+//! unit (docs/sidebar-ia.md, "Properties card by subject").
+use super::{PartEditor, Selected, sentence};
+use crate::kit::{self, severity::Level};
 use egui::Ui;
 use pcbcraft_core::functions::{
     Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
@@ -59,73 +60,116 @@ const DRIVES: [(Drive, &str); 4] = [
 ];
 
 impl PartEditor {
-    pub(super) fn symbol_card(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
-        self.tool_section(ui, engine);
-        self.selection_section(ui, engine);
+    /// The Symbol tab with nothing selected: SYMBOL, with the unit being
+    /// drawn and the terminal list. A row selects its pin, or opens the
+    /// TERMINAL card when the drawn unit has no pin for it.
+    pub(super) fn symbol_card(&mut self, ui: &mut Ui, _engine: &Engine) -> Option<Operation> {
         self.unit_section(ui);
-        let operation = self.grid_section(ui, engine);
-        self.terminal_list(ui);
-        let (Some(id), Some(set)) = (self.selected, &mut self.draft) else {
-            return operation;
+        if let Some(clicked) = self.terminal_rows(ui, None) {
+            self.show_terminal(clicked);
+        }
+        None
+    }
+
+    /// Select `terminal`'s pin on the drawn unit, or show its TERMINAL card
+    /// when the unit has none.
+    pub(super) fn show_terminal(&mut self, terminal: TerminalId) {
+        self.selected = Some(terminal);
+        let on_unit = self
+            .unit_index()
+            .and_then(|i| self.draft.as_ref()?.symbol.units.get(i))
+            .is_some_and(|u| u.pin(terminal).is_some());
+        if on_unit {
+            self.terminal_card = None;
+            self.select([Selected::Pin(terminal)].into_iter().collect());
+            self.frame_selection();
+        } else {
+            self.selection.clear();
+            self.terminal_card = Some(terminal);
+        }
+    }
+
+    /// A selected pin: its terminal's electrical properties, then the pin's
+    /// drawing (docs/sidebar-ia.md wireframe "Pin selected").
+    pub(super) fn pin_card(&mut self, ui: &mut Ui, terminal: TerminalId) {
+        let refused = self.electrical_section(ui, terminal, "pin-electrical", "Pin · Electrical");
+        if let Some(message) = refused {
+            self.tell(Level::Error, message);
+        }
+        self.pin_graphic_section(ui, terminal);
+    }
+
+    /// A terminal the drawn unit has no pin for: TERMINAL, and where its
+    /// pin comes from.
+    pub(super) fn terminal_without_pin_card(&mut self, ui: &mut Ui, terminal: TerminalId) {
+        let refused = self.electrical_section(ui, terminal, "terminal-electrical", "Terminal");
+        if let Some(message) = refused {
+            self.tell(Level::Error, message);
+        }
+        let elsewhere = self.draft.as_ref().and_then(|set| {
+            set.symbol
+                .units
+                .iter()
+                .find(|u| u.pin(terminal).is_some())
+                .map(|u| u.label.clone())
+        });
+        match elsewhere {
+            Some(unit) => kit::hint(
+                ui,
+                &format!("Its pin is on unit {unit}"),
+                "Choose that unit under Symbol to edit the pin",
+            ),
+            None => kit::hint(
+                ui,
+                "No pin yet: place one with the Pin tool (N)",
+                "The Pin tool places the next terminal without a pin",
+            ),
         };
+    }
+
+    /// Name, class and functions of `terminal`: the electrical half of the
+    /// PIN card and the whole TERMINAL card. Returns a refused change's
+    /// message.
+    fn electrical_section(
+        &mut self,
+        ui: &mut Ui,
+        terminal: TerminalId,
+        id: &str,
+        title: &str,
+    ) -> Option<&'static str> {
+        let set = self.draft.as_mut()?;
         let component = &mut set.component;
-        let placed = set.symbol.pin(id).is_some();
-        let notice = &mut self.notice;
-        let mut remove = false;
-        kit::section(
-            ui,
-            "selected-terminal",
-            "Selected terminal",
-            true,
-            None,
-            |ui| {
-                if let Some(terminal) = component.terminals.iter_mut().find(|t| t.id == id) {
-                    kit::text_row(ui, "Name", &mut terminal.name);
+        let mut refused = None;
+        kit::section(ui, id, title, true, None, |ui| {
+            if let Some(t) = component.terminals.iter_mut().find(|t| t.id == terminal) {
+                kit::text_row(ui, "Name", &mut t.name)
+                    .on_hover_text("The terminal's name, shown at the pin");
+            }
+            if let Some(mut class) = component.terminal(terminal).map(ClassChoice::of) {
+                let options: Vec<_> = CLASS_CHOICES
+                    .iter()
+                    .map(|(c, label)| (*c, (*label).to_owned()))
+                    .collect();
+                if kit::choice_row(ui, "Class", &mut class, &options)
+                    && let Err(message) = set_class(component, terminal, class)
+                {
+                    refused = Some(message);
                 }
-                if let Some(mut class) = component.terminal(id).map(ClassChoice::of) {
-                    let options: Vec<_> = CLASS_CHOICES
-                        .iter()
-                        .map(|(c, label)| (*c, (*label).to_owned()))
-                        .collect();
-                    if kit::choice_row(ui, "Class", &mut class, &options)
-                        && let Err(message) = set_class(component, id, class)
-                    {
-                        *notice = message.into();
-                    }
-                }
-                if placed {
-                    kit::note(
-                        ui,
-                        "Select the pin on the canvas to edit it; drag to move it.",
-                    );
-                } else {
-                    kit::note(ui, "No pin yet: place it with the Pin tool (N).");
-                }
-                kit::actions(ui, |ui| {
-                    if ui_kit::button(ui, "Remove terminal", Button::Normal).clicked() {
-                        remove = true;
-                    }
-                });
-            },
-        );
-        functions_section(ui, component, id, notice);
-        if remove {
-            self.remove_selected();
-        }
-        operation
+            }
+            if let Err(message) = function_rows(ui, component, terminal) {
+                refused = Some(message);
+            }
+        });
+        refused
     }
 
-    /// One compact selectable row per terminal, the selected one lit.
-    fn terminal_list(&mut self, ui: &mut Ui) {
-        if let Some(clicked) = self.terminal_rows(ui, self.selected) {
-            self.selected = Some(clicked);
-        }
-    }
-
-    /// The terminal rows with `lit` highlighted; the clicked terminal.
+    /// One compact selectable row per terminal, the `lit` one highlighted,
+    /// bounded at [`kit::LIST_MAX_ROWS`] with "Show all"; the clicked
+    /// terminal.
     pub(super) fn terminal_rows(&self, ui: &mut Ui, lit: Option<TerminalId>) -> Option<TerminalId> {
         let set = self.draft.as_ref()?;
         let terminals = &set.component.terminals;
+        let unit = self.unit_index().and_then(|i| set.symbol.units.get(i));
         let mut clicked = None;
         kit::section(
             ui,
@@ -134,19 +178,41 @@ impl PartEditor {
             true,
             Some(terminals.len()),
             |ui| {
-                for terminal in terminals {
-                    let summary = pin_summary(terminal);
+                let all_id = ui.id().with("show-all");
+                let all = ui.data(|d| d.get_temp::<bool>(all_id)).unwrap_or(false);
+                let max = if all {
+                    terminals.len()
+                } else {
+                    kit::LIST_MAX_ROWS
+                };
+                let shown = kit::list_frame(ui, terminals.len(), max, |ui, index| {
+                    let Some(terminal) = terminals.get(index) else {
+                        return;
+                    };
+                    let placed = unit.is_some_and(|u| u.pin(terminal.id).is_some());
+                    let summary = if placed {
+                        pin_summary(terminal)
+                    } else {
+                        format!("{} · no pin here", pin_summary(terminal))
+                    };
                     let row = kit::Row {
                         icon: "point",
                         label: &terminal.name,
                         secondary: &summary,
                         selected: lit == Some(terminal.id),
-                        tip: "Select this terminal",
+                        tip: if placed {
+                            "Select its pin"
+                        } else {
+                            "Show the terminal"
+                        },
                         ..Default::default()
                     };
                     if kit::tree_row(ui, ui.id().with(("terminal", terminal.id.0)), &row).clicked {
                         clicked = Some(terminal.id);
                     }
+                });
+                if shown.show_all {
+                    ui.data_mut(|d| d.insert_temp(all_id, true));
                 }
             },
         );
@@ -239,51 +305,44 @@ pub(super) fn add_function(
     Ok(function)
 }
 
-/// The function table of an electrical terminal: label, direction, signal
-/// and drive per function, and the design default. The core checks the
-/// declaration; its findings appear at the top of the panel.
-fn functions_section(
+/// The functions of an electrical terminal, inside its section: one
+/// function's direction, signal and drive inline; several as a table with
+/// the design default. The core checks the declaration (Issues shows its
+/// findings). Returns a refused Add function's message.
+fn function_rows(
     ui: &mut Ui,
     component: &mut ComponentDefinition,
     id: TerminalId,
-    notice: &mut String,
-) {
-    let Some(count) = component
+) -> Result<(), &'static str> {
+    if component
         .terminal(id)
         .and_then(Terminal::functions)
-        .map(|f| f.functions.len())
-    else {
-        return;
-    };
+        .is_none()
+    {
+        return Ok(());
+    }
     let directions: Vec<_> = DIRECTIONS
         .iter()
         .map(|d| (*d, sentence(d.label())))
         .collect();
     let signals: Vec<_> = SIGNALS.iter().map(|(s, l)| (*s, (*l).to_owned())).collect();
     let drives: Vec<_> = DRIVES.iter().map(|(d, l)| (*d, (*l).to_owned())).collect();
-    kit::section(ui, "functions", "Functions", true, Some(count), |ui| {
-        let mut add = false;
-        if let Some(TerminalClass::Electrical(table)) = component
-            .terminals
-            .iter_mut()
-            .find(|t| t.id == id)
-            .map(|t| &mut t.class)
-        {
-            let only = table.functions.len() <= 1;
-            let mut remove = None;
-            for (index, function) in table.functions.iter_mut().enumerate() {
-                if index > 0 {
+    let mut add = false;
+    if let Some(TerminalClass::Electrical(table)) = component
+        .terminals
+        .iter_mut()
+        .find(|t| t.id == id)
+        .map(|t| &mut t.class)
+    {
+        let only = table.functions.len() <= 1;
+        let mut remove = None;
+        for (index, function) in table.functions.iter_mut().enumerate() {
+            ui.push_id(("function", function.id.0), |ui| {
+                if !only {
                     kit::rule(ui);
-                }
-                ui.push_id(("function", function.id.0), |ui| {
                     kit::row(ui, &format!("Function {}", index + 1), |ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let response = ui
-                                .add_enabled_ui(!only, |ui| {
-                                    ui_kit::button(ui, "Remove", Button::Small)
-                                })
-                                .inner;
-                            if response.clicked() {
+                            if ui_kit::button(ui, "Remove", Button::Small).clicked() {
                                 remove = Some(index);
                             }
                             ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
@@ -291,45 +350,47 @@ fn functions_section(
                                 .on_hover_text("Function label, unique on this terminal");
                         });
                     });
-                    kit::choice_row(ui, "Direction", &mut function.direction, &directions);
-                    kit::choice_row(ui, "Signal", &mut function.signal, &signals);
-                    kit::choice_row(ui, "Drive", &mut function.drive, &drives);
-                });
-            }
-            if let Some(index) = remove
-                && table.functions.len() > 1
-                && index < table.functions.len()
-            {
-                let removed = table.functions.remove(index);
-                if table.design_default == Some(removed.id) {
-                    table.design_default = None;
                 }
-            }
-            if table.functions.len() > 1 {
-                kit::rule(ui);
-                let options: Vec<_> = std::iter::once((None, "None".to_owned()))
-                    .chain(
-                        table
-                            .functions
-                            .iter()
-                            .map(|f| (Some(f.id), f.label.clone())),
-                    )
-                    .collect();
-                kit::choice_row(ui, "Default", &mut table.design_default, &options);
-            }
-            kit::actions(ui, |ui| {
-                add = ui_kit::button(
-                    ui,
-                    "Add function",
-                    Button::Enabled(table.functions.len() < MAX_FUNCTIONS),
-                )
-                .clicked();
+                kit::choice_row(ui, "Direction", &mut function.direction, &directions);
+                kit::choice_row(ui, "Signal", &mut function.signal, &signals);
+                kit::choice_row(ui, "Drive", &mut function.drive, &drives);
             });
         }
-        if add && let Err(message) = add_function(component, id) {
-            *notice = message.into();
+        if let Some(index) = remove
+            && table.functions.len() > 1
+            && index < table.functions.len()
+        {
+            let removed = table.functions.remove(index);
+            if table.design_default == Some(removed.id) {
+                table.design_default = None;
+            }
         }
-    });
+        if table.functions.len() > 1 {
+            kit::rule(ui);
+            let options: Vec<_> = std::iter::once((None, "None".to_owned()))
+                .chain(
+                    table
+                        .functions
+                        .iter()
+                        .map(|f| (Some(f.id), f.label.clone())),
+                )
+                .collect();
+            kit::choice_row(ui, "Default", &mut table.design_default, &options);
+        }
+        kit::actions(ui, |ui| {
+            add = ui_kit::button(
+                ui,
+                "Add function",
+                Button::Enabled(table.functions.len() < MAX_FUNCTIONS),
+            )
+            .on_hover_text("Another way this terminal can be used, such as a GPIO's UART")
+            .clicked();
+        });
+    }
+    if add {
+        add_function(component, id)?;
+    }
+    Ok(())
 }
 
 /// Take the next local ID of a component, with checked arithmetic.

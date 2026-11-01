@@ -362,10 +362,12 @@ fn layer_toggles_change_the_view_only() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// The Findings section lists blocking findings before lint, names pads
-/// by number, and a click selects the pad it names on the Footprint tab.
+/// Blocking findings come before lint and name pads by number; the
+/// footprint's issue slot counts the blocker, and locating the issue
+/// selects the pad it names on the Footprint tab.
 #[test]
-fn findings_are_grouped_and_a_click_selects_the_pad() -> Result<(), Box<dyn std::error::Error>> {
+fn findings_are_grouped_and_locating_one_selects_the_pad() -> Result<(), Box<dyn std::error::Error>>
+{
     let ctx = egui::Context::default();
     let mut engine = Engine::demo()?;
     let mut editor = footprint_editor(&ctx, &engine)?;
@@ -388,14 +390,18 @@ fn findings_are_grouped_and_a_click_selects_the_pad() -> Result<(), Box<dyn std:
         .find(|f| f.blocking && f.text.starts_with("Pad 7 "))
         .ok_or("the pad's finding, by number")?
         .clone();
-    let shown = inspector_frame(&mut editor, &engine, &ctx);
-    assert!(
-        shown.iter().any(|t| t.starts_with("Blocks publishing")),
-        "{shown:?}"
-    );
+    let slot = editor
+        .inspector_card(&engine)
+        .issues
+        .ok_or("an issue slot")?;
+    assert!(slot.counts.error >= 1, "{slot:?}");
     editor.on_tab("symbol");
     editor.selected_pad = None;
-    editor.show_finding(&finding.objects);
+    assert!(crate::issues::Locate::locate(
+        &mut editor,
+        &engine,
+        &finding.objects
+    ));
     assert_eq!(editor.selected_pad, Some(pad));
     assert!(editor.view == View::Footprint, "the Footprint tab");
     Ok(())
@@ -446,10 +452,13 @@ fn inspector_input(
     (out, copied)
 }
 
-/// B-b: a finding row is a button. Dragging across it selects no text
-/// (Copy copies nothing), and a click on it selects the pad it names.
+/// One home for a problem: the card shows a pad's blocking finding only as
+/// its issue slot's count, never as text, and locating the finding (what
+/// an Issues row does, its rows being buttons) selects the pad on the
+/// Footprint tab from any tab.
 #[test]
-fn a_finding_row_is_a_button_that_locates_its_pad() -> Result<(), Box<dyn std::error::Error>> {
+fn a_finding_shows_as_the_slot_count_and_locates_its_pad() -> Result<(), Box<dyn std::error::Error>>
+{
     let ctx = egui::Context::default();
     let mut engine = Engine::demo()?;
     let mut editor = footprint_editor(&ctx, &engine)?;
@@ -462,41 +471,32 @@ fn a_finding_row_is_a_button_that_locates_its_pad() -> Result<(), Box<dyn std::e
     };
     assert!(commit(&mut editor, &mut engine, &ctx)?);
     let (shown, _) = inspector_input(&mut editor, &engine, &ctx, vec![]);
-    let row = shown
-        .iter()
-        .find(|(t, _)| t.starts_with("Pad 7 "))
-        .map(|(_, r)| *r)
-        .ok_or("the pad's finding row")?;
-    let (from, to) = (
-        row.left_top() + egui::vec2(2.0, 4.0),
-        row.right_bottom() - egui::vec2(2.0, 4.0),
-    );
-    for events in [
-        vec![egui::Event::PointerMoved(from)],
-        vec![button(from, true)],
-        vec![egui::Event::PointerMoved(from + (to - from) * 0.5)],
-        vec![egui::Event::PointerMoved(to)],
-        vec![button(to, false)],
-    ] {
-        inspector_input(&mut editor, &engine, &ctx, events);
-    }
-    let (_, copied) = inspector_input(&mut editor, &engine, &ctx, vec![egui::Event::Copy]);
     assert!(
-        copied.iter().all(|t| t.is_empty()),
-        "selected text {copied:?}"
+        !shown.iter().any(|(t, _)| t.starts_with("Pad 7 ")),
+        "no finding text in the card: {shown:?}"
     );
-    editor.on_tab("symbol");
-    editor.selected_pad = None;
-    let at = row.center();
-    for events in [
-        vec![egui::Event::PointerMoved(at)],
-        vec![button(at, true)],
-        vec![button(at, false)],
-    ] {
-        inspector_input(&mut editor, &engine, &ctx, events);
+    let objects = editor
+        .listed_findings(&engine)
+        .into_iter()
+        .find(|f| f.blocking && f.text.starts_with("Pad 7 "))
+        .ok_or("the pad's finding")?
+        .objects;
+    let slot = editor
+        .inspector_card(&engine)
+        .issues
+        .ok_or("an issue slot")?;
+    assert!(slot.counts.error >= 1, "{slot:?}");
+    for tab in ["details", "symbol", "mapping", "model"] {
+        editor.on_tab(tab);
+        editor.selected_pad = None;
+        assert!(crate::issues::Locate::locate(
+            &mut editor,
+            &engine,
+            &objects
+        ));
+        assert_eq!(editor.selected_pad, Some(pad), "from {tab}");
+        assert!(editor.view == View::Footprint, "the Footprint tab");
     }
-    assert_eq!(editor.selected_pad, Some(pad));
-    assert!(editor.view == View::Footprint, "the Footprint tab");
     Ok(())
 }
 

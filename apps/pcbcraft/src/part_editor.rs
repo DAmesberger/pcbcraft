@@ -6,6 +6,8 @@
 //! gesture commits it as one `library.edit`, so every finished edit is one
 //! shared undo step. Publishing sends one `library.publish` of the five.
 mod arrange;
+#[cfg(test)]
+mod card_tests;
 mod details_card;
 mod drawing;
 #[cfg(test)]
@@ -42,7 +44,7 @@ mod symbol_card;
 mod symbol_props;
 mod working_set;
 
-use crate::kit::{self, Tone};
+use crate::kit::{self, Tone, severity::Level};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
 pub use model_view::reset_model_view;
 pub use part_props::{meaning_label, spec_text};
@@ -59,8 +61,8 @@ use pcbcraft_core::library::{
     Unit,
 };
 use pcbcraft_core::{
-    ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, Id, LibraryCommand, Operation,
-    PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
+    ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, LibraryCommand, ObjectRef,
+    Operation, PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{fonts, theme::Tokens};
 use std::sync::Arc;
@@ -100,9 +102,12 @@ impl FieldText {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum View {
+    /// Component-level data: definition, fields, Parts, library and
+    /// provenance (docs/sidebar-ia.md, "Properties card by subject").
     #[default]
+    Details,
     Symbol,
     Footprint,
     Mapping,
@@ -137,7 +142,16 @@ pub struct PartEditor {
     request: Option<Request>,
     view: View,
     selected: Option<TerminalId>,
+    /// Text the footprint and 3D files still set (slice W1b retires it).
     notice: String,
+    /// Toasts to post on the next frame with a context: command results
+    /// and gesture refusals (the editor `notice` string's replacement).
+    posts: Vec<kit::toast::Posted>,
+    /// A terminal shown on the Symbol tab that has no pin on the drawn
+    /// unit (its TERMINAL card).
+    terminal_card: Option<TerminalId>,
+    /// The issue slot of the inspected subject and what it was counted for.
+    issue_slot: Option<(IssueKey, kit::card::IssueSlot)>,
     /// The pad the Footprint view and its properties edit.
     selected_pad: Option<PadId>,
     /// Footprint view pan and zoom; fitted when unset.
@@ -157,7 +171,6 @@ pub struct PartEditor {
     /// canvas.
     finding_graphic: Option<GraphicId>,
     update: crate::update_preview::UpdatePreview,
-    update_instances: std::collections::BTreeSet<Id>,
     /// Typed component defaults by field lineage.
     field_buffers: std::collections::BTreeMap<DefinitionId, FieldText>,
     /// The armed Symbol tool and its pending points.
@@ -168,6 +181,9 @@ pub struct PartEditor {
     unit: Option<UnitId>,
     /// Symbol view pan and zoom; fitted when unset.
     symbol_view: Option<symbol_canvas::ViewState>,
+    /// The Symbol canvas's last size, to tell whether a located object is
+    /// in view.
+    symbol_canvas_size: Option<egui::Vec2>,
     gesture: Option<symbol_canvas::Gesture>,
     /// A gesture finished by a key or button, placed on the next canvas frame.
     pending_place: Option<drawing::Placed>,
@@ -208,9 +224,12 @@ impl Default for PartEditor {
             publishing: false,
             publish_next: false,
             request: None,
-            view: View::Symbol,
+            view: View::Details,
             selected: Some(TerminalId(1)),
             notice: String::new(),
+            posts: Vec::new(),
+            terminal_card: None,
+            issue_slot: None,
             selected_pad: None,
             footprint_view: None,
             pad_drag: None,
@@ -222,12 +241,12 @@ impl Default for PartEditor {
             findings: None,
             finding_graphic: None,
             update: Default::default(),
-            update_instances: Default::default(),
             field_buffers: Default::default(),
             drawing: Default::default(),
             selection: Default::default(),
             unit: None,
             symbol_view: None,
+            symbol_canvas_size: None,
             gesture: None,
             pending_place: None,
             snap: true,
@@ -303,15 +322,34 @@ impl PartEditor {
         {
             self.selected = set.component.terminals.first().map(|t| t.id);
         }
+        if let (Some(set), Some(id)) = (&set, self.terminal_card)
+            && set.component.terminal(id).is_none()
+        {
+            self.terminal_card = None;
+        }
         if self.publishing
             && let Some(set) = &set
             && !set.unpublished(engine)
             && let Some(published) = set.published(engine)
         {
-            self.notice = format!(
-                "Revision {} published. Existing instances retain their snapshots.",
-                published.revision.0
-            );
+            let older = engine
+                .project()
+                .instances
+                .iter()
+                .filter(|i| {
+                    i.component.id == published.id && i.component.revision != published.revision
+                })
+                .count();
+            let name = &set.metas.component.name;
+            let text = match older {
+                0 => format!("Published {name} r{}", published.revision.0),
+                n => format!(
+                    "Published {name} r{} · {n} placed {} keep older revisions",
+                    published.revision.0,
+                    if n == 1 { "instance" } else { "instances" }
+                ),
+            };
+            self.tell(Level::Ok, text);
         }
         self.publishing = false;
         if self.fit_on_build && set.as_ref().is_some_and(|s| !s.footprint.pads.is_empty()) {
@@ -328,6 +366,7 @@ impl PartEditor {
     /// after the editor's widgets ran.
     pub fn commit(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        self.flush(ctx);
         if let Some(publish) = self.publish_pending(engine) {
             return Some(publish);
         }
@@ -390,6 +429,7 @@ impl PartEditor {
         use crate::shell::{Group, Ribbon, Tab, Tool};
         self.sync(engine);
         let tabs = [
+            ("details", "Details", View::Details),
             ("symbol", "Symbol", View::Symbol),
             ("footprint", "Footprint", View::Footprint),
             ("mapping", "Mapping", View::Mapping),
@@ -436,6 +476,13 @@ impl PartEditor {
             return Ribbon {
                 tabs,
                 groups: self.symbol_groups(has_draft, library),
+                notice: None,
+            };
+        }
+        if self.view == View::Details {
+            return Ribbon {
+                tabs,
+                groups: vec![library],
                 notice: None,
             };
         }
@@ -650,11 +697,33 @@ impl PartEditor {
 
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
+            "details" => View::Details,
             "footprint" => View::Footprint,
             "mapping" => View::Mapping,
             "model" => View::Model,
             _ => View::Symbol,
         };
+    }
+
+    /// Queue a toast for the next frame with a context: a command result
+    /// or a gesture refusal, one line naming objects.
+    fn tell(&mut self, level: Level, text: impl Into<String>) {
+        // A burst of refusals in one gesture needs only its first few.
+        if self.posts.len() < 8 {
+            self.posts.push(kit::toast::Posted {
+                level,
+                text: text.into(),
+                actions: Vec::new(),
+            });
+        }
+    }
+
+    /// Post the queued toasts; the app drains them into the toast stack
+    /// and Messages.
+    fn flush(&mut self, ctx: &egui::Context) {
+        for post in self.posts.drain(..) {
+            kit::toast::post(ctx, post.level, post.text, post.actions);
+        }
     }
 
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
@@ -707,15 +776,113 @@ impl PartEditor {
         None
     }
 
-    /// The properties title band.
+    /// What the card inspects now: the review, the open tab's document
+    /// object, an armed Symbol tool, or the Symbol selection.
+    fn inspected(&self) -> Inspected {
+        if self.update.is_open() {
+            return Inspected::Review;
+        }
+        if self.draft.is_none() {
+            return Inspected::Empty;
+        }
+        if self.view != View::Symbol {
+            return Inspected::Tab(self.view);
+        }
+        let tool = self.drawing.tool();
+        if tool != drawing::Tool::Select {
+            return Inspected::Tool(tool);
+        }
+        if let Some(terminal) = self.selected_pin() {
+            return Inspected::Pin(terminal);
+        }
+        if let Some(graphic) = self.selected_graphic() {
+            return Inspected::Graphic(graphic);
+        }
+        if self.selection.len() > 1 {
+            return Inspected::Selection(self.selection.len());
+        }
+        if let Some(terminal) = self.terminal_card {
+            return Inspected::Terminal(terminal);
+        }
+        Inspected::Tab(View::Symbol)
+    }
+
+    /// The properties title band: it names the subject, so the body never
+    /// repeats it.
     pub fn header(&self, _engine: &Engine) -> crate::shell::Header {
         use crate::shell::Header;
-        if self.update.is_open() {
-            return Header::new("component", "Update placed instances", "Review");
+        let component = || {
+            self.draft
+                .as_ref()
+                .map(|set| set.metas.component.name.clone())
+                .unwrap_or_default()
+        };
+        match self.inspected() {
+            Inspected::Review => Header::new("component", "Update placed instances", "Review"),
+            Inspected::Empty => Header::new("component", "No component", ""),
+            Inspected::Tab(_) => Header::new("component", component(), "Component"),
+            Inspected::Tool(tool) => Header::new(tool.icon(), tool.label(), "Tool"),
+            Inspected::Pin(terminal) => Header::new("point", self.pin_title(terminal), "Pin"),
+            Inspected::Terminal(terminal) => {
+                let name = self
+                    .draft
+                    .as_ref()
+                    .and_then(|set| set.component.terminal(terminal))
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default();
+                Header::new("point", format!("Terminal {name}"), "Terminal")
+            }
+            Inspected::Graphic(graphic) => {
+                let (icon, title) = self.graphic_title(graphic);
+                let kind = if icon == "text" { "Text" } else { "Graphic" };
+                Header::new(icon, title, kind)
+            }
+            Inspected::Selection(count) => {
+                Header::new("select", format!("{count} objects"), "Selection")
+            }
         }
-        match &self.draft {
-            Some(set) => Header::new("component", set.metas.component.name.clone(), "Component"),
-            None => Header::new("component", "No component", ""),
+    }
+
+    /// "Pin 2 · VOUT": the package designation the terminal lands, then its
+    /// name; just the name when they agree or nothing lands it.
+    fn pin_title(&self, terminal: TerminalId) -> String {
+        let Some(set) = &self.draft else {
+            return String::new();
+        };
+        let name = set
+            .component
+            .terminal(terminal)
+            .map(|t| t.name.clone())
+            .unwrap_or_default();
+        let number = set
+            .binding
+            .mappings
+            .iter()
+            .find(|m| m.terminal == terminal)
+            .and_then(|m| set.package.terminal(m.package_terminal))
+            .map(|t| t.designation.clone())
+            .filter(|d| !d.is_empty() && *d != name);
+        match number {
+            Some(number) => format!("Pin {number} · {name}"),
+            None => format!("Pin {name}"),
+        }
+    }
+
+    /// The icon and title of a graphic of the drawn unit.
+    fn graphic_title(&self, graphic: GraphicId) -> (&'static str, String) {
+        let item = self
+            .draft
+            .as_ref()
+            .and_then(|set| set.symbol.units.get(self.unit_index()?))
+            .and_then(|unit| unit.graphic(graphic))
+            .map(|g| &g.item);
+        match item {
+            Some(Item::Shape { shape, .. }) => (
+                symbol_props::shape_icon(shape),
+                symbol_props::shape_name(shape).to_owned(),
+            ),
+            Some(Item::Text(_)) => ("text", "Text".to_owned()),
+            None => ("select", "Graphic".to_owned()),
         }
     }
 
@@ -739,7 +906,7 @@ impl PartEditor {
         }
         self.lineage = Some(id);
         self.source = None;
-        self.notice.clear();
+        self.view = View::Details;
     }
 
     /// Open the component lineage `id` and draft a new Part of it rated at
@@ -804,7 +971,6 @@ impl PartEditor {
             }
             None => self.request = Some(Request::Create(template)),
         }
-        self.notice.clear();
         self.footprint_view = None;
         self.selected_pad = None;
         self.symbol_view = None;
@@ -854,9 +1020,10 @@ impl PartEditor {
     fn new_terminal(&mut self) -> Option<TerminalId> {
         let set = self.draft.as_mut()?;
         if set.component.terminals.len() >= pcbcraft_core::library::MAX_TERMINALS {
-            self.notice = format!(
-                "Maximum {} terminals in this edition",
-                pcbcraft_core::library::MAX_TERMINALS
+            let most = pcbcraft_core::library::MAX_TERMINALS;
+            self.tell(
+                Level::Error,
+                format!("No terminal added: a component holds at most {most}"),
             );
             return None;
         }
@@ -874,7 +1041,7 @@ impl PartEditor {
         let (Some(electrical), Some(function), Some(physical), Some(pad)) =
             (electrical, function, physical, pad)
         else {
-            self.notice = "Terminal identity exhausted".into();
+            self.tell(Level::Error, NO_MORE_TERMINALS);
             return None;
         };
         if set.symbol.units.is_empty() {
@@ -884,7 +1051,7 @@ impl PartEditor {
                 allocate(&mut set.symbol.next_local),
                 allocate(&mut set.symbol.next_local),
             ) else {
-                self.notice = "Unit identity exhausted".into();
+                self.tell(Level::Error, NO_MORE_TERMINALS);
                 return None;
             };
             set.symbol.pin_text_height = PIN_TEXT_HEIGHT_MM;
@@ -907,11 +1074,7 @@ impl PartEditor {
             .map(|n| n.to_string())
             .find(|n| !taken(n))
             .unwrap_or_else(|| physical.to_string());
-        if set.package.chip_kind().is_some() && set.package.terminals.len() >= 2 {
-            self.notice = "A chip body has exactly two terminals; change Form on the 3D tab \
-                 to Generic, or remove this terminal"
-                .to_owned();
-        }
+        let chip = set.package.chip_kind().is_some() && set.package.terminals.len() >= 2;
         set.component.terminals.push(Terminal {
             id: electrical,
             name: number.clone(),
@@ -936,6 +1099,12 @@ impl PartEditor {
             terminal: electrical,
         });
         self.selected = Some(electrical);
+        if chip {
+            self.tell(
+                Level::Warning,
+                "A chip body has two terminals: change Body on the 3D tab or remove this one",
+            );
+        }
         Some(electrical)
     }
 
@@ -944,7 +1113,7 @@ impl PartEditor {
             return;
         };
         if set.component.terminals.len() <= 1 {
-            self.notice = "A component needs at least one terminal".into();
+            self.tell(Level::Error, "A component needs at least one terminal");
             return;
         }
         let physical: Vec<_> = set
@@ -976,7 +1145,10 @@ impl PartEditor {
             return;
         };
         if set.footprint.source.is_some() {
-            self.notice = "Pads are derived from the footprint sketch".into();
+            self.tell(
+                Level::Info,
+                "Pads come from the footprint sketch: add them there",
+            );
             return;
         }
         let terminal = set
@@ -987,15 +1159,16 @@ impl PartEditor {
             .map(|m| m.package_terminal)
             .filter(|t| !set.footprint.pads.iter().any(|p| p.terminal == Some(*t)));
         if set.footprint.pads.len() >= pcbcraft_core::library::MAX_PADS {
-            self.notice = format!(
-                "Maximum {} pads in this edition",
-                pcbcraft_core::library::MAX_PADS
+            let most = pcbcraft_core::library::MAX_PADS;
+            self.tell(
+                Level::Error,
+                format!("No pad added: a footprint holds at most {most}"),
             );
             return;
         }
         let id = set.footprint.next_local;
         let Some(next) = id.checked_add(1) else {
-            self.notice = "Pad identity exhausted".into();
+            self.tell(Level::Error, "No more pads can be added to this footprint");
             return;
         };
         set.footprint.next_local = next;
@@ -1104,112 +1277,348 @@ impl PartEditor {
         listed
     }
 
-    /// The Findings section: errors that block publishing, then lint,
-    /// scrollable; clicking one shows the pad or graphic it names.
-    fn findings_section(&mut self, ui: &mut Ui, engine: &Engine) {
-        let listed = self.listed_findings(engine);
-        if listed.is_empty() {
-            return;
-        }
-        let errors = listed.iter().filter(|f| f.blocking).count();
-        let mut clicked = None;
-        kit::section(ui, "findings", "Findings", true, Some(listed.len()), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("findings-list")
-                .max_height(220.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for (i, finding) in listed.iter().enumerate() {
-                        if i == 0 && errors > 0 {
-                            kit::note(ui, &format!("Blocks publishing ({errors})"));
-                        }
-                        if i == errors {
-                            kit::note(ui, &format!("Lint, advisory ({})", listed.len() - errors));
-                        }
-                        let tone = if finding.blocking {
-                            Tone::Error
-                        } else {
-                            Tone::Warning
-                        };
-                        let response = kit::status_button(ui, &finding.text, tone)
-                            .on_hover_text("Show it on the canvas");
-                        if response.clicked() {
-                            clicked = Some(finding.objects.clone());
-                        }
-                    }
-                });
-        });
-        if let Some(objects) = clicked {
-            self.show_finding(&objects);
-        }
-    }
-
-    /// Select the pad, or outline the graphic, a finding names in the
-    /// footprint draft, and switch to the Footprint tab.
-    fn show_finding(&mut self, objects: &[pcbcraft_core::diagnostics::ObjectRef]) {
-        use pcbcraft_core::diagnostics::ObjectRef;
-        let Some(set) = &self.draft else {
-            return;
-        };
-        self.finding_graphic = None;
-        for object in objects {
-            let ObjectRef::LibraryObject { definition, local } = object else {
-                continue;
-            };
-            if *definition != set.ids.footprint {
-                continue;
-            }
-            if let Some(pad) = set.footprint.pads.iter().find(|p| p.id.0 == *local) {
-                self.selected_pad = Some(pad.id);
-                if let Some(electrical) = pad.terminal.and_then(|t| set.binding.terminal_of(t)) {
-                    self.selected = Some(electrical);
-                }
-                self.view = View::Footprint;
-            } else if set.footprint.graphics.iter().any(|g| g.id.0 == *local) {
-                self.finding_graphic = Some(GraphicId(*local));
-                self.view = View::Footprint;
-            }
-        }
-    }
-
-    /// The Properties card body: the component's Definition, the open
-    /// view's card, then the component-level sections.
-    pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    /// The Properties card's frame for the current subject: its header,
+    /// the identity whose change resets the scroll, whether it has a pinned
+    /// footer, and its issue slot (docs/sidebar-ia.md, "Contract"). The
+    /// app's column draws it with [`kit::card::card`] and asks
+    /// [`Self::inspector_region`] for the body and footer.
+    pub fn inspector_card(&mut self, engine: &Engine) -> kit::card::Inspector {
         self.sync(engine);
-        if self.update.is_open() {
+        let inspected = self.inspected();
+        kit::card::Inspector {
+            header: self.header(engine),
+            subject: egui::Id::new(("component-card", self.lineage, inspected)),
+            footer: self.has_footer(engine, inspected),
+            issues: self.issue_slot(engine, inspected),
+        }
+    }
+
+    /// What the subject slot holds: Properties, or the armed tool's card.
+    #[allow(dead_code, reason = "the column calls it once it hands the slot over")]
+    pub fn subject_kind(&self) -> kit::card::Subject {
+        match self.inspected() {
+            Inspected::Tool(_) => kit::card::Subject::Tool,
+            Inspected::Review => kit::card::Subject::Review,
+            _ => kit::card::Subject::Properties,
+        }
+    }
+
+    /// One region of the Properties card. The body is the only scroll;
+    /// the footer holds object actions (Remove pin), never Apply.
+    pub fn inspector_region(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+        region: kit::card::Region,
+    ) -> Option<Operation> {
+        self.sync(engine);
+        self.flush(ui.ctx());
+        let inspected = self.inspected();
+        match region {
+            kit::card::Region::Body => self.card_body(ui, engine, inspected),
+            kit::card::Region::Footer => self.card_footer(ui, engine, inspected),
+        }
+    }
+
+    /// The whole subject slot for a column that hands it over: the armed
+    /// tool's card ([`kit::tool_card`]), or the Properties card with its
+    /// pinned issue slot and footer.
+    #[allow(dead_code, reason = "the column calls it once it hands the slot over")]
+    pub fn subject(&mut self, ui: &mut Ui, engine: &Engine) -> kit::card::CardResponse<Operation> {
+        self.sync(engine);
+        self.flush(ui.ctx());
+        if let Inspected::Tool(tool) = self.inspected() {
+            let key = tool_key(tool);
+            let card = kit::ToolCard {
+                icon: tool.icon(),
+                name: tool.label(),
+                key: &key,
+                hint: tool.tip(),
+                tip: "",
+                finish: tool.is_chain().then_some("Finish"),
+            };
+            let response = kit::tool_card(ui, &card, |ui| self.tool_rows(ui, engine));
+            self.tool_card_response(response);
+            return kit::card::CardResponse {
+                output: None,
+                show_issues: false,
+            };
+        }
+        let inspector = self.inspector_card(engine);
+        kit::card::card(ui, &inspector, |ui, region| {
+            self.inspector_region(ui, engine, region)
+        })
+    }
+
+    /// The Properties card for a column that draws the header itself and
+    /// hands over one scrolling body: the body, then the issue slot and
+    /// the footer's actions at its end.
+    pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let inspector = self.inspector_card(engine);
+        let operation = self.inspector_region(ui, engine, kit::card::Region::Body);
+        let slot = inspector.issues.unwrap_or_default();
+        kit::issue_line(ui, &slot.counts, &slot.label);
+        let mut footer = None;
+        if inspector.footer {
+            kit::rule(ui);
+            kit::actions(ui, |ui| {
+                footer = self.inspector_region(ui, engine, kit::card::Region::Footer);
+            });
+        }
+        operation.or(footer)
+    }
+
+    /// The card body for `inspected`.
+    fn card_body(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+        inspected: Inspected,
+    ) -> Option<Operation> {
+        if inspected == Inspected::Review {
             return self.update.show(ui, engine);
         }
-        let unpublished = self.unpublished(engine);
-        self.findings_section(ui, engine);
+        // Slice W1b retires the footprint and 3D files' notice text.
         if !self.notice.is_empty() {
             kit::status(ui, &self.notice, Tone::Note);
         }
-        if self.draft.is_none() {
-            kit::status(
-                ui,
-                "Start a component from the Passive or Connector template, or open one in the Browser.",
-                Tone::Dim,
-            );
-            return None;
-        }
-        self.definition_section(ui, engine, unpublished);
-        let operation = match self.view {
-            View::Symbol => self.symbol_card(ui, engine),
-            View::Footprint => self.footprint_card(ui),
-            View::Mapping => {
+        match inspected {
+            Inspected::Review => None,
+            Inspected::Empty => {
+                kit::hint(
+                    ui,
+                    "Start from a Component template, or open one in the Browser",
+                    "Passive, Connector, SOIC-8, QFN-16 and Header 2×5 are on the ribbon",
+                );
+                None
+            }
+            Inspected::Tab(View::Details) => self.details_card(ui, engine),
+            Inspected::Tab(View::Symbol) => self.symbol_card(ui, engine),
+            Inspected::Tab(View::Footprint) => self.footprint_card(ui),
+            Inspected::Tab(View::Mapping) => {
                 self.mapping_card(ui);
                 None
             }
-            View::Model => self.model_card(ui, engine),
-        };
-        self.fields_section(ui, engine);
-        let operation = self.part_section(ui, engine, operation);
-        self.provenance_section(ui);
-        if !unpublished {
-            self.update_section(ui, engine);
+            Inspected::Tab(View::Model) => self.model_card(ui, engine),
+            Inspected::Tool(tool) => {
+                self.tool_rows(ui, engine);
+                kit::hint(ui, tool.tip(), "");
+                None
+            }
+            Inspected::Pin(terminal) => {
+                self.pin_card(ui, terminal);
+                None
+            }
+            Inspected::Terminal(terminal) => {
+                self.terminal_without_pin_card(ui, terminal);
+                None
+            }
+            Inspected::Graphic(graphic) => {
+                self.graphic_card(ui, engine, graphic);
+                None
+            }
+            Inspected::Selection(count) => {
+                kit::section(
+                    ui,
+                    "symbol-selection",
+                    "Selection",
+                    true,
+                    Some(count),
+                    |ui| {
+                        kit::value_row(ui, "Objects", &count.to_string());
+                        kit::hint(
+                            ui,
+                            "Drag to move; Rotate, Mirror and Duplicate act on all",
+                            "Shift+click adds or removes an object; Esc clears the selection",
+                        );
+                    },
+                );
+                None
+            }
         }
-        self.library_section(ui, engine);
-        operation
+    }
+
+    /// Whether `inspected` has a pinned footer of object actions.
+    fn has_footer(&self, engine: &Engine, inspected: Inspected) -> bool {
+        match inspected {
+            Inspected::Tab(View::Details) => !self.update_candidates(engine).is_empty(),
+            Inspected::Tool(_)
+            | Inspected::Pin(_)
+            | Inspected::Terminal(_)
+            | Inspected::Graphic(_)
+            | Inspected::Selection(_) => true,
+            _ => false,
+        }
+    }
+
+    /// The footer's actions for `inspected`, primary first (the footer is
+    /// laid out right to left, so the primary ends up last).
+    fn card_footer(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+        inspected: Inspected,
+    ) -> Option<Operation> {
+        use solidcraft_ui_egui::ui_kit::{self, Button};
+        let remove = |ui: &mut Ui, label: &str, tip: &str| {
+            ui_kit::button(ui, label, Button::Normal)
+                .on_hover_text(tip)
+                .clicked()
+        };
+        match inspected {
+            Inspected::Tab(View::Details) => {
+                let candidates = self.update_candidates(engine);
+                if ui_kit::button(ui, "Update placed instances…", Button::Normal)
+                    .on_hover_text(format!(
+                        "Review moving {} placed {} to the published revision",
+                        candidates.len(),
+                        if candidates.len() == 1 {
+                            "instance"
+                        } else {
+                            "instances"
+                        }
+                    ))
+                    .clicked()
+                {
+                    self.begin_instance_update(engine, candidates);
+                }
+            }
+            Inspected::Tool(tool) => {
+                // The tool card's own buttons, for a column that draws the
+                // header itself: Done, and Cancel/Finish for a chain.
+                let mut response = kit::ToolCardResponse::default();
+                if tool.is_chain() {
+                    let needed = if tool == drawing::Tool::Polygon { 3 } else { 2 };
+                    let ready = self.drawing.pending().len() >= needed;
+                    response.finish = kit::primary(ui, "Finish", ready)
+                        .on_disabled_hover_text(format!("Click at least {needed} points first"))
+                        .clicked();
+                    response.cancel = ui_kit::button(ui, "Cancel", Button::Normal).clicked();
+                }
+                response.done = ui_kit::button(ui, "Done", Button::Normal)
+                    .on_hover_text("Back to Select")
+                    .clicked();
+                self.tool_card_response(response);
+            }
+            Inspected::Pin(_) => {
+                let clicked = remove(
+                    ui,
+                    "Remove pin",
+                    "Remove the pin from this unit; its terminal stays",
+                );
+                self.delete_selection(engine, clicked);
+            }
+            Inspected::Terminal(terminal) => {
+                let clicked = remove(
+                    ui,
+                    "Remove terminal",
+                    "Remove the terminal everywhere in this component",
+                );
+                if clicked {
+                    self.selected = Some(terminal);
+                    self.terminal_card = None;
+                    self.remove_selected();
+                }
+            }
+            Inspected::Graphic(_) | Inspected::Selection(_) => {
+                let clicked = remove(ui, "Remove", "Remove the selection from this unit (Delete)");
+                self.delete_selection(engine, clicked);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Delete the Symbol selection when `clicked` (the footer's Remove).
+    fn delete_selection(&mut self, engine: &Engine, clicked: bool) {
+        if clicked {
+            self.arrange(
+                symbol_canvas::Arrange::Delete,
+                engine.drafts().grid.symbol_mm,
+            );
+        }
+    }
+
+    /// The objects whose issues the card's slot counts, and the words after
+    /// the counts.
+    fn slot_objects(
+        &self,
+        engine: &Engine,
+        inspected: Inspected,
+    ) -> Option<(Vec<ObjectRef>, &'static str)> {
+        let set = self.draft.as_ref()?;
+        let ids = set.ids;
+        let definition = |id| ObjectRef::Definition { id };
+        let local = |definition, local| ObjectRef::LibraryObject { definition, local };
+        Some(match inspected {
+            Inspected::Empty | Inspected::Review | Inspected::Tool(_) => return None,
+            Inspected::Tab(View::Details) => {
+                let mut objects: Vec<_> = ids.all().into_iter().map(definition).collect();
+                objects.extend(
+                    part_props::PartProps::draft_ids(engine, ids.component)
+                        .into_iter()
+                        .map(definition),
+                );
+                (objects, "on this component")
+            }
+            Inspected::Tab(View::Symbol) => (vec![definition(ids.symbol)], "on this symbol"),
+            Inspected::Tab(View::Footprint) => {
+                (vec![definition(ids.footprint)], "on this footprint")
+            }
+            Inspected::Tab(View::Mapping) => (vec![definition(ids.binding)], "on the mapping"),
+            Inspected::Tab(View::Model) => (vec![definition(ids.package)], "on this package"),
+            Inspected::Pin(terminal) => (vec![local(ids.component, terminal.0)], "on this pin"),
+            Inspected::Terminal(terminal) => {
+                (vec![local(ids.component, terminal.0)], "on this terminal")
+            }
+            Inspected::Graphic(graphic) => (vec![local(ids.symbol, graphic.0)], "on this graphic"),
+            Inspected::Selection(_) => (
+                self.selection
+                    .iter()
+                    .map(|s| match s {
+                        Selected::Pin(t) => local(ids.component, t.0),
+                        Selected::Graphic(g) => local(ids.symbol, g.0),
+                    })
+                    .take(pcbcraft_core::issues::MAX_SCOPE_OBJECTS)
+                    .collect(),
+                "on the selection",
+            ),
+        })
+    }
+
+    /// The card's issue slot: the `project.issues` counts of the inspected
+    /// objects, computed once per document state and subject. A failed
+    /// query says so rather than read as "no issues".
+    fn issue_slot(
+        &mut self,
+        engine: &Engine,
+        inspected: Inspected,
+    ) -> Option<kit::card::IssueSlot> {
+        let (objects, label) = self.slot_objects(engine, inspected)?;
+        let key = IssueKey {
+            revision: engine.revision(),
+            drafts: Arc::as_ptr(&engine.document().drafts) as usize,
+            objects: objects.clone(),
+        };
+        if let Some((cached, slot)) = &self.issue_slot
+            && *cached == key
+        {
+            return Some(slot.clone());
+        }
+        let slot = match engine.query(Query::Issues {
+            scope: pcbcraft_core::issues::IssueScope::Selection { objects },
+        }) {
+            Ok(QueryResult::Issues(report)) => kit::card::IssueSlot {
+                counts: report.counts,
+                label: label.to_owned(),
+            },
+            _ => kit::card::IssueSlot {
+                counts: Default::default(),
+                label: "Issues not counted".to_owned(),
+            },
+        };
+        self.issue_slot = Some((key, slot.clone()));
+        Some(slot)
     }
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1235,6 +1644,16 @@ impl PartEditor {
         }
         if self.view == View::Symbol {
             self.symbol_canvas(ui, rect, &response, engine);
+            self.flush(ui.ctx());
+            return self.grid_popover(ui, rect, engine);
+        }
+        if self.view == View::Details {
+            // A preview of the symbol: nothing on it is picked or edited
+            // from the Details tab.
+            let preview = ui.interact(rect, ui.id().with("details-preview"), Sense::hover());
+            ui.add_enabled_ui(false, |ui| {
+                self.symbol_canvas(ui, rect, &preview, engine);
+            });
             return None;
         }
         // A finished sketch gesture is sent by `commit`, after the frame.
@@ -1362,6 +1781,9 @@ struct Listed {
     objects: Vec<pcbcraft_core::diagnostics::ObjectRef>,
 }
 
+/// A terminal or unit refused because the component ran out of local IDs.
+const NO_MORE_TERMINALS: &str = "No more terminals can be added to this component";
+
 fn fix_hint(code: &str) -> Option<&'static str> {
     match code {
         "package.form_terminals" => Some("Change Body on the 3D tab, or remove terminals."),
@@ -1370,6 +1792,252 @@ fn fix_hint(code: &str) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// What the Component card inspects (docs/sidebar-ia.md, "Properties card
+/// by subject"). Its value identifies the subject, so the card's scroll
+/// resets when it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Inspected {
+    /// No working set yet.
+    Empty,
+    /// The placed-instance update review.
+    Review,
+    /// A tab's document object: the component (Details), the symbol with
+    /// nothing selected, the footprint, the mapping or the package.
+    Tab(View),
+    /// An armed Symbol drawing tool: its tool card.
+    Tool(drawing::Tool),
+    /// One selected pin, with its terminal's electrical properties.
+    Pin(TerminalId),
+    /// A terminal without a pin on the drawn unit.
+    Terminal(TerminalId),
+    /// One selected shape or text.
+    Graphic(GraphicId),
+    /// Several selected objects.
+    Selection(usize),
+}
+
+/// What an issue slot was counted for.
+#[derive(Clone, Debug, PartialEq)]
+struct IssueKey {
+    revision: u64,
+    drafts: usize,
+    objects: Vec<ObjectRef>,
+}
+
+/// The key cap a tool card shows ("R", "⇧L").
+#[allow(dead_code, reason = "used by `PartEditor::subject`")]
+fn tool_key(tool: drawing::Tool) -> String {
+    tool.key()
+        .map(|k| {
+            let name = k.key.name();
+            if k.shift {
+                format!("\u{21e7}{name}")
+            } else {
+                name.to_owned()
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Where one referenced object shows in the Component workspace.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Target {
+    Tab(View),
+    Terminal(TerminalId),
+    Unit(UnitId),
+    SymbolGraphic(UnitId, GraphicId),
+    Pad(PadId),
+    FootprintGraphic(GraphicId),
+    PackageTerminal(PackageTerminalId),
+}
+
+impl Target {
+    fn view(self) -> View {
+        match self {
+            Self::Tab(view) => view,
+            Self::Terminal(_) | Self::Unit(_) | Self::SymbolGraphic(..) => View::Symbol,
+            Self::Pad(_) | Self::FootprintGraphic(_) => View::Footprint,
+            Self::PackageTerminal(_) => View::Mapping,
+        }
+    }
+}
+
+/// Where `object` shows in the working set `set`, if it belongs to it.
+/// `parts` are the component's Part drafts (shown on Details).
+fn target(set: &WorkingSet, parts: &[DefinitionId], object: &ObjectRef) -> Option<Target> {
+    let ids = set.ids;
+    match *object {
+        ObjectRef::Definition { id } => Some(Target::Tab(match id {
+            id if id == ids.component || parts.contains(&id) => View::Details,
+            id if id == ids.symbol => View::Symbol,
+            id if id == ids.footprint => View::Footprint,
+            id if id == ids.binding => View::Mapping,
+            id if id == ids.package => View::Model,
+            _ => return None,
+        })),
+        ObjectRef::LibraryObject { definition, local } => {
+            if definition == ids.component {
+                let id = TerminalId(local);
+                return set.component.terminal(id).map(|_| Target::Terminal(id));
+            }
+            if definition == ids.symbol {
+                if let Some(unit) = set.symbol.units.iter().find(|u| u.id.0 == local) {
+                    return Some(Target::Unit(unit.id));
+                }
+                return set.symbol.units.iter().find_map(|u| {
+                    u.graphic(GraphicId(local))
+                        .map(|g| Target::SymbolGraphic(u.id, g.id))
+                });
+            }
+            if definition == ids.footprint {
+                if let Some(pad) = set.footprint.pads.iter().find(|p| p.id.0 == local) {
+                    return Some(Target::Pad(pad.id));
+                }
+                return set
+                    .footprint
+                    .graphics
+                    .iter()
+                    .any(|g| g.id.0 == local)
+                    .then_some(Target::FootprintGraphic(GraphicId(local)));
+            }
+            if definition == ids.package {
+                let id = PackageTerminalId(local);
+                return match set.package.terminal(id) {
+                    Some(_) => Some(Target::PackageTerminal(id)),
+                    None => Some(Target::Tab(View::Model)),
+                };
+            }
+            if definition == ids.binding {
+                return Some(Target::Tab(View::Mapping));
+            }
+            parts
+                .contains(&definition)
+                .then_some(Target::Tab(View::Details))
+        }
+        _ => None,
+    }
+}
+
+impl crate::issues::Locate for PartEditor {
+    /// Show what an issue names: switch to the tab that shows the first
+    /// object this component owns and select every object of that tab
+    /// (pins and graphics on the Symbol tab, a pad on the Footprint tab).
+    /// A definition of another component draft opens it. Selection and
+    /// camera change only; the document never does.
+    fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
+        self.sync(engine);
+        // An issue of another component's drafts opens that component.
+        let own = |set: &WorkingSet, id: DefinitionId| set.ids.all().contains(&id);
+        if let Some(other) = refs.iter().find_map(|r| match *r {
+            ObjectRef::Definition { id } | ObjectRef::LibraryObject { definition: id, .. } => {
+                Some(id)
+            }
+            _ => None,
+        }) && self.draft.as_ref().is_none_or(|set| !own(set, other))
+            && let Some(lineage) = component_of(engine, other)
+            && Some(lineage) != self.lineage
+        {
+            self.open(lineage, engine);
+            self.sync(engine);
+        }
+        let Some(set) = self.draft.as_ref() else {
+            return false;
+        };
+        let parts = part_props::PartProps::draft_ids(engine, set.ids.component);
+        let targets: Vec<Target> = refs.iter().filter_map(|r| target(set, &parts, r)).collect();
+        let Some(first) = targets.first() else {
+            return false;
+        };
+        let view = first.view();
+        let targets: Vec<Target> = targets.into_iter().filter(|t| t.view() == view).collect();
+        self.view = view;
+        self.finding_graphic = None;
+        if view == View::Symbol {
+            self.drawing.arm(drawing::Tool::Select);
+            self.gesture = None;
+        }
+        let mut selection = arrange::Selection::new();
+        let mut unit = None;
+        let mut card = None;
+        for target in targets {
+            match target {
+                Target::Tab(_) => {}
+                Target::Terminal(terminal) => {
+                    self.selected = Some(terminal);
+                    let on = set
+                        .symbol
+                        .units
+                        .iter()
+                        .find(|u| u.pin(terminal).is_some())
+                        .map(|u| u.id);
+                    match on {
+                        Some(on) if unit.is_none_or(|u| u == on) => {
+                            unit = Some(on);
+                            selection.insert(Selected::Pin(terminal));
+                        }
+                        Some(_) => {}
+                        None => card = card.or(Some(terminal)),
+                    }
+                }
+                Target::Unit(id) => unit = unit.or(Some(id)),
+                Target::SymbolGraphic(on, graphic) => {
+                    if unit.is_none_or(|u| u == on) {
+                        unit = Some(on);
+                        selection.insert(Selected::Graphic(graphic));
+                    }
+                }
+                Target::Pad(pad) => {
+                    self.selected_pad = Some(pad);
+                    if let Some(electrical) = set
+                        .footprint
+                        .pads
+                        .iter()
+                        .find(|p| p.id == pad)
+                        .and_then(|p| p.terminal)
+                        .and_then(|t| set.binding.terminal_of(t))
+                    {
+                        self.selected = Some(electrical);
+                    }
+                }
+                Target::FootprintGraphic(graphic) => self.finding_graphic = Some(graphic),
+                Target::PackageTerminal(id) => {
+                    if let Some(electrical) = set.binding.terminal_of(id) {
+                        self.selected = Some(electrical);
+                    }
+                }
+            }
+        }
+        if view == View::Symbol {
+            if unit.is_some()
+                && unit != self.unit.or_else(|| set.symbol.units.first().map(|u| u.id))
+            {
+                self.symbol_view = None;
+            }
+            if let Some(unit) = unit {
+                self.unit = Some(unit);
+            }
+            self.terminal_card = if selection.is_empty() { card } else { None };
+            self.selection = selection;
+            self.frame_selection();
+        }
+        true
+    }
+}
+
+/// The component lineage whose working set holds the draft `id`, if any.
+fn component_of(engine: &Engine, id: DefinitionId) -> Option<DefinitionId> {
+    engine
+        .drafts()
+        .items
+        .iter()
+        .filter(|d| d.definition.kind() == pcbcraft_core::DefinitionKind::Component)
+        .map(|d| d.id)
+        .find(|component| {
+            WorkingSet::find(engine.drafts(), Some(*component))
+                .is_some_and(|set| set.ids.component == *component && set.ids.all().contains(&id))
+        })
 }
 
 /// The first unit of a part built by hand: a one-module body with the
@@ -1628,7 +2296,14 @@ mod draft_tests {
         assert!(!editor.unpublished(&engine));
         assert_eq!(engine.project().library.components.len(), 2);
         assert_eq!(engine.project().library.footprints.len(), 2);
-        assert!(editor.notice.contains("Revision 2 published"));
+        editor.flush(&ctx);
+        let posted = crate::kit::toast::take_posted(&ctx);
+        assert!(
+            posted
+                .iter()
+                .any(|p| p.level == Level::Ok && p.text.starts_with("Published Resistor r2")),
+            "{posted:?}"
+        );
         Ok(())
     }
 
@@ -1909,6 +2584,7 @@ mod draft_tests {
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
         editor.commit(&ctx, &engine);
+        editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
         // The designator placeholder reads prefix + "?"; numbers come from
         // the working binding; the shown field reads its name (no default).
@@ -2063,18 +2739,31 @@ mod draft_tests {
             _ => return Err("no component draft".into()),
         };
         assert_eq!(stored, typed);
+        // The finding is an issue of the component: Issues lists it and the
+        // Details card's slot counts it; the card never repeats its text.
         let finding = "A component needs a designator prefix of 1–8 uppercase letters A–Z, such as R, C or U.";
-        let shown = frame(&mut editor, &engine, &ctx, vec![]);
-        assert!(!shown.iter().any(|(text, _)| text == finding));
+        let listed = |engine: &Engine| -> Result<bool, Box<dyn std::error::Error>> {
+            let scope = pcbcraft_core::issues::IssueScope::Area {
+                area: pcbcraft_core::issues::IssueArea::Component,
+            };
+            match engine.query(Query::Issues { scope })? {
+                QueryResult::Issues(report) => Ok(report
+                    .rows
+                    .iter()
+                    .any(|r| r.finding.message == finding && r.blocks() == Some(Stage::Publish))),
+                _ => Err("not an issue report".into()),
+            }
+        };
+        assert!(!listed(&engine)?);
+        let before = editor.inspector_card(&engine).issues.ok_or("slot")?.counts;
         type_into(&mut editor, &engine, &ctx, &typed, "1")?;
         let operation = editor.commit(&ctx, &engine).ok_or("no edit")?;
         engine.apply(engine.revision(), operation)?;
         let shown = frame(&mut editor, &engine, &ctx, vec![]);
-        assert!(
-            shown.iter().any(|(text, _)| text == finding),
-            "{:?}",
-            shown.iter().map(|(t, _)| t).collect::<Vec<_>>()
-        );
+        assert!(listed(&engine)?);
+        let after = editor.inspector_card(&engine).issues.ok_or("slot")?.counts;
+        assert_eq!(after.error, before.error + 1, "{before:?} → {after:?}");
+        assert!(!shown.iter().any(|(text, _)| text == finding), "one home");
         Ok(())
     }
 
