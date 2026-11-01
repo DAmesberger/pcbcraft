@@ -960,6 +960,7 @@ pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
 pub fn checks(project: &Project) -> Vec<Finding> {
     let mut findings = BoardCopper::of(project).checks(project);
     findings.extend(fill::findings(project));
+    findings.extend(outline::checks(project));
     findings
 }
 

@@ -4,7 +4,7 @@
 //! fills and keepouts) to named edges. Evaluation and constraint
 //! resolution live in `layout::outline`; the core never interprets the
 //! sketch (as for footprints, `library::footprint_source`).
-use crate::geometry::Point;
+use crate::geometry::{Bounds, Point};
 use crate::ids::Id;
 use crate::library::footprint_source::{
     EvaluatorRef, Expr, FootprintParam, SketchBlob, SketchCurveId, SketchPointId, SolveSummary,
@@ -30,6 +30,19 @@ pub const RECT_EDGES: [&str; 4] = ["bottom", "right", "top", "left"];
 )]
 #[serde(transparent)]
 pub struct EdgeName(pub String);
+
+impl EdgeName {
+    /// Identifier syntax `[A-Za-z_][A-Za-z0-9_]*`, at most
+    /// [`crate::ids::MAX_LABEL`] bytes.
+    pub fn valid(&self) -> bool {
+        let mut chars = self.0.chars();
+        self.0.len() <= crate::ids::MAX_LABEL
+            && chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+}
 
 /// Board-local cutout, slot or hole identity; never reused.
 #[derive(
@@ -156,6 +169,134 @@ impl SolvedBoard {
     pub fn edge(&self, name: &EdgeName) -> Option<&SolvedEdge> {
         self.edges.iter().find(|e| &e.name == name)
     }
+
+    /// The exact box of the outer outline, arcs included.
+    pub fn bounds(&self) -> Bounds {
+        outline_bounds(&self.outer)
+    }
+
+    /// Whether `p` lies inside the outer outline and outside every cutout
+    /// (outlines flattened within `tolerance` mm; mounting holes ignored).
+    pub fn contains(&self, p: Point, tolerance: f64) -> bool {
+        crate::geometry::polygon_contains(&flatten(&self.outer, tolerance), p)
+            && !self
+                .cutouts
+                .iter()
+                .any(|c| crate::geometry::polygon_contains(&flatten(&c.outline, tolerance), p))
+    }
+}
+
+/// A bulge arc from `a` to `b` as a circle: its centre, radius, the angle
+/// of `a` about the centre (radians) and the signed sweep (radians,
+/// positive counter-clockwise). `None` for a straight or degenerate span.
+pub fn arc_geometry(a: Point, b: Point, bulge: f64) -> Option<ArcGeometry> {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let chord = d[0].hypot(d[1]);
+    if !(bulge.is_finite() && bulge != 0.0 && chord.is_finite() && chord > 1e-12) {
+        return None;
+    }
+    let sweep = 4.0 * bulge.atan();
+    let half = sweep / 2.0;
+    let radius = chord / (2.0 * half.sin().abs());
+    // The centre sits on the chord's perpendicular bisector, left of the
+    // chord for a counter-clockwise arc of less than half a turn.
+    let k = (chord / 2.0) / half.tan();
+    let n = [-d[1] / chord, d[0] / chord];
+    let center = [
+        (a[0] + b[0]) / 2.0 + n[0] * k,
+        (a[1] + b[1]) / 2.0 + n[1] * k,
+    ];
+    let start = (a[1] - center[1]).atan2(a[0] - center[0]);
+    (radius.is_finite() && center.iter().all(|v| v.is_finite())).then_some(ArcGeometry {
+        center,
+        radius,
+        start,
+        sweep,
+    })
+}
+
+/// A circle span: see [`arc_geometry`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArcGeometry {
+    pub center: Point,
+    pub radius: f64,
+    /// Angle of the start point about the centre, radians.
+    pub start: f64,
+    /// Signed sweep, radians (positive counter-clockwise).
+    pub sweep: f64,
+}
+
+impl ArcGeometry {
+    pub fn at(&self, angle: f64) -> Point {
+        [
+            self.center[0] + self.radius * angle.cos(),
+            self.center[1] + self.radius * angle.sin(),
+        ]
+    }
+
+    pub fn length(&self) -> f64 {
+        self.radius * self.sweep.abs()
+    }
+}
+
+/// The exact box of an outline, arcs included.
+pub fn outline_bounds(outline: &Outline) -> Bounds {
+    let mut bounds = Bounds::point(outline.start);
+    let mut from = outline.start;
+    for s in &outline.segments {
+        let to = s.to();
+        bounds = bounds.including(to);
+        if let Segment::Arc { bulge, .. } = s
+            && let Some(arc) = arc_geometry(from, to, *bulge)
+        {
+            // Every axis extreme the sweep passes.
+            for k in 0..4 {
+                let axis = f64::from(k) * std::f64::consts::FRAC_PI_2;
+                let along = if arc.sweep > 0.0 {
+                    (axis - arc.start).rem_euclid(std::f64::consts::TAU)
+                } else {
+                    (arc.start - axis).rem_euclid(std::f64::consts::TAU)
+                };
+                if along <= arc.sweep.abs() {
+                    bounds = bounds.including(arc.at(axis));
+                }
+            }
+        }
+        from = to;
+    }
+    bounds
+}
+
+/// The outline as a closed polygon (the start not repeated), arcs as
+/// chords whose sagitta is within `tolerance` mm (at most 256 per arc).
+pub fn flatten(outline: &Outline, tolerance: f64) -> Vec<Point> {
+    let mut out = vec![outline.start];
+    let mut from = outline.start;
+    for s in &outline.segments {
+        let to = s.to();
+        if let Segment::Arc { bulge, .. } = s
+            && let Some(arc) = arc_geometry(from, to, *bulge)
+        {
+            let tol = tolerance.max(1e-6).min(arc.radius);
+            let step = 2.0 * (1.0 - tol / arc.radius).clamp(-1.0, 1.0).acos();
+            let n = if step > 1e-9 {
+                (arc.sweep.abs() / step).ceil().clamp(1.0, 256.0)
+            } else {
+                256.0
+            };
+            // A whole number in 1–256.
+            let n = n as usize;
+            for k in 1..n {
+                out.push(arc.at(arc.start + arc.sweep * k as f64 / n as f64));
+            }
+        }
+        out.push(to);
+        from = to;
+    }
+    if out.len() > 1 && out.first() == out.last() {
+        out.pop();
+    }
+    out
 }
 
 /// The parametric board: SolidCraft's sketch, its parameters, the roles

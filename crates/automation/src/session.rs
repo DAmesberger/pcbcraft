@@ -426,10 +426,10 @@ impl Session {
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         match request {
             Request::Apply(params) => {
-                let outcome = self.engine.apply_with(
+                let outcome = self.engine.apply_hosted(
                     params.expected_revision,
                     params.operation,
-                    &pcbcraft_solidcraft::footprint::SketchEvaluator,
+                    hosted(),
                 )?;
                 let mut snapshot = self.snapshot();
                 snapshot["outcome"] = serde_json::to_value(outcome)?;
@@ -567,11 +567,9 @@ impl Session {
 
     /// Apply one operation and return the snapshot with its outcome.
     fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Value> {
-        let outcome = self.engine.apply_with(
-            expected_revision,
-            operation,
-            &pcbcraft_solidcraft::footprint::SketchEvaluator,
-        )?;
+        let outcome = self
+            .engine
+            .apply_hosted(expected_revision, operation, hosted())?;
         let mut snapshot = self.snapshot();
         snapshot["outcome"] = serde_json::to_value(outcome)?;
         Ok(snapshot)
@@ -801,3 +799,12 @@ mod svg_tests;
 mod templates_tests;
 #[cfg(test)]
 mod tests;
+
+/// The host evaluators every applied operation gets: SolidCraft's sketch
+/// engine for footprint sources and for the board shape.
+fn hosted() -> pcbcraft_core::Evaluators<'static> {
+    pcbcraft_core::Evaluators {
+        footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
+        board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),
+    }
+}

@@ -38,6 +38,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "keepout.pad"
         // Geometry past the limit is unchecked, so errors may be uncounted.
         | "board.check_limit"
+        | "board.shape_unsolved"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
@@ -76,6 +77,8 @@ pub(super) fn group_title(code: &str) -> String {
         "keepout.track" => "Tracks in keepouts",
         "keepout.via" => "Vias in keepouts",
         "keepout.pad" => "Pads in keepouts",
+        "board.constraint_unresolved" => "Edge constraints unresolved",
+        "board.shape_unsolved" => "Board shape does not solve",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -175,6 +178,8 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "fill.net_missing" => "Choose the fill's net",
         "fill.thermal_starved" => "Clear room around the pad or use more spokes",
         "keepout.track" | "keepout.via" | "keepout.pad" => "Move it out of the keepout",
+        "board.constraint_unresolved" => "Edit or delete the edge constraint",
+        "board.shape_unsolved" => "Fix the board sketch's dimensions",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -390,11 +395,13 @@ pub const KNOWN_CODES: &[&str] = &[
     "binding.unavailable_unknown",
     "board.check_limit",
     "board.clearance",
+    "board.constraint_unresolved",
     "board.courtyard_clearance",
     "board.courtyard_overlap",
     "board.edge_clearance",
     "board.hole_clearance",
     "board.outside_outline",
+    "board.shape_unsolved",
     "board.unplaced",
     "board.unrouted",
     "board.via_annular_ring",

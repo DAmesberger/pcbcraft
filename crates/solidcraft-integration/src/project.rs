@@ -852,18 +852,31 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
     b.sources = sources.clone();
     stackup_params(&mut b, project)?;
     let board = b.native.component("PCB substrate", true)?.occurrence;
-    b.body(
-        BodyKind::Substrate,
-        BoxBody {
+    // A sketched board's laminate is its outline extruded; its cutouts,
+    // slots and mounting holes are cut with the drills.
+    let shaped = crate::board::laminate(project);
+    if let Some(laminate) = &shaped {
+        b.native.profile_body(ProfileBody {
             name: "Substrate",
-            corner: [0.into(), 0.into(), 0.into()],
-            size: [
-                "board_width".into(),
-                "board_depth".into(),
-                "board_thickness".into(),
-            ],
-        },
-    )?;
+            offset: 0.into(),
+            contours: std::slice::from_ref(&laminate.outline),
+            height: "board_thickness".into(),
+        })?;
+        b.record("Substrate", BodyKind::Substrate)?;
+    } else {
+        b.body(
+            BodyKind::Substrate,
+            BoxBody {
+                name: "Substrate",
+                corner: [0.into(), 0.into(), 0.into()],
+                size: [
+                    "board_width".into(),
+                    "board_depth".into(),
+                    "board_thickness".into(),
+                ],
+            },
+        )?;
+    }
     let pads = placed_pads(project)?;
     // Every drill through the laminate, cut in one feature: the holes sit
     // where the pads are placed now (they do not follow placement
@@ -881,6 +894,9 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
         center: via.position,
         radius: via.drill / 2.0,
     }));
+    if let Some(laminate) = shaped {
+        drills.extend(laminate.through);
+    }
     if !drills.is_empty() {
         b.native.profile_cut(
             "Drills",
