@@ -336,6 +336,7 @@ fn check_with<'a>(
             )));
         }
     }
+    pins::check_configs(name, component, &instance.pin_config)?;
     check_functions(
         name,
         component,
@@ -706,7 +707,8 @@ pub(crate) struct Retarget {
 }
 
 /// Pin an instance to another revision of its lineage. Project no-connect
-/// markers on terminals the target removes or declares NC are dropped; the
+/// markers and pin configurations on terminals the target removes or
+/// declares NC are dropped ([`pins::carry_pin_config`]); the
 /// caller has already unplaced dropped units and removed wires on such
 /// terminals through `schematic`, and checks the instance once its schematic
 /// is regrouped.
@@ -743,6 +745,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.properties = target.properties;
     instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
+    instance.pin_config = pins::carry_pin_config(&instance.pin_config, &component);
     Ok(())
 }
 

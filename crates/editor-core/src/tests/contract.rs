@@ -32,16 +32,6 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
             fits: None,
             limit: None,
         },
-        Query::SuggestPins {
-            instance,
-            request: crate::functions::suggest::SuggestRequest {
-                enable: vec![],
-                keep_existing: true,
-                avoid: vec![],
-                limit: None,
-            },
-        },
-        Query::PinReport { instance },
         Query::PinConfig { instance },
         Query::Marking { instance },
     ];
@@ -66,11 +56,6 @@ fn new_commands_refuse_and_change_nothing() -> Fallible<()> {
     let operation = Operation::Instance(crate::InstanceCommand::SetMarking {
         instance,
         marking: Default::default(),
-    });
-    assert!(unsupported(engine.apply(revision, operation)));
-    let operation = Operation::Instance(crate::InstanceCommand::SetPinConfig {
-        instance,
-        edits: vec![],
     });
     assert!(unsupported(engine.apply(revision, operation)));
     assert_eq!(engine.revision(), revision);
