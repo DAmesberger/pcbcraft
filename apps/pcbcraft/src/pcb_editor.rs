@@ -211,6 +211,9 @@ pub struct PcbEditor {
     /// Instances whose designator a placed text already shows.
     labelled: BTreeSet<Id>,
     layers: Layers,
+    /// PCB 3D's layer toggles; its outer copper and silkscreen entries are
+    /// `layers`' ([`PcbEditor::layer_view`]).
+    view_layers: crate::layer_view::LayerView,
     from_bottom: bool,
 }
 
@@ -246,12 +249,52 @@ impl Default for PcbEditor {
             outlined: BTreeSet::new(),
             labelled: BTreeSet::new(),
             layers: Layers::default(),
+            view_layers: Default::default(),
             from_bottom: false,
         }
     }
 }
 
 impl PcbEditor {
+    /// The layers PCB 3D shows: its own toggles, with the outer copper and
+    /// silkscreen toggles it shares with PCB 2D.
+    pub fn layer_view(&self) -> crate::layer_view::LayerView {
+        let mut view = self.view_layers.clone();
+        for (layer, visible) in self.shared_layers() {
+            view.set(layer, visible);
+        }
+        view
+    }
+
+    /// Set the layers PCB 3D shows; the shared toggles change in 2D too.
+    pub fn set_layer_view(&mut self, view: crate::layer_view::LayerView) {
+        use crate::layer_view::ViewLayer;
+        let l = &mut self.layers;
+        for (layer, flag) in [
+            (ViewLayer::Copper(Layer::Top.into()), &mut l.copper_top),
+            (
+                ViewLayer::Copper(Layer::Bottom.into()),
+                &mut l.copper_bottom,
+            ),
+            (ViewLayer::Silkscreen(Layer::Top), &mut l.silk_top),
+            (ViewLayer::Silkscreen(Layer::Bottom), &mut l.silk_bottom),
+        ] {
+            *flag = view.visible(layer);
+        }
+        self.view_layers = view;
+    }
+
+    fn shared_layers(&self) -> [(crate::layer_view::ViewLayer, bool); 4] {
+        use crate::layer_view::ViewLayer;
+        let l = &self.layers;
+        [
+            (ViewLayer::Copper(Layer::Top.into()), l.copper_top),
+            (ViewLayer::Copper(Layer::Bottom.into()), l.copper_bottom),
+            (ViewLayer::Silkscreen(Layer::Top), l.silk_top),
+            (ViewLayer::Silkscreen(Layer::Bottom), l.silk_bottom),
+        ]
+    }
+
     pub fn is_3d(&self) -> bool {
         self.view_3d
     }
@@ -542,7 +585,7 @@ impl PcbEditor {
             board_section(ui, project)
         };
         self.routing_section(ui, project);
-        // The 2D layer toggles do not drive the 3D scene; hide them there.
+        // PCB 3D shows its layer toggles on the navigation bar instead.
         if !self.view_3d {
             self.layers_section(ui);
         }
@@ -2540,5 +2583,30 @@ mod tests {
         let after = pad_label(&output).ok_or("pad number 1 not drawn after zoom")?;
         assert!((after - before).length() < 0.5, "{before:?} → {after:?}");
         Ok(())
+    }
+
+    /// PCB 2D's copper and silkscreen toggles and PCB 3D's layer view are
+    /// one state: a change on either side shows on the other, and 3D-only
+    /// layers stay 3D's.
+    #[test]
+    fn pcb_2d_and_3d_share_the_copper_and_silkscreen_toggles() {
+        use crate::layer_view::ViewLayer;
+        let mut editor = PcbEditor::default();
+        editor.layers.copper_bottom = false;
+        editor.layers.silk_top = false;
+        let view = editor.layer_view();
+        assert!(!view.visible(ViewLayer::Copper(pcbcraft_core::CopperLayer::Bottom)));
+        assert!(!view.visible(ViewLayer::Silkscreen(Layer::Top)));
+        assert!(view.visible(ViewLayer::Copper(pcbcraft_core::CopperLayer::Top)));
+        let mut view = view;
+        view.set(ViewLayer::Copper(pcbcraft_core::CopperLayer::Bottom), true);
+        view.set(ViewLayer::Silkscreen(Layer::Bottom), false);
+        view.set(ViewLayer::Mask(Layer::Top), false);
+        editor.set_layer_view(view.clone());
+        assert!(editor.layers.copper_bottom && !editor.layers.silk_bottom);
+        assert!(!editor.layers.silk_top);
+        assert_eq!(editor.layer_view(), view);
+        // Only the shared toggles reach 2D.
+        assert!(editor.layers.courtyard && editor.layers.holes);
     }
 }

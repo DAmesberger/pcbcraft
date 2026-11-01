@@ -401,7 +401,7 @@ impl App {
     }
 
     /// Floating view controls at the bottom of the canvas (Solidcraft's
-    /// navigation bar): fit, and the substrate toggle in PCB 3D.
+    /// navigation bar): fit, and the layer popover in PCB 3D.
     fn navigation_bar(&mut self, ui: &mut egui::Ui, canvas: Rect) {
         let t = Tokens::get();
         let three_d = self.model_key().is_some();
@@ -446,32 +446,11 @@ impl App {
             }
         }
         if pcb_3d {
-            let hidden = self.scene.viewport.hide_substrate();
-            let label = if hidden {
-                "Show substrate"
-            } else {
-                "Hide substrate"
-            };
-            let response = shell::icon_button(
-                &mut child,
-                if hidden {
-                    "style_translucent"
-                } else {
-                    "style_shaded"
-                },
-                label,
-                true,
-            );
-            if hidden {
-                child.painter().rect_stroke(
-                    response.rect,
-                    t.radius_sm,
-                    egui::Stroke::new(1.0, t.accent),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            if response.clicked() {
-                self.scene.viewport.set_hide_substrate(!hidden);
+            let mut view = self.pcb.layer_view();
+            let copper = self.engine.project().stackup.layers();
+            if crate::layer_view::button(&mut child, &mut view, &copper) {
+                self.scene.viewport.set_layers(view.clone());
+                self.pcb.set_layer_view(view);
             }
         }
     }

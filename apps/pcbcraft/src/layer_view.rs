@@ -1,10 +1,24 @@
 //! Which board layers the 3D view shows. Display-only: changing it changes
 //! the draw lists and picking, never the model geometry. PCB 2D's layer
-//! toggles share the overlapping entries (copper, silkscreen, mask).
+//! toggles share the overlapping entries (outer copper and silkscreen).
+//!
+//! The popover on the 3D view's floating navigation bar lists the toggles
+//! in the order the layers lie in the board, top to bottom.
+use crate::shell;
+use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
+use solidcraft_ui_egui::{
+    theme::Tokens,
+    ui_kit::{self, Button, Container, Surface},
+};
 use std::collections::BTreeSet;
+
+/// Width of the layer popover's content.
+const POPOVER_WIDTH: f32 = 280.0;
+/// Height of a caption row in the popover.
+const CAPTION_HEIGHT: f32 = 22.0;
 
 /// One toggle of the 3D layer popover.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -20,6 +34,52 @@ pub enum ViewLayer {
 }
 
 impl ViewLayer {
+    /// The toggle's label in the popover.
+    pub fn label(self) -> String {
+        let side = |side: Layer| match side {
+            Layer::Top => "Top",
+            Layer::Bottom => "Bottom",
+        };
+        match self {
+            Self::Bodies => "Components".into(),
+            Self::Silkscreen(s) => format!("{} silkscreen", side(s)),
+            Self::Mask(s) => format!("{} solder mask", side(s)),
+            Self::Copper(layer) => format!("{} copper", layer.name()),
+            Self::Substrate => "Substrate".into(),
+            Self::Vias => "Vias".into(),
+        }
+    }
+
+    /// The popover's toggles for a board with the `copper` layers (top to
+    /// bottom), in the order the layers lie: components and the top films
+    /// above the copper, the laminate between the copper, the bottom films
+    /// below it, then the vias that pass through it all.
+    pub fn stack(copper: &[CopperLayer]) -> Vec<ViewLayer> {
+        let mut out = vec![
+            Self::Bodies,
+            Self::Silkscreen(Layer::Top),
+            Self::Mask(Layer::Top),
+        ];
+        let mut layers: Vec<CopperLayer> = copper.to_vec();
+        for outer in [CopperLayer::Top, CopperLayer::Bottom] {
+            if !layers.contains(&outer) {
+                layers.push(outer);
+            }
+        }
+        layers.sort();
+        let (bottom, above): (Vec<CopperLayer>, Vec<CopperLayer>) =
+            layers.into_iter().partition(|l| *l == CopperLayer::Bottom);
+        out.extend(above.into_iter().map(Self::Copper));
+        out.push(Self::Substrate);
+        out.extend(bottom.into_iter().map(Self::Copper));
+        out.extend([
+            Self::Mask(Layer::Bottom),
+            Self::Silkscreen(Layer::Bottom),
+            Self::Vias,
+        ]);
+        out
+    }
+
     /// The toggle a body belongs to. Films and copper read their side or
     /// layer from `layer`; a mask cap or copper without one belongs to the
     /// top.
@@ -56,6 +116,7 @@ pub struct LayerView {
 }
 
 impl LayerView {
+    #[cfg(test)]
     /// The view the old substrate toggle gave: the laminate and both masks
     /// hidden together, or nothing hidden.
     pub fn substrate_hidden(hidden: bool) -> Self {
@@ -68,6 +129,11 @@ impl LayerView {
             view.set(layer, !hidden);
         }
         view
+    }
+
+    /// Whether any layer is hidden.
+    pub fn hides_any(&self) -> bool {
+        !self.hidden.is_empty()
     }
 
     pub fn visible(&self, layer: ViewLayer) -> bool {
@@ -88,6 +154,61 @@ impl LayerView {
     }
 }
 
+/// The navigation bar's layer button and its popover of toggles for a
+/// board with the `copper` layers. Returns whether `view` changed. The
+/// button is outlined while a layer is hidden.
+pub fn button(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
+    let t = Tokens::get();
+    let response = shell::icon_button(ui, "eye", "Layers", true);
+    if view.hides_any() {
+        ui.painter().rect_stroke(
+            response.rect,
+            t.radius_sm,
+            egui::Stroke::new(1.0, t.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let mut changed = false;
+    Container::new(ui.ctx(), Surface::Popup)
+        .menu(&response)
+        .align(egui::RectAlign::TOP)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            crate::kit::form(ui, |ui| {
+                ui.set_width(POPOVER_WIDTH);
+                changed = popover(ui, view, copper);
+            });
+        });
+    changed
+}
+
+/// The popover's content: a caption, one check per layer and Show all.
+fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
+    let t = Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(vec2(POPOVER_WIDTH, CAPTION_HEIGHT), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + t.space_4, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Layers",
+        FontId::proportional(t.font_caption),
+        t.text_dim,
+    );
+    let mut changed = false;
+    for layer in ViewLayer::stack(copper) {
+        let mut shown = view.visible(layer);
+        if crate::kit::check_row(ui, &layer.label(), &mut shown) {
+            view.set(layer, shown);
+            changed = true;
+        }
+    }
+    let all = ui_kit::button(ui, "Show all", Button::Enabled(view.hides_any()));
+    if all.clicked() && view.hides_any() {
+        *view = LayerView::default();
+        changed = true;
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +227,106 @@ mod tests {
             }
         }
         assert_eq!(LayerView::substrate_hidden(false), LayerView::default());
+    }
+
+    #[test]
+    fn the_popover_lists_every_layer_once_in_board_order() {
+        let four = [
+            CopperLayer::Top,
+            CopperLayer::Inner(1),
+            CopperLayer::Inner(2),
+            CopperLayer::Bottom,
+        ];
+        let stack = ViewLayer::stack(&four);
+        let names: Vec<String> = stack.iter().map(|l| l.label()).collect();
+        assert_eq!(
+            names,
+            [
+                "Components",
+                "Top silkscreen",
+                "Top solder mask",
+                "Top copper",
+                "Inner 1 copper",
+                "Inner 2 copper",
+                "Substrate",
+                "Bottom copper",
+                "Bottom solder mask",
+                "Bottom silkscreen",
+                "Vias",
+            ]
+        );
+        // Every body kind on every layer of the board has its toggle.
+        for kind in BodyKind::ALL {
+            for layer in four.iter().copied().map(Some).chain([None]) {
+                let toggle = ViewLayer::of(kind, layer);
+                assert!(stack.contains(&toggle), "{kind:?} on {layer:?}");
+            }
+        }
+        // The outer layers are always listed, however the list is given.
+        let two = ViewLayer::stack(&[CopperLayer::Top, CopperLayer::Bottom]);
+        assert_eq!(ViewLayer::stack(&[]), two);
+        assert_eq!(two.len(), stack.len() - 2);
+    }
+
+    /// Where the popover drew `label`, after one frame.
+    fn text_at(output: &egui::FullOutput, label: &str) -> Option<egui::Pos2> {
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.pos + text.galley.rect.center().to_vec2())
+                }
+                _ => None,
+            })
+    }
+
+    /// Hover, press and release on `label`; whether the view changed.
+    fn click(ctx: &egui::Context, view: &mut LayerView, label: &str) -> Result<bool, String> {
+        let copper = [CopperLayer::Top, CopperLayer::Bottom];
+        let frame = |view: &mut LayerView, events: Vec<egui::Event>| {
+            let mut changed = false;
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run_ui(input, |ui| changed = popover(ui, view, &copper));
+            (output, changed)
+        };
+        let (output, _) = frame(view, vec![]);
+        let at = text_at(&output, label).ok_or_else(|| format!("no {label}"))?;
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut changed = false;
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![button(true)],
+            vec![button(false)],
+        ] {
+            changed |= frame(view, events).1;
+        }
+        Ok(changed)
+    }
+
+    #[test]
+    fn the_popover_toggles_layers_and_shows_all_again() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = LayerView::default();
+        assert!(click(&ctx, &mut view, "Top solder mask")?);
+        assert!(!view.visible(ViewLayer::Mask(Layer::Top)));
+        assert!(click(&ctx, &mut view, "Substrate")?);
+        assert!(!view.visible(ViewLayer::Substrate));
+        assert!(view.visible(ViewLayer::Copper(CopperLayer::Top)));
+        assert!(click(&ctx, &mut view, "Show all")?);
+        assert_eq!(view, LayerView::default());
+        assert!(
+            !click(&ctx, &mut view, "Show all")?,
+            "nothing hidden: Show all is disabled"
+        );
+        Ok(())
     }
 }

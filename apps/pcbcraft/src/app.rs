@@ -464,6 +464,8 @@ impl App {
         let area = ui.available_rect_before_wrap();
         // Component previews never change PCB selection.
         let pick = if self.workspace == Workspace::Part {
+            // Component 3D shows every layer of its package.
+            self.scene.viewport.set_layers(Default::default());
             self.scene.highlight(None, None, None);
             self.part
                 .model_view_prepare(&mut self.scene.viewport, &self.engine);
@@ -473,6 +475,7 @@ impl App {
             None
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
+            self.scene.viewport.set_layers(self.pcb.layer_view());
             self.scene.highlight(
                 self.pcb.selected_instance(),
                 self.pcb.selected_track(),

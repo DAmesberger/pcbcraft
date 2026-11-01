@@ -662,158 +662,10 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// The showcase board: [`pcbcraft_core::Engine::showcase`] once the core
-/// builds it, otherwise an interim board of the generated sample packages
-/// (SOIC-8, QFN-16, 2×5 header, 0603 and 0805, one 0805 on the bottom)
-/// with top and bottom tracks, built through the public commands.
+/// The showcase board, [`pcbcraft_core::Engine::showcase`]: a 4-layer
+/// board of the sample packages routed on top and bottom through vias.
 fn showcase_project() -> Result<Project, Box<dyn std::error::Error>> {
-    if let Ok(engine) = pcbcraft_core::Engine::showcase() {
-        return Ok(engine.project().clone());
-    }
-    use pcbcraft_core::library::samples::{self, Preset, SampleRefs};
-    use pcbcraft_core::library::{Definition, DefinitionMeta};
-    use pcbcraft_core::{
-        BindingRef, ComponentRef, DefinitionKind, Engine, FootprintRef, InstanceCommand,
-        LibraryCommand, Operation, Outcome, PackageRef, PhysicalChoice, Revision, SymbolRef,
-        UnitId, instances::NewInstance,
-    };
-    let mut engine = Engine::default();
-    // (preset, board position, rotation, side).
-    let parts = [
-        (Preset::Soic8, [14.0, 24.0], 0.0, Layer::Top),
-        (Preset::Qfn16, [30.0, 24.0], 0.0, Layer::Top),
-        (Preset::Header2x5, [46.0, 24.0], 0.0, Layer::Top),
-        (Preset::Chip0603, [12.0, 12.0], 0.0, Layer::Top),
-        (Preset::Chip0805, [20.0, 12.0], 90.0, Layer::Top),
-        (Preset::Chip0805, [36.0, 12.0], 0.0, Layer::Bottom),
-    ];
-    let mut published: Vec<(Preset, SampleRefs)> = Vec::new();
-    for (preset, ..) in parts {
-        if published.iter().any(|(p, _)| *p == preset) {
-            continue;
-        }
-        let mut ids = Vec::new();
-        for kind in [
-            DefinitionKind::Component,
-            DefinitionKind::Symbol,
-            DefinitionKind::Package,
-            DefinitionKind::Footprint,
-            DefinitionKind::Binding,
-        ] {
-            if let Outcome::DraftCreated { id } = engine.apply(
-                engine.revision(),
-                Operation::Library(LibraryCommand::NewDraft {
-                    meta: DefinitionMeta::default(),
-                    definition: Definition::empty(kind),
-                }),
-            )? {
-                ids.push(id);
-            }
-        }
-        let [component, symbol, package, footprint, binding] = ids[..] else {
-            return Err("draft reservation failed".into());
-        };
-        let first = Revision::FIRST;
-        let refs = SampleRefs {
-            component,
-            symbol: SymbolRef::new(symbol, first),
-            package: PackageRef::new(package, first),
-            footprint: FootprintRef::new(footprint, first),
-            binding: BindingRef::new(binding, first),
-        };
-        let edits = samples::packaged(preset.label(), preset, refs);
-        engine.apply(
-            engine.revision(),
-            Operation::Library(LibraryCommand::Edit { edits }),
-        )?;
-        engine.apply(
-            engine.revision(),
-            Operation::Library(LibraryCommand::Publish {
-                drafts: vec![component, symbol, package, footprint, binding],
-            }),
-        )?;
-        published.push((preset, refs));
-    }
-    let mut placed = Vec::new();
-    for (k, (preset, at, rotation, layer)) in parts.into_iter().enumerate() {
-        let Some((_, refs)) = published.iter().find(|(p, _)| *p == preset) else {
-            continue;
-        };
-        let outcome = engine.apply(
-            engine.revision(),
-            Operation::Instance(InstanceCommand::Place(NewInstance {
-                component: ComponentRef::new(refs.component, Revision::FIRST),
-                designator: None,
-                properties: vec![],
-                representation: refs.symbol.id,
-                unit: UnitId(1),
-                position: [25.0 * k as f64, 0.0],
-                physical: Some(PhysicalChoice {
-                    binding: refs.binding.id,
-                    footprint: refs.footprint.id,
-                }),
-            })),
-        )?;
-        if let Outcome::InstancePlaced { instance, .. } = outcome {
-            placed.push((instance, at, rotation, layer));
-        }
-    }
-    engine.apply(
-        engine.revision(),
-        Operation::Layout(pcbcraft_core::layout::LayoutCommand::Sync),
-    )?;
-    let mut project = engine.project().clone();
-    for (instance, at, rotation, layer) in placed {
-        if let Some(p) = project
-            .placements
-            .iter_mut()
-            .find(|p| p.instance == instance)
-        {
-            p.position = at;
-            p.rotation_deg = rotation;
-            p.layer = layer;
-        }
-    }
-    if let Some(net) = project.nets.first().map(|n| n.id) {
-        for (start, end, width, layer) in [
-            (
-                [4.0, 4.0],
-                [56.0, 4.0],
-                0.5,
-                pcbcraft_core::CopperLayer::Top,
-            ),
-            (
-                [4.0, 34.0],
-                [56.0, 34.0],
-                0.25,
-                pcbcraft_core::CopperLayer::Top,
-            ),
-            (
-                [4.0, 6.0],
-                [56.0, 6.0],
-                0.8,
-                pcbcraft_core::CopperLayer::Bottom,
-            ),
-            (
-                [4.0, 30.0],
-                [56.0, 30.0],
-                0.3,
-                pcbcraft_core::CopperLayer::Bottom,
-            ),
-        ] {
-            let id = project.allocate()?;
-            project.tracks.push(pcbcraft_core::Track {
-                id,
-                net,
-                start,
-                end,
-                width,
-                layer,
-                locked: false,
-            });
-        }
-    }
-    Ok(project)
+    Ok(pcbcraft_core::Engine::showcase()?.project().clone())
 }
 
 /// Where on the board the first part matching `wanted` stands (its
@@ -974,3 +826,6 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "12-bottom-side")?;
     Ok(())
 }
+
+/// Pictures of the 3D layer toggles.
+mod layers;
