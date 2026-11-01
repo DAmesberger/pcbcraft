@@ -270,7 +270,6 @@ pub(crate) fn take_posted(ctx: &egui::Context) -> Vec<Posted> {
 }
 
 /// What a pill's click did.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PillResponse {
     pub clicked: bool,
@@ -280,7 +279,6 @@ pub struct PillResponse {
 
 /// A viewport pill for a persistent mode ("Routing N22 ×", "Showing:
 /// Clearance R3 ↔ R6 ×").
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 pub fn pill(ui: &mut Ui, level: Option<Level>, text: &str) -> PillResponse {
     let t = Tokens::get();
     let mut out = PillResponse::default();
@@ -296,12 +294,20 @@ pub fn pill(ui: &mut Ui, level: Option<Level>, text: &str) -> PillResponse {
                     ui.allocate_exact_size(vec2(t.font_label, t.font_label), egui::Sense::hover());
                 severity_glyph(ui.painter(), glyph.center(), t.font_small, level);
             }
+            // The text truncates into what is left after the ×, so a narrow
+            // pill keeps its ×.
+            let close = t.control_height + ui.spacing().item_spacing.x;
+            let room = (ui.available_width() - close).max(0.0);
             out.clicked = ui
-                .add(
-                    egui::Button::new(RichText::new(text).size(t.font_label).color(t.text))
-                        .frame_when_inactive(false)
-                        .truncate(),
-                )
+                .allocate_ui(vec2(room, t.control_height), |ui| {
+                    ui.set_max_width(room);
+                    ui.add(
+                        egui::Button::new(RichText::new(text).size(t.font_label).color(t.text))
+                            .frame_when_inactive(false)
+                            .truncate(),
+                    )
+                })
+                .inner
                 .on_hover_text(text)
                 .clicked();
             out.closed = ui_kit::button(ui, "×", Button::Small)

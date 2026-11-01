@@ -15,8 +15,6 @@
 //! `tree_header`) and `checks.rs`, MIT option; see ATTRIBUTION.md. Upstream
 //! keeps these crate-private, so the geometry is reproduced here on the
 //! public tokens and fonts.
-#![allow(dead_code, reason = "slice A1 wires the Issues surface")]
-
 use super::severity::{Level, severity_glyph};
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
@@ -80,6 +78,10 @@ pub struct IssueRowResponse {
 }
 
 /// One issue row. `id` keeps its interaction stable while the list scrolls.
+#[allow(
+    dead_code,
+    reason = "S0 contract; a single row outside the list has no caller yet"
+)]
 pub fn issue_row(ui: &mut Ui, id: egui::Id, row: &IssueRowView) -> IssueRowResponse {
     row_at(ui, id, row, 0.0)
 }

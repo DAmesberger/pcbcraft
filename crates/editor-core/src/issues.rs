@@ -236,6 +236,18 @@ pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<
     })
 }
 
+/// The user's name of each of `objects`, in order, as issue titles name
+/// them ("R2 pad 1", "Track on N22", "Terminal ‘VOUT’"), capitalised. Hosts
+/// show these as a row's object chips, so every transport names objects
+/// with core's words and never with IDs.
+pub fn object_names(project: &Project, drafts: &Drafts, objects: &[ObjectRef]) -> Vec<String> {
+    let names = names::Names::new(project, drafts);
+    objects
+        .iter()
+        .map(|object| crate::library::names::capitalised(&names.object(object)))
+        .collect()
+}
+
 /// What the checks of a scope cover, for the footer.
 fn coverage(scope: &IssueScope) -> &'static str {
     match scope {

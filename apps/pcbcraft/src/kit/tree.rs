@@ -24,6 +24,9 @@ pub struct Row<'a> {
     pub dim: bool,
     /// Unpublished or unsaved changes: an accent dot.
     pub modified: bool,
+    /// The most severe issue on the object: its severity glyph at the
+    /// row's right (docs/sidebar-ia.md, "Canvas and Browser").
+    pub issue: Option<super::severity::Level>,
     pub tip: &'a str,
 }
 
@@ -107,6 +110,12 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
         ui.painter()
             .galley(pos2(right, cy - galley.size().y / 2.0), galley, t.text_dim);
         right -= t.space_6;
+    }
+    if let Some(level) = row.issue {
+        let size = t.space_12;
+        right -= size / 2.0;
+        super::severity::severity_glyph(ui.painter(), pos2(right, cy), size, level);
+        right -= size / 2.0 + t.space_6;
     }
     if row.modified {
         right -= t.space_4;

@@ -3,11 +3,10 @@
 //! Solidcraft tokens and constants; content comes from the editors.
 use super::{App, browser};
 use crate::file_ui::Action;
+use crate::issues;
 use crate::kit;
 use crate::shell::{self, RibbonEvent, Workspace};
 use egui::{Rect, pos2, vec2};
-use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueReport, IssueScope};
-use pcbcraft_core::{Query, QueryResult};
 use solidcraft_ui_egui::{
     fonts,
     theme::Tokens,
@@ -90,105 +89,6 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
         browser,
         overlay,
     }
-}
-
-/// What the Issues bar shows: the active workspace's counts and the
-/// blockers elsewhere, or that the issues could not be counted.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum IssueSummary {
-    Counted {
-        counts: IssueCounts,
-        /// Areas outside the workspace that hold blockers ("Component: 2
-        /// blocking").
-        elsewhere: Option<String>,
-    },
-    /// The query refused: the bar says so rather than show no counts.
-    NotCounted,
-}
-
-impl IssueSummary {
-    /// The bar's summary from the `project.issues` answer; a refusal (or
-    /// any other answer) is shown as not counted, never as no issues.
-    fn from_query(result: pcbcraft_core::Result<QueryResult>) -> Self {
-        match result {
-            Ok(QueryResult::Issues(report)) => Self::from_report(&report),
-            _ => Self::NotCounted,
-        }
-    }
-
-    fn from_report(report: &IssueReport) -> Self {
-        let elsewhere: Vec<String> = report
-            .elsewhere
-            .iter()
-            .filter(|a| a.blocking > 0)
-            .map(|a| format!("{}: {} blocking", area_label(a.area), a.blocking))
-            .collect();
-        Self::Counted {
-            counts: report.counts,
-            elsewhere: (!elsewhere.is_empty()).then(|| elsewhere.join(" · ")),
-        }
-    }
-}
-
-/// The issue area a workspace shows by default.
-fn area(workspace: Workspace) -> IssueArea {
-    match workspace {
-        Workspace::Part => IssueArea::Component,
-        Workspace::Schematic => IssueArea::Schematic,
-        Workspace::Pcb => IssueArea::Board,
-    }
-}
-
-/// An area by its workspace's name.
-fn area_label(area: IssueArea) -> &'static str {
-    match area {
-        IssueArea::Component => Workspace::Part.label(),
-        IssueArea::Schematic => Workspace::Schematic.label(),
-        IssueArea::Board => Workspace::Pcb.label(),
-    }
-}
-
-/// Shown while the issues cannot be counted, in place of counts.
-const NOT_COUNTED: &str = "Not counted";
-const NOT_COUNTED_TIP: &str = "Checks still show in each Properties card";
-
-/// The Issues card: the always-visible bar and, expanded, its body. Returns
-/// whether the bar was clicked (expand or collapse).
-fn issues_card(ui: &mut egui::Ui, summary: &IssueSummary, expanded: bool) -> bool {
-    let zero = IssueCounts::default();
-    let (counts, elsewhere, tip) = match summary {
-        IssueSummary::Counted { counts, elsewhere } => (counts, elsewhere.as_deref(), None),
-        IssueSummary::NotCounted => (&zero, Some(NOT_COUNTED), Some(NOT_COUNTED_TIP)),
-    };
-    let mut bar = kit::issues_bar(ui, counts, expanded, elsewhere);
-    if let Some(tip) = tip {
-        bar = bar.on_hover_text(tip);
-    }
-    if expanded {
-        kit::rule(ui);
-        egui::ScrollArea::vertical()
-            .id_salt("issues-body")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Frame::NONE
-                    .inner_margin(egui::Margin::symmetric(Tokens::get().space_8 as i8, 0))
-                    .show(ui, |ui| {
-                        kit::form(ui, |ui| match summary {
-                            IssueSummary::NotCounted => {
-                                kit::hint(ui, NOT_COUNTED_TIP, "");
-                            }
-                            IssueSummary::Counted { counts, .. } => {
-                                kit::hint(
-                                    ui,
-                                    &kit::issues::counts_words(counts, true, true),
-                                    NOT_COUNTED_TIP,
-                                );
-                            }
-                        });
-                    });
-            });
-    }
-    bar.clicked()
 }
 
 impl App {
@@ -342,7 +242,8 @@ impl App {
             Workspace::Schematic => self.schematic.ribbon(&self.engine),
             Workspace::Pcb => self.pcb.ribbon(&self.engine),
         };
-        match shell::ribbon(ui, self.workspace, &ribbon) {
+        let issues = self.issues.ribbon_toggle(&self.engine, self.workspace);
+        match shell::ribbon(ui, self.workspace, &ribbon, &issues) {
             Some(RibbonEvent::Workspace(workspace)) => {
                 if workspace != self.workspace {
                     self.clear_error();
@@ -371,6 +272,7 @@ impl App {
                     operation,
                 );
             }
+            Some(RibbonEvent::Issues) => self.issues.toggle(),
             None => {}
         }
     }
@@ -387,6 +289,17 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
+                    self.issues
+                        .badge(ui, layout.canvas, &self.engine, self.workspace);
+                    let selection = self.selection();
+                    let shown = self.issues.pill(
+                        ui,
+                        layout.canvas,
+                        &self.engine,
+                        self.workspace,
+                        &selection,
+                    );
+                    self.issue_request(&ctx, shown);
                     self.navigation_bar(ui, layout.canvas);
                     self.toasts_above_navigation(ui, layout.canvas);
                 });
@@ -396,13 +309,14 @@ impl App {
                     let mut pick = None;
                     let mut source_pick = None;
                     let updates = self.sources.updates(&self.engine);
+                    let badges = self.issues.badges(&self.engine);
                     shell::card(
                         &ctx,
                         "project-browser",
                         rect,
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
-                            pick = browser::show(ui, &self.engine, lit, &updates);
+                            pick = browser::show(ui, &self.engine, lit, &updates, &badges);
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
@@ -424,11 +338,7 @@ impl App {
     /// The right column: the subject card above the always-visible Issues
     /// card (docs/sidebar-ia.md, "Layout").
     fn column(&mut self, ctx: &egui::Context, rect: Rect) {
-        let expanded_id = egui::Id::new("issues-expanded");
-        let expanded = ctx
-            .data(|d| d.get_temp::<bool>(expanded_id))
-            .unwrap_or(false);
-        let column = kit::card::column(rect, expanded);
+        let column = kit::card::column(rect, self.issues.expanded());
         let header = match self.workspace {
             Workspace::Part => self.part.header(&self.engine),
             Workspace::Schematic => self.schematic.header(&self.engine),
@@ -456,48 +366,111 @@ impl App {
                 })
             },
         );
-        let mut open_issues = false;
         if let Some(card) = card {
-            open_issues = card.show_issues;
+            if card.show_issues {
+                self.issues.show_selection();
+            }
             self.apply(ctx, crate::refusal::Origin::Command, card.output);
         }
-        let summary = self.issue_summary(ctx);
-        let toggle = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
-            issues_card(ui, &summary, expanded)
-        });
-        if toggle == Some(true) {
-            ctx.data_mut(|d| d.insert_temp(expanded_id, !expanded));
-        } else if open_issues {
-            ctx.data_mut(|d| d.insert_temp(expanded_id, true));
+        let selection = self.selection();
+        let request = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
+            self.issues
+                .card(ui, &self.engine, self.workspace, &selection)
+        })
+        .flatten();
+        self.issue_request(ctx, request);
+    }
+
+    /// The active editor's selection as issue objects, for the Selection
+    /// scope.
+    fn selection(&self) -> Vec<pcbcraft_core::ObjectRef> {
+        match self.workspace {
+            Workspace::Part => {
+                issues::selection(self.workspace, self.part.lineage(), None, None, None)
+            }
+            Workspace::Schematic => issues::selection(
+                self.workspace,
+                None,
+                self.schematic.selected_instance(),
+                None,
+                self.schematic.selected_net(&self.engine),
+            ),
+            Workspace::Pcb => issues::selection(
+                self.workspace,
+                None,
+                self.pcb.selected_instance(),
+                self.pcb.selected_track(),
+                self.pcb.highlighted_net(),
+            ),
         }
     }
 
-    /// The Issues bar's counts for the active workspace, from the one
-    /// `project.issues` query, computed once per document revision.
-    fn issue_summary(&self, ctx: &egui::Context) -> IssueSummary {
-        let key = egui::Id::new((
-            "issue-summary",
-            self.engine.revision(),
-            std::sync::Arc::as_ptr(self.engine.project_arc()) as usize,
-            self.workspace,
-        ));
-        if let Some(summary) = ctx.data(|d| d.get_temp::<IssueSummary>(key)) {
-            return summary;
-        }
-        let scope = IssueScope::Area {
-            area: area(self.workspace),
-        };
-        let summary = IssueSummary::from_query(self.engine.query(Query::Issues { scope }));
-        // One entry: the previous revision's summary is dropped.
-        let last = egui::Id::new("issue-summary-key");
-        ctx.data_mut(|d| {
-            if let Some(old) = d.get_temp::<egui::Id>(last) {
-                d.remove::<IssueSummary>(old);
+    /// What the Issues surface asked for: locate an issue's objects in the
+    /// workspace that shows them, or run its Fix.
+    fn issue_request(&mut self, ctx: &egui::Context, request: Option<issues::Request>) {
+        match request {
+            Some(issues::Request::Locate { refs, area }) => {
+                let mut part = issues::interim::Part(&mut self.part);
+                let mut schematic = issues::interim::Schematic(&mut self.schematic);
+                let mut pcb = issues::interim::Pcb(&mut self.pcb);
+                let mut editors = issues::Editors {
+                    part: &mut part,
+                    schematic: &mut schematic,
+                    pcb: &mut pcb,
+                };
+                match issues::route(&mut editors, &self.engine, &refs, issues::workspace(area)) {
+                    Some(workspace) => {
+                        if workspace != self.workspace {
+                            self.clear_error();
+                        }
+                        self.workspace = workspace;
+                    }
+                    None => self.say(
+                        crate::kit::severity::Level::Info,
+                        "That issue has nothing to select",
+                    ),
+                }
             }
-            d.insert_temp(last, key);
-            d.insert_temp(key, summary.clone());
-        });
-        summary
+            Some(issues::Request::Fix(fix)) => self.fix(ctx, fix),
+            None => {}
+        }
+    }
+
+    /// Run an issue's Fix: open its dialog in its workspace, or apply its
+    /// typed operation.
+    fn fix(&mut self, ctx: &egui::Context, fix: issues::Fix) {
+        use issues::{Fix, FixDialog};
+        match fix {
+            Fix::Apply { operation, .. } => {
+                self.apply(ctx, crate::refusal::Origin::Command, Some(*operation));
+            }
+            Fix::Open { dialog, .. } => match dialog {
+                FixDialog::UpdatePcb => {
+                    self.workspace = Workspace::Pcb;
+                    let operation = self.pcb.on_tool("update", &self.engine);
+                    self.apply(ctx, crate::refusal::Origin::Command, operation);
+                }
+                FixDialog::ResolveParts => {
+                    self.workspace = Workspace::Schematic;
+                    // The ribbon's Resolve toggles; open it only when shut.
+                    let open = self
+                        .schematic
+                        .ribbon(&self.engine)
+                        .groups
+                        .iter()
+                        .flat_map(|g| &g.tools)
+                        .any(|t| t.id == "resolve" && t.selected);
+                    if !open {
+                        let operation = self.schematic.on_tool("resolve", &self.engine);
+                        self.apply(ctx, crate::refusal::Origin::Command, operation);
+                    }
+                }
+                FixDialog::AssignPads
+                | FixDialog::ChoosePart
+                | FixDialog::UpdateInstances
+                | FixDialog::Mapping => {}
+            },
+        }
     }
 
     /// The selection the Browser marks, from the active workspace.
@@ -747,60 +720,5 @@ mod tests {
                 assert_eq!(c.issues.x_range(), l.inspector.x_range());
             }
         }
-    }
-
-    /// The bar counts the active workspace's issues through `project.issues`;
-    /// a refused query is shown as not counted instead of as no issues.
-    #[test]
-    fn the_bar_counts_through_project_issues_and_marks_a_refusal() {
-        let engine = pcbcraft_core::Engine::default();
-        let scope = IssueScope::Area {
-            area: area(Workspace::Pcb),
-        };
-        let summary = IssueSummary::from_query(engine.query(Query::Issues { scope }));
-        assert!(
-            matches!(summary, IssueSummary::Counted { .. }),
-            "{summary:?}"
-        );
-        let refused =
-            IssueSummary::from_query(Err(pcbcraft_core::Error::Unsupported("issues".into())));
-        assert_eq!(refused, IssueSummary::NotCounted);
-    }
-
-    #[test]
-    fn a_report_shows_its_counts_and_the_blockers_elsewhere() {
-        use pcbcraft_core::issues::AreaCount;
-        let counts = IssueCounts {
-            error: 1,
-            to_do: 3,
-            ..Default::default()
-        };
-        let report = IssueReport {
-            counts,
-            elsewhere: vec![
-                AreaCount {
-                    area: IssueArea::Component,
-                    counts,
-                    blocking: 2,
-                },
-                AreaCount {
-                    area: IssueArea::Schematic,
-                    counts,
-                    blocking: 0,
-                },
-            ],
-            ..Default::default()
-        };
-        assert_eq!(
-            IssueSummary::from_report(&report),
-            IssueSummary::Counted {
-                counts,
-                elsewhere: Some("Component: 2 blocking".into()),
-            }
-        );
-        assert_eq!(
-            kit::issues::counts_words(&counts, true, true),
-            "1 error, 3 to do"
-        );
     }
 }

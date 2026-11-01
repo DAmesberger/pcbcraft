@@ -25,9 +25,10 @@ pub mod toast;
 mod tree;
 
 pub use form::*;
-pub use issues::issues_bar;
+pub use issues::{count_badge, issues_bar, issues_list};
 pub use rows::*;
 pub use search::*;
+pub use toast::pill;
 pub use tree::*;
 #[allow(
     unused_imports,
@@ -35,10 +36,9 @@ pub use tree::*;
 )]
 pub use {
     dialog::{DialogPanel, confirm},
-    issues::{count_badge, detail, issue_line, issue_row, issues_list},
+    issues::{detail, issue_line, issue_row},
     review::ReviewPanel,
     severity::severity_glyph,
-    toast::pill,
 };
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};

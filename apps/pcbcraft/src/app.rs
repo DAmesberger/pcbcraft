@@ -48,6 +48,8 @@ pub struct App {
     /// Every message of this run, with the full engine text.
     messages: Messages,
     messages_open: bool,
+    /// The Issues card, canvas badge and pill, and their cached answers.
+    issues: crate::issues::Surface,
     /// The engine revision a toast's Undo would undo; Undo is withdrawn
     /// once another step follows.
     undo_revision: Option<u64>,
@@ -95,6 +97,7 @@ impl App {
             toasts: Toasts::default(),
             messages: Messages::default(),
             messages_open: false,
+            issues: Default::default(),
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
@@ -237,12 +240,11 @@ impl App {
                 ..
             }
             | ToastEvent::OpenMessages => self.messages_open = true,
-            // Locating what a toast names arrives with the Issues surface
-            // (slice A1); until then no toast offers Show.
+            // Show opens Issues, where every finding locates.
             ToastEvent::Action {
                 action: ToastAction::Show,
                 ..
-            } => self.messages_open = true,
+            } => self.issues.open(),
         }
     }
 

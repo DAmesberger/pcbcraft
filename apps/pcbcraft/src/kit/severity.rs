@@ -6,8 +6,6 @@
 //! `crates/ui-egui/src/ui_kit/status.rs` (`check_status_line`, `CheckStatus`
 //! and its `text_marker`) and `ui_kit/checks.rs` (`paint_check_glyph`), MIT
 //! option; see ATTRIBUTION.md.
-#![allow(dead_code, reason = "slice A1 wires the Issues surface")]
-
 use egui::{Color32, Painter, Pos2, Stroke, vec2};
 use pcbcraft_core::issues::Severity;
 use solidcraft_ui_egui::theme::Tokens;
@@ -37,6 +35,7 @@ impl From<Severity> for Level {
 
 impl Level {
     /// Every level, most severe first.
+    #[allow(dead_code, reason = "only the kit's tests use it so far")]
     pub const ALL: [Self; 5] = [Self::Error, Self::Warning, Self::ToDo, Self::Info, Self::Ok];
 
     /// The plain-text marker for copied reports and accessible text, where

@@ -148,7 +148,7 @@ Anything that blocks publishing is always Error and always counted.
 
 **Merging.** Core emits one finding with both `ObjectRef`s for a same-cause pair: pad ↔ package terminal, binding ↔ package terminal, and per-instance copies of one shared Part. A side with no counterpart keeps its own finding. The app never merges by matching text.
 
-**Scope.** This workspace (default), All or Selection. In this-workspace scope a dot marks blockers in another area ("● Component: 2 block publishing").
+**Scope.** This workspace (default), All or Selection, and a severity filter, as two dropdowns that share the card's width. A dot marks blockers in another area, count first so a clipped bar keeps it ("● 2 blocking in Component").
 
 **Counting.** The bar, the ribbon toggle and the canvas badge show "× n ! n ○ n". The badge hides To do while errors exist; the bar never does. Results are cached per document revision, reusing the editor caches (`BoardCopper`, part_editor `findings`).
 
@@ -215,6 +215,7 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 - `MAX_TITLE = 80`;
 - `report(&Project, &Drafts, &IssueScope) -> Result<IssueReport>`, served as `Query::Issues { scope }` (`project.issues`) → `QueryResult::Issues`. Since C1 it returns the real report on desktop, CLI and MCP; a failure or an oversized scope (`Error::Limit`) refuses rather than return an empty list, so no transport mistakes it for "no issues".
 - `style::{check, Problem}`.
+- `object_names(&Project, &Drafts, &[ObjectRef]) -> Vec<String>` (A1): the user names of objects, as titles name them, for object chips.
 
 **Desktop** (`apps/pcbcraft/src`):
 
@@ -229,10 +230,14 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 | Review | `kit/review.rs` | `ReviewPanel { id, icon, title, summary, stale, blockers: &[ReviewLine], groups: &[ReviewGroup], apply }::show(ui, acked) -> Option<ReviewAction>` |
 | Rows | `kit/rows.rs` | `tool_card(ui, &ToolCard, rows) -> ToolCardResponse { done }`, `hint(ui, text, tip)`, `list_frame(ui, len, max_rows, row) -> ListFrameResponse { show_all }`, `table(ui, &[TableColumn], rows, cell, add_row) -> TableResponse { add }`, `summary_row(ui, summary, action) -> bool`, `field_error(ui, &field, message, not_stored)`, `refusal(ui, message)`, `LIST_MAX_ROWS = 8` |
 | Locate | `issues.rs` | `trait Locate { fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool }`. It takes the engine so an editor can resolve tabs and frames; it changes selection and camera only. |
+| Issues surface | `issues.rs` | A1 added `Surface` (the card's state and cached answers: `card`, `pill`, `badge`, `ribbon_toggle`, `badges`, `toggle`, `open`, `show_selection`), `Request { Locate { refs, area }, Fix }`, `Editors` and `route(editors, engine, refs, preferred) -> Option<Workspace>` (the issue's area first, then the others), `Badges`, `report_text` and `interim::{Part, Schematic, Pcb}` (locate through each editor's public selection until its W slice implements `Locate`; then `route` takes the editor and `interim` goes) |
+| Ribbon toggle | `shell.rs` | A1 added `IssuesToggle { counts, expanded }`, a fourth `ribbon` argument and `RibbonEvent::Issues` |
+| Browser badge | `kit/tree.rs` | A1 added `Row::issue: Option<Level>` |
+| Pill width | `kit/toast.rs` | A1: `pill` truncates its text into the room left after ×, so a narrow pill keeps its ×; the Showing pill keeps clear of the badge corner |
 | Fix launchers | `issues.rs` | `Fix { Apply { label, operation }, Open { label, dialog: FixDialog } }`, `fix(&IssueRow) -> Option<Fix>` |
 | Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String`; K3 added `mark(ctx, origin)` (an editor declares the origin of the operation it returns this frame; otherwise the call site's default applies: inspector and draft commits `Command`, canvas `Canvas`), `claim(ctx, origin) -> Option<String>` (on the next frame), `level(&Error) -> Level`, `presentable(text)` and `clip(text, max)` |
 
-The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance. After wave 3, `kit/card.rs` keeps one only on `Subject` (Properties is the only subject until R1 and the W slices), and the kit re-exports other than `issues_bar` and `rows` stay allowed until A1, R1 and the W slices use them.
+The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance. After wave 3, `kit/card.rs` keeps one only on `Subject` (Properties is the only subject until R1 and the W slices), and the kit re-exports other than `issues_bar` and `rows` stay allowed until A1, R1 and the W slices use them. A1 removed the allowances on `kit/issues.rs`, `kit/severity.rs` and `pill`; only `issue_row` (no caller outside the list yet) and `Level::ALL` (tests only) keep one.
 
 ## Slices and file ownership
 
@@ -250,7 +255,7 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | **C1** Core issues and messages (done) | `project.issues` (also on CLI/MCP) with severity, group and title; same-cause merging in the rules; names-not-IDs pass over `Finding.message` and `Error` display (not `updates.rs`); CLI/MCP golden tests; core message-style tests over fixtures | `crates/editor-core` except `updates.rs`; `crates/automation` | S0 |
 | **C2** Core review data (done) | Structured update plan (changes by kind, area and refs; line + detail); findings diff (new/resolved) replacing the "Candidate … check" lines; conflicting tracks with net, layer and length; wording of the `updates.rs` blockers | `crates/editor-core/src/updates.rs`, `updates/` | S0 |
 | **C3** Core commands (done) | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
-| **A1** Issues surface | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
+| **A1** Issues surface (done) | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
 | **R1** Review panel | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview | `update_preview.rs` | K4, C2 |
 | **W1a** Component Details + Symbol | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
 | **W1b** Component Footprint + Mapping + 3D | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate` targets for its tabs (methods in its own files that W1a's `Locate` calls); `notice` sites | `part_editor/footprint_*.rs` (with `footprint_card.rs`), `part_editor/{mapping,model}_card.rs`, `part_editor/model_{body,props}.rs` | S1, K1, K3, K4 |

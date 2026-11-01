@@ -419,9 +419,6 @@ impl SchematicEditor {
                 Group {
                     label: "Inspect",
                     tools: vec![
-                        Button::new("check", "inspect", "Check")
-                            .selected(self.show_checks)
-                            .tip("Show the electrical rule checks"),
                         Button::new("resolve", "component", "Resolve")
                             .enabled(!reviewing)
                             .selected(self.resolve.is_open())
@@ -438,10 +435,6 @@ impl SchematicEditor {
             "select" => Tool::Select,
             "place" => Tool::Place,
             "wire" => Tool::Wire,
-            "check" => {
-                self.show_checks = !self.show_checks;
-                return None;
-            }
             "rotate" => return self.arranged(engine.project(), Arrange::Rotate),
             "mirror" => return self.arranged(engine.project(), Arrange::Mirror),
             "resolve" => {

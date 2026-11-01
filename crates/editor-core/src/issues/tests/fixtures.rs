@@ -153,6 +153,41 @@ fn the_demo_reports_unrouted_copper_and_missing_parts_as_to_do() -> Fallible<()>
     Ok(())
 }
 
+/// Every object of every demo issue has a user name for its chip, one per
+/// object and in order, in the message style and never an ID.
+#[test]
+fn every_issue_object_has_a_user_name() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let report = all(&engine)?;
+    let mut named = 0;
+    for row in &report.rows {
+        let objects: Vec<ObjectRef> = row.objects().copied().collect();
+        let names = object_names(engine.project(), engine.drafts(), &objects);
+        assert_eq!(names.len(), objects.len(), "{}", row.title);
+        for name in &names {
+            assert_eq!(naming(name), Vec::<Problem>::new(), "{name}");
+            assert!(
+                name.chars().next().is_some_and(|c| !c.is_lowercase()),
+                "{name}"
+            );
+        }
+        named += names.len();
+    }
+    assert!(named > 0);
+    let r1 = engine
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.designator == "R1")
+        .map(|i| ObjectRef::Instance { id: i.id })
+        .ok_or("R1")?;
+    assert_eq!(
+        object_names(engine.project(), engine.drafts(), &[r1]),
+        ["R1"]
+    );
+    Ok(())
+}
+
 #[test]
 fn a_publish_blocker_is_an_error_that_is_counted() -> Fallible<()> {
     let mut engine = Engine::default();
