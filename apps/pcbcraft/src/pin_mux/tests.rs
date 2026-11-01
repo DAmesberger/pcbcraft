@@ -598,16 +598,7 @@ fn ticking_asks_the_engine_for_a_suggestion() -> TestResult {
                 )
             );
         }
-        Ok(_) => assert!(state.alternatives.is_none()),
-        // Before the solver exists, the panel says so and stages nothing.
-        Err(Error::Unsupported(_)) => {
-            assert_eq!(
-                state.suggest_note.as_deref(),
-                Some("Suggestions are not available in this version; choose pins below")
-            );
-            assert!(state.staged.is_empty());
-        }
-        Err(other) => return Err(other.into()),
+        other => return Err(format!("USART1 has a suggestion: {other:?}").into()),
     }
     Ok(())
 }

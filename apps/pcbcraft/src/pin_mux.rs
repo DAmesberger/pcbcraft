@@ -31,7 +31,7 @@ use pcbcraft_core::functions::suggest::{
 };
 use pcbcraft_core::ids::{ResourceId, RoleId, TerminalId};
 use pcbcraft_core::{
-    ComponentInstance, Engine, Error, Id, InstanceCommand, Operation, Query, QueryResult,
+    ComponentInstance, Engine, Id, InstanceCommand, Operation, Query, QueryResult,
 };
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -434,10 +434,6 @@ fn suggest(
             }
         }
         Ok(_) => state.suggest_note = Some("The suggestion could not be read".into()),
-        Err(Error::Unsupported(_)) => {
-            state.suggest_note =
-                Some("Suggestions are not available in this version; choose pins below".into());
-        }
         Err(error) => state.suggest_note = Some(refusal::shown_error(&error)),
     }
 }

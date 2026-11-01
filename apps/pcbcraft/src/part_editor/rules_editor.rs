@@ -7,12 +7,10 @@
 use crate::kit;
 use crate::refusal::shown_error;
 use egui::Ui;
-use pcbcraft_core::Error;
 use pcbcraft_core::functions::rules::{
-    self, MAX_RULE_SOURCE, PinRule, RuleBudget, RuleEvaluation, RuleFailureKind, RuleVerdict,
-    RuleView, ViewFunction, ViewResource, ViewTerminal,
+    self, MAX_RULE_SOURCE, PinRule, RuleBudget, RuleEvaluation, RuleVerdict, RuleView,
 };
-use pcbcraft_core::functions::{self, FunctionSelections, Resolution};
+use pcbcraft_core::functions::{self, FunctionSelections, PinConfigs, Resolution};
 use pcbcraft_core::library::ComponentDefinition;
 use pcbcraft_core::{FunctionId, RuleId, TerminalId};
 use solidcraft_ui_egui::theme::Tokens;
@@ -24,88 +22,35 @@ pub enum Check {
     Compiles,
     /// The compiler's message, or why the script cannot be checked.
     Error(String),
-    /// This build has no rule compiler yet.
-    Unavailable,
 }
 
-/// The syntax check of one rule: bounds first, then the core compiler
-/// (`functions::rules::compile`) and its compile failures.
+/// The syntax check of one rule: not empty, then the core's bounded
+/// compile (`functions::rules::syntax_error`).
 pub fn check(rule: &PinRule) -> Check {
     let source = &rule.script.source;
-    if source.len() > MAX_RULE_SOURCE {
-        return Check::Error(format!("A rule script has at most {MAX_RULE_SOURCE} bytes"));
-    }
     if source.trim().is_empty() {
         return Check::Error("The script is empty: end it with ok() or a verdict".into());
     }
-    let compiled = match rules::compile(std::slice::from_ref(rule)) {
-        Ok(compiled) => compiled,
-        Err(Error::Unsupported(_)) => return Check::Unavailable,
-        Err(error) => return Check::Error(shown_error(&error)),
-    };
-    match rules::evaluate(&compiled, &RuleView::default(), RuleBudget::default()) {
-        Ok(evaluation) => evaluation
-            .failures
-            .iter()
-            .find(|f| f.rule == rule.id && f.kind == RuleFailureKind::Compile)
-            .map_or(Check::Compiles, |f| Check::Error(f.message.clone())),
-        Err(Error::Unsupported(_)) => Check::Unavailable,
-        Err(error) => Check::Error(shown_error(&error)),
-    }
+    rules::syntax_error(source).map_or(Check::Compiles, Check::Error)
 }
 
-/// The read-only view rules see of `component` resolved as `resolution`:
-/// every terminal's name, declared labels and active function with its
-/// peripheral and role, and every peripheral's active roles.
+/// The read-only view rules see of `component` resolved as `resolution`,
+/// built by the core exactly as the resolution builds it (no pin
+/// configuration: the explain panel has no instance).
 pub fn rule_view(component: &ComponentDefinition, resolution: &Resolution) -> RuleView {
-    let mut view = RuleView::default();
-    let mut active_roles: Vec<(pcbcraft_core::ResourceId, pcbcraft_core::RoleId)> = Vec::new();
-    for terminal in &component.terminals {
-        let Some(declared) = terminal.functions() else {
-            continue;
-        };
-        let active = resolution.active(terminal.id).and_then(|a| {
-            let function = declared.function(a.function)?;
-            let names = super::pins_table::peripheral_of(component, function);
-            if let Some(rr) = function.resource_role {
-                active_roles.push((rr.resource, rr.role));
-            }
-            Some(ViewFunction {
-                function: function.id,
-                label: function.label.clone(),
-                peripheral: names.map(|(p, _)| p.to_owned()),
-                role: names.map(|(_, r)| r.to_owned()),
-            })
-        });
-        view.terminals.push(ViewTerminal {
-            terminal: terminal.id,
-            name: terminal.name.clone(),
-            active,
-            functions: declared.functions.iter().map(|f| f.label.clone()).collect(),
-            config: None,
-        });
-    }
-    for resource in &component.resources {
-        view.resources.push(ViewResource {
-            resource: resource.id,
-            label: resource.label.clone(),
-            kind: resource.kind.clone(),
-            active_roles: resource
-                .roles
-                .iter()
-                .filter(|r| active_roles.contains(&(resource.id, r.id)))
-                .map(|r| r.label.clone())
-                .collect(),
-        });
-    }
-    view
+    rules::view(
+        &component.declarations(),
+        &component.resources,
+        resolution,
+        &PinConfigs::default(),
+    )
 }
 
 /// What the explain panel shows for one scratch selection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Explained {
     pub resolution: Result<Resolution, String>,
-    /// Every rule's verdict; `None` when this build cannot evaluate rules.
+    /// Every rule's verdict; `None` when the selection did not resolve.
     pub evaluation: Option<Result<RuleEvaluation, String>>,
 }
 
@@ -127,11 +72,12 @@ pub fn valid_scratch(
 }
 
 /// Resolve `component` with the scratch selection and evaluate its rules
-/// over the result, within the default budget.
+/// over the result within the default budget, folding their verdicts into
+/// the resolution as the design's resolution does.
 pub fn explain(component: &ComponentDefinition, scratch: &FunctionSelections) -> Explained {
     let scratch = valid_scratch(component, scratch);
     let declarations = component.declarations();
-    let resolution = functions::resolve(
+    let mut resolution = functions::resolve(
         &declarations,
         &component.resources,
         &component.constraints,
@@ -139,18 +85,17 @@ pub fn explain(component: &ComponentDefinition, scratch: &FunctionSelections) ->
         &scratch,
     )
     .map_err(|e| shown_error(&e));
-    let evaluation = match &resolution {
+    let evaluation = match &mut resolution {
         Err(_) => None,
         Ok(_) if component.pin_rules.is_empty() => Some(Ok(RuleEvaluation::default())),
         Ok(resolved) => {
             let view = rule_view(component, resolved);
-            match rules::compile(&component.pin_rules)
-                .and_then(|c| rules::evaluate(&c, &view, RuleBudget::default()))
-            {
-                Ok(evaluation) => Some(Ok(evaluation)),
-                Err(Error::Unsupported(_)) => None,
-                Err(error) => Some(Err(shown_error(&error))),
-            }
+            let evaluated = rules::compile(&component.pin_rules).and_then(|compiled| {
+                let evaluation = rules::evaluate(&compiled, &view, RuleBudget::default())?;
+                rules::apply(resolved, &compiled, &evaluation);
+                Ok(evaluation)
+            });
+            Some(evaluated.map_err(|e| shown_error(&e)))
         }
     };
     Explained {
@@ -235,7 +180,6 @@ pub fn rule_list(
                     let lit = selected == Some(rule.id);
                     let (secondary, issue) = match editor.check(rule) {
                         Check::Compiles => ("compiles", None),
-                        Check::Unavailable => ("", None),
                         Check::Error(_) => ("does not compile", Some(kit::severity::Level::Error)),
                     };
                     let row = kit::Row {
@@ -288,13 +232,6 @@ pub fn script_editor(ui: &mut Ui, rule: &mut PinRule, editor: &mut RulesEditor) 
             }
             Check::Error(message) => {
                 kit::field_error(ui, &response, &message, false);
-            }
-            Check::Unavailable => {
-                kit::hint(
-                    ui,
-                    "This build cannot check rule scripts yet",
-                    "The script is stored as typed; Issues reports it once checked",
-                );
             }
         }
     });
@@ -423,13 +360,7 @@ fn outcome(ui: &mut Ui, component: &ComponentDefinition, explained: &Explained) 
     }
     kit::rule(ui);
     match &explained.evaluation {
-        None => {
-            kit::hint(
-                ui,
-                "This build cannot evaluate rule scripts yet",
-                "The resolution above uses functions, peripherals and pair rules",
-            );
-        }
+        None => {}
         Some(Err(message)) => {
             kit::refusal(ui, message);
         }

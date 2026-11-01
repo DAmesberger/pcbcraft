@@ -43,8 +43,8 @@ fn firmware(command: &str, instance: &Value, emitter: &str, path: Option<&str>) 
 }
 
 /// Every request shape the scenario and the MCP instructions use parses
-/// as the contract's types, so a drift in either fails here even while
-/// the handlers are stubs.
+/// as the contract's types, so a drift in either fails here before any
+/// handler runs.
 #[test]
 fn every_scenario_request_is_a_contract_request() -> Fallible<()> {
     let instance = json!(7);
@@ -79,8 +79,7 @@ fn every_scenario_request_is_a_contract_request() -> Fallible<()> {
     Ok(())
 }
 
-/// Firmware export of an instance with no peripherals: either the C4
-/// stub's explicit refusal (nothing changes) or a pin-configuration
+/// Firmware export of an instance with no peripherals: a pin-configuration
 /// starting point with a suggested file name.
 #[test]
 fn firmware_export_of_a_plain_instance() -> Fallible<()> {

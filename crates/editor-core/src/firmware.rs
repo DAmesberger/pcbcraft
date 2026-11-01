@@ -157,10 +157,10 @@ pub fn from_pin_report(project: &Project, report: &PinReport) -> Result<PinConfi
         let config = pin.config.as_ref();
         // A net's name counts only when someone named it: every placed
         // terminal sits on a net, and an unnamed one is called `N<id>`.
-        let net_name = pin
-            .net_name
-            .as_deref()
-            .filter(|name| pin.net.is_none_or(|net| *name != crate::nets::default_name(net)));
+        let net_name = pin.net_name.as_deref().filter(|name| {
+            pin.net
+                .is_none_or(|net| *name != crate::nets::default_name(net))
+        });
         let source = config
             .and_then(|c| c.name.as_deref())
             .or(net_name)

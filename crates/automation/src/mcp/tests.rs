@@ -291,11 +291,10 @@ fn the_instructions_describe_the_reviewed_pinout_workflow() -> super::scenario::
 
 /// The pinout and firmware requests are generated tools; the schema tool
 /// answers now, and the preview through `project_query` answers the EXM-48
-/// document with its one review item (or, until C3 lands, the explicit C3
-/// stub refusal as a tool error, nothing changed).
+/// document with its one review item.
 #[test]
 fn the_pinout_tools_answer_over_mcp() -> super::scenario::Fallible<()> {
-    use super::scenario::{EXM48, Fallible, Stub, finish, stub_in};
+    use super::scenario::EXM48;
     let mut server = Server::new(Session::new(Engine::demo()?));
     let tools = call(&mut server, 1, "tools/list", json!({}));
     let listed: Vec<_> = tools["result"]["tools"]
@@ -320,33 +319,23 @@ fn the_pinout_tools_answer_over_mcp() -> super::scenario::Fallible<()> {
     assert_eq!(schema["result"]["isError"], false, "{schema}");
     assert_eq!(schema["result"]["structuredContent"]["format"], 1);
 
-    finish((|| -> Fallible<()> {
-        let document: Value = serde_json::from_str(EXM48)?;
-        let before = server.session().engine().document().clone();
-        let revision = server.session().engine().revision();
-        let plan = call(
-            &mut server,
-            3,
-            "tools/call",
-            json!({"name": "project_query", "arguments": {"query": "library.pinout_preview",
-                "params": {"target": {"target": "new", "name": "EXM-48"}, "document": document}}}),
-        );
-        assert_eq!(server.session().engine().revision(), revision);
-        assert_eq!(server.session().engine().document(), &before);
-        let content = &plan["result"]["structuredContent"];
-        if plan["result"]["isError"] == true {
-            return match stub_in(content) {
-                Some(rule) => Err(Box::new(Stub {
-                    step: "mcp pinout_preview".into(),
-                    rule: rule.into(),
-                })),
-                None => Err(format!("{plan}").into()),
-            };
-        }
-        let review = content["result"]["review"].as_array().ok_or("review")?;
-        assert_eq!(review.len(), 1, "{plan}");
-        assert_eq!(review[0]["row"], "r20");
-        assert_eq!(review[0]["reason"], "uncertain");
-        Ok(())
-    })())
+    let document: Value = serde_json::from_str(EXM48)?;
+    let before = server.session().engine().document().clone();
+    let revision = server.session().engine().revision();
+    let plan = call(
+        &mut server,
+        3,
+        "tools/call",
+        json!({"name": "project_query", "arguments": {"query": "library.pinout_preview",
+            "params": {"target": {"target": "new", "name": "EXM-48"}, "document": document}}}),
+    );
+    assert_eq!(server.session().engine().revision(), revision);
+    assert_eq!(server.session().engine().document(), &before);
+    assert_eq!(plan["result"]["isError"], false, "{plan}");
+    let content = &plan["result"]["structuredContent"];
+    let review = content["result"]["review"].as_array().ok_or("review")?;
+    assert_eq!(review.len(), 1, "{plan}");
+    assert_eq!(review[0]["row"], "r20");
+    assert_eq!(review[0]["reason"], "uncertain");
+    Ok(())
 }
