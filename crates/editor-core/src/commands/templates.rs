@@ -45,7 +45,8 @@ pub(crate) fn new_from_template(
         footprint: FootprintRef::new(footprint, Revision::FIRST),
         binding: BindingRef::new(binding, Revision::FIRST),
     };
-    let edits = catalog::new_from_template(&project.library, &request, refs)?;
+    let rules = project.rules.effective();
+    let edits = catalog::new_from_template_with(&project.library, &request, refs, &rules)?;
     let drafts = Arc::make_mut(&mut document.drafts);
     for edit in edits {
         drafts::create(
@@ -281,7 +282,8 @@ fn finish(
             (fresh, footprint_meta, footprint, 1, true)
         }
     };
-    let mut rebuilt = rebuilt_footprint(&footprint, &next, lands, floor)?;
+    let rules = document.project.rules.effective();
+    let mut rebuilt = rebuilt_footprint(&footprint, &next, lands, floor, &rules)?;
     let pads_after = u32::try_from(rebuilt.pads.len()).unwrap_or(u32::MAX);
     findings.extend(package_fit::placement_findings(
         &next,
@@ -507,7 +509,8 @@ fn replaced_package(
 }
 
 /// `footprint` with its template content replaced: form-derived lands for
-/// `package`'s terminals in lead order (with cited land overrides), new
+/// `package`'s terminals in lead order (estimated under `rules`, the
+/// project's effective design rules, or with cited land overrides), new
 /// pad identities from `floor` (see [`footprint_floor`]), and the
 /// standard drawings. Authored
 /// mask and paste defaults and the datum stay; identities never repeat.
@@ -516,18 +519,20 @@ fn rebuilt_footprint(
     package: &PackageDefinition,
     lands: Option<&catalog::LandValues>,
     floor: u32,
+    rules: &crate::rules::DesignRules,
 ) -> Result<FootprintDefinition> {
     let mut next = footprint_family::cleared(footprint);
     next.graphics.clear();
     next.next_local = floor;
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
-    let mut pads = samples::template_lands(&package.form, &terminals, lands).ok_or_else(|| {
-        Error::Invalid(format!(
-            "template.values: the {} values give no lands for {} terminals",
-            package.form.label(),
-            terminals.len()
-        ))
-    })?;
+    let mut pads = samples::template_lands_with(&package.form, &terminals, lands, rules)
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "template.values: the {} values give no lands for {} terminals",
+                package.form.label(),
+                terminals.len()
+            ))
+        })?;
     for pad in &mut pads {
         pad.id = PadId(next.next_local);
         next.next_local = next

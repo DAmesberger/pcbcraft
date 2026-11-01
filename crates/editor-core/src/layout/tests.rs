@@ -925,7 +925,11 @@ fn track_set_refusals_change_nothing() -> Result<()> {
         return Err(Error::Invalid("a clearance conflict expected".into()));
     };
     assert!(text.starts_with("Too close to "), "{text}");
-    assert!(text.ends_with(": needs 0.2 mm"), "{text}");
+    // The refusal names the limit and where it comes from.
+    assert!(
+        text.ends_with(": needs 0.2 mm (Pcbcraft default)"),
+        "{text}"
+    );
     assert_eq!(crate::issues::style::check(&text), vec![], "{text}");
     // On the bottom it would overlap the other net's track.
     assert!(matches!(

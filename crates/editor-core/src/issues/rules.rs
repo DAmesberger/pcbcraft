@@ -21,9 +21,14 @@ pub(super) fn severity(finding: &Finding) -> Severity {
     match finding.code.as_str() {
         "board.clearance"
         | "board.courtyard_overlap"
+        | "board.courtyard_clearance"
+        | "board.edge_clearance"
+        | "board.hole_clearance"
         | "board.outside_outline"
         | "board.via_annular_ring"
+        | "board.via_aspect_ratio"
         | "board.via_drill_clearance"
+        | "board.via_drill_size"
         | "board.via_hole_spacing"
         | "erc.driver_conflict"
         | "erc.open_drain_contention"
@@ -52,6 +57,11 @@ pub(super) fn group_title(code: &str) -> String {
         "board.via_drill_clearance" => "Via drills too close to copper",
         "board.via_hole_spacing" => "Via drills too close together",
         "board.via_dangling" => "Vias joining nothing",
+        "board.via_drill_size" => "Via drills too small",
+        "board.via_aspect_ratio" => "Via aspect ratio too high",
+        "board.edge_clearance" => "Too close to the board edge",
+        "board.hole_clearance" => "Mounting holes too close",
+        "board.courtyard_clearance" => "Courtyards too close",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -141,6 +151,10 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.via_annular_ring" => "Enlarge the via pad or shrink its drill",
         "board.via_drill_clearance" | "board.via_hole_spacing" => "Move the via",
         "board.via_dangling" => "Route copper to the via or delete it",
+        "board.via_drill_size" | "board.via_aspect_ratio" => "Enlarge the via drill",
+        "board.edge_clearance" => "Move it away from the edge",
+        "board.hole_clearance" => "Move the copper away from the hole",
+        "board.courtyard_clearance" => "Move the parts apart",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -276,10 +290,16 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
                 parties(names, findings).join(" ↔ ")
             )
         }
-        "board.outside_outline" => format!(
-            "{} extends beyond the board outline",
-            list(&names_of(names, findings, |_| true))
-        ),
+        "board.outside_outline" => {
+            let what = if message.contains("extends into a slot") {
+                "extends into a slot"
+            } else if message.contains("extends into a cutout") {
+                "extends into a cutout"
+            } else {
+                "extends beyond the board outline"
+            };
+            format!("{} {what}", list(&names_of(names, findings, |_| true)))
+        }
         "board.unrouted" => {
             let nets = names_of(names, findings, |o| matches!(o, ObjectRef::Net { .. }));
             let pads = names_of(names, findings, is_pad);
@@ -350,13 +370,18 @@ pub const KNOWN_CODES: &[&str] = &[
     "binding.unavailable_unknown",
     "board.check_limit",
     "board.clearance",
+    "board.courtyard_clearance",
     "board.courtyard_overlap",
+    "board.edge_clearance",
+    "board.hole_clearance",
     "board.outside_outline",
     "board.unplaced",
     "board.unrouted",
     "board.via_annular_ring",
+    "board.via_aspect_ratio",
     "board.via_dangling",
     "board.via_drill_clearance",
+    "board.via_drill_size",
     "board.via_hole_spacing",
     "component.designator_prefix",
     "component.duplicate_binding_lineage",

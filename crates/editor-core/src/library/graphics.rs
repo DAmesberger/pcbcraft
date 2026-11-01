@@ -964,14 +964,25 @@ pub enum SymbolHit {
     Field,
 }
 
-/// Advisory findings for one draft: symbols against the authoring grid,
-/// footprints for courtyard, pin-1 polarity and mask webs. They never
-/// block publishing and never touch stored files.
+/// [`lint_with`] under the default design-rule profile.
 pub fn lint(draft: &Draft, library: &Library, grid: &Grid) -> Vec<Finding> {
+    lint_with(draft, library, grid, &crate::rules::ProjectRules::default())
+}
+
+/// Advisory findings for one draft: symbols against the authoring grid,
+/// footprints for courtyard, pin-1 polarity, mask webs and silkscreen
+/// against `rules` (the project's design rules). They never block
+/// publishing and never touch stored files.
+pub fn lint_with(
+    draft: &Draft,
+    library: &Library,
+    grid: &Grid,
+    rules: &crate::rules::ProjectRules,
+) -> Vec<Finding> {
     let mut out = Vec::new();
     let this = ObjectRef::Definition { id: draft.id };
     if let Definition::Footprint(footprint) = &draft.definition {
-        out.extend(footprint.lint(draft.id));
+        out.extend(footprint.lint_with(draft.id, rules));
     }
     if let Definition::Symbol(symbol) = &draft.definition {
         let ratio = SHEET_GRID_MM / grid.symbol_mm;

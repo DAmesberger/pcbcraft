@@ -43,7 +43,7 @@ pub use footprint_source::{FootprintEvaluator, FootprintSource};
 pub use graphics::{
     Decorations, DrawingLayer, Fill, FootprintGraphic, Graphic, Grid, HAlign, Item, Justify, Pin,
     PinDirection, PinText, PlacedText, Polarity, Rotation, Side, SymbolHit, Text, TextContent,
-    TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint,
+    TextLine, TextMetric, TextSize, VAlign, designator_placeholder, lint, lint_with,
 };
 pub use model3d::{LibraryModel, ModelDefinition};
 pub use package::{PackageDefinition, PackageTerminal};

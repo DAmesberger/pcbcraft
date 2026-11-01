@@ -21,6 +21,7 @@ use crate::ids::{
     PadId, QuantityKindRef, SymbolRef, TerminalId, UnitId,
 };
 use crate::quantity::{UnitOfMeasure, UnitSet};
+use crate::rules::DesignRules;
 
 /// The five lineages of one sample and the revisions they pin of each other
 /// (normally the drafts' pending revisions).
@@ -475,15 +476,17 @@ pub fn form_designations(form: &PackageForm, count: usize) -> Vec<String> {
 /// centre: the toe gets 0.4 mm, the heel 0.2 mm (the B2 template rules).
 const TOE_HEEL_SHIFT_MM: f64 = 0.1;
 
-/// The least gap between the two estimated lands of a chip, mm (original
-/// rule of thumb; it only trims the heels of the smallest sizes).
-const CHIP_MIN_GAP_MM: f64 = 0.2;
+/// The least copper gap between two estimated no-lead lands: the `min
+/// mask web` rule plus the footprint's default mask expansion on both
+/// sides, so the lint's `footprint.mask_web` holds under the same rules.
+fn no_lead_copper_gap(rules: &DesignRules) -> f64 {
+    rules.mask.web_min + 2.0 * super::footprint::MASK_EXPANSION_MM
+}
 
-/// The least copper gap between two estimated no-lead lands: the minimum
-/// mask web plus the default mask expansion on both sides, so the lint's
-/// `footprint.mask_web` holds for a footprint with the default rules.
-const NO_LEAD_COPPER_GAP_MM: f64 =
-    super::footprint::MIN_MASK_WEB_MM + 2.0 * super::footprint::MASK_EXPANSION_MM;
+/// [`form_lands_with`] under the default design-rule profile.
+pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option<Vec<Pad>> {
+    form_lands_with(form, terminals, &DesignRules::default())
+}
 
 /// Lands for the leads of a typed `form`, in lead order, landing
 /// `terminals[k]` (pad IDs from 1, numbers from [`form_designations`]):
@@ -497,8 +500,16 @@ const NO_LEAD_COPPER_GAP_MM: f64 =
 /// ball ([`GridForm::estimated_land_diameter`]). `None` for `Generic` or
 /// when the terminal count does not match.
 ///
+/// The land margins come from `rules` (`LandRules`: the gull-wing extra
+/// width and the least chip land gap; the no-lead gap from the mask web).
+///
 /// [`GridForm::estimated_land_diameter`]: super::package_form::grid::GridForm::estimated_land_diameter
-pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option<Vec<Pad>> {
+pub fn form_lands_with(
+    form: &PackageForm,
+    terminals: &[PackageTerminalId],
+    rules: &DesignRules,
+) -> Option<Vec<Pad>> {
+    let no_lead_gap = no_lead_copper_gap(rules);
     let points = form.lead_points();
     let leads = usize::try_from(form.lead_count()).ok()?;
     if points.is_empty() || !form.terminal_counts().contains(&(terminals.len() as u64)) {
@@ -515,7 +526,10 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
         match form {
             PackageForm::Chip(c) => [c.termination + 0.6, c.width + 0.2],
             PackageForm::GullWing(g) => {
-                let land = [g.lead_width + 0.2, g.foot_length + 0.6];
+                let land = [
+                    g.lead_width + rules.land.gull_wing_width_extra,
+                    g.foot_length + 0.6,
+                ];
                 if across_x(g.sides, g.leads_per_side, k) {
                     [land[1], land[0]]
                 } else {
@@ -527,7 +541,7 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
                 // neighbours at the pitch lose the mask web; never
                 // narrower than the terminal.
                 let width = (n.terminal_width + 0.05)
-                    .min(n.pitch - NO_LEAD_COPPER_GAP_MM)
+                    .min(n.pitch - no_lead_gap)
                     .max(n.terminal_width);
                 let land = [width, n.terminal_length + 0.4];
                 if across_x(n.sides, n.terminals_per_side, k) {
@@ -588,9 +602,10 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
         let mut land = size(k);
         if let PackageForm::Chip(_) = form {
             // Small chips: keep the lands' inner edges at least
-            // CHIP_MIN_GAP_MM apart, trimming the heel, never the toe.
+            // the least chip land gap apart, trimming the heel, never the
+            // toe.
             let outer = at[0].abs() + land[0] / 2.0;
-            let inner = (at[0].abs() - land[0] / 2.0).max(CHIP_MIN_GAP_MM / 2.0);
+            let inner = (at[0].abs() - land[0] / 2.0).max(rules.land.chip_gap_min / 2.0);
             if inner < outer {
                 land[0] = outer - inner;
                 at[0] = at[0].signum() * (outer + inner) / 2.0;
@@ -685,6 +700,7 @@ pub fn packaged_form(
             lands: None,
             provenance: PROVENANCE,
             template: false,
+            rules: &DesignRules::default(),
         },
         refs,
     )
@@ -713,6 +729,8 @@ struct Packaged<'a> {
     /// Lands from [`template_lands`] (a template build) rather than the
     /// plain form lands of a sample.
     template: bool,
+    /// The design rules the land estimates follow.
+    rules: &'a DesignRules,
 }
 
 /// What [`from_template`] builds: a typed `form`, the skeleton the
@@ -727,8 +745,9 @@ pub struct TemplateSpec<'a> {
     pub provenance: &'a str,
 }
 
-/// Clearance kept between a no-lead perimeter land's heel and the
-/// exposed pad when the lands are estimated (original rule of thumb).
+/// The default profile's clearance between a no-lead perimeter land's
+/// heel and the exposed pad when the lands are estimated (original rule
+/// of thumb); estimates read the `exposed pad clearance` rule.
 pub const EXPOSED_PAD_CLEARANCE_MM: f64 = 0.2;
 
 /// The five drafts of a component built from a typed `form` and a
@@ -740,6 +759,16 @@ pub const EXPOSED_PAD_CLEARANCE_MM: f64 = 0.2;
 /// Refuses a form that has no terminals and a two-terminal skeleton on a
 /// package of another count.
 pub fn from_template(spec: &TemplateSpec<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
+    from_template_with(spec, refs, &DesignRules::default())
+}
+
+/// [`from_template`] with land estimates following `rules` (the project's
+/// effective design rules).
+pub fn from_template_with(
+    spec: &TemplateSpec<'_>,
+    refs: SampleRefs,
+    rules: &DesignRules,
+) -> Result<Vec<DraftEdit>> {
     let count = form_terminal_count(&spec.form);
     if count == 0 {
         return Err(Error::Invalid(format!(
@@ -769,6 +798,7 @@ pub fn from_template(spec: &TemplateSpec<'_>, refs: SampleRefs) -> Result<Vec<Dr
             lands: spec.lands,
             provenance: spec.provenance,
             template: true,
+            rules,
         },
         refs,
     );
@@ -789,10 +819,16 @@ pub fn form_terminal_count(form: &PackageForm) -> u32 {
         .unwrap_or(0)
 }
 
-/// How much to trim the heels of a no-lead form's estimated perimeter
-/// lands so they keep [`EXPOSED_PAD_CLEARANCE_MM`] from its exposed pad;
-/// 0 for other forms.
+/// [`heel_trim_with`] under the default design-rule profile
+/// ([`EXPOSED_PAD_CLEARANCE_MM`]).
 pub fn heel_trim(form: &PackageForm) -> f64 {
+    heel_trim_with(form, &DesignRules::default())
+}
+
+/// How much to trim the heels of a no-lead form's estimated perimeter
+/// lands so they keep the `exposed pad clearance` rule from its exposed
+/// pad; 0 for other forms.
+pub fn heel_trim_with(form: &PackageForm, rules: &DesignRules) -> f64 {
     let PackageForm::NoLead(n) = form else {
         return 0.0;
     };
@@ -807,7 +843,7 @@ pub fn heel_trim(form: &PackageForm) -> f64 {
         gaps.push(gap(n.body_length, ep[0]));
     }
     let worst = gaps.into_iter().fold(f64::INFINITY, f64::min);
-    let trim = EXPOSED_PAD_CLEARANCE_MM - worst;
+    let trim = rules.land.exposed_pad_clearance - worst;
     // Never trim a land below half its estimated length.
     if trim.is_finite() && trim > 0.0 {
         trim.min(length / 2.0)
@@ -903,12 +939,23 @@ pub fn template_lands(
     terminals: &[PackageTerminalId],
     lands: Option<&LandValues>,
 ) -> Option<Vec<Pad>> {
-    let mut pads = form_lands(form, terminals)?;
+    template_lands_with(form, terminals, lands, &DesignRules::default())
+}
+
+/// [`template_lands`] with the estimates following `rules` (the project's
+/// effective design rules, or the default profile in a library context).
+pub fn template_lands_with(
+    form: &PackageForm,
+    terminals: &[PackageTerminalId],
+    lands: Option<&LandValues>,
+    rules: &DesignRules,
+) -> Option<Vec<Pad>> {
+    let mut pads = form_lands_with(form, terminals, rules)?;
     match lands {
         Some(lands) => apply_lands(&mut pads, form, lands),
         None => {
-            trim_pads(&mut pads, heel_trim(form));
-            clear_corners(&mut pads, form);
+            trim_pads(&mut pads, heel_trim_with(form, rules));
+            clear_corners(&mut pads, form, no_lead_copper_gap(rules));
         }
     }
     Some(pads)
@@ -918,10 +965,10 @@ pub fn template_lands(
 /// four-sided no-lead form (pins 1 and N, and the other three corners):
 /// the end lands of two sides run towards each other, so without this
 /// their inner corners touch. Both lands of a pair give up the same
-/// length, the least that leaves [`NO_LEAD_COPPER_GAP_MM`] of copper
+/// length, the least that leaves `copper_gap` (the no-lead copper gap) of copper
 /// between them; the toes stay. A pair that cannot be cleared within half
 /// of the shorter land is left as it is (the lint then reports it).
-fn clear_corners(pads: &mut [Pad], form: &PackageForm) {
+fn clear_corners(pads: &mut [Pad], form: &PackageForm, copper_gap: f64) {
     let PackageForm::NoLead(n) = form else {
         return;
     };
@@ -956,19 +1003,19 @@ fn clear_corners(pads: &mut [Pad], form: &PackageForm) {
     let mut pull = vec![0.0_f64; pads.len()];
     for (i, a) in lands.iter().enumerate() {
         for b in lands.iter().skip(i + 1) {
-            if a.1 == b.1 || rect_gap(&a.3, &b.3) >= NO_LEAD_COPPER_GAP_MM {
+            if a.1 == b.1 || rect_gap(&a.3, &b.3) >= copper_gap {
                 continue;
             }
             let length = |l: &(usize, usize, f64, Bounds)| l.3.size()[l.1];
             let most = length(a).min(length(b)) / 2.0;
             let gap = |by: f64| rect_gap(&pulled(a, by), &pulled(b, by));
-            if gap(most) < NO_LEAD_COPPER_GAP_MM {
+            if gap(most) < copper_gap {
                 continue;
             }
             let (mut lo, mut hi) = (0.0, most);
             for _ in 0..48 {
                 let mid = (lo + hi) / 2.0;
-                if gap(mid) >= NO_LEAD_COPPER_GAP_MM {
+                if gap(mid) >= copper_gap {
                     hi = mid;
                 } else {
                     lo = mid;
@@ -1036,9 +1083,9 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
         placement: ModelPlacement::default(),
     };
     let pads = if spec.template {
-        template_lands(&package.form, &package_terminals, spec.lands)
+        template_lands_with(&package.form, &package_terminals, spec.lands, spec.rules)
     } else {
-        form_lands(&package.form, &package_terminals).map(|mut pads| {
+        form_lands_with(&package.form, &package_terminals, spec.rules).map(|mut pads| {
             if let Some(lands) = spec.lands {
                 apply_lands(&mut pads, &package.form, lands);
             }
@@ -1609,6 +1656,61 @@ mod tests {
                 .iter()
                 .map(|p| (p.position, p.shape.clone()))
                 .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    /// The land estimates follow the design rules they are given; the
+    /// rule-free entry points are the default profile.
+    #[test]
+    fn land_estimates_follow_the_land_rules() -> Result<()> {
+        let ids = |n: u32| (1..=n).map(PackageTerminalId).collect::<Vec<_>>();
+        let width = |pads: &[Pad]| match pads.first().map(|p| &p.shape) {
+            Some(PadShape::Rect { size }) => size[0],
+            _ => f64::NAN,
+        };
+        let soic = Preset::Soic8.form();
+        let base = DesignRules::default();
+        let default = form_lands(&soic, &ids(8)).ok_or(Error::Invalid("lands".into()))?;
+        assert_eq!(
+            Some(&default),
+            form_lands_with(&soic, &ids(8), &base).as_ref()
+        );
+        // 0.41 mm leads: 0.61 mm lands by default, 0.71 mm with 0.3 mm extra.
+        assert!((width(&default) - 0.61).abs() < 1e-9, "{}", width(&default));
+        let mut wide = base.clone();
+        wide.land.gull_wing_width_extra = 0.3;
+        let lands = form_lands_with(&soic, &ids(8), &wide).ok_or(Error::Invalid("lands".into()))?;
+        assert!((width(&lands) - 0.71).abs() < 1e-9, "{}", width(&lands));
+
+        // The chip lands' inner edges keep the least chip gap.
+        let chip = Preset::Chip0603.form();
+        let mut apart = base.clone();
+        apart.land.chip_gap_min = 1.2;
+        let lands =
+            form_lands_with(&chip, &ids(2), &apart).ok_or(Error::Invalid("lands".into()))?;
+        let inner = |p: &Pad| match p.shape {
+            PadShape::Rect { size } => p.position[0].abs() - size[0] / 2.0,
+            _ => f64::NAN,
+        };
+        for pad in &lands {
+            assert!((inner(pad) - 0.6).abs() < 1e-9, "{}", inner(pad));
+        }
+
+        // A larger exposed-pad clearance trims the no-lead heels more.
+        let qfn = Preset::Qfn16.form();
+        assert_eq!(heel_trim(&qfn), heel_trim_with(&qfn, &base));
+        let mut clear = base.clone();
+        clear.land.exposed_pad_clearance = base.land.exposed_pad_clearance + 0.1;
+        assert!(heel_trim_with(&qfn, &clear) > heel_trim(&qfn));
+        let terminals = ids(form_terminal_count(&qfn));
+        assert_eq!(
+            template_lands(&qfn, &terminals, None),
+            template_lands_with(&qfn, &terminals, None, &base)
+        );
+        assert_ne!(
+            template_lands(&qfn, &terminals, None),
+            template_lands_with(&qfn, &terminals, None, &clear)
         );
         Ok(())
     }

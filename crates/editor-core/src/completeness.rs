@@ -289,7 +289,7 @@ pub fn definition(
                 .get(id)
                 .ok_or_else(|| Error::NotFound("That draft no longer exists.".into()))?;
             let staged = Staged::new(&project.library, drafts)?;
-            Ok(staged.report(draft, &drafts.grid))
+            Ok(staged.report(draft, &drafts.grid, project))
         }
     }
 }
@@ -300,7 +300,7 @@ pub fn drafts(project: &Project, drafts: &Drafts) -> Result<Vec<DefinitionReport
     Ok(drafts
         .items
         .iter()
-        .map(|d| staged.report(d, &drafts.grid))
+        .map(|d| staged.report(d, &drafts.grid, project))
         .collect())
 }
 
@@ -343,8 +343,9 @@ impl Staged {
 
     /// A draft that cannot be staged reports only why; it never borrows the
     /// findings of a stored revision with the same number. A staged draft
-    /// also carries the advisory drawing lint against the authoring grid.
-    fn report(&self, draft: &Draft, grid: &Grid) -> DefinitionReport {
+    /// also carries the advisory drawing lint against the authoring grid
+    /// and the project's design rules.
+    fn report(&self, draft: &Draft, grid: &Grid, project: &Project) -> DefinitionReport {
         let target = CheckTarget::Draft(draft.id);
         let fallback = DefinitionRef {
             kind: draft.definition.kind(),
@@ -354,7 +355,12 @@ impl Staged {
         match self.pending.iter().find(|(id, _)| *id == draft.id) {
             Some((_, Ok(r))) => {
                 let mut findings = library::publish_findings(&self.library, *r);
-                findings.extend(library::lint(draft, &self.library, grid));
+                findings.extend(library::lint_with(
+                    draft,
+                    &self.library,
+                    grid,
+                    &project.rules,
+                ));
                 report(target, *r, findings)
             }
             Some((_, Err(finding))) => report(target, fallback, vec![finding.clone()]),
