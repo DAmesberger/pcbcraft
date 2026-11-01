@@ -18,7 +18,9 @@ use crate::library::{
     PackageDefinition, PackageForm, PackageModel, Pad, PadKind, PadShape, PasteRule, Pin,
     PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
 };
-use crate::model::{ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence};
+use crate::model::{
+    ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence, WireEnd,
+};
 use crate::{erc, layout, nets, schematic, validate};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -376,6 +378,22 @@ fn invalid(message: &str) -> Error {
 }
 fn not_found(message: &str) -> Error {
     Error::NotFound(message.into())
+}
+
+/// A wire end for the plan's detail lines: a terminal label or "junction 7".
+fn wire_end_label(project: &Project, end: WireEnd) -> String {
+    match end {
+        WireEnd::Terminal(endpoint) => endpoint_label(project, endpoint),
+        WireEnd::Junction(j) => format!("junction {}", j.junction),
+    }
+}
+
+/// A wire end by its user names: "R1 ‘2’" or "a junction".
+fn wire_end_name(project: &Project, end: WireEnd) -> String {
+    match end {
+        WireEnd::Terminal(endpoint) => end_name(project, endpoint),
+        WireEnd::Junction(_) => "a junction".into(),
+    }
 }
 
 fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
@@ -787,6 +805,7 @@ fn stage_change(project: &Project, change: &Change) -> Result<Project> {
         }
         Change::SyncPcb {} => layout::apply(&mut next, layout::LayoutCommand::Sync)?,
     }
+    schematic::tidy(&mut next);
     nets::reconcile(&mut next)?;
     Ok(next)
 }
@@ -2389,11 +2408,12 @@ pub(crate) fn preview(
             electrical_changes.insert(*net);
         }
     }
-    let wire_refs = |from: Endpoint, to: Endpoint| {
-        vec![
-            ObjectRef::Terminal { endpoint: from },
-            ObjectRef::Terminal { endpoint: to },
-        ]
+    let wire_refs = |from: WireEnd, to: WireEnd| {
+        [from, to]
+            .into_iter()
+            .filter_map(WireEnd::terminal)
+            .map(|endpoint| ObjectRef::Terminal { endpoint })
+            .collect::<Vec<_>>()
     };
     for wire in &project.wires {
         let replacement = next.wires.iter().find(|w| w.id == wire.id);
@@ -2407,22 +2427,22 @@ pub(crate) fn preview(
                     wire_refs(wire.from, wire.to),
                     format!(
                         "Removes the wire from {} to {}",
-                        end_name(project, wire.from),
-                        end_name(project, wire.to)
+                        wire_end_name(project, wire.from),
+                        wire_end_name(project, wire.to)
                     ),
                 ),
                 format!(
                     "Remove wire {}: {} → {}.",
                     wire.id,
-                    endpoint_label(project, wire.from),
-                    endpoint_label(project, wire.to)
+                    wire_end_label(project, wire.from),
+                    wire_end_label(project, wire.to)
                 ),
             );
         }
         if replacement != Some(wire)
             || [wire.from, wire.to]
                 .into_iter()
-                .any(|e| schematic::pin_position(project, e) != schematic::pin_position(&next, e))
+                .any(|e| schematic::end_position(project, e) != schematic::end_position(&next, e))
         {
             plan.affected_wires.push(wire.id);
         }
@@ -2438,15 +2458,15 @@ pub(crate) fn preview(
                     wire_refs(wire.from, wire.to),
                     format!(
                         "Adds a wire from {} to {}",
-                        end_name(&next, wire.from),
-                        end_name(&next, wire.to)
+                        wire_end_name(&next, wire.from),
+                        wire_end_name(&next, wire.to)
                     ),
                 ),
                 format!(
                     "Add wire {}: {} → {}.",
                     wire.id,
-                    endpoint_label(&next, wire.from),
-                    endpoint_label(&next, wire.to)
+                    wire_end_label(&next, wire.from),
+                    wire_end_label(&next, wire.to)
                 ),
             );
         }

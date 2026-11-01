@@ -7,6 +7,7 @@ mod drawing;
 mod engine;
 mod fields;
 mod graphics;
+mod junctions;
 mod library;
 mod library_folders;
 mod orientation;

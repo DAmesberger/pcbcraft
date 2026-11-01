@@ -8,7 +8,7 @@
 //! routed nets is acceptable.
 use crate::diagnostics::{Error, Result};
 use crate::ids::{Endpoint, Id};
-use crate::model::{Net, Project};
+use crate::model::{Net, Project, WireEnd};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_NETS: usize = 262_144;
@@ -61,33 +61,84 @@ pub fn accounted_for(project: &Project, terminal: Endpoint) -> bool {
             .is_some_and(|net| net.terminals.len() >= 2)
 }
 
-/// Wire-connected terminal groups, ordered by their smallest terminal.
-pub fn components(project: &Project, terminals: &BTreeSet<Endpoint>) -> Vec<Vec<Endpoint>> {
-    let index: BTreeMap<Endpoint, usize> =
-        terminals.iter().enumerate().map(|(i, t)| (*t, i)).collect();
-    let mut parent: Vec<usize> = (0..terminals.len()).collect();
-    fn find(parent: &mut [usize], mut at: usize) -> usize {
-        while parent[at] != at {
-            parent[at] = parent[parent[at]];
-            at = parent[at];
+/// Union-find over terminals and junctions: terminals take indices
+/// `0..terminals.len()`, junctions the indices after them, so a group's
+/// root is its smallest terminal whenever it has one.
+struct Nodes {
+    index: BTreeMap<WireEnd, usize>,
+    parent: Vec<usize>,
+}
+
+impl Nodes {
+    fn new(project: &Project, terminals: &BTreeSet<Endpoint>) -> Self {
+        let index: BTreeMap<WireEnd, usize> = terminals
+            .iter()
+            .map(|t| WireEnd::Terminal(*t))
+            .chain(project.junctions.iter().map(|j| WireEnd::junction(j.id)))
+            .enumerate()
+            .map(|(i, end)| (end, i))
+            .collect();
+        let mut nodes = Self {
+            parent: (0..index.len()).collect(),
+            index,
+        };
+        for wire in &project.wires {
+            if let (Some(&a), Some(&b)) = (nodes.index.get(&wire.from), nodes.index.get(&wire.to)) {
+                let (a, b) = (nodes.find(a), nodes.find(b));
+                if a != b {
+                    nodes.parent[a.max(b)] = a.min(b);
+                }
+            }
+        }
+        nodes
+    }
+    fn find(&mut self, mut at: usize) -> usize {
+        while self.parent[at] != at {
+            self.parent[at] = self.parent[self.parent[at]];
+            at = self.parent[at];
         }
         at
     }
-    for wire in &project.wires {
-        if let (Some(&a), Some(&b)) = (index.get(&wire.from), index.get(&wire.to)) {
-            let (a, b) = (find(&mut parent, a), find(&mut parent, b));
-            if a != b {
-                parent[a.max(b)] = a.min(b);
-            }
-        }
+    fn root(&mut self, end: WireEnd) -> Option<usize> {
+        let at = *self.index.get(&end)?;
+        Some(self.find(at))
     }
+}
+
+/// Wire-connected terminal groups, ordered by their smallest terminal.
+/// Wires joined through junctions connect their terminals.
+pub fn components(project: &Project, terminals: &BTreeSet<Endpoint>) -> Vec<Vec<Endpoint>> {
+    let mut nodes = Nodes::new(project, terminals);
     let mut groups: BTreeMap<usize, Vec<Endpoint>> = BTreeMap::new();
     for (i, terminal) in terminals.iter().enumerate() {
-        let root = find(&mut parent, i);
+        let root = nodes.find(i);
         groups.entry(root).or_default().push(*terminal);
     }
     // Roots are the smallest index of each group, so this is min-terminal order.
     groups.into_values().collect()
+}
+
+/// The net each wire belongs to, by wire ID. A wire whose connected group
+/// reaches no terminal has none.
+pub fn wire_nets(project: &Project) -> BTreeMap<Id, Id> {
+    let terminals = terminals(project);
+    let mut nodes = Nodes::new(project, &terminals);
+    let mut root_net: BTreeMap<usize, Id> = BTreeMap::new();
+    for net in &project.nets {
+        for terminal in &net.terminals {
+            if let Some(root) = nodes.root(WireEnd::Terminal(*terminal)) {
+                root_net.insert(root, net.id);
+            }
+        }
+    }
+    project
+        .wires
+        .iter()
+        .filter_map(|w| {
+            let root = nodes.root(w.from)?;
+            Some((w.id, *root_net.get(&root)?))
+        })
+        .collect()
 }
 
 /// Rebuild `project.nets` from wires while preserving existing identities.
