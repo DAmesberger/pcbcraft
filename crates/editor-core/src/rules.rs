@@ -215,6 +215,9 @@ pub struct SilkscreenRules {
     pub text_height_min: f64,
     /// Least gap from silkscreen to an exposed (mask-open) pad, mm.
     pub pad_clearance: f64,
+    /// Least gap from silkscreen to the board edge and cutouts, mm (0: not
+    /// checked).
+    pub edge_clearance: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -258,6 +261,15 @@ pub struct LandRules {
     pub chip_gap_min: f64,
     /// Exposed pad to signal land gap, mm.
     pub exposed_pad_clearance: f64,
+    /// Outward shift of a gull-wing or molded land's centre from its
+    /// foot's centre (toe-heavy lands), mm.
+    pub gull_wing_toe_shift: f64,
+    /// Through-hole drill over the lead's largest cross-section, mm.
+    pub tht_drill_clearance: f64,
+    /// Through-hole land diameter over its drill (both sides), mm.
+    pub tht_land_extra: f64,
+    /// Copper kept between neighbouring through-hole lands, mm.
+    pub tht_land_gap: f64,
 }
 
 /// One complete set of design rules.
@@ -279,7 +291,8 @@ impl Default for DesignRules {
     /// qualification): 0.2 mm copper clearance, copper anywhere inside the
     /// board, 0.25 mm drill to copper and hole to hole, 0.1 mm annular
     /// ring and drill, 0.05 mm mask expansion, 0.1 mm mask web and silk
-    /// width, 0.6 mm silk text, 0.3/0.6 mm vias, tented.
+    /// width, 0.6 mm silk text, 0.3/0.6 mm vias, tented, and the land
+    /// estimators' margins (`library::samples`, `package_form::tht`).
     fn default() -> Self {
         Self {
             copper: CopperRules {
@@ -304,6 +317,7 @@ impl Default for DesignRules {
                 line_width_min: 0.1,
                 text_height_min: 0.6,
                 pad_clearance: 0.0,
+                edge_clearance: 0.0,
             },
             paste: PasteRules { reduction: 0.0 },
             courtyard: CourtyardRules { clearance: 0.0 },
@@ -323,6 +337,10 @@ impl Default for DesignRules {
                 gull_wing_width_extra: 0.2,
                 chip_gap_min: 0.2,
                 exposed_pad_clearance: 0.2,
+                gull_wing_toe_shift: 0.1,
+                tht_drill_clearance: 0.3,
+                tht_land_extra: 0.6,
+                tht_land_gap: 0.25,
             },
         }
     }
@@ -345,7 +363,10 @@ pub enum RuleGroup {
     Lands,
 }
 
-/// One scalar rule, the unit of overrides and of issue texts.
+/// One scalar rule, the unit of overrides and of issue texts. In JSON a
+/// key is `{"rule":"drill_min"}`, or for a clearance pair
+/// `{"rule":"clearance","a":"track","b":"via"}` (either order). Keys are
+/// serialized by name: new keys are appended, none is renamed.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -379,6 +400,12 @@ pub enum RuleKey {
     GullWingWidthExtra,
     ChipGapMin,
     ExposedPadClearance,
+    // Appended keys (serialized by name; never rename or reuse one).
+    SilkEdgeClearance,
+    GullWingToeShift,
+    ThtDrillClearance,
+    ThtLandExtra,
+    ThtLandGap,
 }
 
 /// A rule's value.
@@ -420,6 +447,7 @@ impl RuleKey {
             Self::SilkLineWidthMin,
             Self::SilkTextHeightMin,
             Self::SilkPadClearance,
+            Self::SilkEdgeClearance,
             Self::PasteReduction,
             Self::CourtyardClearance,
             Self::FillClearance,
@@ -433,6 +461,10 @@ impl RuleKey {
             Self::GullWingWidthExtra,
             Self::ChipGapMin,
             Self::ExposedPadClearance,
+            Self::GullWingToeShift,
+            Self::ThtDrillClearance,
+            Self::ThtLandExtra,
+            Self::ThtLandGap,
         ]);
         keys
     }
@@ -465,9 +497,10 @@ impl RuleKey {
             | Self::ViaDrillDefault
             | Self::ViaDiameterDefault => RuleGroup::HolesAndVias,
             Self::MaskExpansion | Self::MaskWebMin | Self::TentVias => RuleGroup::Mask,
-            Self::SilkLineWidthMin | Self::SilkTextHeightMin | Self::SilkPadClearance => {
-                RuleGroup::Silkscreen
-            }
+            Self::SilkLineWidthMin
+            | Self::SilkTextHeightMin
+            | Self::SilkPadClearance
+            | Self::SilkEdgeClearance => RuleGroup::Silkscreen,
             Self::PasteReduction => RuleGroup::Paste,
             Self::CourtyardClearance => RuleGroup::Placement,
             Self::FillClearance
@@ -478,9 +511,13 @@ impl RuleKey {
             | Self::ThermalAngle
             | Self::FillConnection
             | Self::IslandAreaMin => RuleGroup::Fills,
-            Self::GullWingWidthExtra | Self::ChipGapMin | Self::ExposedPadClearance => {
-                RuleGroup::Lands
-            }
+            Self::GullWingWidthExtra
+            | Self::ChipGapMin
+            | Self::ExposedPadClearance
+            | Self::GullWingToeShift
+            | Self::ThtDrillClearance
+            | Self::ThtLandExtra
+            | Self::ThtLandGap => RuleGroup::Lands,
         }
     }
 
@@ -516,6 +553,11 @@ impl RuleKey {
                 Self::GullWingWidthExtra => "gull-wing land extra width",
                 Self::ChipGapMin => "min chip land gap",
                 Self::ExposedPadClearance => "exposed pad clearance",
+                Self::SilkEdgeClearance => "silkscreen to board edge clearance",
+                Self::GullWingToeShift => "gull-wing land toe shift",
+                Self::ThtDrillClearance => "THT drill over lead",
+                Self::ThtLandExtra => "THT land over drill",
+                Self::ThtLandGap => "min THT land gap",
                 Self::Clearance { .. } => "clearance",
             }
             .to_string(),
@@ -554,6 +596,11 @@ impl RuleKey {
             Self::GullWingWidthExtra => Length(rules.land.gull_wing_width_extra),
             Self::ChipGapMin => Length(rules.land.chip_gap_min),
             Self::ExposedPadClearance => Length(rules.land.exposed_pad_clearance),
+            Self::SilkEdgeClearance => Length(rules.silkscreen.edge_clearance),
+            Self::GullWingToeShift => Length(rules.land.gull_wing_toe_shift),
+            Self::ThtDrillClearance => Length(rules.land.tht_drill_clearance),
+            Self::ThtLandExtra => Length(rules.land.tht_land_extra),
+            Self::ThtLandGap => Length(rules.land.tht_land_gap),
         }
     }
 
@@ -629,6 +676,11 @@ impl RuleKey {
             Self::GullWingWidthExtra => &mut rules.land.gull_wing_width_extra,
             Self::ChipGapMin => &mut rules.land.chip_gap_min,
             Self::ExposedPadClearance => &mut rules.land.exposed_pad_clearance,
+            Self::SilkEdgeClearance => &mut rules.silkscreen.edge_clearance,
+            Self::GullWingToeShift => &mut rules.land.gull_wing_toe_shift,
+            Self::ThtDrillClearance => &mut rules.land.tht_drill_clearance,
+            Self::ThtLandExtra => &mut rules.land.tht_land_extra,
+            Self::ThtLandGap => &mut rules.land.tht_land_gap,
         };
         let Some(mm) = length(value) else {
             return wrong();
@@ -644,10 +696,14 @@ fn length_ok(mm: f64) -> bool {
 
 impl DesignRules {
     /// Bounds of every value and the cross-field relations a fabricator
-    /// could not build otherwise. Lengths 0–25 mm; widths, drills and via
-    /// sizes positive; via diameter covers drill plus two rings; spokes
-    /// 1–8; aspect ratio 1–50; mask expansion may be negative down to
-    /// −1 mm.
+    /// could not build otherwise. Lengths 0–25 mm; areas 0–10⁶ mm²;
+    /// angles ±360°; track, fill, spoke and silkscreen widths, silkscreen
+    /// text height, drills and the default via positive; the default track
+    /// width at least the minimum; the default via drill at least the
+    /// minimum drill and its diameter covering the drill plus two minimum
+    /// rings; spokes 1–8; aspect ratio 1–50 or unchecked; mask expansion
+    /// −1 mm to 25 mm (negative shrinks the opening). The error names the
+    /// rule (`rules.bounds: min drill is out of range`).
     pub fn validate(&self) -> Result<()> {
         let bad = |what: &str| Err(Error::Invalid(format!("rules.bounds: {what}")));
         for key in RuleKey::all() {
@@ -671,13 +727,17 @@ impl DesignRules {
         }
         let c = &self.copper;
         let h = &self.holes;
-        if c.track_width_min <= 0.0
-            || h.drill_min <= 0.0
-            || h.via_drill_default <= 0.0
-            || self.fill.width_min <= 0.0
-            || self.fill.thermal.spoke_width <= 0.0
-        {
-            return bad("widths and drills must be positive");
+        let positive = [
+            (RuleKey::TrackWidthMin, c.track_width_min),
+            (RuleKey::DrillMin, h.drill_min),
+            (RuleKey::ViaDrillDefault, h.via_drill_default),
+            (RuleKey::FillWidthMin, self.fill.width_min),
+            (RuleKey::ThermalSpokeWidth, self.fill.thermal.spoke_width),
+            (RuleKey::SilkLineWidthMin, self.silkscreen.line_width_min),
+            (RuleKey::SilkTextHeightMin, self.silkscreen.text_height_min),
+        ];
+        if let Some((key, _)) = positive.iter().find(|(_, v)| *v <= 0.0) {
+            return bad(&format!("{} must be positive", key.label()));
         }
         if c.track_width_default < c.track_width_min {
             return bad("the default track width is below the minimum");
@@ -803,6 +863,9 @@ pub enum RuleSource {
     NetClass { class: String },
     /// The class-to-class clearance matrix.
     ClassPair { a: String, b: String },
+    /// Reserved for rule regions (a board area with its own values); no
+    /// resolution step produces it yet.
+    Region { name: String },
 }
 
 impl RuleSource {
@@ -814,6 +877,21 @@ impl RuleSource {
             Self::Override => "project override".into(),
             Self::NetClass { class } => format!("net class {class}"),
             Self::ClassPair { a, b } => format!("net classes {a} / {b}"),
+            Self::Region { name } => format!("region {name}"),
+        }
+    }
+
+    /// The step of the resolution order, lowest first: profile 0,
+    /// override 1, net class 2, class pair 3, region 4. A later step's
+    /// value replaces an earlier one for widths and sizes; clearances take
+    /// the largest value and report the step it came from.
+    pub fn precedence(&self) -> u8 {
+        match self {
+            Self::Profile { .. } => 0,
+            Self::Override => 1,
+            Self::NetClass { .. } => 2,
+            Self::ClassPair { .. } => 3,
+            Self::Region { .. } => 4,
         }
     }
 }
@@ -1029,20 +1107,34 @@ impl ProjectRules {
 }
 
 /// Every design-rule and net-class mutation. Each is one undo step and
-/// leaves the project unchanged on failure.
+/// leaves the project unchanged on failure; a command that changes
+/// nothing (the same profile again, an override to its current value) is
+/// no undo step.
+///
+/// JSON examples (the `params` of `Operation::Rules`):
+/// `{"command":"rules.set_profile","params":{"profile":{...},"keep_overrides":true}}`
+/// with a profile from `rules.profiles`;
+/// `{"command":"rules.set_override","params":{"key":{"rule":"clearance","a":"track","b":"via"},"value":{"kind":"length","value":0.15}}}`;
+/// `{"command":"rules.clear_override","params":{"key":{"rule":"mask_web_min"}}}`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum RulesCommand {
     /// Replace the project's profile snapshot. `keep_overrides` keeps the
-    /// project overrides (each must still be valid on the new profile);
-    /// otherwise they are dropped. Preview with `rules.preview_profile`.
+    /// project overrides, which must still give valid rules on the new
+    /// profile (`rules.override_conflict` otherwise); without it they are
+    /// dropped. A built-in profile must carry its shipped values
+    /// (`rules.builtin_modified`); changed values go in a user profile.
+    /// Preview with `rules.preview_profile`.
     #[serde(rename = "rules.set_profile")]
     SetProfile {
         profile: Box<RuleProfile>,
         #[serde(default)]
         keep_overrides: bool,
     },
-    /// Set (or replace) the project override of one rule.
+    /// Set (or replace) the project override of one rule. The value's kind
+    /// must match the rule (`rules.value_kind`) and the effective rules
+    /// must stay valid (`rules.bounds`). An override equal to the profile
+    /// value is kept: it pins the value across profile switches.
     #[serde(rename = "rules.set_override")]
     SetOverride { key: RuleKey, value: RuleValue },
     /// Drop the project override of one rule (back to the profile value).
@@ -1076,20 +1168,25 @@ pub enum RulesCommand {
     },
 }
 
-/// Apply one rules command to a candidate. Net existence of
-/// `AssignNets` is the caller's check (the engine's, which sees nets).
-/// Returns the class `AddNetClass` created.
+/// Apply one rules command. On failure `rules` is unchanged. Net
+/// existence of `AssignNets` is the caller's check (the engine's, which
+/// sees nets). Returns the class `AddNetClass` created.
 pub fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<NetClassId>> {
+    let mut next = rules.clone();
+    let added = apply_to(&mut next, command)?;
+    *rules = next;
+    Ok(added)
+}
+
+fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<NetClassId>> {
     let mut added = None;
     match command {
         RulesCommand::SetProfile {
             profile,
             keep_overrides,
         } => {
-            rules.profile = *profile;
-            if !keep_overrides {
-                rules.overrides.clear();
-            }
+            set_profile(rules, *profile, keep_overrides)?;
+            return Ok(None);
         }
         RulesCommand::SetOverride { key, value } => {
             let key = key.normalized();
@@ -1115,6 +1212,37 @@ pub fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<N
     }
     rules.validate()?;
     Ok(added)
+}
+
+/// `rules.set_profile`: the profile itself must be valid, a built-in
+/// profile must carry its shipped values, and kept overrides must leave
+/// valid effective rules (the error names the overrides to clear first).
+fn set_profile(rules: &mut ProjectRules, profile: RuleProfile, keep_overrides: bool) -> Result<()> {
+    profile.validate()?;
+    if profile.provenance.origin == ProfileOrigin::BuiltIn
+        && builtin::by_id(&profile.id).is_none_or(|b| b.rules != profile.rules)
+    {
+        return Err(Error::Invalid(format!(
+            "rules.builtin_modified: {} is not a shipped built-in profile; save changed values as a user profile",
+            profile.name
+        )));
+    }
+    let mut next = rules.clone();
+    next.profile = profile;
+    if !keep_overrides {
+        next.overrides.clear();
+    }
+    if let Err(error) = next.effective().validate() {
+        let keys: Vec<String> = next.overrides.iter().map(|o| o.key.label()).collect();
+        return Err(Error::Invalid(format!(
+            "rules.override_conflict: keeping the overrides ({}) on {} gives invalid rules: {error}",
+            keys.join(", "),
+            next.profile.name
+        )));
+    }
+    next.validate()?;
+    *rules = next;
+    Ok(())
 }
 
 /// One row of the Design rules panel and `rules.effective`.
@@ -1181,15 +1309,66 @@ pub struct RuleChange {
 
 /// `rules.preview_profile`: what switching would change, without changing
 /// the document. Issue rows are the board issues that would appear or go.
+/// A switch `rules.set_profile` would refuse is still previewed: the rule
+/// changes are listed, `refusal` holds the reason and the issue lists stay
+/// empty.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ProfileImpact {
+    /// Every rule whose effective value changes, in [`RuleKey::all`] order.
     pub changes: Vec<RuleChange>,
-    /// Overrides dropped (`keep_overrides: false`) or no longer valid.
+    /// Project overrides the switch drops (`keep_overrides: false`).
     pub dropped_overrides: Vec<RuleKey>,
-    /// Titles of issues the switch would add.
+    /// Titles of issues the switch would add (one per added issue).
     pub new_issues: Vec<String>,
-    /// Titles of issues the switch would resolve.
+    /// Titles of issues the switch would resolve (one per resolved issue).
     pub resolved_issues: Vec<String>,
+    /// Why `rules.set_profile` would refuse this switch; `None` when it
+    /// would succeed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+}
+
+/// The rules a switch would give and why `rules.set_profile` would refuse
+/// it (then the candidate is the unvalidated result, for listing changes).
+pub fn preview_candidate(
+    rules: &ProjectRules,
+    profile: &RuleProfile,
+    keep_overrides: bool,
+) -> (ProjectRules, Option<String>) {
+    let mut candidate = rules.clone();
+    match set_profile(&mut candidate, profile.clone(), keep_overrides) {
+        Ok(()) => (candidate, None),
+        Err(error) => {
+            candidate.profile = profile.clone();
+            if !keep_overrides {
+                candidate.overrides.clear();
+            }
+            (candidate, Some(error.to_string()))
+        }
+    }
+}
+
+/// Fill `impact`'s issue lists from the issues before and after a switch,
+/// each given as (identity, title). An issue is matched by identity (its
+/// finding code and objects), not its title, so a text that only names a
+/// new value is neither added nor resolved; repeated identities count.
+pub fn diff_issues(
+    impact: &mut ProfileImpact,
+    before: impl IntoIterator<Item = (String, String)>,
+    after: impl IntoIterator<Item = (String, String)>,
+) {
+    use std::collections::BTreeMap;
+    let mut left: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, title) in before {
+        left.entry(id).or_default().push(title);
+    }
+    for (id, title) in after {
+        match left.get_mut(&id).and_then(|titles| titles.pop()) {
+            Some(_) => {}
+            None => impact.new_issues.push(title),
+        }
+    }
+    impact.resolved_issues.extend(left.into_values().flatten());
 }
 
 /// The rule changes of switching `rules` to `candidate` (issue lists are
@@ -1219,6 +1398,7 @@ pub fn rule_changes(rules: &ProjectRules, candidate: &ProjectRules) -> ProfileIm
         dropped_overrides,
         new_issues: Vec::new(),
         resolved_issues: Vec::new(),
+        refusal: None,
     }
 }
 

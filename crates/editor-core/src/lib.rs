@@ -649,15 +649,22 @@ impl Engine {
                 }
             }
             Operation::Rules(command) => {
-                let project = Arc::make_mut(&mut candidate.project);
                 if let rules::RulesCommand::AssignNets { nets, .. } = &command
-                    && let Some(net) = nets.iter().find(|n| project.net(**n).is_none())
+                    && let Some(net) = nets.iter().find(|n| candidate.project.net(**n).is_none())
                 {
                     return Err(Error::NotFound(format!(
                         "net_class.net_missing: no net {net}"
                     )));
                 }
-                match rules::apply(&mut project.rules, command)? {
+                // A command that leaves the rules as they are (the same
+                // profile again, an override to its current value) is not
+                // an undo step.
+                let mut next = candidate.project.rules.clone();
+                let added = rules::apply(&mut next, command)?;
+                if next != candidate.project.rules {
+                    Arc::make_mut(&mut candidate.project).rules = next;
+                }
+                match added {
                     Some(class) => Outcome::NetClassAdded { class },
                     None => Outcome::None,
                 }
@@ -826,26 +833,27 @@ impl Engine {
                 keep_overrides,
             } => {
                 let current = &self.document.project;
+                let (next, refusal) =
+                    rules::preview_candidate(&current.rules, &profile, keep_overrides);
+                let mut impact = rules::rule_changes(&current.rules, &next);
+                if let Some(reason) = refusal {
+                    impact.refusal = Some(reason);
+                    return Ok(QueryResult::ProfileImpact(Box::new(impact)));
+                }
                 let mut candidate = current.as_ref().clone();
-                rules::apply(
-                    &mut candidate.rules,
-                    rules::RulesCommand::SetProfile {
-                        profile,
-                        keep_overrides,
-                    },
-                )?;
-                let mut impact = rules::rule_changes(&current.rules, &candidate.rules);
+                candidate.rules = next;
                 let scope = issues::IssueScope::All;
-                let titles = |p: &Project| -> Result<std::collections::BTreeSet<String>> {
-                    Ok(issues::report(p, &self.document.drafts, &scope)?
+                let rows = |p: &Project| -> Result<Vec<(String, String)>> {
+                    issues::report(p, &self.document.drafts, &scope)?
                         .rows
                         .into_iter()
-                        .map(|r| r.title)
-                        .collect())
+                        .map(|r| {
+                            let id = serde_json::to_string(&(&r.finding.code, &r.finding.objects))?;
+                            Ok((id, r.title))
+                        })
+                        .collect()
                 };
-                let (before, after) = (titles(current)?, titles(&candidate)?);
-                impact.new_issues = after.difference(&before).cloned().collect();
-                impact.resolved_issues = before.difference(&after).cloned().collect();
+                rules::diff_issues(&mut impact, rows(current)?, rows(&candidate)?);
                 Ok(QueryResult::ProfileImpact(Box::new(impact)))
             }
             Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
