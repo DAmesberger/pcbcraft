@@ -54,6 +54,7 @@ impl PcbEditor {
     /// Setup…, which opens the Board setup dialog.
     pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) {
         let mut setup = false;
+        let mut classes = false;
         kit::section(ui, "pcb-board", "Board", true, None, |ui| {
             kit::value_row(
                 ui,
@@ -72,13 +73,26 @@ impl PcbEditor {
             kit::row(ui, "Finish", |ui| {
                 setup = kit::summary_row(ui, &finish_summary(&project.fabrication), Some("Setup…"));
             });
+            kit::row(ui, "Net classes", |ui| {
+                let count = project.rules.net_classes.len();
+                let summary = match count {
+                    0 => "None".to_owned(),
+                    1 => "1 class".to_owned(),
+                    n => format!("{n} classes"),
+                };
+                classes = kit::summary_row(ui, &summary, Some("Edit…"));
+            });
         });
         if setup {
             self.open_board_setup(project);
         }
+        if classes {
+            self.open_net_classes(None);
+        }
     }
 
     pub(super) fn open_board_setup(&mut self, project: &Project) {
+        self.net_classes = None;
         self.setup = Some(BoardSetup::new(project.fabrication));
     }
 

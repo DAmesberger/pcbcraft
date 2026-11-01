@@ -1,5 +1,5 @@
-//! The Net card of a picked wire: the net's name (committed live), its
-//! members, and the WIRE's two ends. Disconnect wire… is the card's footer.
+//! The Net card of a picked wire: the net's name (committed live), its net
+//! class, its members, and the WIRE's two ends. Disconnect wire… is the card's footer.
 use super::{SchematicEditor, end_label, endpoint_label, live};
 use crate::kit;
 use crate::refusal::{self, Origin};
@@ -40,6 +40,12 @@ impl SchematicEditor {
                     super::Live::Revert => *name = net.name.clone(),
                     super::Live::Idle => {}
                 }
+            }
+            // The net's class: explicit, or by a name pattern; assigning
+            // here is the same `net_class.assign` as in Layout.
+            let class = crate::pcb_editor::net_classes::class_row(ui, project, net.id, false);
+            if class.operation.is_some() {
+                output = class.operation;
             }
             let members: Vec<Endpoint> = net.terminals.clone();
             kit::value_row(ui, "Members", &format!("{} terminals", members.len()));

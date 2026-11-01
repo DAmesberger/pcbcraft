@@ -12,6 +12,7 @@ mod graphics;
 mod junctions;
 mod library;
 mod library_folders;
+mod net_classes;
 mod orientation;
 mod parts;
 mod staged;

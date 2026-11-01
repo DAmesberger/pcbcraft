@@ -211,6 +211,16 @@ pub enum Query {
         #[serde(default)]
         keep_overrides: bool,
     },
+    /// Every net class with its resolved width, via and clearance, and
+    /// every net with its class and how it got it (explicit or pattern).
+    #[serde(rename = "net_class.list")]
+    NetClasses {},
+    /// The nets whose class `net_class.set_patterns` with `patterns` would
+    /// change. Never applies anything.
+    #[serde(rename = "net_class.preview_patterns")]
+    PreviewNetClassPatterns {
+        patterns: Vec<rules::NetClassPattern>,
+    },
     /// The solved board outline, cutouts, holes and named edges.
     #[serde(rename = "board.shape")]
     BoardShape {},
@@ -245,6 +255,8 @@ pub enum QueryResult {
     Rules(Box<rules::RulesReport>),
     RuleProfiles(Vec<rules::RuleProfile>),
     ProfileImpact(Box<rules::ProfileImpact>),
+    NetClasses(Box<rules::netclass::NetClassReport>),
+    NetClassChanges(Vec<rules::netclass::ClassChange>),
     BoardShape(Box<model::SolvedBoard>),
     FillStatus(Vec<layout::fill::FillStatus>),
 }
@@ -651,11 +663,11 @@ impl Engine {
             Operation::Rules(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
                 if let rules::RulesCommand::AssignNets { nets, .. } = &command
-                    && let Some(net) = nets.iter().find(|n| project.net(**n).is_none())
+                    && nets.iter().any(|n| project.net(*n).is_none())
                 {
-                    return Err(Error::NotFound(format!(
-                        "net_class.net_missing: no net {net}"
-                    )));
+                    return Err(Error::NotFound(
+                        "net_class.net_missing: a chosen net no longer exists".into(),
+                    ));
                 }
                 match rules::apply(&mut project.rules, command)? {
                     Some(class) => Outcome::NetClassAdded { class },
@@ -690,18 +702,20 @@ impl Engine {
         if !Arc::ptr_eq(&candidate.project, &self.document.project) {
             let project = Arc::make_mut(&mut candidate.project);
             schematic::tidy(project);
-            nets::reconcile(project)?;
-            // Explicit net-class assignments follow their nets; a net
-            // that no longer exists takes its assignment with it.
-            if project
-                .rules
-                .assignments
-                .iter()
-                .any(|a| project.net(a.net).is_none())
-            {
+            let changes = nets::reconcile(project)?;
+            // Explicit net-class assignments follow their nets through
+            // merges and splits; a net that no longer exists takes its
+            // assignment with it.
+            if !project.rules.assignments.is_empty() {
                 let live: std::collections::BTreeSet<Id> =
                     project.nets.iter().map(|n| n.id).collect();
-                project.rules.assignments.retain(|a| live.contains(&a.net));
+                rules::netclass::follow_nets(
+                    &mut project.rules,
+                    &changes.merged,
+                    &changes.split,
+                    &changes.created,
+                    &live,
+                );
             }
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
@@ -847,6 +861,23 @@ impl Engine {
                 impact.new_issues = after.difference(&before).cloned().collect();
                 impact.resolved_issues = before.difference(&after).cloned().collect();
                 Ok(QueryResult::ProfileImpact(Box::new(impact)))
+            }
+            Query::NetClasses {} => {
+                let project = &self.document.project;
+                Ok(QueryResult::NetClasses(Box::new(rules::netclass::report(
+                    &project.rules,
+                    project.nets.iter().map(|n| (n.id, n.name.as_str())),
+                ))))
+            }
+            Query::PreviewNetClassPatterns { patterns } => {
+                let project = &self.document.project;
+                Ok(QueryResult::NetClassChanges(
+                    rules::netclass::preview_patterns(
+                        &project.rules,
+                        patterns,
+                        project.nets.iter().map(|n| (n.id, n.name.as_str())),
+                    )?,
+                ))
             }
             Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
                 self.document.project.board().into_owned(),

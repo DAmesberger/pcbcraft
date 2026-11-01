@@ -708,6 +708,7 @@ fn check_request_with_nets(
     if !nets.contains(&request.net) {
         return Err(Error::NotFound("unknown electrical net".into()));
     }
+    check_class_width(project, request.net, request.width)?;
     let track = Track {
         id: 0,
         net: request.net,
@@ -721,6 +722,49 @@ fn check_request_with_nets(
         return invalid("track copper must lie inside the board outline");
     }
     Ok(())
+}
+
+/// The net class of `net`: its explicit assignment, else the first
+/// matching name pattern (never inferred from anything else).
+pub fn net_class(project: &Project, net: Id) -> Option<crate::rules::NetClassId> {
+    project.rules.class_of(net, project.net_name(net))
+}
+
+/// The Route tool's width for `net`: its class's width, else the
+/// effective default.
+pub fn route_width(project: &Project, net: Id) -> crate::rules::Resolved<f64> {
+    project.rules.track_width(net_class(project, net))
+}
+
+/// A tented through via on `net` at `position` with its class's drill and
+/// pad (else the effective defaults).
+pub fn class_via(project: &Project, net: Id, position: Point) -> ViaRequest {
+    let (drill, diameter) = project.rules.via_size(net_class(project, net)).value;
+    ViaRequest {
+        drill,
+        diameter,
+        ..ViaRequest::through(net, position)
+    }
+}
+
+/// Routing refuses a track narrower than its net's class minimum or the
+/// effective minimum track width.
+fn check_class_width(project: &Project, net: Id, width: f64) -> Result<()> {
+    let min = project.rules.track_width_min(net_class(project, net));
+    if width + 1e-9 < min.value {
+        return Err(Error::Invalid(format!(
+            "Track on {} needs at least {} mm ({}: min track width)",
+            project.net_name(net),
+            trim_mm(min.value),
+            min.source.describe()
+        )));
+    }
+    Ok(())
+}
+
+fn trim_mm(mm: f64) -> String {
+    let text = format!("{mm:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 pub fn validate(project: &Project) -> Result<()> {

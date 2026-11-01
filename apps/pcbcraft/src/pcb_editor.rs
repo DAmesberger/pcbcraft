@@ -34,6 +34,7 @@ use solidcraft_ui_egui::{
 use std::collections::BTreeSet;
 
 mod board_card;
+pub(crate) mod net_classes;
 mod placement_card;
 #[cfg(test)]
 mod raster_tests;
@@ -291,6 +292,9 @@ pub struct PcbEditor {
     /// The board's copper layers, top to bottom, per revision.
     stack: Vec<CopperLayer>,
     width: f64,
+    /// The net and class width `width` was last set from, so a new net or
+    /// a class edit sets the width and an edit by hand keeps it.
+    width_from: Option<(Id, u64)>,
     route_start: Option<Point>,
     /// A layer change pressed (V) during a route: the via's position and
     /// the layer the route reaches it on. The next click routes there,
@@ -346,6 +350,8 @@ pub struct PcbEditor {
     show_in_schematic: Option<Id>,
     /// Every Connections row instead of the first eight.
     connections_all: bool,
+    /// The Net classes card while it is open.
+    net_classes: Option<net_classes::NetClassesCard>,
     /// The issue slot of the last inspected subject, per document revision.
     issue_slot: Option<((u64, usize, Inspected), Option<IssueSlot>)>,
 }
@@ -366,6 +372,7 @@ impl Default for PcbEditor {
             layer: CopperLayer::Top,
             stack: vec![CopperLayer::Top, CopperLayer::Bottom],
             width: 0.3,
+            width_from: None,
             route_start: None,
             pending_via: None,
             via_tented: true,
@@ -400,6 +407,7 @@ impl Default for PcbEditor {
             frame_request: None,
             show_in_schematic: None,
             connections_all: false,
+            net_classes: None,
             issue_slot: None,
         }
     }
@@ -877,7 +885,7 @@ impl PcbEditor {
     pub fn subject(&self) -> Subject {
         if self.update.is_open() {
             Subject::Review
-        } else if self.setup.is_some() {
+        } else if self.setup.is_some() || self.net_classes.is_some() {
             Subject::Dialog
         } else if matches!(self.tool, Tool::Route | Tool::Via) && !self.view_3d {
             Subject::Tool
@@ -913,6 +921,7 @@ impl PcbEditor {
                 CardResponse::output(self.via_tool_card(ui, engine.project()))
             }
             Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
+            Subject::Dialog if self.setup.is_none() => self.net_classes_card(ui, engine),
             Subject::Dialog => CardResponse::output(self.board_setup(ui, engine)),
             // The review docks with its own header and pinned footer
             // (slice R1), in place of the Properties card.
@@ -1143,6 +1152,7 @@ impl PcbEditor {
                     .unwrap_or_else(|| self.route_point(at, scale));
                 if let Some(start) = self.route_start {
                     if let Some(net) = self.net {
+                        self.follow_class_width(project);
                         let request = |start, end, layer| RouteRequest {
                             net,
                             start,
@@ -1156,7 +1166,7 @@ impl PcbEditor {
                                     request: request(start, via, from),
                                     via: layout::ViaRequest {
                                         tented: self.via_tented,
-                                        ..layout::ViaRequest::through(net, via)
+                                        ..layout::class_via(project, net, via)
                                     },
                                     to_layer: self.layer,
                                     end: destination,
@@ -1177,6 +1187,7 @@ impl PcbEditor {
                         self.route_highlight(self.net);
                     }
                     if self.net.is_some() {
+                        self.follow_class_width(project);
                         self.route_start = Some(destination);
                     }
                 }
@@ -1224,7 +1235,8 @@ impl PcbEditor {
                 Some((via, from)) => {
                     leg(start, via, from);
                     leg(via, end, self.layer);
-                    let radius = (layout::DEFAULT_VIA_DIAMETER_MM as f32 * scale / 2.0).max(4.0);
+                    let (drill, diameter) = self.class_via_size(project);
+                    let radius = (diameter as f32 * scale / 2.0).max(4.0);
                     painter.circle(
                         screen(via),
                         radius,
@@ -1233,7 +1245,7 @@ impl PcbEditor {
                     );
                     painter.circle_filled(
                         screen(via),
-                        (layout::DEFAULT_VIA_DRILL_MM as f32 * scale / 2.0).max(2.0),
+                        (drill as f32 * scale / 2.0).max(2.0),
                         BoardInk::get().drill,
                     );
                 }
@@ -1248,7 +1260,7 @@ impl PcbEditor {
             let at = self.via_point(at, scale);
             painter.circle_stroke(
                 screen(at),
-                (layout::DEFAULT_VIA_DIAMETER_MM as f32 * scale / 2.0).max(4.0),
+                (self.class_via_size(project).1 as f32 * scale / 2.0).max(4.0),
                 Stroke::new(1.5, t.body_selected),
             );
         }
@@ -1426,7 +1438,7 @@ impl PcbEditor {
         Some(Operation::Layout(LayoutCommand::AddVia {
             via: layout::ViaRequest {
                 tented: self.via_tented,
-                ..layout::ViaRequest::through(net, position)
+                ..layout::class_via(project, net, position)
             },
         }))
     }
