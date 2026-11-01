@@ -103,8 +103,8 @@ fn error_codes_classify_failures() -> Result<()> {
     let duplicate = engine.apply(
         revision,
         Operation::Schematic(SchematicCommand::Connect {
-            from: ep(r1, 2),
-            to: ep(r2, 1),
+            from: ep(r1, 2).into(),
+            to: ep(r2, 1).into(),
         }),
     );
     assert_eq!(duplicate.err().map(|e| e.code()), Some("conflict"));
@@ -292,8 +292,8 @@ fn malformed_references_and_routed_connectivity_changes_leave_state_unchanged() 
     let revision = engine.revision();
     for operation in [
         Operation::Schematic(SchematicCommand::Connect {
-            from: ep(a, 2),
-            to: ep(999, 1),
+            from: ep(a, 2).into(),
+            to: ep(999, 1).into(),
         }),
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,

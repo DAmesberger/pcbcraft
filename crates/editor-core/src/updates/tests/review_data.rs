@@ -122,9 +122,17 @@ fn a_removal_is_listed_by_area_kind_and_object_with_refs() -> Result<()> {
         removed.refs,
         [
             ObjectRef::Terminal {
-                endpoint: wire.from
+                endpoint: wire
+                    .from
+                    .terminal()
+                    .ok_or_else(|| Error::NotFound("terminal end".into()))?
             },
-            ObjectRef::Terminal { endpoint: wire.to }
+            ObjectRef::Terminal {
+                endpoint: wire
+                    .to
+                    .terminal()
+                    .ok_or_else(|| Error::NotFound("terminal end".into()))?
+            }
         ]
     );
     assert!(

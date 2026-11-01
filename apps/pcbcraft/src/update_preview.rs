@@ -191,6 +191,12 @@ impl UpdatePreview {
         self.plan.is_some()
     }
 
+    /// The change under review.
+    #[cfg(test)]
+    pub fn change(&self) -> Option<&Change> {
+        self.plan.as_ref().map(|p| &p.change)
+    }
+
     /// What the canvas outlines, while a review is open.
     pub fn marks(&self) -> Option<Marks> {
         let plan = self.plan.as_ref()?;

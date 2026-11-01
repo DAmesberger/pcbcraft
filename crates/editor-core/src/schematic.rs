@@ -1,6 +1,7 @@
-//! Single-sheet capture: symbol occurrences and wires. Wire endpoints
-//! reference electrical identities; drawn crossings and coincident pins
-//! never imply a connection. [`placed_unit`] resolves what an occurrence
+//! Single-sheet capture: symbol occurrences, wires and junctions. Wire ends
+//! reference terminals or junctions; drawn crossings and coincident pins
+//! never imply a connection. A wire end routed onto another wire's segment
+//! splits it at a junction ([`wiring`]). [`placed_unit`] resolves what an occurrence
 //! draws and [`definition_unit`] what a unit being authored draws.
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
@@ -20,6 +21,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MAX_WIRES: usize = 16384;
+
+mod wiring;
+pub use wiring::{
+    JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, junction_dots,
+    nearest_on_wire, tidy, wire_ends, wire_net, wire_route,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
@@ -48,8 +55,11 @@ pub enum SchematicCommand {
     /// terminals; otherwise preview it as `Change::Schematic`.
     #[serde(rename = "symbol.unplace_unit")]
     UnplaceUnit { occurrence: Id },
+    /// Draw a wire between two targets: a terminal, a junction, or a point
+    /// on an existing wire, which splits that wire at a new junction. One
+    /// undo step.
     #[serde(rename = "schematic.connect")]
-    Connect { from: Endpoint, to: Endpoint },
+    Connect { from: WireTarget, to: WireTarget },
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
     /// Relabel a net. Its identity, membership and routed copper are unchanged.
@@ -193,7 +203,7 @@ fn unit_wires(project: &Project, occurrence: &SymbolOccurrence) -> Result<Vec<Id
         .wires
         .iter()
         .filter(|w| {
-            [w.from, w.to].iter().any(|e| {
+            [w.from, w.to].iter().filter_map(|e| e.terminal()).any(|e| {
                 e.instance == occurrence.instance
                     && instances::owning_unit(symbol, e.terminal) == Some(occurrence.unit)
             })
@@ -233,6 +243,7 @@ pub fn disconnect_terminals(
     let touches = |w: &Wire| {
         [w.from, w.to]
             .iter()
+            .filter_map(|e| e.terminal())
             .any(|e| e.instance == instance && terminals.contains(&e.terminal))
     };
     if project.wires.iter().any(touches) {
@@ -248,34 +259,46 @@ pub fn disconnect_terminals(
 
 /// Remove every occurrence of an instance. Direct only without wires.
 pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) -> Result<()> {
-    let wired = project
-        .wires
-        .iter()
-        .any(|w| w.from.instance == instance || w.to.instance == instance);
+    let on_instance = |w: &Wire| {
+        [w.from, w.to]
+            .iter()
+            .filter_map(|e| e.terminal())
+            .any(|e| e.instance == instance)
+    };
+    let wired = project.wires.iter().any(on_instance);
     if wired {
         if policy == EditPolicy::Direct {
             return Err(conflict(
                 "This instance is wired. Preview its removal with project.preview_update (Change::Instance) to review the wires it removes.",
             ));
         }
-        project
-            .wires
-            .retain(|w| w.from.instance != instance && w.to.instance != instance);
+        project.wires.retain(|w| !on_instance(w));
     }
     project.occurrences.retain(|o| o.instance != instance);
     Ok(())
 }
 
-pub fn connect(project: &mut Project, from: Endpoint, to: Endpoint) -> Result<()> {
+/// Draw a wire between two targets. A target on a wire's segment splits
+/// that wire at a new junction first; both targets on one wire are refused.
+/// The caller discards the candidate on failure, so a refused connect leaves
+/// no split behind.
+pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Result<()> {
+    if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
+        && a.wire == b.wire
+    {
+        return Err(invalid("A wire cannot join two points of the same wire."));
+    }
+    let from = wiring::resolve(project, from)?;
+    let to = wiring::resolve(project, to)?;
     if from == to {
-        return Err(invalid("A wire must connect two different terminals."));
+        return Err(invalid("A wire must connect two different points."));
     }
     if project
         .wires
         .iter()
         .any(|w| (w.from == from && w.to == to) || (w.from == to && w.to == from))
     {
-        return Err(conflict("These terminals are already connected by a wire."));
+        return Err(conflict("These points are already connected by a wire."));
     }
     if project.wires.len() >= MAX_WIRES {
         return Err(Error::Limit(
@@ -284,10 +307,14 @@ pub fn connect(project: &mut Project, from: Endpoint, to: Endpoint) -> Result<()
     }
     let id = project.allocate()?;
     project.wires.push(Wire { id, from, to });
-    // `check_instance` owns endpoint validity: instance, terminal, unit
+    // `check_instance` owns terminal validity: instance, terminal, unit
     // placement and NC/no-connect exclusion.
-    instances::check_instance(project, from.instance)?;
-    instances::check_instance(project, to.instance)
+    for end in [from, to] {
+        if let Some(endpoint) = end.terminal() {
+            instances::check_instance(project, endpoint.instance)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn disconnect(project: &mut Project, wire: Id) -> Result<()> {
@@ -352,26 +379,7 @@ pub fn validate(project: &Project) -> Result<()> {
             ));
         }
     }
-    let mut pairs = BTreeSet::new();
-    for wire in &project.wires {
-        if wire.from == wire.to {
-            return Err(invalid("A wire must connect two different terminals."));
-        }
-        for endpoint in [wire.from, wire.to] {
-            if project.instance(endpoint.instance).is_none() {
-                return Err(invalid("A wire references a missing terminal."));
-            }
-        }
-        let pair = if wire.from < wire.to {
-            (wire.from, wire.to)
-        } else {
-            (wire.to, wire.from)
-        };
-        if !pairs.insert(pair) {
-            return Err(invalid("Duplicate schematic connection."));
-        }
-    }
-    Ok(())
+    wiring::validate(project)
 }
 
 /// The frame an occurrence draws its unit in: reflect across the local

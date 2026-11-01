@@ -18,7 +18,7 @@ use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
     PackageDefinition, Published, Rotation, SymbolDefinition, designator_prefix_valid,
 };
-use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence};
+use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence, WireEnd};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -471,7 +471,11 @@ pub fn check_instance(project: &Project, id: Id) -> Result<()> {
     let instance = project
         .instance(id)
         .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))?;
-    let endpoints = project.wires.iter().flat_map(|w| [w.from, w.to]);
+    let endpoints = project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal);
     check_with(
         project,
         instance,
@@ -492,7 +496,10 @@ pub fn check_all(project: &Project) -> Result<()> {
     }
     let mut endpoints: BTreeMap<Id, Vec<Endpoint>> = BTreeMap::new();
     for wire in &project.wires {
-        for endpoint in [wire.from, wire.to] {
+        for endpoint in [wire.from, wire.to]
+            .into_iter()
+            .filter_map(WireEnd::terminal)
+        {
             endpoints
                 .entry(endpoint.instance)
                 .or_default()
@@ -662,7 +669,9 @@ pub fn remove(project: &mut Project, id: Id) -> Result<()> {
         || project
             .wires
             .iter()
-            .any(|w| w.from.instance == id || w.to.instance == id)
+            .flat_map(|w| [w.from, w.to])
+            .filter_map(WireEnd::terminal)
+            .any(|e| e.instance == id)
     {
         return Err(Error::Conflict(
             "Detach the instance's occurrences, wires and placement before removing it.".into(),
@@ -1066,6 +1075,7 @@ pub(crate) fn wired_terminals(project: &Project, id: Id) -> BTreeSet<TerminalId>
         .wires
         .iter()
         .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal)
         .filter(|e| e.instance == id)
         .map(|e| e.terminal)
         .collect()

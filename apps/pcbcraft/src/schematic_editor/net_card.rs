@@ -1,9 +1,12 @@
 //! The Net card of a picked wire: the net's name (committed live), its
 //! members, and the WIRE's two ends. Disconnect wire… is the card's footer.
-use super::{SchematicEditor, endpoint_label, live};
+use super::{SchematicEditor, end_label, endpoint_label, live};
 use crate::kit;
 use crate::refusal::{self, Origin};
-use pcbcraft_core::{Endpoint, Engine, Id, Operation, schematic::SchematicCommand};
+use pcbcraft_core::{
+    Endpoint, Engine, Id, Operation,
+    schematic::{self, SchematicCommand},
+};
 
 impl SchematicEditor {
     pub(super) fn net_section(
@@ -15,7 +18,7 @@ impl SchematicEditor {
         let project = engine.project();
         let mut output = None;
         let mut select: Option<Id> = None;
-        let net = project.net_of(wire.from);
+        let net = schematic::wire_net(project, wire);
         kit::section(ui, "net", "Net", true, None, |ui| {
             let Some(net) = net else {
                 kit::value_row(ui, "Name", "—");
@@ -66,8 +69,8 @@ impl SchematicEditor {
             }
         });
         kit::section(ui, "wire", "Wire", true, None, |ui| {
-            kit::value_row(ui, "From", &endpoint_label(project, wire.from));
-            kit::value_row(ui, "To", &endpoint_label(project, wire.to));
+            kit::value_row(ui, "From", &end_label(project, wire.from));
+            kit::value_row(ui, "To", &end_label(project, wire.to));
         });
         if let Some(instance) = select {
             self.select_instance(Some(instance), project);
