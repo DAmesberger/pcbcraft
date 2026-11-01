@@ -1,0 +1,1414 @@
+//! Design rules: the docked panel the Board card opens (docs/sidebar-ia.md,
+//! "Dialogs and reviews"; docs/board-contract.md task 4).
+//!
+//! The panel shows the project's profile snapshot with its provenance, a
+//! picker of the built-in and user profiles, and every rule grouped as the
+//! core groups them (Copper, Holes & vias, Mask, Silkscreen, Paste, Fills,
+//! Board edge, Placement, Lands) with the profile value beside the
+//! effective value. A value commits live, per field, as one
+//! `rules.set_override` (or `rules.clear_override` when it returns to the
+//! profile value) and one undo step; Reset clears an override. Choosing
+//! another profile first shows its impact (`rules.preview_profile`): the
+//! rules that change, the overrides dropped and the board issues that
+//! appear or go; Switch then commits `rules.set_profile` as one undo step.
+//!
+//! The user profile library (`pcbcraft_io::rule_profiles`) is file
+//! effects, not document edits: saving, renaming, deleting, importing and
+//! exporting a profile change files in the user config folder and are not
+//! undone. A project never reads the library to evaluate its rules; it
+//! keeps its own snapshot.
+use super::{Inspected, PcbEditor};
+use crate::kit::{
+    self,
+    card::{CardResponse, Inspector, Region, Subject},
+    dialog::{DialogAction, DialogPanel},
+    review::{ReviewAction, ReviewGroup, ReviewLine, ReviewPanel},
+    severity::Level,
+    toast::{self, ToastAction},
+};
+use crate::refusal::{self, Origin};
+use crate::shell::Header;
+use egui::{Align, RichText, Ui};
+use pcbcraft_core::rules::{
+    self, CopperObject, MAX_RULE_MM, PadConnection, ProfileBasis, ProfileImpact, ProfileOrigin,
+    ProfileProvenance, ProjectRules, RuleGroup, RuleKey, RuleProfile, RuleRow, RuleValue,
+    RulesCommand, builtin,
+};
+use pcbcraft_core::{Engine, Operation, Query, QueryResult};
+use pcbcraft_io::rule_profiles::{self, Listing, ProfileLibrary};
+use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_ui_egui::ui_kit::{self, Button};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, TryRecvError};
+
+/// The groups in panel order, with their captions.
+pub const GROUPS: [(RuleGroup, &str); 9] = [
+    (RuleGroup::Copper, "Copper"),
+    (RuleGroup::HolesAndVias, "Holes & vias"),
+    (RuleGroup::Mask, "Mask"),
+    (RuleGroup::Silkscreen, "Silkscreen"),
+    (RuleGroup::Paste, "Paste"),
+    (RuleGroup::Fills, "Fills"),
+    (RuleGroup::BoardEdge, "Board edge"),
+    (RuleGroup::Placement, "Placement"),
+    (RuleGroup::Lands, "Lands"),
+];
+
+/// The rule an issue's "Show rule" opens: its group, and the one rule
+/// when the finding rests on exactly one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RuleTopic {
+    Clearance,
+    BoardEdge,
+    ViaAnnularRing,
+    DrillToCopper,
+    HoleSpacing,
+    Courtyard,
+}
+
+impl RuleTopic {
+    pub fn group(self) -> RuleGroup {
+        match self {
+            Self::Clearance => RuleGroup::Copper,
+            Self::BoardEdge => RuleGroup::BoardEdge,
+            Self::ViaAnnularRing | Self::DrillToCopper | Self::HoleSpacing => {
+                RuleGroup::HolesAndVias
+            }
+            Self::Courtyard => RuleGroup::Placement,
+        }
+    }
+
+    pub fn key(self) -> Option<RuleKey> {
+        match self {
+            Self::Clearance | Self::BoardEdge | Self::DrillToCopper => None,
+            Self::ViaAnnularRing => Some(RuleKey::ViaAnnularRingMin),
+            Self::HoleSpacing => Some(RuleKey::Clearance {
+                a: CopperObject::Hole,
+                b: CopperObject::Hole,
+            }),
+            Self::Courtyard => Some(RuleKey::CourtyardClearance),
+        }
+    }
+}
+
+/// Board finding codes whose limit is a design rule, and that rule.
+const TOPICS: &[(&str, RuleTopic)] = &[
+    ("board.clearance", RuleTopic::Clearance),
+    ("board.outside_outline", RuleTopic::BoardEdge),
+    ("board.via_annular_ring", RuleTopic::ViaAnnularRing),
+    ("board.via_drill_clearance", RuleTopic::DrillToCopper),
+    ("board.via_hole_spacing", RuleTopic::HoleSpacing),
+    ("board.courtyard_overlap", RuleTopic::Courtyard),
+];
+
+/// The rule behind a finding code, for the Issues row's "Show rule".
+pub fn topic_for(code: &str) -> Option<RuleTopic> {
+    TOPICS.iter().find(|(c, _)| *c == code).map(|(_, t)| *t)
+}
+
+fn field_id(key: RuleKey) -> egui::Id {
+    egui::Id::new(("pcb-rules-field", key.normalized()))
+}
+fn panel_id() -> egui::Id {
+    egui::Id::new("pcb-rules")
+}
+fn preview_id() -> egui::Id {
+    egui::Id::new("pcb-rules-preview")
+}
+fn save_id() -> egui::Id {
+    egui::Id::new("pcb-rules-save")
+}
+fn rename_id() -> egui::Id {
+    egui::Id::new("pcb-rules-rename")
+}
+fn delete_id() -> egui::Id {
+    egui::Id::new("pcb-rules-delete")
+}
+
+/// The impact review of switching to `profile`.
+struct Preview {
+    profile: RuleProfile,
+    keep_overrides: bool,
+    /// The revision the impact was computed at.
+    at: u64,
+    impact: Result<ProfileImpact, String>,
+    /// The revision Switch was sent at.
+    sent: Option<u64>,
+    refusal: Option<String>,
+}
+
+/// The "Save as profile" form.
+struct SaveForm {
+    name: String,
+    basis: ProfileBasis,
+    source: String,
+    url: String,
+    date: String,
+    notes: String,
+    /// Switch the board to the saved profile (its rules are the current
+    /// effective rules, so nothing else changes).
+    use_it: bool,
+    refusal: Option<String>,
+    opening: bool,
+}
+
+enum Mode {
+    Table,
+    Preview(Box<Preview>),
+    Save(Box<SaveForm>),
+    Rename {
+        id: String,
+        name: String,
+        refusal: Option<String>,
+    },
+    Delete {
+        id: String,
+        name: String,
+    },
+}
+
+/// A file job's result, from a worker thread.
+enum Job {
+    /// The imported profile's name.
+    Imported(Result<String, String>),
+    Exported(Result<PathBuf, String>),
+    Cancelled,
+}
+
+/// The Design rules panel's state while it is open.
+pub(super) struct RulesPanel {
+    library: Option<ProfileLibrary>,
+    listing: Result<Listing, String>,
+    /// Number fields being edited, committed when focus leaves.
+    staged: BTreeMap<RuleKey, f64>,
+    /// Refusals of a field's last commit, in shown wording.
+    errors: BTreeMap<RuleKey, String>,
+    /// The revision the field state belongs to.
+    revision: Option<u64>,
+    /// The rule an issue asked to show.
+    focus: Option<RuleTopic>,
+    /// Open the focused group and scroll its row into view once.
+    reveal: bool,
+    mode: Mode,
+    job: Option<Receiver<Job>>,
+    /// Every user profile instead of the first eight.
+    all_profiles: bool,
+    /// A field had keyboard focus last frame (Esc reverts it rather than
+    /// closing the panel).
+    typing: bool,
+}
+
+impl RulesPanel {
+    pub(super) fn new(library: Option<ProfileLibrary>, focus: Option<RuleTopic>) -> Self {
+        let mut panel = Self {
+            library,
+            listing: Ok(Listing::default()),
+            staged: BTreeMap::new(),
+            errors: BTreeMap::new(),
+            revision: None,
+            focus,
+            reveal: focus.is_some(),
+            mode: Mode::Table,
+            job: None,
+            all_profiles: false,
+            typing: false,
+        };
+        panel.refresh();
+        panel
+    }
+
+    /// Re-read the user profile library.
+    fn refresh(&mut self) {
+        self.listing = match &self.library {
+            Some(library) => library.list().map_err(|e| e.to_string()),
+            None => Ok(Listing::default()),
+        };
+    }
+
+    fn user_profiles(&self) -> &[RuleProfile] {
+        self.listing.as_ref().map_or(&[], |l| l.profiles.as_slice())
+    }
+
+    pub(super) fn subject(&self) -> Subject {
+        match self.mode {
+            Mode::Preview(_) => Subject::Review,
+            _ => Subject::Dialog,
+        }
+    }
+
+    /// The impact of switching to `profile`, computed now.
+    fn preview(&mut self, engine: &Engine, profile: RuleProfile, keep_overrides: bool) {
+        let impact = match engine.query(Query::PreviewProfile {
+            profile: Box::new(profile.clone()),
+            keep_overrides,
+        }) {
+            Ok(QueryResult::ProfileImpact(impact)) => Ok(*impact),
+            Ok(_) => Err("The preview returned something else".to_owned()),
+            Err(error) => Err(refusal::shown_error(&error)),
+        };
+        self.mode = Mode::Preview(Box::new(Preview {
+            profile,
+            keep_overrides,
+            at: engine.revision(),
+            impact,
+            sent: None,
+            refusal: None,
+        }));
+    }
+
+    /// Take the refusals handed back for the panel's fields and dialogs.
+    fn claim(&mut self, ctx: &egui::Context) {
+        for key in RuleKey::all() {
+            if let Some(text) = refusal::claim(ctx, Origin::Field(field_id(key))) {
+                self.errors.insert(key.normalized(), text);
+            }
+        }
+        if let Some(text) = refusal::claim(ctx, Origin::Dialog(preview_id()))
+            && let Mode::Preview(preview) = &mut self.mode
+        {
+            preview.refusal = Some(text);
+            preview.sent = None;
+        }
+        if let Some(text) = refusal::claim(ctx, Origin::Dialog(save_id())) {
+            toast::post(
+                ctx,
+                Level::Error,
+                format!("Saved, but switching failed: {text}"),
+                Vec::new(),
+            );
+        }
+    }
+
+    /// Take a finished file job.
+    fn poll(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = &self.job else {
+            return;
+        };
+        let job = match receiver.try_recv() {
+            Ok(job) => job,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                Job::Exported(Err("The file picker closed unexpectedly".to_owned()))
+            }
+        };
+        self.job = None;
+        match job {
+            Job::Imported(Ok(name)) => {
+                self.refresh();
+                toast::post(
+                    ctx,
+                    Level::Ok,
+                    format!("Imported profile {name}"),
+                    Vec::new(),
+                );
+            }
+            Job::Exported(Ok(path)) => {
+                let name = path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                toast::post(ctx, Level::Ok, format!("Exported {name}"), Vec::new());
+            }
+            Job::Imported(Err(error)) | Job::Exported(Err(error)) => {
+                toast::post(ctx, Level::Error, error, Vec::new());
+            }
+            Job::Cancelled => {}
+        }
+    }
+
+    /// Pick a profile file and import it into the library, off the UI
+    /// thread.
+    fn start_import(&mut self, ctx: &egui::Context) {
+        let Some(library) = self.library.clone() else {
+            return;
+        };
+        if self.job.is_some() {
+            return;
+        }
+        let future = rfd::AsyncFileDialog::new()
+            .set_title("Import a design-rule profile")
+            .add_filter("Rule profile", &[rule_profiles::EXTENSION])
+            .pick_file();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let job = match pollster::block_on(future) {
+                None => Job::Cancelled,
+                Some(file) => Job::Imported(
+                    library
+                        .import(file.path())
+                        .map(|p| p.name)
+                        .map_err(|e| format!("Import failed: {e}")),
+                ),
+            };
+            let _ = sender.send(job);
+            ctx.request_repaint();
+        });
+        self.job = Some(receiver);
+    }
+
+    /// Pick a file name and write `profile` to it, off the UI thread. The
+    /// native dialog asks before replacing a file.
+    fn start_export(&mut self, ctx: &egui::Context, profile: RuleProfile) {
+        if self.job.is_some() {
+            return;
+        }
+        let future = rfd::AsyncFileDialog::new()
+            .set_title("Export a design-rule profile")
+            .add_filter("Rule profile", &[rule_profiles::EXTENSION])
+            .set_file_name(format!("{}.{}", profile.id, rule_profiles::EXTENSION))
+            .save_file();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let job = match pollster::block_on(future) {
+                None => Job::Cancelled,
+                Some(file) => {
+                    let path = file.path().to_path_buf();
+                    Job::Exported(
+                        rule_profiles::export_replacing(&profile, &path)
+                            .map(|()| path)
+                            .map_err(|e| format!("Export failed: {e}")),
+                    )
+                }
+            };
+            let _ = sender.send(job);
+            ctx.request_repaint();
+        });
+        self.job = Some(receiver);
+    }
+}
+
+/// "0.2 mm", "45°", "4", "10:1", "Not checked", "Thermal relief".
+pub fn value_text(value: RuleValue) -> String {
+    match value {
+        RuleValue::Length(mm) => format!("{} mm", kit::number_text(mm)),
+        RuleValue::Area(a) => format!("{} mm²", kit::number_text(a)),
+        RuleValue::Angle(d) => format!("{}°", kit::number_text(d)),
+        RuleValue::Ratio(Some(r)) => format!("{}:1", kit::number_text(r)),
+        RuleValue::Ratio(None) => "Not checked".into(),
+        RuleValue::Count(n) => n.to_string(),
+        RuleValue::Flag(true) => "Yes".into(),
+        RuleValue::Flag(false) => "No".into(),
+        RuleValue::Connection(c) => connection_label(c).into(),
+    }
+}
+
+fn connection_label(c: PadConnection) -> &'static str {
+    match c {
+        PadConnection::Solid => "Solid",
+        PadConnection::Thermal => "Thermal relief",
+        PadConnection::None => "Not connected",
+    }
+}
+
+/// A number-valued rule's number, unit and accepted range.
+fn numeric(
+    key: RuleKey,
+    value: RuleValue,
+) -> Option<(f64, &'static str, std::ops::RangeInclusive<f64>)> {
+    match value {
+        RuleValue::Length(mm) if key == RuleKey::MaskExpansion => {
+            Some((mm, "mm", -1.0..=MAX_RULE_MM))
+        }
+        RuleValue::Length(mm) => Some((mm, "mm", 0.0..=MAX_RULE_MM)),
+        RuleValue::Area(a) => Some((a, "mm²", 0.0..=1.0e6)),
+        RuleValue::Angle(d) => Some((d, "°", -360.0..=360.0)),
+        RuleValue::Count(n) => Some((f64::from(n), "", 1.0..=8.0)),
+        _ => None,
+    }
+}
+
+/// `number` in the kind of `like`.
+fn with_number(like: RuleValue, number: f64) -> RuleValue {
+    match like {
+        RuleValue::Area(_) => RuleValue::Area(number),
+        RuleValue::Angle(_) => RuleValue::Angle(number),
+        RuleValue::Count(_) => {
+            // The field's range is 1–8, so the rounded value fits.
+            let n = number.round().clamp(0.0, f64::from(u32::MAX));
+            RuleValue::Count(n as u32)
+        }
+        _ => RuleValue::Length(number),
+    }
+}
+
+fn same(a: RuleValue, b: RuleValue) -> bool {
+    match (a, b) {
+        (RuleValue::Length(x), RuleValue::Length(y))
+        | (RuleValue::Area(x), RuleValue::Area(y))
+        | (RuleValue::Angle(x), RuleValue::Angle(y)) => (x - y).abs() < 1e-9,
+        (RuleValue::Ratio(Some(x)), RuleValue::Ratio(Some(y))) => (x - y).abs() < 1e-9,
+        (a, b) => a == b,
+    }
+}
+
+/// The command that makes `key`'s effective value `value`: an override,
+/// its removal when `value` is the profile's again, or nothing.
+pub fn commit_for(rules: &ProjectRules, key: RuleKey, value: RuleValue) -> Option<RulesCommand> {
+    let profile = key.get(&rules.profile.rules);
+    let overridden = rules.override_of(key).is_some();
+    if same(value, profile) {
+        return overridden.then_some(RulesCommand::ClearOverride { key });
+    }
+    if same(value, key.get(&rules.effective())) {
+        return None;
+    }
+    Some(RulesCommand::SetOverride { key, value })
+}
+
+/// "Built-in · estimated", "Your profile · from fabricator data · Fab X ·
+/// 2026-10-30".
+pub fn provenance_line(p: &ProfileProvenance) -> String {
+    let origin = match p.origin {
+        ProfileOrigin::BuiltIn => "Built-in",
+        ProfileOrigin::User => "Your profile",
+        ProfileOrigin::Imported => "Imported",
+    };
+    let basis = match p.basis {
+        ProfileBasis::Estimated => "estimated",
+        ProfileBasis::FabricatorEntered => "from fabricator data",
+    };
+    let mut parts = vec![origin.to_owned(), basis.to_owned()];
+    parts.extend(
+        [&p.source, &p.date]
+            .into_iter()
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| t.trim().to_owned()),
+    );
+    parts.join(" · ")
+}
+
+/// The Board card's Rules summary: "Standard 6/6 · 2 overrides".
+pub fn rules_summary(rules: &ProjectRules) -> String {
+    match rules.overrides.len() {
+        0 => rules.profile.name.clone(),
+        1 => format!("{} · 1 override", rules.profile.name),
+        n => format!("{} · {n} overrides", rules.profile.name),
+    }
+}
+
+/// "Min track width" from "min track width".
+fn sentence(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_uppercase().collect::<String>() + chars.as_str()
+    })
+}
+
+/// One entry of the profile picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Pick {
+    BuiltIn(String),
+    User(String),
+    /// The board's own snapshot, matching no library entry.
+    Board,
+}
+
+/// The review's text: summary, groups and the copyable report.
+pub fn impact_groups(impact: &ProfileImpact) -> Vec<ReviewGroup> {
+    let mut groups = vec![ReviewGroup {
+        title: "Rules that change".into(),
+        summary: String::new(),
+        lines: impact
+            .changes
+            .iter()
+            .map(|c| {
+                format!(
+                    "{}: {} → {}",
+                    sentence(&c.label),
+                    value_text(c.from),
+                    value_text(c.to)
+                )
+            })
+            .collect(),
+    }];
+    if !impact.dropped_overrides.is_empty() {
+        groups.push(ReviewGroup {
+            title: "Overrides dropped".into(),
+            summary: String::new(),
+            lines: impact
+                .dropped_overrides
+                .iter()
+                .map(|k| sentence(&k.label()))
+                .collect(),
+        });
+    }
+    for (title, lines) in [
+        ("New issues", &impact.new_issues),
+        ("Resolved issues", &impact.resolved_issues),
+    ] {
+        if !lines.is_empty() {
+            groups.push(ReviewGroup {
+                title: title.into(),
+                summary: String::new(),
+                lines: lines.clone(),
+            });
+        }
+    }
+    groups
+}
+
+/// "Fine 4/4 · 12 rules change · 3 new issues · 1 resolved".
+pub fn impact_summary(name: &str, impact: &ProfileImpact) -> String {
+    let plural = |n: usize, one: &str, many: &str| {
+        if n == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{n} {many}")
+        }
+    };
+    let mut parts = vec![
+        name.to_owned(),
+        plural(impact.changes.len(), "rule changes", "rules change"),
+    ];
+    if !impact.new_issues.is_empty() {
+        parts.push(plural(impact.new_issues.len(), "new issue", "new issues"));
+    }
+    if !impact.resolved_issues.is_empty() {
+        parts.push(format!("{} resolved", impact.resolved_issues.len()));
+    }
+    parts.join(" · ")
+}
+
+impl PcbEditor {
+    /// Open the Design rules panel (the Board card's Rules…), at the rule
+    /// of `topic` when an issue asked for it. The user profile library is
+    /// the config folder's `rule-profiles/`.
+    pub(super) fn open_rules(&mut self, topic: Option<RuleTopic>) {
+        let library = pcbcraft_io::settings::UserDirs::from_env()
+            .ok()
+            .map(|dirs| ProfileLibrary::from_dirs(&dirs));
+        self.open_rules_in(library, topic);
+    }
+
+    /// [`Self::open_rules`] over a given library folder (tests).
+    pub(super) fn open_rules_in(
+        &mut self,
+        library: Option<ProfileLibrary>,
+        topic: Option<RuleTopic>,
+    ) {
+        self.setup = None;
+        self.net_classes = None;
+        match &mut self.rules {
+            Some(panel) => {
+                if topic.is_some() {
+                    panel.focus = topic;
+                    panel.reveal = true;
+                    panel.mode = Mode::Table;
+                }
+            }
+            None => self.rules = Some(RulesPanel::new(library, topic)),
+        }
+    }
+
+    /// An Issues row's "Show rule": the panel, at that rule.
+    pub fn show_rule(&mut self, topic: RuleTopic) {
+        self.open_rules(Some(topic));
+    }
+
+    pub(super) fn rules_subject(&self) -> Option<Subject> {
+        self.rules.as_ref().map(RulesPanel::subject)
+    }
+
+    /// The whole subject slot while the panel is open.
+    pub(super) fn rules_slot(&mut self, ui: &mut Ui, engine: &Engine) -> CardResponse<Operation> {
+        let Some(mut panel) = self.rules.take() else {
+            return CardResponse::output(None);
+        };
+        panel.claim(ui.ctx());
+        panel.poll(ui.ctx());
+        if panel.revision != Some(engine.revision()) {
+            // Undo, redo or another edit: fields show the document again.
+            panel.staged.clear();
+            panel.errors.clear();
+            panel.revision = Some(engine.revision());
+        }
+        // A switch the engine applied: say so and show the table again.
+        if let Mode::Preview(preview) = &panel.mode
+            && preview.sent.is_some_and(|sent| sent != engine.revision())
+        {
+            toast::post(
+                ui.ctx(),
+                Level::Ok,
+                format!("Switched to {}", preview.profile.name),
+                vec![ToastAction::Undo],
+            );
+            panel.mode = Mode::Table;
+        }
+        let mut close = false;
+        let response = match &mut panel.mode {
+            Mode::Preview(_) => CardResponse::output(preview_slot(&mut panel, ui, engine)),
+            Mode::Save(_) => CardResponse::output(save_slot(&mut panel, ui, engine)),
+            Mode::Rename { .. } => {
+                rename_slot(&mut panel, ui);
+                CardResponse::output(None)
+            }
+            Mode::Delete { id, name } => {
+                let (id, name) = (id.clone(), name.clone());
+                let text = format!(
+                    "Delete {name} from your profiles? Boards that use it keep their copy."
+                );
+                match kit::dialog::confirm(ui.ctx(), delete_id(), "Delete profile", &text, "Delete")
+                {
+                    Some(true) => {
+                        if let Some(library) = &panel.library {
+                            match library.delete(&id) {
+                                Ok(()) => toast::post(
+                                    ui.ctx(),
+                                    Level::Ok,
+                                    format!("Deleted profile {name}"),
+                                    Vec::new(),
+                                ),
+                                Err(error) => toast::post(
+                                    ui.ctx(),
+                                    Level::Error,
+                                    format!("Deleting {name} failed: {error}"),
+                                    Vec::new(),
+                                ),
+                            }
+                        }
+                        panel.refresh();
+                        panel.mode = Mode::Table;
+                    }
+                    Some(false) => panel.mode = Mode::Table,
+                    None => {}
+                }
+                table_card(self, &mut panel, ui, engine, &mut close)
+            }
+            Mode::Table => table_card(self, &mut panel, ui, engine, &mut close),
+        };
+        if !close {
+            self.rules = Some(panel);
+        }
+        response
+    }
+}
+
+/// The table card: header, profile, rule groups, your profiles, footer.
+fn table_card(
+    editor: &mut PcbEditor,
+    panel: &mut RulesPanel,
+    ui: &mut Ui,
+    engine: &Engine,
+    close: &mut bool,
+) -> CardResponse<Operation> {
+    let inspector = Inspector {
+        header: Header::new("constraint", "Design rules", "Board"),
+        subject: panel_id(),
+        footer: true,
+        issues: editor.issue_slot(engine, Inspected::Board),
+    };
+    let typing = panel.typing;
+    let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let mut focused = false;
+    let response = kit::card::card(ui, &inspector, |ui, region| match region {
+        Region::Body => {
+            let (op, any_focus) = body(panel, ui, engine);
+            focused = any_focus;
+            op
+        }
+        Region::Footer => {
+            if kit::primary(ui, "Done", true).clicked() {
+                *close = true;
+            }
+            if ui_kit::button(
+                ui,
+                "Save as profile…",
+                Button::Enabled(panel.library.is_some()),
+            )
+            .on_disabled_hover_text("No user config folder: profiles cannot be saved")
+            .clicked()
+            {
+                panel.mode = Mode::Save(Box::new(save_form(&engine.project().rules)));
+            }
+            None
+        }
+    });
+    if escape && !typing && !focused && matches!(panel.mode, Mode::Table) {
+        *close = true;
+    }
+    panel.typing = focused;
+    response
+}
+
+fn save_form(rules: &ProjectRules) -> SaveForm {
+    let p = &rules.profile.provenance;
+    SaveForm {
+        name: format!("{} copy", rules.profile.name),
+        basis: p.basis,
+        source: p.source.clone(),
+        url: p.url.clone(),
+        date: p.date.clone(),
+        notes: p.notes.clone(),
+        use_it: true,
+        refusal: None,
+        opening: true,
+    }
+}
+
+/// The picker's entries and the board's current one.
+fn picks(
+    panel: &RulesPanel,
+    rules: &ProjectRules,
+) -> (Vec<(Pick, String)>, Pick, Option<RuleProfile>) {
+    let snapshot = &rules.profile;
+    let mut options = Vec::new();
+    let mut current = Pick::Board;
+    let mut differs = None;
+    for p in builtin::all() {
+        let pick = Pick::BuiltIn(p.id.clone());
+        if p.id == snapshot.id {
+            if p == *snapshot {
+                current = pick.clone();
+            } else {
+                differs = Some(p.clone());
+            }
+        }
+        options.push((pick, format!("{} · built-in", p.name)));
+    }
+    for p in panel.user_profiles() {
+        let pick = Pick::User(p.id.clone());
+        if p.id == snapshot.id {
+            if p == snapshot {
+                current = pick.clone();
+            } else {
+                differs = Some(p.clone());
+            }
+        }
+        options.push((pick, p.name.clone()));
+    }
+    if current == Pick::Board {
+        options.insert(0, (Pick::Board, format!("{} · this board", snapshot.name)));
+    } else {
+        differs = None;
+    }
+    (options, current, differs)
+}
+
+fn profile_of(panel: &RulesPanel, pick: &Pick) -> Option<RuleProfile> {
+    match pick {
+        Pick::BuiltIn(id) => builtin::all().into_iter().find(|p| p.id == *id),
+        Pick::User(id) => panel.user_profiles().iter().find(|p| p.id == *id).cloned(),
+        Pick::Board => None,
+    }
+}
+
+/// The table card's body; returns its operation and whether a field has
+/// keyboard focus.
+fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operation>, bool) {
+    let rules = &engine.project().rules;
+    let mut op: Option<(RulesCommand, Origin)> = None;
+    // PROFILE: the picker, provenance, and the overrides with Reset all.
+    kit::section(ui, "pcb-rules-profile", "Profile", true, None, |ui| {
+        let (options, current, differs) = picks(panel, rules);
+        let mut chosen = current.clone();
+        kit::choice_row(ui, "Profile", &mut chosen, &options);
+        if chosen != current
+            && let Some(profile) = profile_of(panel, &chosen)
+        {
+            panel.preview(engine, profile, false);
+        }
+        kit::row(ui, "Basis", |ui| {
+            kit::summary_row(ui, &provenance_line(&rules.profile.provenance), None);
+        });
+        if let Some(library) = differs
+            && kit::summary_row(ui, "Differs from the library version", Some("Review…"))
+        {
+            panel.preview(engine, library, true);
+        }
+        match rules.overrides.len() {
+            0 => {}
+            n => {
+                let text = if n == 1 {
+                    "1 project override".to_owned()
+                } else {
+                    format!("{n} project overrides")
+                };
+                if kit::summary_row(ui, &text, Some("Reset all")) {
+                    op = Some((
+                        RulesCommand::SetProfile {
+                            profile: Box::new(rules.profile.clone()),
+                            keep_overrides: false,
+                        },
+                        Origin::Command,
+                    ));
+                }
+            }
+        }
+    });
+    let p = &rules.profile.provenance;
+    if [&p.source, &p.url, &p.date, &p.notes]
+        .iter()
+        .any(|t| !t.trim().is_empty())
+    {
+        kit::section(
+            ui,
+            "pcb-rules-provenance",
+            "Provenance",
+            false,
+            None,
+            |ui| {
+                for (label, text) in [("Source", &p.source), ("URL", &p.url), ("Date", &p.date)] {
+                    if !text.trim().is_empty() {
+                        kit::value_row(ui, label, text);
+                    }
+                }
+                if !p.notes.trim().is_empty() {
+                    kit::note(ui, &p.notes);
+                }
+            },
+        );
+    }
+    let report = rules::report(rules);
+    let mut focused = false;
+    for (group, title) in GROUPS {
+        let rows: Vec<&RuleRow> = report.rows.iter().filter(|r| r.group == group).collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let section = ("pcb-rules-group", title);
+        let reveal = panel.reveal && panel.focus.is_some_and(|t| t.group() == group);
+        if reveal {
+            let id = ui.make_persistent_id(("section", section));
+            ui.ctx().data_mut(|d| d.insert_persisted(id, true));
+        }
+        let overridden = rows
+            .iter()
+            .filter(|r| rules.override_of(r.key).is_some())
+            .count();
+        let summary = match overridden {
+            0 => format!("{} rules", rows.len()),
+            n => format!("{} rules · {n} overridden", rows.len()),
+        };
+        let shown = kit::summary_section(
+            ui,
+            section,
+            title,
+            group == RuleGroup::Copper,
+            &summary,
+            |ui| group_table(panel, ui, rules, &rows, reveal),
+        );
+        if let Some((edit, any_focus)) = shown {
+            focused |= any_focus;
+            if op.is_none() {
+                op = edit;
+            }
+        }
+    }
+    panel.reveal = false;
+    let mut library_op = None;
+    kit::section(
+        ui,
+        "pcb-rules-library",
+        "Your profiles",
+        true,
+        Some(panel.user_profiles().len()),
+        |ui| {
+            library_op = library_section(panel, ui, engine);
+        },
+    );
+    let op = match op {
+        Some((command, origin)) => {
+            refusal::mark(ui.ctx(), origin);
+            Some(Operation::Rules(command))
+        }
+        None => library_op,
+    };
+    (op, focused)
+}
+
+/// One group's table: Rule · Profile · Value · Reset. Returns the edit a
+/// field or menu committed and whether a field has focus.
+fn group_table(
+    panel: &mut RulesPanel,
+    ui: &mut Ui,
+    rules: &ProjectRules,
+    rows: &[&RuleRow],
+    reveal: bool,
+) -> (Option<(RulesCommand, Origin)>, bool) {
+    let t = Tokens::get();
+    let columns = [
+        kit::TableColumn {
+            title: "Rule",
+            weight: 3.0,
+        },
+        kit::TableColumn {
+            title: "Profile",
+            weight: 1.6,
+        },
+        kit::TableColumn {
+            title: "Value",
+            weight: 1.8,
+        },
+        kit::TableColumn {
+            title: "",
+            weight: 0.9,
+        },
+    ];
+    let focus_key = panel
+        .focus
+        .and_then(RuleTopic::key)
+        .map(RuleKey::normalized);
+    let mut edit: Option<(RulesCommand, Origin)> = None;
+    let mut focused = false;
+    let mut marked: Option<(egui::Response, String)> = None;
+    let mut blurred: Vec<RuleKey> = Vec::new();
+    kit::table(
+        ui,
+        &columns,
+        rows.len(),
+        |ui, index, column| {
+            let Some(row) = rows.get(index) else {
+                return;
+            };
+            let key = row.key.normalized();
+            let overridden = rules.override_of(key).is_some();
+            match column {
+                0 => {
+                    if Some(key) == focus_key {
+                        ui.painter()
+                            .rect_filled(ui.max_rect(), t.radius_sm, t.selected_bg);
+                        if reveal {
+                            ui.scroll_to_rect(ui.max_rect(), Some(Align::Center));
+                        }
+                    }
+                    let ink = if overridden { t.form_ink } else { t.text };
+                    let label = ui.add(
+                        egui::Label::new(RichText::new(sentence(&row.label)).color(ink)).truncate(),
+                    );
+                    label.on_hover_text(format!(
+                        "{} · from {}",
+                        sentence(&row.label),
+                        row.source.describe()
+                    ));
+                }
+                1 => {
+                    ui.add(
+                        egui::Label::new(RichText::new(value_text(row.profile)).color(t.form_dim))
+                            .truncate(),
+                    );
+                }
+                2 => {
+                    if let Some((number, unit, range)) = numeric(key, row.value) {
+                        let mut value = panel.staged.get(&key).copied().unwrap_or(number);
+                        let input =
+                            kit::number_input(ui, &format!("{key:?}"), &mut value, unit, range);
+                        let escaped = input.response.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                        if input.response.has_focus() {
+                            focused = true;
+                            panel.staged.insert(key, value);
+                        } else if escaped {
+                            panel.staged.remove(&key);
+                            panel.errors.remove(&key);
+                        } else if panel.staged.contains_key(&key) {
+                            blurred.push(key);
+                        }
+                        if let Some(message) = input.invalid {
+                            marked = Some((input.response, message));
+                        } else if let Some(message) = panel.errors.get(&key) {
+                            marked = Some((input.response, message.clone()));
+                        }
+                    } else {
+                        let mut value = row.value;
+                        let changed = choice_cell(ui, key, &mut value);
+                        if changed && let Some(command) = commit_for(rules, key, value) {
+                            panel.errors.remove(&key);
+                            edit = Some((command, Origin::Field(field_id(key))));
+                        }
+                    }
+                }
+                _ => {
+                    if overridden
+                        && ui_kit::button(ui, "Reset", Button::Small)
+                            .on_hover_text(format!(
+                                "Back to the profile value, {}",
+                                value_text(row.profile)
+                            ))
+                            .clicked()
+                    {
+                        panel.staged.remove(&key);
+                        panel.errors.remove(&key);
+                        edit = Some((
+                            RulesCommand::ClearOverride { key },
+                            Origin::Field(field_id(key)),
+                        ));
+                    }
+                }
+            }
+        },
+        None,
+    );
+    if let Some((response, message)) = marked {
+        kit::field_error(ui, &response, &message, true);
+    }
+    // A field that lost focus commits its staged value once.
+    for key in blurred {
+        let Some(number) = panel.staged.remove(&key) else {
+            continue;
+        };
+        let like = key.get(&rules.effective());
+        if edit.is_none()
+            && let Some(command) = commit_for(rules, key, with_number(like, number))
+        {
+            panel.errors.remove(&key);
+            edit = Some((command, Origin::Field(field_id(key))));
+        }
+    }
+    (edit, focused)
+}
+
+/// A dropdown cell for a flag, ratio or pad-connection rule.
+fn choice_cell(ui: &mut Ui, key: RuleKey, value: &mut RuleValue) -> bool {
+    let id = ("pcb-rules-choice", key);
+    match *value {
+        RuleValue::Flag(_) => {
+            let options =
+                [true, false].map(|v| (RuleValue::Flag(v), value_text(RuleValue::Flag(v))));
+            kit::dropdown(ui, id, value, &options)
+        }
+        RuleValue::Ratio(current) => {
+            let mut options: Vec<(RuleValue, String)> = [
+                None,
+                Some(6.0),
+                Some(8.0),
+                Some(10.0),
+                Some(12.0),
+                Some(16.0),
+                Some(20.0),
+            ]
+            .into_iter()
+            .map(|r| (RuleValue::Ratio(r), value_text(RuleValue::Ratio(r))))
+            .collect();
+            if !options.iter().any(|(v, _)| same(*v, *value)) {
+                options.push((RuleValue::Ratio(current), value_text(*value)));
+            }
+            kit::dropdown(ui, id, value, &options)
+        }
+        RuleValue::Connection(_) => {
+            let options = [
+                PadConnection::Solid,
+                PadConnection::Thermal,
+                PadConnection::None,
+            ]
+            .map(|c| (RuleValue::Connection(c), connection_label(c).to_owned()));
+            kit::dropdown(ui, id, value, &options)
+        }
+        _ => false,
+    }
+}
+
+/// YOUR PROFILES: the library's profiles, each with a menu, then Import…
+/// and the files that could not be read.
+fn library_section(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    let Some(library) = panel.library.clone() else {
+        kit::hint(ui, "No user config folder: profiles cannot be saved", "");
+        return None;
+    };
+    let profiles = panel.user_profiles().to_vec();
+    if profiles.is_empty() {
+        kit::hint(
+            ui,
+            "Save these rules or import a profile file to add one",
+            &format!("Profiles are kept in {}", library.dir().display()),
+        );
+    }
+    let max = if panel.all_profiles {
+        profiles.len()
+    } else {
+        kit::LIST_MAX_ROWS
+    };
+    let mut chosen: Option<(usize, &'static str)> = None;
+    let shown = kit::list_frame(ui, profiles.len(), max, |ui, index| {
+        let Some(profile) = profiles.get(index) else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.menu_button("…", |ui| {
+                    for action in ["Use for this board…", "Rename…", "Export…", "Delete…"] {
+                        if ui.button(action).clicked() {
+                            chosen = Some((index, action));
+                            ui.close();
+                        }
+                    }
+                });
+                let basis = match profile.provenance.basis {
+                    ProfileBasis::Estimated => "estimated",
+                    ProfileBasis::FabricatorEntered => "fabricator data",
+                };
+                ui.add(
+                    egui::Label::new(RichText::new(format!("{} · {basis}", profile.name)))
+                        .truncate(),
+                )
+                .on_hover_text(provenance_line(&profile.provenance));
+            });
+        });
+    });
+    if shown.show_all {
+        panel.all_profiles = true;
+    }
+    if let Ok(listing) = &panel.listing
+        && !listing.problems.is_empty()
+    {
+        let tip = listing
+            .problems
+            .iter()
+            .map(|p| format!("{}: {}", p.file.display(), p.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let n = listing.problems.len();
+        let text = if n == 1 {
+            "1 profile file could not be read".to_owned()
+        } else {
+            format!("{n} profile files could not be read")
+        };
+        kit::hint(ui, &text, &tip);
+    }
+    if let Err(error) = &panel.listing {
+        kit::hint(ui, "The profile folder could not be read", error);
+    }
+    let busy = panel.job.is_some();
+    kit::actions(ui, |ui| {
+        if ui_kit::button(ui, "Export…", Button::Enabled(!busy))
+            .on_hover_text("Write this board's effective rules to a profile file")
+            .clicked()
+        {
+            let rules = &engine.project().rules;
+            let mut profile = rules.profile.clone();
+            profile.rules = rules.effective();
+            panel.start_export(ui.ctx(), profile);
+        }
+        if ui_kit::button(ui, "Import…", Button::Enabled(!busy)).clicked() {
+            panel.start_import(ui.ctx());
+        }
+    });
+    let (index, action) = chosen?;
+    let profile = profiles.get(index)?.clone();
+    match action {
+        "Use for this board…" => panel.preview(engine, profile, false),
+        "Rename…" => {
+            panel.mode = Mode::Rename {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+                refusal: None,
+            };
+        }
+        "Export…" => panel.start_export(ui.ctx(), profile),
+        _ => {
+            panel.mode = Mode::Delete {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+            };
+        }
+    }
+    None
+}
+
+/// The docked impact review of a profile switch.
+fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    let Mode::Preview(preview) = &mut panel.mode else {
+        return None;
+    };
+    let stale = preview.at != engine.revision();
+    let (summary, groups, blockers) = match &preview.impact {
+        Ok(impact) => (
+            impact_summary(&preview.profile.name, impact),
+            impact_groups(impact),
+            Vec::new(),
+        ),
+        Err(error) => (
+            preview.profile.name.clone(),
+            Vec::new(),
+            vec![ReviewLine {
+                level: Level::Error,
+                title: error.clone(),
+                ack: None,
+                locate: false,
+            }],
+        ),
+    };
+    let apply = format!("Switch to {}", preview.profile.name);
+    let review = ReviewPanel {
+        id: preview_id(),
+        icon: "constraint",
+        title: "Switch rules profile",
+        summary: &summary,
+        stale,
+        blockers: &blockers,
+        after: &[],
+        groups: &groups,
+        apply: &apply,
+        destructive: false,
+    };
+    let overrides = !engine.project().rules.overrides.is_empty();
+    let mut keep = preview.keep_overrides;
+    let provenance = provenance_line(&preview.profile.provenance);
+    let action = review.show_with(ui, &mut [], preview.refusal.as_deref(), |ui| {
+        kit::hint(ui, &provenance, &preview.profile.provenance.notes);
+        if overrides {
+            kit::check_row(ui, "Keep project overrides", &mut keep);
+        }
+    });
+    let profile = preview.profile.clone();
+    if keep != preview.keep_overrides {
+        panel.preview(engine, profile, keep);
+        return None;
+    }
+    match action? {
+        ReviewAction::Cancel => {
+            panel.mode = Mode::Table;
+            None
+        }
+        ReviewAction::Recompute => {
+            panel.preview(engine, profile, keep);
+            None
+        }
+        ReviewAction::CopyReport => {
+            let mut text = summary;
+            for group in &groups {
+                text.push_str(&format!("\n{}:", group.title));
+                for line in &group.lines {
+                    text.push_str(&format!("\n  {line}"));
+                }
+            }
+            ui.ctx().copy_text(text);
+            None
+        }
+        ReviewAction::Apply => {
+            preview.refusal = None;
+            preview.sent = Some(engine.revision());
+            refusal::mark(ui.ctx(), Origin::Dialog(preview_id()));
+            Some(Operation::Rules(RulesCommand::SetProfile {
+                profile: Box::new(profile),
+                keep_overrides: keep,
+            }))
+        }
+        ReviewAction::Acknowledge(_) | ReviewAction::Locate(_) | ReviewAction::LocateAfter(_) => {
+            None
+        }
+    }
+}
+
+/// The docked "Save as profile" dialog: name and provenance; Save writes
+/// the board's effective rules to the library and, when asked, switches
+/// the board to the saved profile.
+fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+    let Mode::Save(form) = &mut panel.mode else {
+        return None;
+    };
+    let blank = form.name.trim().is_empty();
+    let mut dialog = DialogPanel::new(save_id(), "constraint", "Save as profile", "Save");
+    dialog.kind = "Rules";
+    dialog.body_rows = 10.0;
+    dialog.reset_scroll = form.opening;
+    dialog.refusal = form.refusal.as_deref();
+    dialog.primary_disabled = blank.then_some("Enter a name");
+    form.opening = false;
+    let action = dialog.show(ui, |ui| {
+        kit::text_row(ui, "Name", &mut form.name);
+        let bases = [
+            (ProfileBasis::Estimated, "Estimated".to_owned()),
+            (
+                ProfileBasis::FabricatorEntered,
+                "Fabricator data".to_owned(),
+            ),
+        ];
+        kit::choice_row(ui, "Basis", &mut form.basis, &bases);
+        kit::text_row(ui, "Source", &mut form.source);
+        kit::text_row(ui, "URL", &mut form.url);
+        kit::text_row(ui, "Date", &mut form.date);
+        kit::multiline_row(ui, "Notes", &mut form.notes, false);
+        kit::check_row(ui, "Use it for this board", &mut form.use_it);
+        kit::hint(
+            ui,
+            "Fabricator data: numbers you entered from their published capabilities",
+            "",
+        );
+    });
+    match action? {
+        DialogAction::Cancel => {
+            panel.mode = Mode::Table;
+            None
+        }
+        DialogAction::Primary => {
+            let library = panel.library.clone()?;
+            let rules = &engine.project().rules;
+            let profile = RuleProfile {
+                id: "profile".into(),
+                name: form.name.trim().to_owned(),
+                provenance: ProfileProvenance {
+                    origin: ProfileOrigin::User,
+                    basis: form.basis,
+                    source: form.source.trim().to_owned(),
+                    url: form.url.trim().to_owned(),
+                    date: form.date.trim().to_owned(),
+                    notes: form.notes.trim().to_owned(),
+                },
+                rules: rules.effective(),
+            };
+            match library.save_as(&profile, &profile.name) {
+                Ok(stored) => {
+                    let use_it = form.use_it;
+                    toast::post(
+                        ui.ctx(),
+                        Level::Ok,
+                        format!("Saved profile {}", stored.name),
+                        Vec::new(),
+                    );
+                    panel.refresh();
+                    panel.mode = Mode::Table;
+                    use_it.then(|| {
+                        refusal::mark(ui.ctx(), Origin::Dialog(save_id()));
+                        Operation::Rules(RulesCommand::SetProfile {
+                            profile: Box::new(stored),
+                            keep_overrides: false,
+                        })
+                    })
+                }
+                Err(error) => {
+                    form.refusal = Some(sentence(&error.to_string()));
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// The docked Rename dialog for one library profile.
+fn rename_slot(panel: &mut RulesPanel, ui: &mut Ui) {
+    let Mode::Rename { id, name, refusal } = &mut panel.mode else {
+        return;
+    };
+    let blank = name.trim().is_empty();
+    let mut dialog = DialogPanel::new(rename_id(), "constraint", "Rename profile", "Rename");
+    dialog.kind = "Rules";
+    dialog.body_rows = 2.0;
+    dialog.refusal = refusal.as_deref();
+    dialog.primary_disabled = blank.then_some("Enter a name");
+    let action = dialog.show(ui, |ui| {
+        kit::text_row(ui, "Name", name);
+    });
+    match action {
+        Some(DialogAction::Cancel) => panel.mode = Mode::Table,
+        Some(DialogAction::Primary) => {
+            let result = panel
+                .library
+                .as_ref()
+                .map(|library| library.rename(id, name));
+            match result {
+                Some(Ok(_)) | None => {
+                    panel.refresh();
+                    panel.mode = Mode::Table;
+                }
+                Some(Err(error)) => *refusal = Some(sentence(&error.to_string())),
+            }
+        }
+        None => {}
+    }
+}
+
+#[cfg(test)]
+#[path = "rules_panel_tests.rs"]
+mod tests;

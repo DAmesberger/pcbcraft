@@ -2,6 +2,7 @@
 //! thin transport over `pcbcraft_automation::Session`.
 mod firmware;
 mod pinout;
+mod rules_profile;
 mod sample_packages;
 
 use pcbcraft_automation::{Session, lines, mcp, session};
@@ -36,10 +37,15 @@ fn main() -> ExitCode {
 
 /// [`USAGE`] with the slice subcommands that are available.
 fn usage() -> String {
-    [pinout::USAGE, sample_packages::USAGE, firmware::USAGE]
-        .into_iter()
-        .filter(|u| !u.is_empty())
-        .fold(USAGE.to_owned(), |text, line| format!("{text}\n  {line}"))
+    [
+        pinout::USAGE,
+        sample_packages::USAGE,
+        firmware::USAGE,
+        rules_profile::USAGE,
+    ]
+    .into_iter()
+    .filter(|u| !u.is_empty())
+    .fold(USAGE.to_owned(), |text, line| format!("{text}\n  {line}"))
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -130,6 +136,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "pinout" => pinout::run(rest),
         [command, rest @ ..] if command == "sample-packages" => sample_packages::run(rest),
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),
+        [command, rest @ ..] if command == "rules-profile" => rules_profile::run(rest),
         _ => Err(usage().into()),
     }
 }

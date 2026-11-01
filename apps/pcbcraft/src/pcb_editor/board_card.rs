@@ -51,10 +51,12 @@ impl BoardSetup {
 
 impl PcbEditor {
     /// BOARD: size and copper layers, then the finish in one line with
-    /// Setup…, which opens the Board setup dialog.
+    /// Setup…, which opens the Board setup dialog, and the rules profile
+    /// with Rules…, which opens the Design rules panel.
     pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) {
         let mut setup = false;
         let mut classes = false;
+        let mut rules = false;
         kit::section(ui, "pcb-board", "Board", true, None, |ui| {
             kit::value_row(
                 ui,
@@ -73,6 +75,13 @@ impl PcbEditor {
             kit::row(ui, "Finish", |ui| {
                 setup = kit::summary_row(ui, &finish_summary(&project.fabrication), Some("Setup…"));
             });
+            kit::row(ui, "Rules", |ui| {
+                rules = kit::summary_row(
+                    ui,
+                    &super::rules_panel::rules_summary(&project.rules),
+                    Some("Rules…"),
+                );
+            });
             kit::row(ui, "Net classes", |ui| {
                 let count = project.rules.net_classes.len();
                 let summary = match count {
@@ -86,6 +95,9 @@ impl PcbEditor {
         if setup {
             self.open_board_setup(project);
         }
+        if rules {
+            self.open_rules(None);
+        }
         if classes {
             self.open_net_classes(None);
         }
@@ -93,6 +105,7 @@ impl PcbEditor {
 
     pub(super) fn open_board_setup(&mut self, project: &Project) {
         self.net_classes = None;
+        self.rules = None;
         self.setup = Some(BoardSetup::new(project.fabrication));
     }
 

@@ -46,6 +46,8 @@ pub enum FixDialog {
     UpdatePcb,
     UpdateInstances,
     Mapping,
+    /// The Design rules panel at the rule a board finding rests on.
+    DesignRules(crate::pcb_editor::RuleTopic),
 }
 
 /// What an issue's Fix button does. Only issues that a typed command, or a
@@ -105,6 +107,12 @@ pub fn fix(row: &IssueRow) -> Option<Fix> {
         .map(|(_, label, dialog)| Fix::Open {
             label,
             dialog: *dialog,
+        })
+        .or_else(|| {
+            crate::pcb_editor::rule_topic_for(&row.group.code).map(|topic| Fix::Open {
+                label: "Show rule",
+                dialog: FixDialog::DesignRules(topic),
+            })
         })
 }
 
