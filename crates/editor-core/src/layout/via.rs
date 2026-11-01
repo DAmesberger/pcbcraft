@@ -2,6 +2,8 @@
 //! layer change, and the via manufacturing checks (annular ring, drill to
 //! copper, hole to hole). Connectivity through vias lives in
 //! [`BoardCopper`], which treats a through via as copper on every layer.
+use super::copper::CHECK_REACH_MM;
+use super::grid::BoundsGrid;
 use super::{
     BoardCopper, CopperRing, EPS, Error, MAX_CHECK_PAIRS, Result, RouteEditSet, RouteRequest,
     WorldPad, distance, invalid,
@@ -9,7 +11,7 @@ use super::{
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};
 use crate::ids::Id;
-use crate::model::{CopperLayer, Project, Stackup, Track, Via, ViaSpan};
+use crate::model::{CopperLayer, Project, Stackup, Via, ViaSpan};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -269,21 +271,6 @@ fn check_clearance(project: &Project, id: Id) -> Result<()> {
     Ok(())
 }
 
-/// The first via on another net whose clearance rule the track breaks:
-/// the via side of routing's clearance check.
-pub(super) fn track_violates_via<'a>(
-    project: &'a Project,
-    track: &Track,
-    ring: &CopperRing,
-) -> Option<&'a Via> {
-    let layers = project.stackup.layers();
-    project.vias.iter().find(|via| {
-        via.net != track.net
-            && via.on(track.layer, &layers)
-            && ring.violates_clearance(&CopperRing::of_via(via))
-    })
-}
-
 /// The via manufacturing checks over `copper`'s vias: annular ring, drilled
 /// hole to another net's copper on any layer, and hole to hole. Copper
 /// clearance and connectivity through vias are part of
@@ -307,6 +294,29 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
         }
         over
     };
+    // Every other copper shape a drill is checked against, in the order
+    // findings name them (pads, vias, tracks), filed by its bounds.
+    let mut copper_shapes: Vec<(&CopperRing, ObjectRef, &str, Id)> = Vec::new();
+    for (k, pad) in copper.pads().iter().enumerate() {
+        if let Some(ring) = copper.ring(k) {
+            let object = ObjectRef::Pad {
+                instance: pad.instance,
+                pad: pad.pad,
+            };
+            copper_shapes.push((ring, object, "pad", pad.net));
+        }
+    }
+    for (k, via) in vias.iter().enumerate() {
+        if let Some(ring) = copper.via_ring(k) {
+            copper_shapes.push((ring, ObjectRef::Via { id: via.id }, "via", via.net));
+        }
+    }
+    for (track, ring) in tracks.iter().zip(&track_rings) {
+        copper_shapes.push((ring, ObjectRef::Track { id: track.id }, "track", track.net));
+    }
+    let shapes = BoundsGrid::new(copper_shapes.iter().map(|s| s.0.bounds), CHECK_REACH_MM);
+    let holes = BoundsGrid::new(drills.iter().map(|d| d.bounds), CHECK_REACH_MM);
+    let mut near = Vec::new();
     for (i, (via, drill)) in vias.iter().zip(&drills).enumerate() {
         let me = ObjectRef::Via { id: via.id };
         if via.annular_ring() < MIN_ANNULAR_RING_MM - EPS {
@@ -320,40 +330,15 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
                 vec![me],
             ));
         }
-        let pads = copper
-            .pads()
+        let Some(bounds) = drill.bounds else {
+            continue;
+        };
+        shapes.near(&bounds, CHECK_REACH_MM, &mut near);
+        for (ring, object, kind, net) in near
             .iter()
-            .enumerate()
-            .filter(|(_, p)| p.net != via.net)
-            .filter_map(|(k, p)| {
-                Some((
-                    copper.ring(k)?,
-                    ObjectRef::Pad {
-                        instance: p.instance,
-                        pad: p.pad,
-                    },
-                    "pad",
-                    p.net,
-                ))
-            });
-        let others = vias
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.net != via.net)
-            .filter_map(|(k, v)| {
-                Some((
-                    copper.via_ring(k)?,
-                    ObjectRef::Via { id: v.id },
-                    "via",
-                    v.net,
-                ))
-            });
-        let wires = tracks
-            .iter()
-            .zip(&track_rings)
-            .filter(|(t, _)| t.net != via.net)
-            .map(|(t, ring)| (ring, ObjectRef::Track { id: t.id }, "track", t.net));
-        for (ring, object, kind, net) in pads.chain(others).chain(wires) {
+            .filter_map(|k| copper_shapes.get(*k))
+            .filter(|s| s.3 != via.net)
+        {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
@@ -363,13 +348,18 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
                     format!(
                         "A via on {}: drill is within {DRILL_TO_COPPER_MM} mm of a {kind} on {}",
                         project.net_name(via.net),
-                        project.net_name(net)
+                        project.net_name(*net)
                     ),
-                    vec![me, object],
+                    vec![me, *object],
                 ));
             }
         }
-        for (other, other_drill) in vias.iter().zip(&drills).skip(i + 1) {
+        holes.near(&bounds, CHECK_REACH_MM, &mut near);
+        for (other, other_drill) in near
+            .iter()
+            .filter(|j| **j > i)
+            .filter_map(|j| Some((vias.get(*j)?, drills.get(*j)?)))
+        {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }

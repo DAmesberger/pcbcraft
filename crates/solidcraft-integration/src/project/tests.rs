@@ -249,9 +249,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         .into_owned();
     original.save(&path)?;
     let reopened = Native::open(&path)?;
-    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
-    let retained: Vec<Source> =
-        serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
+    let retained = saved_sources(&reopened)?;
     assert_eq!(
         serde_json::to_value(&retained)?,
         serde_json::to_value(&original.sources)?
@@ -818,28 +816,6 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
         + 4.0 * (1.0 * 1.4 * 0.035)
         + (2.0 * 10.0 * 0.4 + 6.0 * 0.25) * 0.035;
     near(volume, expected);
-    Ok(())
-}
-
-#[test]
-fn body_kind_chunks_measure_escaped_names() -> Result<()> {
-    let mut bodies = BTreeMap::new();
-    // Quotes and backslashes serialize at twice their length.
-    for k in 0..3000 {
-        let kind = BodyKind::ALL[k % BodyKind::ALL.len()];
-        bodies.insert(format!("{k:05} \\\"{}", "\\".repeat(20)), kind);
-    }
-    let chunks = kind_chunks(&bodies)?;
-    assert!(chunks.len() > 1);
-    let mut names = 0;
-    for chunk in &chunks {
-        let bytes = serde_json::to_string(chunk)?.len();
-        assert!(bytes <= BODIES_CHUNK_BYTES, "{bytes} bytes");
-        names += chunk.values().map(Vec::len).sum::<usize>();
-    }
-    assert_eq!(names, bodies.len());
-    bodies.insert("x".repeat(BODIES_CHUNK_BYTES), BodyKind::Substrate);
-    assert!(matches!(kind_chunks(&bodies), Err(Error::Invalid(_))));
     Ok(())
 }
 
@@ -1451,9 +1427,7 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
         .into_owned();
     original.save(&path)?;
     let reopened = Native::open(&path)?;
-    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
-    let retained: Vec<Source> =
-        serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
+    let retained = saved_sources(&reopened)?;
     let before = finish(reopened, retained)?;
     // Every generated body keeps its instance's pick, bounds and look.
     let generated = |model: &NativeModel| -> Vec<Geometry> {
@@ -1679,5 +1653,93 @@ fn a_cancelled_build_stops_and_an_uncancelled_one_completes() -> Result<()> {
     assert!(matches!(stopped, Err(Error::Cancelled)));
     let built = build_cancellable(&project, Arc::new(AtomicBool::new(false)))?;
     assert_eq!(native(&built).count(), native(&build(&project)?).count());
+    Ok(())
+}
+
+/// A board of 10,000 vias and 1,500 tracks saves its identity within
+/// Solidcraft's metadata limits, and reopening it finds every pad, track
+/// and via's copper again. 1,500, not the document's 2,000 tracks: five
+/// parameters a track reach Solidcraft's 10,000 parameters a design first
+/// (`identity::tests` records 2,000 tracks and 16,384 vias through a real
+/// save). Slow (a full 10,000-via build):
+/// `cargo test --profile ci -p pcbcraft-solidcraft ten_thousand_vias_and_many_tracks -- --ignored --nocapture`.
+#[test]
+#[ignore = "builds a 10,000-via board"]
+fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
+    let mut project = via_board(10_000)?;
+    let net = project.nets[0].id;
+    let columns = 64;
+    let first = project.vias.len() - 10_000;
+    let mut k = 0usize;
+    while project.tracks.len() < 1_500 {
+        let (Some(a), Some(b)) = (
+            project.vias.get(first + k).map(|v| v.position),
+            project.vias.get(first + k + columns).map(|v| v.position),
+        ) else {
+            return Err(Error::Verification("ran out of vias for tracks".into()));
+        };
+        let id = project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        project.tracks.push(Track {
+            id,
+            net,
+            start: a,
+            end: b,
+            width: 0.15,
+            layer: CopperLayer::Inner(1 + u8::from(k.is_multiple_of(2))),
+            locked: false,
+        });
+        k += 1;
+    }
+    let start = std::time::Instant::now();
+    let model = build(&project)?;
+    eprintln!("built in {:?}", start.elapsed());
+    let temporary = tempfile::tempdir()?;
+    let path = temporary
+        .path()
+        .join("large.solidcraft")
+        .to_string_lossy()
+        .into_owned();
+    model.save(&path)?;
+    let reopened = Native::open(&path)?;
+    let metadata = serde_json::to_string(&reopened.session().doc.metadata)?;
+    eprintln!("metadata {} bytes", metadata.len());
+    let saved = saved_sources(&reopened)?;
+    assert_eq!(
+        serde_json::to_value(&saved)?,
+        serde_json::to_value(&model.sources)?
+    );
+    let start = std::time::Instant::now();
+    let again = finish(reopened, saved)?;
+    eprintln!("reopened in {:?}", start.elapsed());
+    let count = |m: &NativeModel, f: &dyn Fn(&Source) -> bool| {
+        let picks: BTreeSet<u64> = m
+            .sources
+            .iter()
+            .filter(|s| f(s))
+            .map(|s| s.pick_id)
+            .collect();
+        let copper = m
+            .geometry
+            .iter()
+            .filter(|g| !g.kind.is_appearance() && g.item.is_some_and(|i| picks.contains(&i)))
+            .count();
+        (picks.len(), copper)
+    };
+    for (what, f) in [
+        (
+            "vias",
+            &(|s: &Source| s.via.is_some()) as &dyn Fn(&Source) -> bool,
+        ),
+        ("tracks", &|s: &Source| s.track.is_some()),
+        ("pads", &|s: &Source| s.pad.is_some()),
+    ] {
+        let (was, now) = (count(&model, f), count(&again, f));
+        assert_eq!(was, now, "{what}");
+        assert!(was.0 > 0 && was.1 >= was.0, "{what}: {was:?}");
+    }
+    assert_eq!(count(&again, &|s| s.via.is_some()).0, project.vias.len());
+    assert_eq!(count(&again, &|s| s.track.is_some()).0, 1_500);
     Ok(())
 }
