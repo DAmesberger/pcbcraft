@@ -8,7 +8,7 @@
 //! Findings live in Issues; a refused field edit shows under its field.
 use crate::kit;
 use crate::kit::card::{Inspector, IssueSlot, Region};
-use crate::place_palette::{Mode as PaletteMode, PaletteAction, PlacePalette};
+use crate::place_palette::{ChooseAction, Mode as PaletteMode, PaletteAction, PlacePalette};
 use crate::refusal::{self, Origin};
 use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
@@ -66,10 +66,6 @@ const PLACE_PITCH: [f64; 2] = [15.0, 10.0];
 enum Subject {
     /// A docked update review.
     Review,
-    /// The palette choosing a Part for instances.
-    Assign,
-    /// Resolve parts.
-    Resolve,
     /// The Place tool: the COMPONENT preview.
     Place,
     Instance(Id),
@@ -277,6 +273,57 @@ pub type NewPartRequest = (
 );
 
 impl SchematicEditor {
+    /// Whether a docked dialog takes the subject slot: Choose part.
+    pub fn dialog_open(&self) -> bool {
+        self.palette.choosing() && !self.update.is_open()
+    }
+
+    /// The docked dialog in the subject slot `ui` offers (Choose part);
+    /// returns the operation it issues.
+    pub fn dialog(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
+        match self.palette.choose_dialog(ui, engine)? {
+            ChooseAction::Assign { instances, part } => {
+                Some(resolve_parts::assign(instances, Some(part)))
+            }
+            ChooseAction::UpdateAndAssign {
+                instances,
+                part,
+                target,
+            } => self.stage_update(
+                engine,
+                resolve_parts::update_and_assign(instances, part, target),
+            ),
+            ChooseAction::NewPart(request) => {
+                self.resolve.close();
+                self.new_part = Some(request);
+                None
+            }
+            ChooseAction::Cancel => None,
+        }
+    }
+
+    /// The Resolve parts window, while open. Choose… opens the docked
+    /// dialog and the window steps aside until the dialog closes, then
+    /// shows the updated table; Select on sheet keeps it open.
+    fn resolve_window(&mut self, ctx: &egui::Context, engine: &Engine) {
+        if self.palette.choosing() {
+            return;
+        }
+        match self.resolve.window(ctx, engine) {
+            Some(ResolveAction::Choose { query, instances }) => {
+                self.palette.open_assign(query, instances);
+            }
+            Some(ResolveAction::Select(id)) => {
+                self.select(Some(id), None, engine.project());
+            }
+            Some(ResolveAction::NewPart { component, values }) => {
+                self.resolve.close();
+                self.new_part = Some((component.id, values));
+            }
+            Some(ResolveAction::Close) | None => {}
+        }
+    }
+
     /// New Part… from Resolve parts or Choose…, once.
     pub fn take_new_part(&mut self) -> Option<NewPartRequest> {
         self.new_part.take()
@@ -513,15 +560,10 @@ impl SchematicEditor {
         if self.update.is_open() {
             return Subject::Review;
         }
-        if self.palette.is_open() {
-            return if matches!(self.palette.mode(), PaletteMode::Assign { .. }) {
-                Subject::Assign
-            } else {
-                Subject::Place
-            };
-        }
-        if self.resolve.is_open() {
-            return Subject::Resolve;
+        // Choose part docks as a dialog in the subject slot and Resolve
+        // parts is a window, so neither is a subject of the card.
+        if self.palette.is_open() && !self.palette.choosing() {
+            return Subject::Place;
         }
         if let Some(id) = self.selected.filter(|id| project.instance(*id).is_some()) {
             return Subject::Instance(id);
@@ -544,8 +586,6 @@ impl SchematicEditor {
         let project = engine.project();
         match self.subject(project) {
             Subject::Review => Header::new("component", "Review change", "Review"),
-            Subject::Assign => Header::new("component", "Choose part", "Library"),
-            Subject::Resolve => Header::new("component", "Resolve parts", "Purchasing"),
             Subject::Place => Header::new("component", "Place component", "Library"),
             Subject::Instance(id) => {
                 let title = project.instance(id).map_or_else(String::new, |instance| {
@@ -828,29 +868,6 @@ impl SchematicEditor {
         }
         match self.subject(project) {
             Subject::Review => None,
-            Subject::Assign => {
-                if let Some(request) = self.palette.preview(ui, engine) {
-                    self.palette.close();
-                    self.new_part = Some(request);
-                }
-                None
-            }
-            Subject::Resolve => {
-                match self.resolve.show(ui, engine) {
-                    Some(ResolveAction::Choose { query, instances }) => {
-                        self.palette.open_assign(query, instances);
-                    }
-                    Some(ResolveAction::Select(id)) => {
-                        self.resolve.close();
-                        self.select(Some(id), None, project);
-                    }
-                    Some(ResolveAction::NewPart { component, values }) => {
-                        self.new_part = Some((component.id, values));
-                    }
-                    Some(ResolveAction::Close) | None => {}
-                }
-                None
-            }
             Subject::Place => {
                 if self.palette.is_open() {
                     let _ = self.palette.preview(ui, engine);
@@ -925,6 +942,7 @@ impl SchematicEditor {
 
     pub fn canvas(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         self.refresh_connectivity(engine);
+        self.resolve_window(ui.ctx(), engine);
         let project = engine.project();
         let t = Tokens::get();
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());

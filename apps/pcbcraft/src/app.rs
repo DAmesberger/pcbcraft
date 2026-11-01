@@ -580,6 +580,29 @@ impl App {
             Workspace::Pcb => self.pcb.inspector(ui, &self.engine),
         };
         self.apply(&ui.ctx().clone(), Origin::Command, operation);
+        self.open_new_part();
+    }
+
+    /// Whether the active workspace docks a dialog in the subject slot
+    /// instead of its Properties card.
+    fn dialog_open(&self) -> bool {
+        matches!(self.workspace, Workspace::Schematic) && self.schematic.dialog_open()
+    }
+
+    /// The docked dialog of the active workspace; it marks its own origin,
+    /// so a refusal returns to its refusal row.
+    fn dialog(&mut self, ui: &mut egui::Ui) {
+        let operation = match self.workspace {
+            Workspace::Schematic => self.schematic.dialog(ui, &self.engine),
+            Workspace::Part | Workspace::Pcb => None,
+        };
+        self.apply(&ui.ctx().clone(), Origin::Command, operation);
+        self.open_new_part();
+    }
+
+    /// New Part… from the schematic opens the Part dialog; its return link
+    /// comes back to the instance.
+    fn open_new_part(&mut self) {
         if let Some((component, values)) = self.schematic.take_new_part() {
             self.clear_error();
             // The Part dialog returns to the instance the request came from.

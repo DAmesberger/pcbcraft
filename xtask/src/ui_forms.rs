@@ -66,7 +66,6 @@ const LEGACY_MESSAGES: &[(&str, usize)] = &[
     ("part_editor/symbol_props.rs", 1),
     ("pcb_editor/board_card.rs", 1),
     ("place_palette.rs", 2),
-    ("resolve_parts.rs", 5),
     ("schematic_editor/instance_card.rs", 1),
     ("update_preview.rs", 3),
 ];

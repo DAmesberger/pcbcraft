@@ -339,6 +339,18 @@ impl App {
     /// card (docs/sidebar-ia.md, "Layout").
     fn column(&mut self, ctx: &egui::Context, rect: Rect) {
         let column = kit::card::column(rect, self.issues.expanded());
+        // A docked dialog takes the subject slot; the Issues bar stays.
+        if self.dialog_open() {
+            shell::column_card(
+                ctx,
+                "properties",
+                column.subject,
+                shell::COLUMN_CARD_INSET,
+                |ui| self.dialog(ui),
+            );
+            self.issues_column(ctx, column);
+            return;
+        }
         let header = match self.workspace {
             Workspace::Part => self.part.header(&self.engine),
             Workspace::Schematic => self.schematic.header(&self.engine),
@@ -382,6 +394,11 @@ impl App {
             }
             self.apply(ctx, crate::refusal::Origin::Command, card.output);
         }
+        self.issues_column(ctx, column);
+    }
+
+    /// The Issues card under the subject slot, always shown.
+    fn issues_column(&mut self, ctx: &egui::Context, column: kit::card::Column) {
         let selection = self.selection();
         let request = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
             self.issues
