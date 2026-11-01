@@ -33,8 +33,18 @@ fn the_showcase_is_a_routed_four_layer_board_with_tented_and_open_vias() -> Resu
     assert!(project.vias.len() >= 10);
     assert!(project.vias.iter().any(|v| v.tented));
     assert!(project.vias.iter().filter(|v| !v.tented).count() >= 3);
-    // Wide ground traces stand in for a pour.
+    // Wide ground traces under a bottom pour and an inner ground plane.
     let gnd = net(&engine, "GND")?;
+    let pours: Vec<_> = project.fills.iter().map(|f| (f.net, f.layer)).collect();
+    assert_eq!(
+        pours,
+        [
+            (Some(gnd), CopperLayer::Bottom),
+            (Some(gnd), CopperLayer::Inner(1))
+        ]
+    );
+    // Stitching vias on the ground traces tie the pours together.
+    assert!(project.vias.iter().filter(|v| v.net == gnd).count() >= 15);
     assert!(
         project
             .tracks

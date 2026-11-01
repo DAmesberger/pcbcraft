@@ -106,9 +106,10 @@ impl ViewLayer {
             BodyKind::MaskBottom => Self::Mask(Layer::Bottom),
             BodyKind::MaskCap => Self::Mask(side),
             BodyKind::Silkscreen => Self::Silkscreen(side),
-            BodyKind::CopperTrack | BodyKind::PadCopper | BodyKind::PadFinish => {
-                layer.map_or(Self::Vias, Self::Copper)
-            }
+            BodyKind::CopperTrack
+            | BodyKind::PadCopper
+            | BodyKind::PadFinish
+            | BodyKind::FillCopper => layer.map_or(Self::Vias, Self::Copper),
             BodyKind::ViaCopper | BodyKind::ViaBore => Self::Vias,
             BodyKind::PackageBody
             | BodyKind::ChipResistor

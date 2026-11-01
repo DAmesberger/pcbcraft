@@ -34,6 +34,11 @@ use solidcraft_ui_egui::{
 use std::collections::BTreeSet;
 
 mod board_card;
+mod fill_card;
+mod fill_paint;
+#[cfg(test)]
+mod fill_tests;
+mod fill_tool;
 pub(crate) mod net_classes;
 mod placement_card;
 #[cfg(test)]
@@ -56,6 +61,8 @@ enum Tool {
     Route,
     /// Place a through via on a net.
     Via,
+    /// Draw a copper fill's outline.
+    Fill,
 }
 
 /// Most inner copper layers a stackup has (six-layer boards).
@@ -264,6 +271,7 @@ enum Inspected {
     Unplaced(Id),
     Track(Id),
     Via(Id),
+    Fill(Id),
     Review,
 }
 
@@ -358,6 +366,20 @@ pub struct PcbEditor {
     net_classes: Option<net_classes::NetClassesCard>,
     /// The issue slot of the last inspected subject, per document revision.
     issue_slot: Option<((u64, usize, Inspected), Option<IssueSlot>)>,
+    /// The selected copper fill.
+    fill: Option<Id>,
+    /// The fills' display copper, kept while their copper is unchanged.
+    fill_meshes: fill_paint::FillCache,
+    /// Fills whose copper is stale, per revision.
+    stale_fills: BTreeSet<Id>,
+    /// How Layout shows fill copper.
+    fill_display: fill_paint::FillDisplay,
+    /// The Fill tool's outline in progress and settings.
+    fill_draw: fill_tool::FillDraw,
+    /// A handle of the selected fill's outline being dragged.
+    fill_drag: Option<fill_tool::HandleDrag>,
+    /// The Fill card's staged edit.
+    fill_card: Option<fill_card::FillDraft>,
 }
 
 impl Default for PcbEditor {
@@ -414,6 +436,13 @@ impl Default for PcbEditor {
             connections_all: false,
             net_classes: None,
             issue_slot: None,
+            fill: None,
+            fill_meshes: Default::default(),
+            stale_fills: BTreeSet::new(),
+            fill_display: Default::default(),
+            fill_draw: Default::default(),
+            fill_drag: None,
+            fill_card: None,
         }
     }
 }
@@ -499,6 +528,8 @@ impl PcbEditor {
         self.also.clear();
         self.track = track;
         self.via = None;
+        self.fill = None;
+        self.fill_drag = None;
         self.discard_staged();
     }
 
@@ -514,6 +545,7 @@ impl PcbEditor {
         self.tool = Tool::Select;
         self.route_start = None;
         self.pending_via = None;
+        self.fill_draw.clear();
         if let Some(net) = self.route_lit.take()
             && self.highlighted == Some(net)
         {
@@ -577,6 +609,20 @@ impl PcbEditor {
             {
                 self.via = None;
             }
+            self.fill_meshes.update(engine.project());
+            self.stale_fills = layout::fill::status(engine.project())
+                .into_iter()
+                .filter(|s| s.stale)
+                .map(|s| s.fill)
+                .collect();
+            self.fill_drag = None;
+            self.fill_draw.clear();
+            if self
+                .fill
+                .is_some_and(|id| engine.project().fill(id).is_none())
+            {
+                self.fill = None;
+            }
             self.copper = BoardCopper::of(engine.project());
             self.airwires = self.copper.airwires(&engine.project().tracks);
             self.issues = self.copper.checks(engine.project());
@@ -605,7 +651,10 @@ impl PcbEditor {
                 self.route_start = None;
             }
         }
-        let key = (engine.revision(), self.instance.or(self.track).or(self.via));
+        let key = (
+            engine.revision(),
+            self.instance.or(self.track).or(self.via).or(self.fill),
+        );
         if self.property_key != Some(key) {
             // A new revision or subject: the fields show the document again.
             self.sent.clear();
@@ -774,6 +823,18 @@ impl PcbEditor {
                             .tip("Place a through via on a net; switch to Layout to place"),
                     ],
                 },
+                Group {
+                    label: "Fills",
+                    tools: vec![
+                        Button::new("fill", "polygon", "Fill")
+                            .enabled(!self.view_3d)
+                            .selected(self.tool == Tool::Fill)
+                            .tip("Draw a copper fill outline; switch to Layout to draw"),
+                        Button::new("refill", "update", "Refill")
+                            .enabled(!engine.project().fills.is_empty())
+                            .tip("Compute the copper of every fill from the board as it is now"),
+                    ],
+                },
             ],
             notice: None,
         }
@@ -801,6 +862,18 @@ impl PcbEditor {
                 self.end_route();
                 self.tool = Tool::Via;
             }
+            "fill" => {
+                self.end_route();
+                self.tool = Tool::Fill;
+                if self.fill_draw.net.is_none() {
+                    self.fill_draw.net = self.highlighted;
+                }
+            }
+            "refill" if !engine.project().fills.is_empty() => {
+                return Some(Operation::Fill(layout::fill::FillCommand::Refill {
+                    target: layout::fill::RefillTarget::All,
+                }));
+            }
             _ => {}
         }
         None
@@ -823,6 +896,9 @@ impl PcbEditor {
             .filter(|id| project.vias.iter().any(|v| v.id == *id))
         {
             return Inspected::Via(id);
+        }
+        if let Some(id) = self.fill.filter(|id| project.fill(*id).is_some()) {
+            return Inspected::Fill(id);
         }
         match self
             .track
@@ -880,6 +956,17 @@ impl PcbEditor {
                     .map_or("", |v| project.net_name(v.net));
                 Header::new("circle", format!("Via · {net}"), "Via")
             }
+            Inspected::Fill(id) => {
+                let title = project.fill(id).map_or_else(String::new, |f| {
+                    let net = f.net.map_or("No net", |n| project.net_name(n));
+                    if f.name.is_empty() {
+                        format!("Fill · {net} · {}", f.layer.name())
+                    } else {
+                        format!("{} · {net}", f.name)
+                    }
+                });
+                Header::new("polygon", title, "Fill")
+            }
             Inspected::Board => Header::new("plane", "Board", "Board"),
         }
     }
@@ -894,7 +981,7 @@ impl PcbEditor {
             subject
         } else if self.setup.is_some() || self.net_classes.is_some() {
             Subject::Dialog
-        } else if matches!(self.tool, Tool::Route | Tool::Via) && !self.view_3d {
+        } else if matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill) && !self.view_3d {
             Subject::Tool
         } else {
             Subject::Properties
@@ -910,7 +997,10 @@ impl PcbEditor {
             subject: egui::Id::new(("pcb-card", inspected)),
             footer: matches!(
                 inspected,
-                Inspected::Placement(_) | Inspected::Track(_) | Inspected::Via(_)
+                Inspected::Placement(_)
+                    | Inspected::Track(_)
+                    | Inspected::Via(_)
+                    | Inspected::Fill(_)
             ),
             issues: self.issue_slot(engine, inspected),
         }
@@ -929,6 +1019,9 @@ impl PcbEditor {
             }
             Subject::Tool if self.tool == Tool::Via => {
                 CardResponse::output(self.via_tool_card(ui, engine.project()))
+            }
+            Subject::Tool if self.tool == Tool::Fill => {
+                CardResponse::output(self.fill_tool_card(ui, engine.project()))
             }
             Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
             Subject::Dialog if self.setup.is_none() => self.net_classes_card(ui, engine),
@@ -1008,6 +1101,10 @@ impl PcbEditor {
                 let via = project.vias.iter().find(|v| v.id == id)?;
                 self.via_section(ui, project, via)
             }
+            Inspected::Fill(id) => {
+                let fill = project.fill(id)?;
+                self.fill_section(ui, project, engine.revision(), fill)
+            }
             Inspected::Board | Inspected::Review => {
                 self.board_section(ui, project);
                 None
@@ -1032,6 +1129,7 @@ impl PcbEditor {
                 let via = project.vias.iter().find(|v| v.id == id)?;
                 via_card::via_footer(ui, via)
             }
+            Inspected::Fill(id) => fill_card::fill_footer(ui, project.fill(id)?),
             _ => None,
         }
     }
@@ -1097,8 +1195,14 @@ impl PcbEditor {
         let cursor = pointer.map(world);
         // Strokes and text pick within a few pixels.
         let tolerance = f64::from(4.0 / scale);
-        let mut operation = None;
-        if response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        // The Fill tool's keys: Enter may close its outline into a fill.
+        let (closed, fill_escaped) = if response.hovered() {
+            self.fill_keys(ui)
+        } else {
+            (None, false)
+        };
+        let mut operation = closed;
+        if response.hovered() && !fill_escaped && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.end_route();
             self.cancel_drag();
             self.discard_staged();
@@ -1113,7 +1217,41 @@ impl PcbEditor {
             let reverse = ui.input(|i| i.modifiers.shift);
             self.change_layer(cursor.map(|at| self.route_point(at, scale)), reverse);
         }
+        // A handle of the selected fill's outline drags the handle.
         if self.tool == Tool::Select
+            && !self.update.is_open()
+            && response.drag_started_by(PointerButton::Primary)
+            && let Some(start) = ui.input(|i| i.pointer.press_origin()).or(pointer)
+            && let Some((fill, handle)) = self.fill_handle_at(project, view, start)
+        {
+            self.fill_drag = Some(fill_tool::HandleDrag {
+                fill,
+                handle,
+                to: world(start),
+            });
+        }
+        if let (Some(drag), Some(at)) = (&mut self.fill_drag, cursor) {
+            drag.to = snap(at);
+        }
+        if response.drag_stopped_by(PointerButton::Primary)
+            && let Some(drag) = self.fill_drag.take()
+            && let Some(fill) = project.fill(drag.fill)
+            && let Some(outline) = drag.preview(fill)
+        {
+            operation = PcbEditor::fill_outline_edit(fill, outline);
+        }
+        // Double-clicking a vertex of the selected fill removes it.
+        if self.tool == Tool::Select
+            && response.double_clicked()
+            && let Some(at) = pointer
+            && let Some((id, fill_tool::Handle::Vertex(i))) = self.fill_handle_at(project, view, at)
+            && let Some(fill) = project.fill(id)
+            && let Some(outline) = fill_tool::without_vertex(&fill.outline, i)
+        {
+            operation = PcbEditor::fill_outline_edit(fill, outline);
+        }
+        if self.tool == Tool::Select
+            && self.fill_drag.is_none()
             && !self.update.is_open()
             && response.drag_started_by(PointerButton::Primary)
         {
@@ -1155,6 +1293,8 @@ impl PcbEditor {
         {
             if self.tool == Tool::Via {
                 operation = self.place_via(project, at, scale);
+            } else if self.tool == Tool::Fill {
+                operation = self.fill_click(view, at);
             } else if self.tool == Tool::Route {
                 let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
                 let destination = snapped
@@ -1201,12 +1341,16 @@ impl PcbEditor {
                         self.route_start = Some(destination);
                     }
                 }
-            } else {
+            } else if self.fill_handle_at(project, view, screen(at)).is_none() {
+                // A click on a handle of the selected fill keeps it
+                // selected, so a double-click there can remove the vertex.
                 self.select_at(project, at, tolerance, metric);
             }
         }
         self.refresh_drag_airwires(engine);
         self.paint_board(&painter, view, project);
+        self.paint_fill_handles(&painter, view, project);
+        self.paint_fill_draw(&painter, view, cursor);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
             crate::update_preview::paint_board(
@@ -1283,6 +1427,7 @@ impl PcbEditor {
                 match self.tool {
                     Tool::Route => "Route (V changes layer)",
                     Tool::Via => "Via",
+                    Tool::Fill => "Fill (A arcs, Enter closes)",
                     Tool::Select => "Select / move",
                 },
                 self.layer.name(),
@@ -1486,9 +1631,13 @@ impl PcbEditor {
             layers.copper_layer(track.layer) && layout::track_contains(track, at, 0.0)
         }) {
             self.set_selection(None, Some(track.id), Some(track.net));
+        } else if let Some(instance) = self.pick_instance(project, at, tolerance, metric) {
+            self.set_selection(Some(instance), None, None);
+        } else if let Some(fill) = self.pick_fill(project, at, tolerance) {
+            let (id, net) = (fill.id, fill.net);
+            self.select_fill(id, net);
         } else {
-            let instance = self.pick_instance(project, at, tolerance, metric);
-            self.set_selection(instance, None, None);
+            self.set_selection(None, None, None);
         }
     }
 
@@ -1596,6 +1745,7 @@ impl PcbEditor {
         let routing_inner =
             (self.tool == Tool::Route && self.layer.side().is_none()).then_some(self.layer);
         for layer in &inner {
+            self.paint_fills(painter, view, project, *layer, INNER_SHADE);
             self.paint_tracks(painter, view, project, *layer, INNER_SHADE);
         }
         let assembly = |l: BoardDrawing| matches!(l, BoardDrawing::Assembly(_));
@@ -1603,6 +1753,7 @@ impl PcbEditor {
         self.paint_copper(painter, view, project, None, false);
         self.paint_copper(painter, view, project, Some(near), false);
         if let Some(layer) = routing_inner {
+            self.paint_fills(painter, view, project, layer, 1.0);
             self.paint_tracks(painter, view, project, layer, 1.0);
         }
         self.paint_vias(painter, view, project, near);
@@ -1720,6 +1871,7 @@ impl PcbEditor {
             if !self.layers.copper(layer) {
                 return;
             }
+            self.paint_fills(painter, view, project, layer.into(), factor);
             self.paint_tracks(painter, view, project, layer.into(), factor);
         }
         for pad in &self.board_pads {
@@ -2195,6 +2347,8 @@ fn issue_slot_of(engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
             },
             "on this via".to_owned(),
         ),
+        // Findings do not name fills yet: the slot stays empty.
+        Inspected::Fill(_) => return None,
     };
     let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues { scope }) else {
         return None;

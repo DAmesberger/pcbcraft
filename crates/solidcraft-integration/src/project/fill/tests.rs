@@ -1,0 +1,237 @@
+use super::super::{NativeModel, build};
+use crate::material::BodyKind;
+use crate::scene::Geometry;
+use crate::{Error, Result};
+use pcbcraft_core::model::fill::{FilledCopper, FilledRegion};
+use pcbcraft_core::{CopperLayer, Engine, Id, Point, Project};
+
+fn showcase() -> Result<Project> {
+    Ok(Engine::showcase()
+        .map_err(|e| Error::Verification(e.to_string()))?
+        .project()
+        .clone())
+}
+
+/// A counter-clockwise rectangle.
+fn rect(lo: Point, hi: Point) -> Vec<Point> {
+    vec![lo, [hi[0], lo[1]], hi, [lo[0], hi[1]]]
+}
+
+/// A clockwise circle of `n` points.
+fn hole(center: Point, radius: f64, n: usize) -> Vec<Point> {
+    (0..n)
+        .rev()
+        .map(|k| {
+            let a = std::f64::consts::TAU * k as f64 / n as f64;
+            [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
+        })
+        .collect()
+}
+
+fn copper(regions: Vec<FilledRegion>) -> FilledCopper {
+    FilledCopper {
+        key: "test".into(),
+        regions,
+        joins: vec![],
+        removed_islands: 0,
+    }
+}
+
+/// The showcase pour on `layer`.
+fn pour(project: &mut Project, layer: CopperLayer) -> Result<&mut pcbcraft_core::Fill> {
+    project
+        .fills
+        .iter_mut()
+        .find(|f| f.layer == layer)
+        .ok_or_else(|| Error::Verification(format!("no pour on {}", layer.name())))
+}
+
+/// The copper bodies of fill `fill`: one per region, all of its source.
+fn fill_bodies(model: &NativeModel, fill: Id) -> Result<Vec<&Geometry>> {
+    let source = model
+        .sources
+        .iter()
+        .find(|s| s.fill == Some(fill))
+        .ok_or_else(|| Error::Verification("no fill source".into()))?;
+    Ok(model
+        .geometry
+        .iter()
+        .filter(|g| g.item == Some(source.pick_id) && g.kind == BodyKind::FillCopper)
+        .collect())
+}
+
+/// The bounds and total volume of `bodies`.
+fn extent(bodies: &[&Geometry]) -> ([f64; 3], [f64; 3], f64) {
+    bodies.iter().fold(
+        ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3], 0.0),
+        |(lo, hi, v), g| {
+            (
+                std::array::from_fn(|k| lo[k].min(g.min[k])),
+                std::array::from_fn(|k| hi[k].max(g.max[k])),
+                v + g.volume,
+            )
+        },
+    )
+}
+
+fn near(actual: f64, expected: f64, tolerance: f64) {
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "{actual} != {expected}"
+    );
+}
+
+/// A bottom pour of two regions (one with two holes) and an inner plane:
+/// each is one saved copper body on its layer, as thick as its foil and
+/// as large as its regions, its source naming the fill, net and layer.
+/// The inner plane is cut from the laminate; the bottom pour wears a
+/// display-only mask cap opened at its holes.
+#[test]
+fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
+    let plain = showcase()?;
+    let unfilled = build(&plain)?;
+    assert!(
+        unfilled
+            .geometry
+            .iter()
+            .all(|g| g.kind != BodyKind::FillCopper),
+        "unfilled pours build no copper"
+    );
+    let mut project = plain.clone();
+    let bottom = pour(&mut project, CopperLayer::Bottom)?;
+    let bottom_id = bottom.id;
+    bottom.computed = Some(copper(vec![
+        FilledRegion {
+            outer: rect([30.0, 1.0], [40.0, 4.0]),
+            holes: vec![hole([32.0, 2.5], 0.5, 48), hole([36.0, 2.5], 0.5, 48)],
+        },
+        FilledRegion {
+            outer: rect([30.0, 4.5], [34.0, 6.0]),
+            holes: vec![],
+        },
+    ]));
+    let inner = pour(&mut project, CopperLayer::Inner(1))?;
+    let inner_id = inner.id;
+    inner.computed = Some(copper(vec![FilledRegion {
+        outer: rect([30.0, 1.0], [40.0, 4.0]),
+        holes: vec![],
+    }]));
+    let model = build(&project)?;
+    let stackup = &project.stackup;
+    let thickness = |layer| {
+        stackup
+            .index(layer)
+            .and_then(|i| stackup.copper.get(i))
+            .map(|c| c.thickness_um / 1000.0)
+            .ok_or_else(|| Error::Verification("foil".into()))
+    };
+    let t_bottom = thickness(CopperLayer::Bottom)?;
+    let t_inner = thickness(CopperLayer::Inner(1))?;
+
+    let bodies = fill_bodies(&model, bottom_id)?;
+    assert_eq!(bodies.len(), 2, "one body per region");
+    assert!(bodies.iter().all(|g| g.layer == Some(CopperLayer::Bottom)));
+    let (lo, hi, volume) = extent(&bodies);
+    // Inscribed 48-gons: their area is (n/2)·r²·sin(2π/n).
+    let disc = 24.0 * 0.25 * (std::f64::consts::TAU / 48.0).sin();
+    let area = 30.0 - 2.0 * disc + 6.0;
+    near(volume, area * t_bottom, 1e-6);
+    near(hi[2], 0.0, 1e-9);
+    near(lo[2], -t_bottom, 1e-9);
+    near(lo[0], 30.0, 1e-9);
+    near(hi[0], 40.0, 1e-9);
+
+    let plane = fill_bodies(&model, inner_id)?;
+    assert_eq!(plane.len(), 1);
+    assert!(plane.iter().all(|g| g.layer == Some(CopperLayer::Inner(1))));
+    let (lo, hi, volume) = extent(&plane);
+    near(volume, 30.0 * t_inner, 1e-6);
+    let span = stackup
+        .copper_span(CopperLayer::Inner(1))
+        .ok_or_else(|| Error::Verification("inner span".into()))?;
+    near(lo[2], span.0, 1e-9);
+    near(hi[2], span.1, 1e-9);
+
+    let source = model
+        .sources
+        .iter()
+        .find(|s| s.fill == Some(bottom_id))
+        .ok_or_else(|| Error::Verification("source".into()))?;
+    let gnd = project.fills.first().and_then(|f| f.net);
+    assert_eq!(source.net, gnd);
+    assert_eq!(source.layer, Some(CopperLayer::Bottom));
+    assert!(source.track.is_none() && source.via.is_none() && source.instance.is_none());
+
+    // The laminate lost exactly the inner plane's volume.
+    let substrate = |m: &NativeModel| -> f64 {
+        m.geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::Substrate)
+            .map(|g| g.volume)
+            .sum()
+    };
+    near(
+        substrate(&unfilled) - substrate(&model),
+        30.0 * t_inner,
+        1e-6,
+    );
+
+    // The bottom pour's mask cap: display-only, picked as the fill, one
+    // per region, below the board.
+    let caps: Vec<&Geometry> = model
+        .geometry
+        .iter()
+        .filter(|g| g.item == Some(source.pick_id) && g.kind == BodyKind::MaskCap)
+        .collect();
+    assert_eq!(caps.len(), 2);
+    assert!(
+        caps.iter()
+            .all(|g| g.kind.is_appearance() && g.max[2] <= 1e-9)
+    );
+    assert!(caps.iter().all(|g| g.min[2] < -t_bottom));
+    Ok(())
+}
+
+/// A pour of many pad clearances builds as one body: one sketch command
+/// and one extrusion, not a command or a Boolean per hole.
+/// Prints the build time with and without it.
+#[test]
+fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
+    let plain = showcase()?;
+    let start = std::time::Instant::now();
+    build(&plain)?;
+    let base = start.elapsed();
+    let mut project = plain.clone();
+    let holes: Vec<Vec<Point>> = (0..20)
+        .flat_map(|i| (0..10).map(move |j| (i, j)))
+        .map(|(i, j)| {
+            hole(
+                [2.0 + 2.0 * f64::from(i), 2.0 + 2.4 * f64::from(j)],
+                0.45,
+                32,
+            )
+        })
+        .collect();
+    let count = holes.len();
+    let bottom = pour(&mut project, CopperLayer::Bottom)?;
+    let id = bottom.id;
+    bottom.computed = Some(copper(vec![FilledRegion {
+        outer: rect([1.0, 1.0], [43.0, 27.0]),
+        holes,
+    }]));
+    let start = std::time::Instant::now();
+    let model = build(&project)?;
+    let filled = start.elapsed();
+    eprintln!("showcase build {base:?}; with a {count}-hole pour {filled:?}");
+    let bodies = fill_bodies(&model, id)?;
+    assert_eq!(bodies.len(), 1);
+    let (_, _, volume) = extent(&bodies);
+    let disc = 16.0 * 0.45 * 0.45 * (std::f64::consts::TAU / 32.0).sin();
+    let area = 42.0 * 26.0 - count as f64 * disc;
+    let (z0, z1) = project
+        .stackup
+        .copper_span(CopperLayer::Bottom)
+        .ok_or_else(|| Error::Verification("bottom span".into()))?;
+    near(volume, area * (z1 - z0), 1e-4);
+    Ok(())
+}

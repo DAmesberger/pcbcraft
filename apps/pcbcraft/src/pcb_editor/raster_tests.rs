@@ -218,6 +218,8 @@ fn corner_board(layer: CopperLayer, paths: &[&[Point]], width: f64) -> Result<En
     project.tracks.clear();
     project.vias.clear();
     project.placements.clear();
+    // The showcase's pours would cover the inner layer's tracks.
+    project.fills.clear();
     let net = project.nets.first().map(|n| n.id).ok_or("a net")?;
     for path in paths {
         for leg in path.windows(2) {

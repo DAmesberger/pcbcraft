@@ -53,6 +53,9 @@ pub struct Source {
     pub track: Option<Id>,
     /// The board via a via body came from.
     pub via: Option<Id>,
+    /// The copper fill a fill body came from ([`fill`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<Id>,
     pub net: Option<Id>,
     pub layer: Option<CopperLayer>,
     pub label: String,
@@ -955,6 +958,7 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
                 pad: None,
                 track: None,
                 via: None,
+                fill: None,
                 net: None,
                 layer: Some(placement.layer.into()),
                 label: format!("{} model", instance.designator),
@@ -1022,6 +1026,7 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
             pad: None,
             track: None,
             via: None,
+            fill: None,
             net: None,
             layer: Some(placement.layer.into()),
             label,
@@ -1169,6 +1174,7 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
             pad: Some(local.id),
             track: None,
             via: None,
+            fill: None,
             net: pad.placed.net,
             layer: Some(pad.placed.layer.into()),
             label: format!("{} pad {}", pad.designator, local.number),
@@ -1229,6 +1235,7 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
             pad: None,
             track: Some(track.id),
             via: None,
+            fill: None,
             net: Some(track.net),
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),
@@ -1238,6 +1245,7 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
     }
     let display = appearance::Board::of(project);
     let marks = vias(&mut b, project, board, &mut sources)?;
+    let fills = fill::build(&mut b, project, board, &mut sources)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
@@ -1250,6 +1258,9 @@ fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Resul
         .collect();
     let layers = appearance::board(&display, &lands, &paths, &marks, &parts)?;
     model.geometry.extend(layers);
+    model
+        .geometry
+        .extend(fill::films(&display, &lands, &marks, &fills)?);
     model.geometry.extend(crate::silkscreen::films(
         project,
         &crate::silkscreen::Legend {
@@ -1374,6 +1385,7 @@ fn vias(
             pad: None,
             track: None,
             via: Some(via.id),
+            fill: None,
             net: Some(via.net),
             layer: None,
             label: format!("Via {}", via.id),
@@ -1531,6 +1543,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
     b.finish(vec![])
 }
 
+mod fill;
 #[cfg(test)]
 mod realism_tests;
 #[cfg(test)]

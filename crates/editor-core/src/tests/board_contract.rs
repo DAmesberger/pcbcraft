@@ -61,16 +61,27 @@ fn default_rules_equal_the_former_hardcoded_limits() {
 
 #[test]
 fn existing_documents_do_not_mention_the_board_fields() -> Fallible<()> {
+    // The showcase carries pours since the fill views (task fillview), so
+    // it names `fills`; it still names no other board field, and a
+    // document without fills does not name `fills` either.
     let text = serde_json::to_string(&Engine::showcase()?.to_file())?;
     for key in [
         "\"rules\"",
         "\"board_shape\"",
         "\"edge_constraints\"",
-        "\"fills\"",
         "\"keepouts\"",
     ] {
         assert!(!text.contains(key), "{key}");
     }
+    assert!(text.contains("\"fills\""));
+    let mut engine = Engine::showcase()?;
+    let mut project = engine.project().clone();
+    project.fills.clear();
+    let mut file = engine.to_file();
+    file.project = project;
+    engine = Engine::from_file(file)?;
+    let text = serde_json::to_string(&engine.to_file())?;
+    assert!(!text.contains("\"fills\""));
     Ok(())
 }
 

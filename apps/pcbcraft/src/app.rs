@@ -820,6 +820,12 @@ impl App {
                         self.pcb.select_via(via, source.net);
                     }
                 }
+                // A fill body selects the fill (and lights its net).
+                Some(source) if source.fill.is_some() => {
+                    if let Some(fill) = source.fill {
+                        self.pcb.select_fill(fill, source.net);
+                    }
+                }
                 Some(source) => {
                     let (instance, track, net) = (source.instance, source.track, source.net);
                     self.pcb.set_selection(instance, track, net);

@@ -405,6 +405,20 @@ impl Engine {
         for command in layout::showcase::commands(engine.project())? {
             engine.apply(engine.revision, Operation::Layout(command))?;
         }
+        for command in layout::showcase::fill_commands(engine.project())? {
+            engine.apply(engine.revision, Operation::Fill(command))?;
+        }
+        // The pours' copper, where this build computes fills; a build
+        // without fill computation keeps them unfilled (stale).
+        match engine.apply(
+            engine.revision,
+            Operation::Fill(layout::fill::FillCommand::Refill {
+                target: layout::fill::RefillTarget::All,
+            }),
+        ) {
+            Ok(_) | Err(Error::Unsupported(_)) => {}
+            Err(e) => return Err(e),
+        }
         engine.undo.clear();
         engine.redo.clear();
         Ok(engine)

@@ -103,6 +103,7 @@ Sections are listed in order. Every card ends with its issue slot.
 | PCB, Board | BOARD (size · copper layers; finish summary + Board setup…). | Routing → tool card; layers and view → popover; fabrication form → Board setup dialog; Checks → Issues. |
 | PCB, placement | PLACEMENT (position pair with inline "Must stay inside the board", rotation, side, locked); CONNECTIONS (pad · net · routed, capped). Footer: Rotate 90°, Flip, Schematic ›. | — |
 | PCB, track | Header "Track · N22". TRACK (net, layer, width through typed layout commands, length, ends, locked). Footer: Delete track. | Route-tool fields. |
+| PCB, fill | Header "Fill · GND · Bottom" (or its name). FILL (name, net, layer, priority, copper state, locked); CLEARANCE (clearance and minimum width: rules or set here); CONNECTIONS (SMD, through-hole and via styles; thermals: rules or set here); STYLE (solid or hatched copper, island removal). One `fill.edit` per commit. Footer: Refill, Delete fill. The issue slot stays empty until findings name fills. | — |
 | PCB, unplaced instance | Header "R21 · Not placed"; one row + Update PCB…. | — |
 
 Elsewhere: SVG import and Arrange results become an error toast and a disabled reason. Library sources stays a `ui_kit::Window`. Recovery messages become Info toasts.
@@ -112,6 +113,7 @@ Elsewhere: SVG import and Arrange results become an error toast and a disabled r
 The tool card replaces Properties while a tool other than Select is armed. Esc or Select restores Properties with the previous selection. The Issues bar stays.
 
 - **Route:** Width, Layer, Net (from the first pad), one hint line. The routing state is the pill "Routing N22 ×".
+- **Fill:** Net, Layer, Priority, Arcs (A); footer Cancel and Finish. Clicks add corners; with arcs, a click sets an arc's end and the next a point it passes through; the first point, Enter or Finish closes the outline as one `fill.add`.
 - **Polygon:** Stroke, Corner radius, Fill, Points (read-only); footer Cancel and Finish.
 - **Pad:** Kind, Side, Size. **Rectangle, Pin and Wire** get their own cards.
 - "Highlight complete net" and "Show airwires" move to the view popover. 3D shows no 2D tool card.
@@ -296,3 +298,6 @@ Paths are relative to `apps/pcbcraft/src`. Each editor's `subject_slot` and card
 | `pcb_editor/placement_card.rs` | W3: Placement (live position pair, rotation, side, lock), Connections, the Rotate 90° / Flip / Schematic › footer, and the not-placed state |
 | `pcb_editor/track_card.rs` | W3: Track (net, live layer and width through `layout.track_set`, length, ends, lock) and the Delete track footer |
 | `pcb_editor/route_card.rs` | W3: the Route tool card (width, layer, net); the route in progress is a canvas pill |
+| `pcb_editor/fill_card.rs` | the Fill card (fill, clearance, connections, style), its Refill / Delete fill footer and the view popover's Fills row |
+| `pcb_editor/fill_tool.rs` | the Fill tool card and outline drawing, and the selected fill's outline handles (drag a vertex or midpoint, double-click a vertex to remove it) |
+| `pcb_editor/fill_paint.rs` | fill copper in Layout: solid, hatched or outlines only, under its layer's tracks; fill picking |

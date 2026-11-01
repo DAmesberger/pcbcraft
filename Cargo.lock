@@ -2778,6 +2778,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "solidcraft-ui-egui",
+ "spade",
  "tempfile",
 ]
 
