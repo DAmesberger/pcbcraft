@@ -39,6 +39,8 @@ impl PcbEditor {
             self.errors.0.remove(&Field::TrackWidth);
         }
         let mut action: Option<(LayoutCommand, Option<Field>)> = None;
+        let mut class_action = None;
+        let mut open_classes = false;
         let mut focused = false;
         kit::section(ui, "pcb-track", "Track", true, None, |ui| {
             kit::row(ui, "Net", |ui| {
@@ -50,6 +52,9 @@ impl PcbEditor {
                     self.highlighted = Some(track.net);
                 }
             });
+            let class = super::net_classes::class_row(ui, project, track.net, true);
+            class_action = class.operation;
+            open_classes = class.edit;
             let mut layer = track.layer;
             let layer_row = ui
                 .add_enabled_ui(!locked, |ui| {
@@ -119,6 +124,12 @@ impl PcbEditor {
             ));
         }
         self.editing = focused.then_some(Field::TrackWidth);
+        if open_classes {
+            self.open_net_classes(pcbcraft_core::layout::net_class(project, track.net));
+        }
+        if class_action.is_some() {
+            return class_action;
+        }
         let (command, field) = action?;
         let origin = field.map_or(Origin::Command, |f| Origin::Field(f.id()));
         refusal::mark(ui.ctx(), origin);

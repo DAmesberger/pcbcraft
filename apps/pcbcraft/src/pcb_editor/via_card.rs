@@ -21,6 +21,8 @@ impl PcbEditor {
         via: &Via,
     ) -> Option<Operation> {
         let mut action = None;
+        let mut class_action = None;
+        let mut open_classes = false;
         kit::section(ui, "pcb-via", "Via", true, None, |ui| {
             kit::row(ui, "Net", |ui| {
                 if ui_kit::button(ui, project.net_name(via.net), Button::Small)
@@ -31,6 +33,9 @@ impl PcbEditor {
                     self.highlighted = Some(via.net);
                 }
             });
+            let class = super::net_classes::class_row(ui, project, via.net, true);
+            class_action = class.operation;
+            open_classes = class.edit;
             let mm = |v: f64| format!("{} mm", kit::number_text((v * 1000.0).round() / 1000.0));
             kit::value_row(
                 ui,
@@ -60,6 +65,12 @@ impl PcbEditor {
                 action = Some(LayoutCommand::SetViaLock { id: via.id, locked });
             }
         });
+        if open_classes {
+            self.open_net_classes(pcbcraft_core::layout::net_class(project, via.net));
+        }
+        if class_action.is_some() {
+            return class_action;
+        }
         let command = action?;
         refusal::mark(ui.ctx(), Origin::Command);
         Some(Operation::Layout(command))
@@ -73,7 +84,8 @@ impl PcbEditor {
             name: "Via",
             key: "",
             hint: "Click a track end, pad or point to place a via; Esc ends",
-            tip: "Places a through via (0.3 mm drill, 0.6 mm pad) on the net of the pad or \
+            tip: "Places a through via (its net class's drill and pad, else the design \
+                  rules' 0.3 mm drill, 0.6 mm pad by default) on the net of the pad or \
                   track under the pointer, else on the chosen net. It snaps to a track end \
                   within reach, else to the 0.5 mm grid. A via the clearance rules refuse \
                   is not added.",
