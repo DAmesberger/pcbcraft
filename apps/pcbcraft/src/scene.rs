@@ -3,7 +3,10 @@
 //! electronics objects. Selection and highlight recolour cached meshes; only a
 //! changed project or package preview rebuilds geometry. The worker also
 //! packs the GPU vertices ([`crate::model_scene`]), so the UI thread never
-//! walks a mesh.
+//! walks a mesh. It keeps the last board model it made, and a board edited
+//! only in values (a part, track or via moved, a size changed) updates it
+//! in place ([`pcbcraft_solidcraft::project::update`]) instead of building
+//! the board again.
 use crate::model_scene::{self, ModelScene};
 use crate::viewport::Viewport;
 use pcbcraft_core::library::PackageDefinition;
@@ -56,7 +59,8 @@ struct Built {
 
 /// One background thread building native models. Only the newest queued
 /// request is built; older ones are skipped, and a board build a newer
-/// request replaced stops at its next native command.
+/// request replaced stops at its next native command. The last board
+/// model stays with the thread, for the next board request to update.
 struct Worker {
     sender: Sender<Job>,
     receiver: Receiver<Built>,
@@ -67,22 +71,44 @@ impl Worker {
         let (sender, jobs) = mpsc::channel::<Job>();
         let (results, receiver) = mpsc::channel();
         std::thread::spawn(move || {
+            let mut board: Option<pcbcraft_solidcraft::project::NativeModel> = None;
             while let Ok(mut job) = jobs.recv() {
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
                 let (ticket, result) = match job {
-                    Job::Project(ticket, project, cancel) => (
-                        ticket,
-                        pcbcraft_solidcraft::project::build_cancellable(&project, cancel),
-                    ),
+                    Job::Project(ticket, project, cancel) => {
+                        let made = match board.take() {
+                            Some(previous) => pcbcraft_solidcraft::project::update(
+                                previous,
+                                &project,
+                                Some(cancel),
+                            )
+                            .map(|(model, _)| model),
+                            None => {
+                                pcbcraft_solidcraft::project::build_cancellable(&project, cancel)
+                            }
+                        };
+                        // The scene shares the meshes; the model stays for
+                        // the next edit to update.
+                        let result = made.map_err(|e| e.to_string()).and_then(|model| {
+                            let scene = model_scene::build(model.geometry.clone());
+                            let sources = model.sources.clone();
+                            board = Some(model);
+                            scene.map(|scene| (scene, sources))
+                        });
+                        (ticket, result)
+                    }
                     Job::Package(ticket, package) => {
-                        (ticket, pcbcraft_solidcraft::project::preview(&package))
+                        let result = pcbcraft_solidcraft::project::preview(&package)
+                            .map_err(|e| e.to_string())
+                            .and_then(|model| {
+                                model_scene::build(model.geometry)
+                                    .map(|scene| (scene, model.sources))
+                            });
+                        (ticket, result)
                     }
                 };
-                let result = result.map_err(|e| e.to_string()).and_then(|model| {
-                    model_scene::build(model.geometry).map(|scene| (scene, model.sources))
-                });
                 if results.send(Built { ticket, result }).is_err() {
                     break;
                 }
@@ -101,7 +127,7 @@ pub enum Status {
 }
 
 /// How the canvas shows a requested model.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Display {
     /// Nothing of the requested kind was shown yet: a status message only.
     Blank,
@@ -423,6 +449,55 @@ mod tests {
         let key = ModelKey::package(&package);
         package.envelope[0] += 1.0;
         assert_ne!(key, ModelKey::package(&package));
+        Ok(())
+    }
+
+    /// The worker keeps the board it built and makes the next board from
+    /// it: an edited board's model is the edited board's.
+    #[test]
+    fn worker_makes_an_edited_board_from_the_last_one() -> Result<(), Box<dyn std::error::Error>> {
+        let worker = Worker::start(egui::Context::default());
+        let project = Engine::demo()?.project().clone();
+        let mut edited = project.clone();
+        let moved = edited.placements[0].instance;
+        edited.placements[0].position[0] += 2.0;
+        let wait = |ticket: u64| -> Result<Built, Box<dyn std::error::Error>> {
+            loop {
+                let built = worker
+                    .receiver
+                    .recv_timeout(std::time::Duration::from_secs(60))?;
+                if built.ticket == ticket {
+                    return Ok(built);
+                }
+            }
+        };
+        let flag = || Arc::new(AtomicBool::new(false));
+        worker
+            .sender
+            .send(Job::Project(1, Arc::new(project), flag()))?;
+        let first = wait(1)?.result?;
+        worker
+            .sender
+            .send(Job::Project(2, Arc::new(edited.clone()), flag()))?;
+        let (scene, sources) = wait(2)?.result?;
+        let fresh = pcbcraft_solidcraft::project::build(&edited)?;
+        assert_eq!(sources.len(), first.1.len());
+        assert_eq!(scene.geometry.len(), fresh.geometry.len());
+        // The moved part's body is where the edited board has it.
+        let pick = sources
+            .iter()
+            .find(|s| s.instance == Some(moved) && s.pad.is_none())
+            .map(|s| s.pick_id)
+            .ok_or("moved part")?;
+        let min_x = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
+            geometry
+                .iter()
+                .filter(|g| g.item == Some(pick) && !g.kind.is_appearance())
+                .map(|g| g.min[0])
+                .fold(f64::MAX, f64::min)
+        };
+        assert!((min_x(&scene.geometry) - min_x(&fresh.geometry)).abs() < 1e-6);
+        assert!((min_x(&scene.geometry) - min_x(&first.0.geometry) - 2.0).abs() < 1e-6);
         Ok(())
     }
 

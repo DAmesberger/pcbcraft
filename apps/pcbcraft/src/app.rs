@@ -6,6 +6,7 @@
 //! background threads and reports back with the input it was made from.
 mod browser;
 mod chrome;
+mod open_timing;
 
 use crate::file_ui::{self, Effect, FileUi};
 use crate::kit::messages::Messages;
@@ -63,6 +64,8 @@ pub struct App {
     closing: bool,
     /// Input time of the current frame, for status messages.
     now: f64,
+    /// Time from opening the PCB 3D view to its first frame.
+    open_timing: open_timing::OpenTiming,
 }
 
 impl App {
@@ -104,6 +107,7 @@ impl App {
             pending_import: None,
             closing: false,
             now: 0.0,
+            open_timing: open_timing::OpenTiming::default(),
         })
     }
 
@@ -625,11 +629,15 @@ impl App {
             return;
         };
         let display = self.scene.display(&key);
-        let note = match self.scene.status() {
-            crate::scene::Status::Failed(error) => error.clone(),
-            _ => "Updating 3D model…".into(),
+        if self.workspace == Workspace::Pcb {
+            self.open_timing.drew(display);
+        }
+        let failed = match self.scene.status() {
+            crate::scene::Status::Failed(error) => Some(error.clone()),
+            _ => None,
         };
         if display == Display::Blank {
+            let note = failed.unwrap_or_else(|| "Preparing 3D model…".into());
             ui.centered_and_justified(|ui| ui.label(note));
             return;
         }
@@ -656,15 +664,10 @@ impl App {
             self.scene.viewport.show(ui)
         };
         if display == Display::Stale {
-            // The last model stays up while a newer one builds; picks on it
-            // could name objects that no longer exist, so they are ignored.
-            ui.put(
-                egui::Rect::from_center_size(
-                    area.center_top() + egui::vec2(0.0, 24.0),
-                    egui::vec2(area.width(), 20.0),
-                ),
-                egui::Label::new(note),
-            );
+            // The last model stays up while a newer one builds, under a
+            // small chip at the top right; picks on it could name objects
+            // that no longer exist, so they are ignored.
+            updating_chip(ui, area, failed.as_deref());
             return;
         }
         if let Some(pick) = pick {
@@ -724,6 +727,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
+        let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
+        open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
         self.scene.receive();
         self.file_effects(&ctx);
         self.library_sources(&ctx);
@@ -744,7 +749,38 @@ impl eframe::App for App {
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);
         self.request_model(&ctx);
+        if self.open_timing.pending() {
+            ctx.request_repaint();
+        }
     }
+}
+
+/// The chip over a 3D view showing its last model while a newer one is
+/// prepared (or failed: the error, the last model still shown).
+fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let text = failed.unwrap_or("Updating");
+    let width = if failed.is_some() {
+        (area.width() - 2.0 * t.space_8).min(480.0)
+    } else {
+        ui.painter()
+            .layout_no_wrap(
+                text.to_owned(),
+                egui::FontId::proportional(t.font_small),
+                t.text_dim,
+            )
+            .size()
+            .x
+            + t.font_small
+            + 3.0 * t.space_8
+    };
+    let rect = egui::Rect::from_min_size(
+        area.right_top() + egui::vec2(-width - t.space_8, t.space_8),
+        egui::vec2(width, t.control_height),
+    );
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    let level = failed.map(|_| crate::kit::severity::Level::Error);
+    crate::kit::status_chip(&mut child, level, text);
 }
 
 /// Follow the operating system's light or dark appearance, like Solidcraft's

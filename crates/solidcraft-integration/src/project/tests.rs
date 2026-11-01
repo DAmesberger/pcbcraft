@@ -1522,7 +1522,7 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
 /// The showcase on 4 layers with `count` through vias on a 1.27 mm grid
 /// beside its parts, and 200 inner tracks from vias spread over the grid
 /// (a few hundred pads and tracks with the showcase's own).
-fn via_board(count: usize) -> Result<Project> {
+pub(super) fn via_board(count: usize) -> Result<Project> {
     let mut project = Engine::showcase()
         .map_err(|error| Error::Verification(error.to_string()))?
         .project()
