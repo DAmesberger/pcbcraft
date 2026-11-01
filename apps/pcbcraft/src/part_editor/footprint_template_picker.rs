@@ -1,14 +1,27 @@
-//! "New from template" in the Footprint tab (slice F5): pick a family,
-//! review its prefilled form, and send one
-//! `library.footprint_from_template`, so the result is an ordinary
-//! editable sketch with named parameters. The form edits the template's
-//! expressions as text; the core and the evaluator check them, and a
-//! refused template changes nothing. While the form is open the canvas
-//! shows a ghost of the pads it would build (the same pure build, on an
-//! empty copy), and the form warns when their count differs from the
-//! package's terminals.
+//! The Footprint tab's two command dialogs, docked in the subject slot
+//! (docs/sidebar-ia.md, "Dialogs and reviews"):
+//!
+//! - **New footprint from template** (slice F5): pick a family, review its
+//!   prefilled form and send one `library.footprint_from_template`, so the
+//!   result is an ordinary editable sketch with named parameters. The form
+//!   edits the template's expressions as text; the core and the evaluator
+//!   check them, and a refused template changes nothing. While it is open
+//!   the canvas shows a ghost of the pads it would build (the same pure
+//!   build, on an empty copy). On a footprint that already has content the
+//!   primary is "Replace footprint" (`replace: true`, slice C3): the clear
+//!   and the build are one atomic command and one undo step.
+//! - **Assign pads by number**: the changes `library.assign_terminals`
+//!   would make, then one confirmed command.
+//!
+//! Each dialog stays open until the engine answers: a refusal comes back
+//! to its refusal row (`refusal::Origin::Dialog`), a success closes it with
+//! a toast that offers Undo. Findings are never suppressed while a dialog
+//! is open; the Issues bar keeps counting.
 use super::PartEditor;
-use crate::kit::{self, Tone};
+use crate::kit::severity::Level;
+use crate::kit::toast::{ToastAction, post};
+use crate::kit::{self, DialogPanel, Tone, dialog::DialogAction, dialog::PrimaryKind};
+use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::library::footprint_edit::{self, AssignRule, TerminalChange};
 use pcbcraft_core::library::footprint_source::{Expr, NumberingScheme};
@@ -18,7 +31,16 @@ use pcbcraft_core::library::templates::footprint_family::{
 use pcbcraft_core::library::{FootprintDefinition, PackageDefinition, Pad, PadKind};
 use pcbcraft_core::{DefinitionId, LibraryCommand, Operation};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+
+/// The template dialog's panel id (also its refusal origin).
+pub const TEMPLATE_DIALOG: &str = "footprint-template-dialog";
+/// The Assign dialog's panel id (also its refusal origin).
+pub const ASSIGN_DIALOG: &str = "footprint-assign-dialog";
+/// Frames a submitted dialog waits for the engine's answer before it is
+/// usable again (the app may drop an operation while a file is busy).
+const ANSWER_FRAMES: u64 = 3;
+/// Why a primary waits for the working copy.
+const WAIT_STORED: &str = "Wait until the last edit is stored";
 
 /// The ribbon tool that opens the picker.
 pub const TOOL: &str = "footprint-template";
@@ -30,9 +52,58 @@ pub struct TemplatePicker {
     /// The pads the form would build, for the canvas ghost: rebuilt only
     /// when the form or the package changes.
     preview: Option<Preview>,
-    /// The terminal changes "Assign by number" would make, shown before
-    /// they are confirmed.
+    /// The open Assign dialog: the terminal changes "Assign by number"
+    /// would make, shown before they are confirmed.
     pub assign: Option<Vec<TerminalChange>>,
+    /// The open dialog was drawn before (its body starts at the top once).
+    shown: bool,
+    /// A submitted operation waiting for the engine's answer.
+    submitted: Option<Submitted>,
+    /// The engine's refusal of the last submit, in shown wording.
+    pub refusal: Option<String>,
+}
+
+/// A dialog operation sent to the engine: the footprint it was made
+/// against and the frame it was sent in.
+#[derive(Clone, Debug)]
+struct Submitted {
+    before: FootprintDefinition,
+    frame: u64,
+}
+
+/// What became of a submitted dialog operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// Nothing yet.
+    Waiting,
+    /// The footprint changed: the operation was applied.
+    Applied,
+    /// The engine refused it, in shown wording.
+    Refused(String),
+    /// No answer came (the operation was dropped); the dialog is usable
+    /// again.
+    Lost,
+}
+
+/// The answer to a dialog operation sent against `before` in `sent`: a
+/// refusal handed back to `id` wins, then a changed footprint.
+pub fn answer(
+    ctx: &egui::Context,
+    id: egui::Id,
+    before: &FootprintDefinition,
+    sent: u64,
+    now: Option<&FootprintDefinition>,
+) -> Answer {
+    if let Some(why) = refusal::claim(ctx, Origin::Dialog(id)) {
+        return Answer::Refused(why);
+    }
+    if now != Some(before) {
+        return Answer::Applied;
+    }
+    if ctx.cumulative_frame_nr() > sent.saturating_add(ANSWER_FRAMES) {
+        return Answer::Lost;
+    }
+    Answer::Waiting
 }
 
 /// A template built on an empty copy of the draft.
@@ -46,12 +117,72 @@ struct Preview {
 impl TemplatePicker {
     /// Open the form for `kind`, prefilled from the package.
     pub fn open(&mut self, kind: TemplateKind, package: &PackageDefinition) {
+        self.assign = None;
         self.form = Some(FootprintTemplate::defaults(kind, package));
+        self.reset();
     }
 
     pub fn close(&mut self) {
         self.form = None;
         self.preview = None;
+        self.reset();
+    }
+
+    /// Open the Assign dialog on `changes` (closing the template form).
+    pub fn open_assign(&mut self, changes: Vec<TerminalChange>) {
+        self.close();
+        self.assign = Some(changes);
+    }
+
+    pub fn close_assign(&mut self) {
+        self.assign = None;
+        self.reset();
+    }
+
+    pub fn is_assigning(&self) -> bool {
+        self.assign.is_some()
+    }
+
+    /// Whether an operation is waiting for the engine's answer.
+    pub fn is_waiting(&self) -> bool {
+        self.submitted.is_some()
+    }
+
+    fn reset(&mut self) {
+        self.shown = false;
+        self.submitted = None;
+        self.refusal = None;
+    }
+
+    /// Record a submit against `before`, sent in frame `frame`.
+    fn submit(&mut self, before: FootprintDefinition, frame: u64) {
+        self.submitted = Some(Submitted { before, frame });
+        self.refusal = None;
+    }
+
+    /// Settle a submitted operation; `Some(true)` once it was applied.
+    fn settle(
+        &mut self,
+        ctx: &egui::Context,
+        id: egui::Id,
+        now: Option<&FootprintDefinition>,
+    ) -> bool {
+        let Some(sent) = &self.submitted else {
+            return false;
+        };
+        match answer(ctx, id, &sent.before, sent.frame, now) {
+            Answer::Waiting => false,
+            Answer::Applied => true,
+            Answer::Refused(why) => {
+                self.submitted = None;
+                self.refusal = Some(why);
+                false
+            }
+            Answer::Lost => {
+                self.submitted = None;
+                false
+            }
+        }
     }
 
     pub fn is_open(&self) -> bool {
@@ -98,45 +229,71 @@ fn preview_pads(
         .map_err(|e| e.to_string())
 }
 
-/// A warning when the pads that land terminals differ in number from the
-/// package's terminals.
-pub fn count_warning(pads: &[Pad], package: &PackageDefinition) -> Option<String> {
-    let lands = pads
-        .iter()
+/// The pads that land terminals.
+fn landing(pads: &[Pad]) -> usize {
+    pads.iter()
         .filter(|p| matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough))
-        .count();
+        .count()
+}
+
+/// A one-line warning when the pads that land terminals differ in number
+/// from the package's terminals.
+pub fn count_warning(pads: &[Pad], package: &PackageDefinition) -> Option<String> {
+    let lands = landing(pads);
     let terminals = package.terminals.len();
-    (lands != terminals).then(|| {
-        format!(
-            "This builds {lands} pads but the package has {terminals} terminals; pads without a terminal block publishing. Change the counts or the package."
-        )
-    })
+    (lands != terminals)
+        .then(|| format!("{lands} pads for {terminals} terminals: spares block publishing"))
 }
 
-/// A sourced footprint reset to an empty explicit one in the working copy:
-/// no source, pads, polarity or role-solved graphics; authored graphics
-/// stay. Sent as one `library.edit`, so it is one undo step and the
-/// stored pads never disagree with a source.
-pub fn cleared(footprint: &FootprintDefinition) -> FootprintDefinition {
-    let mut next = footprint.clone();
-    let roles: Vec<_> = next
-        .source
-        .as_deref()
-        .map(|s| s.graphics.iter().map(|g| g.id).collect())
-        .unwrap_or_default();
-    next.graphics.retain(|g| !roles.contains(&g.id));
-    next.source = None;
-    next.pads.clear();
-    next.polarity = None;
-    next
+/// The footer's one line: what Build gives. Build leaves pads without a
+/// package terminal, so the line says they are assigned afterwards.
+pub fn build_status(pads: &[Pad], _package: &PackageDefinition) -> String {
+    match landing(pads) {
+        1 => "Builds 1 pad; assign it to a terminal afterwards".to_owned(),
+        n => format!("Builds {n} pads; assign them to terminals afterwards"),
+    }
 }
 
-/// The one operation that builds `template` into footprint `draft`.
-pub fn request(draft: DefinitionId, template: FootprintTemplate) -> Operation {
+/// The one operation that builds `template` into footprint `draft`;
+/// `replace` drops the draft's current content in the same atomic step.
+pub fn request(draft: DefinitionId, template: FootprintTemplate, replace: bool) -> Operation {
     Operation::Library(LibraryCommand::FootprintFromTemplate {
         draft,
         template: Box::new(template),
+        replace,
     })
+}
+
+/// The Assign dialog's one operation.
+pub fn assign_request(draft: DefinitionId) -> Operation {
+    Operation::Library(LibraryCommand::AssignTerminals {
+        draft,
+        rule: AssignRule::ByPackageDesignation,
+        confirm: true,
+    })
+}
+
+/// The changes Assign by number would make to `footprint`, previewed by
+/// the core's pure rule (nothing is inferred without confirming them).
+pub fn assign_preview(
+    footprint: &FootprintDefinition,
+    package: &PackageDefinition,
+) -> Vec<TerminalChange> {
+    footprint_edit::assign_terminals(footprint, package, &AssignRule::ByPackageDesignation)
+        .map(|(_, changes)| changes)
+        .unwrap_or_default()
+}
+
+/// Copper pads of a sketched footprint that land no package terminal yet.
+pub fn unassigned(footprint: &FootprintDefinition) -> usize {
+    if footprint.source.is_none() {
+        return 0;
+    }
+    footprint
+        .pads
+        .iter()
+        .filter(|p| p.terminal.is_none() && matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough))
+        .count()
 }
 
 /// The family a package most likely wants: two terminals are a chip,
@@ -271,7 +428,11 @@ fn form(ui: &mut Ui, template: &mut FootprintTemplate) {
                     expr_row(ui, "Via drill", &mut v.drill, LEN);
                 }
             }
-            kit::note(ui, "The exposed pad's terminal is left for you to choose.");
+            kit::hint(
+                ui,
+                "You choose the exposed pad's terminal afterwards",
+                "Assign by number lands the numbered pads; the exposed pad's terminal is an explicit choice",
+            );
         }
         FootprintTemplate::PinHeader(t) => {
             expr_row(ui, "Pitch", &mut t.pitch, LEN);
@@ -303,7 +464,7 @@ fn form(ui: &mut Ui, template: &mut FootprintTemplate) {
 }
 
 impl PartEditor {
-    /// The ribbon's "From template" tool: open the picker for the
+    /// The ribbon's "From template" tool: open the dialog for the
     /// footprint draft's package.
     pub(super) fn open_template_picker(&mut self) {
         if let Some(set) = &self.draft {
@@ -312,192 +473,238 @@ impl PartEditor {
         }
     }
 
-    /// The "New from template" section in the Footprint tab's Properties:
-    /// the family, its form, and Build; afterwards, terminal assignment by
-    /// pad number. Returns the one operation a button sends.
-    pub(super) fn template_section(&mut self, ui: &mut Ui) -> Option<Operation> {
+    /// Open Assign pads by number with its preview (the Terminals list's
+    /// action, and the Issues Fix for pads without a package terminal).
+    pub(super) fn open_assign_dialog(&mut self) {
+        if let Some(set) = &self.draft {
+            let changes = assign_preview(&set.footprint, &set.package);
+            self.template_picker.open_assign(changes);
+        }
+    }
+
+    /// The docked "New footprint from template" dialog. Returns the one
+    /// operation its primary sends.
+    pub(super) fn template_dialog(&mut self, ui: &mut Ui) -> Option<Operation> {
+        let id = egui::Id::new(TEMPLATE_DIALOG);
+        let ctx = ui.ctx().clone();
+        let now = self.draft.as_ref().map(|s| &s.footprint);
+        if self.template_picker.settle(&ctx, id, now) {
+            let pads = now.map_or(0, |f| f.pads.len());
+            post(
+                &ctx,
+                Level::Ok,
+                format!("Footprint built: {pads} pads"),
+                vec![ToastAction::Undo],
+            );
+            self.template_picker.close();
+            return None;
+        }
         let set = self.draft.as_mut()?;
         let draft = set.ids.footprint;
         let synced = self.baseline.as_ref() == Some(&*set);
-        let mut operation = None;
+        let replace = !accepts(&set.footprint);
+        let replaced = set.footprint.pads.len();
         let preview = self.template_picker.preview(&set.package).cloned();
-        if let Some(template) = &mut self.template_picker.form {
-            let mut close = false;
-            let mut build = None;
-            let mut clear = false;
-            kit::section(
-                ui,
-                "footprint-template",
-                "New from template",
-                true,
-                None,
-                |ui| {
-                    let mut kind = template.kind();
-                    let options: Vec<(TemplateKind, String)> = TemplateKind::ALL
-                        .into_iter()
-                        .map(|k| (k, k.label().to_owned()))
-                        .collect();
-                    if kit::choice_row(ui, "Family", &mut kind, &options) {
-                        *template = FootprintTemplate::defaults(kind, &set.package);
+        let picker = &mut self.template_picker;
+        let waiting = picker.is_waiting();
+        let reset_scroll = !std::mem::replace(&mut picker.shown, true);
+        let refusal = picker.refusal.clone().or_else(|| match &preview {
+            Some(Err(why)) => Some(
+                refusal::presentable(why)
+                    .unwrap_or_else(|| "These values do not build a footprint".into()),
+            ),
+            _ => None,
+        });
+        let disabled = if waiting {
+            Some("Building…")
+        } else if !synced {
+            Some(WAIT_STORED)
+        } else if !matches!(preview, Some(Ok(_))) {
+            Some("These values do not build a footprint")
+        } else {
+            None
+        };
+        let template = picker.form.as_mut()?;
+        let package = &set.package;
+        let dialog = DialogPanel {
+            id,
+            icon: "component",
+            title: "Footprint from template",
+            kind: "",
+            body_rows: 14.0,
+            primary: if replace {
+                "Replace footprint"
+            } else {
+                "Build"
+            },
+            primary_kind: if replace {
+                PrimaryKind::Destructive
+            } else {
+                PrimaryKind::Normal
+            },
+            primary_disabled: disabled,
+            refusal: refusal.as_deref(),
+            reset_scroll,
+            status: None,
+        };
+        if reset_scroll {
+            // A new dialog starts with its header in view.
+            ui.scroll_to_cursor(Some(egui::Align::TOP));
+        }
+        let action = dialog.show(ui, |ui| {
+            // Static for the open dialog, so it sits above the fields.
+            if replace {
+                kit::status(
+                    ui,
+                    &format!("Replaces {replaced} pads and the sketch; one undo step"),
+                    Tone::Warning,
+                );
+            }
+            let mut kind = template.kind();
+            let options: Vec<(TemplateKind, String)> = TemplateKind::ALL
+                .into_iter()
+                .map(|k| (k, k.label().to_owned()))
+                .collect();
+            if kit::choice_row(ui, "Family", &mut kind, &options) {
+                *template = FootprintTemplate::defaults(kind, package);
+            }
+            form(ui, template);
+            if let Some(Ok(pads)) = preview.as_ref() {
+                match count_warning(pads, package) {
+                    Some(warning) => {
+                        kit::status(ui, &warning, Tone::Warning);
                     }
-                    form(ui, template);
-                    match preview.as_ref() {
-                        Some(Ok(pads)) => {
-                            if let Some(warning) = count_warning(pads, &set.package) {
-                                kit::status(ui, &warning, Tone::Warning);
-                            } else {
-                                kit::note(
-                                    ui,
-                                    &format!("{} pads, previewed on the canvas.", pads.len()),
-                                );
-                            }
-                        }
-                        Some(Err(why)) => {
-                            kit::status(ui, why, Tone::Error);
-                        }
-                        None => {}
-                    }
-                    let empty = accepts(&set.footprint);
-                    if !empty {
-                        kit::status(
+                    None => {
+                        kit::hint(
                             ui,
-                            "A template builds into an empty footprint. Clear this footprint first (one undo step).",
-                            Tone::Warning,
+                            &build_status(pads, package),
+                            "Pads, arrays, the pin-1 mark and the courtyard and assembly outlines become an editable sketch with named parameters. Terminals are assigned afterwards.",
                         );
                     }
-                    kit::note(
-                        ui,
-                        "Pads, arrays, the pin-1 mark and the courtyard and assembly outlines become an editable sketch with named parameters. Terminals are assigned afterwards.",
-                    );
-                    kit::actions(ui, |ui| {
-                        let builds = matches!(preview, Some(Ok(_)));
-                        let ready = empty && synced && builds;
-                        if kit::primary(ui, "Build", ready).clicked() && ready {
-                            build = Some(template.clone());
-                        }
-                        if !empty
-                            && ui_kit::button(ui, "Clear footprint", Button::Normal)
-                                .on_hover_text("Remove every pad, the sketch, its parameters and its derived outlines (one undo step); authored drawings stay")
-                                .clicked()
-                        {
-                            clear = true;
-                        }
-                        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
-                            close = true;
-                        }
-                    });
-                },
-            );
-            if clear {
-                set.footprint = cleared(&set.footprint);
-                self.selected_pad = None;
-                self.footprint_tool.selection.clear();
+                }
             }
-            if let Some(template) = build {
-                operation = Some(request(draft, template));
+        });
+        match action {
+            Some(DialogAction::Primary) if disabled.is_none() => {
+                let operation = request(draft, template.clone(), replace);
+                refusal::mark(&ctx, Origin::Dialog(id));
+                picker.submit(set.footprint.clone(), ctx.cumulative_frame_nr());
                 self.awaiting = true;
                 self.fit_on_build = true;
-                close = true;
+                self.selected_pad = None;
+                self.footprint_tool.selection.clear();
+                Some(operation)
             }
-            if close {
-                self.template_picker.close();
+            Some(DialogAction::Cancel) => {
+                picker.close();
+                None
             }
-            return operation;
+            _ => None,
         }
-        // After a build: the pads wait for their terminals.
-        let sourced = set.footprint.source.is_some();
-        let open = set
-            .footprint
-            .pads
-            .iter()
-            .filter(|p| {
-                p.terminal.is_none() && matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough)
-            })
-            .count();
-        if sourced && open > 0 {
-            kit::section(
-                ui,
-                "footprint-terminals",
-                "Terminals",
-                true,
-                Some(open),
-                |ui| {
-                    kit::note(ui, &format!("{open} pads land no package terminal yet."));
-                    let preview = &mut self.template_picker.assign;
-                    match preview {
-                        None => kit::actions(ui, |ui| {
-                            if kit::primary(ui, "Assign by number…", synced)
-                                .on_hover_text(
-                                    "Preview which pads take the package terminal whose designation equals their number; explicit terminals are kept",
-                                )
-                                .clicked()
-                                && synced
-                            {
-                                *preview = Some(
-                                    footprint_edit::assign_terminals(
-                                        &set.footprint,
-                                        &set.package,
-                                        &AssignRule::ByPackageDesignation,
-                                    )
-                                    .map(|(_, changes)| changes)
-                                    .unwrap_or_default(),
-                                );
-                            }
-                        }),
-                        Some(changes) => {
-                            if changes.is_empty() {
-                                kit::note(
-                                    ui,
-                                    "No pad number matches exactly one free package terminal.",
-                                );
-                            }
-                            for change in changes.iter().take(12) {
-                                let to = change
-                                    .to
-                                    .and_then(|t| set.package.terminal(t))
-                                    .map_or_else(|| "none".to_owned(), |t| t.designation.clone());
-                                kit::value_row(
-                                    ui,
-                                    &format!("Pad {}", change.number),
-                                    &format!("→ terminal {to}"),
-                                );
-                            }
-                            if changes.len() > 12 {
-                                kit::note(ui, &format!("and {} more pads", changes.len() - 12));
-                            }
-                            let count = changes.len();
-                            let mut done = false;
-                            kit::actions(ui, |ui| {
-                                let ready = synced && count > 0;
-                                if kit::primary(ui, &format!("Assign {count} pads"), ready)
-                                    .clicked()
-                                    && ready
-                                {
-                                    operation =
-                                        Some(Operation::Library(LibraryCommand::AssignTerminals {
-                                            draft,
-                                            rule: AssignRule::ByPackageDesignation,
-                                            confirm: true,
-                                        }));
-                                    done = true;
-                                }
-                                if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
-                                    done = true;
-                                }
-                            });
-                            if done {
-                                *preview = None;
-                            }
-                        }
-                    }
-                },
+    }
+
+    /// The docked "Assign pads by number" dialog: each pad and the package
+    /// terminal it takes, then one confirmed `library.assign_terminals`.
+    pub(super) fn assign_dialog(&mut self, ui: &mut Ui) -> Option<Operation> {
+        let id = egui::Id::new(ASSIGN_DIALOG);
+        let ctx = ui.ctx().clone();
+        let now = self.draft.as_ref().map(|s| &s.footprint);
+        if self.template_picker.settle(&ctx, id, now) {
+            let count = self.template_picker.assign.as_ref().map_or(0, Vec::len);
+            let noun = if count == 1 { "pad" } else { "pads" };
+            post(
+                &ctx,
+                Level::Ok,
+                format!("Assigned {count} {noun}"),
+                vec![ToastAction::Undo],
             );
+            self.template_picker.close_assign();
+            return None;
+        }
+        let set = self.draft.as_ref()?;
+        let draft = set.ids.footprint;
+        let synced = self.baseline.as_ref() == Some(set);
+        let picker = &mut self.template_picker;
+        let changes = picker.assign.clone()?;
+        let count = changes.len();
+        let reset_scroll = !std::mem::replace(&mut picker.shown, true);
+        let primary = match count {
+            1 => "Assign 1 pad".to_owned(),
+            n => format!("Assign {n} pads"),
+        };
+        let disabled = if picker.is_waiting() {
+            Some("Assigning…")
+        } else if !synced {
+            Some(WAIT_STORED)
+        } else if count == 0 {
+            Some("No pad number matches exactly one free package terminal")
         } else {
-            self.template_picker.assign = None;
+            None
+        };
+        let refusal = picker.refusal.clone();
+        let rows: Vec<(String, String)> = changes
+            .iter()
+            .map(|change| {
+                let to = change
+                    .to
+                    .and_then(|t| set.package.terminal(t))
+                    .map_or_else(|| "none".to_owned(), |t| t.designation.clone());
+                (format!("Pad {}", change.number), format!("→ terminal {to}"))
+            })
+            .collect();
+        let show_all_id = id.with("show-all");
+        let show_all = ctx
+            .data(|d| d.get_temp::<bool>(show_all_id))
+            .unwrap_or(false);
+        let dialog = DialogPanel {
+            id,
+            icon: "point",
+            title: "Assign pads by number",
+            kind: "",
+            body_rows: 12.0,
+            primary: &primary,
+            primary_kind: PrimaryKind::Normal,
+            primary_disabled: disabled,
+            refusal: refusal.as_deref(),
+            reset_scroll,
+            status: None,
+        };
+        if reset_scroll {
+            // A new dialog starts with its header in view.
+            ui.scroll_to_cursor(Some(egui::Align::TOP));
         }
-        if operation.is_some() {
-            self.awaiting = true;
+        let action = dialog.show(ui, |ui| {
+            kit::hint(
+                ui,
+                "Pads take the matching terminal",
+                "A pad takes the package terminal whose designation equals its number, when exactly one free terminal matches. Explicit terminals are kept.",
+            );
+            if rows.is_empty() {
+                kit::hint(ui, "No pad number matches a free package terminal", "");
+            }
+            let max = if show_all { rows.len() } else { kit::LIST_MAX_ROWS };
+            let list = kit::list_frame(ui, rows.len(), max, |ui, index| {
+                if let Some((pad, to)) = rows.get(index) {
+                    kit::value_row(ui, pad, to);
+                }
+            });
+            if list.show_all {
+                ctx.data_mut(|d| d.insert_temp(show_all_id, true));
+            }
+        });
+        match action {
+            Some(DialogAction::Primary) if disabled.is_none() => {
+                refusal::mark(&ctx, Origin::Dialog(id));
+                picker.submit(set.footprint.clone(), ctx.cumulative_frame_nr());
+                self.awaiting = true;
+                Some(assign_request(draft))
+            }
+            Some(DialogAction::Cancel) => {
+                picker.close_assign();
+                ctx.data_mut(|d| d.remove::<bool>(show_all_id));
+                None
+            }
+            _ => None,
         }
-        operation
     }
 }

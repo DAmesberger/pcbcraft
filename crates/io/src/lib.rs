@@ -39,6 +39,7 @@ impl Error {
             Self::Document(error) => error.diagnostic(),
             other => pcbcraft_core::Diagnostic {
                 code: other.code().into(),
+                rule: None,
                 message: other.to_string(),
                 expected_revision: None,
                 actual_revision: None,

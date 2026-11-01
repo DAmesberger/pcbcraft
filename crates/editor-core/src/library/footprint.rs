@@ -133,6 +133,16 @@ pub enum PadKind {
 }
 
 impl PadKind {
+    /// The kind's name in messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Smd => "SMD",
+            Self::PlatedThrough => "plated through-hole",
+            Self::NonPlatedHole => "non-plated hole",
+            Self::Fiducial => "fiducial",
+            Self::Mechanical => "mechanical",
+        }
+    }
     /// Whether this kind carries a plated hole and spans all copper layers.
     pub fn through_hole(self) -> bool {
         matches!(self, Self::PlatedThrough | Self::NonPlatedHole)
@@ -582,7 +592,10 @@ impl FootprintDefinition {
         let Some(package) = library.package(self.package) else {
             out.push(issue(
                 "reference.missing",
-                format!("Package {} is not in the project library.", self.package),
+                format!(
+                    "{} is missing from the project library.",
+                    super::names::capitalised(&library.describe(self.package.erased()))
+                ),
                 vec![
                     this,
                     ObjectRef::Definition {
@@ -605,17 +618,21 @@ impl FootprintDefinition {
                 out.push(issue(
                     "footprint.pad_terminal_unknown",
                     format!(
-                        "Pad {} lands unknown package terminal {}.",
-                        pad.id, terminal
+                        "Pad {} lands a package terminal the package does not have.",
+                        checks::pad_label(pad)
                     ),
                     vec![object(id, pad.id.0)],
                 ));
             }
         }
         for terminal in terminals.difference(&landed) {
+            let designation = package
+                .definition
+                .terminal(*terminal)
+                .map_or_else(|| terminal.to_string(), |t| t.designation.clone());
             out.push(issue(
                 "footprint.terminal_without_pad",
-                format!("Package terminal {terminal} has no pad."),
+                format!("Package terminal ‘{designation}’ has no pad."),
                 vec![this, object(self.package.id, terminal.0)],
             ));
         }

@@ -2,6 +2,7 @@
 //! project and drafts; clicking a row opens its workspace and selects it
 //! there. The tree reads state only; the app applies the returned
 //! [`Pick`] through the editors.
+use crate::issues::{Badge, Badges};
 use crate::kit::{self, Row};
 use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS, UpdateAvailable};
 use pcbcraft_core::library::Definition;
@@ -227,11 +228,21 @@ pub fn stale_text(
     }
 }
 
+/// The issue glyph and hover text of a row with `badge`, after `tip`.
+fn issue_mark(badge: Option<&Badge>, tip: &str) -> (Option<kit::severity::Level>, String) {
+    match badge {
+        Some(badge) if tip.is_empty() => (Some(badge.level), badge.tip()),
+        Some(badge) => (Some(badge.level), format!("{tip}\n{}", badge.tip())),
+        None => (None, tip.to_owned()),
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     engine: &Engine,
     lit: Lit,
     updates: &[UpdateAvailable],
+    badges: &Badges,
 ) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
@@ -324,6 +335,14 @@ pub fn show(
                     u.source, u.latest, u.local.revision
                 )
             });
+            let (issue, tip) = issue_mark(
+                badges.components.get(&component.id),
+                match &update_tip {
+                    Some(tip) => tip,
+                    None if component.draft => "Unpublished draft changes",
+                    None => "Published revision",
+                },
+            );
             let response = kit::tree_row(
                 ui,
                 egui::Id::new(("browser-component", component.id.0)),
@@ -338,11 +357,8 @@ pub fn show(
                     secondary: &secondary,
                     selected: lit.component == Some(component.id),
                     modified: component.draft,
-                    tip: match &update_tip {
-                        Some(tip) => tip,
-                        None if component.draft => "Unpublished draft changes",
-                        None => "Published revision",
-                    },
+                    issue,
+                    tip: &tip,
                     ..Default::default()
                 },
             );
@@ -391,8 +407,6 @@ pub fn show(
                     .library
                     .component(instance.component)
                     .map_or_else(String::new, |c| c.meta.name.clone());
-                // A chosen Part that disagrees with the instance is marked.
-                let findings = pcbcraft_core::instances::part_findings(&project.library, instance);
                 let stale = stale_text(&project.library, instance.component, updates);
                 let stale_tip = stale.as_ref().map(|text| {
                     format!(
@@ -400,24 +414,20 @@ pub fn show(
                         instance.component.revision
                     )
                 });
-                let tip = findings
-                    .first()
-                    .map(|f| f.message.as_str())
-                    .or(stale_tip.as_deref())
-                    .unwrap_or("");
-                let secondary = match (&stale, findings.is_empty()) {
-                    (_, false) => format!("{name} · part mismatch"),
-                    (Some(text), true) => format!("{name} · {text}"),
-                    (None, true) => name,
+                let secondary = match &stale {
+                    Some(text) => format!("{name} · {text}"),
+                    None => name,
                 };
+                let (issue, tip) = issue_mark(
+                    badges.instances.get(&instance.id),
+                    stale_tip.as_deref().unwrap_or(""),
+                );
                 let response = kit::tree_row(
                     ui,
                     egui::Id::new(("browser-instance", instance.id)),
                     &Row {
                         depth: 3,
-                        icon: if !findings.is_empty() {
-                            "status_warning"
-                        } else if stale.is_some() {
+                        icon: if stale.is_some() {
                             "update"
                         } else {
                             "component"
@@ -425,7 +435,8 @@ pub fn show(
                         label: &instance.designator,
                         secondary: &secondary,
                         selected: lit.instance == Some(instance.id),
-                        tip,
+                        issue,
+                        tip: &tip,
                         ..Default::default()
                     },
                 );
@@ -444,7 +455,11 @@ pub fn show(
             false,
         ) {
             for net in &project.nets {
-                let members = format!("{} pins", net.terminals.len());
+                let members = match net.terminals.len() {
+                    1 => "1 pin".to_owned(),
+                    n => format!("{n} pins"),
+                };
+                let (issue, tip) = issue_mark(badges.nets.get(&net.id), "");
                 let response = kit::tree_row(
                     ui,
                     egui::Id::new(("browser-net", net.id)),
@@ -454,6 +469,8 @@ pub fn show(
                         label: &net.name,
                         secondary: &members,
                         selected: lit.net == Some(net.id),
+                        issue,
+                        tip: &tip,
                         ..Default::default()
                     },
                 );
@@ -471,6 +488,7 @@ pub fn show(
             kit::number_text(project.board_size[0]),
             kit::number_text(project.board_size[1])
         );
+        let (issue, tip) = issue_mark(badges.board.as_ref(), "");
         if kit::tree_row(
             ui,
             egui::Id::new("browser-board"),
@@ -480,6 +498,8 @@ pub fn show(
                 label: "Board",
                 secondary: &size,
                 selected: lit.board,
+                issue,
+                tip: &tip,
                 ..Default::default()
             },
         )
@@ -504,6 +524,10 @@ pub fn show(
                     pcbcraft_core::Layer::Top => "Top",
                     pcbcraft_core::Layer::Bottom => "Bottom",
                 };
+                let (issue, tip) = issue_mark(
+                    badges.placements.get(&placement.instance),
+                    if placement.locked { "Locked" } else { "" },
+                );
                 if kit::tree_row(
                     ui,
                     egui::Id::new(("browser-placement", placement.instance)),
@@ -514,7 +538,8 @@ pub fn show(
                         secondary: side,
                         selected: lit.placement == Some(placement.instance),
                         dim: placement.locked,
-                        tip: if placement.locked { "Locked" } else { "" },
+                        issue,
+                        tip: &tip,
                         ..Default::default()
                     },
                 )
@@ -535,6 +560,7 @@ pub fn show(
         ) {
             for track in &project.tracks {
                 let label = format!("Track {}", track.id);
+                let (issue, tip) = issue_mark(badges.tracks.get(&track.id), "");
                 if kit::tree_row(
                     ui,
                     egui::Id::new(("browser-track", track.id)),
@@ -544,6 +570,8 @@ pub fn show(
                         label: &label,
                         secondary: project.net_name(track.net),
                         selected: lit.track == Some(track.id),
+                        issue,
+                        tip: &tip,
                         ..Default::default()
                     },
                 )
@@ -667,7 +695,9 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                kit::form(ui, |ui| show(ui, engine, Lit::default(), &[]));
+                kit::form(ui, |ui| {
+                    show(ui, engine, Lit::default(), &[], &Badges::default())
+                });
             },
         );
         output.textures_delta.clear();

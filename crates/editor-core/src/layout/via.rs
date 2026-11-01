@@ -238,17 +238,19 @@ fn check_clearance(project: &Project, id: Id) -> Result<()> {
     for track in project.tracks.iter().filter(|t| t.net != via.net) {
         budget(&mut pairs)?;
         if via.on(track.layer, &layers) && ring.violates_clearance(&CopperRing::of_track(track)) {
-            return Err(Error::Conflict(
-                "via violates 0.2 mm clearance to another net's track".into(),
-            ));
+            return Err(Error::Conflict(format!(
+                "Too close to a track on {}: needs 0.2 mm",
+                project.net_name(track.net)
+            )));
         }
     }
     for pad in super::pads(project).iter().filter(|p| p.net != via.net) {
         budget(&mut pairs)?;
         if via_pad_clearance_conflict(via, pad, &layers) {
-            return Err(Error::Conflict(
-                "via violates 0.2 mm clearance to another net's pad".into(),
-            ));
+            return Err(Error::Conflict(format!(
+                "Too close to a pad on {}: needs 0.2 mm",
+                project.net_name(pad.net)
+            )));
         }
     }
     for other in project.vias.iter().filter(|v| v.net != via.net) {
@@ -258,19 +260,24 @@ fn check_clearance(project: &Project, id: Id) -> Result<()> {
             .any(|l| via.on(*l, &layers) && other.on(*l, &layers))
             && ring.violates_clearance(&CopperRing::of_via(other))
         {
-            return Err(Error::Conflict(
-                "via violates 0.2 mm clearance to another net's via".into(),
-            ));
+            return Err(Error::Conflict(format!(
+                "Too close to a via on {}: needs 0.2 mm",
+                project.net_name(other.net)
+            )));
         }
     }
     Ok(())
 }
 
-/// Whether a track on another net breaks the clearance rule to any via:
+/// The first via on another net whose clearance rule the track breaks:
 /// the via side of routing's clearance check.
-pub(super) fn track_violates_via(project: &Project, track: &Track, ring: &CopperRing) -> bool {
+pub(super) fn track_violates_via<'a>(
+    project: &'a Project,
+    track: &Track,
+    ring: &CopperRing,
+) -> Option<&'a Via> {
     let layers = project.stackup.layers();
-    project.vias.iter().any(|via| {
+    project.vias.iter().find(|via| {
         via.net != track.net
             && via.on(track.layer, &layers)
             && ring.violates_clearance(&CopperRing::of_via(via))
@@ -281,7 +288,8 @@ pub(super) fn track_violates_via(project: &Project, track: &Track, ring: &Copper
 /// hole to another net's copper on any layer, and hole to hole. Copper
 /// clearance and connectivity through vias are part of
 /// [`BoardCopper::checks`].
-pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
+pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> {
+    let tracks = &project.tracks;
     let mut issues = Vec::new();
     let track_rings: Vec<CopperRing> = tracks.iter().map(CopperRing::of_track).collect();
     let vias = copper.vias();
@@ -305,8 +313,8 @@ pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
             issues.push(Finding::new(
                 "board.via_annular_ring",
                 format!(
-                    "Via {}: annular ring {:.3} mm is under {MIN_ANNULAR_RING_MM} mm",
-                    via.id,
+                    "A via on {}: annular ring {:.3} mm is under {MIN_ANNULAR_RING_MM} mm",
+                    project.net_name(via.net),
                     via.annular_ring()
                 ),
                 vec![me],
@@ -325,19 +333,27 @@ pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
                         pad: p.pad,
                     },
                     "pad",
+                    p.net,
                 ))
             });
         let others = vias
             .iter()
             .enumerate()
             .filter(|(_, v)| v.net != via.net)
-            .filter_map(|(k, v)| Some((copper.via_ring(k)?, ObjectRef::Via { id: v.id }, "via")));
+            .filter_map(|(k, v)| {
+                Some((
+                    copper.via_ring(k)?,
+                    ObjectRef::Via { id: v.id },
+                    "via",
+                    v.net,
+                ))
+            });
         let wires = tracks
             .iter()
             .zip(&track_rings)
             .filter(|(t, _)| t.net != via.net)
-            .map(|(t, ring)| (ring, ObjectRef::Track { id: t.id }, "track"));
-        for (ring, object, kind) in pads.chain(others).chain(wires) {
+            .map(|(t, ring)| (ring, ObjectRef::Track { id: t.id }, "track", t.net));
+        for (ring, object, kind, net) in pads.chain(others).chain(wires) {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
@@ -345,8 +361,9 @@ pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
                 issues.push(Finding::new(
                     "board.via_drill_clearance",
                     format!(
-                        "Via {} drill is within {DRILL_TO_COPPER_MM} mm of another net's {kind}",
-                        via.id
+                        "A via on {}: drill is within {DRILL_TO_COPPER_MM} mm of a {kind} on {}",
+                        project.net_name(via.net),
+                        project.net_name(net)
                     ),
                     vec![me, object],
                 ));
@@ -360,8 +377,9 @@ pub(super) fn findings(copper: &BoardCopper, tracks: &[Track]) -> Vec<Finding> {
                 issues.push(Finding::new(
                     "board.via_hole_spacing",
                     format!(
-                        "Vias {} and {} drills are closer than {HOLE_TO_HOLE_MM} mm",
-                        via.id, other.id
+                        "Vias on {} and {}: drills are closer than {HOLE_TO_HOLE_MM} mm",
+                        project.net_name(via.net),
+                        project.net_name(other.net)
                     ),
                     vec![me, ObjectRef::Via { id: other.id }],
                 ));

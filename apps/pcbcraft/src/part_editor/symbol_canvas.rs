@@ -9,6 +9,7 @@ use super::arrange::{self, Selection};
 use super::drawing::{Click, Placed, Tool};
 use super::snap::{self, SNAP_PX, Snap, Targets};
 use super::{PartEditor, Selected};
+use crate::kit::severity::Level;
 use crate::symbol_view;
 use egui::{Align2, Pos2, Rect, Response, Stroke, Ui, pos2, vec2};
 use pcbcraft_core::geometry::Bounds;
@@ -31,6 +32,9 @@ pub(super) struct DrawnCache {
     /// Snap targets for the objects being moved and the pending points.
     targets: Option<(Selection, Vec<Point>, Arc<Targets>)>,
 }
+
+/// A graphic refused because the symbol ran out of local IDs.
+const NO_MORE_GRAPHICS: &str = "No more graphics can be added to this symbol";
 
 /// Pick tolerance around drawn symbol content, in pixels.
 const PICK_PX: f32 = 6.0;
@@ -179,8 +183,9 @@ impl PartEditor {
     /// Run an arrange action on the selection.
     pub(super) fn arrange(&mut self, action: Arrange, grid: f64) {
         let selection = self.selection.clone();
+        // The ribbon disables Arrange without a selection; a key does
+        // nothing then.
         if selection.is_empty() {
-            self.notice = "Select something to arrange first".into();
             return;
         }
         let Some(index) = self.unit_index() else {
@@ -206,13 +211,16 @@ impl PartEditor {
             Arrange::Duplicate => {
                 match arrange::duplicate(&mut set.symbol, index, &selection, [grid, -grid]) {
                     Some((copies, skipped)) => {
-                        if skipped > 0 {
-                            self.notice =
-                                format!("{skipped} pin(s) not duplicated: a terminal has one pin");
-                        }
                         self.selection = copies;
+                        if skipped > 0 {
+                            let pins = if skipped == 1 { "pin" } else { "pins" };
+                            self.tell(
+                                Level::Warning,
+                                format!("{skipped} {pins} not duplicated: a terminal has one pin"),
+                            );
+                        }
                     }
-                    None => self.notice = "Graphic identity exhausted".into(),
+                    None => self.tell(Level::Error, NO_MORE_GRAPHICS),
                 }
             }
             Arrange::Delete => {
@@ -227,7 +235,7 @@ impl PartEditor {
     /// Add what a finished tool gesture produced to the current unit.
     fn place(&mut self, placed: Placed, engine: &Engine) {
         let Some(index) = self.unit_index() else {
-            self.notice = "Add a terminal or load a template first".into();
+            self.tell(Level::Error, "Add a terminal or load a template first");
             return;
         };
         let width = self.stroke_width;
@@ -235,9 +243,12 @@ impl PartEditor {
         let item = match placed {
             Placed::Shape(shape) => {
                 if shape.stored_points() >= graphics::MAX_SHAPE_POINTS {
-                    self.notice = format!(
-                        "Finished at {} points, the most one shape holds",
-                        graphics::MAX_SHAPE_POINTS
+                    self.tell(
+                        Level::Info,
+                        format!(
+                            "Finished at {} points, the most one shape holds",
+                            graphics::MAX_SHAPE_POINTS
+                        ),
                     );
                 }
                 let fill = if shape.is_closed() {
@@ -281,7 +292,7 @@ impl PartEditor {
             return;
         };
         let Some(id) = allocate(&mut set.symbol.next_local) else {
-            self.notice = "Graphic identity exhausted".into();
+            self.tell(Level::Error, NO_MORE_GRAPHICS);
             return;
         };
         let Some(unit) = set.symbol.units.get_mut(index) else {
@@ -463,7 +474,8 @@ impl PartEditor {
     /// letters only act while no text field has the keyboard.
     fn symbol_keys(&mut self, ui: &Ui, grid: f64) {
         use egui::{Key, Modifiers};
-        if ui.ctx().egui_wants_keyboard_input() {
+        // A disabled canvas (the Details tab's preview) takes no keys.
+        if !ui.is_enabled() || ui.ctx().egui_wants_keyboard_input() {
             return;
         }
         // Cmd+Z pops a pending point before the app's undo sees it.
@@ -527,6 +539,7 @@ impl PartEditor {
     pub(super) fn cancel_tool(&mut self) {
         if !self.drawing.cancel() {
             self.selection.clear();
+            self.terminal_card = None;
         }
         self.gesture = None;
     }
@@ -542,6 +555,7 @@ impl PartEditor {
         let t = Tokens::get();
         let grid = engine.drafts().grid.symbol_mm;
         let m = TextMetric::default();
+        self.symbol_canvas_size = Some(rect.size());
         self.prune_selection();
         if let Some(placed) = self.pending_place.take() {
             self.place(placed, engine);
@@ -658,8 +672,12 @@ impl PartEditor {
                 }
             }
         }
-        // Selection, moving and box selection.
+        // Selection, moving and box selection. A click on the canvas
+        // leaves a TERMINAL card for what it selects.
         if tool == Tool::Select && !panning && !space {
+            if response.clicked() || response.drag_started() {
+                self.terminal_card = None;
+            }
             self.select_gestures(ui, response, &drawn, view, grid, suppress);
         }
         if let Some(placed) = self.pending_place.take() {
@@ -986,7 +1004,11 @@ impl PartEditor {
     pub(super) fn add_unit(&mut self) -> Option<UnitId> {
         let set = self.draft.as_mut()?;
         if set.symbol.units.len() >= pcbcraft_core::library::MAX_UNITS {
-            self.notice = "Maximum units reached".into();
+            let most = pcbcraft_core::library::MAX_UNITS;
+            self.tell(
+                Level::Error,
+                format!("No unit added: a symbol holds at most {most}"),
+            );
             return None;
         }
         let id = allocate(&mut set.symbol.next_local)?;

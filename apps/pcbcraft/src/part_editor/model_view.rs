@@ -157,16 +157,15 @@ impl PartEditor {
             );
         }
         // The triad's snap step, shown where it applies.
-        painter.text(
-            rect.left_bottom() + egui::vec2(tk.space_8, -tk.space_8),
-            egui::Align2::LEFT_BOTTOM,
-            format!(
+        crate::kit::canvas_hint(
+            &painter,
+            rect,
+            tk.space_8,
+            &format!(
                 "Triad snaps {} mm · arrows nudge {} mm (Shift ×10)",
                 crate::kit::number_text(step),
                 model_place::NUDGE_MM
             ),
-            egui::FontId::proportional(tk.font_small),
-            tk.text_dim,
         );
         // Arrow-key nudges over the view while no field has the keyboard:
         // each press is one command.

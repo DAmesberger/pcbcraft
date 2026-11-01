@@ -1,0 +1,168 @@
+{
+  "report": "issues",
+  "result": {
+    "counts": {
+      "error": 2,
+      "info": 0,
+      "to_do": 3,
+      "warning": 0
+    },
+    "coverage": "Publish checks, completeness, electrical rules and board checks",
+    "elsewhere": [],
+    "rows": [
+      {
+        "area": "schematic",
+        "detail": {
+          "cause": "R1 terminal ‘1’ is neither connected nor marked no-connect",
+          "fix": "Connect the terminal or mark it no-connect"
+        },
+        "finding": {
+          "blocks": "electrically_resolved",
+          "code": "instance.terminal_unaccounted",
+          "message": "R1 terminal ‘1’ is neither connected nor marked no-connect.",
+          "objects": [
+            {
+              "endpoint": {
+                "instance": 8,
+                "terminal": 1
+              },
+              "kind": "terminal"
+            }
+          ]
+        },
+        "group": {
+          "code": "instance.terminal_unaccounted",
+          "key": "",
+          "title": "Unconnected terminals"
+        },
+        "severity": "error",
+        "title": "R1 pin 1 unconnected"
+      },
+      {
+        "area": "schematic",
+        "detail": {
+          "cause": "R2 terminal ‘2’ is neither connected nor marked no-connect",
+          "fix": "Connect the terminal or mark it no-connect"
+        },
+        "finding": {
+          "blocks": "electrically_resolved",
+          "code": "instance.terminal_unaccounted",
+          "message": "R2 terminal ‘2’ is neither connected nor marked no-connect.",
+          "objects": [
+            {
+              "endpoint": {
+                "instance": 10,
+                "terminal": 2
+              },
+              "kind": "terminal"
+            }
+          ]
+        },
+        "group": {
+          "code": "instance.terminal_unaccounted",
+          "key": "",
+          "title": "Unconnected terminals"
+        },
+        "severity": "error",
+        "title": "R2 pin 2 unconnected"
+      },
+      {
+        "area": "schematic",
+        "detail": {
+          "cause": "R1 has no Part chosen",
+          "fix": "Choose a Part with Resolve parts"
+        },
+        "finding": {
+          "blocks": null,
+          "code": "purchasing.no_part",
+          "message": "R1 has no Part chosen.",
+          "objects": [
+            {
+              "id": 8,
+              "kind": "instance"
+            }
+          ]
+        },
+        "group": {
+          "code": "purchasing.no_part",
+          "key": "",
+          "title": "No Part chosen"
+        },
+        "severity": "to_do",
+        "title": "R1: no Part"
+      },
+      {
+        "area": "schematic",
+        "detail": {
+          "cause": "R2 has no Part chosen",
+          "fix": "Choose a Part with Resolve parts"
+        },
+        "finding": {
+          "blocks": null,
+          "code": "purchasing.no_part",
+          "message": "R2 has no Part chosen.",
+          "objects": [
+            {
+              "id": 10,
+              "kind": "instance"
+            }
+          ]
+        },
+        "group": {
+          "code": "purchasing.no_part",
+          "key": "",
+          "title": "No Part chosen"
+        },
+        "severity": "to_do",
+        "title": "R2: no Part"
+      },
+      {
+        "also": [
+          {
+            "blocks": null,
+            "code": "board.unrouted",
+            "message": "Unrouted: R2 pad 1 (N2)",
+            "objects": [
+              {
+                "instance": 10,
+                "kind": "pad",
+                "pad": 1
+              },
+              {
+                "id": 2,
+                "kind": "net"
+              }
+            ]
+          }
+        ],
+        "area": "board",
+        "detail": {
+          "fix": "Route the connection"
+        },
+        "finding": {
+          "blocks": null,
+          "code": "board.unrouted",
+          "message": "Unrouted: R1 pad 2 (N2)",
+          "objects": [
+            {
+              "instance": 8,
+              "kind": "pad",
+              "pad": 2
+            },
+            {
+              "id": 2,
+              "kind": "net"
+            }
+          ]
+        },
+        "group": {
+          "code": "board.unrouted",
+          "key": "",
+          "title": "Unrouted connections"
+        },
+        "severity": "to_do",
+        "title": "N2: 2 pads unrouted"
+      }
+    ]
+  }
+}

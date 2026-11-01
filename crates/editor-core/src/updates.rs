@@ -4,7 +4,7 @@
 //! plan is blocked whenever a current choice is not offered by its target
 //! until an explicit resolution is supplied. Nothing is inferred from names,
 //! order or pad count.
-use crate::diagnostics::{Error, Result};
+use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::fields::{EffectiveField, PropertyEdit, PropertyInput};
 use crate::functions::{Function, FunctionEdit, TerminalFunctions};
 use crate::ids::{
@@ -23,6 +23,13 @@ use crate::{erc, layout, nets, schematic, validate};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod review;
+pub use review::{
+    ChangeArea, ChangeKind, ChangeObject, ConflictReason, FindingRow, FindingsDiff, PlanChange,
+    PlanLine, TrackConflict, summarize,
+};
+use review::{ChangeArea as A, ChangeKind as K, ChangeObject as O, clip, layer_label};
 
 /// Instances one component-revision update may change.
 pub const MAX_UPDATE_INSTANCES: usize = 128;
@@ -184,6 +191,8 @@ pub struct ApplyUpdate {
 pub struct UpdatePlan {
     pub revision: u64,
     pub change: Change,
+    /// The full wording of every change, in order; `items` carries the same
+    /// changes structured.
     pub changes: Vec<String>,
     pub affected_wires: Vec<Id>,
     pub removed_wires: Vec<Id>,
@@ -196,20 +205,170 @@ pub struct UpdatePlan {
     /// (`ApplyUpdate::remove_conflicting_tracks`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conflicting_vias: Vec<Id>,
+    /// The full wording of each blocker; `blocker_lines` carries them with a
+    /// one-line title and their objects. Any blocker refuses the apply.
     pub blockers: Vec<String>,
     pub warnings: Vec<String>,
+    /// One line for the whole plan, such as "Adds 2 placements, removes 1
+    /// wire" ([`summarize`] over `items`).
+    #[serde(default)]
+    pub summary: String,
+    /// Every change by area, kind and objects, with a title and the detail.
+    #[serde(default)]
+    pub items: Vec<PlanChange>,
+    /// `blockers`, in the same order, with titles and objects.
+    #[serde(default)]
+    pub blocker_lines: Vec<PlanLine>,
+    /// `warnings`, in the same order, with titles and objects.
+    #[serde(default)]
+    pub warning_lines: Vec<PlanLine>,
+    /// `conflicting_tracks`, in the same order, with net, layer and length.
+    #[serde(default)]
+    pub conflicts: Vec<TrackConflict>,
+    /// Board and electrical findings the update adds and resolves, once
+    /// the conflicting tracks are removed.
+    #[serde(default)]
+    pub findings: FindingsDiff,
+    /// The placements the update adds or moves, as they will be, for a
+    /// canvas preview of the result.
+    #[serde(default)]
+    pub planned_placements: Vec<crate::model::Placement>,
 }
 
+/// Area, kind, objects and title of one change; see [`UpdatePlan::detail`].
+struct Head {
+    area: ChangeArea,
+    kind: ChangeKind,
+    object: ChangeObject,
+    refs: Vec<ObjectRef>,
+    line: String,
+}
+
+fn head(
+    area: ChangeArea,
+    kind: ChangeKind,
+    object: ChangeObject,
+    refs: Vec<ObjectRef>,
+    line: String,
+) -> Head {
+    Head {
+        area,
+        kind,
+        object,
+        refs,
+        line,
+    }
+}
+
+const DETAIL_LIMIT: &str = "Preview detail limit exceeded; update fewer instances at a time.";
+
 impl UpdatePlan {
-    fn detail(&mut self, message: String) {
-        if self.changes.len() < 10_000 {
-            self.changes.push(message);
-        } else {
-            const LIMIT: &str = "Preview detail limit exceeded; update fewer instances at a time.";
-            if !self.blockers.iter().any(|b| b == LIMIT) {
-                self.blockers.push(LIMIT.into());
-            }
+    fn new(revision: u64, change: Change) -> Self {
+        Self {
+            revision,
+            change,
+            changes: vec![],
+            affected_wires: vec![],
+            removed_wires: vec![],
+            affected_placements: vec![],
+            removed_placements: vec![],
+            conflicting_tracks: vec![],
+            conflicting_vias: vec![],
+            blockers: vec![],
+            warnings: vec![],
+            summary: String::new(),
+            items: vec![],
+            blocker_lines: vec![],
+            warning_lines: vec![],
+            conflicts: vec![],
+            findings: FindingsDiff::default(),
+            planned_placements: vec![],
         }
+    }
+
+    /// Record one change: `head` structured, `detail` in full.
+    fn detail(&mut self, head: Head, detail: String) {
+        if self.changes.len() < 10_000 {
+            self.changes.push(detail.clone());
+            self.items.push(PlanChange {
+                area: head.area,
+                kind: head.kind,
+                object: head.object,
+                refs: head.refs,
+                line: clip(&head.line),
+                detail,
+            });
+        } else {
+            self.block(
+                "Too many changes to preview; update fewer instances at a time",
+                DETAIL_LIMIT.into(),
+                vec![],
+            );
+        }
+    }
+
+    /// A blocker: `line` is the title, `detail` the full wording.
+    fn block(&mut self, line: &str, detail: String, refs: Vec<ObjectRef>) {
+        self.blocker_lines.push(PlanLine {
+            line: clip(line),
+            detail,
+            refs,
+        });
+    }
+
+    fn warn(&mut self, line: &str, detail: String, refs: Vec<ObjectRef>) {
+        self.warning_lines.push(PlanLine {
+            line: clip(line),
+            detail,
+            refs,
+        });
+    }
+
+    /// Sort and deduplicate the blockers and warnings by their wording, and
+    /// derive the flat lists and the summary from the structured ones.
+    fn finish(&mut self) {
+        for lines in [&mut self.blocker_lines, &mut self.warning_lines] {
+            lines.sort_by(|a, b| a.detail.cmp(&b.detail));
+            lines.dedup_by(|a, b| a.detail == b.detail);
+        }
+        self.blockers = self
+            .blocker_lines
+            .iter()
+            .map(|l| l.detail.clone())
+            .collect();
+        self.warnings = self
+            .warning_lines
+            .iter()
+            .map(|l| l.detail.clone())
+            .collect();
+        self.summary = summarize(&self.items);
+    }
+}
+
+/// A title for a refusal of staging or validation, chosen by error kind;
+/// the error's own wording stays in the detail.
+fn refusal_line(error: &Error) -> &'static str {
+    match error {
+        Error::Conflict(_) => "This update needs a decision before it can apply",
+        Error::Invalid(_) | Error::Json(_) => "This update is not valid for these instances",
+        Error::NotFound(_) => "This update refers to something that no longer exists",
+        Error::Limit(_) => "This update is too large; update fewer instances",
+        Error::Stale { .. } => "The project changed; preview the update again",
+        Error::Unsupported(_) | Error::History(_) => "This update cannot be previewed",
+    }
+}
+
+/// The instances a change names, for locate.
+fn change_refs(change: &Change) -> Vec<ObjectRef> {
+    match change {
+        Change::ComponentRevision { instances, .. } => instances
+            .iter()
+            .map(|id| ObjectRef::Instance { id: *id })
+            .collect(),
+        Change::Instance {
+            edit: InstanceChange::Remove { instance } | InstanceChange::SetPhysical { instance, .. },
+        } => vec![ObjectRef::Instance { id: *instance }],
+        Change::Schematic { .. } | Change::SyncPcb {} => vec![],
     }
 }
 
@@ -316,65 +475,93 @@ fn local_pad(pad: Option<&Pad>) -> String {
 
 /// What changed on one kept pad, by aspect: moved, rotated, reshaped,
 /// kind or side, terminal, number, hole, mask and paste, vias. Rotations
-/// compare canonically per shape symmetry.
-fn pad_changes(a: &Pad, b: &Pad) -> Vec<String> {
-    let mut out = Vec::new();
+/// compare canonically per shape symmetry. Each aspect is a short title
+/// phrase and its full wording.
+fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
     if a.position != b.position {
-        out.push(format!("moves {:?} → {:?} mm", a.position, b.position));
+        out.push((
+            "moves".to_string(),
+            format!("moves {:?} → {:?} mm", a.position, b.position),
+        ));
     }
     let (ra, rb) = (
         a.shape.canonical_rotation(a.rotation_deg),
         b.shape.canonical_rotation(b.rotation_deg),
     );
     if a.shape != b.shape {
-        out.push(format!(
-            "is reshaped {} → {}",
-            shape_label(&a.shape),
-            shape_label(&b.shape)
+        out.push((
+            "is reshaped".to_string(),
+            format!(
+                "is reshaped {} → {}",
+                shape_label(&a.shape),
+                shape_label(&b.shape)
+            ),
         ));
     }
     if (ra - rb).abs() > 1e-9 {
-        out.push(format!("turns {ra}° → {rb}°"));
+        out.push(("turns".to_string(), format!("turns {ra}° → {rb}°")));
     }
     if a.kind != b.kind || a.side != b.side {
-        out.push(format!(
-            "kind {:?} on {:?} → {:?} on {:?}",
-            a.kind, a.side, b.kind, b.side
+        out.push((
+            "changes kind or side".to_string(),
+            format!(
+                "kind {:?} on {:?} → {:?} on {:?}",
+                a.kind, a.side, b.kind, b.side
+            ),
         ));
     }
     if a.terminal != b.terminal {
         let t = |t: Option<crate::ids::PackageTerminalId>| {
             t.map_or_else(|| "none".to_string(), |t| t.to_string())
         };
-        out.push(format!(
-            "lands package terminal {} → {}",
-            t(a.terminal),
-            t(b.terminal)
+        out.push((
+            "lands another package terminal".to_string(),
+            format!(
+                "lands package terminal {} → {}",
+                t(a.terminal),
+                t(b.terminal)
+            ),
         ));
     }
     if a.number != b.number {
-        out.push(format!(
-            "is renumbered ‘{}’ → ‘{}’ (display only)",
-            a.number, b.number
+        out.push((
+            format!("is renumbered from ‘{}’", a.number),
+            format!(
+                "is renumbered ‘{}’ → ‘{}’ (display only)",
+                a.number, b.number
+            ),
         ));
     }
     if a.hole != b.hole {
         let hole =
             |h: &Option<crate::library::Hole>| h.as_ref().map_or_else(|| "none".into(), hole_label);
-        out.push(format!("hole {} → {}", hole(&a.hole), hole(&b.hole)));
+        out.push((
+            "changes its hole".to_string(),
+            format!("hole {} → {}", hole(&a.hole), hole(&b.hole)),
+        ));
     }
     if a.mask != b.mask {
-        out.push(format!("mask {:?} → {:?}", a.mask, b.mask));
+        out.push((
+            "changes its mask".to_string(),
+            format!("mask {:?} → {:?}", a.mask, b.mask),
+        ));
     }
     if a.paste != b.paste {
-        out.push(format!(
-            "paste {} → {}",
-            paste_label(&a.paste),
-            paste_label(&b.paste)
+        out.push((
+            "changes its paste".to_string(),
+            format!(
+                "paste {} → {}",
+                paste_label(&a.paste),
+                paste_label(&b.paste)
+            ),
         ));
     }
     if a.vias != b.vias {
-        out.push(format!("pad vias {} → {}", a.vias.len(), b.vias.len()));
+        out.push((
+            "changes its vias".to_string(),
+            format!("pad vias {} → {}", a.vias.len(), b.vias.len()),
+        ));
     }
     out
 }
@@ -405,9 +592,11 @@ fn paste_label(paste: &PasteRule) -> String {
 fn footprint_details(
     plan: &mut UpdatePlan,
     designator: &str,
+    instance: Id,
     a: &FootprintDefinition,
     b: &FootprintDefinition,
 ) {
+    let refs = || vec![ObjectRef::Instance { id: instance }];
     let old: BTreeMap<GraphicId, _> = a.graphics.iter().map(|g| (g.id, g)).collect();
     let new: BTreeMap<GraphicId, _> = b.graphics.iter().map(|g| (g.id, g)).collect();
     for layer in [
@@ -429,7 +618,14 @@ fn footprint_details(
             .filter(|(id, g)| on(g) && old.get(id).is_some_and(|o| o != *g))
             .count();
         if (added, removed, changed) != (0, 0, 0) {
-            plan.detail(format!(
+            let name = match layer {
+                crate::library::DrawingLayer::Silkscreen => "silkscreen",
+                crate::library::DrawingLayer::Courtyard => "courtyard",
+                crate::library::DrawingLayer::Assembly => "assembly",
+            };
+            plan.detail(head(A::Board, K::Change, O::Footprint, refs(), format!(
+                "{designator}: footprint {name} drawing changes"
+            )), format!(
                 "{designator}: footprint {layer:?} graphics: {added} added, {removed} removed, {changed} changed (presentation only; terminals and nets unchanged)."
             ));
         }
@@ -439,20 +635,38 @@ fn footprint_details(
             p.as_ref()
                 .map_or_else(|| "none".to_string(), |p| p.pad.to_string())
         };
-        plan.detail(format!(
-            "{designator}: footprint pin-1 polarity pad {} → {}.",
-            pad(&a.polarity),
-            pad(&b.polarity)
-        ));
+        plan.detail(
+            head(
+                A::Board,
+                K::Change,
+                O::Footprint,
+                refs(),
+                format!("{designator}: footprint pin-1 mark moves"),
+            ),
+            format!(
+                "{designator}: footprint pin-1 polarity pad {} → {}.",
+                pad(&a.polarity),
+                pad(&b.polarity)
+            ),
+        );
     }
     if a.defaults != b.defaults {
-        plan.detail(format!(
-            "{designator}: footprint mask expansion {} → {} mm, paste reduction {} → {} mm.",
-            a.defaults.mask_expansion_mm,
-            b.defaults.mask_expansion_mm,
-            a.defaults.paste_reduction_mm,
-            b.defaults.paste_reduction_mm
-        ));
+        plan.detail(
+            head(
+                A::Board,
+                K::Change,
+                O::Footprint,
+                refs(),
+                format!("{designator}: footprint mask and paste defaults change"),
+            ),
+            format!(
+                "{designator}: footprint mask expansion {} → {} mm, paste reduction {} → {} mm.",
+                a.defaults.mask_expansion_mm,
+                b.defaults.mask_expansion_mm,
+                a.defaults.paste_reduction_mm,
+                b.defaults.paste_reduction_mm
+            ),
+        );
     }
     let keyed = |f: &FootprintDefinition| -> BTreeMap<u32, Vec<crate::ids::PadId>> {
         let mut by_array: BTreeMap<u32, Vec<crate::ids::PadId>> = BTreeMap::new();
@@ -487,7 +701,22 @@ fn footprint_details(
                     .join(", ")
             }
         };
-        plan.detail(format!(
+        let line = if after.len() >= before.len() {
+            format!(
+                "{designator}: a footprint pad array grows from {} to {}",
+                before.len(),
+                after.len()
+            )
+        } else {
+            format!(
+                "{designator}: a footprint pad array shrinks from {} to {}",
+                before.len(),
+                after.len()
+            )
+        };
+        plan.detail(
+            head(A::Board, K::Change, O::Pad, refs(), line),
+            format!(
             "{designator}: footprint array {array} {} → {} instances; new pads {} ({unresolved} without a package terminal), retired pads {}.",
             before.len(),
             after.len(),
@@ -575,9 +804,10 @@ fn revise(
             "Select between 1 and 128 instances for one revision update.",
         ));
     }
-    let target_component = next.library.component(target).cloned().ok_or_else(|| {
-        not_found("Target exact component revision is not in the project snapshot.")
-    })?;
+    let target_component =
+        next.library.component(target).cloned().ok_or_else(|| {
+            not_found("The target component revision is not in the project library.")
+        })?;
     let selected: BTreeSet<Id> = ids.iter().copied().collect();
     if selected.len() != ids.len() {
         return Err(invalid("An instance occurs twice in the update."));
@@ -652,9 +882,13 @@ fn revise_instance(
     let representation = choice
         .and_then(|c| c.representation)
         .unwrap_or(old.representation);
+    let target_name = next.library.component(target).map_or_else(
+        || format!("the target {}", target.revision),
+        |c| format!("{} {}", c.meta.name, target.revision),
+    );
     let Some(symbol_ref) = target_component.representation(representation) else {
         return Err(Error::Conflict(format!(
-            "{name}: representation {representation} is not offered by {target}; supply a ChoiceResolution."
+            "{name}: {target_name} does not offer its current symbol; supply a ChoiceResolution."
         )));
     };
     let new_symbol = next
@@ -670,8 +904,7 @@ fn revise_instance(
         && instances::resolve_physical(&next.library, target_component, choice).is_err()
     {
         return Err(Error::Conflict(format!(
-            "{name}: implementation {} with footprint {} is not offered by {target}; supply a ChoiceResolution.",
-            choice.binding, choice.footprint
+            "{name}: {target_name} does not offer its current footprint; supply a ChoiceResolution."
         )));
     }
     let unit_resolutions: Vec<(UnitId, UnitTarget)> = resolutions
@@ -830,7 +1063,7 @@ pub(crate) fn graphic_diff(before: &[Graphic], after: &[Graphic]) -> (usize, usi
 }
 
 /// Package difference lines and the designators each one reaches.
-type PackageLines = Vec<(String, Vec<String>)>;
+type PackageLines = Vec<(String, Vec<(String, Id)>)>;
 
 /// `[l, w, h]` as `L×W×H`.
 fn size_text(size: &[f64; 3]) -> String {
@@ -940,63 +1173,130 @@ fn definition_details(
     mapping_endpoints: &mut BTreeSet<Endpoint>,
     packages: &mut PackageLines,
 ) {
+    let refs = || vec![ObjectRef::Instance { id: instance }];
+    let terminal_ref = |terminal: TerminalId| ObjectRef::Terminal {
+        endpoint: Endpoint { instance, terminal },
+    };
+    let terminal_name = |terminal: TerminalId| {
+        b.component
+            .terminal(terminal)
+            .or_else(|| a.component.terminal(terminal))
+            .map_or_else(|| "a terminal".to_string(), |t| format!("‘{}’", t.name))
+    };
     if a.name != b.name {
-        plan.detail(format!(
-            "{designator}: component name ‘{}’ → ‘{}’.",
-            a.name, b.name
-        ));
+        plan.detail(
+            head(
+                A::Component,
+                K::Change,
+                O::Component,
+                refs(),
+                format!("{designator}: component renamed ‘{}’", b.name),
+            ),
+            format!("{designator}: component name ‘{}’ → ‘{}’.", a.name, b.name),
+        );
     }
     if let (Some(pa), Some(pb)) = (a.package, b.package) {
         for line in package_details(pa, pb) {
             match packages.iter_mut().find(|(l, _)| *l == line) {
-                Some((_, designators)) => designators.push(designator.to_owned()),
-                None => packages.push((line, vec![designator.to_owned()])),
+                Some((_, designators)) => designators.push((designator.to_owned(), instance)),
+                None => packages.push((line, vec![(designator.to_owned(), instance)])),
             }
         }
     }
     // Units, pins and graphics.
     for unit in &a.symbol.units {
         if b.symbol.unit(unit.id).is_none() {
-            plan.detail(format!(
-                "{designator}: unit {} ({}) is removed.",
-                unit.label, unit.id
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Remove,
+                    O::Unit,
+                    vec![ObjectRef::Unit {
+                        instance,
+                        unit: unit.id,
+                    }],
+                    format!("{designator}: unit {} is removed", unit.label),
+                ),
+                format!(
+                    "{designator}: unit {} ({}) is removed.",
+                    unit.label, unit.id
+                ),
+            );
         }
     }
     for unit in &b.symbol.units {
         if a.symbol.unit(unit.id).is_none() {
-            plan.detail(format!(
-                "{designator}: add unit {} ({}).",
-                unit.label, unit.id
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Add,
+                    O::Unit,
+                    vec![ObjectRef::Unit {
+                        instance,
+                        unit: unit.id,
+                    }],
+                    format!("{designator}: adds unit {}", unit.label),
+                ),
+                format!("{designator}: add unit {} ({}).", unit.label, unit.id),
+            );
         }
     }
     for terminal in &b.component.terminals {
         let before = a.symbol.pin(terminal.id);
         let after = b.symbol.pin(terminal.id);
         match (before, after) {
-            (Some((ua, pa)), Some((ub, pb))) if ua.id != ub.id => plan.detail(format!(
-                "{designator} terminal {} moves from unit {} to unit {}; pin {:?} → {:?} mm.",
-                terminal.id,
-                unit_label(a.symbol, ua.id),
-                unit_label(b.symbol, ub.id),
-                pa.position,
-                pb.position
-            )),
-            (Some((_, pa)), Some((ub, pb))) if pa.position != pb.position => plan.detail(format!(
-                "{designator} terminal {} pin in unit {} {:?} → {:?} mm.",
-                terminal.id,
-                unit_label(b.symbol, ub.id),
-                pa.position,
-                pb.position
-            )),
+            (Some((ua, pa)), Some((ub, pb))) if ua.id != ub.id => plan.detail(
+                head(
+                    A::Schematic,
+                    K::Change,
+                    O::Pin,
+                    vec![terminal_ref(terminal.id)],
+                    format!(
+                        "{designator}: pin {} moves to unit {}",
+                        terminal_name(terminal.id),
+                        unit_label(b.symbol, ub.id)
+                    ),
+                ),
+                format!(
+                    "{designator} terminal {} moves from unit {} to unit {}; pin {:?} → {:?} mm.",
+                    terminal.id,
+                    unit_label(a.symbol, ua.id),
+                    unit_label(b.symbol, ub.id),
+                    pa.position,
+                    pb.position
+                ),
+            ),
+            (Some((_, pa)), Some((ub, pb))) if pa.position != pb.position => plan.detail(
+                head(
+                    A::Schematic,
+                    K::Change,
+                    O::Pin,
+                    vec![terminal_ref(terminal.id)],
+                    format!(
+                        "{designator}: pin {} moves in unit {}",
+                        terminal_name(terminal.id),
+                        unit_label(b.symbol, ub.id)
+                    ),
+                ),
+                format!(
+                    "{designator} terminal {} pin in unit {} {:?} → {:?} mm.",
+                    terminal.id,
+                    unit_label(b.symbol, ub.id),
+                    pa.position,
+                    pb.position
+                ),
+            ),
             _ => {}
         }
         if let (Some((ua, pa)), Some((ub, pb))) = (before, after)
             && pin_presentation(pa) != pin_presentation(pb)
         {
             let anchored = ua.id == ub.id && pa.position == pb.position;
-            plan.detail(format!(
+            plan.detail(
+                head(A::Schematic, K::Change, O::Pin, vec![terminal_ref(terminal.id)], format!(
+                    "{designator}: pin {} drawing changes", terminal_name(terminal.id)
+                )),
+                format!(
                 "{designator} terminal {} pin in unit {}: direction, length, decorations or text change{}.",
                 terminal.id,
                 unit_label(b.symbol, ub.id),
@@ -1014,17 +1314,30 @@ fn definition_details(
         };
         let diff = graphic_diff(&old.graphics, &unit.graphics);
         if diff != (0, 0, 0) {
-            plan.detail(format!(
+            plan.detail(
+                head(A::Schematic, K::Change, O::Unit, vec![ObjectRef::Unit { instance, unit: unit.id }], format!(
+                    "{designator}: unit {} drawing changes", unit.label
+                )),
+                format!(
                 "{designator}: unit {} graphics: {} added, {} removed, {} changed (presentation only; terminals and nets unchanged).",
                 unit.label, diff.0, diff.1, diff.2
             ));
         }
     }
     if a.symbol.pin_text_height != b.symbol.pin_text_height {
-        plan.detail(format!(
-            "{designator}: pin text height {} → {} mm (presentation only).",
-            a.symbol.pin_text_height, b.symbol.pin_text_height
-        ));
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Change,
+                O::Pin,
+                refs(),
+                format!("{designator}: pin text size changes"),
+            ),
+            format!(
+                "{designator}: pin text height {} → {} mm (presentation only).",
+                a.symbol.pin_text_height, b.symbol.pin_text_height
+            ),
+        );
     }
     // Explicit binding mapping, keyed by package terminal.
     let map = |binding: Option<&BindingDefinition>| -> BTreeMap<_, _> {
@@ -1042,15 +1355,31 @@ fn definition_details(
     let none = || "none".to_string();
     for physical in am.keys().chain(bm.keys()).copied().collect::<BTreeSet<_>>() {
         if am.get(&physical) != bm.get(&physical) {
-            plan.detail(format!(
-                "{designator}: package terminal {physical} maps electrical {} → {}.",
-                am.get(&physical)
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(none),
-                bm.get(&physical)
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(none)
-            ));
+            let mapped: Vec<ObjectRef> = am
+                .get(&physical)
+                .into_iter()
+                .chain(bm.get(&physical))
+                .map(|t| terminal_ref(*t))
+                .collect();
+            let line = match bm.get(&physical) {
+                Some(t) => format!(
+                    "{designator}: a package terminal now maps to {}",
+                    terminal_name(*t)
+                ),
+                None => format!("{designator}: a package terminal no longer maps to a terminal"),
+            };
+            plan.detail(
+                head(A::Component, K::Change, O::Terminal, mapped, line),
+                format!(
+                    "{designator}: package terminal {physical} maps electrical {} → {}.",
+                    am.get(&physical)
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(none),
+                    bm.get(&physical)
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(none)
+                ),
+            );
             for terminal in am.get(&physical).into_iter().chain(bm.get(&physical)) {
                 mapping_endpoints.insert(Endpoint {
                     instance,
@@ -1062,12 +1391,21 @@ fn definition_details(
     // Terminals and their functions.
     for terminal in &a.component.terminals {
         let Some(replacement) = b.component.terminal(terminal.id) else {
-            plan.detail(format!(
-                "{designator}: terminal {} ‘{}’ ({}) is removed.",
-                terminal.id,
-                terminal.name,
-                class_summary(terminal)
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Remove,
+                    O::Terminal,
+                    vec![terminal_ref(terminal.id)],
+                    format!("{designator}: terminal ‘{}’ is removed", terminal.name),
+                ),
+                format!(
+                    "{designator}: terminal {} ‘{}’ ({}) is removed.",
+                    terminal.id,
+                    terminal.name,
+                    class_summary(terminal)
+                ),
+            );
             continue;
         };
         if replacement.is_electrical() != terminal.is_electrical() {
@@ -1077,31 +1415,63 @@ fn definition_details(
             });
         }
         if replacement.name != terminal.name {
-            plan.detail(format!(
-                "{designator}: terminal {} ‘{}’ is renamed ‘{}’.",
-                terminal.id, terminal.name, replacement.name
-            ));
-            plan.warnings.push(format!(
-                "{designator}.{} is renamed; its stable electrical identity is retained. Confirm the new label does not represent a different signal.",
-                terminal.id
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Change,
+                    O::Terminal,
+                    vec![terminal_ref(terminal.id)],
+                    format!(
+                        "{designator}: terminal ‘{}’ is renamed ‘{}’",
+                        terminal.name, replacement.name
+                    ),
+                ),
+                format!(
+                    "{designator}: terminal {} ‘{}’ is renamed ‘{}’.",
+                    terminal.id, terminal.name, replacement.name
+                ),
+            );
+            plan.warn(
+                &format!(
+                    "{designator}: confirm ‘{}’ is the same signal as ‘{}’",
+                    replacement.name, terminal.name
+                ),
+                format!(
+                    "{designator} terminal ‘{}’ is renamed ‘{}’; its stable electrical identity is retained. Confirm the new name does not represent a different signal.",
+                    terminal.name, replacement.name
+                ),
+                vec![terminal_ref(terminal.id)],
+            );
         }
-        function_details(plan, designator, terminal, replacement);
+        function_details(plan, designator, instance, terminal, replacement);
     }
     for terminal in &b.component.terminals {
         if a.component.terminal(terminal.id).is_none() {
-            plan.detail(format!(
-                "{designator}: add terminal {} ‘{}’ ({}).",
-                terminal.id,
-                terminal.name,
-                class_summary(terminal)
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Add,
+                    O::Terminal,
+                    vec![terminal_ref(terminal.id)],
+                    format!("{designator}: adds terminal ‘{}’", terminal.name),
+                ),
+                format!(
+                    "{designator}: add terminal {} ‘{}’ ({}).",
+                    terminal.id,
+                    terminal.name,
+                    class_summary(terminal)
+                ),
+            );
         }
     }
     if a.component.resources != b.component.resources
         || a.component.constraints != b.component.constraints
     {
-        plan.detail(format!(
+        plan.detail(
+            head(A::Component, K::Change, O::Function, refs(), format!(
+                "{designator}: function resources or limits change"
+            )),
+            format!(
             "{designator}: function resources or constraints change; selections are checked against the target revision."
         ));
     }
@@ -1129,14 +1499,22 @@ fn definition_details(
             }
         }
         match replacement {
-            None => plan.detail(format!(
+            None => plan.detail(
+                head(A::Board, K::Remove, O::Pad, vec![ObjectRef::Pad { instance, pad: pad.id }], format!(
+                    "{designator}: pad {} is removed", pad_name(pad)
+                )),
+                format!(
                 "{designator}: footprint pad {} is retired ({}); copper touching it is listed below.",
                 pad_name(pad),
                 local_pad(Some(pad))
             )),
             Some(next) => {
-                for aspect in pad_changes(pad, next) {
-                    plan.detail(format!(
+                for (short, aspect) in pad_changes(pad, next) {
+                    plan.detail(
+                        head(A::Board, K::Change, O::Pad, vec![ObjectRef::Pad { instance, pad: next.id }], format!(
+                            "{designator}: pad {} {short}", pad_name(next)
+                        )),
+                        format!(
                         "{designator}: footprint pad {} {aspect}.",
                         pad_name(next)
                     ));
@@ -1146,30 +1524,59 @@ fn definition_details(
     }
     for pad in b_pads {
         if !a_pads.iter().any(|p| p.id == pad.id) {
-            plan.detail(format!(
-                "{designator}: add footprint pad {}: {}{}.",
-                pad_name(pad),
-                local_pad(Some(pad)),
-                if pad.terminal.is_none()
-                    && matches!(pad.kind, PadKind::Smd | PadKind::PlatedThrough)
-                {
-                    " (unresolved: no package terminal chosen)"
-                } else {
-                    ""
-                }
-            ));
+            let unresolved =
+                pad.terminal.is_none() && matches!(pad.kind, PadKind::Smd | PadKind::PlatedThrough);
+            plan.detail(
+                head(
+                    A::Board,
+                    K::Add,
+                    O::Pad,
+                    vec![ObjectRef::Pad {
+                        instance,
+                        pad: pad.id,
+                    }],
+                    format!(
+                        "{designator}: adds pad {}{}",
+                        pad_name(pad),
+                        if unresolved {
+                            " without a package terminal"
+                        } else {
+                            ""
+                        }
+                    ),
+                ),
+                format!(
+                    "{designator}: add footprint pad {}: {}{}.",
+                    pad_name(pad),
+                    local_pad(Some(pad)),
+                    if unresolved {
+                        " (unresolved: no package terminal chosen)"
+                    } else {
+                        ""
+                    }
+                ),
+            );
         }
     }
     if let (Some(fa), Some(fb)) = (a.footprint, b.footprint) {
-        footprint_details(plan, designator, fa, fb);
+        footprint_details(plan, designator, instance, fa, fb);
     }
     let datum = |f: Option<&FootprintDefinition>| f.map(|f| f.datum);
     if datum(a.footprint) != datum(b.footprint) {
-        plan.detail(format!(
-            "{designator}: footprint datum {:?} → {:?} mm.",
-            datum(a.footprint),
-            datum(b.footprint)
-        ));
+        plan.detail(
+            head(
+                A::Board,
+                K::Change,
+                O::Footprint,
+                refs(),
+                format!("{designator}: footprint origin moves"),
+            ),
+            format!(
+                "{designator}: footprint datum {:?} → {:?} mm.",
+                datum(a.footprint),
+                datum(b.footprint)
+            ),
+        );
     }
 }
 
@@ -1198,17 +1605,41 @@ fn behavior(function: &Function) -> String {
 /// Function differences of one terminal, keyed by function ID. Order is
 /// presentation, so a reorder alone reports nothing; a relabel reports the
 /// label change only.
-fn function_details(plan: &mut UpdatePlan, designator: &str, a: &Terminal, b: &Terminal) {
+fn function_details(
+    plan: &mut UpdatePlan,
+    designator: &str,
+    instance: Id,
+    a: &Terminal,
+    b: &Terminal,
+) {
     let id = a.id;
+    let name = &b.name;
+    let refs = || {
+        vec![ObjectRef::Terminal {
+            endpoint: Endpoint {
+                instance,
+                terminal: id,
+            },
+        }]
+    };
     let (fa, fb) = match (a.functions(), b.functions()) {
         (Some(fa), Some(fb)) => (fa, fb),
         (None, None) if a.class == b.class => return,
         _ => {
-            plan.detail(format!(
-                "{designator} terminal {id}: {} → {}.",
-                class_summary(a),
-                class_summary(b)
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Change,
+                    O::Terminal,
+                    refs(),
+                    format!("{designator}: terminal ‘{name}’ changes class"),
+                ),
+                format!(
+                    "{designator} terminal {id}: {} → {}.",
+                    class_summary(a),
+                    class_summary(b)
+                ),
+            );
             return;
         }
     };
@@ -1218,47 +1649,98 @@ fn function_details(plan: &mut UpdatePlan, designator: &str, a: &Terminal, b: &T
     let (before, after) = (functions(fa), functions(fb));
     for (function, old) in &before {
         match after.get(function) {
-            None => plan.detail(format!(
-                "{designator} terminal {id}: function ‘{}’ ({function}) is removed.",
-                old.label
-            )),
+            None => plan.detail(
+                head(
+                    A::Component,
+                    K::Remove,
+                    O::Function,
+                    refs(),
+                    format!(
+                        "{designator}: terminal ‘{name}’ loses function ‘{}’",
+                        old.label
+                    ),
+                ),
+                format!(
+                    "{designator} terminal {id}: function ‘{}’ ({function}) is removed.",
+                    old.label
+                ),
+            ),
             Some(new) => {
                 if new.label != old.label {
-                    plan.detail(format!(
+                    plan.detail(
+                        head(A::Component, K::Change, O::Function, refs(), format!(
+                            "{designator}: function ‘{}’ is renamed ‘{}’", old.label, new.label
+                        )),
+                        format!(
                         "{designator} terminal {id}: function {function} ‘{}’ is relabeled ‘{}’; selections are kept by ID.",
                         old.label, new.label
                     ));
                 }
                 if behavior(new) != behavior(old) {
-                    plan.detail(format!(
-                        "{designator} terminal {id}: function ‘{}’ ({function}) {} → {}.",
-                        new.label,
-                        behavior(old),
-                        behavior(new)
-                    ));
+                    plan.detail(
+                        head(
+                            A::Component,
+                            K::Change,
+                            O::Function,
+                            refs(),
+                            format!("{designator}: function ‘{}’ behaves differently", new.label),
+                        ),
+                        format!(
+                            "{designator} terminal {id}: function ‘{}’ ({function}) {} → {}.",
+                            new.label,
+                            behavior(old),
+                            behavior(new)
+                        ),
+                    );
                 }
             }
         }
     }
     for (function, new) in &after {
         if !before.contains_key(function) {
-            plan.detail(format!(
-                "{designator} terminal {id}: add function ‘{}’ ({function}), {}.",
-                new.label,
-                behavior(new)
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Add,
+                    O::Function,
+                    refs(),
+                    format!(
+                        "{designator}: terminal ‘{name}’ gains function ‘{}’",
+                        new.label
+                    ),
+                ),
+                format!(
+                    "{designator} terminal {id}: add function ‘{}’ ({function}), {}.",
+                    new.label,
+                    behavior(new)
+                ),
+            );
         }
     }
     if fa.design_default != fb.design_default {
-        plan.detail(format!(
-            "{designator} terminal {id}: design default {:?} → {:?}.",
-            fa.design_default, fb.design_default
-        ));
+        plan.detail(
+            head(
+                A::Component,
+                K::Change,
+                O::Function,
+                refs(),
+                format!("{designator}: terminal ‘{name}’ changes its default function"),
+            ),
+            format!(
+                "{designator} terminal {id}: design default {:?} → {:?}.",
+                fa.design_default, fb.design_default
+            ),
+        );
     }
 }
 
 /// Explicit selection changes, by terminal.
-fn selection_details(plan: &mut UpdatePlan, old: &ComponentInstance, new: &ComponentInstance) {
+fn selection_details(
+    plan: &mut UpdatePlan,
+    next: &Project,
+    old: &ComponentInstance,
+    new: &ComponentInstance,
+) {
     let designator = old.designator.as_str();
     let terminals: BTreeSet<&TerminalId> =
         old.functions.keys().chain(new.functions.keys()).collect();
@@ -1268,11 +1750,27 @@ fn selection_details(plan: &mut UpdatePlan, old: &ComponentInstance, new: &Compo
     for terminal in terminals {
         let (a, b) = (old.functions.get(terminal), new.functions.get(terminal));
         if a != b {
-            plan.detail(format!(
-                "{designator} terminal {terminal}: selection {} → {}.",
-                show(a),
-                show(b)
-            ));
+            let endpoint = Endpoint {
+                instance: new.id,
+                terminal: *terminal,
+            };
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Change,
+                    O::Function,
+                    vec![ObjectRef::Terminal { endpoint }],
+                    format!(
+                        "{designator}: terminal {} uses another function",
+                        terminal_name(next, endpoint)
+                    ),
+                ),
+                format!(
+                    "{designator} terminal {terminal}: selection {} → {}.",
+                    show(a),
+                    show(b)
+                ),
+            );
         }
     }
 }
@@ -1287,11 +1785,21 @@ fn instance_details(
     packages: &mut PackageLines,
 ) {
     let designator = old.designator.as_str();
+    let refs = || vec![ObjectRef::Instance { id: old.id }];
     if old.designator != new.designator {
-        plan.detail(format!(
-            "Instance {}: designator {:?} → {:?}.",
-            old.id, old.designator, new.designator
-        ));
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Change,
+                O::Instance,
+                refs(),
+                format!("{} is renamed {}", old.designator, new.designator),
+            ),
+            format!(
+                "Instance {}: designator {:?} → {:?}.",
+                old.id, old.designator, new.designator
+            ),
+        );
     }
     if old.component != new.component || old.properties != new.properties {
         field_details(plan, project, next, old, new);
@@ -1302,27 +1810,56 @@ fn instance_details(
             .component(new.component)
             .or_else(|| project.library.component(old.component))
             .map_or_else(|| old.component.id.to_string(), |c| c.meta.name.clone());
-        plan.detail(format!(
-            "{designator}: {name} {} → {}.",
-            old.component.revision, new.component.revision
-        ));
+        plan.detail(
+            head(
+                A::Component,
+                K::Change,
+                O::Component,
+                refs(),
+                format!(
+                    "{designator}: {name} {} → {}",
+                    old.component.revision, new.component.revision
+                ),
+            ),
+            format!(
+                "{designator}: {name} {} → {}.",
+                old.component.revision, new.component.revision
+            ),
+        );
     }
     if old.representation != new.representation {
-        plan.detail(format!(
-            "{designator}: representation {} → {}.",
-            old.representation, new.representation
-        ));
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Change,
+                O::Component,
+                refs(),
+                format!("{designator}: uses another symbol"),
+            ),
+            format!(
+                "{designator}: representation {} → {}.",
+                old.representation, new.representation
+            ),
+        );
     }
     if old.physical != new.physical {
         let show = |c: Option<PhysicalChoice>| {
             c.map(|c| format!("binding {} footprint {}", c.binding, c.footprint))
                 .unwrap_or_else(|| "none".into())
         };
-        plan.detail(format!(
-            "{designator}: physical implementation {} → {}.",
-            show(old.physical),
-            show(new.physical)
-        ));
+        let line = if new.physical.is_some() {
+            format!("{designator}: uses another footprint")
+        } else {
+            format!("{designator}: no longer has a footprint")
+        };
+        plan.detail(
+            head(A::Board, K::Change, O::Footprint, refs(), line),
+            format!(
+                "{designator}: physical implementation {} → {}.",
+                show(old.physical),
+                show(new.physical)
+            ),
+        );
     }
     if (old.component, old.representation, old.physical)
         != (new.component, new.representation, new.physical)
@@ -1339,25 +1876,79 @@ fn instance_details(
         );
     }
     if old.functions != new.functions {
-        selection_details(plan, old, new);
+        selection_details(plan, next, old, new);
     }
+    let unit_name = |unit: UnitId| {
+        view(next, new)
+            .and_then(|v| v.symbol.unit(unit))
+            .or_else(|| view(project, old).and_then(|v| v.symbol.unit(unit)))
+            .map_or_else(|| "a unit".to_string(), |u| format!("unit {}", u.label))
+    };
     for unit in old.unused_units.difference(&new.unused_units) {
-        plan.detail(format!(
-            "{designator}: unit {unit} is no longer marked unused."
-        ));
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Change,
+                O::Unit,
+                vec![ObjectRef::Unit {
+                    instance: old.id,
+                    unit: *unit,
+                }],
+                format!("{designator}: {} is used again", unit_name(*unit)),
+            ),
+            format!("{designator}: unit {unit} is no longer marked unused."),
+        );
     }
     for unit in new.unused_units.difference(&old.unused_units) {
-        plan.detail(format!("{designator}: unit {unit} is marked unused."));
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Change,
+                O::Unit,
+                vec![ObjectRef::Unit {
+                    instance: old.id,
+                    unit: *unit,
+                }],
+                format!("{designator}: {} is marked unused", unit_name(*unit)),
+            ),
+            format!("{designator}: unit {unit} is marked unused."),
+        );
     }
+    let endpoint = |terminal: TerminalId| Endpoint {
+        instance: old.id,
+        terminal,
+    };
     for terminal in old.no_connect.difference(&new.no_connect) {
-        plan.detail(format!(
-            "{designator}: no-connect marker on terminal {terminal} is removed."
-        ));
+        let endpoint = endpoint(*terminal);
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Remove,
+                O::Terminal,
+                vec![ObjectRef::Terminal { endpoint }],
+                format!(
+                    "{designator}: terminal {} is no longer marked no-connect",
+                    terminal_name(next, endpoint)
+                ),
+            ),
+            format!("{designator}: no-connect marker on terminal {terminal} is removed."),
+        );
     }
     for terminal in new.no_connect.difference(&old.no_connect) {
-        plan.detail(format!(
-            "{designator}: terminal {terminal} is marked no-connect."
-        ));
+        let endpoint = endpoint(*terminal);
+        plan.detail(
+            head(
+                A::Schematic,
+                K::Add,
+                O::Terminal,
+                vec![ObjectRef::Terminal { endpoint }],
+                format!(
+                    "{designator}: terminal {} is marked no-connect",
+                    terminal_name(next, endpoint)
+                ),
+            ),
+            format!("{designator}: terminal {terminal} is marked no-connect."),
+        );
     }
 }
 
@@ -1394,23 +1985,50 @@ fn field_details(
     };
     for lineage in before.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
         let (a, b) = (before.get(lineage), after.get(lineage));
+        let refs = vec![ObjectRef::Property {
+            instance: old.id,
+            field: *lineage,
+        }];
         if let (Some(a), Some(b)) = (a, b)
             && a.label != b.label
         {
-            plan.detail(format!(
-                "{designator}: field ‘{}’ is renamed ‘{}’; its assignment is kept.",
-                a.label, b.label
-            ));
+            plan.detail(
+                head(
+                    A::Component,
+                    K::Change,
+                    O::Field,
+                    refs.clone(),
+                    format!("{designator}: field ‘{}’ is renamed ‘{}’", a.label, b.label),
+                ),
+                format!(
+                    "{designator}: field ‘{}’ is renamed ‘{}’; its assignment is kept.",
+                    a.label, b.label
+                ),
+            );
         }
         if a.map(|f| (&f.value, f.origin)) != b.map(|f| (&f.value, f.origin)) {
             let label = b
                 .or(a)
                 .map_or_else(|| lineage.to_string(), |f| f.label.clone());
-            plan.detail(format!(
-                "{designator}: field ‘{label}’ {} → {}.",
-                show(a),
-                show(b)
-            ));
+            let text = |f: Option<&EffectiveField>| {
+                f.and_then(|f| f.text.clone())
+                    .unwrap_or_else(|| "no value".into())
+            };
+            let kind = match (a, b) {
+                (None, Some(_)) => K::Add,
+                (Some(_), None) => K::Remove,
+                _ => K::Change,
+            };
+            plan.detail(
+                head(
+                    A::Component,
+                    kind,
+                    O::Field,
+                    refs,
+                    format!("{designator}: {label} {} → {}", text(a), text(b)),
+                ),
+                format!("{designator}: field ‘{label}’ {} → {}.", show(a), show(b)),
+            );
         }
     }
 }
@@ -1421,20 +2039,33 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
             .map(|i| instances::display_label(p, i, o.unit))
             .unwrap_or_else(|| "removed instance".into())
     };
+    let refs = |o: &SymbolOccurrence| vec![ObjectRef::Occurrence { id: o.id }];
     for occurrence in &project.occurrences {
         match next.occurrence(occurrence.id) {
-            None => plan.detail(format!(
+            None => plan.detail(
+                head(A::Schematic, K::Remove, O::Symbol, refs(occurrence), format!(
+                    "Removes {} from the sheet", label(project, occurrence)
+                )),
+                format!(
                 "Remove symbol occurrence {} ({}).",
                 occurrence.id,
                 label(project, occurrence)
             )),
-            Some(after) if after.unit != occurrence.unit => plan.detail(format!(
+            Some(after) if after.unit != occurrence.unit => plan.detail(
+                head(A::Schematic, K::Change, O::Symbol, refs(occurrence), format!(
+                    "{} replaces {} on the sheet", label(next, after), label(project, occurrence)
+                )),
+                format!(
                 "Occurrence {} draws {} instead of {}.",
                 occurrence.id,
                 label(next, after),
                 label(project, occurrence)
             )),
-            Some(after) if after.position != occurrence.position => plan.detail(format!(
+            Some(after) if after.position != occurrence.position => plan.detail(
+                head(A::Schematic, K::Change, O::Symbol, refs(occurrence), format!(
+                    "{} moves on the sheet", label(project, occurrence)
+                )),
+                format!(
                 "{}: schematic position {:?} → {:?} mm; electrical identities stay unchanged.",
                 label(project, occurrence),
                 occurrence.position,
@@ -1443,7 +2074,11 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
             Some(after)
                 if (after.rotation, after.mirror) != (occurrence.rotation, occurrence.mirror) =>
             {
-                plan.detail(format!(
+                plan.detail(
+                    head(A::Schematic, K::Change, O::Symbol, refs(occurrence), format!(
+                        "{} turns on the sheet", label(project, occurrence)
+                    )),
+                    format!(
                     "{}: schematic orientation {}°{} → {}°{}; electrical identities stay unchanged.",
                     label(project, occurrence),
                     occurrence.rotation.degrees(),
@@ -1457,12 +2092,21 @@ fn occurrence_details(plan: &mut UpdatePlan, project: &Project, next: &Project) 
     }
     for occurrence in &next.occurrences {
         if project.occurrence(occurrence.id).is_none() {
-            plan.detail(format!(
-                "Place {} at {:?} mm (occurrence {}).",
-                label(next, occurrence),
-                occurrence.position,
-                occurrence.id
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Add,
+                    O::Symbol,
+                    refs(occurrence),
+                    format!("Places {} on the sheet", label(next, occurrence)),
+                ),
+                format!(
+                    "Place {} at {:?} mm (occurrence {}).",
+                    label(next, occurrence),
+                    occurrence.position,
+                    occurrence.id
+                ),
+            );
         }
     }
 }
@@ -1486,15 +2130,35 @@ fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
                     .map_or_else(|| r.to_string(), |p| p.definition.mpn.clone())
             })
         };
+        let refs = || vec![ObjectRef::Instance { id: new.id }];
+        let d = &new.designator;
         match (mpn(project, old), mpn(next, new)) {
             (Some(before), None) => {
-                plan.detail(format!("{}: clear Part {before}.", new.designator));
+                plan.detail(
+                    head(
+                        A::Component,
+                        K::Remove,
+                        O::Part,
+                        refs(),
+                        format!("{d}: clears Part {before}"),
+                    ),
+                    format!("{d}: clear Part {before}."),
+                );
             }
             (before, Some(after)) if old.part != new.part => {
-                plan.detail(match before {
-                    Some(before) => format!("{}: Part {before} → {after}.", new.designator),
-                    None => format!("{}: assign Part {after}.", new.designator),
-                });
+                let (kind, line, detail) = match before {
+                    Some(before) => (
+                        K::Change,
+                        format!("{d}: Part {before} → {after}"),
+                        format!("{d}: Part {before} → {after}."),
+                    ),
+                    None => (
+                        K::Add,
+                        format!("{d}: assigns Part {after}"),
+                        format!("{d}: assign Part {after}."),
+                    ),
+                };
+                plan.detail(head(A::Component, kind, O::Part, refs(), line), detail);
             }
             _ => {}
         }
@@ -1504,13 +2168,49 @@ fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
             .collect();
         for finding in instances::part_findings(&next.library, new) {
             if !known.contains(&(finding.code.clone(), finding.message.clone())) {
-                plan.warnings.push(format!(
-                    "Part finding {}: {}",
-                    finding.code, finding.message
-                ));
+                let part = mpn(next, new).unwrap_or_default();
+                plan.warn(
+                    &format!("{d}: Part {part} no longer agrees with the instance"),
+                    format!("Part finding {}: {}", finding.code, finding.message),
+                    refs(),
+                );
             }
         }
     }
+}
+
+/// A terminal by its user name, quoted: "‘A’", or "a terminal" when the
+/// instance or terminal no longer resolves.
+fn terminal_name(project: &Project, endpoint: Endpoint) -> String {
+    project
+        .instance(endpoint.instance)
+        .and_then(|i| instances::resolve(&project.library, i).ok())
+        .and_then(|r| {
+            r.component
+                .definition
+                .terminal(endpoint.terminal)
+                .map(|t| format!("‘{}’", t.name))
+        })
+        .unwrap_or_else(|| "a terminal".into())
+}
+
+/// A wire end by its user names: "R1 ‘2’".
+fn end_name(project: &Project, endpoint: Endpoint) -> String {
+    let designator = project
+        .instance(endpoint.instance)
+        .map_or("a removed instance", |i| i.designator.as_str());
+    format!("{designator} {}", terminal_name(project, endpoint))
+}
+
+fn count_of(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Board and electrical findings of one project state.
+fn findings(project: &Project) -> Vec<Finding> {
+    let mut out = layout::checks(project);
+    out.extend(erc::checks(project));
+    out
 }
 
 /// Preview never mutates the source. Apply recomputes this plan at its bound revision.
@@ -1519,23 +2219,17 @@ pub(crate) fn preview(
     revision: u64,
     change: Change,
 ) -> (UpdatePlan, Option<Project>) {
-    let mut plan = UpdatePlan {
-        revision,
-        change: change.clone(),
-        changes: vec![],
-        affected_wires: vec![],
-        removed_wires: vec![],
-        affected_placements: vec![],
-        removed_placements: vec![],
-        conflicting_tracks: vec![],
-        conflicting_vias: vec![],
-        blockers: vec![],
-        warnings: vec![],
-    };
+    let mut plan = UpdatePlan::new(revision, change.clone());
     let mut next = match stage_change(project, &change) {
         Ok(next) => next,
         Err(error) => {
-            plan.blockers.push(error.to_string());
+            plan.block(
+                refusal_line(&error),
+                error.to_string(),
+                change_refs(&change),
+            );
+            plan.findings.line = "Issues not checked: the update cannot be staged".into();
+            plan.finish();
             return (plan, None);
         }
     };
@@ -1565,42 +2259,75 @@ pub(crate) fn preview(
     let mut electrical_changes = BTreeSet::new();
     for (id, terminals) in &old_nets {
         let name = project.net_name(*id);
+        let refs = vec![ObjectRef::Net { id: *id }];
         match new_nets.get(id) {
             Some(after) if after == terminals => {}
             Some(after) if terminals.iter().all(|t| after.binary_search(t).is_ok()) => {
-                plan.detail(format!(
-                    "Net {name} gains terminals: {} → {}.",
-                    members(project, terminals),
-                    members(&next, after)
-                ));
+                let gained = after.len() - terminals.len();
+                plan.detail(
+                    head(
+                        A::Nets,
+                        K::Change,
+                        O::Net,
+                        refs,
+                        format!("{name} gains {}", count_of(gained, "terminal", "terminals")),
+                    ),
+                    format!(
+                        "Net {name} gains terminals: {} → {}.",
+                        members(project, terminals),
+                        members(&next, after)
+                    ),
+                );
             }
             after => {
                 electrical_changes.insert(*id);
-                plan.detail(format!(
-                    "Net {name}: {} → {}.",
-                    members(project, terminals),
-                    members(&next, after.copied().unwrap_or(&[]))
-                ));
+                let (kind, line) = match after {
+                    None => (K::Remove, format!("Removes net {name}")),
+                    Some(_) => (K::Change, format!("{name} changes its connections")),
+                };
+                plan.detail(
+                    head(A::Nets, kind, O::Net, refs, line),
+                    format!(
+                        "Net {name}: {} → {}.",
+                        members(project, terminals),
+                        members(&next, after.copied().unwrap_or(&[]))
+                    ),
+                );
             }
         }
     }
     for (id, terminals) in &new_nets {
         if !old_nets.contains_key(id) {
-            plan.detail(format!(
-                "Add net {}: {}.",
-                next.net_name(*id),
-                members(&next, terminals)
-            ));
+            let name = next.net_name(*id);
+            plan.detail(
+                head(
+                    A::Nets,
+                    K::Add,
+                    O::Net,
+                    vec![ObjectRef::Net { id: *id }],
+                    format!(
+                        "Adds net {name} with {}",
+                        count_of(terminals.len(), "terminal", "terminals")
+                    ),
+                ),
+                format!("Add net {name}: {}.", members(&next, terminals)),
+            );
         }
     }
     let mut mapping_endpoints = BTreeSet::new();
     let mut packages = PackageLines::new();
     for old in &project.instances {
         let Some(new) = next.instance(old.id) else {
-            plan.detail(format!(
-                "Remove instance {} (ID {}).",
-                old.designator, old.id
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Remove,
+                    O::Instance,
+                    vec![ObjectRef::Instance { id: old.id }],
+                    format!("Removes {}", old.designator),
+                ),
+                format!("Remove instance {} (ID {}).", old.designator, old.id),
+            );
             continue;
         };
         instance_details(
@@ -1614,15 +2341,42 @@ pub(crate) fn preview(
         );
     }
     // A package change is listed once for every instance it reaches.
-    for (line, designators) in packages {
-        plan.detail(format!("{}: {line}", designators.join(", ")));
+    for (line, reached) in packages {
+        let designators: Vec<&str> = reached.iter().map(|(d, _)| d.as_str()).collect();
+        let designators = designators.join(", ");
+        plan.detail(
+            head(
+                A::Board,
+                K::Change,
+                O::Package,
+                reached
+                    .iter()
+                    .map(|(_, id)| ObjectRef::Instance { id: *id })
+                    .collect(),
+                format!("{designators}: the package or 3D model changes"),
+            ),
+            format!("{designators}: {line}"),
+        );
     }
     for instance in &next.instances {
         if project.instance(instance.id).is_none() {
-            plan.detail(format!(
-                "Add instance {} (ID {}), component {}.",
-                instance.designator, instance.id, instance.component
-            ));
+            let name = next
+                .library
+                .component(instance.component)
+                .map_or_else(|| "a component".to_string(), |c| c.meta.name.clone());
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Add,
+                    O::Instance,
+                    vec![ObjectRef::Instance { id: instance.id }],
+                    format!("Adds {} ({name})", instance.designator),
+                ),
+                format!(
+                    "Add instance {} (ID {}), component {}.",
+                    instance.designator, instance.id, instance.component
+                ),
+            );
         }
     }
     occurrence_details(&mut plan, project, &next);
@@ -1636,16 +2390,35 @@ pub(crate) fn preview(
             electrical_changes.insert(*net);
         }
     }
+    let wire_refs = |from: Endpoint, to: Endpoint| {
+        vec![
+            ObjectRef::Terminal { endpoint: from },
+            ObjectRef::Terminal { endpoint: to },
+        ]
+    };
     for wire in &project.wires {
         let replacement = next.wires.iter().find(|w| w.id == wire.id);
         if replacement.is_none() {
             plan.removed_wires.push(wire.id);
-            plan.detail(format!(
-                "Remove wire {}: {} → {}.",
-                wire.id,
-                endpoint_label(project, wire.from),
-                endpoint_label(project, wire.to)
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Remove,
+                    O::Wire,
+                    wire_refs(wire.from, wire.to),
+                    format!(
+                        "Removes the wire from {} to {}",
+                        end_name(project, wire.from),
+                        end_name(project, wire.to)
+                    ),
+                ),
+                format!(
+                    "Remove wire {}: {} → {}.",
+                    wire.id,
+                    endpoint_label(project, wire.from),
+                    endpoint_label(project, wire.to)
+                ),
+            );
         }
         if replacement != Some(wire)
             || [wire.from, wire.to]
@@ -1658,12 +2431,25 @@ pub(crate) fn preview(
     for wire in &next.wires {
         if !project.wires.iter().any(|w| w.id == wire.id) {
             plan.affected_wires.push(wire.id);
-            plan.detail(format!(
-                "Add wire {}: {} → {}.",
-                wire.id,
-                endpoint_label(&next, wire.from),
-                endpoint_label(&next, wire.to)
-            ));
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Add,
+                    O::Wire,
+                    wire_refs(wire.from, wire.to),
+                    format!(
+                        "Adds a wire from {} to {}",
+                        end_name(&next, wire.from),
+                        end_name(&next, wire.to)
+                    ),
+                ),
+                format!(
+                    "Add wire {}: {} → {}.",
+                    wire.id,
+                    endpoint_label(&next, wire.from),
+                    endpoint_label(&next, wire.to)
+                ),
+            );
         }
     }
     for placement in &project.placements {
@@ -1676,30 +2462,51 @@ pub(crate) fn preview(
                 .map(|i| (i.component, i.physical))
         };
         let part_changed = pins(project) != pins(&next);
+        let designator = designator_of(project, &next, placement.instance);
+        let refs = || {
+            vec![ObjectRef::Instance {
+                id: placement.instance,
+            }]
+        };
         if replacement != Some(placement) || part_changed {
             plan.affected_placements.push(placement.instance);
             if placement.locked {
-                plan.blockers.push(format!(
-                    "Placement of {} is locked; unlock it before updating.",
-                    designator_of(project, &next, placement.instance)
-                ));
+                plan.block(
+                    &format!("{designator} is locked on the board; unlock it to update"),
+                    format!("Placement of {designator} is locked; unlock it before updating."),
+                    refs(),
+                );
             }
             if replacement.is_none() {
                 plan.removed_placements.push(placement.instance);
-                plan.detail(format!(
-                    "Remove the PCB placement of {} at {:?} mm.",
-                    designator_of(project, &next, placement.instance),
-                    placement.position
-                ));
+                plan.detail(
+                    head(
+                        A::Board,
+                        K::Remove,
+                        O::Placement,
+                        refs(),
+                        format!("Removes {designator} from the board"),
+                    ),
+                    format!(
+                        "Remove the PCB placement of {designator} at {:?} mm.",
+                        placement.position
+                    ),
+                );
             } else if replacement.is_some_and(|r| {
                 r.position != placement.position
                     || r.rotation_deg != placement.rotation_deg
                     || r.layer != placement.layer
             }) {
-                let designator = project
-                    .instance(placement.instance)
-                    .map_or_else(|| placement.instance.to_string(), |i| i.designator.clone());
-                plan.detail(format!("{designator}: the PCB placement moves."));
+                plan.detail(
+                    head(
+                        A::Board,
+                        K::Change,
+                        O::Placement,
+                        refs(),
+                        format!("{designator} moves on the board"),
+                    ),
+                    format!("{designator}: the PCB placement moves."),
+                );
             }
         }
     }
@@ -1710,13 +2517,25 @@ pub(crate) fn preview(
             .any(|p| p.instance == placement.instance)
         {
             plan.affected_placements.push(placement.instance);
-            plan.detail(format!(
-                "Add the PCB placement of {} at {:?} mm, {}°, {:?}.",
-                designator_of(project, &next, placement.instance),
-                placement.position,
-                placement.rotation_deg,
-                placement.layer
-            ));
+            let designator = designator_of(project, &next, placement.instance);
+            plan.detail(
+                head(
+                    A::Board,
+                    K::Add,
+                    O::Placement,
+                    vec![ObjectRef::Instance {
+                        id: placement.instance,
+                    }],
+                    format!(
+                        "Places {designator} on the {} side",
+                        layer_label(placement.layer).to_lowercase()
+                    ),
+                ),
+                format!(
+                    "Add the PCB placement of {designator} at {:?} mm, {}°, {:?}.",
+                    placement.position, placement.rotation_deg, placement.layer
+                ),
+            );
         }
     }
     let old_pads: BTreeMap<_, _> = layout::pads(project)
@@ -1742,19 +2561,25 @@ pub(crate) fn preview(
                 .unwrap_or_else(|| key.1.to_string())
         )
     };
-    let mut conflicts: BTreeSet<_> = project
+    let pad_ref = |key: &(Id, crate::ids::PadId)| ObjectRef::Pad {
+        instance: key.0,
+        pad: key.1,
+    };
+    let track_ref = |track: &crate::model::Track| ObjectRef::Track { id: track.id };
+    let mut conflicts: BTreeMap<Id, (ConflictReason, Option<(Id, crate::ids::PadId)>)> = project
         .tracks
         .iter()
         .filter(|t| electrical_changes.contains(&t.net))
-        .map(|t| t.id)
+        .map(|t| (t.id, (ConflictReason::NetChanged, None)))
         .collect();
-    let mut affected_tracks = conflicts.clone();
+    let mut affected_tracks: BTreeSet<Id> = conflicts.keys().copied().collect();
     let mut via_conflicts: BTreeSet<Id> = project
         .vias
         .iter()
         .filter(|v| electrical_changes.contains(&v.net))
         .map(|v| v.id)
         .collect();
+    let via_ref = |via: &crate::model::Via| ObjectRef::Via { id: via.id };
     let layers = next.stackup.layers();
     let mut pairs = 0usize;
     for key in pad_ids {
@@ -1763,17 +2588,39 @@ pub(crate) fn preview(
         if before == after {
             continue;
         }
-        plan.detail(format!(
-            "{} world geometry: {} → {}.",
-            pad_label(&key),
-            world_pad(before),
-            world_pad(after)
-        ));
+        let (kind, line) = match (before, after) {
+            (None, _) => (K::Add, format!("{} is added on the board", pad_label(&key))),
+            (_, None) => (K::Remove, format!("{} leaves the board", pad_label(&key))),
+            (Some(b), Some(a)) if b.net != a.net => (
+                K::Change,
+                format!(
+                    "{} moves from {} to {}",
+                    pad_label(&key),
+                    project.net_name(b.net),
+                    next.net_name(a.net)
+                ),
+            ),
+            _ => (
+                K::Change,
+                format!("{} changes on the board", pad_label(&key)),
+            ),
+        };
+        plan.detail(
+            head(A::Board, kind, O::Pad, vec![pad_ref(&key)], line),
+            format!(
+                "{} world geometry: {} → {}.",
+                pad_label(&key),
+                world_pad(before),
+                world_pad(after)
+            ),
+        );
         for track in &project.tracks {
             pairs += 1;
             if pairs > 100_000 {
-                plan.blockers.push(
+                plan.block(
+                    "Too much copper to check; update fewer instances at a time",
                     "Impact geometry budget exceeded; update fewer instances at a time.".into(),
+                    vec![],
                 );
                 break;
             }
@@ -1783,23 +2630,32 @@ pub(crate) fn preview(
                 affected_tracks.insert(track.id);
             }
             if after.is_some_and(|p| layout::track_pad_clearance_conflict(track, p)) {
-                conflicts.insert(track.id);
+                conflicts
+                    .entry(track.id)
+                    .or_insert((ConflictReason::Clearance, Some(key)));
                 affected_tracks.insert(track.id);
             }
             // The part stays placed but this pad is gone or unconnected.
             let retired = after.is_none() && next.placements.iter().any(|p| p.instance == key.0);
+            let net = project.net_name(track.net);
             if touched_before && retired {
-                plan.warnings.push(format!(
-                    "Track {} touches {}, which the update retires or disconnects; copper stays in place for rerouting.",
-                    track.id,
-                    pad_label(&key)
-                ));
-            } else if touched_before && !touched_after && !conflicts.contains(&track.id) {
-                plan.warnings.push(format!(
-                    "Track {} is detached from {} after its geometry changes; copper stays in place for rerouting.",
-                    track.id,
-                    pad_label(&key)
-                ));
+                plan.warn(
+                    &format!("A track on {net} loses {}; it stays for rerouting", pad_label(&key)),
+                    format!(
+                        "A track on {net} touches {}, which the update retires or disconnects; copper stays in place for rerouting.",
+                        pad_label(&key)
+                    ),
+                    vec![track_ref(track), pad_ref(&key)],
+                );
+            } else if touched_before && !touched_after && !conflicts.contains_key(&track.id) {
+                plan.warn(
+                    &format!("A track on {net} is detached from {}", pad_label(&key)),
+                    format!(
+                        "A track on {net} is detached from {} after its geometry changes; copper stays in place for rerouting.",
+                        pad_label(&key)
+                    ),
+                    vec![track_ref(track), pad_ref(&key)],
+                );
             }
         }
         for via in &project.vias {
@@ -1812,11 +2668,15 @@ pub(crate) fn preview(
             } else if before.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
                 && !after.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
             {
-                plan.warnings.push(format!(
-                    "Via {} is detached from {} after its geometry changes; copper stays in place for rerouting.",
-                    via.id,
-                    pad_label(&key)
-                ));
+                let net = project.net_name(via.net);
+                plan.warn(
+                    &format!("A via on {net} is detached from {}", pad_label(&key)),
+                    format!(
+                        "A via on {net} is detached from {} after its geometry changes; copper stays in place for rerouting.",
+                        pad_label(&key)
+                    ),
+                    vec![via_ref(via), pad_ref(&key)],
+                );
             }
         }
         if pairs > 100_000 {
@@ -1825,61 +2685,236 @@ pub(crate) fn preview(
     }
     for via in &project.vias {
         if via_conflicts.contains(&via.id) && via.locked {
-            plan.blockers.push(format!(
-                "Via {} is locked and affected; unlock it before updating.",
-                via.id
-            ));
+            let net = project.net_name(via.net);
+            plan.block(
+                &format!("A locked via on {net} is affected; unlock it to update"),
+                format!("Via on {net} is locked and affected; unlock it before updating."),
+                vec![via_ref(via)],
+            );
         }
     }
     plan.conflicting_vias = via_conflicts.into_iter().collect();
     if !plan.conflicting_vias.is_empty() {
-        plan.warnings.push(format!(
-            "Explicit removal required for vias {:?}; retained vias are never retagged.",
+        let vias = count_of(
+            plan.conflicting_vias.len(),
+            "conflicting via",
+            "conflicting vias",
+        );
+        plan.warn(
+            &format!("Remove {vias} to apply; other copper stays"),
+            format!(
+                "Remove {vias} to apply this update; retained vias are never moved to another net."
+            ),
             plan.conflicting_vias
-        ));
+                .iter()
+                .map(|id| ObjectRef::Via { id: *id })
+                .collect(),
+        );
     }
-    next.vias.retain(|v| !plan.conflicting_vias.contains(&v.id));
     for track in &project.tracks {
         if affected_tracks.contains(&track.id) && track.locked {
-            plan.blockers.push(format!(
-                "Track {} is locked and affected; unlock it before updating.",
-                track.id
-            ));
+            let net = project.net_name(track.net);
+            plan.block(
+                &format!("A locked track on {net} is affected; unlock it to update"),
+                format!("Track on {net} is locked and affected; unlock it before updating."),
+                vec![track_ref(track)],
+            );
         }
     }
-    plan.conflicting_tracks = conflicts.into_iter().collect();
+    for track in &project.tracks {
+        let Some((reason, pad)) = conflicts.get(&track.id) else {
+            continue;
+        };
+        let net_name = project.net_name(track.net).to_owned();
+        let length_mm = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
+        let line = match (reason, pad) {
+            (ConflictReason::Clearance, Some(key)) => format!(
+                "Track on {net_name} would touch {} of another net",
+                pad_label(key)
+            ),
+            (ConflictReason::Clearance, None) => {
+                format!("Track on {net_name} would touch a pad of another net")
+            }
+            (ConflictReason::NetChanged, _) if !new_nets.contains_key(&track.net) => {
+                format!("Track on {net_name} would be left without its net")
+            }
+            (ConflictReason::NetChanged, _) => {
+                format!("Track on {net_name} would join pads the net no longer joins")
+            }
+        };
+        plan.conflicting_tracks.push(track.id);
+        plan.conflicts.push(TrackConflict {
+            track: track.id,
+            net: track.net,
+            net_name,
+            layer: track.layer,
+            length_mm,
+            reason: *reason,
+            pad: pad.as_ref().map(pad_ref),
+            line: clip(&line),
+            ack: format!(
+                "Remove that track ({}, {length_mm:.1} mm)",
+                track.layer.name()
+            ),
+        });
+    }
+    plan.conflicting_tracks.sort_unstable();
+    plan.conflicts.sort_by_key(|c| c.track);
     if !plan.conflicting_tracks.is_empty() {
-        plan.warnings.push(format!(
-            "Explicit removal required for tracks {:?}; retained tracks are never retagged.",
+        let tracks = count_of(
+            plan.conflicting_tracks.len(),
+            "conflicting track",
+            "conflicting tracks",
+        );
+        plan.warn(
+            &format!("Remove {tracks} to apply; other copper stays"),
+            format!(
+                "Remove {tracks} to apply this update; retained tracks are never moved to another net."
+            ),
             plan.conflicting_tracks
-        ));
+                .iter()
+                .map(|id| ObjectRef::Track { id: *id })
+                .collect(),
+        );
     }
     next.tracks
         .retain(|t| !plan.conflicting_tracks.contains(&t.id));
+    next.vias.retain(|v| !plan.conflicting_vias.contains(&v.id));
     if let Err(error) = validate::edited(project, &next) {
-        plan.blockers.push(error.to_string());
+        plan.block(
+            refusal_line(&error),
+            error.to_string(),
+            change_refs(&change),
+        );
     }
-    for check in layout::checks(&next) {
-        plan.warnings
-            .push(format!("Candidate PCB check: {}", check.message));
-    }
-    for check in erc::checks(&next) {
-        plan.warnings
-            .push(format!("Candidate electrical check: {}", check.message));
-    }
+    plan.findings = review::findings_diff(findings(project), findings(&next));
+    plan.findings.new_rows = crate::issues::finding_rows(&next, &plan.findings.new);
+    plan.findings.resolved_rows = crate::issues::finding_rows(project, &plan.findings.resolved);
+    plan.planned_placements = next
+        .placements
+        .iter()
+        .filter(|p| {
+            project
+                .placements
+                .iter()
+                .find(|q| q.instance == p.instance)
+                .is_none_or(|q| q != *p)
+        })
+        .cloned()
+        .collect();
     plan.affected_wires.sort_unstable();
     plan.affected_wires.dedup();
     plan.affected_placements.sort_unstable();
     plan.affected_placements.dedup();
-    plan.blockers.sort();
-    plan.blockers.dedup();
-    plan.warnings.sort();
-    plan.warnings.dedup();
     if plan.changes.is_empty() {
-        plan.warnings
-            .push("This update makes no document changes.".into());
+        plan.warn(
+            "This update changes nothing",
+            "This update makes no document changes.".into(),
+            vec![],
+        );
     }
+    plan.finish();
+    plan.summary = summarize(folded_items(&plan, project));
+    name_added_placements(&mut plan, project, &next);
+    name_removal(&mut plan, project, &next);
     (plan, Some(next))
+}
+
+/// The instances whose placement the plan adds.
+fn added_placements(plan: &UpdatePlan) -> Vec<Id> {
+    plan.items
+        .iter()
+        .filter(|i| i.kind == K::Add && i.object == O::Placement)
+        .flat_map(|i| i.refs.iter())
+        .filter_map(|r| match r {
+            ObjectRef::Instance { id } => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The plan's items with each new placement's "pad is added" items folded
+/// into the placement's own line: the pads arrive with it. The summary and
+/// the review's lists read these; `items` keeps every change.
+pub fn folded_items<'a>(
+    plan: &'a UpdatePlan,
+    project: &Project,
+) -> impl Iterator<Item = &'a PlanChange> {
+    let added: BTreeSet<Id> = added_placements(plan)
+        .into_iter()
+        .filter(|id| !project.placements.iter().any(|p| p.instance == *id))
+        .collect();
+    plan.items.iter().filter(move |i| {
+        !(i.kind == K::Add
+            && i.object == O::Pad
+            && !i.refs.is_empty()
+            && i.refs
+                .iter()
+                .all(|r| matches!(r, ObjectRef::Pad { instance, .. } if added.contains(instance))))
+    })
+}
+
+/// "Removes R1, 1 wire and its PCB placement": a removal's summary names
+/// the instance and what goes with it a user knows, not every sheet symbol
+/// and pad (those stay in the change list).
+fn name_removal(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    let Change::Instance {
+        edit: InstanceChange::Remove { instance },
+    } = plan.change
+    else {
+        return;
+    };
+    let removes = |object: ChangeObject| {
+        plan.items
+            .iter()
+            .filter(|i| i.kind == K::Remove && i.object == object)
+            .count()
+    };
+    let mut parts = vec![format!(
+        "Removes {}",
+        designator_of(project, next, instance)
+    )];
+    match removes(O::Wire) {
+        0 => {}
+        1 => parts.push("1 wire".into()),
+        n => parts.push(format!("{n} wires")),
+    }
+    if removes(O::Placement) > 0 {
+        parts.push("its PCB placement".into());
+    }
+    let named = match parts.as_slice() {
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        [] => return,
+    };
+    if named.chars().count() <= crate::issues::MAX_TITLE {
+        plan.summary = named;
+    }
+}
+
+/// "Adds 6 placements: R17–R22": the summary names the placements it adds
+/// when that still fits one line.
+fn name_added_placements(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    let added = added_placements(plan);
+    if added.is_empty() {
+        return;
+    }
+    let names: Vec<String> = added
+        .iter()
+        .map(|id| designator_of(project, next, *id))
+        .collect();
+    let noun = if added.len() == 1 {
+        "placement"
+    } else {
+        "placements"
+    };
+    let lead = format!("Adds {} {noun}", added.len());
+    if let Some(rest) = plan.summary.strip_prefix(&lead) {
+        let named = format!("{lead}: {}{rest}", review::designator_list(&names));
+        if named.chars().count() <= crate::issues::MAX_TITLE {
+            plan.summary = named;
+        }
+    }
 }
 
 pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -> Result<Project> {
@@ -1894,15 +2929,25 @@ pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -
         return Err(Error::Conflict(plan.blockers.join("\n")));
     }
     if !plan.conflicting_tracks.is_empty() && !update.remove_conflicting_tracks {
+        let nets: BTreeSet<&str> = plan.conflicts.iter().map(|c| c.net_name.as_str()).collect();
         return Err(Error::Conflict(format!(
-            "Update requires explicit removal of conflicting tracks {:?}.",
-            plan.conflicting_tracks
+            "This update removes {} on {}; confirm their removal to apply it.",
+            count_of(
+                plan.conflicting_tracks.len(),
+                "conflicting track",
+                "conflicting tracks"
+            ),
+            nets.into_iter().collect::<Vec<_>>().join(", ")
         )));
     }
     if !plan.conflicting_vias.is_empty() && !update.remove_conflicting_tracks {
         return Err(Error::Conflict(format!(
-            "Update requires explicit removal of conflicting vias {:?}.",
-            plan.conflicting_vias
+            "This update removes {}; confirm their removal to apply it.",
+            count_of(
+                plan.conflicting_vias.len(),
+                "conflicting via",
+                "conflicting vias"
+            )
         )));
     }
     candidate.ok_or_else(|| invalid("Update could not be staged."))

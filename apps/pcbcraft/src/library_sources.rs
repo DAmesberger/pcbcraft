@@ -625,6 +625,14 @@ impl LibrarySources {
         &self.sources
     }
 
+    /// Whether a library folder is still being read, so a search may not
+    /// have every entry yet.
+    pub fn loading(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|s| matches!(s.status, Status::Loading))
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }

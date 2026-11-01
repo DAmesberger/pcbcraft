@@ -238,6 +238,21 @@ A reviewed transfer of schematic or component changes into the PCB, preserving t
 **Fabrication attributes**:
 The board finish choices a fabricator builds: soldermask colour and finish, pad surface finish and silkscreen colour. They are saved in the design; the 3D view draws them, but they do not change the native Solidcraft model.
 
+**Stackup**:
+The board's layer build, top to bottom: copper foils and the dielectrics (core or prepreg, with a glass style) between them, plus mask and silkscreen on both sides. It sets the board and copper thicknesses; 2, 4 and 6 copper layers are offered. See [PCB realism](docs/pcb-realism.md).
+
+**Copper layer**:
+A named layer of the stackup that carries copper: Top, Inner 1…n or Bottom. Tracks lie on a copper layer; a board side (top or bottom) is the side a part, mask or silkscreen is on, and its outer copper layer is the copper layer of that side.
+
+**Board via**:
+A plated hole that joins its net's copper on every copper layer it spans, placed on the board (distinct from a pad via inside a footprint pad). It is tented (covered by mask) or open, and it is real copper in the native model. Only through vias exist yet.
+
+**Display-only layer**:
+A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations and solder. The saved native model holds only the physical bodies.
+
+**Layer view**:
+Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It is display state: hiding a layer filters what is drawn and picked and never rebuilds geometry. Outer copper and silkscreen share their state with PCB 2D.
+
 **Mechanical export**:
 A geometric representation of the board and its components for enclosure and assembly work. It does not contain the complete electrical design.
 

@@ -13,7 +13,9 @@
 //! are chosen by the sketch and never invented by the caller. The steps
 //! run on one clone and the last one evaluates and commits, so the whole
 //! template is one `library.footprint_from_template` undo step; a failure
-//! anywhere leaves the draft unchanged.
+//! anywhere leaves the draft unchanged. With `replace` the command first
+//! drops the draft's built content ([`cleared`]) on the same clone, so
+//! clearing and building are still one atomic undo step.
 //!
 //! Positions are driven by dimensions bound to named parameters (`seed_x`,
 //! `pad_x`, …) measured from the sketch origin, so editing a parameter
@@ -438,6 +440,38 @@ pub fn build(
         def.polarity = Some(Polarity { pad, markers });
     }
     Ok((def, report))
+}
+
+/// `footprint` with its template-built content dropped: the parametric
+/// source, every pad, the pin-1 polarity and the graphics the source's
+/// roles solved. Authored graphics (silkscreen, courtyard, assembly
+/// drawings without a role), the mask and paste defaults and `next_local`
+/// stay, so identities are never reused; the datum then follows the new
+/// source, as in any build. Pure; the result is what [`build`] accepts.
+pub fn cleared(footprint: &FootprintDefinition) -> FootprintDefinition {
+    let mut next = footprint.clone();
+    let roles: Vec<_> = next
+        .source
+        .as_deref()
+        .map(|s| s.graphics.iter().map(|g| g.id).collect())
+        .unwrap_or_default();
+    next.graphics.retain(|g| !roles.contains(&g.id));
+    next.source = None;
+    next.pads.clear();
+    next.polarity = None;
+    next
+}
+
+/// [`build`] into [`cleared`]`(footprint)`: replace whatever the draft
+/// holds with the template, in one pure step. On an empty draft it is
+/// exactly [`build`]. Any failure returns an error and nothing.
+pub fn rebuild(
+    footprint: &FootprintDefinition,
+    package: &PackageDefinition,
+    template: &FootprintTemplate,
+    evaluator: &dyn FootprintEvaluator,
+) -> Result<(FootprintDefinition, FootprintEditReport)> {
+    build(&cleared(footprint), package, template, evaluator)
 }
 
 /// Move a silkscreen designator that now sits over the built pads to just

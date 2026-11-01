@@ -1,11 +1,12 @@
 //! Application chrome: app bar, ribbon, the floating Browser and properties
-//! cards, the canvas navigation bar and status messages. Geometry comes from
+//! cards, the canvas navigation bar and the toast stack. Geometry comes from
 //! Solidcraft tokens and constants; content comes from the editors.
 use super::{App, browser};
 use crate::file_ui::Action;
+use crate::issues;
 use crate::kit;
 use crate::shell::{self, RibbonEvent, Workspace};
-use egui::{FontId, Rect, pos2, vec2};
+use egui::{Rect, pos2, vec2};
 use solidcraft_ui_egui::{
     fonts,
     theme::Tokens,
@@ -22,11 +23,6 @@ const SHELL_GAP: f32 = 7.0;
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
 /// Upstream Browser card width.
 const BROWSER_WIDTH: f32 = 260.0;
-/// Informational status messages fade after this many seconds; errors stay
-/// until the next successful action, a workspace change or this many
-/// seconds, whichever comes first.
-const STATUS_SECONDS: f64 = 6.0;
-const ERROR_SECONDS: f64 = 12.0;
 
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
@@ -93,14 +89,6 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
         browser,
         overlay,
     }
-}
-
-/// How a status message reads.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Status {
-    pub text: String,
-    pub error: bool,
-    pub at: f64,
 }
 
 impl App {
@@ -238,6 +226,12 @@ impl App {
                     {
                         self.toggle_browser();
                     }
+                    if ui_kit::button(ui, "Messages…", Button::Normal)
+                        .on_hover_text("Every message of this session, with the full text")
+                        .clicked()
+                    {
+                        self.messages_open = true;
+                    }
                 });
             });
     }
@@ -248,7 +242,8 @@ impl App {
             Workspace::Schematic => self.schematic.ribbon(&self.engine),
             Workspace::Pcb => self.pcb.ribbon(&self.engine),
         };
-        match shell::ribbon(ui, self.workspace, &ribbon) {
+        let issues = self.issues.ribbon_toggle(&self.engine, self.workspace);
+        match shell::ribbon(ui, self.workspace, &ribbon, &issues) {
             Some(RibbonEvent::Workspace(workspace)) => {
                 if workspace != self.workspace {
                     self.clear_error();
@@ -271,8 +266,13 @@ impl App {
                     Workspace::Schematic => self.schematic.on_tool(tool, &self.engine),
                     Workspace::Pcb => self.pcb.on_tool(tool, &self.engine),
                 };
-                self.apply(operation);
+                self.apply(
+                    &ui.ctx().clone(),
+                    crate::refusal::Origin::Command,
+                    operation,
+                );
             }
+            Some(RibbonEvent::Issues) => self.issues.toggle(),
             None => {}
         }
     }
@@ -289,8 +289,19 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
+                    self.issues
+                        .badge(ui, layout.canvas, &self.engine, self.workspace);
+                    let selection = self.selection();
+                    let shown = self.issues.pill(
+                        ui,
+                        layout.canvas,
+                        &self.engine,
+                        self.workspace,
+                        &selection,
+                    );
+                    self.issue_request(&ctx, shown);
                     self.navigation_bar(ui, layout.canvas);
-                    self.status_chip(ui, layout.canvas);
+                    self.toasts_above_navigation(ui, layout.canvas);
                 });
                 if let Some(rect) = layout.browser {
                     let summary = browser::summary(&self.engine);
@@ -298,13 +309,14 @@ impl App {
                     let mut pick = None;
                     let mut source_pick = None;
                     let updates = self.sources.updates(&self.engine);
+                    let badges = self.issues.badges(&self.engine);
                     shell::card(
                         &ctx,
                         "project-browser",
                         rect,
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
-                            pick = browser::show(ui, &self.engine, lit, &updates);
+                            pick = browser::show(ui, &self.engine, lit, &updates, &badges);
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
@@ -319,19 +331,143 @@ impl App {
                         self.sources.open_card();
                     }
                 }
-                let header = match self.workspace {
-                    Workspace::Part => self.part.header(&self.engine),
-                    Workspace::Schematic => self.schematic.header(&self.engine),
-                    Workspace::Pcb => self.pcb.header(&self.engine),
-                };
-                shell::card(
-                    &ctx,
-                    "properties",
-                    layout.inspector,
-                    |ui| kit::inspector_header(ui, header.icon, &header.title, header.kind),
-                    |ui| self.inspector(ui),
-                );
+                self.column(&ctx, layout.inspector);
             });
+    }
+
+    /// The right column: the subject slot above the always-visible Issues
+    /// card (docs/sidebar-ia.md, "Layout"). The active editor lays out the
+    /// whole slot: its Properties card, a tool card, a docked dialog or a
+    /// docked review.
+    fn column(&mut self, ctx: &egui::Context, rect: Rect) {
+        let wants = kit::card::wants(ctx, 2.0 * f32::from(shell::COLUMN_CARD_INSET));
+        let column = kit::card::column(rect, self.issues.expanded(), wants);
+        let slot = shell::column_card(
+            ctx,
+            "properties",
+            column.subject,
+            shell::COLUMN_CARD_INSET,
+            |ui| match self.workspace {
+                Workspace::Part => self.part.subject_slot(ui, &self.engine),
+                Workspace::Schematic => self.schematic.subject_slot(ui, &self.engine),
+                Workspace::Pcb => self.pcb.subject_slot(ui, &self.engine),
+            },
+        );
+        if let Some(slot) = slot {
+            if slot.show_issues {
+                self.issues.show_selection();
+            }
+            // Editors mark a field or dialog origin themselves; the rest
+            // are commands.
+            self.apply(ctx, crate::refusal::Origin::Command, slot.output);
+        }
+        self.open_new_part();
+        if let Some(id) = self.pcb.take_show_in_schematic() {
+            self.workspace = Workspace::Schematic;
+            self.schematic
+                .select_instance(Some(id), self.engine.project());
+        }
+        self.issues_column(ctx, column);
+    }
+
+    /// The Issues card under the subject slot, always shown.
+    fn issues_column(&mut self, ctx: &egui::Context, column: kit::card::Column) {
+        let selection = self.selection();
+        let request = shell::column_card(ctx, "issues", column.issues, 0, |ui| {
+            self.issues
+                .card(ui, &self.engine, self.workspace, &selection)
+        })
+        .flatten();
+        self.issue_request(ctx, request);
+    }
+
+    /// The active editor's selection as issue objects, for the Selection
+    /// scope.
+    fn selection(&self) -> Vec<pcbcraft_core::ObjectRef> {
+        match self.workspace {
+            Workspace::Part => {
+                issues::selection(self.workspace, self.part.lineage(), None, None, None)
+            }
+            Workspace::Schematic => issues::selection(
+                self.workspace,
+                None,
+                self.schematic.selected_instance(),
+                None,
+                self.schematic.selected_net(&self.engine),
+            ),
+            Workspace::Pcb => issues::selection(
+                self.workspace,
+                None,
+                self.pcb.selected_instance(),
+                self.pcb.selected_track(),
+                self.pcb.highlighted_net(),
+            ),
+        }
+    }
+
+    /// What the Issues surface asked for: locate an issue's objects in the
+    /// workspace that shows them, or run its Fix.
+    fn issue_request(&mut self, ctx: &egui::Context, request: Option<issues::Request>) {
+        match request {
+            Some(issues::Request::Locate { refs, area }) => {
+                let mut editors = issues::Editors {
+                    part: &mut self.part,
+                    schematic: &mut self.schematic,
+                    pcb: &mut self.pcb,
+                };
+                match issues::route(&mut editors, &self.engine, &refs, issues::workspace(area)) {
+                    Some(workspace) => {
+                        if workspace != self.workspace {
+                            self.clear_error();
+                        }
+                        self.workspace = workspace;
+                    }
+                    None => self.say(
+                        crate::kit::severity::Level::Info,
+                        "That issue has nothing to select",
+                    ),
+                }
+            }
+            Some(issues::Request::Fix(fix)) => self.fix(ctx, fix),
+            None => {}
+        }
+    }
+
+    /// Run an issue's Fix: open its dialog in its workspace, or apply its
+    /// typed operation.
+    fn fix(&mut self, ctx: &egui::Context, fix: issues::Fix) {
+        use issues::{Fix, FixDialog};
+        match fix {
+            Fix::Apply { operation, .. } => {
+                self.apply(ctx, crate::refusal::Origin::Command, Some(*operation));
+            }
+            Fix::Open { dialog, .. } => match dialog {
+                FixDialog::UpdatePcb => {
+                    self.workspace = Workspace::Pcb;
+                    let operation = self.pcb.on_tool("update", &self.engine);
+                    self.apply(ctx, crate::refusal::Origin::Command, operation);
+                }
+                FixDialog::ResolveParts => {
+                    self.workspace = Workspace::Schematic;
+                    // The ribbon's Resolve toggles; open it only when shut.
+                    let open = self
+                        .schematic
+                        .ribbon(&self.engine)
+                        .groups
+                        .iter()
+                        .flat_map(|g| &g.tools)
+                        .any(|t| t.id == "resolve" && t.selected);
+                    if !open {
+                        let operation = self.schematic.on_tool("resolve", &self.engine);
+                        self.apply(ctx, crate::refusal::Origin::Command, operation);
+                    }
+                }
+                FixDialog::AssignPads
+                | FixDialog::ChoosePart
+                | FixDialog::UpdateInstances
+                | FixDialog::Mapping => {}
+            },
+        }
     }
 
     /// The selection the Browser marks, from the active workspace.
@@ -406,7 +542,8 @@ impl App {
         let t = Tokens::get();
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
-        let buttons = if pcb_3d { 2.0 } else { 1.0 };
+        let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
+        let buttons = if pcb_3d || pcb_view { 2.0 } else { 1.0 };
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             t.control_height + 2.0 * t.space_4,
@@ -445,6 +582,15 @@ impl App {
                 }
             }
         }
+        if pcb_view {
+            // Layers and view toggles (W3): a popover above the bar.
+            let response = shell::icon_button(&mut child, "display", "Layers and view", true);
+            Container::new(ui.ctx(), Surface::Popup)
+                .menu(&response)
+                .align(egui::RectAlign::TOP_START)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| self.pcb.view_menu(ui));
+        }
         if pcb_3d {
             let mut view = self.pcb.layer_view();
             let copper = self.engine.project().stackup.layers();
@@ -455,58 +601,43 @@ impl App {
         }
     }
 
-    /// The latest status message, bottom-left in the canvas. Errors stay
-    /// longer than other messages; both fade.
-    fn status_chip(&mut self, ui: &mut egui::Ui, canvas: Rect) {
-        let t = Tokens::get();
-        let Some(status) = &self.status else {
-            return;
-        };
-        let now = ui.input(|i| i.time);
-        let lasts = if status.error {
-            ERROR_SECONDS
-        } else {
-            STATUS_SECONDS
-        };
-        if now - status.at > lasts {
-            self.status = None;
-            return;
+    /// The toast stack, bottom-centre of the canvas above the navigation
+    /// bar and clear of the bottom-left hint line.
+    fn toasts_above_navigation(&mut self, ui: &mut egui::Ui, canvas: Rect) {
+        let free = toast_area(canvas);
+        if let Some(event) = self.toasts.show(ui.ctx(), free, self.now) {
+            self.toast_event(event);
         }
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_secs_f64(
-                lasts - (now - status.at) + 0.05,
-            ));
-        let ink = if status.error { t.error } else { t.text };
-        let mut job = egui::text::LayoutJob::simple(
-            status.text.clone(),
-            FontId::proportional(t.font_label),
-            ink,
-            (canvas.width() * 0.45).max(120.0),
-        );
-        job.wrap.max_rows = 3;
-        let galley = ui.painter().layout_job(job);
-        let rect = Rect::from_min_size(
-            pos2(
-                canvas.left() + t.space_12,
-                canvas.bottom() - t.space_16 - galley.size().y - 2.0 * t.space_8,
-            ),
-            galley.size() + vec2(2.0 * t.space_12, 2.0 * t.space_8),
-        );
-        ui.painter().rect(
-            rect,
-            t.radius_md,
-            t.toolbar,
-            t.container_border(if status.error { t.error } else { t.border }),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter()
-            .galley(rect.min + vec2(t.space_12, t.space_8), galley, ink);
     }
+}
+
+/// Where toasts may go in `canvas`: above the navigation bar (its height
+/// and gap, see `navigation_bar`).
+fn toast_area(canvas: Rect) -> Rect {
+    let t = Tokens::get();
+    let navigation = t.space_16 + t.control_height + 2.0 * t.space_4;
+    Rect::from_min_max(
+        canvas.min,
+        pos2(
+            canvas.right(),
+            (canvas.bottom() - navigation).max(canvas.top()),
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toasts_stay_above_the_navigation_bar() {
+        let canvas = Rect::from_min_size(pos2(10.0, 20.0), vec2(600.0, 400.0));
+        let free = toast_area(canvas);
+        assert!(canvas.contains_rect(free));
+        assert!(free.bottom() < canvas.bottom() - Tokens::get().control_height);
+        let flat = toast_area(Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 4.0)));
+        assert!(flat.height() >= 0.0);
+    }
 
     #[test]
     fn layout_keeps_cards_and_canvas_apart_and_hides_the_browser_when_narrow() {
@@ -548,5 +679,32 @@ mod tests {
         assert!(!layout(wide, BrowserMode::Shown).overlay);
         assert_eq!(BrowserMode::Auto.toggled(false), BrowserMode::Shown);
         assert_eq!(BrowserMode::Shown.toggled(true), BrowserMode::Hidden);
+    }
+
+    /// The Issues bar sits under Properties, inside the column, at every
+    /// window size the layout supports, so blockers stay counted on screen.
+    #[test]
+    fn the_issues_bar_stays_in_the_column_at_every_window_size() {
+        for (w, h) in [
+            (1600.0, 900.0),
+            (860.0, 1081.0),
+            (600.0, 500.0),
+            (320.0, 120.0),
+        ] {
+            let l = layout(
+                Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h)),
+                BrowserMode::Auto,
+            );
+            for expanded in [false, true] {
+                let c = kit::card::column(l.inspector, expanded, Default::default());
+                assert!(
+                    c.issues.height() >= kit::issues::ISSUES_BAR_HEIGHT,
+                    "{w}x{h}"
+                );
+                assert_eq!(c.issues.bottom(), l.inspector.bottom());
+                assert!(c.subject.bottom() < c.issues.top());
+                assert_eq!(c.issues.x_range(), l.inspector.x_range());
+            }
+        }
     }
 }

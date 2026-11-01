@@ -688,20 +688,16 @@ pub(super) fn item_findings(
             if degenerate(shape) {
                 out.push(issue(
                     "graphic.degenerate",
-                    format!(
-                        "Graphic {} has no length or area, too few points or a radius below 0.01 mm.",
-                        id
-                    ),
+                    "A graphic has no length or area, too few points or a radius below 0.01 mm."
+                        .into(),
                     this.clone(),
                 ));
             }
             if !shape.corners_fit() {
                 out.push(issue(
                     "graphic.radius_too_large",
-                    format!(
-                        "Graphic {} rounds a corner more than its edges allow, or rounds an open end.",
-                        id
-                    ),
+                    "A graphic rounds a corner more than its edges allow, or rounds an open end."
+                        .into(),
                     this.clone(),
                 ));
             }
@@ -710,21 +706,21 @@ pub(super) fn item_findings(
             {
                 out.push(issue(
                     "graphic.polygon_self_intersecting",
-                    format!("Polygon {} crosses itself.", id),
+                    "A polygon crosses itself.".into(),
                     this.clone(),
                 ));
             }
             if *width <= 0.0 && *fill == Fill::None {
                 out.push(issue(
                     "graphic.invisible",
-                    format!("Graphic {} has no stroke and no fill.", id),
+                    "A graphic has no stroke and no fill.".into(),
                     this.clone(),
                 ));
             }
             if *fill != Fill::None && !shape.is_closed() {
                 out.push(issue(
                     "graphic.fill_open",
-                    format!("Graphic {} is open and cannot be filled.", id),
+                    "An open graphic cannot be filled.".into(),
                     this,
                 ));
             }
@@ -738,17 +734,12 @@ pub(super) fn item_findings(
                     issue(
                         "text.too_long",
                         format!(
-                            "Text {} is longer than {MAX_LABEL} bytes or {MAX_TEXT_LINES} lines.",
-                            id
+                            "A text is longer than {MAX_LABEL} bytes or {MAX_TEXT_LINES} lines."
                         ),
                         this,
                     )
                 } else {
-                    issue(
-                        "text.empty",
-                        format!("Text {} needs printable content.", id),
-                        this,
-                    )
+                    issue("text.empty", "A text needs printable content.".into(), this)
                 });
             }
         }
@@ -976,7 +967,7 @@ pub enum SymbolHit {
 /// Advisory findings for one draft: symbols against the authoring grid,
 /// footprints for courtyard, pin-1 polarity and mask webs. They never
 /// block publishing and never touch stored files.
-pub fn lint(draft: &Draft, _library: &Library, grid: &Grid) -> Vec<Finding> {
+pub fn lint(draft: &Draft, library: &Library, grid: &Grid) -> Vec<Finding> {
     let mut out = Vec::new();
     let this = ObjectRef::Definition { id: draft.id };
     if let Definition::Footprint(footprint) = &draft.definition {
@@ -997,11 +988,17 @@ pub fn lint(draft: &Draft, _library: &Library, grid: &Grid) -> Vec<Finding> {
         for unit in &symbol.units {
             for pin in &unit.pins {
                 if !on_grid(pin.position, grid.symbol_mm) {
+                    let name = library
+                        .latest_components()
+                        .into_iter()
+                        .find(|c| c.id == symbol.component)
+                        .and_then(|c| c.definition.terminal(pin.terminal))
+                        .map_or_else(|| pin.terminal.to_string(), |t| format!("‘{}’", t.name));
                     out.push(Finding::new(
                         "symbol.pin_off_grid",
                         format!(
-                            "The pin of terminal {} at {:?} mm is off the {} mm grid.",
-                            pin.terminal, pin.position, grid.symbol_mm
+                            "The pin of terminal {name} in unit ‘{}’ is off the {} mm grid.",
+                            unit.label, grid.symbol_mm
                         ),
                         vec![
                             object(draft.id, unit.id.0),
@@ -1020,7 +1017,7 @@ pub fn lint(draft: &Draft, _library: &Library, grid: &Grid) -> Vec<Finding> {
             if !has_designator {
                 out.push(Finding::new(
                     "symbol.field_missing",
-                    format!("Unit {} shows no designator text.", unit.label),
+                    format!("Unit ‘{}’ shows no designator text.", unit.label),
                     vec![object(draft.id, unit.id.0)],
                 ));
             }

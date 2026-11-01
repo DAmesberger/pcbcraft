@@ -421,8 +421,9 @@ fn exact(
     let mapped = map.exact(DefinitionRef { kind, id, revision })?;
     if mapped.kind != kind {
         return Err(Error::Invalid(format!(
-            "a {kind:?} reference cannot become a {:?} reference",
-            mapped.kind
+            "a {} reference cannot become a {} reference",
+            super::names::noun(kind),
+            super::names::noun(mapped.kind)
         )));
     }
     Ok((mapped.id, mapped.revision))
@@ -482,8 +483,8 @@ pub fn closure(library: &Library, root: DefinitionRef) -> Result<Vec<DefinitionR
             }
             let Some((DefinitionKind::Field, revision)) = library.latest(id) else {
                 return Err(Error::NotFound(format!(
-                    "{:?} {} {} shows field {id}, which is not in the project library",
-                    from.kind, from.id, from.revision
+                    "{} shows a field that is missing from the project library",
+                    library.describe(from)
                 )));
             };
             stack.push((
@@ -521,12 +522,13 @@ fn closure_step(
         let Some((_, body)) = library.definition(r) else {
             return Err(Error::NotFound(match from {
                 Some(from) => format!(
-                    "{:?} {} {} names {:?} {} {}, which is not in the project library",
-                    from.kind, from.id, from.revision, r.kind, r.id, r.revision
+                    "{} names {}, which is missing from the project library",
+                    library.describe(from),
+                    library.describe(r)
                 ),
                 None => format!(
-                    "{:?} {} {} is not in the project library",
-                    r.kind, r.id, r.revision
+                    "{} is missing from the project library",
+                    library.describe(r)
                 ),
             }));
         };
@@ -817,11 +819,11 @@ pub fn validate_bundle(bundle: &Bundle) -> Result<()> {
         }
         if record.definition.kind() != record.kind {
             return Err(Error::Invalid(format!(
-                "record {} {} says {:?} but holds a {:?}",
-                record.lineage,
+                "the record of ‘{}’ {} says {} but holds a {}",
+                record.meta.name,
                 record.revision,
-                record.kind,
-                record.definition.kind()
+                super::names::noun(record.kind),
+                super::names::noun(record.definition.kind())
             )));
         }
         if record.revision.0 == 0 {
@@ -921,9 +923,10 @@ fn check_links(
             Some(found) if found == kind => {}
             Some(found) => {
                 return Err(Error::Invalid(format!(
-                    "{} names {} as a {kind:?}, but the bundle carries a {found:?}",
+                    "{} names a {} that the bundle carries as a {}",
                     at(),
-                    link.lineage
+                    super::names::noun(kind),
+                    super::names::noun(found)
                 )));
             }
             None => {
@@ -1081,8 +1084,8 @@ pub fn asset_findings(library: &Library) -> Vec<Finding> {
             out.push(Finding::new(
                 "asset.missing",
                 format!(
-                    "Reference ‘{}’ of {} {} names attached copy {text}, which the project does not pack.",
-                    reference.title, part.id, part.revision
+                    "Reference ‘{}’ of Part ‘{}’ {} names an attached copy the project does not pack.",
+                    reference.title, part.meta.name, part.revision
                 ),
                 vec![ObjectRef::LibraryObject {
                     definition: part.id,

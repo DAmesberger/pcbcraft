@@ -426,6 +426,52 @@ fn inspector_frame(
     texts(&output)
 }
 
+/// Click the section caption `caption` in the inspector.
+fn open_section(
+    editor: &mut PartEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    caption: &str,
+) -> Result<(), String> {
+    let frame = |editor: &mut PartEditor, events: Vec<egui::Event>| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(360.0, 4000.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                editor.inspector(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    fn find(shape: &egui::Shape, caption: &str) -> Option<Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.job.text == caption => {
+                Some(text.pos + text.galley.size() * 0.5)
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, caption)),
+            _ => None,
+        }
+    }
+    let output = frame(editor, vec![]);
+    let at = output
+        .shapes
+        .iter()
+        .find_map(|s| find(&s.shape, caption))
+        .ok_or_else(|| format!("no {caption}"))?;
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(at, true)],
+        vec![button(at, false)],
+    ] {
+        frame(editor, events);
+    }
+    Ok(())
+}
+
 fn click(editor: &mut PartEditor, engine: &Engine, ctx: &egui::Context, at: Pos2) {
     for events in [
         vec![egui::Event::PointerMoved(at)],
@@ -648,7 +694,8 @@ fn a_refused_value_keeps_the_field_and_the_document_unchanged() -> TestResult {
         .as_ref()
         .and_then(|f| f.error().map(str::to_owned));
     assert!(
-        error.is_some_and(|e| e.contains("footprint.")),
+        // The solver's reason, without the rule code the refusal carries.
+        error.is_some_and(|e| e.contains("cannot be satisfied") && !e.contains("footprint.")),
         "the field shows why"
     );
     assert!(!send(&mut editor, &mut engine, &ctx)?, "nothing sent");
@@ -789,6 +836,10 @@ fn the_parameters_panel_shows_values_and_readers_and_edits_once() -> TestResult 
         &SketchEvaluator,
     )?;
     editor.commit(&ctx, &engine);
+    // The package values are read-only and folded until opened.
+    let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(!shown.iter().any(|t| t == "pkg_L"), "{shown:?}");
+    open_section(&mut editor, &engine, &ctx, "PACKAGE VALUES")?;
     let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(shown.iter().any(|t| t == "pkg_L"), "{shown:?}");
     assert!(
@@ -868,7 +919,7 @@ fn a_refused_expression_shows_only_its_own_cause() -> TestResult {
         .panel_error()
         .ok_or("refused")?
         .to_owned();
-    assert_eq!(why, "`pitch`: unexpected end of expression");
+    assert_eq!(why, "pitch: the expression ends with an operator");
     assert!(!send(&mut editor, &mut engine, &ctx)?);
     let shown = inspector_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(shown.contains(&why), "{why} in {shown:?}");

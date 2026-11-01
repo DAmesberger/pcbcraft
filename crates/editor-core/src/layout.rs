@@ -25,7 +25,11 @@ pub mod courtyard;
 mod placed;
 pub mod showcase;
 pub mod via;
+#[cfg(test)]
+pub(crate) use copper::limit_finding as copper_limit_finding;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
+#[cfg(test)]
+pub(crate) use courtyard::limit_finding as courtyard_limit_finding;
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
@@ -66,6 +70,19 @@ pub enum LayoutCommand {
     DeleteTrack { id: Id },
     #[serde(rename = "layout.track_lock")]
     SetTrackLock { id: Id, locked: bool },
+    /// Change one track's width, copper layer or both, as one undo step.
+    /// The track keeps its identity, net and ends. The edit goes through
+    /// the same checks as `layout.route_apply` (a locked track, a width
+    /// outside 0.05–5 mm, copper outside the board or a clearance
+    /// violation is refused and nothing changes); omitting both is refused.
+    #[serde(rename = "layout.track_set")]
+    SetTrack {
+        id: Id,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        layer: Option<CopperLayer>,
+    },
     /// Replace the board's fabrication attributes (mask colour and finish,
     /// pad finish, silkscreen colour) as one undo step.
     #[serde(rename = "layout.set_fabrication")]
@@ -461,6 +478,30 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
                 .ok_or_else(|| Error::NotFound("unknown track".into()))?
                 .locked = locked;
         }
+        LayoutCommand::SetTrack { id, width, layer } => {
+            if width.is_none() && layer.is_none() {
+                return invalid("layout.track_set needs a width, a layer or both");
+            }
+            let mut track = project
+                .tracks
+                .iter()
+                .find(|t| t.id == id)
+                .cloned()
+                .ok_or_else(|| Error::NotFound("unknown track".into()))?;
+            if let Some(width) = width {
+                track.width = width;
+            }
+            if let Some(layer) = layer {
+                track.layer = layer;
+            }
+            apply_routes(
+                project,
+                RouteEditSet {
+                    replace: vec![track],
+                    ..Default::default()
+                },
+            )?;
+        }
         LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
         LayoutCommand::SetStackup(stackup) => {
             via::check_stackup_change(project, &stackup)?;
@@ -579,9 +620,10 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                 && other.net != track.net
                 && ring.violates_clearance(other_ring)
             {
-                return Err(Error::Conflict(
-                    "route violates 0.2 mm clearance to another net's track".into(),
-                ));
+                return Err(Error::Conflict(format!(
+                    "Too close to a track on {}: needs 0.2 mm",
+                    project.net_name(other.net)
+                )));
             }
         }
         check_pairs = check_pairs.saturating_add(project.vias.len());
@@ -590,10 +632,11 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                 "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
             ));
         }
-        if via::track_violates_via(project, track, ring) {
-            return Err(Error::Conflict(
-                "route violates 0.2 mm clearance to another net's via".into(),
-            ));
+        if let Some(via) = via::track_violates_via(project, track, ring) {
+            return Err(Error::Conflict(format!(
+                "Too close to a via on {}: needs 0.2 mm",
+                project.net_name(via.net)
+            )));
         }
         for (index, pad) in copper.pads().iter().enumerate() {
             check_pairs += 1;
@@ -608,9 +651,17 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
                     .ring(index)
                     .is_some_and(|pad_ring| ring.violates_clearance(pad_ring))
             {
-                return Err(Error::Conflict(
-                    "route violates 0.2 mm clearance to another net's pad".into(),
-                ));
+                let label = pad_labels(project)
+                    .get(&(pad.instance, pad.pad))
+                    .cloned()
+                    .unwrap_or_else(|| pad.pad.to_string());
+                let designator = project
+                    .instance(pad.instance)
+                    .map_or("a part", |i| i.designator.as_str());
+                return Err(Error::Conflict(format!(
+                    "Too close to {designator} pad {label} ({}): needs 0.2 mm",
+                    project.net_name(pad.net)
+                )));
             }
         }
     }

@@ -12,6 +12,7 @@ pub mod footprint_edit;
 pub mod footprint_source;
 pub mod graphics;
 pub mod import;
+pub mod names;
 mod package;
 pub mod package_fit;
 pub mod package_form;
@@ -502,7 +503,8 @@ pub fn validate(library: &Library) -> Result<()> {
     ] {
         if library.count(kind) > MAX_REVISIONS_PER_KIND {
             return Err(Error::Invalid(format!(
-                "too many published {kind:?} revisions"
+                "too many published {} revisions",
+                names::noun(kind)
             )));
         }
     }

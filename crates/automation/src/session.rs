@@ -178,7 +178,8 @@ pub enum Request {
     /// Answer one read-only core query (`component.inspect`,
     /// `component.check`, `component.check_drafts`, `library.search`,
     /// `library.facets`, `library.inspect`, `project.bom`,
-    /// `library.resolve_groups`), passed unchanged to `Engine::query`.
+    /// `library.resolve_groups`, `project.issues`), passed unchanged to
+    /// `Engine::query`.
     #[serde(rename = "project.query")]
     Query(Query),
     #[serde(rename = "project.undo")]
@@ -266,7 +267,7 @@ impl Request {
             ),
             info::<Query>(
                 "project.query",
-                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges; project.bom lists the bill of materials, resolved instances grouped by their manufacturer Part and unresolved ones marked; library.footprint_preview reports what library.edit_footprint would produce for a footprint draft (pads, graphics and findings, blocking ones included); library.resolve_groups lists instances without an agreeing Part that share component revision, footprint and requirements, each group with the library.search query that finds Parts for it; library.updates_available lists project lineages copied from a library source that holds a newer revision or records whose hash changed (modified lists those source revisions); library.promote_preview reports the bundle and origins library.promote would write and record (library.publish_to_folder runs it). library.search and library.facets include the entries of every ready library source. Nothing is stored.",
+                "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges; project.bom lists the bill of materials, resolved instances grouped by their manufacturer Part and unresolved ones marked; library.footprint_preview reports what library.edit_footprint would produce for a footprint draft (pads, graphics and findings, blocking ones included); library.resolve_groups lists instances without an agreeing Part that share component revision, footprint and requirements, each group with the library.search query that finds Parts for it; library.updates_available lists project lineages copied from a library source that holds a newer revision or records whose hash changed (modified lists those source revisions); library.promote_preview reports the bundle and origins library.promote would write and record (library.publish_to_folder runs it); project.issues lists every issue of the project (scope all, an area of component, schematic or board, or a selection of objects), uncapped and most severe first, each with core's severity (error for anything that blocks a stage or breaks a board or electrical rule, warning, to_do for unrouted, unplaced and unpurchased work, info), group, one-line title naming objects by their names, cause and fix, the finding it comes from and, under also, the same-cause findings merged into it; elsewhere counts the issues of areas outside the scope. library.search and library.facets include the entries of every ready library source. Nothing is stored.",
             ),
             info::<NoParams>("project.undo", "Undo the last document change."),
             info::<NoParams>("project.redo", "Redo the last undone document change."),
@@ -655,6 +656,9 @@ impl Session {
             "drafts": drafts,
             "can_undo": self.engine.can_undo(),
             "can_redo": self.engine.can_redo(),
+            // Raw rule output for scripts that read rule codes directly.
+            // The findings view people and agents act on is
+            // `project.issues` (severity, wording, merging, locating).
             "erc": erc::checks(project),
             "board_checks": layout::checks(project),
         })
@@ -735,6 +739,8 @@ pub mod sources;
 
 #[cfg(test)]
 mod folder_tests;
+#[cfg(test)]
+mod issues_tests;
 #[cfg(test)]
 mod package_tests;
 #[cfg(test)]

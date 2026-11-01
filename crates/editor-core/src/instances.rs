@@ -93,8 +93,13 @@ pub fn representation<'a>(
         .representation(lineage)
         .ok_or_else(|| {
             Error::Conflict(format!(
-                "Component {} {} does not offer representation {lineage}.",
-                component.id, component.revision
+                "{} does not offer {}.",
+                crate::library::names::capitalised(&library.describe(crate::ids::DefinitionRef {
+                    kind: crate::ids::DefinitionKind::Component,
+                    id: component.id,
+                    revision: component.revision,
+                })),
+                library.describe_lineage(crate::ids::DefinitionKind::Symbol, lineage)
             ))
         })?;
     library
@@ -290,7 +295,8 @@ fn check_with<'a>(
             }
             Some(t) if !t.is_electrical() => {
                 return Err(invalid(format!(
-                    "{name}: terminal {terminal} is device NC or reserved and needs no project no-connect."
+                    "{name}: terminal ‘{}’ is device NC or reserved and needs no project no-connect.",
+                    t.name
                 )));
             }
             Some(_) => {}
@@ -307,21 +313,20 @@ fn check_with<'a>(
         }
         if instance.no_connect.contains(&terminal.id) {
             return Err(Error::Conflict(format!(
-                "{name} terminal {} is marked no-connect; a no-connect terminal cannot be wired.",
-                terminal.id
+                "{name} terminal ‘{}’ is marked no-connect; a no-connect terminal cannot be wired.",
+                terminal.name
             )));
         }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {
             invalid(format!(
-                "{name}: terminal {} has no pin in its representation.",
-                terminal.id
+                "{name}: terminal ‘{}’ has no pin in its representation.",
+                terminal.name
             ))
         })?;
         if !placed.contains(&unit) {
             return Err(Error::Conflict(format!(
-                "Place {} before wiring terminal {} ‘{}’.",
+                "Place {} before wiring terminal ‘{}’.",
                 display_label(project, instance, unit),
-                terminal.id,
                 terminal.name
             )));
         }

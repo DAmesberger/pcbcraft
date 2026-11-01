@@ -1157,8 +1157,8 @@ fn device_nc_and_reserved_terminals_and_no_connect_exclude_wiring() -> Result<()
     };
     assert_eq!(wired.code(), marked.code());
     assert_eq!(
-        wired.to_string().replace("terminal 1", "terminal N"),
-        marked.to_string().replace("terminal 4", "terminal N")
+        wired.to_string().replace("terminal ‘A’", "terminal N"),
+        marked.to_string().replace("terminal ‘D’", "terminal N")
     );
     // A passive-only net has no ERC finding.
     let net = net_of(&engine, ep(x, 1))?;
@@ -1284,7 +1284,7 @@ fn a_requires_constraint_is_reported_until_its_prerequisite_is_active() -> Resul
     assert_eq!(resolution.incomplete.len(), 1);
     assert_eq!(
         resolution.incomplete[0].message(),
-        "‘out’ on terminal 1 requires function 13 on terminal 2."
+        "‘out’ on terminal ‘A’ requires ‘enable’ on terminal ‘B’."
     );
     assert!(unmet(&engine)?);
     assert!(!inspect(&engine, x)?.electrically_resolved);

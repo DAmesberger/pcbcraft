@@ -561,11 +561,14 @@ fn a_choice_no_longer_offered_blocks_until_resolved() -> Result<()> {
     let before = engine.document().clone();
     let plan = engine.preview_update(revision_change(r1, target));
     assert!(
-        plan.blockers
-            .iter()
-            .any(|b| b.contains("not offered") && b.contains("ChoiceResolution")),
+        plan.blockers.iter().any(|b| b
+            == "R1: Resistor r2 does not offer its current footprint; supply a ChoiceResolution."),
         "{:?}",
         plan.blockers
+    );
+    assert_eq!(
+        plan.blocker_lines[0].line,
+        "This update needs a decision before it can apply"
     );
     assert!(
         engine
@@ -995,11 +998,20 @@ fn a_retired_pad_lists_the_copper_touching_it() -> Result<()> {
         plan.changes
     );
     assert!(
-        plan.warnings.iter().any(|w| w.starts_with(&format!(
-            "Track {shared} touches R1 pad 2, which the update retires"
-        ))),
+        plan.warning_lines.iter().any(|w| w
+            .detail
+            .starts_with("A track on N2 touches R1 pad 2, which the update retires")
+            && w.line == "A track on N2 loses R1 pad 2; it stays for rerouting"
+            && w.refs.contains(&ObjectRef::Track { id: shared })),
         "{:#?}",
-        plan.warnings
+        plan.warning_lines
+    );
+    assert_eq!(
+        plan.warnings,
+        plan.warning_lines
+            .iter()
+            .map(|w| w.detail.clone())
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
@@ -1046,19 +1058,7 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
         })),
         ..FootprintDefinition::default()
     };
-    let mut plan = UpdatePlan {
-        revision: 0,
-        change: revision_change(1, ComponentRef::default()),
-        changes: vec![],
-        affected_wires: vec![],
-        removed_wires: vec![],
-        affected_placements: vec![],
-        removed_placements: vec![],
-        conflicting_tracks: vec![],
-        conflicting_vias: vec![],
-        blockers: vec![],
-        warnings: vec![],
-    };
+    let mut plan = UpdatePlan::new(0, revision_change(1, ComponentRef::default()));
     let a = footprint(&[(1, 0, Some(1)), (2, 1, Some(2)), (3, 2, Some(3))]);
     let grown = footprint(&[
         (1, 0, Some(1)),
@@ -1067,9 +1067,9 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
         (4, 3, None),
         (5, 4, None),
     ]);
-    footprint_details(&mut plan, "U1", &a, &grown);
+    footprint_details(&mut plan, "U1", 7, &a, &grown);
     let shrunk = footprint(&[(1, 0, Some(1))]);
-    footprint_details(&mut plan, "U1", &a, &shrunk);
+    footprint_details(&mut plan, "U1", 7, &a, &shrunk);
     assert_eq!(
         plan.changes,
         vec![
@@ -1077,6 +1077,17 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
             "U1: footprint array 9 3 → 1 instances; new pads none (0 without a package terminal), retired pads 2, 3.".to_string(),
         ]
     );
+    let lines: Vec<&str> = plan.items.iter().map(|c| c.line.as_str()).collect();
+    assert_eq!(
+        lines,
+        [
+            "U1: a footprint pad array grows from 3 to 5",
+            "U1: a footprint pad array shrinks from 3 to 1",
+        ]
+    );
+    assert!(plan.items.iter().all(|c| c.area == ChangeArea::Board
+        && c.object == ChangeObject::Pad
+        && c.refs == [ObjectRef::Instance { id: 7 }]));
 }
 
 #[test]
@@ -1186,3 +1197,5 @@ fn a_package_change_is_listed_once_for_every_instance_it_reaches() -> Result<()>
     );
     Ok(())
 }
+
+mod review_data;

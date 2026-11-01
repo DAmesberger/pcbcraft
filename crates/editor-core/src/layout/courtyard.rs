@@ -66,11 +66,11 @@ pub fn findings(project: &Project) -> Vec<Finding> {
     bounded_findings(project, MAX_CHECKED_COURTYARDS, MAX_OVERLAP_FINDINGS)
 }
 
-fn limit_finding() -> Finding {
+pub(crate) fn limit_finding() -> Finding {
     Finding::new(
         COURTYARD_LIMIT,
-        "Courtyard check limit reached; remaining courtyards are unchecked".into(),
-        vec![],
+        "Board checks incomplete: courtyards past the check limit are unchecked".into(),
+        vec![ObjectRef::Board],
     )
 }
 

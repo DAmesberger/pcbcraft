@@ -2,6 +2,7 @@
 //! apps/solidcraft/src/main.rs::services; unsaved choices follow documents.rs.
 //! Dialogs stay in the app. Reads, writes, native export and recovery run outside
 //! the UI thread; every result retains its document epoch and captured content.
+use crate::kit::severity::Level;
 use pcbcraft_core::{Document, Engine, Project, format::EditorFile};
 use pcbcraft_io::recovery::{self, RecoveryEntry, RecoveryStore};
 use solidcraft_ui_egui::{
@@ -312,7 +313,8 @@ pub struct FileUi {
     event_sender: Sender<Event>,
     receiver: Receiver<Event>,
     effects: Vec<Effect>,
-    status: Option<String>,
+    /// The latest file message and how it reads.
+    status: Option<(Level, String)>,
     recoveries: Vec<RecoveryEntry>,
     /// The recovery the dialog would restore or discard.
     recovery_selected: usize,
@@ -369,7 +371,8 @@ impl FileUi {
     pub fn prompting(&self) -> bool {
         self.controller.prompt.is_some() || !self.recoveries.is_empty()
     }
-    pub fn take_status(&mut self) -> Option<String> {
+    /// The latest file message, with its severity said explicitly.
+    pub fn take_status(&mut self) -> Option<(Level, String)> {
         self.status.take()
     }
     pub fn adopt(
@@ -388,7 +391,7 @@ impl FileUi {
         if let Err(error) = self.sender.send(job) {
             self.controller.flight = None;
             self.controller.recovery_flight = None;
-            self.status = Some(error.to_string());
+            self.status = Some((Level::Error, error.to_string()));
         }
     }
     fn begin(&mut self, kind: Kind, continuation: Option<Transition>) -> Option<Ticket> {
@@ -398,7 +401,7 @@ impl FileUi {
                 Some(ticket)
             }
             Err(error) => {
-                self.status = Some(error);
+                self.status = Some((Level::Error, error));
                 None
             }
         }
@@ -442,7 +445,7 @@ impl FileUi {
                             Ok(path) => self.send(Job::Read(ticket, path)),
                             Err(error) => {
                                 self.controller.cancel(&ticket, Kind::Open);
-                                self.status = Some(error);
+                                self.status = Some((Level::Error, error));
                             }
                         }
                     } else {
@@ -564,7 +567,7 @@ impl FileUi {
         match event {
             Event::Startup(result) => match result {
                 Ok(entries) => self.recoveries = entries,
-                Err(error) => self.status = Some(error),
+                Err(error) => self.status = Some((Level::Error, error)),
             },
             Event::Picked(ticket, kind, path) => {
                 if !self
@@ -578,14 +581,14 @@ impl FileUi {
                 let Some(path) = path else {
                     self.controller.cancel(&ticket, kind);
                     self.captured = None;
-                    self.status = Some("File selection cancelled".into());
+                    self.status = Some((Level::Info, "File selection cancelled".into()));
                     return;
                 };
                 let path = match absolute_path(path) {
                     Ok(path) => path,
                     Err(error) => {
                         self.controller.cancel(&ticket, kind);
-                        self.status = Some(error);
+                        self.status = Some((Level::Error, error));
                         return;
                     }
                 };
@@ -609,9 +612,10 @@ impl FileUi {
                     }
                     _ => {
                         self.controller.cancel(&ticket, kind);
-                        self.status = Some(
+                        self.status = Some((
+                            Level::Warning,
                             "The document changed while choosing a file. Please try again.".into(),
-                        );
+                        ));
                     }
                 }
             }
@@ -621,14 +625,17 @@ impl FileUi {
                         self.controller.saved(&ticket, path.clone())
                     {
                         self.captured = None;
-                        self.status = Some(if current {
-                            format!("Saved {}", path.display())
-                        } else {
-                            format!(
-                                "Saved captured version to {}; newer edits remain unsaved",
-                                path.display()
-                            )
-                        });
+                        self.status = Some((
+                            Level::Ok,
+                            if current {
+                                format!("Saved {}", path.display())
+                            } else {
+                                format!(
+                                    "Saved captured version to {}; newer edits remain unsaved",
+                                    path.display()
+                                )
+                            },
+                        ));
                         if current {
                             self.clear_recovery(false);
                         }
@@ -639,13 +646,15 @@ impl FileUi {
                 }
                 Err(error) => {
                     self.controller.cancel(&ticket, Kind::Save);
-                    self.status = Some(format!("Save failed: {error}"));
+                    self.status = Some((Level::Error, format!("Save failed: {error}")));
                 }
             },
             Event::Read(ticket, path, result) => {
                 if !self.controller.accept(&ticket, Kind::Open) {
-                    self.status =
-                        Some("Open cancelled because the current document changed".into());
+                    self.status = Some((
+                        Level::Warning,
+                        "Open cancelled because the current document changed".into(),
+                    ));
                     return;
                 }
                 match result {
@@ -654,18 +663,23 @@ impl FileUi {
                         path: Some(path),
                         recovered: false,
                     }),
-                    Err(error) => self.status = Some(format!("Open failed: {error}")),
+                    Err(error) => {
+                        self.status = Some((Level::Error, format!("Open failed: {error}")))
+                    }
                 }
             }
             Event::Exported(ticket, path, result) => {
                 let current = self.controller.accept(&ticket, Kind::Export);
                 self.status = Some(match result {
-                    Ok(()) if current => format!("Exported {}", path.display()),
-                    Ok(()) => format!(
-                        "Exported captured PCB to {}; current document has changed",
-                        path.display()
+                    Ok(()) if current => (Level::Ok, format!("Exported {}", path.display())),
+                    Ok(()) => (
+                        Level::Warning,
+                        format!(
+                            "Exported captured PCB to {}; current document has changed",
+                            path.display()
+                        ),
                     ),
-                    Err(error) => format!("Export failed: {error}"),
+                    Err(error) => (Level::Error, format!("Export failed: {error}")),
                 });
             }
             Event::Recovered(ticket, removed, close, result) => {
@@ -689,15 +703,17 @@ impl FileUi {
                     }
                 }
                 if let Err(error) = result {
-                    self.status = Some(format!("Recovery failed: {error}"));
+                    self.status = Some((Level::Error, format!("Recovery failed: {error}")));
                     self.recovery_retry_at = self.now + 10.0;
                 }
             }
             Event::Restored(ticket, path, result) => {
                 self.recovery_choice_pending = false;
                 if !self.controller.accept(&ticket, Kind::Restore) {
-                    self.status =
-                        Some("Restore cancelled because the current document changed".into());
+                    self.status = Some((
+                        Level::Warning,
+                        "Restore cancelled because the current document changed".into(),
+                    ));
                     return;
                 }
                 match result {
@@ -711,14 +727,16 @@ impl FileUi {
                             recovered: true,
                         });
                     }
-                    Err(error) => self.status = Some(format!("Restore failed: {error}")),
+                    Err(error) => {
+                        self.status = Some((Level::Error, format!("Restore failed: {error}")))
+                    }
                 }
             }
             Event::Discarded(path, result) => {
                 self.recovery_choice_pending = false;
                 match result {
                     Ok(()) => self.recoveries.retain(|e| e.path != path),
-                    Err(error) => self.status = Some(error),
+                    Err(error) => self.status = Some((Level::Error, error)),
                 }
             }
         }
@@ -741,7 +759,7 @@ impl FileUi {
                         "The project or component draft has unsaved changes.",
                         crate::kit::Tone::Dim,
                     );
-                    if let Some(status) = &self.status {
+                    if let Some((_, status)) = &self.status {
                         crate::kit::note(ui, status);
                     }
                     crate::kit::actions(ui, |ui| {

@@ -436,8 +436,8 @@ impl MaterialDef {
             Ok(())
         } else {
             Err(Error::Invalid(format!(
-                "material.invalid: {:?} has a value outside the opaque-surface bounds",
-                self.id
+                "material.invalid: material ‘{}’ has a value outside the opaque-surface bounds",
+                self.name
             )))
         }
     }

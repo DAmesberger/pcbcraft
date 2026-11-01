@@ -132,10 +132,7 @@ impl PackageDefinition {
             if !printable(&terminal.designation) || !designations.insert(&terminal.designation) {
                 out.push(issue(
                     "package.designation",
-                    format!(
-                        "Package terminal {} needs a unique printable designation.",
-                        terminal.id
-                    ),
+                    "A package terminal needs a unique printable designation.".into(),
                     vec![object(id, terminal.id.0)],
                 ));
             }
@@ -169,9 +166,10 @@ impl PackageDefinition {
             out.push(issue(
                 "package.envelope_derived",
                 format!(
-                    "The envelope {:?} mm differs from the {} form's {derived:?} mm.",
-                    self.envelope,
-                    self.form.label().to_lowercase()
+                    "The envelope {} mm differs from the {} form's {} mm.",
+                    size_text(&self.envelope),
+                    self.form.label().to_lowercase(),
+                    size_text(&derived)
                 ),
                 vec![this],
             ));
@@ -210,6 +208,14 @@ impl PackageDefinition {
             ));
         }
     }
+}
+
+/// A size for a message: "1.6 × 0.8 × 0.45".
+fn size_text(size: &[f64]) -> String {
+    size.iter()
+        .map(|v| format!("{v}"))
+        .collect::<Vec<_>>()
+        .join(" × ")
 }
 
 #[cfg(test)]

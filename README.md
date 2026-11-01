@@ -77,6 +77,7 @@ Solidcraft and its required patches are pinned to `87b1009b029a1b381ad1799fe72bf
 - [Product plan](docs/pcbcraft-plan.md)
 - [Part library design](docs/part-library-design.md)
 - [Parts library: catalog, search and slice plan](docs/parts-library.md)
+- [Right sidebar and feedback: information architecture](docs/sidebar-ia.md)
 - [Component-editor acceptance scenarios](docs/part-library-design.md#component-editor-acceptance-scenarios), including multi-unit symbols and structured multi-function IOs
 - [Native integration research](docs/solidcraft-interop-research.md)
 - [Copper performance research](docs/copper-performance-research.md)

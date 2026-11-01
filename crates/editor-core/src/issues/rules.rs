@@ -1,0 +1,485 @@
+//! What core says about each finding code: its severity, its group title,
+//! its one-line title and the fix it suggests. Every code a rule owner
+//! emits is classified here; [`KNOWN_CODES`] lists them and a test keeps it
+//! complete against the sources.
+use super::names::Names;
+use super::{MAX_TITLE, Severity};
+use crate::diagnostics::{Finding, ObjectRef};
+use std::collections::BTreeSet;
+
+/// Synthetic codes `project.issues` adds for states no rule owner reports
+/// as a finding.
+pub(super) const NO_PART: &str = "purchasing.no_part";
+pub(super) const CHECK_FAILED: &str = "instance.check_failed";
+
+/// How severe a finding is. Anything that blocks a stage is an error, so a
+/// publish blocker is always red and always counted.
+pub(super) fn severity(finding: &Finding) -> Severity {
+    if finding.blocks.is_some() {
+        return Severity::Error;
+    }
+    match finding.code.as_str() {
+        "board.clearance"
+        | "board.courtyard_overlap"
+        | "board.outside_outline"
+        | "board.via_annular_ring"
+        | "board.via_drill_clearance"
+        | "board.via_hole_spacing"
+        | "erc.driver_conflict"
+        | "erc.open_drain_contention"
+        // Geometry past the limit is unchecked, so errors may be uncounted.
+        | "board.check_limit"
+        | CHECK_FAILED => Severity::Error,
+        "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
+        "erc.unchecked_terminal" | "library.update_available" => Severity::Info,
+        _ => Severity::Warning,
+    }
+}
+
+/// The group header of a code: "Clearance", "Unrouted connections".
+pub(super) fn group_title(code: &str) -> String {
+    let known = match code {
+        "board.clearance" => "Clearance",
+        "board.courtyard_overlap" => "Courtyards overlap",
+        "board.outside_outline" => "Outside the board outline",
+        "board.unrouted" => "Unrouted connections",
+        "board.unplaced" => "Not placed",
+        "board.check_limit" => "Board checks incomplete",
+        "board.via_annular_ring" => "Thin via annular rings",
+        "board.via_drill_clearance" => "Via drills too close to copper",
+        "board.via_hole_spacing" => "Via drills too close together",
+        "board.via_dangling" => "Vias joining nothing",
+        "instance.unit_unplaced" => "Units not placed",
+        "instance.terminal_unaccounted" => "Unconnected terminals",
+        "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
+        "instance.field_required" => "Required values missing",
+        "instance.no_physical_choice" => "No footprint chosen",
+        "config.function_unresolved" => "Pin functions not chosen",
+        "config.requirement_unmet" => "Pin function requirements",
+        "erc.driver_conflict" => "Drivers in conflict",
+        "erc.open_drain_contention" => "Open-drain contention",
+        "erc.input_only_net" => "Inputs without a driver",
+        "erc.undriven_power_input" => "Power inputs without a supply",
+        "erc.unchecked_terminal" => "Terminals not checked",
+        NO_PART => "No Part chosen",
+        CHECK_FAILED => "Instances that cannot be checked",
+        "part.stale_component" => "Part for an older revision",
+        "part.newer_component" => "Part for a newer revision",
+        "part.component_mismatch" => "Part for another component",
+        "part.binding_mismatch" => "Part for another footprint",
+        "part.spec_mismatch" => "Rating does not meet the value",
+        "part.spec_unrated" => "Value the Part does not rate",
+        "part.spec_uncomparable" => "Rating cannot be compared",
+        "part.spec_field_mismatch" => "Rating of another field",
+        "reference.missing" => "Missing from the project library",
+        "reference.owner_mismatch" => "Owned by another component",
+        "footprint.terminal_required" => "Pads without a package terminal",
+        "footprint.terminal_without_pad" => "Package terminals without a pad",
+        "footprint.terminal_forbidden" => "Pads that cannot land a terminal",
+        "footprint.pad_terminal_unknown" => "Pads landing unknown terminals",
+        "component.mapping_missing" => "Unmapped terminals",
+        "component.pin_missing" => "Terminals without a pin",
+        "binding.mapping_missing" => "Unmapped package terminals",
+        "footprint.courtyard_missing" => "No courtyard",
+        "footprint.polarity_missing" => "No pin-1 marking",
+        "footprint.mask_web" => "Thin solder-mask webs",
+        "footprint.silk_width" => "Thin silkscreen lines",
+        "footprint.text_height" => "Small silkscreen text",
+        "footprint.silk_over_pad" => "Silkscreen over pads",
+        "footprint.pad_outside_courtyard" => "Pads outside the courtyard",
+        "footprint.param_expr" => "Parameter expressions",
+        "footprint.solve_failed" => "Sketch does not solve",
+        "footprint.over_constrained" => "Sketch over-constrained",
+        "symbol.pin_off_grid" => "Pins off the grid",
+        "symbol.grid_sheet" => "Symbol grid",
+        "symbol.field_missing" => "No designator text",
+        "definition.name" => "Names missing",
+        "definition.stale_base" => "Drafts of an older revision",
+        "definition.bounds" => "Drafts too large",
+        "part.identity" => "Part identity",
+        "package.lead_off_land" => "Leads off their lands",
+        "package.lead_unseated" => "Leads off the seating plane",
+        "package.body_below_board" => "Body below the board",
+        "component.no_implementation" => "No physical implementation",
+        "asset.missing" => "Attached copies not packed",
+        "library.update_available" => "Library updates",
+        "library.source_modified" => "Library sources changed",
+        _ => "",
+    };
+    if !known.is_empty() {
+        return known.into();
+    }
+    humanised(code)
+}
+
+/// "footprint.pad_size" → "Pad size": the rule part of a code in words.
+fn humanised(code: &str) -> String {
+    let rule = code.rsplit('.').next().unwrap_or(code).replace('_', " ");
+    crate::library::names::capitalised(rule.trim())
+}
+
+/// What resolves a code, as an imperative.
+pub(super) fn fix(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "board.clearance" => "Move the parts apart or reroute the copper",
+        "board.courtyard_overlap" => "Move the parts apart",
+        "board.outside_outline" => "Move it inside the board",
+        "board.unrouted" => "Route the connection",
+        "board.unplaced" => "Update the PCB from the schematic",
+        "board.via_annular_ring" => "Enlarge the via pad or shrink its drill",
+        "board.via_drill_clearance" | "board.via_hole_spacing" => "Move the via",
+        "board.via_dangling" => "Route copper to the via or delete it",
+        "instance.unit_unplaced" => "Place the unit or mark it unused",
+        "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
+        "instance.required_terminal_no_connect" => "Connect the power input",
+        "instance.field_required" => "Enter the value",
+        "instance.no_physical_choice" => "Choose a footprint",
+        "config.function_unresolved" => "Choose a pin function",
+        NO_PART => "Choose a Part with Resolve parts",
+        "part.stale_component" | "part.newer_component" | "part.component_mismatch" => {
+            "Choose a Part for this revision"
+        }
+        "footprint.terminal_required" => "Assign the pad a package terminal, or make it mechanical",
+        "footprint.terminal_without_pad" => "Assign a pad to the package terminal",
+        "component.mapping_missing" | "binding.mapping_missing" => {
+            "Map the terminal on the Mapping tab"
+        }
+        "component.pin_missing" => "Add a pin for the terminal on the Symbol tab",
+        _ => return None,
+    })
+}
+
+/// `text` as one line of at most [`MAX_TITLE`] characters with no final
+/// full stop: the first clause, clipped at a word with "…".
+pub(super) fn line(text: &str) -> String {
+    let first = text.lines().next().unwrap_or_default().trim();
+    let clause = first.split("; ").next().unwrap_or(first).trim();
+    let clause = clause.trim_end_matches('.').trim_end();
+    clip(clause)
+}
+
+/// The first line of `text` without a final full stop, unclipped: the
+/// cause shown under a row.
+pub(super) fn line_full(text: &str) -> String {
+    let first = text.lines().next().unwrap_or_default().trim();
+    first.trim_end_matches('.').trim_end().to_owned()
+}
+
+/// At most [`MAX_TITLE`] characters, cut at a word boundary with "…".
+pub(super) fn clip(text: &str) -> String {
+    if text.chars().count() <= MAX_TITLE {
+        return text.to_owned();
+    }
+    let keep: String = text.chars().take(MAX_TITLE - 1).collect();
+    let cut = keep
+        .rfind(' ')
+        .filter(|at| *at > MAX_TITLE / 2)
+        .unwrap_or(keep.len());
+    let head = keep[..cut].trim_end_matches([' ', ',', ';', ':', '.']);
+    format!("{head}…")
+}
+
+/// Distinct names of the referenced objects of `kind`, in first-seen order.
+fn names_of(names: &Names<'_>, findings: &[&Finding], pick: fn(&ObjectRef) -> bool) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for object in findings.iter().flat_map(|f| f.objects.iter()) {
+        if pick(object) {
+            let name = names.object(object);
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+    }
+    out
+}
+
+/// The parties of a clearance or courtyard finding: the instances and
+/// tracks it names, by name.
+fn parties(names: &Names<'_>, findings: &[&Finding]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for object in findings.iter().flat_map(|f| f.objects.iter()) {
+        let name = match *object {
+            ObjectRef::Pad { instance, .. } | ObjectRef::Instance { id: instance } => {
+                names.designator(instance)
+            }
+            ObjectRef::Track { .. } => names.object(object),
+            _ => continue,
+        };
+        if seen.insert(name.clone()) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+fn is_pad(object: &ObjectRef) -> bool {
+    matches!(object, ObjectRef::Pad { .. })
+}
+
+/// "R1, R2 and R3", shortened to "R1, R2 and 3 more" past four names.
+fn list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] if items.len() <= 4 => format!("{} and {last}", init.join(", ")),
+        _ => format!(
+            "{} and {} more",
+            items.get(..2).unwrap_or_default().join(", "),
+            items.len() - 2
+        ),
+    }
+}
+
+/// The one-line title of a row: its primary finding and every finding
+/// merged into it. Titles name objects by their user names.
+pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
+    let Some(first) = findings.first() else {
+        return String::new();
+    };
+    let message = first.message.as_str();
+    let title = match first.code.as_str() {
+        "board.clearance" => {
+            let pads = names_of(names, findings, is_pad);
+            match parties(names, findings).as_slice() {
+                [a, b] if findings.len() > 1 => {
+                    format!("{a} ↔ {b}: {} pads too close", pads.len())
+                }
+                _ => {
+                    let objects = names_of(names, findings, |_| true);
+                    format!("{} too close", objects.join(" ↔ "))
+                }
+            }
+        }
+        "board.courtyard_overlap" => {
+            // The top side is the usual case; only the bottom is named.
+            let side = if message.contains("bottom") {
+                " (bottom)"
+            } else {
+                ""
+            };
+            format!(
+                "{} courtyards overlap{side}",
+                parties(names, findings).join(" ↔ ")
+            )
+        }
+        "board.outside_outline" => format!(
+            "{} extends beyond the board outline",
+            list(&names_of(names, findings, |_| true))
+        ),
+        "board.unrouted" => {
+            let nets = names_of(names, findings, |o| matches!(o, ObjectRef::Net { .. }));
+            let pads = names_of(names, findings, is_pad);
+            match pads.as_slice() {
+                [pad] => format!("{}: {pad} is unrouted", list(&nets)),
+                _ => format!("{}: {} pads unrouted", list(&nets), pads.len()),
+            }
+        }
+        "board.unplaced" => format!("{} not placed", list(&names_of(names, findings, |_| true))),
+        "instance.unit_unplaced" => format!(
+            "{} is neither placed nor marked unused",
+            names_of(names, findings, |_| true).join(", ")
+        ),
+        "instance.terminal_unaccounted" => format!(
+            "{} unconnected",
+            names_of(names, findings, |_| true).join(", ")
+        ),
+        "config.function_unresolved" => format!(
+            "{}: no pin function",
+            names_of(names, findings, |_| true).join(", ")
+        ),
+        "instance.no_physical_choice" => format!(
+            "{}: no footprint",
+            names_of(names, findings, |_| true).join(", ")
+        ),
+        NO_PART => format!(
+            "{}: no Part",
+            names_of(names, findings, |_| true).join(", ")
+        ),
+        "component.mapping_missing" if findings.len() > 1 => {
+            let package = names_of(names, findings, |o| {
+                matches!(o, ObjectRef::LibraryObject { .. })
+            })
+            .into_iter()
+            .find(|n| n.starts_with("package terminal"));
+            match package {
+                Some(p) => format!(
+                    "{} has no electrical terminal",
+                    crate::library::names::capitalised(&p)
+                ),
+                None => line(message),
+            }
+        }
+        code if code.starts_with("part.") && findings.len() > 1 => {
+            let instances = names_of(names, findings, |o| matches!(o, ObjectRef::Instance { .. }));
+            let rest = message.split_once(": ").map_or(message, |(_, rest)| rest);
+            format!("{}: {}", list(&instances), line(rest))
+        }
+        _ => line(message),
+    };
+    clip(title.trim())
+}
+
+/// Every code a rule owner in core emits, and the synthetic ones
+/// `project.issues` adds. A test checks this list against the sources, so
+/// a new code is classified (severity, group title) when it is added.
+pub const KNOWN_CODES: &[&str] = &[
+    "asset.missing",
+    "binding.duplicate_footprint_lineage",
+    "binding.footprint_count",
+    "binding.footprint_package",
+    "binding.mapping_missing",
+    "binding.mapping_unknown",
+    "binding.unavailable_duplicate",
+    "binding.unavailable_required",
+    "binding.unavailable_unknown",
+    "board.check_limit",
+    "board.clearance",
+    "board.courtyard_overlap",
+    "board.outside_outline",
+    "board.unplaced",
+    "board.unrouted",
+    "board.via_annular_ring",
+    "board.via_dangling",
+    "board.via_drill_clearance",
+    "board.via_hole_spacing",
+    "component.designator_prefix",
+    "component.duplicate_binding_lineage",
+    "component.duplicate_field_lineage",
+    "component.duplicate_symbol_lineage",
+    "component.field_default_invalid",
+    "component.mapping_missing",
+    "component.mapping_unknown",
+    "component.no_implementation",
+    "component.no_representation",
+    "component.pin_missing",
+    "component.pin_unknown",
+    "component.terminal_count",
+    "component.terminal_name",
+    "component.text_field_unknown",
+    "config.function_unresolved",
+    "config.requirement_unmet",
+    "definition.base_invalid",
+    "definition.bounds",
+    "definition.local_id_invalid",
+    "definition.local_id_reused",
+    "definition.local_id_unallocated",
+    "definition.name",
+    "definition.next_local_decreased",
+    "definition.revisions_exhausted",
+    "definition.stale_base",
+    "erc.driver_conflict",
+    "erc.input_only_net",
+    "erc.open_drain_contention",
+    "erc.unchecked_terminal",
+    "erc.undriven_power_input",
+    "field.choice_label",
+    "field.default_invalid",
+    "field.required_stage",
+    "field.value_type",
+    "footprint.aperture_duplicate",
+    "footprint.courtyard_missing",
+    "footprint.courtyard_open",
+    "footprint.hole_kind",
+    "footprint.hole_outside_land",
+    "footprint.hole_shape",
+    "footprint.mask_web",
+    "footprint.over_constrained",
+    "footprint.override_orphaned",
+    "footprint.pad_count",
+    "footprint.pad_number",
+    "footprint.pad_outside_courtyard",
+    "footprint.pad_shape",
+    "footprint.pad_side",
+    "footprint.pad_size",
+    "footprint.pad_terminal_unknown",
+    "footprint.param_duplicate",
+    "footprint.param_expr",
+    "footprint.param_name",
+    "footprint.param_reserved",
+    "footprint.paste_window_outside_pad",
+    "footprint.paste_window_shape",
+    "footprint.polarity_marker_unknown",
+    "footprint.polarity_missing",
+    "footprint.polarity_pad_unknown",
+    "footprint.silk_over_pad",
+    "footprint.silk_width",
+    "footprint.solve_failed",
+    "footprint.source_pad_unknown",
+    "footprint.terminal_forbidden",
+    "footprint.terminal_required",
+    "footprint.terminal_without_pad",
+    "footprint.text_height",
+    "function.combination",
+    "function.constraint_key",
+    "function.count",
+    "function.default_conflict",
+    "function.design_default",
+    "function.label",
+    "function.resource_unknown",
+    "graphic.degenerate",
+    "graphic.fill_body",
+    "graphic.fill_open",
+    "graphic.invisible",
+    "graphic.polygon_self_intersecting",
+    "graphic.radius_too_large",
+    "instance.field_required",
+    "instance.no_physical_choice",
+    "instance.required_terminal_no_connect",
+    "instance.terminal_unaccounted",
+    "instance.unit_unplaced",
+    "library.source_modified",
+    "library.update_available",
+    "package.body_below_board",
+    "package.designation",
+    "package.envelope",
+    "package.envelope_derived",
+    "package.form_range",
+    "package.form_terminals",
+    "package.lead_off_land",
+    "package.lead_unseated",
+    "package.model_form",
+    "package.model_materials",
+    "package.model_unsupported",
+    "package.terminal_count",
+    "part.binding_mismatch",
+    "part.binding_unlisted",
+    "part.component_mismatch",
+    "part.hash",
+    "part.identity",
+    "part.link",
+    "part.newer_component",
+    "part.offer_text",
+    "part.provenance_basis",
+    "part.reference_text",
+    "part.spec_duplicate",
+    "part.spec_field",
+    "part.spec_field_mismatch",
+    "part.spec_meaning",
+    "part.spec_mismatch",
+    "part.spec_uncomparable",
+    "part.spec_unrated",
+    "part.spec_value",
+    "part.stale_component",
+    "quantity_kind.default_unit",
+    "quantity_kind.units",
+    "reference.missing",
+    "reference.owner_mismatch",
+    "resource.label",
+    "resource.role_capacity",
+    "resource.role_count",
+    "resource.role_label",
+    "symbol.field_missing",
+    "symbol.grid_sheet",
+    "symbol.pin_duplicate",
+    "symbol.pin_off_grid",
+    "symbol.unit_count",
+    "symbol.unit_empty",
+    "symbol.unit_label",
+    "text.content_kind",
+    "text.empty",
+    "text.too_long",
+    NO_PART,
+    CHECK_FAILED,
+];

@@ -41,21 +41,17 @@ enum PasteChoice {
     Windows,
 }
 
-/// The pad the inspector shows: the selected one while it exists, else the
-/// selected terminal's first pad (none when no pad lands it: another
-/// terminal's pad would contradict the Terminals list), else the first pad.
+/// The pad the card inspects and the ribbon's Remove pad takes: the
+/// selected pad while it exists. Nothing is inferred from the selected
+/// terminal, so with no pad selected the card shows the footprint itself
+/// and Remove pad has nothing to take (one card, one subject).
 pub(super) fn current_pad(
     footprint: &FootprintDefinition,
-    binding: &BindingDefinition,
+    _binding: &BindingDefinition,
     selected_pad: Option<PadId>,
-    terminal: Option<pcbcraft_core::TerminalId>,
+    _terminal: Option<pcbcraft_core::TerminalId>,
 ) -> Option<PadId> {
-    selected_pad
-        .filter(|id| footprint.pad(*id).is_some())
-        .or_else(|| match terminal {
-            Some(_) => first_pad_of(footprint, binding, terminal),
-            None => footprint.pads.first().map(|p| p.id),
-        })
+    selected_pad.filter(|id| footprint.pad(*id).is_some())
 }
 
 /// The first pad landing one of `terminal`'s package terminals.
@@ -86,36 +82,52 @@ pub(super) fn pad_label(pad: &Pad) -> String {
     format!("{number} · {}", kind_label(pad.kind))
 }
 
-impl PartEditor {
-    pub(super) fn footprint_inspector(&mut self, ui: &mut Ui) {
-        self.footprint_section(ui);
-        self.footprint_parameters(ui);
-        // One selection: the list lights the terminal of the pad the Pad
-        // section shows (none for an unmapped pad), and a clicked terminal
-        // shows its own first pad.
-        let lit = self.draft.as_ref().and_then(|set| {
-            match current_pad(
-                &set.footprint,
-                &set.binding,
-                self.selected_pad,
-                self.selected,
-            )
-            .and_then(|id| set.footprint.pad(id))
-            {
-                Some(pad) => pad.terminal.and_then(|t| set.binding.terminal_of(t)),
-                None => self.selected,
-            }
-        });
-        if let Some(clicked) = self.terminal_rows(ui, lit)
-            && let Some(set) = &self.draft
-        {
-            self.selected = Some(clicked);
-            self.selected_pad = first_pad_of(&set.footprint, &set.binding, self.selected);
-        }
-        self.pad_sections(ui);
+/// A pad's shape and size in one line ("Rounded 0.6 × 1.2 mm").
+pub(super) fn pad_shape_text(pad: &Pad) -> String {
+    let [w, h] = pad.shape.extent();
+    let shape = match &pad.shape {
+        PadShape::Rect { .. } => "Rectangle",
+        PadShape::RoundRect { .. } => "Rounded",
+        PadShape::Oblong { .. } => "Oblong",
+        PadShape::Circle { .. } => "Round",
+        PadShape::Custom { .. } => "Custom",
+    };
+    match &pad.shape {
+        PadShape::Circle { diameter } => format!("{shape} {} mm", kit::number_text(*diameter)),
+        _ => format!(
+            "{shape} {} × {} mm",
+            kit::number_text(w),
+            kit::number_text(h)
+        ),
     }
+}
 
-    fn footprint_section(&mut self, ui: &mut Ui) {
+/// A pad's side and kind in one line ("Top · SMD").
+pub(super) fn pad_side_text(pad: &Pad) -> String {
+    let side = if pad.hole.is_some() {
+        "All layers"
+    } else if pad.side == PadSide::Bottom {
+        "Bottom"
+    } else {
+        "Top"
+    };
+    format!("{side} · {}", kind_label(pad.kind))
+}
+
+/// Whether a pad of `kind` has a Hole section: through-hole kinds always,
+/// a mechanical pad because it may get one.
+fn has_hole_section(pad: &Pad) -> bool {
+    pad.hole.is_some()
+        || matches!(
+            pad.kind,
+            PadKind::PlatedThrough | PadKind::NonPlatedHole | PadKind::Mechanical
+        )
+}
+
+impl PartEditor {
+    /// The Footprint section: the placement datum, then the footprint-wide
+    /// mask and paste defaults (collapsed, with their values in its title).
+    pub(super) fn footprint_section(&mut self, ui: &mut Ui) {
         let Some(set) = &mut self.draft else {
             return;
         };
@@ -131,28 +143,36 @@ impl PartEditor {
             ) {
                 footprint.datum.rotation_deg = footprint.datum.rotation_deg.rem_euclid(360.0);
             }
-            kit::number_row(
-                ui,
-                "Mask",
-                &mut footprint.defaults.mask_expansion_mm,
-                "mm",
-                OPENING,
+            let openings = format!(
+                "{} / {}",
+                signed_mm(footprint.defaults.mask_expansion_mm, '+'),
+                signed_mm(footprint.defaults.paste_reduction_mm, '−')
             );
-            kit::number_row(
-                ui,
-                "Paste",
-                &mut footprint.defaults.paste_reduction_mm,
-                "mm",
-                OPENING,
-            );
-            kit::note(
-                ui,
-                "The datum is the placement origin. Pads that inherit their openings grow the mask and shrink the paste by these defaults.",
-            );
+            kit::value_row(ui, "Openings", &openings);
         });
+        let defaults = &mut footprint.defaults;
+        kit::section(
+            ui,
+            "footprint-openings",
+            "Mask and paste",
+            false,
+            None,
+            |ui| {
+                kit::number_row(ui, "Mask", &mut defaults.mask_expansion_mm, "mm", OPENING);
+                kit::number_row(ui, "Paste", &mut defaults.paste_reduction_mm, "mm", OPENING);
+                kit::hint(
+                    ui,
+                    "Pads that inherit grow the mask and shrink the paste",
+                    "Pads whose openings inherit grow the mask and shrink the paste by these defaults. Openings are display overlays, never saved in the 3D model.",
+                );
+            },
+        );
     }
 
-    fn pad_sections(&mut self, ui: &mut Ui) {
+    /// The selected pad's card: Pad (one summary row for a pad derived
+    /// from the sketch), Hole for through-hole kinds, then Mask and paste
+    /// (collapsed).
+    pub(super) fn pad_sections(&mut self, ui: &mut Ui) {
         let Some(set) = &mut self.draft else {
             return;
         };
@@ -162,28 +182,9 @@ impl PartEditor {
             self.selected_pad,
             self.selected,
         ) else {
-            let count = set.footprint.pads.len();
-            let name = self
-                .selected
-                .and_then(|id| set.component.terminal(id))
-                .map(|t| t.name.clone())
-                .unwrap_or_default();
-            kit::section(ui, "pad", "Pad", true, Some(count), |ui| {
-                if count == 0 {
-                    kit::note(ui, "This footprint has no pads.");
-                } else {
-                    kit::note(
-                        ui,
-                        &format!(
-                            "No pad lands terminal ‘{name}’. Click a pad on the canvas to show it."
-                        ),
-                    );
-                }
-            });
             return;
         };
         let derived = set.footprint.source.is_some();
-        let count = set.footprint.pads.len();
         let options: Vec<_> = set
             .footprint
             .pads
@@ -197,29 +198,41 @@ impl PartEditor {
             return;
         };
         let mut chosen = id;
-        kit::section(ui, "pad", "Pad", true, Some(count), |ui| {
+        let mut edit_sketch = false;
+        kit::section(ui, "pad", "Pad", true, None, |ui| {
             kit::choice_row(ui, "Pad", &mut chosen, &options);
-            ui.add_enabled_ui(!derived, |ui| {
-                ui.push_id(("pad", id.0), |ui| pad_rows(ui, pad, package, fallback));
-            });
             if derived {
-                kit::note(
-                    ui,
-                    "Pads are derived from the footprint sketch; change them through it.",
-                );
+                let terminal = pad
+                    .terminal
+                    .and_then(|t| package.terminal(t))
+                    .map_or_else(|| "None".to_owned(), |t| t.designation.clone());
+                kit::value_row(ui, "Terminal", &terminal);
+                kit::value_row(ui, "Shape", &pad_shape_text(pad));
+                kit::value_row(ui, "Side", &pad_side_text(pad));
+                edit_sketch = kit::summary_row(ui, "From the sketch", Some("Edit sketch \u{203a}"));
+            } else {
+                ui.push_id(("pad", id.0), |ui| pad_rows(ui, pad, package, fallback));
+                kit::value_row(ui, "Openings", &openings_summary(pad, &defaults));
             }
         });
-        kit::section(ui, "pad-hole", "Hole", true, None, |ui| {
-            ui.add_enabled_ui(!derived, |ui| {
+        if !derived && has_hole_section(pad) {
+            kit::section(ui, "pad-hole", "Hole", true, None, |ui| {
                 ui.push_id(("hole", id.0), |ui| hole_rows(ui, pad));
             });
-        });
-        kit::section(ui, "pad-openings", "Mask and paste", true, None, |ui| {
-            ui.add_enabled_ui(!derived, |ui| {
+        }
+        if !derived {
+            kit::section(ui, "pad-openings", "Mask and paste", false, None, |ui| {
                 ui.push_id(("openings", id.0), |ui| opening_rows(ui, pad, &defaults));
             });
-        });
+        }
         let terminal = pad.terminal;
+        if edit_sketch {
+            // The pad's sketch role stays selected on the canvas; the
+            // footprint card shows the parameters that drive it.
+            self.footprint_tool.selection = vec![super::footprint_tools::Pick::Pad(id)];
+            self.selected_pad = None;
+            return;
+        }
         if chosen != id {
             self.selected_pad = Some(chosen);
             if let Some(electrical) = set
@@ -237,6 +250,30 @@ impl PartEditor {
                 self.selected = Some(electrical);
             }
         }
+    }
+}
+
+/// A pad's openings in one line: "inherits" or its own rules.
+fn openings_summary(pad: &Pad, defaults: &pcbcraft_core::library::PadDefaults) -> String {
+    let mask = match pad.mask {
+        MaskRule::Inherit => signed_mm(defaults.mask_expansion_mm, '+'),
+        MaskRule::Tented => "tented".to_owned(),
+        MaskRule::Expansion(e) => signed_mm(e, '+'),
+    };
+    let paste = match &pad.paste {
+        PasteRule::Inherit if pad.hole.is_some() || pad.kind == PadKind::Fiducial => {
+            "no paste".to_owned()
+        }
+        PasteRule::Inherit => signed_mm(defaults.paste_reduction_mm, '−'),
+        PasteRule::None => "no paste".to_owned(),
+        PasteRule::Reduction(r) => signed_mm(*r, '−'),
+        PasteRule::Windows(w) => format!("{} windows", w.len()),
+    };
+    let inherits = matches!(pad.mask, MaskRule::Inherit) && matches!(pad.paste, PasteRule::Inherit);
+    if inherits {
+        format!("inherits {mask} / {paste}")
+    } else {
+        format!("{mask} / {paste}")
     }
 }
 
@@ -381,13 +418,7 @@ fn hole_rows(ui: &mut Ui, pad: &mut Pad) {
     match pad.kind {
         PadKind::PlatedThrough | PadKind::NonPlatedHole => {}
         PadKind::Mechanical => choices.push((HoleChoice::None, "None".to_owned())),
-        PadKind::Smd | PadKind::Fiducial => {
-            kit::note(
-                ui,
-                "Surface pads have no hole. Choose a through-hole kind to drill one.",
-            );
-            return;
-        }
+        PadKind::Smd | PadKind::Fiducial => return,
     }
     choices.push((HoleChoice::Round, "Round drill".to_owned()));
     choices.push((HoleChoice::Slot, "Slot".to_owned()));
@@ -527,10 +558,10 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
     if matches!(pad.paste, PasteRule::Inherit)
         && (pad.hole.is_some() || pad.kind == PadKind::Fiducial)
     {
-        kit::note(ui, "Through-hole pads and fiducials inherit no paste.");
+        kit::hint(
+            ui,
+            "Through-hole pads and fiducials inherit no paste",
+            "Openings are display overlays, never saved in the 3D model",
+        );
     }
-    kit::note(
-        ui,
-        "Mask and paste openings are display overlays; they are never saved in the 3D model.",
-    );
 }

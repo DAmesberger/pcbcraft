@@ -1,6 +1,7 @@
 //! Pcbcraft desktop editor.
 mod app;
 mod file_ui;
+mod issues;
 mod kit;
 mod layer_view;
 mod library_sources;
@@ -10,6 +11,7 @@ mod palette;
 mod part_editor;
 mod pcb_editor;
 mod place_palette;
+mod refusal;
 mod resolve_parts;
 mod scene;
 mod schematic_editor;
