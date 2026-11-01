@@ -631,6 +631,88 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// The demo board with a marking on every placed instance: its built
+    /// geometry plus the decals, as the model worker appends them.
+    fn marked_scene() -> Result<(ModelScene, usize), Box<dyn std::error::Error>> {
+        use pcbcraft_core::library::marking::{Finish, LaidElement, LaidText, MarkingLayout};
+        use pcbcraft_solidcraft::marking::{DecalCache, board};
+        let project = demo_project()?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let layouts = project
+            .placements
+            .iter()
+            .map(|p| {
+                let layout = MarkingLayout {
+                    elements: vec![LaidElement::Text(LaidText {
+                        text: "103".into(),
+                        height_mm: 0.3,
+                        origin: [0.0, 0.0],
+                    })],
+                    finish: Finish::LaserEtch,
+                    findings: Vec::new(),
+                };
+                (p.instance, layout)
+            })
+            .collect();
+        let decals = board::board_decals(
+            &project,
+            &model.geometry,
+            &model.sources,
+            &layouts,
+            &mut DecalCache::default(),
+        );
+        let count = decals.len();
+        let mut geometry = model.geometry;
+        geometry.extend(decals);
+        Ok((build(geometry)?, count))
+    }
+
+    /// PCB 3D: decals pack with the component bodies (a layer view hides
+    /// them with the bodies, nothing rebuilt), take their finish's look and
+    /// highlight with their instance.
+    #[test]
+    fn marking_decals_draw_and_hide_with_the_component_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_solidcraft::marking::{board::DECAL_KIND, finish_surface};
+        let (scene, count) = marked_scene()?;
+        assert!(count >= 2, "{count}");
+        let plain = demo_scene()?;
+        let decals: Vec<&Geometry> = scene.geometry[plain.geometry.len()..].iter().collect();
+        assert_eq!(decals.len(), count);
+        let triangles: usize = decals.iter().map(|g| g.mesh.triangles.len()).sum();
+        // The Bodies run grows by exactly the decal vertices.
+        let run = |s: &ModelScene| {
+            s.runs
+                .iter()
+                .find(|(l, _)| *l == ViewLayer::Bodies)
+                .map(|(_, r)| r.len())
+                .unwrap_or(0)
+        };
+        assert_eq!(run(&scene), run(&plain) + 3 * PBR_DETAILED_SIZE * triangles);
+        assert_eq!(
+            scene.pbr.len(),
+            plain.pbr.len() + 3 * PBR_DETAILED_SIZE * triangles
+        );
+        let laser = finish_surface(pcbcraft_core::library::marking::Finish::LaserEtch)?;
+        for g in &decals {
+            assert_eq!(g.kind, DECAL_KIND);
+            assert_eq!(g.surface.base_color(), laser.base_color());
+            assert!(
+                scene.highlight.iter().any(|(item, layer, _)| {
+                    Some(*item) == g.item && *layer == ViewLayer::Bodies
+                })
+            );
+        }
+        // Hiding the bodies drops the decals too; shadows are unchanged.
+        let mut view = LayerView::default();
+        view.set(ViewLayer::Bodies, false);
+        let (marked, _) = pack(&scene.geometry, &view)?;
+        let (unmarked, _) = pack(&plain.geometry, &view)?;
+        assert_eq!(marked, unmarked);
+        assert_eq!(scene.shadows.top.len(), plain.shadows.top.len());
+        Ok(())
+    }
+
     #[test]
     fn highlight_blocks_are_flat_one_per_item_and_segment() -> Result<(), Box<dyn std::error::Error>>
     {
