@@ -510,6 +510,32 @@ fn build_timings() -> Result<()> {
     Ok(())
 }
 
+/// One via board's build, for profiling: `PCBCRAFT_VIAS=10000 cargo test
+/// --profile ci -p pcbcraft-solidcraft via_build_profile -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn via_build_profile() -> Result<()> {
+    let count = std::env::var("PCBCRAFT_VIAS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10_000);
+    let runs = std::env::var("PCBCRAFT_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let project = via_board(count)?;
+    for _ in 0..runs {
+        let start = std::time::Instant::now();
+        let model = build(&project)?;
+        println!(
+            "{count} vias: {} native bodies, build {:.0} ms",
+            native(&model).count(),
+            start.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    Ok(())
+}
+
 /// Every body's surface is exactly the look the native file stores, as
 /// Solidcraft's own product-scene extraction reads it.
 fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {

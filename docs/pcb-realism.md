@@ -252,51 +252,68 @@ from the GUI. The core warning that restated them is no longer shown twice.
 via boards are `via_board` in `project/tests.rs`: the showcase on 4 layers with that many
 vias on a 1.27 mm grid and about 260 tracks (200 inner).
 
-| Board | Native bodies | Before | After |
-| --- | --- | --- | --- |
-| Demo | 13 | 117 ms | 93 ms |
-| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s |
-| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s |
-| Demo, 400 tracks | 413 | 13.5 s | 3.8 s |
-| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s |
-| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s |
-| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s |
+| Board | Native bodies | Before | Phase 1 | Phase 2 |
+| --- | --- | --- | --- | --- |
+| Demo | 13 | 117 ms | 93 ms | 45 ms |
+| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s | 1.0 s |
+| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s | 0.14 s |
+| Demo, 400 tracks | 413 | 13.5 s | 3.8 s | 0.39 s |
+| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s | 1.6 s |
+| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s | 2.3 s |
+| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s | 2.7–3.5 s |
 
 "Before" is the pinned `pcbcraft-product-look` build (the showcase with 50 vias took 607 s
-there); "after" was measured at a load average of about 15–40 from other builds, one run for
-the two largest boards.
+there). Phase 1 and phase 2 were measured at a load average of about 5–40 from other builds;
+the 10,000-via row is the range of best-of-3 runs over several minutes (`via_build_profile` in
+`project/tests.rs`, `PCBCRAFT_VIAS=10000`).
 
-What made vias expensive, and what changed:
+What made vias expensive, and what changed in phase 1:
 
 - **Booleans.** The drills were one profile cut of the laminate and each inner layer's
   copper another; past Solidcraft's prism budgets these fell back to its general B-rep
   Boolean (607 s for 50 vias on the showcase) and refused 200 vias. The laminate is now
   stacked slabs extruded with their holes, and no Boolean runs.
-- **A command per thing.** Every Solidcraft command evaluates parameters and solves every
-  joint again, so N commands cost N². Sketch contours go in with one `sketch.insert_dxf`, the
+- **A command per thing.** Sketch contours go in with one `sketch.insert_dxf`, the
   placements' parameters with one `parameters.import`, every via of a size with one
   `occurrence.copy` (`translations`) and every board joint with one `joint.create`
   (`joints`), the last two added to the Solidcraft fork for this.
-- **Per-via components.** A via was its own component with its own features, meshed on
-  its own. A via size is now one definition placed per via.
-- **Quadratic sketch steps.** Choosing a drilled plate's profiles compared every hole with
-  every profile, and merging regions every segment with every other: both now look up a
-  grid (`BoxIndex` in the fork's geometry crate). Above 10,000 profiles the profile choice
-  used to take every profile, which filled every hole in; it now checks them all.
-- **Measuring.** Every body was measured exactly as it was built; a placement of a via
-  definition reuses its definition's measure, and a laminate slab's volume is measured only
-  when read.
+- **Per-via components.** A via size is one definition placed per via.
+- **Quadratic sketch steps.** Choosing a drilled plate's profiles and merging its regions
+  look up a grid (`BoxIndex` in the fork's geometry crate).
+- **Measuring.** A placement of a via definition reuses its definition's measure.
 
-Where the time goes now (sampled at 10,000 vias, before the joints were batched): meshing the five laminate slabs (each
-face of 10,000 hole walls is a NURBS cylinder that the reference mesher and its seam
-classification sample one by one) about 40 %, extruding them (orienting each new body by
-meshing it coarsely, and its planar checks) about 25 %, the remaining per-part commands
-(pads, tracks: parameters evaluated again by each) about 20 %, and copying the sketch on each
-sketch step. Per via, building and placing are now about linear.
+Phase 2 (fork branch `via2-mesh`):
 
-The 3D view cannot show 1,000 vias yet: each via body is meshed at its own scale (about
-700 triangles a body, five bodies a via), and every placement is copied into the vertex
-stream, far over the view's 88 MiB cap (about 480,000 triangles).
+- **Meshing the laminate** (51 s of 77 at 10,000 vias): the reference mesher projected every
+  rim point onto its NURBS hole wall and the seam check fitted each of the 10,000 walls by
+  sampling. A straight prism of 256 faces or more is now meshed from its rims in the kernel
+  (`prism_mesh.rs`): each rim divided once by the same chord, angle and crowding rules (one
+  division per hole shape, reused for every hole of that shape), each wall a strip, each cap
+  one constrained triangulation; the same faces, edges, seam and tangent flags and, on the
+  plates tested, the same triangles as the reference mesher. A crowded cap gives each half
+  circle at least two segments (the reference left a hole of no area). About 0.3 s a slab.
+- **Extruding the laminate** (12 s): orienting each new body by meshing it, and comparing
+  every side with every profile piece; now read from the start cap, and looked up. A sketch
+  plane that is XY raised along Z extrudes in place instead of rebuilding the body to move
+  it; the solved sketch's profiles are reused when choosing the extrude's profiles; profile
+  nesting and DXF ids are indexed.
+- **One evaluation per build.** Solidcraft's `Session::defer_evaluation` /
+  `evaluate_deferred` (fork): adding commands (components, boxes, parameters, metadata) run
+  without evaluating or copying the design, any other command evaluates what is pending
+  first, and the batch ends evaluated as one undo step. The board build runs in one such
+  batch. Evaluating an expression reads only the parameters it names (every named feature
+  input is one), and a parameter change is checked without copying the design.
+- **Order and overlap.** The laminate is built last (its sketches hold every drill, which
+  each earlier command would read again); the display-only layers (mask, finish,
+  silkscreen, edge) are drawn on another thread while the laminate, joints and native
+  finish run; a body whose mesh box is its outline box is measured only when its volume is
+  read; all bodies are meshed at once on all cores.
+
+Where the time goes now at 10,000 vias (about 3 s): the display-only layers on their own
+thread about 1.7 s (`appearance::region::slab` and `via::via_layers`), in parallel with the
+laminate (0.7 s) and the native finish (1.1 s: world bodies for 50,000 placements, their
+copied meshes, `appearance.assign` frames); before them the generated package models
+(0.7 s, fillets, the same for every board) and the parts and vias (about 0.4 s).
 
 Plan to reach thousands of vias in a few seconds and an instant 3D view:
 
@@ -304,11 +321,9 @@ Plan to reach thousands of vias in a few seconds and an instant 3D view:
    `ModelBody::mesh_in_place`), drawn once per placement with a per-placement pick id. This
    needs a PBR instanced pipeline in the fork's GPU crate (its `InstancedMesh` is
    palette-lit only), with its coarser levels for small placements.
-2. Mesh repeated faces once: the hole walls of one drill size differ only by a translation;
-   a translation-keyed face-mesh cache in the kernel's reference mesher, and orientation of
-   an extrusion from its profile instead of a coarse mesh.
-3. One evaluation per build: a batch scope in the engine that defers parameter evaluation
-   and joint solving to its end, for the remaining per-part commands.
+2. Mesh repeated faces once (done in phase 2: rims divided once per shape, prisms meshed
+   from their rims, extrusions oriented from their start cap).
+3. One evaluation per build (done in phase 2: `Session::defer_evaluation`).
 4. Incremental rebuilds: keep the native session between builds and change only the
    features of the parts that changed (a moved via is one occurrence move, a moved track
    its parameters), instead of rebuilding the board on every edit.
@@ -349,7 +364,7 @@ purpose:
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
 - The GUI could not be checked live: the screen was locked during both runs, so windows drew
   nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- 10,000 vias build without error but take about a minute, and the 3D view cannot show
+- 10,000 vias build in about 3 s (see Build cost), and the 3D view cannot show
   1,000 vias yet: every via body is meshed at its own scale (about 700 triangles a body),
   far over the view's 88 MiB vertex cap. See Build cost for where the time goes and the
   plan.
