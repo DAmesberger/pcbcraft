@@ -34,6 +34,9 @@ use solidcraft_ui_egui::{
 use std::collections::BTreeSet;
 
 mod board_card;
+pub(crate) mod board_shape;
+mod board_shape_ui;
+mod edge_card;
 mod placement_card;
 #[cfg(test)]
 mod raster_tests;
@@ -348,6 +351,10 @@ pub struct PcbEditor {
     connections_all: bool,
     /// The issue slot of the last inspected subject, per document revision.
     issue_slot: Option<((u64, usize, Inspected), Option<IssueSlot>)>,
+    /// The Board shape mode (`board_shape_ui`).
+    shape: board_shape_ui::ShapeMode,
+    /// The Placement card's Board edge fields (`edge_card`).
+    edge: edge_card::EdgeEdit,
 }
 
 impl Default for PcbEditor {
@@ -401,6 +408,8 @@ impl Default for PcbEditor {
             show_in_schematic: None,
             connections_all: false,
             issue_slot: None,
+            shape: Default::default(),
+            edge: Default::default(),
         }
     }
 }
@@ -617,6 +626,7 @@ impl PcbEditor {
             }
             self.property_key = Some(key);
         }
+        self.sync_shape(engine);
     }
 
     /// Place pads and graphics once per revision.
@@ -733,6 +743,13 @@ impl PcbEditor {
                 notice: Some("Review the update in Properties"),
             };
         }
+        if self.shape.active && !self.view_3d {
+            return Ribbon {
+                tabs,
+                groups: self.shape_groups(),
+                notice: None,
+            };
+        }
         let pending = !layout::sync_preview(engine.project()).is_empty();
         Ribbon {
             tabs,
@@ -759,6 +776,9 @@ impl PcbEditor {
                             .enabled(!self.view_3d)
                             .selected(self.tool == Tool::Via)
                             .tip("Place a through via on a net; switch to Layout to place"),
+                        Button::new("board-shape", "sketch", "Shape")
+                            .enabled(!self.view_3d)
+                            .tip("Edit the board outline, cutouts and named edges as a sketch"),
                     ],
                 },
             ],
@@ -773,6 +793,9 @@ impl PcbEditor {
     pub fn on_tool(&mut self, tool: &str, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
         self.discard_staged();
+        if let Some(operation) = self.shape_tool(tool, engine) {
+            return operation;
+        }
         match tool {
             "update" => {
                 self.update.begin(engine, Change::SyncPcb {});
@@ -879,7 +902,9 @@ impl PcbEditor {
             Subject::Review
         } else if self.setup.is_some() {
             Subject::Dialog
-        } else if matches!(self.tool, Tool::Route | Tool::Via) && !self.view_3d {
+        } else if (self.shape.active || matches!(self.tool, Tool::Route | Tool::Via))
+            && !self.view_3d
+        {
             Subject::Tool
         } else {
             Subject::Properties
@@ -909,6 +934,7 @@ impl PcbEditor {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
         match self.subject() {
+            Subject::Tool if self.shape.active => CardResponse::output(self.shape_card(ui, engine)),
             Subject::Tool if self.tool == Tool::Via => {
                 CardResponse::output(self.via_tool_card(ui, engine.project()))
             }
@@ -991,7 +1017,7 @@ impl PcbEditor {
             }
             Inspected::Board | Inspected::Review => {
                 self.board_section(ui, project);
-                None
+                self.board_shape_section(ui, engine)
             }
         }
     }
@@ -1034,6 +1060,9 @@ impl PcbEditor {
 
     pub fn canvas(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         self.sync(engine);
+        if self.shape.active {
+            return self.shape_canvas(ui, engine);
+        }
         let project = engine.project();
         let t = Tokens::get();
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -1186,6 +1215,7 @@ impl PcbEditor {
         }
         self.refresh_drag_airwires(engine);
         self.paint_board(&painter, view, project);
+        self.paint_edge_constraints(&painter, &view, project);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
             crate::update_preview::paint_board(
@@ -1526,17 +1556,27 @@ impl PcbEditor {
             Layer::Top
         };
         let far = opposite(near);
-        let board = [
-            [0.0, 0.0],
-            [project.board_size[0], 0.0],
-            project.board_size,
-            [0.0, project.board_size[1]],
-        ];
-        painter.add(Shape::convex_polygon(
-            board.map(screen).to_vec(),
-            ink.board,
-            Stroke::new(1.5, t.body_edge),
-        ));
+        if project.board_shape.is_rectangle() {
+            let board = [
+                [0.0, 0.0],
+                [project.board_size[0], 0.0],
+                project.board_size,
+                [0.0, project.board_size[1]],
+            ];
+            painter.add(Shape::convex_polygon(
+                board.map(screen).to_vec(),
+                ink.board,
+                Stroke::new(1.5, t.body_edge),
+            ));
+        } else {
+            board_shape_ui::paint_solved(
+                painter,
+                &view,
+                &project.board(),
+                &ink,
+                Stroke::new(1.5, t.body_edge),
+            );
+        }
         let grid_step = if scale < 6.0 { 5 } else { 1 };
         for x in (0..=project.board_size[0] as usize).step_by(grid_step) {
             painter.line_segment(
