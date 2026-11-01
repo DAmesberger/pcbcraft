@@ -11,4 +11,8 @@ workspace = true
 [dependencies]
 pcbcraft-core.workspace = true
 pcbcraft-automation.workspace = true
+pcbcraft-io.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -38,6 +38,8 @@ mod placement_card;
 #[cfg(test)]
 mod raster_tests;
 mod route_card;
+mod rules_panel;
+pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
 mod via_card;
 #[cfg(test)]
@@ -340,6 +342,8 @@ pub struct PcbEditor {
     errors: FieldErrors,
     /// The Board setup dialog while it is open.
     setup: Option<board_card::BoardSetup>,
+    /// The Design rules panel while it is open.
+    rules: Option<rules_panel::RulesPanel>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
     /// Instance whose schematic symbol the app should show next.
@@ -397,6 +401,7 @@ impl Default for PcbEditor {
             sent: Default::default(),
             errors: FieldErrors::default(),
             setup: None,
+            rules: None,
             frame_request: None,
             show_in_schematic: None,
             connections_all: false,
@@ -877,6 +882,8 @@ impl PcbEditor {
     pub fn subject(&self) -> Subject {
         if self.update.is_open() {
             Subject::Review
+        } else if let Some(subject) = self.rules_subject() {
+            subject
         } else if self.setup.is_some() {
             Subject::Dialog
         } else if matches!(self.tool, Tool::Route | Tool::Via) && !self.view_3d {
@@ -909,6 +916,9 @@ impl PcbEditor {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
         match self.subject() {
+            Subject::Dialog | Subject::Review if self.rules.is_some() && !self.update.is_open() => {
+                self.rules_slot(ui, engine)
+            }
             Subject::Tool if self.tool == Tool::Via => {
                 CardResponse::output(self.via_tool_card(ui, engine.project()))
             }

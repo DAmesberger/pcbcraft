@@ -472,6 +472,10 @@ impl App {
                         self.apply(ctx, crate::refusal::Origin::Command, operation);
                     }
                 }
+                FixDialog::DesignRules(topic) => {
+                    self.workspace = Workspace::Pcb;
+                    self.pcb.show_rule(topic);
+                }
                 FixDialog::AssignPads
                 | FixDialog::ChoosePart
                 | FixDialog::UpdateInstances

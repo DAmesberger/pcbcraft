@@ -2760,7 +2760,9 @@ version = "0.1.0"
 dependencies = [
  "pcbcraft-automation",
  "pcbcraft-core",
+ "pcbcraft-io",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

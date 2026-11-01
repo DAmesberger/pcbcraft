@@ -51,9 +51,11 @@ impl BoardSetup {
 
 impl PcbEditor {
     /// BOARD: size and copper layers, then the finish in one line with
-    /// Setup…, which opens the Board setup dialog.
+    /// Setup…, which opens the Board setup dialog, and the rules profile
+    /// with Rules…, which opens the Design rules panel.
     pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) {
         let mut setup = false;
+        let mut rules = false;
         kit::section(ui, "pcb-board", "Board", true, None, |ui| {
             kit::value_row(
                 ui,
@@ -72,13 +74,24 @@ impl PcbEditor {
             kit::row(ui, "Finish", |ui| {
                 setup = kit::summary_row(ui, &finish_summary(&project.fabrication), Some("Setup…"));
             });
+            kit::row(ui, "Rules", |ui| {
+                rules = kit::summary_row(
+                    ui,
+                    &super::rules_panel::rules_summary(&project.rules),
+                    Some("Rules…"),
+                );
+            });
         });
         if setup {
             self.open_board_setup(project);
         }
+        if rules {
+            self.open_rules(None);
+        }
     }
 
     pub(super) fn open_board_setup(&mut self, project: &Project) {
+        self.rules = None;
         self.setup = Some(BoardSetup::new(project.fabrication));
     }
 
