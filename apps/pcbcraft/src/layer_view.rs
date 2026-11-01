@@ -4,6 +4,11 @@
 //!
 //! The popover on the 3D view's floating navigation bar lists the toggles
 //! in the order the layers lie in the board, top to bottom.
+//!
+//! Markings (founder decision F7) are display-only decals on the component
+//! bodies: no saved body carries them, so no [`BodyKind`] maps to their
+//! toggle. The decal pass asks [`LayerView::shows_markings`], which also
+//! hides them with the bodies they sit on.
 use crate::shell;
 use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
@@ -25,6 +30,9 @@ const CAPTION_HEIGHT: f32 = 22.0;
 pub enum ViewLayer {
     /// Component bodies, leads, terminations and solder.
     Bodies,
+    /// The display-only marking decals on the bodies (top marks, value
+    /// codes, polarity marks and bands). Never saved, never fabricated.
+    Markings,
     Silkscreen(Layer),
     Mask(Layer),
     Copper(CopperLayer),
@@ -42,6 +50,7 @@ impl ViewLayer {
         };
         match self {
             Self::Bodies => "Components".into(),
+            Self::Markings => "Markings".into(),
             Self::Silkscreen(s) => format!("{} silkscreen", side(s)),
             Self::Mask(s) => format!("{} solder mask", side(s)),
             Self::Copper(layer) => format!("{} copper", layer.name()),
@@ -51,12 +60,13 @@ impl ViewLayer {
     }
 
     /// The popover's toggles for a board with the `copper` layers (top to
-    /// bottom), in the order the layers lie: components and the top films
-    /// above the copper, the laminate between the copper, the bottom films
+    /// bottom), in the order the layers lie: components, their markings and
+    /// the top films above the copper, the laminate between the copper, the bottom films
     /// below it, then the vias that pass through it all.
     pub fn stack(copper: &[CopperLayer]) -> Vec<ViewLayer> {
         let mut out = vec![
             Self::Bodies,
+            Self::Markings,
             Self::Silkscreen(Layer::Top),
             Self::Mask(Layer::Top),
         ];
@@ -135,8 +145,9 @@ impl LayerView {
         view
     }
 
-    /// X-ray: only the copper and vias, every film, the laminate and the
-    /// components hidden, so the stackup's copper shows layer over layer.
+    /// X-ray: only the copper and vias, every film, the laminate, the
+    /// components and their markings hidden, so the stackup's copper shows
+    /// layer over layer.
     pub fn x_ray() -> Self {
         let mut view = Self::default();
         for side in [Layer::Top, Layer::Bottom] {
@@ -145,6 +156,7 @@ impl LayerView {
         }
         view.set(ViewLayer::Substrate, false);
         view.set(ViewLayer::Bodies, false);
+        view.set(ViewLayer::Markings, false);
         view
     }
 
@@ -178,6 +190,13 @@ impl LayerView {
     /// Whether a body is drawn and pickable.
     pub fn shows(&self, geometry: &Geometry) -> bool {
         self.visible(ViewLayer::of(geometry.kind, geometry.layer))
+    }
+
+    /// Whether the marking decals are drawn: their own toggle and the
+    /// bodies they sit on both shown. Display only, so turning it changes
+    /// what is drawn and never rebuilds a model or a decal.
+    pub fn shows_markings(&self) -> bool {
+        self.visible(ViewLayer::Markings) && self.visible(ViewLayer::Bodies)
     }
 }
 
@@ -281,6 +300,7 @@ mod tests {
             names,
             [
                 "Components",
+                "Markings",
                 "Top silkscreen",
                 "Top solder mask",
                 "Top copper",
@@ -378,6 +398,7 @@ mod tests {
             let copper = matches!(layer, ViewLayer::Copper(_) | ViewLayer::Vias);
             assert_eq!(x_ray.visible(layer), copper, "{layer:?}");
         }
+        assert!(!x_ray.shows_markings());
         let inner = LayerView::only(CopperLayer::Inner(2), &four);
         for layer in ViewLayer::stack(&four) {
             assert_eq!(
@@ -403,6 +424,31 @@ mod tests {
             !click(&ctx, &mut view, "Show all")?,
             "nothing hidden: Show all is disabled"
         );
+        Ok(())
+    }
+
+    /// The Markings toggle hides the decals and nothing else; hiding the
+    /// components hides their markings too; no saved body is a marking.
+    #[test]
+    fn the_markings_toggle_hides_only_the_decals() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = LayerView::default();
+        assert!(view.shows_markings());
+        assert!(click(&ctx, &mut view, "Markings")?);
+        assert!(!view.visible(ViewLayer::Markings));
+        assert!(!view.shows_markings());
+        for kind in BodyKind::ALL {
+            for layer in [None, Some(CopperLayer::Top), Some(CopperLayer::Bottom)] {
+                let toggle = ViewLayer::of(kind, layer);
+                assert_ne!(toggle, ViewLayer::Markings, "{kind:?}");
+                assert!(view.visible(toggle), "{kind:?} on {layer:?}");
+            }
+        }
+        assert!(click(&ctx, &mut view, "Markings")?);
+        assert!(view.shows_markings());
+        assert!(click(&ctx, &mut view, "Components")?);
+        assert!(view.visible(ViewLayer::Markings));
+        assert!(!view.shows_markings(), "no decals without their bodies");
         Ok(())
     }
 }
