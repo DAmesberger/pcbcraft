@@ -1,0 +1,1008 @@
+{
+ "format": 1,
+ "family": "header",
+ "family_rev": 1,
+ "citations": {},
+ "rows": [
+  {
+   "name": "Pin header 1\u00d71 2.54 mm",
+   "description": "Straight pin header, one row of 1 at 2.54 mm.",
+   "aliases": [
+    "1x01 2.54",
+    "PinHeader 1x1"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 1,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d72 2.54 mm",
+   "description": "Straight pin header, one row of 2 at 2.54 mm.",
+   "aliases": [
+    "1x02 2.54",
+    "PinHeader 1x2"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 2,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d73 2.54 mm",
+   "description": "Straight pin header, one row of 3 at 2.54 mm.",
+   "aliases": [
+    "1x03 2.54",
+    "PinHeader 1x3"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 3,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d74 2.54 mm",
+   "description": "Straight pin header, one row of 4 at 2.54 mm.",
+   "aliases": [
+    "1x04 2.54",
+    "PinHeader 1x4"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 4,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d75 2.54 mm",
+   "description": "Straight pin header, one row of 5 at 2.54 mm.",
+   "aliases": [
+    "1x05 2.54",
+    "PinHeader 1x5"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 5,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d76 2.54 mm",
+   "description": "Straight pin header, one row of 6 at 2.54 mm.",
+   "aliases": [
+    "1x06 2.54",
+    "PinHeader 1x6"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 6,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d77 2.54 mm",
+   "description": "Straight pin header, one row of 7 at 2.54 mm.",
+   "aliases": [
+    "1x07 2.54",
+    "PinHeader 1x7"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 7,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d78 2.54 mm",
+   "description": "Straight pin header, one row of 8 at 2.54 mm.",
+   "aliases": [
+    "1x08 2.54",
+    "PinHeader 1x8"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 8,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d79 2.54 mm",
+   "description": "Straight pin header, one row of 9 at 2.54 mm.",
+   "aliases": [
+    "1x09 2.54",
+    "PinHeader 1x9"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 9,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d710 2.54 mm",
+   "description": "Straight pin header, one row of 10 at 2.54 mm.",
+   "aliases": [
+    "1x10 2.54",
+    "PinHeader 1x10"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 10,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d711 2.54 mm",
+   "description": "Straight pin header, one row of 11 at 2.54 mm.",
+   "aliases": [
+    "1x11 2.54",
+    "PinHeader 1x11"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 11,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d712 2.54 mm",
+   "description": "Straight pin header, one row of 12 at 2.54 mm.",
+   "aliases": [
+    "1x12 2.54",
+    "PinHeader 1x12"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 12,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d716 2.54 mm",
+   "description": "Straight pin header, one row of 16 at 2.54 mm.",
+   "aliases": [
+    "1x16 2.54",
+    "PinHeader 1x16"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 16,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d720 2.54 mm",
+   "description": "Straight pin header, one row of 20 at 2.54 mm.",
+   "aliases": [
+    "1x20 2.54",
+    "PinHeader 1x20"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 20,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d740 2.54 mm",
+   "description": "Straight pin header, one row of 40 at 2.54 mm.",
+   "aliases": [
+    "1x40 2.54",
+    "PinHeader 1x40"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 40,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d72 2.54 mm",
+   "description": "Straight pin header, two rows of 2 at 2.54 mm.",
+   "aliases": [
+    "2x02 2.54",
+    "PinHeader 2x2"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 2,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d73 2.54 mm",
+   "description": "Straight pin header, two rows of 3 at 2.54 mm.",
+   "aliases": [
+    "2x03 2.54",
+    "PinHeader 2x3"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 3,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d74 2.54 mm",
+   "description": "Straight pin header, two rows of 4 at 2.54 mm.",
+   "aliases": [
+    "2x04 2.54",
+    "PinHeader 2x4"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 4,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d75 2.54 mm",
+   "description": "Straight pin header, two rows of 5 at 2.54 mm.",
+   "aliases": [
+    "2x05 2.54",
+    "PinHeader 2x5"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 5,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d76 2.54 mm",
+   "description": "Straight pin header, two rows of 6 at 2.54 mm.",
+   "aliases": [
+    "2x06 2.54",
+    "PinHeader 2x6"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 6,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d77 2.54 mm",
+   "description": "Straight pin header, two rows of 7 at 2.54 mm.",
+   "aliases": [
+    "2x07 2.54",
+    "PinHeader 2x7"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 7,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d78 2.54 mm",
+   "description": "Straight pin header, two rows of 8 at 2.54 mm.",
+   "aliases": [
+    "2x08 2.54",
+    "PinHeader 2x8"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 8,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d79 2.54 mm",
+   "description": "Straight pin header, two rows of 9 at 2.54 mm.",
+   "aliases": [
+    "2x09 2.54",
+    "PinHeader 2x9"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 9,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d710 2.54 mm",
+   "description": "Straight pin header, two rows of 10 at 2.54 mm.",
+   "aliases": [
+    "2x10 2.54",
+    "PinHeader 2x10"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 10,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d712 2.54 mm",
+   "description": "Straight pin header, two rows of 12 at 2.54 mm.",
+   "aliases": [
+    "2x12 2.54",
+    "PinHeader 2x12"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 12,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d713 2.54 mm",
+   "description": "Straight pin header, two rows of 13 at 2.54 mm.",
+   "aliases": [
+    "2x13 2.54",
+    "PinHeader 2x13"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 13,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d715 2.54 mm",
+   "description": "Straight pin header, two rows of 15 at 2.54 mm.",
+   "aliases": [
+    "2x15 2.54",
+    "PinHeader 2x15"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 15,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d717 2.54 mm",
+   "description": "Straight pin header, two rows of 17 at 2.54 mm.",
+   "aliases": [
+    "2x17 2.54",
+    "PinHeader 2x17"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 17,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d720 2.54 mm",
+   "description": "Straight pin header, two rows of 20 at 2.54 mm.",
+   "aliases": [
+    "2x20 2.54",
+    "PinHeader 2x20"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 20,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d725 2.54 mm",
+   "description": "Straight pin header, two rows of 25 at 2.54 mm.",
+   "aliases": [
+    "2x25 2.54",
+    "PinHeader 2x25"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 25,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d730 2.54 mm",
+   "description": "Straight pin header, two rows of 30 at 2.54 mm.",
+   "aliases": [
+    "2x30 2.54",
+    "PinHeader 2x30"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 30,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d740 2.54 mm",
+   "description": "Straight pin header, two rows of 40 at 2.54 mm.",
+   "aliases": [
+    "2x40 2.54",
+    "PinHeader 2x40"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 40,
+    "pitch": 2.54,
+    "row_pitch": 2.54,
+    "body_height": 2.54,
+    "pin_side": 0.64,
+    "pin_above": 6.0,
+    "pin_below": 3.0
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d72 2.0 mm",
+   "description": "Straight pin header, one row of 2 at 2.0 mm.",
+   "aliases": [
+    "1x02 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 2,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d73 2.0 mm",
+   "description": "Straight pin header, one row of 3 at 2.0 mm.",
+   "aliases": [
+    "1x03 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 3,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d74 2.0 mm",
+   "description": "Straight pin header, one row of 4 at 2.0 mm.",
+   "aliases": [
+    "1x04 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 4,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d76 2.0 mm",
+   "description": "Straight pin header, one row of 6 at 2.0 mm.",
+   "aliases": [
+    "1x06 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 6,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 1\u00d78 2.0 mm",
+   "description": "Straight pin header, one row of 8 at 2.0 mm.",
+   "aliases": [
+    "1x08 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 1,
+    "pins_per_row": 8,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d75 2.0 mm",
+   "description": "Straight pin header, two rows of 5 at 2.0 mm.",
+   "aliases": [
+    "2x05 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 5,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d710 2.0 mm",
+   "description": "Straight pin header, two rows of 10 at 2.0 mm.",
+   "aliases": [
+    "2x10 2.00"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 10,
+    "pitch": 2.0,
+    "row_pitch": 2.0,
+    "body_height": 2.0,
+    "pin_side": 0.5,
+    "pin_above": 4.0,
+    "pin_below": 2.8
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d75 1.27 mm",
+   "description": "Straight pin header, two rows of 5 at 1.27 mm.",
+   "aliases": [
+    "2x05 1.27",
+    "SWD 10-pin",
+    "Cortex debug 2x5"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 5,
+    "pitch": 1.27,
+    "row_pitch": 1.27,
+    "body_height": 1.0,
+    "pin_side": 0.4,
+    "pin_above": 3.0,
+    "pin_below": 2.3
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d77 1.27 mm",
+   "description": "Straight pin header, two rows of 7 at 1.27 mm.",
+   "aliases": [
+    "2x07 1.27"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 7,
+    "pitch": 1.27,
+    "row_pitch": 1.27,
+    "body_height": 1.0,
+    "pin_side": 0.4,
+    "pin_above": 3.0,
+    "pin_below": 2.3
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  },
+  {
+   "name": "Pin header 2\u00d710 1.27 mm",
+   "description": "Straight pin header, two rows of 10 at 1.27 mm.",
+   "aliases": [
+    "2x10 1.27"
+   ],
+   "skeleton": {
+    "skeleton": "connector"
+   },
+   "cite": null,
+   "values": {
+    "family": "header",
+    "rows": 2,
+    "pins_per_row": 10,
+    "pitch": 1.27,
+    "row_pitch": 1.27,
+    "body_height": 1.0,
+    "pin_side": 0.4,
+    "pin_above": 3.0,
+    "pin_below": 2.3
+   },
+   "note": "Estimated: typical square-post pin header proportions, not typed from one drawing. Confirm body height and post lengths against the chosen manufacturer's drawing."
+  }
+ ]
+}
