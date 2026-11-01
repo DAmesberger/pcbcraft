@@ -157,6 +157,7 @@ impl Builder {
     /// Store each kind's physical look (one assignment per kind) and the
     /// body → kind map, then evaluate.
     fn finish(mut self, sources: Vec<Source>) -> Result<NativeModel> {
+        self.native.evaluate_deferred()?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
@@ -507,7 +508,7 @@ fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
 
 /// A definition body's measure at one placement: volume, box (low, high)
 /// and where that placement moved it.
-type Measured = (f64, [f64; 3], [f64; 3], [f64; 3]);
+type Measured = (Volume, [f64; 3], [f64; 3], [f64; 3]);
 
 /// Via definitions by drill and diameter (their bits).
 type ViaKey = (u64, u64);
@@ -538,6 +539,8 @@ fn finish_with(
     // each definition body is measured once, at its first placement.
     let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
+    // Every body's display mesh at once, on all cores (each the mesh it makes alone).
+    native.session().world_state().warm_meshes(|| true);
     for (index, body) in native.session().world_state().bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
@@ -575,32 +578,46 @@ fn finish_with(
         let (volume, min, max) = match measured.get(&key).filter(|_| translation) {
             Some((volume, min, max, at)) => {
                 let shift = |p: &[f64; 3]| std::array::from_fn(|i| p[i] + moved[i] - at[i]);
-                (Volume::known(*volume), shift(min), shift(max))
-            }
-            // A laminate slab's box is its outline's, whose corners its mesh
-            // has exactly; its volume (measuring thousands of drilled
-            // holes) is measured only if asked for.
-            None if kind == BodyKind::Substrate => {
-                let b = mesh.bounds();
-                let body = body.clone();
-                (
-                    Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
-                    [b.min.x, b.min.y, b.min.z],
-                    [b.max.x, b.max.y, b.max.z],
-                )
+                (volume.clone(), shift(min), shift(max))
             }
             None => {
-                let m = body
-                    .measure()
-                    .map_err(|e| Error::Verification(e.to_string()))?;
-                let (min, max) = (
-                    [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
-                    [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
-                );
+                let b = mesh.bounds();
+                let outline = body.body.outline_bounds();
+                let span = b.min.dist(b.max).max(1.0);
+                let near = |p: solidcraft_engine::geom::Vec3, q: solidcraft_engine::geom::Vec3| {
+                    p.dist(q) <= span * 1e-12
+                };
+                // A box the mesh reaches exactly: the body's vertices and edges' controls
+                // span no more than the mesh does (a laminate slab, a pad, a track),
+                // so that box is the body's own. Its volume (meshing the body more
+                // finely three times) is measured only if asked for; any other body
+                // is measured now.
+                let (volume, min, max) = if kind == BodyKind::Substrate
+                    || (near(b.min, outline.min) && near(b.max, outline.max))
+                {
+                    let body = body.clone();
+                    (
+                        Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
+                        [b.min.x, b.min.y, b.min.z],
+                        [b.max.x, b.max.y, b.max.z],
+                    )
+                } else {
+                    let m = body
+                        .measure()
+                        .map_err(|e| Error::Verification(e.to_string()))?;
+                    (
+                        Volume::known(m.volume),
+                        [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
+                        [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
+                    )
+                };
                 if translation {
-                    measured.insert(key, (m.volume, min, max, [moved[0], moved[1], moved[2]]));
+                    measured.insert(
+                        key,
+                        (volume.clone(), min, max, [moved[0], moved[1], moved[2]]),
+                    );
                 }
-                (Volume::known(m.volume), min, max)
+                (volume, min, max)
             }
         };
         let item = shared
@@ -1014,11 +1031,13 @@ fn build_with(
     if let Some(cancel) = cancel {
         b.native.cancel_with(cancel);
     }
+    // The board is evaluated once its parts are in, not after every command.
+    b.native.defer_evaluation()?;
     stackup_params(&mut b, project)?;
-    let board = b.native.component("PCB substrate", true)?.occurrence;
+    let substrate = b.native.component("PCB substrate", true)?;
+    let board = substrate.occurrence;
     let pads = placed_pads(project)?;
     b.params(&object_params(project, &pads)?)?;
-    laminate(&mut b, project, &pads)?;
     let mut sources = vec![];
     let mut parts = vec![];
     // Board joints of every part, made at the end (see there).
@@ -1344,35 +1363,58 @@ fn build_with(
     }
     let display = appearance::Board::of(project);
     let marks = vias(&mut b, project, &mut sources)?;
-    // Every joint goes in once the parts are built, solved together (one
-    // by one, each would solve all the joints made before it); a copy of a
-    // shared definition starts where its first occurrence stands.
-    b.native.board_joints(&joints)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
-    let mut model = b.finish(sources)?;
-    let picks: BTreeMap<Id, u64> = model
-        .sources
+    let picks: BTreeMap<Id, u64> = sources
         .iter()
         .filter(|s| s.pad.is_none())
         .filter_map(|s| s.instance.map(|i| (i, s.pick_id)))
         .collect();
-    let layers = appearance::board(&display, &lands, &paths, &marks, &parts)?;
-    model.geometry.extend(layers);
-    model.geometry.extend(crate::silkscreen::films(
-        project,
-        &crate::silkscreen::Legend {
-            board: &display,
-            lands: &lands,
-            paths: &paths,
-            vias: &marks,
-            picks: &picks,
-        },
-    )?);
-    model
-        .geometry
-        .extend(crate::stackup_edge::bands(stackup, &display)?);
+    // The display-only layers (mask, finish, silkscreen, edge) need no native
+    // model: they are drawn while the native one gets its laminate and joints
+    // and is finished and meshed.
+    let layers = || -> Result<Vec<Geometry>> {
+        let mut layers = appearance::board(&display, &lands, &paths, &marks, &parts)?;
+        layers.extend(crate::silkscreen::films(
+            project,
+            &crate::silkscreen::Legend {
+                board: &display,
+                lands: &lands,
+                paths: &paths,
+                vias: &marks,
+                picks: &picks,
+            },
+        )?);
+        layers.extend(crate::stackup_edge::bands(stackup, &display)?);
+        Ok(layers)
+    };
+    let native = |mut b: Builder| -> Result<NativeModel> {
+        // The laminate last: its sketches hold every drill, which each
+        // command before it would otherwise read again.
+        b.native.activate(substrate.component)?;
+        laminate(&mut b, project, &pads)?;
+        // Every joint goes in once the parts are built, solved together (one
+        // by one, each would solve all the joints made before it); a copy of
+        // a shared definition starts where its first occurrence stands.
+        b.native.board_joints(&joints)?;
+        b.finish(sources)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (model, layers) = std::thread::scope(|scope| {
+        let drawn = scope.spawn(layers);
+        let model = native(b);
+        let layers = drawn.join().unwrap_or_else(|_| {
+            Err(Error::Verification(
+                "drawing the board's layers failed".into(),
+            ))
+        });
+        (model, layers)
+    });
+    #[cfg(target_arch = "wasm32")]
+    let (model, layers) = (native(b), layers());
+    let mut model = model?;
+    model.geometry.extend(layers?);
     Ok(model)
 }
 

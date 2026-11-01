@@ -211,6 +211,29 @@ impl Native {
         &self.session
     }
 
+    /// Put off evaluating the design after each command until [`Native::evaluate_deferred`]
+    /// (Solidcraft's `Session::defer_evaluation`): a board built in hundreds of commands is
+    /// evaluated a few times instead of after every one.
+    pub fn defer_evaluation(&mut self) -> Result<()> {
+        self.session
+            .defer_evaluation()
+            .map_err(|error| Error::Engine {
+                command: "defer evaluation".into(),
+                message: error.to_string(),
+            })
+    }
+
+    /// Evaluate what [`Native::defer_evaluation`] put off, as one undo step; fails, leaving the
+    /// design as it was before, when a feature added meanwhile fails.
+    pub fn evaluate_deferred(&mut self) -> Result<()> {
+        self.session
+            .evaluate_deferred()
+            .map_err(|error| Error::Engine {
+                command: "evaluate deferred".into(),
+                message: error.to_string(),
+            })
+    }
+
     pub fn parameter(&mut self, name: &str, expression: impl Into<String>) -> Result<()> {
         self.call(
             "parameters.add",
@@ -251,6 +274,12 @@ impl Native {
             component: id(&reply, "component")?,
             occurrence: id(&reply, "occurrence")?,
         })
+    }
+
+    /// Make `component` the one new geometry goes into.
+    pub fn activate(&mut self, component: u64) -> Result<()> {
+        self.call("component.activate", json!({"component": component}))?;
+        Ok(())
     }
 
     pub fn activate_root(&mut self) -> Result<()> {
