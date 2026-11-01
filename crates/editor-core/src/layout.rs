@@ -5,7 +5,9 @@ use crate::geometry::{Point, Shape, Transform2, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadKind, PadShape, PadSide};
-use crate::model::{EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Track};
+use crate::model::{
+    CopperLayer, EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Stackup, Track,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,12 +23,14 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 mod copper;
 pub mod courtyard;
 mod placed;
+pub mod via;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
     BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
     pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
 };
+pub use via::{LayerChangeRequest, ViaRequest};
 const MAX_CHECK_PAIRS: usize = 100_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -62,6 +66,24 @@ pub enum LayoutCommand {
     /// pad finish, silkscreen colour) as one undo step.
     #[serde(rename = "layout.set_fabrication")]
     SetFabrication(Fabrication),
+    /// Replace the board's stackup as one undo step. Tracks and vias on a
+    /// copper layer the new stackup lacks make it fail.
+    #[serde(rename = "layout.set_stackup")]
+    SetStackup(Stackup),
+    /// Add a board via; the outcome names it (`Outcome::ViaAdded`).
+    #[serde(rename = "layout.add_via")]
+    AddVia { via: ViaRequest },
+    #[serde(rename = "layout.via_move")]
+    MoveVia { id: Id, position: Point },
+    #[serde(rename = "layout.via_delete")]
+    DeleteVia { id: Id },
+    #[serde(rename = "layout.via_tent")]
+    SetViaTented { id: Id, tented: bool },
+    #[serde(rename = "layout.via_lock")]
+    SetViaLock { id: Id, locked: bool },
+    /// Route to a via, change layer there and route on.
+    #[serde(rename = "layout.route_layer_change")]
+    RouteLayerChange { request: LayerChangeRequest },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -71,7 +93,7 @@ pub struct RouteRequest {
     pub start: Point,
     pub end: Point,
     pub width: f64,
-    pub layer: Layer,
+    pub layer: CopperLayer,
 }
 
 /// A speculative edit set. A future shove strategy may replace connected tracks
@@ -127,8 +149,8 @@ pub struct WorldPad {
 
 impl WorldPad {
     /// Whether the pad has copper on `layer`.
-    pub fn on(&self, layer: Layer) -> bool {
-        self.through || self.layer == layer
+    pub fn on(&self, layer: impl Into<CopperLayer>) -> bool {
+        self.through || layer.into() == self.layer
     }
 
     /// Pad frame to board coordinates (reflected first on the bottom).
@@ -327,13 +349,15 @@ pub fn apply(project: &mut Project, command: LayoutCommand) -> Result<()> {
     Ok(())
 }
 
-/// Apply to a candidate the caller discards on failure.
-pub(crate) fn apply_staged(candidate: &mut Project, command: LayoutCommand) -> Result<()> {
-    apply_inner(candidate, command)?;
-    validate(candidate)
+/// Apply to a candidate the caller discards on failure. Returns the via a
+/// `layout.add_via` created.
+pub(crate) fn apply_staged(candidate: &mut Project, command: LayoutCommand) -> Result<Option<Id>> {
+    let created = apply_inner(candidate, command)?;
+    validate(candidate)?;
+    Ok(created)
 }
 
-fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
+fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<Id>> {
     match command {
         LayoutCommand::Sync => {
             let missing = sync_preview(project);
@@ -429,8 +453,19 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<()> {
                 .locked = locked;
         }
         LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
+        LayoutCommand::SetStackup(stackup) => project.stackup = stackup,
+        LayoutCommand::AddVia { via } => return via::add(project, via).map(Some),
+        LayoutCommand::MoveVia { id, position } => via::move_to(project, id, position)?,
+        LayoutCommand::DeleteVia { id } => via::delete(project, id)?,
+        LayoutCommand::SetViaTented { id, tented } => via::set_tented(project, id, tented)?,
+        LayoutCommand::SetViaLock { id, locked } => via::set_lock(project, id, locked)?,
+        LayoutCommand::RouteLayerChange { .. } => {
+            return Err(Error::Unsupported(
+                "routing through a layer change is not supported yet; route each layer and add the via".into(),
+            ));
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn invalid<T>(message: &str) -> Result<T> {
@@ -659,7 +694,9 @@ pub fn validate(project: &Project) -> Result<()> {
             return invalid("placement datum must lie inside the board with a finite rotation");
         }
     }
+    project.stackup.check()?;
     let ids = project.nets.iter().map(|n| n.id).collect::<BTreeSet<_>>();
+    via::validate(project, &ids)?;
     let mut track_ids = BTreeSet::new();
     for track in &project.tracks {
         if track.id == 0 || track.id >= project.next_id || !track_ids.insert(track.id) {
@@ -677,6 +714,9 @@ pub fn validate(project: &Project) -> Result<()> {
             || distance(track.start, track.end) < 0.01
         {
             return invalid("invalid track geometry");
+        }
+        if !project.stackup.has(track.layer) {
+            return invalid("track lies on a copper layer the stackup lacks");
         }
         if track_polygon(track)
             .iter()

@@ -16,7 +16,9 @@ use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
-use pcbcraft_core::{Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout};
+use pcbcraft_core::{
+    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, instances, layout,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,8 +41,11 @@ pub struct Source {
     pub instance: Option<Id>,
     pub pad: Option<PadId>,
     pub track: Option<Id>,
+    /// The board via a via body came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<Id>,
     pub net: Option<Id>,
-    pub layer: Option<Layer>,
+    pub layer: Option<CopperLayer>,
     pub label: String,
     pub component: u64,
     /// The occurrence of a shared generated-model definition this source
@@ -344,14 +349,20 @@ fn finish_with(
         let m = body
             .measure()
             .map_err(|e| Error::Verification(e.to_string()))?;
+        let item = shared.get(&index).copied().or_else(|| {
+            sources
+                .iter()
+                .find(|s| s.component == body.component && s.occurrence.is_none())
+                .map(|s| s.pick_id)
+        });
+        let layer = item
+            .and_then(|pick| sources.iter().find(|s| s.pick_id == pick))
+            .filter(|_| !kind.is_envelope() && !kind.is_generated())
+            .and_then(|s| s.layer);
         geometry.push(Geometry {
-            item: shared.get(&index).copied().or_else(|| {
-                sources
-                    .iter()
-                    .find(|s| s.component == body.component && s.occurrence.is_none())
-                    .map(|s| s.pick_id)
-            }),
+            item,
             kind,
+            layer,
             surface,
             detail,
             mesh: body.mesh(),
@@ -614,6 +625,16 @@ fn flat(contour: &Contour) -> Result<Vec<Point>> {
 
 pub fn build(project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    if project.stackup != pcbcraft_core::Stackup::default() {
+        return Err(Error::Invalid(
+            "only the default 2-layer stackup is built in the native model yet".into(),
+        ));
+    }
+    if !project.vias.is_empty() {
+        return Err(Error::Invalid(
+            "board vias are not built in the native model yet".into(),
+        ));
+    }
     let mut b = Builder::new(&project.name)?;
     for (name, value) in [
         ("board_width", project.board_size[0]),
@@ -711,8 +732,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 instance: Some(instance.id),
                 pad: None,
                 track: None,
+                via: None,
                 net: None,
-                layer: Some(placement.layer),
+                layer: Some(placement.layer.into()),
                 label: format!("{} model", instance.designator),
                 component: created.component,
                 occurrence: Some(created.occurrence),
@@ -777,8 +799,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             instance: Some(instance.id),
             pad: None,
             track: None,
+            via: None,
             net: None,
-            layer: Some(placement.layer),
+            layer: Some(placement.layer.into()),
             label,
             component: created.component,
             occurrence: None,
@@ -921,8 +944,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             instance: Some(pad.placed.instance),
             pad: Some(local.id),
             track: None,
+            via: None,
             net: pad.placed.net,
-            layer: Some(pad.placed.layer),
+            layer: Some(pad.placed.layer.into()),
             label: format!("{} pad {}", pad.designator, local.number),
             component: created.component,
             occurrence: None,
@@ -930,6 +954,12 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let mut paths = Vec::with_capacity(project.tracks.len());
     for track in &project.tracks {
+        let Some(side) = track.layer.side() else {
+            return Err(Error::Invalid(format!(
+                "inner-layer copper ({}) is not built in the native model yet",
+                track.layer.name()
+            )));
+        };
         let prefix = format!("trace_{}", track.id);
         for (suffix, value) in [
             ("x0", track.start[0]),
@@ -961,7 +991,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             x: format!("{prefix}_x0").into(),
             y: format!("{prefix}_y0").into(),
             angle: angle.into(),
-            layer: track.layer,
+            layer: side,
         })?;
         let pick = next_pick(&sources);
         paths.push(Path {
@@ -969,13 +999,14 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             start: track.start,
             end: track.end,
             width: track.width,
-            layer: track.layer,
+            layer: side,
         });
         sources.push(Source {
             pick_id: pick,
             instance: None,
             pad: None,
             track: Some(track.id),
+            via: None,
             net: Some(track.net),
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),

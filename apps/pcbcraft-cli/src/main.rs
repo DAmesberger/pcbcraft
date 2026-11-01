@@ -14,6 +14,7 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
   stdio [FILE.pcbcraft]            JSON-lines requests on stdin, replies on stdout
   mcp [FILE.pcbcraft]              Model Context Protocol server on stdio
   demo NEW_FILE.pcbcraft           write the two-component demo project
+  showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
@@ -82,12 +83,14 @@ fn run() -> Result<()> {
             let mut server = mcp::Server::new(open(rest.first())?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
-        [command, path] if command == "demo" || command == "parts" => {
+        [command, path] if ["demo", "showcase", "parts"].contains(&command.as_str()) => {
             if std::path::Path::new(path).try_exists()? {
                 return Err("output exists; choose a new .pcbcraft filename".into());
             }
             let engine = if command == "demo" {
                 Engine::demo()?
+            } else if command == "showcase" {
+                Engine::showcase()?
             } else {
                 Engine::from_file(pcbcraft_core::format::EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,

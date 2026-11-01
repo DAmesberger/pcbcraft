@@ -213,7 +213,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
                 start: land.position,
                 end: [land.position[0], land.position[1] - 2.0],
                 width: 0.3,
-                layer: Layer::Top,
+                layer: Layer::Top.into(),
             },
         }),
     )?;

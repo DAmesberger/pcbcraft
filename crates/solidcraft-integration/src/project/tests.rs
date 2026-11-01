@@ -77,7 +77,7 @@ fn fixture() -> Result<Project> {
             start: [5.0, y],
             end: [15.0, y],
             width: 0.4,
-            layer,
+            layer: layer.into(),
             locked: false,
         });
     }
@@ -309,7 +309,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         near(geometry.volume, 10.0 * 0.4 * 0.07);
         near(
             geometry.min[2],
-            if source.layer == Some(Layer::Top) {
+            if source.layer == Some(CopperLayer::Top) {
                 2.4
             } else {
                 -0.07
@@ -429,9 +429,9 @@ fn build_timings() -> Result<()> {
             end: [x + 12.0, y],
             width: 0.15,
             layer: if k % 2 == 0 {
-                Layer::Top
+                CopperLayer::Top
             } else {
-                Layer::Bottom
+                CopperLayer::Bottom
             },
             locked: false,
         });
@@ -522,7 +522,7 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
             near(finish.min[axis], pad.min[axis] - 0.005);
             near(finish.max[axis], pad.max[axis] + 0.005);
         }
-        if source.layer == Some(Layer::Top) {
+        if source.layer == Some(CopperLayer::Top) {
             near(finish.min[2], pad.min[2]);
             near(finish.max[2], pad.max[2] + 0.005);
         } else {
@@ -564,7 +564,7 @@ fn exposed_pads_stand_above_the_mask_and_tracks_are_capped() -> Result<()> {
             (pad.min[0] + pad.max[0]) / 2.0,
             (pad.min[1] + pad.max[1]) / 2.0,
         ];
-        let top = source.layer == Some(Layer::Top);
+        let top = source.layer == Some(CopperLayer::Top);
         let hit = first_hit(&model, center, top)
             .ok_or_else(|| Error::Verification("ray missed the pad".into()))?;
         assert_eq!(
@@ -658,7 +658,7 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
             start,
             end,
             width: 0.3,
-            layer: Layer::Top,
+            layer: CopperLayer::Top,
             locked: false,
         });
         Ok(id)
@@ -724,7 +724,7 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
         start: pad.position,
         end: [pad.position[0] + 6.0, pad.position[1]],
         width: 0.25,
-        layer: Layer::Top,
+        layer: CopperLayer::Top,
         locked: false,
     });
     let model = build(&project)?;
@@ -899,7 +899,7 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
         };
         let ends = of(BodyKind::Termination);
         assert_eq!(ends.len(), 2, "{}", source.label);
-        let top = source.layer == Some(Layer::Top);
+        let top = source.layer == Some(CopperLayer::Top);
         for end in &ends {
             // Each cap wraps 10 µm past the body's top and underside (the
             // fixture lifts the body 0.2 mm), its sides and one end face.

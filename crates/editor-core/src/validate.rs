@@ -44,6 +44,7 @@ fn project_except_library(p: &Project) -> Result<()> {
         .chain(p.occurrences.iter().map(|o| o.id))
         .chain(p.wires.iter().map(|w| w.id))
         .chain(p.tracks.iter().map(|t| t.id))
+        .chain(p.vias.iter().map(|v| v.id))
     {
         if id == 0 || id >= p.next_id || !ids.insert(id) {
             return Err(Error::Invalid("invalid global identity allocation".into()));
@@ -82,6 +83,7 @@ pub fn drafts_only(p: &Project, drafts: &Drafts) -> Result<()> {
         .chain(p.occurrences.iter().map(|o| o.id))
         .chain(p.wires.iter().map(|w| w.id))
         .chain(p.tracks.iter().map(|t| t.id))
+        .chain(p.vias.iter().map(|v| v.id))
         .collect();
     for draft in &drafts.items {
         if draft.id.0 >= p.next_id || objects.contains(&draft.id.0) {

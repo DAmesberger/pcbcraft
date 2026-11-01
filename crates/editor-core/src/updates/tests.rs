@@ -19,7 +19,7 @@ fn route(engine: &mut Engine, terminal: Endpoint, start: [f64; 2], end: [f64; 2]
                 start,
                 end,
                 width: 0.3,
-                layer: Layer::Top,
+                layer: Layer::Top.into(),
             },
         }),
     )?;

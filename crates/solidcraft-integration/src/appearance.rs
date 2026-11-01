@@ -840,6 +840,7 @@ fn push(
     out.push(Geometry {
         item,
         kind,
+        layer: None,
         surface: material::material(kind, looks).surface()?,
         detail: material::detail(kind, looks),
         mesh: Arc::new(mesh),

@@ -1356,7 +1356,7 @@ fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -
             start: at(from)?,
             end: at(to)?,
             width: 0.2,
-            layer: crate::Layer::Top,
+            layer: crate::Layer::Top.into(),
         };
         apply(engine, Operation::Layout(LayoutCommand::Route { request }))?;
         Ok(())

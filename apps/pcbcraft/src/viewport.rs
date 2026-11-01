@@ -410,10 +410,11 @@ impl Viewport {
         let model = self.model.as_ref()?;
         let (origin, direction) = self.camera.ray(x, y, width, height);
         let (origin, direction) = self.model_ray(origin, direction);
+        let layers = crate::layer_view::LayerView::substrate_hidden(self.hide_substrate);
         model
             .geometry
             .iter()
-            .filter(|g| !(self.hide_substrate && g.kind.is_board()))
+            .filter(|g| layers.shows(g))
             .filter(|g| box_hit(g, origin, direction))
             .filter_map(|g| g.mesh.raycast(origin, direction).map(|(d, _)| (d, g)))
             .min_by(|a, b| a.0.total_cmp(&b.0))

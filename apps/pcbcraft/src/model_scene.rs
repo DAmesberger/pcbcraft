@@ -410,7 +410,7 @@ pub(crate) mod tests {
             start: [5.0, 5.0],
             end: [25.0, 5.0],
             width: 0.3,
-            layer: pcbcraft_core::Layer::Top,
+            layer: pcbcraft_core::CopperLayer::Top,
             locked: false,
         });
         Ok(project)

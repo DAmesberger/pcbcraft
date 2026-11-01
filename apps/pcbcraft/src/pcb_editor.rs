@@ -840,7 +840,7 @@ impl PcbEditor {
                                 start,
                                 end: destination,
                                 width: self.width,
-                                layer: self.layer,
+                                layer: self.layer.into(),
                             },
                         }));
                         // End the speculative gesture even if the engine rejects
@@ -940,7 +940,7 @@ impl PcbEditor {
             let (instance, net) = (pad.instance, pad.net);
             self.set_selection(Some(instance), None, net);
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
-            layers.copper(track.layer)
+            track.layer.side().is_some_and(|side| layers.copper(side))
                 && layout::point_in_polygon(at, &layout::track_polygon(track))
         }) {
             self.set_selection(None, Some(track.id), Some(track.net));
@@ -1162,7 +1162,7 @@ impl PcbEditor {
                     layout::track_polygon(track)
                         .map(|p| view.screen(p))
                         .to_vec(),
-                    shade(copper_color(track.layer, selected)),
+                    shade(copper_color(layer, selected)),
                     Stroke::NONE,
                 ));
             }
@@ -1491,7 +1491,7 @@ fn track_section(ui: &mut Ui, project: &Project, track: &Track) -> Option<Operat
             "Width",
             &format!("{} mm", kit::number_text(track.width)),
         );
-        kit::value_row(ui, "Layer", layer_name(track.layer));
+        kit::value_row(ui, "Layer", &track.layer.name());
         let mut locked = track.locked;
         if kit::check_row(ui, "Locked", &mut locked) {
             action = Some(LayoutCommand::SetTrackLock {
@@ -1618,7 +1618,7 @@ mod tests {
                     start: [9.2, 8.0],
                     end: [14.8, 8.0],
                     width: 0.3,
-                    layer: Layer::Top,
+                    layer: Layer::Top.into(),
                 },
             }),
         )?;

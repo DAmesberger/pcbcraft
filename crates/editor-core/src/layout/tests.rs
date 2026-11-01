@@ -37,7 +37,7 @@ fn request() -> RouteRequest {
         start: [11.2, 10.0],
         end: [23.8, 10.0],
         width: 0.3,
-        layer: Layer::Top,
+        layer: Layer::Top.into(),
     }
 }
 
@@ -501,7 +501,7 @@ fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
         &mut project,
         LayoutCommand::Route {
             request: RouteRequest {
-                layer: Layer::Bottom,
+                layer: Layer::Bottom.into(),
                 ..request()
             },
         },
@@ -534,7 +534,7 @@ fn an_opposite_side_smd_pad_is_on_the_other_layer() -> Result<()> {
         &mut project,
         LayoutCommand::Route {
             request: RouteRequest {
-                layer: Layer::Bottom,
+                layer: Layer::Bottom.into(),
                 ..request()
             },
         },

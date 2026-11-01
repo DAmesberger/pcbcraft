@@ -174,6 +174,16 @@ impl Engine {
         Ok(engine)
     }
 
+    /// The PCB realism showcase: a 4-layer board with an SOIC-8, a QFN-16,
+    /// a 2x5 header, 0603/0805 passives and a polarised part, routed on top
+    /// and bottom through tented and open vias, built through the public
+    /// commands. The sample parts live in `library::samples`.
+    pub fn showcase() -> Result<Self> {
+        Err(Error::Unsupported(
+            "the showcase project is not built yet".into(),
+        ))
+    }
+
     /// Two connected two-terminal components, placed on the board, with a
     /// typed resistance field shown on the symbol. The sample library is
     /// built through the public commands and its drafts stay open for
@@ -399,8 +409,10 @@ impl Engine {
                 Outcome::None
             }
             Operation::Layout(command) => {
-                layout::apply_staged(Arc::make_mut(&mut candidate.project), command)?;
-                Outcome::None
+                match layout::apply_staged(Arc::make_mut(&mut candidate.project), command)? {
+                    Some(via) => Outcome::ViaAdded { via },
+                    None => Outcome::None,
+                }
             }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(

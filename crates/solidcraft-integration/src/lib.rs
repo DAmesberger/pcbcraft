@@ -12,6 +12,8 @@ pub mod native;
 pub mod pad_outline;
 pub mod project;
 pub mod scene;
+pub mod silkscreen;
+pub mod stackup_edge;
 pub mod svg;
 pub use solidcraft_engine::{geom, render};
 

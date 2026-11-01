@@ -10,6 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+mod stackup;
+mod via;
+pub use stackup::{
+    COPPER_LAYER_COUNTS, CopperFoil, CopperLayer, Dielectric, DielectricKind, GlassStyle, OUNCE_UM,
+    Stackup,
+};
+pub use via::{Via, ViaSpan};
+
 /// The physical implementation an instance uses, as lineages resolved
 /// through its pinned component revision.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -83,7 +91,12 @@ pub struct Net {
     pub terminals: Vec<Endpoint>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// A board side: where a component sits and which outer copper, mask and
+/// silkscreen a footprint layer lands on. Copper routing names any copper
+/// layer with [`CopperLayer`].
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub enum Layer {
     Top,
     Bottom,
@@ -107,7 +120,7 @@ pub struct Track {
     pub start: Point,
     pub end: Point,
     pub width: f64,
-    pub layer: Layer,
+    pub layer: CopperLayer,
     pub locked: bool,
 }
 
@@ -192,7 +205,10 @@ pub struct Project {
     pub nets: Vec<Net>,
     pub placements: Vec<Placement>,
     pub tracks: Vec<Track>,
+    pub vias: Vec<Via>,
     pub board_size: Point,
+    /// Copper and dielectric layers; sets the board's thickness.
+    pub stackup: Stackup,
     /// What the fabricator is asked to build. Saved with the design; the 3D
     /// view draws it, but it never changes the saved native model.
     pub fabrication: Fabrication,
@@ -216,7 +232,9 @@ impl Default for Project {
             nets: vec![],
             placements: vec![],
             tracks: vec![],
+            vias: vec![],
             board_size: [60.0, 40.0],
+            stackup: Stackup::default(),
             fabrication: Fabrication::default(),
             material_table: crate::materials::BUILTIN_REVISION,
         }
@@ -263,6 +281,9 @@ impl Project {
     }
     pub fn placement_of(&self, instance: Id) -> Option<&Placement> {
         self.placements.iter().find(|p| p.instance == instance)
+    }
+    pub fn via(&self, id: Id) -> Option<&Via> {
+        self.vias.iter().find(|v| v.id == id)
     }
     pub fn net(&self, id: Id) -> Option<&Net> {
         self.nets.iter().find(|n| n.id == id)

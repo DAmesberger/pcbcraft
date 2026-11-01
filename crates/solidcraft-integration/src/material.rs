@@ -7,7 +7,7 @@
 //! soldermask layer model are in `docs/materials.md`. No EDA tool, library or
 //! material file was consulted.
 use crate::{Error, Result};
-use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish};
+use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 use serde::{Deserialize, Serialize};
 use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
@@ -51,10 +51,19 @@ pub enum BodyKind {
     ModelBody,
     /// A lead, termination or exposed pad of a generated package model.
     ModelLead,
+    /// A via's plated barrel and its annular rings (saved copper).
+    ViaCopper,
+    /// Legend ink film on the mask (display-only).
+    Silkscreen,
+    /// A dielectric band of the stackup at the routed board edge
+    /// (display-only).
+    EdgeDielectric,
+    /// A copper foil's line at the routed board edge (display-only).
+    EdgeCopper,
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 16] = [
+    pub const ALL: [BodyKind; 20] = [
         BodyKind::Substrate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
@@ -71,6 +80,10 @@ impl BodyKind {
         BodyKind::PartBody,
         BodyKind::ModelBody,
         BodyKind::ModelLead,
+        BodyKind::ViaCopper,
+        BodyKind::Silkscreen,
+        BodyKind::EdgeDielectric,
+        BodyKind::EdgeCopper,
     ];
 
     /// Board-level layers: hidden with the substrate.
@@ -112,6 +125,9 @@ impl BodyKind {
                 | BodyKind::Termination
                 | BodyKind::Overcoat
                 | BodyKind::Solder
+                | BodyKind::Silkscreen
+                | BodyKind::EdgeDielectric
+                | BodyKind::EdgeCopper
         )
     }
 }
@@ -304,6 +320,12 @@ const ALUMINA: [f64; 3] = [0.78, 0.77, 0.73];
 const ALUMINA_IOR: f64 = 1.77;
 /// Sintered barium-titanate MLCC body, tan (est.).
 const MLCC: [f64; 3] = [0.32, 0.25, 0.15];
+/// Matte epoxy legend ink, diffuse reflectance (est.; TiO2-filled white,
+/// carbon black, chrome-free yellow) and its matte roughness (est.).
+const INK_WHITE: [f64; 3] = [0.78, 0.78, 0.76];
+const INK_BLACK: [f64; 3] = [0.03, 0.03, 0.03];
+const INK_YELLOW: [f64; 3] = [0.70, 0.52, 0.04];
+const INK_ROUGHNESS: f64 = 0.75;
 /// Barium titanate is n ≈ 2.4; Solidcraft's dielectric IOR is at most 3.
 const MLCC_IOR: f64 = 2.4;
 
@@ -377,7 +399,22 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
             "Soldermask over copper",
             mask_body(pigment, COPPER, MASK_OVER_COPPER_UM),
         ),
-        BodyKind::CopperTrack | BodyKind::PadCopper => metal("Copper", COPPER, 0.30),
+        BodyKind::CopperTrack
+        | BodyKind::PadCopper
+        | BodyKind::ViaCopper
+        | BodyKind::EdgeCopper => metal("Copper", COPPER, 0.30),
+        // Stand-in until the edge bands carry the weave detail.
+        BodyKind::EdgeDielectric => dielectric("FR-4 laminate edge", FR4, 0.60, EPOXY_IOR),
+        BodyKind::Silkscreen => dielectric(
+            "Epoxy legend ink",
+            match fabrication.silkscreen_colour {
+                SilkscreenColour::White => INK_WHITE,
+                SilkscreenColour::Black => INK_BLACK,
+                SilkscreenColour::Yellow => INK_YELLOW,
+            },
+            INK_ROUGHNESS,
+            EPOXY_IOR,
+        ),
         BodyKind::PadFinish => match fabrication.pad_finish {
             // 85 % Au F0 (1.000, 0.782, 0.344) over 15 % Ni F0 (0.660, 0.609,
             // 0.526): the immersion gold is only 1–2 penetration depths thick.

@@ -49,7 +49,7 @@ fn public_command_workflow_authors_connects_places_routes_and_undoes() -> Result
                 start: [9.2, 8.0],
                 end: [14.8, 8.0],
                 width: 0.3,
-                layer: Layer::Top,
+                layer: Layer::Top.into(),
             },
         }),
     )?;
@@ -319,7 +319,7 @@ fn malformed_references_and_routed_connectivity_changes_leave_state_unchanged() 
                 start: pad.position,
                 end: [pad.position[0] + 2.0, pad.position[1]],
                 width: 0.3,
-                layer: Layer::Top,
+                layer: Layer::Top.into(),
             },
         }),
     )?;
@@ -433,7 +433,7 @@ fn routed_project_and_incomplete_drafts_roundtrip_through_the_document() -> Resu
                 start: [9.2, 8.0],
                 end: [14.8, 8.0],
                 width: 0.3,
-                layer: Layer::Top,
+                layer: Layer::Top.into(),
             },
         }),
     )?;
@@ -561,7 +561,7 @@ fn tracks_on_removed_terminals_fail_validation_instead_of_retagging() -> Result<
         start: [5.0, 5.0],
         end: [6.0, 5.0],
         width: 0.3,
-        layer: Layer::Top,
+        layer: Layer::Top.into(),
         locked: false,
     });
     assert!(crate::validate::project(&project).is_err());

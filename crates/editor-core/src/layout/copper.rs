@@ -15,7 +15,7 @@ use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance};
 use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
-use crate::model::{Layer, Project, Track};
+use crate::model::{CopperLayer, Project, Track};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The chord tolerance curved copper edges are flattened at, in mm, and so
@@ -147,7 +147,7 @@ pub struct BoardCopper {
 /// One copper shape the checks compare: a pad or a track.
 struct Copper<'a> {
     net: Id,
-    layer: Layer,
+    layer: CopperLayer,
     through: bool,
     ring: &'a CopperRing,
     object: ObjectRef,
@@ -193,7 +193,7 @@ impl BoardCopper {
             .enumerate()
             .map(|(i, (pad, ring))| Copper {
                 net: pad.net,
-                layer: pad.layer,
+                layer: pad.layer.into(),
                 through: pad.through,
                 ring,
                 object: ObjectRef::Pad {

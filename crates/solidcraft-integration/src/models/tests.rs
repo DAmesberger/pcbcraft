@@ -673,7 +673,7 @@ fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<(
         let high = bodies.iter().map(|g| g.max[2]).fold(f64::MIN, f64::max);
         match source.layer {
             // Seated on the land copper on top of the 1.6 mm board.
-            Some(Layer::Top) => near(low, 1.635, "top seating plane"),
+            Some(pcbcraft_core::CopperLayer::Top) => near(low, 1.635, "top seating plane"),
             _ => near(high, -0.035, "bottom seating plane"),
         }
     }

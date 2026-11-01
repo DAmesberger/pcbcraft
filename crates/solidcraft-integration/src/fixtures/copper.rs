@@ -335,6 +335,7 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
         geometry.push(Geometry {
             item: source.map(|i| i.id),
             kind,
+            layer: None,
             surface: crate::material::material(kind, &pcbcraft_core::Fabrication::default())
                 .surface()?,
             detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),

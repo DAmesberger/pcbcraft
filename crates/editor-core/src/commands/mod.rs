@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub enum Outcome {
     #[default]
     None,
+    /// The via `layout.add_via` created.
+    ViaAdded {
+        via: Id,
+    },
     DraftCreated {
         id: DefinitionId,
     },
