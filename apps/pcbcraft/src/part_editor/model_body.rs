@@ -1,6 +1,9 @@
-//! The Component 3D tab's Body section: the package form (generic, chip,
-//! gull-wing, no-lead, pin header) with its typed parameters, presets, the
-//! model source (generated or envelope) and lands derived from the form.
+//! The Component 3D tab's Body and Model sections: the package form
+//! (generic, chip, gull-wing, no-lead, pin header) with its typed
+//! parameters and presets, lands derived from the form, and the model card
+//! (the current source with its outline thumbnail, name, revision, format
+//! and licence) with Choose model… (the 3D library sheet,
+//! `crate::model_library`) and Import model file… (`model_import.rs`).
 //! Form and model changes are one `library.edit_package` each (typed values
 //! commit when the field is left); a generic envelope and derived lands are
 //! working-set edits, sent with `library.edit`.
@@ -14,14 +17,12 @@ use pcbcraft_core::library::{
     PackageEdit, PackageForm, PackageModel, Pad, PadKind,
 };
 use pcbcraft_core::materials::MaterialId;
-use pcbcraft_core::{Operation, PackageTerminalId, PadId};
+use pcbcraft_core::{Engine, Operation, PackageTerminalId, PadId};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::ops::RangeInclusive;
 
 const LENGTH: RangeInclusive<f64> = 0.01..=1000.0;
-/// The builder revision new generated models are authored against
-/// (`models::family_rev` in the integration crate).
-const FAMILY_REV: u16 = 1;
+const FAMILY_REV: u16 = crate::model_library::GENERATED_FAMILY_REV;
 
 /// The form families offered, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,15 +278,16 @@ fn model_hint(model: &PackageModel) -> (&'static str, &'static str) {
             "Generated from the typed outline values with physical materials; verify it against the datasheet",
         ),
         PackageModel::Library(_) => (
-            "Library model (not supported yet)",
-            "3D library models arrive with the model library",
+            "Library model; check it against the datasheet",
+            "A model from the 3D library, placed by the offset below; its leads map by the lead map",
         ),
     }
 }
 
 impl PartEditor {
     /// The Body section of the 3D tab.
-    pub(super) fn body_inspector(&mut self, ui: &mut Ui) -> Option<Operation> {
+    pub(super) fn body_inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let source = self.model_source(ui, engine);
         let set = self.draft.as_mut()?;
         let draft = set.ids.package;
         let tab = &mut self.model;
@@ -326,25 +328,6 @@ impl PartEditor {
             }
             // Range and lead-count problems of the stored form are package
             // findings: they show in Issues, not here.
-            if package.form != PackageForm::Generic {
-                let mut is_generated = matches!(package.model, PackageModel::Generated { .. });
-                let options = [
-                    (true, "Generated parametric model".to_owned()),
-                    (false, "Envelope box".to_owned()),
-                ];
-                if kit::choice_row(ui, "Model", &mut is_generated, &options) {
-                    let model = if is_generated {
-                        generated()
-                    } else {
-                        PackageModel::Envelope {
-                            material: MaterialId::EpoxyMould,
-                        }
-                    };
-                    operation = Some(model_place::edit(draft, vec![PackageEdit::SetModel(model)]));
-                }
-            }
-            let (shown, tip) = model_hint(&package.model);
-            kit::hint(ui, shown, tip);
             let lands = lands_from_form(footprint, package);
             kit::actions(ui, |ui| {
                 let response = ui_kit::button(
@@ -380,7 +363,206 @@ impl PartEditor {
         {
             operation = Some(model_place::edit(draft, vec![PackageEdit::SetForm(form)]));
         }
+        operation.or(source)
+    }
+
+    /// The Model section: the model card and its two actions, and for a
+    /// typed form the choice between the generated model and the envelope.
+    fn model_source(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let set = self.draft.as_ref()?;
+        let draft = set.ids.package;
+        let package = &set.package;
+        let chooser = &mut self.model_chooser;
+        let import = &mut self.model_import;
+        let mut operation = None;
+        kit::section(ui, "model-source", "Model", true, None, |ui| {
+            let card = ModelCard::of(engine, package);
+            model_card_rows(ui, &card);
+            if package.form != PackageForm::Generic {
+                let mut source = Source::of(&package.model);
+                let mut options = vec![
+                    (Source::Generated, "Generated parametric model".to_owned()),
+                    (Source::Envelope, "Envelope box".to_owned()),
+                ];
+                if source == Source::Library {
+                    options.push((Source::Library, "Library model".to_owned()));
+                }
+                if kit::choice_row(ui, "Source", &mut source, &options) {
+                    let model = match source {
+                        Source::Generated => Some(generated()),
+                        Source::Envelope => Some(PackageModel::Envelope {
+                            material: MaterialId::EpoxyMould,
+                        }),
+                        Source::Library => None,
+                    };
+                    if let Some(model) = model {
+                        operation =
+                            Some(model_place::edit(draft, vec![PackageEdit::SetModel(model)]));
+                    }
+                }
+            }
+            let (shown, tip) = model_hint(&package.model);
+            kit::hint(ui, shown, tip);
+            kit::actions(ui, |ui| {
+                let busy = import.busy();
+                let response = ui_kit::button(ui, "Import model file…", Button::Enabled(!busy));
+                let response = if busy {
+                    response.on_disabled_hover_text("An import is already running")
+                } else {
+                    response
+                        .on_hover_text("Import a STEP, GLB or .solidcraft file into the 3D library")
+                };
+                if response.clicked() {
+                    import.start(ui.ctx());
+                }
+                if ui_kit::button(ui, "Choose model…", Button::Small)
+                    .on_hover_text(
+                        "Search the 3D library, ranked by how well each model fits this package",
+                    )
+                    .clicked()
+                {
+                    chooser.open_for(draft);
+                }
+            });
+        });
         operation
+    }
+}
+
+/// Which kind of source the Source row shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    Generated,
+    Envelope,
+    Library,
+}
+
+impl Source {
+    fn of(model: &PackageModel) -> Self {
+        match model {
+            PackageModel::Generated { .. } => Self::Generated,
+            PackageModel::Envelope { .. } => Self::Envelope,
+            PackageModel::Library(_) => Self::Library,
+        }
+    }
+}
+
+/// What the model card shows of the package's current model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelCard {
+    pub name: String,
+    /// "r2", or "draft" for a model not yet published.
+    pub revision: Option<String>,
+    pub detail: String,
+    pub licence: Option<String>,
+    pub leads: Option<String>,
+    pub body_mm: [f64; 3],
+    pub pins: Option<u32>,
+}
+
+impl ModelCard {
+    pub fn of(engine: &Engine, package: &PackageDefinition) -> Self {
+        let pins = u32::try_from(package.terminals.len())
+            .ok()
+            .filter(|n| *n > 0);
+        match &package.model {
+            PackageModel::Envelope { .. } => Self {
+                name: "Envelope box".into(),
+                revision: None,
+                detail: "Approximate".into(),
+                licence: None,
+                leads: None,
+                body_mm: package.envelope,
+                pins: None,
+            },
+            PackageModel::Generated { .. } => Self {
+                name: "Generated parametric model".into(),
+                revision: None,
+                detail: pcbcraft_core::library::templates::catalog::FamilyKind::of(&package.form)
+                    .map_or_else(
+                        || "Generated".to_owned(),
+                        |f| format!("Generated · {}", crate::model_library::family_label(f)),
+                    ),
+                licence: None,
+                leads: None,
+                body_mm: package.envelope,
+                pins,
+            },
+            PackageModel::Library(model) => {
+                let published = engine.project().library.model(model.model).is_some();
+                match crate::model_library::model_definition(engine, model.model) {
+                    Some((name, definition)) => {
+                        let b = definition.bounds_mm;
+                        Self {
+                            name: if name.trim().is_empty() {
+                                definition.asset.file_name.clone()
+                            } else {
+                                name.to_owned()
+                            },
+                            revision: Some(if published {
+                                model.model.revision.to_string()
+                            } else {
+                                "draft".into()
+                            }),
+                            detail: format!(
+                                "{} · {}",
+                                crate::model_library::format_label(definition.format),
+                                crate::model_library::redistribution_label(
+                                    definition.provenance.redistribution
+                                )
+                            ),
+                            licence: definition.provenance.record.licence.clone(),
+                            leads: Some(crate::model_library::lead_map_line(
+                                &model.lead_map,
+                                definition.leads.len(),
+                                package.terminals.len(),
+                            )),
+                            body_mm: [b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]],
+                            pins: definition.hints.pins,
+                        }
+                    }
+                    None => Self {
+                        name: "Missing library model".into(),
+                        revision: Some(model.model.revision.to_string()),
+                        detail: "This project holds no such model revision".into(),
+                        licence: None,
+                        leads: None,
+                        body_mm: package.envelope,
+                        pins: None,
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// The model card: the outline thumbnail, then name, revision and the
+/// source line, licence and lead map.
+fn model_card_rows(ui: &mut Ui, card: &ModelCard) {
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), t.space_24 * 3.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, t.control_radius, t.dialog_footer);
+    crate::model_library::thumbnail(
+        ui.painter(),
+        rect.shrink(t.space_8),
+        card.body_mm,
+        card.pins,
+    );
+    let name = match &card.revision {
+        Some(r) => format!("{} · {r}", card.name),
+        None => card.name.clone(),
+    };
+    kit::value_row(ui, "Model", &name);
+    kit::value_row(ui, "Kind", &card.detail);
+    if let Some(licence) = &card.licence {
+        kit::value_row(ui, "Licence", licence);
+    }
+    if let Some(leads) = &card.leads {
+        kit::value_row(ui, "Leads", leads);
     }
 }
 
