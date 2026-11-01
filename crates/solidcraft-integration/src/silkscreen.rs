@@ -119,14 +119,14 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
             fills: loops.clone(),
             cuts: cuts.clone(),
         };
-        appearance::push(
+        display_only(appearance::push(
             &mut films,
             &board.fabrication,
             BodyKind::Silkscreen,
             item,
             layer,
             slab(&flat, z0, z1, FILM_TILE_MM),
-        )?;
+        ))?;
         let covers = covers(legend, side);
         let raised: Vec<Vec<Point>> = loops
             .iter()
@@ -139,8 +139,12 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         if raised.is_empty() {
             continue;
         }
+        // One stroke clipped by overlapping covers (a track's cap and a
+        // via's dome) gives coincident pieces, whose shared edges the
+        // slab cannot pair: merged first, they are one region.
+        let raised = appearance::union(&raised).unwrap_or(raised);
         let (c0, c1) = board.span(side, crown - sink, crown + INK_THICKNESS_MM);
-        appearance::push(
+        display_only(appearance::push(
             &mut films,
             &board.fabrication,
             BodyKind::Silkscreen,
@@ -155,9 +159,20 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
                 c1,
                 FILM_TILE_MM,
             ),
-        )?;
+        ))?;
     }
     Ok(films)
+}
+
+/// A legend film that is not a closed outward volume is left out rather
+/// than failing the whole model: the legend is display-only and never
+/// saved, so a degenerate piece of ink must not cost the 3D view or the
+/// export. Other errors still fail.
+fn display_only(pushed: Result<()>) -> Result<()> {
+    match pushed {
+        Err(crate::Error::Verification(_)) => Ok(()),
+        other => other,
+    }
 }
 
 /// The convex outlines on `side` where the mask stands over copper: track

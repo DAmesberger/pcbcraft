@@ -562,3 +562,183 @@ fn arc_board_edges_place_parts_on_a_round_board() -> Fallible<()> {
     assert!((p.rotation_deg - 180.0).abs() < 1e-6);
     Ok(())
 }
+
+/// The display-only layers follow a sketched board: on a board with
+/// rounded corners and a round cutout, the mask films lie inside the
+/// outline and leave the cutout open, and the edge bands also line the
+/// cutout's wall.
+#[test]
+fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
+    use crate::material::BodyKind;
+    let mut engine = sketched()?;
+    let s = sketch(&engine)?;
+    let add = SketchEdit::AddCircle {
+        center: [30.0, 20.0],
+        radius: 4.0,
+        construction: false,
+    };
+    let curves = created_curves(&EV.apply_sketch(&s.sketch, &add)?);
+    edit(
+        &mut engine,
+        vec![
+            BoardEdit::Sketch { edit: add },
+            BoardEdit::AddCutout {
+                kind: CutoutKind::Cutout,
+                curves,
+            },
+        ],
+    )?;
+    edit(
+        &mut engine,
+        vec![
+            set("corner_r", "5 mm"),
+            BoardEdit::Fillet {
+                corners: Vec::new(),
+                radius: DimValue::Param(ParamName("corner_r".into())),
+            },
+        ],
+    )?;
+    let model = crate::project::build(engine.project())?;
+    let board = engine.project().board().into_owned();
+    let centroids = |kind: BodyKind| -> Vec<[f64; 2]> {
+        model
+            .geometry
+            .iter()
+            .filter(|g| g.kind == kind)
+            .flat_map(|g| {
+                let m = &g.mesh;
+                m.triangles.iter().map(move |t| {
+                    let p = t.map(|v| m.positions[v as usize]);
+                    [
+                        (p[0].x + p[1].x + p[2].x) / 3.0,
+                        (p[0].y + p[1].y + p[2].y) / 3.0,
+                    ]
+                })
+            })
+            .collect()
+    };
+    for kind in [BodyKind::MaskTop, BodyKind::MaskBottom] {
+        let mask = centroids(kind);
+        assert!(!mask.is_empty(), "{kind:?}");
+        for c in &mask {
+            assert!(board.contains(*c, 0.001), "{kind:?} mask at {c:?}");
+        }
+        // Nothing over the cutout, and the rounded corner is bare.
+        assert!(mask.iter().all(|c| (c[0] - 30.0).hypot(c[1] - 20.0) > 4.0));
+        assert!(mask.iter().all(|c| c[0] + c[1] > 1.0));
+    }
+    // An edge band lines the cutout's wall, just proud of it.
+    let bands: Vec<&crate::scene::Geometry> = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::EdgeDielectric)
+        .collect();
+    assert!(!bands.is_empty());
+    let lines_cutout = bands.iter().any(|g| {
+        g.mesh.positions.iter().any(|p| {
+            let r = (p.x - 30.0).hypot(p.y - 20.0);
+            (r - 4.0).abs() < 0.01
+        })
+    });
+    assert!(lines_cutout, "a band around the cutout");
+    // And no band stands at the sharp corner the fillet removed.
+    assert!(bands.iter().all(|g| {
+        g.mesh
+            .positions
+            .iter()
+            .all(|p| p.x.hypot(p.y) > 0.5 && (p.x - 60.0).hypot(p.y) > 0.5)
+    }));
+    Ok(())
+}
+
+/// The shipped showcase (`Engine::showcase_hosted`): a sketched board with
+/// rounded corners, a round cutout and a milled slot, a Power class over
+/// GND and VCC, a top GND pour, and J1 held to the left edge. Its board
+/// checks are clean; J1 follows the `height` parameter, and a corner
+/// radius change leaves it in place (edges run between the virtual
+/// corners).
+#[test]
+fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible<()> {
+    use pcbcraft_core::layout::showcase::{CORNER_MM, CUTOUT, SLOT};
+    let mut engine = Engine::showcase_hosted(hosted())?;
+    let s = sketch(&engine)?;
+    // The outline is driven by its parameters; the cutout and slot stand
+    // where they were drawn, undimensioned.
+    assert_eq!(s.solve.status, SolveStatus::UnderConstrained);
+    let board = engine.project().board().into_owned();
+    let arcs = board
+        .outer
+        .segments
+        .iter()
+        .filter(|s| matches!(s, Segment::Arc { .. }))
+        .count();
+    assert_eq!(arcs, 4, "rounded corners");
+    assert_eq!(engine.project().board_size, [44.0, 28.0]);
+    assert!(!board.contains([0.2, 0.2], 0.001));
+    assert!(board.contains([CORNER_MM, CORNER_MM], 0.001));
+    assert_eq!(board.cutouts.len(), 2);
+    assert!(!board.contains(CUTOUT.0, 0.001), "the cutout");
+    let slot_middle = [(SLOT.0[0] + SLOT.1[0]) / 2.0, SLOT.0[1]];
+    assert!(!board.contains(slot_middle, 0.001), "the slot");
+    assert!(
+        board
+            .cutouts
+            .iter()
+            .any(|c| matches!(c.kind, CutoutKind::Slot { plated: false }))
+    );
+    let project = engine.project();
+    let power = project
+        .rules
+        .net_classes
+        .iter()
+        .find(|c| c.name == "Power")
+        .ok_or("Power class")?;
+    for name in ["GND", "VCC"] {
+        let net = project.nets.iter().find(|n| n.name == name).ok_or("net")?;
+        assert_eq!(project.rules.class_of(net.id, &net.name), Some(power.id));
+    }
+    let top = project
+        .fills
+        .iter()
+        .find(|f| f.layer == pcbcraft_core::CopperLayer::Top)
+        .ok_or("top pour")?;
+    let copper = top.computed.as_ref().ok_or("top pour filled")?;
+    assert!(!copper.regions.is_empty());
+    assert!(
+        copper.joins.iter().any(|j| matches!(
+            j,
+            pcbcraft_core::model::fill::FillJoin::Pad {
+                connection: pcbcraft_core::rules::PadConnection::Thermal,
+                ..
+            }
+        )),
+        "thermals"
+    );
+    assert!(
+        project
+            .fills
+            .iter()
+            .all(|f| !pcbcraft_core::layout::fill::is_stale(project, f))
+    );
+    let findings = pcbcraft_core::layout::checks(project);
+    assert!(findings.is_empty(), "{findings:#?}");
+    let j1 = project
+        .instance_by_designator("J1")
+        .map(|i| i.id)
+        .ok_or("J1")?;
+    assert_eq!(project.edge_constraints.len(), 1);
+    let at = |engine: &Engine| {
+        engine
+            .project()
+            .placements
+            .iter()
+            .find(|p| p.instance == j1)
+            .map(|p| p.position)
+    };
+    assert!(close(at(&engine).ok_or("J1 placed")?, [6.0, 15.0]));
+    edit(&mut engine, vec![set("corner_r", "3 mm")])?;
+    assert!(close(at(&engine).ok_or("J1")?, [6.0, 15.0]));
+    edit(&mut engine, vec![set("height", "32 mm")])?;
+    assert!(close(at(&engine).ok_or("J1")?, [6.0, 17.0]));
+    Ok(())
+}

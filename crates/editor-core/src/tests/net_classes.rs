@@ -248,3 +248,69 @@ fn net_class_queries_are_served() {
         assert!(text.contains(name), "{name}");
     }
 }
+
+/// A class clearance applies between copper of different parts and
+/// tracks, but not between two pads of one footprint, whose spacing the
+/// footprint fixes: on the showcase a Power class of 0.3 mm over GND and
+/// VCC flags none of the QFN's pads against its exposed pad, while a
+/// clearance of 1 mm still flags Power copper against other parts.
+#[test]
+fn class_clearance_spares_pads_of_one_footprint() -> Result<()> {
+    use crate::diagnostics::ObjectRef;
+    let mut engine = Engine::showcase()?;
+    let nets: Vec<crate::Id> = engine
+        .project()
+        .nets
+        .iter()
+        .filter(|n| n.name == "GND" || n.name == "VCC")
+        .map(|n| n.id)
+        .collect();
+    assert_eq!(nets.len(), 2);
+    let class = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "Power".into(),
+            clearance: Some(0.3),
+            ..Default::default()
+        },
+    )?;
+    assign(&mut engine, nets, Some(class))?;
+    let same_part = |objects: &[ObjectRef]| match objects {
+        [
+            ObjectRef::Pad { instance: a, .. },
+            ObjectRef::Pad { instance: b, .. },
+        ] => a == b,
+        _ => false,
+    };
+    let clearance = |engine: &Engine| -> Vec<crate::diagnostics::Finding> {
+        layout::checks(engine.project())
+            .into_iter()
+            .filter(|f| f.code == "board.clearance")
+            .collect()
+    };
+    let findings = clearance(&engine);
+    assert!(
+        findings.iter().all(|f| !same_part(&f.objects)),
+        "{findings:#?}"
+    );
+    let mut wide = list(&engine)?
+        .classes
+        .into_iter()
+        .find(|c| c.class.id == class)
+        .ok_or_else(|| Error::Invalid("class".into()))?
+        .class;
+    wide.clearance = Some(1.0);
+    apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::EditNetClass { class: wide }),
+    )?;
+    let findings = clearance(&engine);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.message.contains("net class Power") && !same_part(&f.objects)),
+        "{findings:#?}"
+    );
+    assert!(findings.iter().all(|f| !same_part(&f.objects)));
+    Ok(())
+}

@@ -9,14 +9,30 @@
 //! wide bottom traces under a bottom ground pour, an inner ground plane and
 //! an inner-layer strap, tied together by stitching vias on the ground
 //! traces; the supply runs on an inner layer between its vias.
+//!
+//! [`crate::Engine::showcase_hosted`] adds what the shipped showcase file
+//! shows of design rules and board shape on top: a Power net class over
+//! GND and VCC, a top GND pour, and, with a board sketch evaluator, a
+//! sketched outline with rounded corners (`corner_r`), a round cutout, a
+//! milled slot and the header J1 held to the left edge by board
+//! parameters ([`board_edits`], [`j1_constraint`]).
 use super::fill::FillCommand;
+use super::outline::{BoardEdit, BoardShapeEvaluator};
 use super::{LayerChangeRequest, LayoutCommand, RouteRequest, ViaRequest};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, TerminalId};
+use crate::library::footprint_source::{
+    DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit, SketchRef,
+};
 use crate::library::{Outline, Segment};
-use crate::model::fill::{FillSettings, FillSpec};
+use crate::model::board::{
+    BoardSketch, ConstraintAlign, ConstraintTarget, CutoutKind, EdgeAnchor, EdgeConstraintSpec,
+    EdgeName,
+};
+use crate::model::fill::{FillSettings, FillSpec, PadConnections};
 use crate::model::{CopperLayer, Layer, Project, Stackup};
+use crate::rules::{NetClassSpec, PadConnection};
 
 /// The showcase board outline, in mm.
 pub const BOARD_MM: Point = [44.0, 28.0];
@@ -224,6 +240,36 @@ const POURS: &[(&str, &str, CopperLayer, u32)] = &[
     ("GND plane", "GND", GND_PLANE, 0),
 ];
 
+/// The hosted showcase's top pour: thermals to the header's GND pins and
+/// the vias; surface pads join solid (the QFN's exposed pad, ringed by
+/// its pins, leaves no room for spokes).
+const TOP_POUR: (&str, &str, CopperLayer, u32) = ("GND top pour", "GND", TOP, 0);
+
+/// The hosted showcase's board corner radius, mm: the pours' corners
+/// ([`POUR_CORNER_MM`] at [`POUR_INSET_MM`]) are concentric with it.
+pub const CORNER_MM: f64 = POUR_INSET_MM + POUR_CORNER_MM;
+/// The hosted showcase's round cutout: (centre, radius), mm.
+pub const CUTOUT: (Point, f64) = ([40.0, 4.5], 1.75);
+/// The hosted showcase's milled slot: (cap centres, width), mm.
+pub const SLOT: (Point, Point, f64) = ([2.5, 25.0], [5.5, 25.0], 1.0);
+/// The net class of the supply and ground nets, and its member nets.
+pub const POWER_NETS: [&str; 2] = ["GND", "VCC"];
+
+/// The Power class: wider default tracks and vias for routing, no
+/// narrower than the showcase's thinnest supply stub (the QFN's supply
+/// pin). Its clearance is the profile's: the supply stub runs 0.2 mm from
+/// the QFN's next pin.
+pub fn power_class() -> NetClassSpec {
+    NetClassSpec {
+        name: "Power".into(),
+        track_width: Some(0.5),
+        track_width_min: Some(0.25),
+        via_drill: Some(0.4),
+        via_diameter: Some(0.8),
+        ..NetClassSpec::default()
+    }
+}
+
 /// Layer changes: (net, first layer, start, via, tented, second layer,
 /// end, width).
 type LayerChange = (
@@ -364,7 +410,17 @@ pub fn pour_outline() -> Outline {
 /// bottom ground pour and the inner ground plane). Their copper is
 /// computed by a `fill.refill` after them.
 pub fn fill_commands(project: &Project) -> Result<Vec<FillCommand>> {
-    POURS
+    pours(project, POURS)
+}
+
+/// The hosted showcase's top GND pour, as [`fill_commands`].
+pub fn top_fill_commands(project: &Project) -> Result<Vec<FillCommand>> {
+    pours(project, std::slice::from_ref(&TOP_POUR))
+}
+
+fn pours(project: &Project, pours: &[(&str, &str, CopperLayer, u32)]) -> Result<Vec<FillCommand>> {
+    let top = TOP_POUR.0;
+    pours
         .iter()
         .map(|(name, net, layer, priority)| {
             let net = project
@@ -380,11 +436,97 @@ pub fn fill_commands(project: &Project) -> Result<Vec<FillCommand>> {
                     layer: *layer,
                     outline: pour_outline(),
                     priority: *priority,
-                    settings: FillSettings::default(),
+                    settings: if *name == top {
+                        FillSettings {
+                            connections: PadConnections {
+                                smd: Some(PadConnection::Solid),
+                                ..PadConnections::default()
+                            },
+                            ..FillSettings::default()
+                        }
+                    } else {
+                        FillSettings::default()
+                    },
                 }),
             })
         })
         .collect()
+}
+
+/// The board edits that shape the hosted showcase's sketched board (a
+/// rectangle sketch of [`BOARD_MM`], see `board.start_sketch`): first the
+/// round [`CUTOUT`] (its curve ids come from `evaluator` on `sketch`) and
+/// the [`SLOT`], then [`CORNER_MM`] fillets on every corner through the
+/// `corner_r` parameter. Each inner list is one `board.edit`.
+pub fn board_edits(
+    evaluator: &dyn BoardShapeEvaluator,
+    sketch: &BoardSketch,
+) -> Result<Vec<Vec<BoardEdit>>> {
+    let (center, radius) = CUTOUT;
+    let circle = SketchEdit::AddCircle {
+        center,
+        radius,
+        construction: false,
+    };
+    let curves = evaluator
+        .apply_sketch(&sketch.sketch, &circle)?
+        .created
+        .into_iter()
+        .filter_map(|r| match r {
+            SketchRef::Curve(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    let (a, b, width) = SLOT;
+    Ok(vec![
+        vec![
+            BoardEdit::Sketch { edit: circle },
+            BoardEdit::AddCutout {
+                kind: CutoutKind::Cutout,
+                curves,
+            },
+            BoardEdit::AddSlot {
+                a,
+                b,
+                width: DimValue::Fixed(width),
+                plated: false,
+            },
+        ],
+        vec![
+            BoardEdit::SetParameter {
+                param: FootprintParam {
+                    name: ParamName("corner_r".into()),
+                    expr: Expr(format!("{CORNER_MM} mm")),
+                    unit: ParamUnit::Mm,
+                    comment: "Board corner radius".into(),
+                },
+            },
+            BoardEdit::Fillet {
+                corners: Vec::new(),
+                radius: DimValue::Param(ParamName("corner_r".into())),
+            },
+        ],
+    ])
+}
+
+/// The header J1 held to the board's left edge where the showcase places
+/// it: [`PLACEMENTS`]' (6, 15), as half the board height less 1 mm down
+/// the edge from its top end and 6 mm in, so it stays centred when the
+/// `height` parameter changes.
+pub fn j1_constraint(project: &Project) -> Result<EdgeConstraintSpec> {
+    let j1 = project
+        .instance_by_designator("J1")
+        .ok_or_else(|| Error::NotFound("showcase instance J1".into()))?;
+    Ok(EdgeConstraintSpec {
+        target: ConstraintTarget::Placement(j1.id),
+        edge: EdgeName("left".into()),
+        anchor: EdgeAnchor::Start,
+        along: Expr("height / 2 - 1 mm".into()),
+        offset: Expr("6 mm".into()),
+        align: ConstraintAlign::Origin,
+        follow_edge: false,
+        rotation_deg: 0.0,
+    })
 }
 
 /// A showcase terminal, `designator.terminal`, as an endpoint of `project`.

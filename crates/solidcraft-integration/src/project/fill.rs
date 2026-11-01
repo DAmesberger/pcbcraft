@@ -4,20 +4,33 @@
 //! once from its boundary and holes (inserted into the sketch in one
 //! command), so pad clearances cost no Boolean and no command each. The
 //! bodies are built last, after the rest of the board: every later
-//! command would pay for re-evaluating them. An inner-layer
-//! fill is also cut from the laminate, as inner tracks are, so the saved
-//! bodies stay disjoint. Over an outer-layer fill the display-only mask
-//! conforms as a cap, as over a track; it is never saved.
+//! command would pay for re-evaluating them. Over an outer-layer fill the
+//! display-only mask conforms as a cap, as over a track; it is never
+//! saved.
+//!
+//! An inner-layer fill is not cut from the laminate, as inner tracks
+//! are: its copper overlaps the laminate it is embedded in. The cut is a
+//! Boolean of the pour's every clearance and thermal against the drilled
+//! laminate, and in Solidcraft's kernel it cost about 45 s on the 44 ×
+//! 28 mm showcase (four times the rest of the build), against the
+//! founder's instant 3D view. The overlap is the foil's thickness over
+//! the plane's area (0.035 mm × the pour), so the laminate's mass
+//! properties are high by that slab; interference checks of the saved
+//! file report the plane against the substrate.
+//!
+//! Each region's loops are simplified to [`MODEL_CHORD_MM`] before they
+//! are extruded: the document's 5 µm flattening gives a pour thousands of
+//! points, each a face to tessellate, measure and save.
 //!
 //! The fill copper is the copper the document stores: the board view and
 //! the 3D view show the same regions, stale or not, and a refill (a new
 //! document revision) rebuilds them.
 use super::{Builder, Source, copper_param, inner_base, next_pick};
+use crate::Result;
 use crate::appearance::{self, Board, Land, MASK_CAP_MM, Region, ViaMark};
 use crate::material::BodyKind;
 use crate::native::{BoardJoint, Expr, Mount};
 use crate::scene::Geometry;
-use crate::{Error, Result};
 use pcbcraft_core::model::Fill;
 use pcbcraft_core::model::fill::FilledRegion;
 use pcbcraft_core::{CopperLayer, Point, Project};
@@ -26,18 +39,115 @@ use pcbcraft_core::{CopperLayer, Point, Project};
 const CAP_TILE_MM: f64 = 4.0;
 
 /// A fill as the display layers see it: its pick, layer and regions.
-pub(super) struct FillMark<'a> {
+pub(super) struct FillMark {
     pub pick: u64,
     pub layer: CopperLayer,
-    pub regions: &'a [FilledRegion],
+    pub regions: Vec<FilledRegion>,
 }
 
-/// The fills with copper to build, in document order.
-fn built(project: &Project) -> impl Iterator<Item = (&Fill, &[FilledRegion])> {
-    project.fills.iter().filter_map(|f| {
-        let regions = f.computed.as_ref()?.regions.as_slice();
-        (!regions.is_empty() && project.stackup.has(f.layer)).then_some((f, regions))
-    })
+/// The fills with copper to build, in document order, each region
+/// simplified for the model ([`simplified`]).
+fn built(project: &Project) -> Vec<(&Fill, Vec<FilledRegion>)> {
+    project
+        .fills
+        .iter()
+        .filter_map(|f| {
+            let regions = f.computed.as_ref()?.regions.as_slice();
+            (!regions.is_empty() && project.stackup.has(f.layer))
+                .then(|| (f, regions.iter().map(simplified).collect()))
+        })
+        .collect()
+}
+
+/// The chord tolerance a fill's boundary is simplified to in the native
+/// model, mm. The document's copper is flattened at
+/// [`pcbcraft_core::layout::fill::FILL_CHORD_MM`] (5 µm) for the checks;
+/// at that resolution a pour of thermals and clearance arcs holds
+/// thousands of points, each a face of the saved body and of the
+/// laminate's cut. 10 µm, a quarter of the thinnest foil, is far below
+/// what the 3D view shows, as the track caps' chords are (2 % of the
+/// radius).
+pub(super) const MODEL_CHORD_MM: f64 = 0.01;
+
+/// `region` with every loop simplified to [`MODEL_CHORD_MM`]: collinear
+/// and near-collinear points dropped (Douglas–Peucker), each loop kept
+/// when simplifying would leave fewer than three points.
+fn simplified(region: &FilledRegion) -> FilledRegion {
+    FilledRegion {
+        outer: simplify_loop(&region.outer, MODEL_CHORD_MM),
+        holes: region
+            .holes
+            .iter()
+            .map(|h| simplify_loop(h, MODEL_CHORD_MM))
+            .collect(),
+    }
+}
+
+/// A closed loop simplified to `tolerance`: split at its first point and
+/// the point farthest from it, each half simplified by Douglas–Peucker.
+pub(super) fn simplify_loop(points: &[Point], tolerance: f64) -> Vec<Point> {
+    let n = points.len();
+    if n < 4 {
+        return points.to_vec();
+    }
+    let first = points[0];
+    let far = (1..n)
+        .max_by(|&a, &b| {
+            let d = |k: usize| (points[k][0] - first[0]).hypot(points[k][1] - first[1]);
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap_or(n / 2);
+    let mut keep = vec![false; n];
+    keep[0] = true;
+    keep[far] = true;
+    let ring: Vec<Point> = points
+        .iter()
+        .copied()
+        .chain(std::iter::once(first))
+        .collect();
+    douglas_peucker(&ring, 0, far, tolerance, &mut keep);
+    let mut tail = vec![false; n + 1];
+    douglas_peucker(&ring, far, n, tolerance, &mut tail);
+    for (k, kept) in tail.into_iter().enumerate().take(n) {
+        keep[k] |= kept;
+    }
+    let out: Vec<Point> = points
+        .iter()
+        .zip(keep)
+        .filter_map(|(p, k)| k.then_some(*p))
+        .collect();
+    if out.len() < 3 { points.to_vec() } else { out }
+}
+
+/// Mark the points of `points[a..=b]` Douglas–Peucker keeps at
+/// `tolerance` (the ends excluded), iteratively.
+fn douglas_peucker(points: &[Point], a: usize, b: usize, tolerance: f64, keep: &mut [bool]) {
+    let mut stack = vec![(a, b)];
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+        let (p, q) = (points[a], points[b]);
+        let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+        let len = dx.hypot(dy);
+        let distance = |r: Point| {
+            if len <= f64::EPSILON {
+                (r[0] - p[0]).hypot(r[1] - p[1])
+            } else {
+                ((r[0] - p[0]) * dy - (r[1] - p[1]) * dx).abs() / len
+            }
+        };
+        let (k, d) = (a + 1..b)
+            .map(|k| (k, distance(points[k])))
+            .fold((a, 0.0_f64), |best, c| if c.1 > best.1 { c } else { best });
+        if d > tolerance {
+            if let Some(slot) = keep.get_mut(k) {
+                *slot = true;
+            }
+            stack.push((a, k));
+            stack.push((k, b));
+        }
+    }
 }
 
 /// A region's outer boundary and holes, or nothing for a region of
@@ -61,56 +171,28 @@ fn body_name(fill: &Fill) -> String {
     format!("fill_{}", fill.id)
 }
 
-/// Every fill's copper ([`bodies`]), after the inner-layer fills are cut
-/// from the laminate ([`cuts`]).
-pub(super) fn build<'a>(
+/// Every fill's copper ([`bodies`]).
+pub(super) fn build(
     b: &mut Builder,
-    project: &'a Project,
+    project: &Project,
     board: u64,
     sources: &mut Vec<Source>,
-) -> Result<Vec<FillMark<'a>>> {
-    cuts(b, project)?;
-    bodies(b, project, board, sources)
-}
-
-/// Cut every inner-layer fill's copper from the laminate, in the
-/// substrate's component.
-fn cuts(b: &mut Builder, project: &Project) -> Result<()> {
-    if !built(project).any(|(f, _)| f.layer.side().is_none()) {
-        return Ok(());
-    }
-    let substrate = b
-        .native
-        .find_component("PCB substrate")
-        .ok_or_else(|| Error::Verification("the board has no substrate component".into()))?;
-    b.native.activate(substrate.component)?;
-    for (fill, regions) in built(project).filter(|(f, _)| f.layer.side().is_none()) {
-        let loops: Vec<&[Point]> = regions.iter().flat_map(loops).collect();
-        if loops.is_empty() {
-            continue;
-        }
-        b.native.polyline_cut(
-            &format!("{} cut", body_name(fill)),
-            inner_base(&project.stackup, fill.layer)?.into(),
-            &loops,
-            copper_param(fill.layer).into(),
-            &["Substrate"],
-        )?;
-    }
-    Ok(())
+) -> Result<Vec<FillMark>> {
+    bodies(b, project, board, sources, built(project))
 }
 
 /// Each fill's copper as one body in a component of its own, held upright
 /// on the board at the origin; its source names the fill, its net and
 /// layer. Returns what the display layers draw over each.
-fn bodies<'a>(
+fn bodies(
     b: &mut Builder,
-    project: &'a Project,
+    project: &Project,
     board: u64,
     sources: &mut Vec<Source>,
-) -> Result<Vec<FillMark<'a>>> {
+    built: Vec<(&Fill, Vec<FilledRegion>)>,
+) -> Result<Vec<FillMark>> {
     let mut marks = Vec::new();
-    for (fill, regions) in built(project) {
+    for (fill, regions) in built {
         if regions.iter().all(|r| loops(r).is_empty()) {
             continue;
         }
@@ -180,7 +262,7 @@ pub(super) fn films(
     board: &Board,
     lands: &[Land],
     vias: &[ViaMark],
-    fills: &[FillMark<'_>],
+    fills: &[FillMark],
 ) -> Result<Vec<Geometry>> {
     let mut out = Vec::new();
     for mark in fills {

@@ -2668,6 +2668,9 @@ pub(crate) fn preview(
         .collect();
     let via_ref = |via: &crate::model::Via| ObjectRef::Via { id: via.id };
     let layers = next.stackup.layers();
+    // The candidate's effective rules: profile, overrides, net classes
+    // and class pairs, as the board checks read them.
+    let rules = layout::limits::BoardRules::of(&next);
     let mut pairs = 0usize;
     for key in pad_ids {
         let before = old_pads.get(&key);
@@ -2716,7 +2719,7 @@ pub(crate) fn preview(
             if touched_before || touched_after {
                 affected_tracks.insert(track.id);
             }
-            if after.is_some_and(|p| layout::track_pad_clearance_conflict(track, p)) {
+            if after.is_some_and(|p| layout::track_pad_clearance_conflict(track, p, &rules)) {
                 conflicts
                     .entry(track.id)
                     .or_insert((ConflictReason::Clearance, Some(key)));
@@ -2750,7 +2753,7 @@ pub(crate) fn preview(
             if pairs > 100_000 {
                 break;
             }
-            if after.is_some_and(|p| layout::via_pad_clearance_conflict(via, p, &layers)) {
+            if after.is_some_and(|p| layout::via_pad_clearance_conflict(via, p, &layers, &rules)) {
                 via_conflicts.insert(via.id);
             } else if before.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
                 && !after.is_some_and(|p| layout::via_touches_pad(via, p, &layers))

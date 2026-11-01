@@ -210,12 +210,27 @@ fn shares_layer(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
     pad.through || via.on(pad.layer.into(), layers)
 }
 
-/// Whether a via is closer than the clearance rule to another net's pad:
-/// the via side of a revision impact plan.
-pub fn via_pad_clearance_conflict(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
+/// Whether a via is closer than the effective clearance (rules, net
+/// classes and class pairs) to another net's pad: the via side of a
+/// revision impact plan.
+pub fn via_pad_clearance_conflict(
+    via: &Via,
+    pad: &WorldPad,
+    layers: &[CopperLayer],
+    rules: &super::limits::BoardRules<'_>,
+) -> bool {
+    use crate::rules::CopperObject;
     via.net != pad.net
         && shares_layer(via, pad, layers)
-        && CopperRing::of_via(via).violates_clearance(&CopperRing::of_pad(pad))
+        && CopperRing::of_via(via).closer_than(
+            &CopperRing::of_pad(pad),
+            rules.clearance(
+                CopperObject::Via,
+                Some(via.net),
+                CopperObject::Pad,
+                Some(pad.net),
+            ),
+        )
 }
 
 /// Whether a via's copper touches a pad's exact outline on a shared layer.

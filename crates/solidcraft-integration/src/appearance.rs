@@ -87,12 +87,68 @@ const DOME_STEPS: usize = 6;
 const BORE_GAP_MM: f64 = 0.001;
 const BORE_SHADOW_MM: f64 = 0.01;
 
+/// A sketched board's solved shape as the display layers draw it,
+/// flattened at the display tolerance: the outer outline and the loops
+/// cut through it (cutouts, slots and mounting holes).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Outline {
+    /// Counter-clockwise.
+    pub outer: Vec<Point>,
+    /// Cutouts and slots.
+    pub cutouts: Vec<Vec<Point>>,
+    /// Mounting holes (their drills).
+    pub holes: Vec<Vec<Point>>,
+}
+
+impl Outline {
+    /// The solved shape of a sketched `project`; `None` for a rectangle
+    /// (the layers then draw `board_size`'s rectangle, as before).
+    pub fn of(project: &Project) -> Option<Self> {
+        use pcbcraft_core::model::board::flatten;
+        if project.board_shape.is_rectangle() {
+            return None;
+        }
+        let board = project.board();
+        let tolerance = crate::pad_outline::FLATTEN_TOLERANCE_MM;
+        let ccw = |mut points: Vec<Point>| {
+            if signed_area(&points) < 0.0 {
+                points.reverse();
+            }
+            points
+        };
+        Some(Self {
+            outer: ccw(flatten(&board.outer, tolerance)),
+            cutouts: board
+                .cutouts
+                .iter()
+                .map(|c| ccw(flatten(&c.outline, tolerance)))
+                .collect(),
+            holes: board
+                .holes
+                .iter()
+                .map(|h| circle(h.at, h.drill / 2.0))
+                .collect(),
+        })
+    }
+}
+
+/// Twice the signed area of a loop (positive counter-clockwise).
+fn signed_area(points: &[Point]) -> f64 {
+    let n = points.len();
+    (0..n)
+        .map(|i| points[i][0] * points[(i + 1) % n][1] - points[(i + 1) % n][0] * points[i][1])
+        .sum()
+}
+
 /// The board the layers sit on, in mm, and the fabrication that sets the
 /// mask and finish looks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Board {
     pub width: f64,
     pub depth: f64,
+    /// A sketched board's solved shape; `None` for the `width` × `depth`
+    /// rectangle.
+    pub shape: Option<std::sync::Arc<Outline>>,
     /// The laminate (every dielectric) between the outer copper faces.
     pub thickness: f64,
     /// Outer copper foil thickness, top and bottom.
@@ -116,6 +172,7 @@ impl Board {
         Self {
             width: project.board_size[0],
             depth: project.board_size[1],
+            shape: Outline::of(project).map(std::sync::Arc::new),
             thickness: stackup.dielectric_mm(),
             copper_top: foil(CopperLayer::Top),
             copper_bottom: foil(CopperLayer::Bottom),
@@ -320,10 +377,7 @@ pub fn board(
     parts: &[Part<'_>],
 ) -> Result<Vec<Geometry>> {
     let mut out = Vec::new();
-    // The mask stops short of the routed edge, so its walls never meet the
-    // laminate's at the silhouette.
-    let (i, w, d) = (MASK_EDGE_INSET_MM, board.width, board.depth);
-    let outline = vec![[i, i], [w - i, i], [w - i, d - i], [i, d - i]];
+    let (fills, edge_cuts) = mask_outline(board);
     for (kind, layer) in [
         (BodyKind::MaskTop, Layer::Top),
         (BodyKind::MaskBottom, Layer::Bottom),
@@ -333,11 +387,12 @@ pub fn board(
         }
         let (z0, z1) = board.span(layer, 0.0, MASK_THICKNESS_MM);
         let region = Region {
-            fills: vec![outline.clone()],
+            fills: fills.clone(),
             cuts: lands
                 .iter()
                 .filter(|land| land.layer == layer)
                 .flat_map(|land| land.openings.iter().cloned())
+                .chain(edge_cuts.iter().cloned())
                 .collect(),
         };
         push(
@@ -391,6 +446,30 @@ pub fn board(
         package(&mut out, Some(board), part)?;
     }
     Ok(out)
+}
+
+/// Where the board mask lies: its fill loops and the board's own cuts.
+/// The mask stops [`MASK_EDGE_INSET_MM`] short of every routed edge, the
+/// outer outline and each cutout, slot and mounting hole, so its walls
+/// never meet the laminate's at the silhouette and it never spans an
+/// opening through the board.
+pub(crate) fn mask_outline(board: &Board) -> (Vec<Vec<Point>>, Vec<Vec<Point>>) {
+    let i = MASK_EDGE_INSET_MM;
+    let Some(shape) = &board.shape else {
+        let (w, d) = (board.width, board.depth);
+        return (
+            vec![vec![[i, i], [w - i, i], [w - i, d - i], [i, d - i]]],
+            Vec::new(),
+        );
+    };
+    let fills = offset_polygon(&shape.outer, -i).into_iter().collect();
+    let cuts = shape
+        .cutouts
+        .iter()
+        .chain(&shape.holes)
+        .map(|c| offset_polygon(c, i).unwrap_or_else(|| c.clone()))
+        .collect();
+    (fills, cuts)
 }
 
 /// The authoring preview's layers: terminations and overcoat of an unplaced

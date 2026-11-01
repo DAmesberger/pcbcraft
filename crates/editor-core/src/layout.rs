@@ -942,11 +942,26 @@ pub fn point_in_polygon(point: Point, polygon: &[Point; 4]) -> bool {
     !(positive && negative)
 }
 
-/// Same geometry and clearance rule as routing, used by revision impact plans.
-pub fn track_pad_clearance_conflict(track: &Track, pad: &WorldPad) -> bool {
+/// Same geometry and clearance rule as routing and the board checks
+/// (the project's effective rules, net classes and class pairs), used by
+/// revision impact plans.
+pub fn track_pad_clearance_conflict(
+    track: &Track,
+    pad: &WorldPad,
+    rules: &limits::BoardRules<'_>,
+) -> bool {
+    use crate::rules::CopperObject;
     pad.on(track.layer)
         && track.net != pad.net
-        && CopperRing::of_track(track).violates_clearance(&CopperRing::of_pad(pad))
+        && CopperRing::of_track(track).closer_than(
+            &CopperRing::of_pad(pad),
+            rules.clearance(
+                CopperObject::Track,
+                Some(track.net),
+                CopperObject::Pad,
+                Some(pad.net),
+            ),
+        )
 }
 
 /// Whether a track's copper touches a pad's exact outline on its layer.

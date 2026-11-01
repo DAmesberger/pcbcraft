@@ -127,6 +127,13 @@ pub struct SolvedMountingHole {
 /// One named edge solved: from `a` to `b` along the board's
 /// counter-clockwise direction (the inside is on the left), straight or
 /// an arc in bulge form.
+///
+/// A filleted corner keeps its virtual (unrounded) corner point, so a
+/// straight edge runs corner to corner as drawn before the fillets: its
+/// `a` and `b` are the virtual corners, not the ends of the trimmed line
+/// in [`SolvedBoard::outer`]. Edge constraints measure `along` (and their
+/// `Start`, `Middle`, `End` and fraction anchors) on this segment, so a
+/// part keeps its place when a corner radius changes.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SolvedEdge {

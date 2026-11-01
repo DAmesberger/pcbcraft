@@ -1,8 +1,15 @@
 //! Fill and keepout checks, and the connectivity fills add to the board.
 //!
-//! Fresh fill copper meets its clearances by construction, so the
-//! clearance check measures only stale copper (copper whose inputs moved
-//! on and that has not been refilled yet).
+//! Fresh fill copper meets its clearances by construction. Stale copper
+//! (whose inputs moved on and that has not been refilled yet) carries one
+//! `fill.stale` finding; beyond it only other-net copper that overlaps the
+//! stale copper (a short a refill would cut away) is reported. Gaps that
+//! merely miss a changed clearance (a profile switch, a class edit) are
+//! what the refill fixes, so they are not listed one by one.
+//!
+//! The joins of stale copper do not count in board connectivity
+//! ([`links`]): an airwire shows as soon as a joined pad or via moves off
+//! the pour, not after the refill lands.
 use super::FILL_CHORD_MM;
 use super::compute::{Ctx, pad_on};
 use super::geom::{self, Region, RegionIndex};
@@ -39,10 +46,18 @@ fn regions_of(fill: &Fill) -> Vec<Region> {
 /// track joined to one island. The board connectivity unions each group.
 pub(crate) fn links(project: &Project) -> Vec<Vec<ObjectRef>> {
     let mut out = Vec::new();
+    if project.fills.iter().all(|f| f.computed.is_none()) {
+        return out;
+    }
+    let mut ctx = Ctx::new(project);
     for fill in &project.fills {
         let Some(copper) = &fill.computed else {
             continue;
         };
+        // Stale copper joins nothing until it is refilled.
+        if ctx.key(fill.id).ok().as_ref() != Some(&copper.key) {
+            continue;
+        }
         let mut groups: BTreeMap<u32, Vec<ObjectRef>> = BTreeMap::new();
         for join in &copper.joins {
             let Some(region) = join.joined_region() else {
@@ -180,7 +195,7 @@ pub fn findings(project: &Project) -> Vec<Finding> {
     out
 }
 
-/// Clearance from a fill's stored copper to other-net copper on its layer.
+/// Other-net copper on a fill's layer that overlaps its stale copper.
 fn clearance(ctx: &mut Ctx<'_>, fill: &Fill, label: &str, out: &mut Vec<Finding>) {
     let project = ctx.project;
     let regions = regions_of(fill);
@@ -233,12 +248,12 @@ fn clearance(ctx: &mut Ctx<'_>, fill: &Fill, label: &str, out: &mut Vec<Finding>
         if !geom::overlaps(bounds, b, gap) {
             continue;
         }
-        let limit = gap - FILL_CHORD_MM;
         let n = ring.len();
         let inside = ring.first().and_then(|p| index.region_at(*p)).is_some();
-        let near = inside
-            || (0..n).any(|i| index.segment_distance(ring[i], ring[(i + 1) % n], limit) < limit);
-        if near {
+        let touches = inside
+            || (0..n)
+                .any(|i| index.segment_distance(ring[i], ring[(i + 1) % n], FILL_CHORD_MM) <= 0.0);
+        if touches {
             hits += 1;
             if hits > 256 {
                 break;
@@ -246,7 +261,7 @@ fn clearance(ctx: &mut Ctx<'_>, fill: &Fill, label: &str, out: &mut Vec<Finding>
             out.push(Finding::new(
                 "fill.clearance",
                 format!(
-                    "Clearance < {gap:.3} mm: {label} (stale) / {}",
+                    "Overlap: {label} (stale) / {}; refill it",
                     describe(project, &object)
                 ),
                 vec![me, object],

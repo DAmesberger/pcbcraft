@@ -244,6 +244,7 @@ fn board_schemas_are_served() {
         "net_class.assign",
         "fill.add",
         "fill.store",
+        "fill.store_all",
         "keepout.add",
         "board.edit",
         "board.constrain",

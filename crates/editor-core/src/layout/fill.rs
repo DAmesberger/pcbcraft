@@ -32,6 +32,9 @@ pub use checks::{fill_label, findings};
 pub const FILL_CHORD_MM: f64 = 0.005;
 /// Vertices of all computed regions of one fill.
 pub const MAX_FILL_VERTICES: usize = 1 << 20;
+/// Vertices of the computed copper of every fill of a project together
+/// (16 bytes each: 128 MiB at most in memory).
+pub const MAX_PROJECT_FILL_VERTICES: usize = 1 << 23;
 
 /// Which fills to refill.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -64,6 +67,11 @@ pub enum FillCommand {
     /// `copper.key` equals the fill's current [`inputs_key`].
     #[serde(rename = "fill.store")]
     Store { fill: Id, copper: Box<FilledCopper> },
+    /// Store copper the host computed for several fills (an explicit
+    /// refill done off the UI thread) as one undo step; refused, storing
+    /// nothing, unless every fill exists and every key is current.
+    #[serde(rename = "fill.store_all")]
+    StoreAll { fills: Vec<StoredFill> },
     /// Add a keepout; the outcome names it (`Outcome::KeepoutAdded`).
     #[serde(rename = "keepout.add")]
     AddKeepout { keepout: Box<KeepoutSpec> },
@@ -71,6 +79,14 @@ pub enum FillCommand {
     EditKeepout { keepout: Box<Keepout> },
     #[serde(rename = "keepout.delete")]
     DeleteKeepout { id: Id },
+}
+
+/// One fill's computed copper for `fill.store_all`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StoredFill {
+    pub fill: Id,
+    pub copper: FilledCopper,
 }
 
 /// Apply a fill command to a candidate; returns the id `fill.add` or
@@ -130,6 +146,31 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             }
             if let Some(f) = project.fills.iter_mut().find(|f| f.id == fill) {
                 f.computed = Some(*copper);
+            }
+            Ok(None)
+        }
+        FillCommand::StoreAll { fills } => {
+            if fills.is_empty() || fills.len() > MAX_FILLS {
+                return Err(Error::Limit(format!(
+                    "fill.store_all: 1–{MAX_FILLS} fills at a time"
+                )));
+            }
+            if let Some(gone) = fills.iter().find(|f| project.fill(f.fill).is_none()) {
+                return Err(missing("fill", gone.fill));
+            }
+            let keys = inputs_keys_of(project, fills.iter().map(|f| f.fill))?;
+            if fills
+                .iter()
+                .any(|f| keys.get(&f.fill) != Some(&f.copper.key))
+            {
+                return Err(Error::Conflict(
+                    "fill.stale: the board changed since these fills were computed".into(),
+                ));
+            }
+            for stored in fills {
+                if let Some(f) = project.fills.iter_mut().find(|f| f.id == stored.fill) {
+                    f.computed = Some(stored.copper);
+                }
             }
             Ok(None)
         }
@@ -298,12 +339,17 @@ pub fn inputs_key(project: &Project, id: Id) -> Result<String> {
 
 /// [`inputs_key`] of every fill, sharing one pass.
 pub fn inputs_keys(project: &Project) -> Result<BTreeMap<Id, String>> {
+    inputs_keys_of(project, project.fills.iter().map(|f| f.id))
+}
+
+/// [`inputs_key`] of the fills `ids` only, sharing one context (the keys
+/// of higher-priority fills they depend on are computed as needed).
+pub fn inputs_keys_of(
+    project: &Project,
+    ids: impl IntoIterator<Item = Id>,
+) -> Result<BTreeMap<Id, String>> {
     let mut ctx = compute::Ctx::new(project);
-    project
-        .fills
-        .iter()
-        .map(|f| Ok((f.id, ctx.key(f.id)?)))
-        .collect()
+    ids.into_iter().map(|id| Ok((id, ctx.key(id)?))).collect()
 }
 
 /// Whether a fill has no computed copper or copper of other inputs.
@@ -359,6 +405,7 @@ pub fn validate(project: &Project) -> Result<()> {
             "fill.limit: at most {MAX_FILLS} fills and {MAX_KEEPOUTS} keepouts"
         )));
     }
+    let mut total = 0usize;
     for f in &project.fills {
         let s = &f.settings;
         let thermal_ok = s.thermal.is_none_or(|t| {
@@ -395,6 +442,12 @@ pub fn validate(project: &Project) -> Result<()> {
                         .is_none_or(|r| (r as usize) < c.regions.len())
                 })
         });
+        total = total.saturating_add(vertices);
+        if total > MAX_PROJECT_FILL_VERTICES {
+            return Err(Error::Limit(format!(
+                "fill.limit: the fills' copper holds more than {MAX_PROJECT_FILL_VERTICES} vertices"
+            )));
+        }
         if !outline_ok(&f.outline)
             || !project.stackup.has(f.layer)
             || f.name.len() > crate::rules::MAX_PROFILE_TEXT

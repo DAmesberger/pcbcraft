@@ -3,8 +3,10 @@
 //! glass weave, per `Project::stackup`, so the board reads as a sectioned
 //! real board. Never saved; the native substrate stays one physical body.
 //!
-//! Each band is a thin frame standing [`EDGE_PROUD_MM`] proud of the four
-//! routed faces (and as far inside them, where the laminate hides it). The
+//! Each band is a thin frame standing [`EDGE_PROUD_MM`] proud of the
+//! routed faces (and as far inside them, where the laminate hides it):
+//! the four sides of a rectangular board, or a sketched board's solved
+//! outline and every cutout and slot. The
 //! dielectric bands are split around the inner foils, so no two bands share
 //! a face. An outer foil's line sits on the laminate face with its mask
 //! lip over it, as a section through a plane under the mask shows them.
@@ -12,7 +14,9 @@ use crate::Result;
 use crate::appearance::{self, Board, MASK_CAP_MM, Region, slab};
 use crate::material::{BodyKind, Detail, Pattern};
 use crate::scene::Geometry;
+use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::{CopperLayer, DielectricKind, GlassStyle, Layer, Point, Stackup};
+use solidcraft_engine::geom::Mesh;
 
 /// How far the bands stand proud of the routed edge, so they win the depth
 /// test without z-fighting the substrate's walls (display only).
@@ -69,7 +73,10 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
                 EDGE_PROUD_MM,
             ),
         };
-        let mesh = slab(&frame(board, proud), z0, z1, f64::MAX);
+        let mut mesh = Mesh::default();
+        for region in frames(board, proud) {
+            append(&mut mesh, slab(&region, z0, z1, f64::MAX));
+        }
         let before = out.len();
         appearance::push(&mut out, &board.fabrication, kind, None, layer, mesh)?;
         if let (Band::Dielectric(index), Some(geometry)) = (band, out.get_mut(before))
@@ -84,20 +91,49 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
     Ok(out)
 }
 
-/// A frame `proud` either side of the board outline.
-fn frame(board: &Board, proud: f64) -> Region {
-    let rect = |grow: f64| -> Vec<Point> {
-        vec![
-            [-grow, -grow],
-            [board.width + grow, -grow],
-            [board.width + grow, board.depth + grow],
-            [-grow, board.depth + grow],
-        ]
+/// Frames `proud` either side of each routed edge: the board outline
+/// (`board_size`'s rectangle, or a sketched board's solved outer
+/// outline) and each cutout and slot of a sketched board.
+fn frames(board: &Board, proud: f64) -> Vec<Region> {
+    let Some(shape) = &board.shape else {
+        let rect = |grow: f64| -> Vec<Point> {
+            vec![
+                [-grow, -grow],
+                [board.width + grow, -grow],
+                [board.width + grow, board.depth + grow],
+                [-grow, board.depth + grow],
+            ]
+        };
+        return vec![Region {
+            fills: vec![rect(proud)],
+            cuts: vec![rect(-proud)],
+        }];
     };
-    Region {
-        fills: vec![rect(proud)],
-        cuts: vec![rect(-proud)],
-    }
+    std::iter::once(&shape.outer)
+        .chain(&shape.cutouts)
+        .filter_map(|edge| {
+            Some(Region {
+                fills: vec![offset_polygon(edge, proud)?],
+                cuts: vec![offset_polygon(edge, -proud)?],
+            })
+        })
+        .collect()
+}
+
+/// `more` appended to `mesh`, its vertices and faces renumbered after
+/// `mesh`'s.
+fn append(mesh: &mut Mesh, more: Mesh) {
+    let base = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
+    let face = mesh.tri_face.iter().copied().max().map_or(0, |f| f + 1);
+    mesh.positions.extend(more.positions);
+    mesh.normals.extend(more.normals);
+    mesh.triangles.extend(
+        more.triangles
+            .into_iter()
+            .map(|t| t.map(|v| v.saturating_add(base))),
+    );
+    mesh.tri_face
+        .extend(more.tri_face.into_iter().map(|f| f.saturating_add(face)));
 }
 
 /// The bands bottom to top with their z ranges.
@@ -154,6 +190,7 @@ mod tests {
         Board {
             width: 20.0,
             depth: 10.0,
+            shape: None,
             thickness: stackup.dielectric_mm(),
             copper_top: 0.035,
             copper_bottom: 0.035,

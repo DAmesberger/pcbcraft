@@ -3,8 +3,10 @@
 //!
 //! The native model holds only physical bodies: the laminate, exact copper
 //! and package envelopes. They are disjoint except where copper joins copper
-//! (a track ending in its pad), so Solidcraft's interference checks and mass
-//! properties of the saved file are physical. Soldermask, plated finish,
+//! (a track ending in its pad) and where an inner-layer pour lies in the
+//! laminate ([`fill`]), so Solidcraft's interference checks and mass
+//! properties of the saved file are physical but for that foil-thin slab.
+//! Soldermask, plated finish,
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
@@ -778,6 +780,39 @@ fn polygon(points: &[Point]) -> Option<Contour> {
     }))
 }
 
+/// Whether `via`'s ring on inner `layer` is clear of every track and
+/// other via ring there (by their boxes, so a near miss counts as
+/// touching): its body and the laminate's cut are then the exact circle,
+/// not the shared polygon a union with other copper needs.
+fn round_ring(
+    project: &Project,
+    via: &pcbcraft_core::Via,
+    layer: CopperLayer,
+    layers: &[CopperLayer],
+) -> bool {
+    let r = via.diameter / 2.0;
+    let [x, y] = via.position;
+    let apart =
+        |lo: Point, hi: Point| lo[0] > x + r || hi[0] < x - r || lo[1] > y + r || hi[1] < y - r;
+    project.tracks.iter().filter(|t| t.layer == layer).all(|t| {
+        let w = t.width / 2.0;
+        apart(
+            [t.start[0].min(t.end[0]) - w, t.start[1].min(t.end[1]) - w],
+            [t.start[0].max(t.end[0]) + w, t.start[1].max(t.end[1]) + w],
+        )
+    }) && project
+        .vias
+        .iter()
+        .filter(|v| v.id != via.id && v.on(layer, layers))
+        .all(|v| {
+            let s = v.diameter / 2.0;
+            apart(
+                [v.position[0] - s, v.position[1] - s],
+                [v.position[0] + s, v.position[1] + s],
+            )
+        })
+}
+
 /// A regular polygon of `INNER_RING_SEGMENTS` sides about a circle (its
 /// vertices on it).
 fn ring_outline(center: Point, radius: f64) -> Vec<Point> {
@@ -1369,8 +1404,12 @@ fn vias(
                 CopperLayer::Inner(_) => (
                     inner_base(stackup, *layer)?.into(),
                     vec![
-                        polygon(&ring_outline([0.0, 0.0], ring))
-                            .ok_or_else(|| Error::Invalid("empty via ring".into()))?,
+                        if round_ring(project, via, *layer, &layers) {
+                            circle(ring)
+                        } else {
+                            polygon(&ring_outline([0.0, 0.0], ring))
+                                .ok_or_else(|| Error::Invalid("empty via ring".into()))?
+                        },
                         circle(drill),
                     ],
                 ),
@@ -1444,20 +1483,28 @@ fn inner_copper_cuts(b: &mut Builder, project: &Project) -> Result<()> {
             .map(|t| track_outline(t.start, t.end, t.width))
             .filter(|l| !l.is_empty())
             .collect();
-        loops.extend(
-            project
-                .vias
-                .iter()
-                .filter(|v| v.on(*layer, &layers))
-                .map(|v| ring_outline(v.position, v.diameter / 2.0)),
-        );
-        if loops.is_empty() {
+        // A ring that touches no other copper of the layer is cut as its
+        // exact circle, one cylindrical face (a polygon's 64 faces made
+        // the stitching vias' rings most of the build).
+        let mut circles = Vec::new();
+        for v in project.vias.iter().filter(|v| v.on(*layer, &layers)) {
+            if round_ring(project, v, *layer, &layers) {
+                circles.push(Contour::Circle {
+                    center: v.position,
+                    radius: v.diameter / 2.0,
+                });
+            } else {
+                loops.push(ring_outline(v.position, v.diameter / 2.0));
+            }
+        }
+        if loops.is_empty() && circles.is_empty() {
             continue;
         }
         let outline = appearance::union(&loops).ok_or_else(|| {
             Error::Invalid(format!("{} has too much copper to model", layer.name()))
         })?;
-        let contours: Vec<Contour> = outline.iter().filter_map(|l| polygon(l)).collect();
+        let mut contours: Vec<Contour> = outline.iter().filter_map(|l| polygon(l)).collect();
+        contours.extend(circles);
         if contours.is_empty() {
             continue;
         }

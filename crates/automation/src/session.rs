@@ -800,9 +800,16 @@ mod templates_tests;
 #[cfg(test)]
 mod tests;
 
+/// The shipped showcase ([`pcbcraft_core::Engine::showcase_hosted`]) on
+/// SolidCraft's sketch engine: its sketched board, cutout, slot and
+/// edge-held header included.
+pub fn showcase() -> pcbcraft_core::Result<pcbcraft_core::Engine> {
+    pcbcraft_core::Engine::showcase_hosted(hosted())
+}
+
 /// The host evaluators every applied operation gets: SolidCraft's sketch
 /// engine for footprint sources and for the board shape.
-fn hosted() -> pcbcraft_core::Evaluators<'static> {
+pub fn hosted() -> pcbcraft_core::Evaluators<'static> {
     pcbcraft_core::Evaluators {
         footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
         board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),

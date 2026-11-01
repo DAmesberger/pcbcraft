@@ -432,6 +432,7 @@ impl BoardCopper {
                 if a.layer != b.layer && !a.through && !b.through {
                     continue;
                 }
+                let (an, bn) = class_nets(a, b);
                 if a.net == b.net {
                     if a.ring.touches(b.ring) {
                         union(&mut parents, i, j);
@@ -441,11 +442,11 @@ impl BoardCopper {
                             }
                         }
                     }
-                } else if a.ring.closer_than(
-                    b.ring,
-                    limits.clearance(a.kind, Some(a.net), b.kind, Some(b.net)),
-                ) {
-                    let need = limits.clearance_need(a.kind, Some(a.net), b.kind, Some(b.net));
+                } else if a
+                    .ring
+                    .closer_than(b.ring, limits.clearance(a.kind, an, b.kind, bn))
+                {
+                    let need = limits.clearance_need(a.kind, an, b.kind, bn);
                     issues.push(Finding::new(
                         "board.clearance",
                         format!(
@@ -537,6 +538,20 @@ impl BoardCopper {
             }
         }
         result
+    }
+}
+
+/// The nets whose classes set the clearance between `a` and `b`: none
+/// for two pads of one placed footprint, whose spacing the footprint
+/// fixes (a QFN's pitch cannot meet a power class's clearance to its own
+/// exposed pad), so they are held to the profile's pad-to-pad clearance
+/// (and its overrides) only.
+fn class_nets(a: &Copper<'_>, b: &Copper<'_>) -> (Option<Id>, Option<Id>) {
+    match (a.object, b.object) {
+        (ObjectRef::Pad { instance: x, .. }, ObjectRef::Pad { instance: y, .. }) if x == y => {
+            (None, None)
+        }
+        _ => (Some(a.net), Some(b.net)),
     }
 }
 

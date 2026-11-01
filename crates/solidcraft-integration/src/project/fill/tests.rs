@@ -1,4 +1,5 @@
 use super::super::{NativeModel, build};
+use super::{MODEL_CHORD_MM, simplify_loop};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::{Error, Result};
@@ -80,6 +81,17 @@ fn extent(bodies: &[&Geometry]) -> ([f64; 3], [f64; 3], f64) {
     )
 }
 
+/// The unsigned area of a loop (shoelace).
+fn area(points: &[Point]) -> f64 {
+    points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+        .sum::<f64>()
+        .abs()
+        / 2.0
+}
+
 fn near(actual: f64, expected: f64, tolerance: f64) {
     assert!(
         (actual - expected).abs() <= tolerance,
@@ -90,7 +102,8 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 /// A bottom pour of two regions (one with two holes) and an inner plane:
 /// each is one saved copper body on its layer, as thick as its foil and
 /// as large as its regions, its source naming the fill, net and layer.
-/// The inner plane is cut from the laminate; the bottom pour wears a
+/// The inner plane overlaps the laminate, which keeps its volume (the cut
+/// cost the 3D view too much; see the module); the bottom pour wears a
 /// display-only mask cap opened at its holes.
 #[test]
 fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
@@ -138,8 +151,8 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     assert_eq!(bodies.len(), 2, "one body per region");
     assert!(bodies.iter().all(|g| g.layer == Some(CopperLayer::Bottom)));
     let (lo, hi, volume) = extent(&bodies);
-    // Inscribed 48-gons: their area is (n/2)·r²·sin(2π/n).
-    let disc = 24.0 * 0.25 * (std::f64::consts::TAU / 48.0).sin();
+    // The holes as the model simplifies them (MODEL_CHORD_MM).
+    let disc = area(&simplify_loop(&hole([32.0, 2.5], 0.5, 48), MODEL_CHORD_MM));
     let area = 30.0 - 2.0 * disc + 6.0;
     near(volume, area * t_bottom, 1e-6);
     near(hi[2], 0.0, 1e-9);
@@ -168,7 +181,7 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     assert_eq!(source.layer, Some(CopperLayer::Bottom));
     assert!(source.track.is_none() && source.via.is_none() && source.instance.is_none());
 
-    // The laminate lost exactly the inner plane's volume.
+    // The laminate is not cut by the inner plane.
     let substrate = |m: &NativeModel| -> f64 {
         m.geometry
             .iter()
@@ -176,11 +189,7 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
             .map(|g| g.volume)
             .sum()
     };
-    near(
-        substrate(&unfilled) - substrate(&model),
-        30.0 * t_inner,
-        1e-6,
-    );
+    near(substrate(&unfilled), substrate(&model), 1e-6);
 
     // The bottom pour's mask cap: display-only, picked as the fill, one
     // per region, below the board.
@@ -232,7 +241,7 @@ fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
     let bodies = fill_bodies(&model, id)?;
     assert_eq!(bodies.len(), 1);
     let (_, _, volume) = extent(&bodies);
-    let disc = 16.0 * 0.45 * 0.45 * (std::f64::consts::TAU / 32.0).sin();
+    let disc = area(&simplify_loop(&hole([2.0, 2.0], 0.45, 32), MODEL_CHORD_MM));
     let area = 42.0 * 26.0 - count as f64 * disc;
     let (z0, z1) = project
         .stackup
@@ -240,4 +249,76 @@ fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
         .ok_or_else(|| Error::Verification("bottom span".into()))?;
     near(volume, area * (z1 - z0), 1e-4);
     Ok(())
+}
+
+/// The showcase as shipped (sketched board, three pours, all filled)
+/// builds within 1.25× of the same board with its pours unfilled (plus a
+/// second for timer noise): the fills must not dominate the 3D view's
+/// build, as the inner plane's laminate cut once did (about 6×).
+#[test]
+fn the_showcase_fills_cost_little_of_the_build() -> Result<()> {
+    let filled = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+        footprint: Some(&crate::footprint::SketchEvaluator),
+        board: Some(&crate::board::SketchBoardEvaluator),
+    })
+    .map_err(|e| Error::Verification(e.to_string()))?
+    .project()
+    .clone();
+    assert_eq!(filled.fills.len(), 3);
+    assert!(
+        filled.fills.iter().all(|f| f.computed.is_some()),
+        "the showcase ships its pours filled"
+    );
+    let mut plain = filled.clone();
+    for fill in &mut plain.fills {
+        fill.computed = None;
+    }
+    let time = |p: &Project| -> Result<std::time::Duration> {
+        let start = std::time::Instant::now();
+        build(p)?;
+        Ok(start.elapsed())
+    };
+    // Warm both once; take the faster of two runs each.
+    let base = time(&plain)?.min(time(&plain)?);
+    let with = time(&filled)?.min(time(&filled)?);
+    eprintln!("showcase build unfilled {base:?}, filled {with:?}");
+    assert!(
+        with.as_secs_f64() <= base.as_secs_f64() * 1.25 + 1.0,
+        "filled {with:?} against unfilled {base:?}"
+    );
+    Ok(())
+}
+
+/// A loop's simplification drops collinear points and arc points within
+/// the tolerance, keeps corners and keeps every point within the
+/// tolerance of the original boundary.
+#[test]
+fn model_loops_drop_points_within_the_chord_tolerance() {
+    // A 4 × 2 rectangle sampled every 0.01 mm along its edges.
+    let mut rect = Vec::new();
+    let steps = |n: usize| (0..n).map(move |k| k as f64 / n as f64);
+    rect.extend(steps(400).map(|t| [4.0 * t, 0.0]));
+    rect.extend(steps(200).map(|t| [4.0, 2.0 * t]));
+    rect.extend(steps(400).map(|t| [4.0 - 4.0 * t, 2.0]));
+    rect.extend(steps(200).map(|t| [0.0, 2.0 - 2.0 * t]));
+    let simple = simplify_loop(&rect, MODEL_CHORD_MM);
+    assert_eq!(simple.len(), 4, "{simple:?}");
+    for corner in [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0], [0.0, 2.0]] {
+        assert!(simple.contains(&corner), "{corner:?} kept");
+    }
+    // A circle of radius 0.5 at 5 µm chords keeps far fewer points, each
+    // on the circle, and every dropped point lies within the tolerance
+    // of the simplified polygon's chords.
+    let circle = hole([0.0, 0.0], 0.5, 400);
+    let simple = simplify_loop(&circle, MODEL_CHORD_MM);
+    assert!(simple.len() < 40 && simple.len() >= 8, "{}", simple.len());
+    let max_sagitta = simple
+        .iter()
+        .zip(simple.iter().cycle().skip(1))
+        .map(|(a, b)| {
+            let half = (b[0] - a[0]).hypot(b[1] - a[1]) / 2.0;
+            0.5 - (0.25 - half * half).sqrt()
+        })
+        .fold(0.0_f64, f64::max);
+    assert!(max_sagitta <= MODEL_CHORD_MM + 1e-9, "{max_sagitta}");
 }

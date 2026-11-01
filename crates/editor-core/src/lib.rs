@@ -302,6 +302,20 @@ impl Engine {
     /// Unconnected terminals are marked no-connect. The undo history is
     /// cleared, as for [`Engine::demo`].
     pub fn showcase() -> Result<Self> {
+        Self::showcase_in(None)
+    }
+
+    /// The showcase as the shipped file shows it: [`Engine::showcase`]
+    /// with a Power net class over GND and VCC and a top GND pour; with a
+    /// board evaluator, also a sketched board with rounded corners, a
+    /// round cutout, a milled slot and J1 held to the left edge by board
+    /// parameters (`layout::showcase::board_edits`). The pours are filled
+    /// last, over the final shape. The undo history is cleared.
+    pub fn showcase_hosted(evaluators: Evaluators<'_>) -> Result<Self> {
+        Self::showcase_in(Some(evaluators))
+    }
+
+    fn showcase_in(hosted: Option<Evaluators<'_>>) -> Result<Self> {
         let mut engine = Self::default();
         let mut refs = Vec::new();
         for part in samples::showcase_parts() {
@@ -408,13 +422,18 @@ impl Engine {
         for command in layout::showcase::fill_commands(engine.project())? {
             engine.apply(engine.revision, Operation::Fill(command))?;
         }
+        let evaluators = hosted.unwrap_or_default();
+        if hosted.is_some() {
+            engine.showcase_design(evaluators)?;
+        }
         // The pours' copper, where this build computes fills; a build
         // without fill computation keeps them unfilled (stale).
-        match engine.apply(
+        match engine.apply_hosted(
             engine.revision,
             Operation::Fill(layout::fill::FillCommand::Refill {
                 target: layout::fill::RefillTarget::All,
             }),
+            evaluators,
         ) {
             Ok(_) | Err(Error::Unsupported(_)) => {}
             Err(e) => return Err(e),
@@ -422,6 +441,62 @@ impl Engine {
         engine.undo.clear();
         engine.redo.clear();
         Ok(engine)
+    }
+
+    /// The hosted showcase's rules and shape over the plain showcase; see
+    /// [`Engine::showcase_hosted`].
+    fn showcase_design(&mut self, evaluators: Evaluators<'_>) -> Result<()> {
+        let class = match self.apply(
+            self.revision,
+            Operation::Rules(rules::RulesCommand::AddNetClass {
+                class: layout::showcase::power_class(),
+            }),
+        )? {
+            Outcome::NetClassAdded { class } => class,
+            _ => return Err(Error::Invalid("showcase net class".into())),
+        };
+        let nets: Vec<Id> = self
+            .project()
+            .nets
+            .iter()
+            .filter(|n| layout::showcase::POWER_NETS.contains(&n.name.as_str()))
+            .map(|n| n.id)
+            .collect();
+        self.apply(
+            self.revision,
+            Operation::Rules(rules::RulesCommand::AssignNets {
+                nets,
+                class: Some(class),
+            }),
+        )?;
+        for command in layout::showcase::top_fill_commands(self.project())? {
+            self.apply(self.revision, Operation::Fill(command))?;
+        }
+        let Some(board) = evaluators.board else {
+            return Ok(());
+        };
+        self.apply_hosted(
+            self.revision,
+            Operation::Board(layout::outline::BoardCommand::StartSketch),
+            evaluators,
+        )?;
+        let model::board::BoardShape::Sketch(sketch) = &self.project().board_shape else {
+            return Err(Error::Invalid("showcase board sketch".into()));
+        };
+        for edits in layout::showcase::board_edits(board, sketch)? {
+            self.apply_hosted(
+                self.revision,
+                Operation::Board(layout::outline::BoardCommand::Edit { edits }),
+                evaluators,
+            )?;
+        }
+        let constraint = layout::showcase::j1_constraint(self.project())?;
+        self.apply_hosted(
+            self.revision,
+            Operation::Board(layout::outline::BoardCommand::Constrain { constraint }),
+            evaluators,
+        )?;
+        Ok(())
     }
 
     /// Two connected two-terminal components, placed on the board, with a
@@ -998,7 +1073,14 @@ impl Engine {
                 actual: self.revision,
             });
         }
-        let keys = layout::fill::inputs_keys(&self.document.project)?;
+        // Only the stored fills' keys (and those they depend on).
+        let project = &self.document.project;
+        let ids: Vec<Id> = results
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| project.fill(*id).is_some())
+            .collect();
+        let keys = layout::fill::inputs_keys_of(project, ids)?;
         let fresh: Vec<_> = results
             .into_iter()
             .filter(|(id, c)| keys.get(id) == Some(&c.key))

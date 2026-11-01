@@ -634,7 +634,11 @@ fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
         .into_iter()
         .find(|p| p.net == R1_1)
         .ok_or_else(|| Error::NotFound("R1 pad 1".into()))?;
-    assert!(!track_pad_clearance_conflict(&track, &pad));
+    assert!(!track_pad_clearance_conflict(
+        &track,
+        &pad,
+        &limits::BoardRules::of(&project)
+    ));
     assert!(!track_touches_pad(&track, &pad));
     Ok(())
 }

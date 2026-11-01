@@ -243,6 +243,7 @@ mod tests {
         Board {
             width: 10.0,
             depth: 10.0,
+            shape: None,
             thickness: 1.6,
             copper_top: 0.035,
             copper_bottom: 0.035,
@@ -323,7 +324,7 @@ mod tests {
         // Tented on top only when the bottom has no mask.
         let half = Board {
             mask_bottom: false,
-            ..board
+            ..board.clone()
         };
         let mut out = Vec::new();
         via_layers(&mut out, &half, &via(true))?;

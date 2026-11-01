@@ -108,7 +108,7 @@ fn run() -> Result<()> {
             let engine = if command == "demo" {
                 Engine::demo()?
             } else if command == "showcase" {
-                Engine::showcase()?
+                session::showcase()?
             } else {
                 Engine::from_file(pcbcraft_core::format::EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,

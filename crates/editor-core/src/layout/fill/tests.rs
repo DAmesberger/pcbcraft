@@ -422,6 +422,20 @@ fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
             .filter(|f| f.code == "board.via_dangling")
             .all(|f| !f.objects.contains(&ObjectRef::Net { id: gnd }))
     );
+    // A joined via nudged (its tracks still reach it) makes the plane
+    // stale: its joins stop counting at once, so the airwires the plane
+    // closed are back before any refill.
+    let mut moved = filled.clone();
+    let via = moved
+        .vias
+        .iter_mut()
+        .find(|v| v.net == gnd && v.position == [22.7, 18.5])
+        .ok_or("strap via")?;
+    via.position[0] += 0.02;
+    assert!(super::is_stale(&moved, &moved.fills[moved.fills.len() - 1]));
+    assert!(super::links(&moved).is_empty(), "stale joins are dropped");
+    assert!(!super::links(&filled).is_empty());
+    assert_eq!(layout::airwires(&moved).len(), split);
     Ok(())
 }
 
@@ -946,5 +960,57 @@ fn a_large_board_fills_in_seconds() -> Fallible<()> {
         copper.regions.len()
     );
     assert!(full.as_secs_f64() < 30.0, "{full:?}");
+    Ok(())
+}
+
+/// `fill.store_all` commits a host's off-thread refill of several fills as
+/// one undo step, and refuses the whole batch (storing nothing) when one
+/// fill's copper is stale or a fill is gone.
+#[test]
+fn store_all_is_one_atomic_undo_step() -> Fallible<()> {
+    use super::StoredFill;
+    let mut engine = showcase()?;
+    let gnd = net(&engine, "GND")?;
+    let a = add(
+        &mut engine,
+        spec(Some(gnd), CopperLayer::Bottom, rect(0.0, 0.0, 44.0, 28.0)),
+    )?;
+    let b = add(
+        &mut engine,
+        spec(Some(gnd), CopperLayer::Inner(1), rect(0.0, 0.0, 44.0, 28.0)),
+    )?;
+    let fresh = super::refill(engine.project(), RefillTarget::All)?;
+    let batch = |copper: &[(Id, crate::model::fill::FilledCopper)]| {
+        Operation::Fill(FillCommand::StoreAll {
+            fills: copper
+                .iter()
+                .map(|(fill, copper)| StoredFill {
+                    fill: *fill,
+                    copper: copper.clone(),
+                })
+                .collect(),
+        })
+    };
+    let rev = engine.revision();
+    let before = engine.to_file();
+    let mut stale = fresh.clone();
+    if let Some((_, c)) = stale.last_mut() {
+        c.key = "0000000000000000".into();
+    }
+    assert!(engine.apply(rev, batch(&stale)).is_err());
+    let mut gone = fresh.clone();
+    gone.push((9999, fresh[0].1.clone()));
+    assert!(engine.apply(rev, batch(&gone)).is_err());
+    assert_eq!(engine.revision(), rev);
+    assert_eq!(engine.to_file(), before);
+    engine.apply(rev, batch(&fresh))?;
+    for id in [a, b] {
+        assert!(!super::is_stale(
+            engine.project(),
+            fill(engine.project(), id)?
+        ));
+    }
+    engine.undo()?;
+    assert_eq!(engine.to_file(), before);
     Ok(())
 }

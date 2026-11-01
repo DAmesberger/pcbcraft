@@ -18,6 +18,7 @@ use crate::refusal::{self, Origin, Refused};
 use crate::scene::{Display, ModelKey, SceneController};
 use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
+use pcbcraft_core::layout::fill::{FillCommand, RefillTarget, StoredFill};
 use pcbcraft_core::{Engine, Operation, format::EditorFile};
 use solidcraft_ui_egui::{fonts, theme};
 use std::path::PathBuf;
@@ -124,6 +125,21 @@ impl App {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
         }
+        // An explicit refill computes on the fill worker; its copper comes
+        // back as one undoable `fill.store_all` (`refill_fills`).
+        if let Operation::Fill(FillCommand::Refill { target }) = &operation
+            && self.fills.available()
+            && !matches!(target, RefillTarget::One(id) if self.engine.project().fill(*id).is_none())
+        {
+            if self.fills.refilling() {
+                self.say(Level::Info, "A refill is already running");
+                return;
+            }
+            if self.fills.refill(&self.engine, *target) {
+                self.say(Level::Info, "Refilling in the background");
+                return;
+            }
+        }
         match self.engine.apply_hosted(
             self.engine.revision(),
             operation,
@@ -190,22 +206,54 @@ impl App {
     /// Store fill copper the worker computed for this revision (no undo
     /// step), and queue the revision. Undo and a pending import review
     /// still name the step before the refill.
-    fn refill_fills(&mut self) {
+    ///
+    /// A finished explicit refill is committed here as one undoable
+    /// `fill.store_all`.
+    fn refill_fills(&mut self, ctx: &egui::Context) {
         if self.files.busy() {
             return;
         }
         let before = self.engine.revision();
         match self.fills.poll(&mut self.engine) {
-            Ok(0) => {}
-            Ok(_) => {
-                let now = self.engine.revision();
-                if self.undo_revision == Some(before) {
-                    self.undo_revision = Some(now);
+            Ok(polled) => {
+                if polled.stored > 0 {
+                    let now = self.engine.revision();
+                    if self.undo_revision == Some(before) {
+                        self.undo_revision = Some(now);
+                    }
+                    if let Some(pending) = &mut self.pending_import
+                        && pending.revision == before
+                    {
+                        pending.revision = now;
+                    }
                 }
-                if let Some(pending) = &mut self.pending_import
-                    && pending.revision == before
-                {
-                    pending.revision = now;
+                match polled.refilled {
+                    Some(copper) if copper.is_empty() => {
+                        self.say(Level::Info, "No fill to refill");
+                    }
+                    Some(copper) => {
+                        let count = copper.len();
+                        let revision = self.engine.revision();
+                        self.apply(
+                            ctx,
+                            Origin::Command,
+                            Some(Operation::Fill(FillCommand::StoreAll {
+                                fills: copper
+                                    .into_iter()
+                                    .map(|(fill, copper)| StoredFill { fill, copper })
+                                    .collect(),
+                            })),
+                        );
+                        if self.engine.revision() != revision {
+                            let text = if count == 1 {
+                                "Refilled 1 fill".to_owned()
+                            } else {
+                                format!("Refilled {count} fills")
+                            };
+                            self.say_with(Level::Info, text, vec![ToastAction::Undo]);
+                        }
+                    }
+                    None => {}
                 }
             }
             Err(text) => self.say(Level::Warning, text),
@@ -879,7 +927,7 @@ impl eframe::App for App {
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
         self.scene.receive();
-        self.refill_fills();
+        self.refill_fills(&ctx);
         self.file_effects(&ctx);
         self.library_sources(&ctx);
         self.component_subject(&ctx);

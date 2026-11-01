@@ -1199,3 +1199,80 @@ fn a_package_change_is_listed_once_for_every_instance_it_reaches() -> Result<()>
 }
 
 mod review_data;
+
+/// The impact plan measures pad clearance with the project's effective
+/// rules: a pad moved to 0.3 mm from another net's track passes the
+/// default 0.2 mm, but becomes a planned conflict once the track's net is
+/// in a class of 0.4 mm clearance.
+#[test]
+fn the_impact_plan_reads_net_class_clearances() -> Result<()> {
+    use crate::rules::{NetClassSpec, RulesCommand};
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        shared,
+        ..
+    } = routed()?;
+    let track = engine
+        .project()
+        .tracks
+        .iter()
+        .find(|t| t.id == shared)
+        .cloned()
+        .ok_or_else(|| invalid("track"))?;
+    // R1 stands unrotated at (8, 8) with the track along y = 8 from its
+    // pad 2: pad 1 moves to 0.3 mm above the track's edge.
+    let placement = engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .cloned()
+        .ok_or_else(|| invalid("placement"))?;
+    assert_eq!(placement.rotation_deg, 0.0);
+    let above = track.start[1] - placement.position[1] + track.width / 2.0 + 0.3;
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.footprint, footprint_body, |fp| {
+            let pad = &mut fp.pads[0];
+            let unturned = pad.rotation_deg == 0.0 || pad.rotation_deg == 180.0;
+            let half = pad.shape.extent()[usize::from(unturned)] / 2.0;
+            pad.position = [3.0, above + half];
+        })
+    })?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    assert!(
+        plan.conflicts
+            .iter()
+            .all(|c| c.reason != ConflictReason::Clearance),
+        "0.3 mm passes the default 0.2 mm: {:?}",
+        plan.conflicts
+    );
+    let crate::Outcome::NetClassAdded { class } = apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::AddNetClass {
+            class: NetClassSpec {
+                name: "Wide".into(),
+                clearance: Some(0.4),
+                ..NetClassSpec::default()
+            },
+        }),
+    )?
+    else {
+        return Err(invalid("class added"));
+    };
+    apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::AssignNets {
+            nets: vec![track.net],
+            class: Some(class),
+        }),
+    )?;
+    let plan = engine.preview_update(revision_change(r1, target));
+    let [conflict] = plan.conflicts.as_slice() else {
+        return Err(invalid("one conflict expected"));
+    };
+    assert_eq!(conflict.track, shared);
+    assert_eq!(conflict.reason, ConflictReason::Clearance);
+    Ok(())
+}

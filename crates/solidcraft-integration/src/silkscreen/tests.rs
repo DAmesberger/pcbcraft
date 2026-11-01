@@ -160,3 +160,48 @@ fn a_side_without_silkscreen_prints_nothing() -> Result<()> {
     );
     Ok(())
 }
+
+/// U2 moved to (30, 12) on the showcase sets its legend against its
+/// neighbours' and over copper; the build still succeeds and every
+/// silkscreen film is a closed outward volume (a review found the whole
+/// native build failing here).
+#[test]
+fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
+    use pcbcraft_core::layout::LayoutCommand;
+    use pcbcraft_core::{Layer, Operation};
+    let fail = |e: pcbcraft_core::Error| crate::Error::Verification(e.to_string());
+    let mut engine = Engine::showcase().map_err(fail)?;
+    let u2 = engine
+        .project()
+        .instance_by_designator("U2")
+        .map(|i| i.id)
+        .ok_or_else(|| crate::Error::Verification("U2".into()))?;
+    engine
+        .apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Move {
+                instance: u2,
+                position: [30.0, 12.0],
+                rotation_deg: 0.0,
+                layer: Layer::Top,
+            }),
+        )
+        .map_err(fail)?;
+    let model = crate::project::build(engine.project())?;
+    let films: Vec<&Geometry> = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::Silkscreen)
+        .collect();
+    assert!(films.iter().all(|g| g.volume > 0.0));
+    // U2's legend is built whole: its flat film and the piece standing on
+    // the mask caps it crosses (the piece that failed), not left out.
+    let pick = model
+        .sources
+        .iter()
+        .find(|s| s.instance == Some(u2) && s.pad.is_none())
+        .map(|s| s.pick_id)
+        .ok_or_else(|| crate::Error::Verification("U2 pick".into()))?;
+    assert_eq!(films.iter().filter(|g| g.item == Some(pick)).count(), 2);
+    Ok(())
+}

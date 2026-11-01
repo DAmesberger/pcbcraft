@@ -5,8 +5,8 @@ Four founder requests are built here: configurable manufacturing parameters with
 ## Invariants
 
 - **Defaults equal the former values.** `DesignRules::default()` is the built-in profile `pcbcraft-default` ("Pcbcraft default"). It equals the former hard-coded limits: 0.2 mm copper clearance, copper anywhere inside the board (edge clearance 0), 0.25 mm drill-to-copper and hole-to-hole, 0.1 mm annular ring and min drill, 0.05 mm mask expansion, 0.1 mm mask web and silk width, 0.6 mm silk text height, 0.3/0.6 mm tented vias, a 0.3 mm route width and the land-estimator margins (gull-wing toe shift 0.1 mm, THT drill over lead 0.3 mm, THT land over drill 0.6 mm, THT land gap 0.25 mm). Silkscreen-to-board-edge clearance defaults to 0, which means it is not checked. `default_rules_equal_the_former_hardcoded_limits` pins this, and every check gives the same result as before under the default profile.
-- **One typed engine.** New operations: `rules.set_profile`, `rules.set_override`, `rules.clear_override`, `net_class.add`/`edit`/`delete`/`assign`/`set_patterns`/`set_clearance`, `fill.add`/`edit`/`delete`/`refill`/`store`, `keepout.add`/`edit`/`delete`, `board.set_rectangle`, `board.start_sketch`, `board.edit`, `board.constrain`, `board.constraint_edit` and `board.constraint_delete`. New queries: `rules.effective`, `rules.profiles`, `rules.preview_profile`, `net_class.list`, `net_class.preview_patterns`, `board.shape` and `fill.status`. All of them come from `pcbcraft_core::schemas()`, so the CLI and MCP reach them through the generic `apply` and `query`. Each command is one undo step, and a failed command leaves the document unchanged. A rules command that changes nothing is not an undo step.
-- **Pre-release format.** The new `Project` fields (`rules`, `board_shape`, `edge_constraints`, `fills`, `keepouts`) are serde-defaulted and skipped when empty or default. The showcase names only `fills`, because it carries two pours. There are no migrations.
+- **One typed engine.** New operations: `rules.set_profile`, `rules.set_override`, `rules.clear_override`, `net_class.add`/`edit`/`delete`/`assign`/`set_patterns`/`set_clearance`, `fill.add`/`edit`/`delete`/`refill`/`store`/`store_all`, `keepout.add`/`edit`/`delete`, `board.set_rectangle`, `board.start_sketch`, `board.edit`, `board.constrain`, `board.constraint_edit` and `board.constraint_delete`. New queries: `rules.effective`, `rules.profiles`, `rules.preview_profile`, `net_class.list`, `net_class.preview_patterns`, `board.shape` and `fill.status`. All of them come from `pcbcraft_core::schemas()`, so the CLI and MCP reach them through the generic `apply` and `query`. Each command is one undo step, and a failed command leaves the document unchanged. A rules command that changes nothing is not an undo step.
+- **Pre-release format.** The new `Project` fields (`rules`, `board_shape`, `edge_constraints`, `fills`, `keepouts`) are serde-defaulted and skipped when empty or default. There are no migrations.
 - **Pure core.** Sketch solving runs behind host traits: `FootprintEvaluator` for footprints and `BoardShapeEvaluator` for the board. Hosts pass them as `Engine::apply_hosted(rev, op, Evaluators { footprint, board })`. The desktop app (`pcb_editor::board_shape::host_evaluator`) and the automation session both pass `pcbcraft_solidcraft::board::SketchBoardEvaluator`. The user profile library lives in `pcbcraft-io`.
 - **Clean room.** The built-in profiles (`standard` "Standard 6/6", `fine` "Fine 4/4", `hdi` "HDI 3/3") are generic original estimates, labelled `ProfileBasis::Estimated`. Fabricator numbers enter only as user profiles (`ProfileBasis::FabricatorEntered`, with source, URL, date and notes).
 
@@ -18,7 +18,7 @@ Four founder requests are built here: configurable manufacturing parameters with
   - `rules::apply` is atomic. It names the rule in every bounds refusal.
   - `rules.set_profile` refuses a built-in profile whose values differ from the shipped ones (`rules.builtin_modified`; save changed values as a user profile). It also refuses kept overrides that break the new profile (`rules.override_conflict`).
   - `rules.preview_profile` lists the rule changes, the dropped overrides and the board issues that would appear or go, matched by finding identity. A switch that would be refused is still previewed and carries its `refusal`.
-- **Checks** read the effective rules: copper clearance, board edge with cutouts and slots (`layout/board_edge.rs` on `Project::board()`), via drill size, annular ring, aspect ratio, drill to copper, hole to hole, mounting holes, courtyard clearance, the footprint mask-web and silkscreen lint, and the land estimators. The routing and via refusals do too.
+- **Checks** read the effective rules. Two pads of one placed footprint are held to the profile's pad-to-pad clearance only, not to net-class or class-pair clearances: the footprint fixes their spacing (a QFN's pins cannot meet a power class's clearance to its exposed pad). The checks read: copper clearance, board edge with cutouts and slots (`layout/board_edge.rs` on `Project::board()`), via drill size, annular ring, aspect ratio, drill to copper, hole to hole, mounting holes, courtyard clearance, the footprint mask-web and silkscreen lint, and the land estimators. The routing and via refusals do too.
   - Messages give the rule, its value and its source after "; ", for example "…; needs 0.25 mm (Fine 4/4: min mask web)". The issue title is the first clause, so it stays the same when the profile changes.
   - `layout/limits.rs` caches the resolved limits for one check run.
 - **Desktop.** The Board card's Rules row opens the docked Design rules panel (`pcb_editor/rules_panel.rs`).
@@ -39,7 +39,7 @@ Four founder requests are built here: configurable manufacturing parameters with
     - A net that splits off takes its origin's class.
     - Nets that are gone drop their assignment.
   - `net_class.list` reports every class with its resolved values and every net with its class and basis.
-- **Routing.** `layout.route`, `route_apply`, `track_set` and `route_layer_change` refuse widths below the net's class minimum or the rule minimum. `layout::route_width` and `layout::class_via` give the class defaults. Clearance checks use the class and class-pair values.
+- **Routing.** `layout.route`, `route_apply`, `track_set` and `route_layer_change` refuse widths below the net's class minimum or the rule minimum. `layout::route_width` and `layout::class_via` give the class defaults. Clearance checks use the class and class-pair values, and so does a library update's impact preview (`layout::track_pad_clearance_conflict` and `via_pad_clearance_conflict` take `limits::BoardRules`; `the_impact_plan_reads_net_class_clearances`).
 - **Desktop.**
   - The Route tool starts at the routed net's class width; a typed width stays for that net. The Via tool and layer changes place the class's via.
   - The Track, Via and schematic Net cards have a Class row.
@@ -55,10 +55,12 @@ Four founder requests are built here: configurable manufacturing parameters with
   5. Hatching and island removal are options.
 - **Results.** The copper (`FilledCopper`) is stored on the fill with the key of its inputs.
   - `inputs_key` covers only the objects within the fill's reach, so an edit elsewhere leaves the fill fresh.
-  - `fill.store` refuses copper whose key is stale.
-  - The fill joins (the pads, vias and tracks of each island) count in board connectivity and airwires.
-- **Checks:** `fill.clearance`, `fill.empty`, `fill.island_unconnected`, `fill.net_missing`, `fill.stale`, `fill.thermal_starved` and `keepout.track`/`via`/`pad`.
-- **Background refill.** The desktop fill worker (`apps/pcbcraft/src/fill_worker.rs`) computes stale fills off the UI thread with `FillCache` and `compute_stale`. It stores them with `Engine::store_fills`, which adds no undo step. The `fill.refill` command is the explicit, undoable refill.
+  - `fill.store` refuses copper whose key is stale; `fill.store_all` stores several fills as one undo step and refuses the whole batch when any key is stale.
+  - The fill joins (the pads, vias and tracks of each island) count in board connectivity and airwires while the copper is fresh. Stale copper joins nothing, so an airwire shows as soon as a joined pad or via moves off the pour.
+  - Fill copper is bounded per fill (2^20 vertices) and per project (2^23).
+- **Checks:** `fill.clearance` (other-net copper overlapping stale copper; a stale fill otherwise carries only its one `fill.stale`, so a profile switch does not list every gap the refill will fix), `fill.empty`, `fill.island_unconnected`, `fill.net_missing`, `fill.stale`, `fill.thermal_starved` and `keepout.track`/`via`/`pad`.
+- **Background refill.** The desktop fill worker (`apps/pcbcraft/src/fill_worker.rs`) computes stale fills off the UI thread with `FillCache` and `compute_stale`. It stores them with `Engine::store_fills`, which adds no undo step and computes the keys of the stored fills only.
+  - An explicit refill (the Fill card's and Layout's Refill) also runs on the worker. The app commits its copper as one undoable `fill.store_all` and says "Refilling in the background" meanwhile; a refill whose revision moved on is computed again. The CLI and MCP keep the synchronous `fill.refill`.
 - **Measured** (1 November 2026, macOS arm64, release build): one fill of a 200 × 200 mm plane over 10,000 through vias took 1.40 s, and its inputs key 2.1 ms (`a_large_board_fills_in_seconds`, which prints both).
 - **PCB 2D** (`fill_paint.rs`, `fill_tool.rs`, `fill_card.rs`):
   - Fill copper is drawn under its layer's tracks in the layer's opaque colour: solid, hatched or outlines only, set in the view popover's Fills row. It is triangulated once per copper with `spade` and cached.
@@ -66,10 +68,12 @@ Four founder requests are built here: configurable manufacturing parameters with
   - The selected fill's outline has vertex and midpoint handles. Each release is one `fill.edit`.
   - The Fill tool draws outlines with lines and three-point arcs. The Fill card edits net, layer, priority and settings, with Refill and Delete in its footer.
 - **PCB 3D** (`crates/solidcraft-integration/src/project/fill.rs`):
-  - Each region of fill copper is a saved `FillCopper` body, one component per fill, on its layer and as thick as its foil.
-  - Inner fills are cut from the laminate.
+  - Each region of fill copper is a saved `FillCopper` body, one component per fill, on its layer and as thick as its foil. Its loops are simplified to 10 µm (`MODEL_CHORD_MM`, Douglas–Peucker) first; the document's 5 µm copper gives a pour thousands of faces.
+  - Inner fills are not cut from the laminate: the plane overlaps the laminate by its foil thickness. The cut, a Boolean of every clearance and thermal against the drilled laminate, cost about 45 s of a 66 s showcase build.
   - Outer fills get a display-only mask cap.
-- **Showcase.** The showcase has a bottom GND pour, an inner GND plane and ten stitching vias. `Engine::showcase` refills them.
+  - An inner via ring clear of every other inner copper is built and cut from the laminate as its exact circle (one face) instead of a 64-gon; on the showcase this took the inner copper cut from about 13 s to under 1 s.
+  - Measured (1 November 2026, macOS arm64, `ci` profile, `pcbcraft-cli export`): the shipped showcase builds in 9.0 s; the component-model base showcase took 10.5 s with the base build and takes 5.5 s with this one. `the_showcase_fills_cost_little_of_the_build` keeps the filled showcase within 1.25× of the same board unfilled (5.9 s against 6.3 s in a test build).
+- **Showcase.** `Engine::showcase` has a bottom GND pour, an inner GND plane and ten stitching vias and refills them. The shipped file (`pcbcraft-cli showcase`, `Engine::showcase_hosted` with the sketch evaluators) adds a Power class over GND and VCC (0.5 mm tracks, 0.25 mm minimum, 0.4/0.8 mm vias, the profile's clearance), a top GND pour (thermals to the header and vias, solid to surface pads), and a sketched board: 2 mm rounded corners through `corner_r`, a 3.5 mm round cutout, a 1 mm milled slot and J1 held to the left edge at `height / 2 - 1 mm`. Its board checks are clean (`the_shipped_showcase_has_its_shape_classes_and_edge_held_header`).
 
 ## Board shape, cutouts and edge-relative placement
 
@@ -78,13 +82,13 @@ Four founder requests are built here: configurable manufacturing parameters with
   - `Project::board()` returns the solved shape: the outer outline, cutouts, slots, mounting holes and named edges. For a rectangle, the edges are bottom/right/top/left.
 - **Sketch** (`crates/solidcraft-integration/src/board.rs`). `SketchBoardEvaluator` runs on the footprint sketch machinery: canonical sketch check, parameters in Solidcraft's expression language, bound dimensions and the solver.
   - `board.start_sketch` turns the rectangle into a fully constrained sketch driven by `width` and `height`.
-  - `board.edit` applies sketch edits, parameters, outline/cutout/slot/mounting-hole roles, edge names, real tangent fillets and milled slots as one undo step. A fillet keeps a virtual corner, so dimensions and named edges still run corner to corner.
+  - `board.edit` applies sketch edits, parameters, outline/cutout/slot/mounting-hole roles, edge names, real tangent fillets and milled slots as one undo step. A fillet keeps a virtual corner, so dimensions and named edges still run corner to corner: `board.shape` reports a filleted board's `bottom` edge from (0, 0) to (w, 0) while its `outer` loop's line runs between the fillets. Edge constraints measure along that virtual segment, so a part stays put when the corner radius changes.
   - The edit is refused when the shape is unsolved, over-constrained, open or out of range.
 - **Edge constraints** resolve after every operation (`layout::outline::follow`).
   - A placement, fill or keepout lands at its named edge, straight or arc. Its position is set by an anchor, `along` and `offset` expressions over board parameters, an alignment (origin, near side, or the centre of the courtyard or pads), and an optional rotation that follows the edge. Parts move when board parameters change.
   - Moving a constrained part elsewhere is refused.
   - A constraint whose edge or target is gone is reported as `board.constraint_unresolved`. A stored sketch that no longer solves is reported as `board.shape_unsolved`.
-- **3D.** The laminate extrudes the solved outline and cuts its cutouts, slots and mounting holes. Fill computation and board-edge checks read the same shape.
+- **3D.** The laminate extrudes the solved outline and cuts its cutouts, slots and mounting holes. The display-only mask films follow the solved outline (inset 0.03 mm) and open over every cutout, slot and mounting hole; the edge bands line the outline and each cutout and slot (`the_mask_and_edge_bands_follow_the_sketched_shape`). Fill computation and board-edge checks read the same shape.
 - **Desktop** (`board_shape.rs`, `board_shape_ui.rs`, `edge_card.rs`):
   - Layout's Shape button opens the Board shape mode on the footprint editor's sketch view.
   - The tools are Line (L), Arc (A), Circle (C), Rectangle (R, with a parametric corner radius), Fillet (F), Dimension (D, bound to board parameters), Cutout (U), Slot (Shift+H), Mounting hole (H) and Name edge (E). X toggles construction geometry. Every gesture is one `board.edit`.
@@ -95,4 +99,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 
 - Push-and-shove is not part of this work; routing respects class widths and the rule minimums.
 - Document validation still bounds vias by the board's bounding box (`board_size`). A via outside a sketched outline but inside its bounding box is a board-edge finding, not an invalid document.
-- The Board shape mode, the Fill tool and card, the Net classes card and the Design rules panel are covered by engine and egui-frame tests (`the_host_evaluator_solves_a_cutout_gesture_on_the_engine` drives a Cutout gesture through the linked sketch engine). The integrated app has not been checked by hand.
+- The Board shape mode, the Fill tool and card, the Net classes card and the Design rules panel are covered by engine and egui-frame tests (`the_host_evaluator_solves_a_cutout_gesture_on_the_engine` drives a Cutout gesture through the linked sketch engine).
+- The shipped showcase's cutout and slot are drawn at coordinates, not dimensioned, so its sketch solves under-constrained; its outline is fully driven by `width`, `height` and `corner_r`.
+- Fill bodies are rebuilt with the rest of the native model on every build; they are not cached across builds.
+- `rules.preview_profile` runs two issue reports on the UI thread; it has not been measured at 10,000 vias.
