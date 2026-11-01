@@ -23,10 +23,10 @@ pub use solidcraft_engine::{geom, render};
 #[cfg(test)]
 mod fixtures;
 
-/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-product-look`
+/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-via2`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
-/// opt-in product look).
-pub const SOLIDCRAFT_REVISION: &str = "87b1009b029a1b381ad1799fe72bfec44a4b1a66";
+/// opt-in product look and via scaling).
+pub const SOLIDCRAFT_REVISION: &str = "d53b131e3d1cf0b9489e9c048c60af787b14cc47";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

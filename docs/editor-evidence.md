@@ -180,7 +180,7 @@ Native construction runs on a worker: while editing in PCB 2D the model is prepa
 
 ## Via scale phase 2 review fixes
 
-1 November 2026, macOS arm64, Rust 1.96.0, Solidcraft fork branch `pcbcraft-via2` (`d53b131`, not yet on a remote; the build uses a temporary path patch). Measurements in [PCB realism](pcb-realism.md#build-cost-measured):
+1 November 2026, macOS arm64, Rust 1.96.0, Solidcraft fork branch `pcbcraft-via2` (`d53b131`; built at the time through a temporary path patch, since pushed and pinned). Measurements in [PCB realism](pcb-realism.md#build-cost-measured):
 
 - `build_timings`, best of three at a load average of about 6: showcase 0.96 s, demo with 400 tracks 0.60 s (2.2 s before), 1,000 vias 1.6 s, 4,096 vias 2.0 s, the 10,000-via benchmark board 2.8 s (4.0 s before; the bench now fails at 3 s or more), 10,000 vias with 2,000 tracks 8.5 s (target not met). Tracks are extruded whole and put off in the build's batch; the fork no longer evaluates every parameter for each sketch drawn, copies the design for each line, rebuilds the placement index for the active frame, or compares bodies and placements pair by pair.
 - PCB 3D first frame in the running app with `PCBCRAFT_TIMINGS=1` on a finished 10,000-via build (the review's run of this branch): 8.2, 12.0, 13.6, 15.4, 26.4, 32.0, 32.6 and 37.4 ms. A run after the fixes could not open a board: synthetic input did not reach the system Open panel.

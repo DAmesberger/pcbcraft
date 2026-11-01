@@ -2,7 +2,7 @@
 //! Solidcraft's renderer on an offscreen device, as the window draws it
 //! (scene target with depth, blitted to a target without). The prepare,
 //! paint and read-back steps follow Solidcraft's `ui-egui` offscreen test
-//! helper (MIT, fork revision 87b1009; see ATTRIBUTION.md).
+//! helper (MIT, fork revision d53b131; see ATTRIBUTION.md).
 //!
 //! Without a GPU adapter the tests return early: they measure what the
 //! renderer draws and cannot run without one. With `PCBCRAFT_REQUIRE_GPU`
