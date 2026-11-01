@@ -31,6 +31,7 @@ use crate::native::{Look, Native};
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
+use pcbcraft_core::ids::ContentHash;
 use pcbcraft_core::library::ModelPlacement;
 use pcbcraft_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
 use pcbcraft_core::library::model3d::{
@@ -43,6 +44,7 @@ use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::{MIN_ROUGHNESS, OpaqueSurface};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 /// Built bounds and lead contacts must match the recorded ones this
 /// closely, mm (the same reader and frame give the same numbers; the
@@ -146,6 +148,7 @@ pub fn frame_bounds(
 
 /// A model file read for building: Solidcraft's import feature and each
 /// body's key and colour hint, in the order the feature builds them.
+#[derive(Clone)]
 pub(crate) struct Source {
     pub kind: FeatureKind,
     pub keys: Vec<String>,
@@ -669,7 +672,125 @@ pub fn build_library_model(
     use_: &LibraryModel,
     bytes: &[u8],
 ) -> Result<LibraryDefinition> {
-    check_asset(model, bytes)?;
+    build_library_model_cached(
+        native,
+        component,
+        model,
+        use_,
+        bytes,
+        &SourceCache::default(),
+    )
+}
+
+/// Model files read and hash-checked by earlier builds, kept by the model
+/// worker between board builds (as its marking decals are), so a rebuild
+/// after an edit neither re-hashes a packed model (up to 64 MiB) nor
+/// re-reads its STEP or glTF. An entry is keyed by the asset hash and
+/// format and remembers which bytes it was checked against (their address
+/// and length: the project's shared asset bytes stay put while unchanged);
+/// other bytes are checked again. Entries a build did not use are dropped
+/// by [`SourceCache::sweep`]. Clones share one cache.
+#[derive(Clone, Default)]
+pub struct SourceCache(Arc<Mutex<SourceEntries>>);
+
+#[derive(Default)]
+struct SourceEntries {
+    entries: BTreeMap<(ContentHash, u8), CachedSource>,
+    /// Reads served from the cache, and reads that parsed a file, so far.
+    hits: u64,
+    reads: u64,
+}
+
+struct CachedSource {
+    source: Arc<Source>,
+    /// Address and length of the bytes the hash was checked against.
+    checked: (usize, usize),
+    used: bool,
+}
+
+fn format_key(format: ModelFormat) -> u8 {
+    match format {
+        ModelFormat::Step => 0,
+        ModelFormat::Gltf => 1,
+        ModelFormat::Solidcraft => 2,
+    }
+}
+
+impl SourceCache {
+    /// The checked source of `bytes` as `model` names it: from the cache,
+    /// or hashed against the model and read now (and kept).
+    fn source(&self, model: &ModelDefinition, bytes: &[u8]) -> Result<Arc<Source>> {
+        let key = (model.asset.hash, format_key(model.format));
+        let at = (bytes.as_ptr() as usize, bytes.len());
+        let Ok(mut cache) = self.0.lock() else {
+            // A poisoned cache is bypassed, never trusted.
+            check_asset(model, bytes)?;
+            return read_source(bytes, model.format).map(Arc::new);
+        };
+        if let Some(entry) = cache.entries.get_mut(&key) {
+            if entry.checked != at {
+                check_asset(model, bytes)?;
+                entry.checked = at;
+            }
+            entry.used = true;
+            let source = Arc::clone(&entry.source);
+            cache.hits += 1;
+            return Ok(source);
+        }
+        check_asset(model, bytes)?;
+        let source = Arc::new(read_source(bytes, model.format)?);
+        cache.reads += 1;
+        cache.entries.insert(
+            key,
+            CachedSource {
+                source: Arc::clone(&source),
+                checked: at,
+                used: true,
+            },
+        );
+        Ok(source)
+    }
+
+    /// Start a build: every entry is unused until read again.
+    pub fn begin(&self) {
+        if let Ok(mut cache) = self.0.lock() {
+            for entry in cache.entries.values_mut() {
+                entry.used = false;
+            }
+        }
+    }
+
+    /// Drop the entries the last build did not use.
+    pub fn sweep(&self) {
+        if let Ok(mut cache) = self.0.lock() {
+            cache.entries.retain(|_, e| e.used);
+        }
+    }
+
+    /// Model files kept.
+    pub fn len(&self) -> usize {
+        self.0.lock().map_or(0, |c| c.entries.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// (reads served from the cache, reads that parsed a file) so far.
+    pub fn counts(&self) -> (u64, u64) {
+        self.0.lock().map_or((0, 0), |c| (c.hits, c.reads))
+    }
+}
+
+/// [`build_library_model`] reading the file through `cache`.
+pub fn build_library_model_cached(
+    native: &mut Native,
+    component: &str,
+    model: &ModelDefinition,
+    use_: &LibraryModel,
+    bytes: &[u8],
+    cache: &SourceCache,
+) -> Result<LibraryDefinition> {
     if !valid_stem(component) {
         return Err(Error::Invalid(format!(
             "model.name: `{component}` must start with `{PARAMETER_PREFIX}` and use at most \
@@ -681,7 +802,7 @@ pub fn build_library_model(
             "model.name: the design already has a definition named {component}"
         )));
     }
-    let source = read_source(bytes, model.format)?;
+    let source = cache.source(model, bytes)?;
     let keys = source.keys.clone();
     check_mapping(model, &keys)?;
     // Terminals by body key, from the explicit lead map only.
@@ -704,7 +825,13 @@ pub fn build_library_model(
             )));
         }
     }
-    let names = add_source(native, component, source, &model.frame, model.format)?;
+    let names = add_source(
+        native,
+        component,
+        Source::clone(&source),
+        &model.frame,
+        model.format,
+    )?;
     let file = &model.asset.file_name;
     let built = bounds_of(native, &names)?;
     if !(close(built[0], model.bounds_mm[0]) && close(built[1], model.bounds_mm[1])) {

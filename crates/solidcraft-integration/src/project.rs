@@ -95,6 +95,8 @@ struct Builder {
     /// name: drawn with that material's look (the file keeps its opaque
     /// projection).
     custom_looks: BTreeMap<String, (OpaqueSurface, Detail)>,
+    /// Library model files read by earlier builds.
+    sources: models::imported::SourceCache,
 }
 
 impl Builder {
@@ -105,6 +107,7 @@ impl Builder {
             models: Vec::new(),
             placed: BTreeSet::new(),
             custom_looks: BTreeMap::new(),
+            sources: models::imported::SourceCache::default(),
         })
     }
 
@@ -119,8 +122,14 @@ impl Builder {
         bytes: &[u8],
     ) -> Result<Created> {
         if !self.models.iter().any(|d| d.component == stem) {
-            let built =
-                models::imported::build_library_model(&mut self.native, stem, model, use_, bytes)?;
+            let built = models::imported::build_library_model_cached(
+                &mut self.native,
+                stem,
+                model,
+                use_,
+                bytes,
+                &self.sources,
+            )?;
             for body in &built.bodies {
                 self.record(&body.name, body.kind())?;
                 if matches!(
@@ -807,6 +816,24 @@ fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
+    build_with(project, &models::imported::SourceCache::default())
+}
+
+/// [`build`] reading library model files through `sources`, which the
+/// caller keeps between builds (the model worker), so an unchanged model is
+/// neither re-hashed nor re-read. Entries this build did not use are
+/// dropped.
+pub fn build_with(
+    project: &Project,
+    sources: &models::imported::SourceCache,
+) -> Result<NativeModel> {
+    sources.begin();
+    let built = build_in(project, sources);
+    sources.sweep();
+    built
+}
+
+fn build_in(project: &Project, sources: &models::imported::SourceCache) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     if project
         .vias
@@ -819,6 +846,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let stackup = &project.stackup;
     let mut b = Builder::new(&project.name)?;
+    b.sources = sources.clone();
     stackup_params(&mut b, project)?;
     let board = b.native.component("PCB substrate", true)?.occurrence;
     b.body(
@@ -1263,7 +1291,7 @@ pub fn library_model<'a>(
                 definition.asset.file_name, definition.asset.hash
             ))
         })?;
-    Ok((definition, use_, asset.data.0.as_slice()))
+    Ok((definition, use_, asset.data.as_slice()))
 }
 
 /// Every board via as saved copper: its plated barrel through the laminate

@@ -193,6 +193,7 @@ impl ComponentDefinition {
         out.extend(functions::rules::declaration_findings(id, &self.pin_rules));
         if let Some(marking) = &self.marking {
             out.extend(super::marking::spec_findings(id, marking));
+            out.extend(super::marking::artwork_findings(library, id, marking));
         }
         if self.representations.is_empty() {
             out.push(issue(

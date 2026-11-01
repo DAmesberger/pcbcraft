@@ -209,7 +209,7 @@ fn the_decal_follows_the_area_frame() -> TestResult {
     assert!(
         mesh.positions
             .iter()
-            .all(|p| (p[2] - (-1.601)).abs() < 1e-5)
+            .all(|p| (f64::from(p[2]) - (-1.6 - DECAL_OFFSET_MM)).abs() < 1e-5)
     );
     // The line runs along u (+y): longer in y than in x.
     let span = |k: usize| {
@@ -511,7 +511,7 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
 fn unmarked_projects_read_no_layouts() -> TestResult {
     let (project, _) = demo()?;
     assert!(!board::any_marked(&project));
-    assert!(board::instance_layouts(&project).is_empty());
+    assert!(board::instance_layouts(&project).layouts.is_empty());
     Ok(())
 }
 
@@ -584,4 +584,189 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
     // A body has no up-facing flat face at its top here.
     assert!(board::face_area(&[&body], true, [1.0, 0.0]).is_none());
     Ok(())
+}
+
+/// The worker's layout read costs no project copy, engine or asset
+/// re-hash: with 64 MiB packed and 200 marked instances it is fast, reads
+/// every instance, and an instance the core refuses is reported, not
+/// silently dropped.
+#[test]
+fn instance_layouts_read_the_project_in_place() -> TestResult {
+    use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+    use pcbcraft_core::library::marking::{Align, MarkingItem, MarkingSpec, Template};
+    let (mut project, _) = demo()?;
+    let spec = MarkingSpec {
+        items: vec![MarkingItem::Text {
+            template: Template("{designator}".into()),
+            height_mm: None,
+            align: Align::Centre,
+        }],
+        area: pcbcraft_core::library::marking::AreaChoice::Explicit {
+            centre: [0.0, 0.0],
+            size_mm: [1.2, 0.6],
+        },
+        ..Default::default()
+    };
+    let first = project.instances.first().cloned().ok_or("no instance")?;
+    let placement = project.placements.first().cloned().ok_or("no placement")?;
+    for n in 0..200 {
+        let id = project.allocate()?;
+        let mut instance = first.clone();
+        instance.id = id;
+        instance.designator = format!("X{n}");
+        instance.marking.replace = Some(spec.clone());
+        project.instances.push(instance);
+        let mut p = placement.clone();
+        p.instance = id;
+        project.placements.push(p);
+    }
+    let big = vec![7u8; 64 * 1024 * 1024];
+    project.library.assets.push(PackedAsset {
+        hash: asset_hash(&big),
+        media_type: "application/octet-stream".into(),
+        data: AssetBytes::new(big),
+    });
+    let start = std::time::Instant::now();
+    let read = board::instance_layouts(&project);
+    let took = start.elapsed();
+    assert!(read.layouts.len() >= 200, "{}", read.layouts.len());
+    assert!(read.failures.is_empty(), "{:?}", read.failures);
+    // Hashing or copying 64 MiB alone takes longer than this.
+    assert!(took.as_millis() < 100, "{took:?}");
+    // A placement whose instance is gone is reported.
+    let ghost = project.allocate()?;
+    let mut p = placement.clone();
+    p.instance = ghost;
+    project.placements.push(p);
+    let mut marked = first.clone();
+    marked.marking.replace = Some(spec);
+    project.instances[0] = marked;
+    let read = board::instance_layouts(&project);
+    assert_eq!(read.failures.len(), 1, "{:?}", read.failures);
+    assert_eq!(read.failures[0].0, ghost);
+    Ok(())
+}
+
+/// SVG artwork end to end on a board: `library.pack_artwork` packs the
+/// file with a component draft's marking, an instance's replacing marking
+/// names it, and the worker's decal pass draws it from the project's
+/// packed asset; the same layout without the asset draws nothing.
+#[test]
+fn board_artwork_is_drawn_from_the_project_s_packed_svg() -> TestResult {
+    use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
+    use pcbcraft_core::library::marking::{
+        ARTWORK_MEDIA_TYPE, Anchor, AreaChoice, InstanceMarking, MarkingItem, MarkingSpec,
+    };
+    use pcbcraft_core::library::{Definition, DraftEdit, PackedAsset};
+    use pcbcraft_core::{InstanceCommand, LibraryCommand, Operation};
+    let mut engine = pcbcraft_core::Engine::demo()?;
+    let bytes = ARTWORK.as_bytes().to_vec();
+    let asset = PackedAsset {
+        hash: asset_hash(&bytes),
+        media_type: ARTWORK_MEDIA_TYPE.into(),
+        data: AssetBytes::new(bytes),
+    };
+    let spec = MarkingSpec {
+        items: vec![MarkingItem::Artwork {
+            svg: asset.hash,
+            size_mm: [0.8, 0.4],
+            anchor: Anchor::Centre,
+            licence: Some("CC0-1.0".into()),
+        }],
+        area: AreaChoice::Explicit {
+            centre: [0.0, 0.0],
+            size_mm: [1.0, 0.6],
+        },
+        ..Default::default()
+    };
+    let draft = engine
+        .drafts()
+        .items
+        .iter()
+        .find(|d| matches!(d.definition, Definition::Component(_)))
+        .ok_or("a component draft")?
+        .clone();
+    let mut definition = draft.definition.clone();
+    if let Definition::Component(c) = &mut definition {
+        c.marking = Some(Box::new(spec.clone()));
+    }
+    engine.apply(
+        engine.revision(),
+        Operation::Library(LibraryCommand::PackArtwork {
+            edits: vec![DraftEdit {
+                id: draft.id,
+                meta: draft.meta.clone(),
+                definition,
+            }],
+            artwork: vec![asset.clone()],
+        }),
+    )?;
+    let instance = engine
+        .project()
+        .placements
+        .first()
+        .map(|p| p.instance)
+        .ok_or("a placement")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SetMarking {
+            instance,
+            marking: InstanceMarking {
+                replace: Some(spec),
+                ..Default::default()
+            },
+        }),
+    )?;
+    let project = engine.project().clone();
+    let model = crate::project::build(&project)?;
+    let mut markings = board::BoardMarkings::default();
+    let decals = markings.decals(&project, &model.geometry, &model.sources);
+    assert!(markings.failures().is_empty(), "{:?}", markings.failures());
+    let triangles: usize = decals.iter().map(|g| g.mesh.triangles.len()).sum();
+    assert!(triangles > 0, "the artwork is drawn");
+    assert!(
+        decals
+            .iter()
+            .all(|g| g.kind == DECAL_KIND && g.volume == 0.0)
+    );
+    // The square (half the artwork's width) fills a visible share of the
+    // 0.8 × 0.4 mm box.
+    let area: f64 = decals
+        .iter()
+        .map(|g| {
+            g.mesh
+                .triangles
+                .iter()
+                .filter_map(|t| g.mesh.tri(t))
+                .map(|[a, b, c]| (b - a).cross(c - a).dot((b - a).cross(c - a)).sqrt() / 2.0)
+                .sum::<f64>()
+        })
+        .sum();
+    assert!(area > 0.05 && area < 0.8 * 0.4, "{area}");
+    // Without the packed SVG the same layout draws nothing.
+    let mut bare = project.clone();
+    bare.library.assets.retain(|a| a.hash != asset.hash);
+    let none = board::BoardMarkings::default().decals(&bare, &model.geometry, &model.sources);
+    let drawn: usize = none.iter().map(|g| g.mesh.triangles.len()).sum();
+    assert_eq!(drawn, 0);
+    Ok(())
+}
+
+/// The decal lift against the depth buffer and the vertex format: at 1 m
+/// (zoomed out past a board-fit view) a decal is many reversed-float
+/// depth steps in front of its face, and its lift is many f32 position
+/// steps even 1 m from the origin, so it does not fight the face.
+#[test]
+fn decals_clear_their_face_in_depth_and_position_precision() {
+    const { assert!(DECAL_DEPTH_STEPS_AT_1_M >= 32.0) };
+    // f32 vertex positions: the step at 1000 mm.
+    let step = f64::from(1000.0_f32.next_up() - 1000.0_f32);
+    assert!(DECAL_OFFSET_MM >= 64.0 * step, "{step}");
+    // Measured on reversed depth (1 at the near plane, near / d beyond):
+    // the face and the decal at 1 m round to distinct depths.
+    let near = 1.0_f64;
+    let depth = |d: f64| (near / d) as f32;
+    let (face, decal) = (depth(1000.0), depth(1000.0 - DECAL_OFFSET_MM));
+    let steps = (decal.to_bits() as i64 - face.to_bits() as i64).abs();
+    assert!(steps >= 32, "{steps} depth steps");
 }

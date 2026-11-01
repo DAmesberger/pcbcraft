@@ -1596,7 +1596,7 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
     project.library.assets.push(PackedAsset {
         hash: definition.asset.hash,
         media_type: definition.asset.media_type.clone(),
-        data: AssetBytes(bytes.clone()),
+        data: AssetBytes::new(bytes.clone()),
     });
     project.library.models.push(Published {
         id,
@@ -1643,11 +1643,33 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
             "the model material's coat is drawn"
         );
     }
+    // The model worker's source cache: a rebuild neither re-hashes nor
+    // re-reads the model file, and draws the same; a build that no longer
+    // uses it drops it.
+    let sources = models::imported::SourceCache::default();
+    let start = std::time::Instant::now();
+    let cold = build_with(&project, &sources)?;
+    let cold_time = start.elapsed();
+    assert_eq!(sources.counts(), (0, 1));
+    let start = std::time::Instant::now();
+    let warm = build_with(&project, &sources)?;
+    let warm_time = start.elapsed();
+    assert_eq!(sources.counts(), (1, 1), "the second build reads nothing");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(warm.geometry.len(), cold.geometry.len());
+    for (a, b) in cold.geometry.iter().zip(&warm.geometry) {
+        assert_eq!(
+            (a.kind, a.item, a.min, a.max),
+            (b.kind, b.item, b.min, b.max)
+        );
+    }
+    eprintln!("library-model board build: cold {cold_time:?}, cached {warm_time:?}");
     // A model or asset the project does not hold refuses the build,
     // naming it; nothing falls back to an envelope.
     let mut no_model = project.clone();
     no_model.library.models.clear();
-    let refused = build(&no_model).err().map(|e| e.to_string());
+    let refused = build_with(&no_model, &sources).err().map(|e| e.to_string());
+    assert!(sources.is_empty(), "an unused model file is dropped");
     assert!(
         refused
             .as_deref()

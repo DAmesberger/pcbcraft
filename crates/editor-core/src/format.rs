@@ -61,7 +61,7 @@ pub fn decode_container_document(bytes: &[u8]) -> Result<EditorFile> {
         .library
         .assets
         .iter()
-        .find(|a| !a.data.0.is_empty())
+        .find(|a| !a.data.is_empty())
     {
         return Err(Error::Invalid(format!(
             "{CONTAINER_DOCUMENT} carries the bytes of asset {} inline; asset bytes belong in {CONTAINER_ASSET_PREFIX}{}",

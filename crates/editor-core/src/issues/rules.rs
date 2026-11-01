@@ -444,6 +444,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "instance.unit_unplaced",
     "library.source_modified",
     "library.update_available",
+    "marking.artwork",
     "marking.does_not_fit",
     "marking.template",
     "marking.unrepresentable",

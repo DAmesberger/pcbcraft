@@ -414,13 +414,16 @@ impl PartEditor {
             .lineage
             .and_then(|lineage| self.parts.take_edit(engine, lineage));
         if self.draft == self.baseline {
-            return part.map(|edit| Operation::Library(LibraryCommand::Edit { edits: vec![edit] }));
+            let edit =
+                part.map(|edit| Operation::Library(LibraryCommand::Edit { edits: vec![edit] }));
+            return self.marking.with_artwork(edit);
         }
         let mut operation = self.send(engine);
         if let Some(Operation::Library(LibraryCommand::Edit { edits })) = &mut operation {
             edits.extend(part);
         }
-        operation
+        // SVG artwork a marking now names packs with this edit.
+        self.marking.with_artwork(operation)
     }
 
     /// Send the working copy with sibling references at their pending

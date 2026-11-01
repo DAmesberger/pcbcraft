@@ -30,7 +30,7 @@ fn named(
 fn asset_of(asset: &PackedAsset, media_type: &str, file: &str) -> AssetRef {
     AssetRef {
         hash: asset.hash,
-        bytes: asset.data.0.len() as u64,
+        bytes: asset.data.len() as u64,
         media_type: media_type.into(),
         file_name: file.into(),
     }

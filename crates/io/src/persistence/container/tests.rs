@@ -4,6 +4,7 @@
 use super::*;
 use pcbcraft_core::Engine;
 use pcbcraft_core::library::PackedAsset;
+use pcbcraft_core::library::bundle::asset_hash;
 
 /// Deterministic, incompressible bytes.
 pub(crate) fn noise(len: usize, seed: u64) -> Vec<u8> {
@@ -22,7 +23,7 @@ pub(crate) fn packed(bytes: Vec<u8>, media_type: &str) -> PackedAsset {
     PackedAsset {
         hash: asset_hash(&bytes),
         media_type: media_type.into(),
-        data: AssetBytes(bytes),
+        data: AssetBytes::new(bytes),
     }
 }
 
@@ -135,7 +136,7 @@ fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> 
     let doc = document(&file)?;
     let name = asset_name(asset.hash);
     let other_name = asset_name(other.hash);
-    let mut corrupt = asset.data.0.clone();
+    let mut corrupt = asset.data.to_vec();
     corrupt[0] ^= 0xFF;
     let mut inline = serde_json::to_value(&file)?;
     let mut newer = serde_json::to_value(Engine::demo()?.to_file())?;
@@ -157,15 +158,15 @@ fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> 
         (
             vec![
                 (CONTAINER_DOCUMENT, &doc, D),
-                (&name, &asset.data.0, S),
-                (&other_name, &other.data.0, S),
+                (&name, &asset.data[..], S),
+                (&other_name, &other.data[..], S),
             ],
             format!("{other_name:?} is not an asset the project packs"),
         ),
         (
             vec![
                 (CONTAINER_DOCUMENT, &doc, D),
-                (&name, &asset.data.0, D),
+                (&name, &asset.data[..], D),
                 ("notes.txt", b"x", D),
             ],
             "\"notes.txt\" is not part of the project format".into(),
@@ -173,19 +174,19 @@ fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> 
         (
             vec![
                 (CONTAINER_DOCUMENT, &doc, D),
-                (&name, &asset.data.0, D),
+                (&name, &asset.data[..], D),
                 (CONTAINER_RECOVERY, b"{}", D),
             ],
             "\"recovery.json\" is not part of the project format".into(),
         ),
         (
-            vec![(&name, &asset.data.0, D)],
+            vec![(&name, &asset.data[..], D)],
             "has no project.json".into(),
         ),
         (
             vec![
                 (CONTAINER_DOCUMENT, &inline_doc, D),
-                (&name, &asset.data.0, D),
+                (&name, &asset.data[..], D),
             ],
             format!("carries the bytes of asset {} inline", asset.hash),
         ),
@@ -232,8 +233,8 @@ fn duplicate_entry_names_are_refused() -> Result<()> {
         &path,
         &[
             (CONTAINER_DOCUMENT, &document(&file)?, D),
-            (&na, &a.data.0, S),
-            (&nb, &a.data.0, S),
+            (&na, &a.data[..], S),
+            (&nb, &a.data[..], S),
         ],
     )?;
     // Rename the second entry to the first in its local and central headers.
@@ -294,14 +295,14 @@ fn a_corrupted_entry_fails_its_checksum_and_a_failed_write_keeps_the_target() ->
         &path,
         &[
             (CONTAINER_DOCUMENT, &document(&file)?, D),
-            (&asset_name(asset.hash), &asset.data.0, S),
+            (&asset_name(asset.hash), &asset.data[..], S),
         ],
     )?;
     assert_eq!(read_container(&path)?, file);
     let mut bytes = std::fs::read(&path)?;
     let at = bytes
         .windows(16)
-        .position(|w| w == &asset.data.0[..16])
+        .position(|w| w == &asset.data[..16])
         .ok_or_else(|| Error::Invalid("stored asset bytes".into()))?;
     bytes[at + 100] ^= 0x55;
     std::fs::write(&path, &bytes)?;
@@ -312,7 +313,7 @@ fn a_corrupted_entry_fails_its_checksum_and_a_failed_write_keeps_the_target() ->
     write_container(&target, &file)?;
     let original = std::fs::read(&target)?;
     let mut bad = file.clone();
-    bad.project.library.assets[0].data.0[0] ^= 1;
+    bad.project.library.assets[0].data.make_mut()[0] ^= 1;
     assert!(write_container(&target, &bad).is_err());
     assert_eq!(std::fs::read(&target)?, original);
     assert_eq!(std::fs::read_dir(dir.path())?.count(), 2);

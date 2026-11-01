@@ -126,7 +126,7 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
     let mut bytes = std::fs::read(store.path())?;
     let at = bytes
         .windows(32)
-        .position(|w| w == &asset.data.0[..32])
+        .position(|w| w == &asset.data[..32])
         .ok_or_else(|| Error::Invalid("stored asset bytes".into()))?;
     bytes[at + 1000] ^= 0x5A;
     std::fs::write(store.path(), &bytes)?;

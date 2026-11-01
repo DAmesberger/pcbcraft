@@ -571,13 +571,27 @@ pub struct LeadMapEntry {
 }
 
 /// The `library.import_model` request: inline asset bytes (bounded by the
-/// packed-asset limits) and the wizard's definition. Creates a Model draft.
+/// packed-asset limits) and the wizard's definition. Creates a Model draft
+/// and, with `assign`, uses it in a package draft in the same undo step.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ImportModel {
     pub name: String,
     pub assets: Vec<super::PackedAsset>,
     pub definition: Box<ModelDefinition>,
+    /// The package draft that uses the new model, with its explicit lead
+    /// map, as `library.edit_package { SetModel }` would set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assign: Option<AssignModel>,
+}
+
+/// Where `library.import_model` assigns its new model.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssignModel {
+    /// A package draft.
+    pub package: DefinitionId,
+    pub lead_map: Vec<LeadMapEntry>,
 }
 
 /// Findings of a package that uses a library model and that need only the
@@ -719,7 +733,7 @@ pub fn snapshot_problems(library: &Library) -> Result<()> {
         for asset in model.definition.assets() {
             let packed = library.assets.iter().find(|a| a.hash == asset.hash);
             let fits = packed.is_some_and(|p| {
-                u64::try_from(p.data.0.len()).is_ok_and(|n| n == asset.bytes)
+                u64::try_from(p.data.len()).is_ok_and(|n| n == asset.bytes)
                     && p.media_type == asset.media_type
             });
             if !fits {
@@ -785,7 +799,7 @@ pub fn import_model(request: &ImportModel) -> Result<(super::DefinitionMeta, sup
                     packed.hash
                 ))
             })?;
-        if !u64::try_from(packed.data.0.len()).is_ok_and(|n| n == named.bytes)
+        if !u64::try_from(packed.data.len()).is_ok_and(|n| n == named.bytes)
             || packed.media_type != named.media_type
         {
             return Err(Error::Invalid(format!(
@@ -822,7 +836,7 @@ pub fn assets_to_pack(
         }
         let held = library.assets.iter().find(|a| a.hash == named.hash);
         let fits = held.is_some_and(|p| {
-            u64::try_from(p.data.0.len()).is_ok_and(|n| n == named.bytes)
+            u64::try_from(p.data.len()).is_ok_and(|n| n == named.bytes)
                 && p.media_type == named.media_type
         });
         if !fits {
@@ -832,12 +846,20 @@ pub fn assets_to_pack(
             )));
         }
     }
-    Ok(request
-        .assets
-        .iter()
-        .filter(|a| library.assets.iter().all(|held| held.hash != a.hash))
-        .cloned()
-        .collect())
+    let mut fresh = Vec::new();
+    for staged in &request.assets {
+        match library.assets.iter().find(|held| held.hash == staged.hash) {
+            None => fresh.push(staged.clone()),
+            Some(held) if held.media_type != staged.media_type => {
+                return Err(Error::Invalid(format!(
+                    "model.asset: {} is already packed as {}, not {}",
+                    staged.hash, held.media_type, staged.media_type
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(fresh)
 }
 
 #[cfg(test)]

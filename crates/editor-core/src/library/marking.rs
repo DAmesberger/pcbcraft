@@ -15,7 +15,7 @@ mod template;
 mod tests;
 
 use crate::diagnostics::{Finding, ObjectRef, Result, Stage};
-use crate::ids::{ContentHash, DefinitionId, FieldRef};
+use crate::ids::{ContentHash, DefinitionId, FieldRef, MAX_LABEL};
 use crate::materials::MaterialId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,10 @@ pub const AREA_MARGIN: f64 = 0.05;
 pub const MAX_RENDERED_LINE: usize = 128;
 /// Largest marking area side, mm (bounds arithmetic, not a rule).
 pub const MAX_AREA_MM: f64 = 1000.0;
+/// Media type of packed marking artwork.
+pub const ARTWORK_MEDIA_TYPE: &str = "image/svg+xml";
+/// Bytes of one packed artwork file (the SVG reader's limit).
+pub const MAX_ARTWORK_BYTES: usize = 1 << 20;
 
 /// A text template over fields: `{mpn}`, `{manufacturer}`,
 /// `{field:<id>}`, `{field:<id>|code3}`, `{var:date_code}`,
@@ -100,13 +104,19 @@ pub enum MarkingItem {
     },
     /// A generated value code ([`codes`]).
     Code { scheme: CodeScheme, field: FieldRef },
-    /// User-supplied SVG artwork, packed by hash, licence-gated like
-    /// models. Pcbcraft ships no vendor logos.
+    /// User-supplied SVG artwork, packed by hash in `Library::assets` as
+    /// [`ARTWORK_MEDIA_TYPE`] (`library.pack_artwork`), licence-gated like
+    /// models: publishing needs the artwork packed and its licence stated
+    /// (`marking.artwork`). Pcbcraft ships no vendor logos.
     Artwork {
         svg: ContentHash,
         size_mm: [f64; 2],
         #[serde(default)]
         anchor: Anchor,
+        /// The artwork's licence (an SPDX id or the owner's terms), at
+        /// most [`MAX_LABEL`] bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        licence: Option<String>,
     },
     Polarity {
         mark: PolarityMark,
@@ -177,9 +187,97 @@ impl MarkingSpec {
         self.items.len() <= MAX_MARKING_ITEMS
             && self.items.iter().all(|item| match item {
                 MarkingItem::Text { template, .. } => template.0.len() <= MAX_TEMPLATE,
+                MarkingItem::Artwork { licence, .. } => {
+                    licence.as_ref().is_none_or(|l| l.len() <= MAX_LABEL)
+                }
                 _ => true,
             })
     }
+
+    /// The artwork hashes the spec names, in item order.
+    pub fn artwork(&self) -> impl Iterator<Item = ContentHash> + '_ {
+        self.items.iter().filter_map(|item| match item {
+            MarkingItem::Artwork { svg, .. } => Some(*svg),
+            _ => None,
+        })
+    }
+}
+
+/// Whether `library` packs `hash` as marking artwork: [`ARTWORK_MEDIA_TYPE`],
+/// at most [`MAX_ARTWORK_BYTES`], UTF-8 text.
+pub fn artwork_packed(library: &super::Library, hash: &ContentHash) -> Option<bool> {
+    let asset = library.assets.iter().find(|a| a.hash == *hash)?;
+    Some(
+        asset.media_type == ARTWORK_MEDIA_TYPE
+            && asset.data.len() <= MAX_ARTWORK_BYTES
+            && std::str::from_utf8(asset.data.as_slice()).is_ok(),
+    )
+}
+
+/// Publish findings of a spec's artwork against `library`
+/// (`marking.artwork`, blocking): each artwork packed as SVG text and its
+/// licence stated, as a model's must be.
+pub fn artwork_findings(
+    library: &super::Library,
+    owner: DefinitionId,
+    spec: &MarkingSpec,
+) -> Vec<Finding> {
+    let mut problems = Vec::new();
+    for (index, item) in spec.items.iter().enumerate() {
+        let MarkingItem::Artwork { svg, licence, .. } = item else {
+            continue;
+        };
+        let n = index + 1;
+        match artwork_packed(library, svg) {
+            None => problems.push(format!(
+                "item {n}: artwork {svg} is not packed in the project; import the SVG again"
+            )),
+            Some(false) => problems.push(format!(
+                "item {n}: asset {svg} is not SVG artwork ({ARTWORK_MEDIA_TYPE} text of at most {} KiB)",
+                MAX_ARTWORK_BYTES >> 10
+            )),
+            Some(true) => {}
+        }
+        if licence.as_deref().map(str::trim).is_none_or(str::is_empty) {
+            problems.push(format!("item {n}: state the artwork's licence"));
+        }
+    }
+    problems
+        .into_iter()
+        .map(|problem| {
+            Finding::blocking(
+                "marking.artwork",
+                format!("Marking: {problem}."),
+                vec![ObjectRef::Definition { id: owner }],
+                Stage::Publish,
+            )
+        })
+        .collect()
+}
+
+/// Snapshot rule of markings (`Library::validate`): every published
+/// component marking's and Part top mark's artwork is packed as SVG.
+pub fn snapshot_problems(library: &super::Library) -> Result<()> {
+    let specs = library
+        .components
+        .iter()
+        .filter_map(|c| c.definition.marking.as_deref().map(|s| (&c.meta.name, s)))
+        .chain(
+            library
+                .parts
+                .iter()
+                .filter_map(|p| p.definition.top_mark.as_deref().map(|s| (&p.meta.name, s))),
+        );
+    for (name, spec) in specs {
+        for hash in spec.artwork() {
+            if artwork_packed(library, &hash) != Some(true) {
+                return Err(crate::diagnostics::Error::Invalid(format!(
+                    "marking.artwork: the marking of ‘{name}’ names artwork {hash}, which the project does not pack as SVG"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// An instance's marking choices.
@@ -346,9 +444,19 @@ pub fn spec_findings(owner: DefinitionId, spec: &MarkingSpec) -> Vec<Finding> {
                     problems.push(format!("item {n}: {problem}"));
                 }
             }
-            MarkingItem::Artwork { size_mm, .. } => {
+            MarkingItem::Artwork {
+                size_mm, licence, ..
+            } => {
                 if !size_mm.iter().all(|s| positive(*s)) {
                     problems.push(format!("item {n}: artwork needs a positive size"));
+                }
+                if licence
+                    .as_ref()
+                    .is_some_and(|l| l.len() > MAX_LABEL || l.chars().any(char::is_control))
+                {
+                    problems.push(format!(
+                        "item {n}: an artwork licence is at most {MAX_LABEL} bytes of text"
+                    ));
                 }
             }
             MarkingItem::Polarity { .. } | MarkingItem::Bands { .. } => {}

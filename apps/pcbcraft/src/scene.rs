@@ -5,13 +5,16 @@
 //! packs the GPU vertices ([`crate::model_scene`]), so the UI thread never
 //! walks a mesh. A board's instance marking decals are made there too and
 //! appended to the drawn geometry (display only, never the native model);
-//! the worker keeps their per-instance cache between builds.
+//! the worker keeps their per-instance cache between builds, and the read
+//! and checked library model files ([`SourceCache`]), so a board rebuild
+//! never re-hashes or re-reads an unchanged STEP or glTF.
 use crate::model_scene::{self, ModelScene};
 use crate::viewport::Viewport;
 use pcbcraft_core::library::model3d::ModelDefinition;
 use pcbcraft_core::library::{Definition, ModelPlacement, PackageDefinition, PackageModel};
 use pcbcraft_core::{Engine, Id, Project};
 use pcbcraft_solidcraft::marking::board::BoardMarkings;
+use pcbcraft_solidcraft::models::imported::SourceCache;
 use pcbcraft_solidcraft::project::Source;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -50,7 +53,7 @@ impl ModelKey {
 #[derive(Clone)]
 pub struct LibraryAsset {
     pub model: ModelDefinition,
-    pub bytes: Arc<Vec<u8>>,
+    pub bytes: pcbcraft_core::library::bundle::AssetBytes,
 }
 
 /// The library model `package` uses, resolved in `engine`'s published
@@ -80,7 +83,7 @@ pub fn library_asset(
         .assets
         .iter()
         .find(|a| a.hash == model.asset.hash)
-        .map(|a| Arc::new(a.data.0.clone()))
+        .map(|a| a.data.clone())
         .ok_or_else(|| format!("The model file {} is not packed", model.asset.file_name))?;
     Ok(Some(LibraryAsset { model, bytes }))
 }
@@ -94,14 +97,18 @@ enum Job {
 type BuiltGeometry = Result<(Vec<pcbcraft_solidcraft::scene::Geometry>, Vec<Source>), String>;
 
 /// Build one job's display geometry and pick sources.
-fn build(job: Job, markings: &mut BoardMarkings) -> (u64, BuiltGeometry) {
+fn build(job: Job, markings: &mut BoardMarkings, sources: &SourceCache) -> (u64, BuiltGeometry) {
     match job {
         Job::Project(ticket, project) => {
-            let built = pcbcraft_solidcraft::project::build(&project).map(|mut model| {
-                let decals = markings.decals(&project, &model.geometry, &model.sources);
-                model.geometry.extend(decals);
-                (model.geometry, model.sources)
-            });
+            let built =
+                pcbcraft_solidcraft::project::build_with(&project, sources).map(|mut model| {
+                    let decals = markings.decals(&project, &model.geometry, &model.sources);
+                    for (instance, why) in markings.failures() {
+                        eprintln!("pcbcraft: instance {instance} shows no marking: {why}");
+                    }
+                    model.geometry.extend(decals);
+                    (model.geometry, model.sources)
+                });
             (ticket, built.map_err(|e| e.to_string()))
         }
         Job::Package(ticket, package, library) => {
@@ -141,11 +148,12 @@ impl Worker {
         let (results, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut markings = BoardMarkings::default();
+            let sources = SourceCache::default();
             while let Ok(mut job) = jobs.recv() {
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
-                let (ticket, result) = build(job, &mut markings);
+                let (ticket, result) = build(job, &mut markings, &sources);
                 let result = result.and_then(|(geometry, sources)| {
                     model_scene::build(geometry).map(|scene| (scene, sources))
                 });

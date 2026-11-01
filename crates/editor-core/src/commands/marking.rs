@@ -51,6 +51,17 @@ pub(crate) fn set_marking(
             finding.message
         )));
     }
+    if let Some(spec) = &marking.replace
+        && let Some(finding) =
+            marking::artwork_findings(&project.library, crate::ids::DefinitionId(instance), spec)
+                .into_iter()
+                .next()
+    {
+        return Err(invalid(format!(
+            "marking.artwork: {designator}: {}",
+            finding.message
+        )));
+    }
     let target = instances::instance_mut(project, instance)?;
     target.marking = marking;
     Ok(Outcome::None)
@@ -73,8 +84,9 @@ fn numeric(value: &FieldValue, value_type: Option<&ValueType>) -> Option<f64> {
 }
 
 /// `instance.marking`: the effective spec laid out for one instance;
-/// `None` when nothing is marked (hidden, or no spec anywhere).
-pub(crate) fn layout(project: &Project, instance: Id) -> Result<Option<MarkingLayout>> {
+/// `None` when nothing is marked (hidden, or no spec anywhere). Reads only
+/// `project`; it is the query's whole implementation.
+pub fn layout(project: &Project, instance: Id) -> Result<Option<MarkingLayout>> {
     let target = project
         .instance(instance)
         .ok_or_else(|| invalid(format!("Instance {instance} does not exist.")))?;
@@ -128,4 +140,75 @@ pub(crate) fn layout(project: &Project, instance: Id) -> Result<Option<MarkingLa
         finding.objects.push(ObjectRef::Instance { id: instance });
     }
     Ok(Some(laid))
+}
+
+/// `library.pack_artwork`: the edits through `library.edit`'s path, then
+/// each staged SVG packed by hash (one already packed as SVG is reused;
+/// one packed as another media type is refused). Assets the edited drafts
+/// stopped naming are dropped in the same step.
+pub(crate) fn pack_artwork(
+    document: &mut crate::model::Document,
+    edits: Vec<crate::library::DraftEdit>,
+    artwork: Vec<crate::library::PackedAsset>,
+) -> Result<Outcome> {
+    use crate::library::{Definition, bundle, drafts};
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+    if artwork.is_empty() || artwork.len() > marking::MAX_MARKING_ITEMS {
+        return Err(invalid(format!(
+            "marking.artwork: pack 1–{} artwork files at a time",
+            marking::MAX_MARKING_ITEMS
+        )));
+    }
+    bundle::validate_assets(&artwork)?;
+    let named: BTreeSet<crate::ids::ContentHash> = edits
+        .iter()
+        .flat_map(|e| match &e.definition {
+            Definition::Component(c) => c.marking.iter().flat_map(|m| m.artwork()).collect(),
+            Definition::Part(p) => p.top_mark.iter().flat_map(|m| m.artwork()).collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    for asset in &artwork {
+        if asset.media_type != marking::ARTWORK_MEDIA_TYPE
+            || asset.data.len() > marking::MAX_ARTWORK_BYTES
+            || std::str::from_utf8(asset.data.as_slice()).is_err()
+        {
+            return Err(invalid(format!(
+                "marking.artwork: {} is not SVG artwork ({} text of at most {} KiB)",
+                asset.hash,
+                marking::ARTWORK_MEDIA_TYPE,
+                marking::MAX_ARTWORK_BYTES >> 10
+            )));
+        }
+        if !named.contains(&asset.hash) {
+            return Err(invalid(format!(
+                "marking.artwork: artwork {} is staged but no edited marking names it",
+                asset.hash
+            )));
+        }
+        if let Some(held) = document
+            .project
+            .library
+            .assets
+            .iter()
+            .find(|a| a.hash == asset.hash)
+            && held.media_type != asset.media_type
+        {
+            return Err(invalid(format!(
+                "marking.artwork: {} is already packed as {}",
+                asset.hash, held.media_type
+            )));
+        }
+    }
+    let before = super::assets::named_by_drafts(&document.drafts, edits.iter().map(|e| e.id));
+    drafts::edit(Arc::make_mut(&mut document.drafts), edits)?;
+    let project = Arc::make_mut(&mut document.project);
+    for asset in artwork {
+        if project.library.assets.iter().all(|a| a.hash != asset.hash) {
+            project.library.assets.push(asset);
+        }
+    }
+    super::assets::drop_unnamed(document, before);
+    Ok(Outcome::None)
 }

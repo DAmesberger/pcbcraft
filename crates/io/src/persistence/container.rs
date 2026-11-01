@@ -18,7 +18,7 @@ use pcbcraft_core::format::{
     CONTAINER_MAX_BYTES, CONTAINER_MAX_ENTRIES, CONTAINER_RECOVERY, EditorFile, MAX_FILE_BYTES,
 };
 use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
+use pcbcraft_core::library::bundle::AssetBytes;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
@@ -106,7 +106,7 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
     }
     let mut document = None;
     let mut recovery = None;
-    let mut assets: BTreeMap<ContentHash, Vec<u8>> = BTreeMap::new();
+    let mut assets: BTreeMap<ContentHash, AssetBytes> = BTreeMap::new();
     let mut declared: BTreeMap<ContentHash, u64> = BTreeMap::new();
     let mut total: u64 = 0;
     for index in 0..archive.len() {
@@ -159,7 +159,10 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
             Entry::Document => document = Some(bytes),
             Entry::Recovery => recovery = Some(bytes),
             Entry::Asset(hash) => {
-                if asset_hash(&bytes) != hash {
+                // Hashed once here; the shared bytes remember it, so the
+                // file's validation does not hash them again.
+                let bytes = AssetBytes::new(bytes);
+                if bytes.hash() != hash {
                     return Err(entry_error(&name, "does not match its content hash"));
                 }
                 declared.insert(hash, bytes.len() as u64);
@@ -190,7 +193,7 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
             )));
         }
         if let Some(bytes) = assets.remove(&asset.hash) {
-            asset.data = AssetBytes(bytes);
+            asset.data = bytes;
         }
     }
     if let Some(hash) = declared.keys().next() {
@@ -226,13 +229,13 @@ pub(crate) fn write(
     let mut total = add_total(0, document.len() as u64)?;
     total = add_total(total, recovery.map_or(0, |r| r.len() as u64))?;
     for asset in &file.project.library.assets {
-        if asset.data.0.len() as u64 > CONTAINER_MAX_ASSET_BYTES {
+        if asset.data.len() as u64 > CONTAINER_MAX_ASSET_BYTES {
             return Err(Error::TooLarge(format!(
                 "asset {} exceeds {CONTAINER_MAX_ASSET_BYTES} bytes",
                 asset.hash
             )));
         }
-        total = add_total(total, asset.data.0.len() as u64)?;
+        total = add_total(total, asset.data.len() as u64)?;
     }
     super::atomic_write_with(path, |target| {
         let mut zip = ZipWriter::new(target);
@@ -252,7 +255,7 @@ pub(crate) fn write(
         for asset in &file.project.library.assets {
             zip.start_file(asset_name(asset.hash), options(method))
                 .map_err(malformed)?;
-            zip.write_all(&asset.data.0)?;
+            zip.write_all(&asset.data[..])?;
         }
         zip.finish().map_err(malformed)?;
         Ok(())

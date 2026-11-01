@@ -13,19 +13,28 @@
 //! resistor's code follows each instance's resistance. Markings are
 //! display-only: they never change geometry, the saved `.solidcraft`
 //! model or fabrication output.
+//!
+//! Add item › SVG artwork… picks an `.svg` file (read and sized off the UI
+//! thread), adds an Artwork item sized to the area and stages the file;
+//! the gesture's commit then travels as `library.pack_artwork`, so the
+//! edit and the packed file are one undo step. The artwork's licence is
+//! stated on its item; publishing needs it (`marking.artwork`).
 use super::PartEditor;
 use super::part_props::PartProps;
 use crate::kit;
 use egui::Ui;
 use pcbcraft_core::fields::{self, FieldValue};
+use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
 use pcbcraft_core::library::marking::{
     self, Align, Anchor, AreaChoice, CodeScheme, DEFAULT_MIN_TEXT_HEIGHT_MM, Finish,
     MAX_MARKING_ITEMS, MAX_TEMPLATE, MarkingInputs, MarkingItem, MarkingSpec, PolarityMark,
     Template,
 };
-use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library};
+use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library, PackedAsset};
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, LibraryCommand, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// Marking sizes and positions, mm.
 const AREA_MM: std::ops::RangeInclusive<f64> = -100.0..=100.0;
@@ -51,11 +60,78 @@ struct PartMark {
     mark: Option<Box<MarkingSpec>>,
 }
 
+/// A read SVG: its bytes and natural size, mm.
+struct ReadArtwork {
+    text: String,
+    size_mm: [f64; 2],
+}
+
+/// Add item › SVG artwork… while it runs.
+#[derive(Default)]
+enum ArtworkPick {
+    #[default]
+    Idle,
+    Picking(Scope, Receiver<Option<PathBuf>>),
+    Reading(Scope, Receiver<Result<ReadArtwork, String>>),
+}
+
 /// The section's state.
 #[derive(Default)]
 pub struct MarkingProps {
     scope: Scope,
     part: Option<PartMark>,
+    pick: ArtworkPick,
+    /// SVG files an Artwork item names that are not packed yet; they
+    /// travel with the edit that names them (`library.pack_artwork`).
+    staged: Vec<PackedAsset>,
+    /// Why the last artwork could not be added.
+    artwork_error: Option<String>,
+}
+
+/// Fit artwork of `natural` size into 60 % of `area`, aspect kept.
+pub fn artwork_size(natural: [f64; 2], area: [f64; 2]) -> [f64; 2] {
+    let fits = |v: f64| v.is_finite() && v > 0.0;
+    if !(fits(natural[0]) && fits(natural[1])) {
+        return [1.0, 1.0];
+    }
+    let room = [area[0] * 0.6, area[1] * 0.6];
+    let scale = if fits(room[0]) && fits(room[1]) {
+        (room[0] / natural[0]).min(room[1] / natural[1])
+    } else {
+        1.0
+    };
+    let clamp = |v: f64| v.clamp(*SIZE_MM.start(), *SIZE_MM.end());
+    [clamp(natural[0] * scale), clamp(natural[1] * scale)]
+}
+
+/// The packed asset and Artwork item of a read SVG, sized for `area`.
+pub fn artwork_item(text: &str, natural: [f64; 2], area: [f64; 2]) -> (PackedAsset, MarkingItem) {
+    let bytes = text.as_bytes().to_vec();
+    let hash = asset_hash(&bytes);
+    (
+        PackedAsset {
+            hash,
+            media_type: marking::ARTWORK_MEDIA_TYPE.into(),
+            data: AssetBytes::new(bytes),
+        },
+        MarkingItem::Artwork {
+            svg: hash,
+            size_mm: artwork_size(natural, area),
+            anchor: Anchor::Centre,
+            licence: None,
+        },
+    )
+}
+
+/// Read and size an SVG off the UI thread.
+fn read_artwork(path: &std::path::Path) -> Result<ReadArtwork, String> {
+    let text = pcbcraft_io::artwork::read_svg(path).map_err(|e| e.to_string())?;
+    let options = pcbcraft_solidcraft::svg::Options::new(0.1);
+    let artwork = pcbcraft_solidcraft::svg::convert(&text, &options).map_err(|e| e.to_string())?;
+    Ok(ReadArtwork {
+        text,
+        size_mm: artwork.size,
+    })
 }
 
 /// The kinds Add item offers. Artwork comes from an imported SVG asset.
@@ -398,11 +474,27 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
             svg,
             size_mm,
             anchor,
+            licence,
         } => {
             let hash: String = svg.to_string().chars().take(12).collect();
             kit::value_row(ui, "SVG", &hash);
-            kit::pair_row(ui, "Size", size_mm, "mm", SIZE_MM)
-                | kit::choice_row(ui, "At", anchor, &anchors())
+            let mut changed = kit::pair_row(ui, "Size", size_mm, "mm", SIZE_MM)
+                | kit::choice_row(ui, "At", anchor, &anchors());
+            let mut text = licence.clone().unwrap_or_default();
+            let missing = text.trim().is_empty();
+            let response = kit::row(ui, "Licence", |ui| {
+                ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
+                kit::text_field(ui, "artwork-licence", &mut text, "CC0-1.0", false)
+                    .on_hover_text("The artwork's licence: an SPDX id or the owner's terms")
+            });
+            if response.changed() && text.len() <= pcbcraft_core::MAX_LABEL {
+                *licence = (!text.trim().is_empty()).then_some(text);
+                changed = true;
+            }
+            if missing {
+                kit::note(ui, "State the artwork's licence before publishing");
+            }
+            changed
         }
     }
 }
@@ -413,6 +505,7 @@ pub fn spec_rows(
     ui: &mut Ui,
     spec: &mut Option<Box<MarkingSpec>>,
     fields: &[(FieldRef, String)],
+    pick_artwork: &mut bool,
 ) -> bool {
     let mut changed = false;
     if let Some(body) = spec.as_deref_mut() {
@@ -495,6 +588,15 @@ pub fn spec_rows(
                         added = item;
                     }
                 }
+                if ui
+                    .selectable_label(false, "SVG artwork…")
+                    .on_hover_text(
+                        "Your own SVG drawn on the part, such as a logo; Pcbcraft ships none",
+                    )
+                    .clicked()
+                {
+                    *pick_artwork = true;
+                }
             });
         });
         if let Some(item) = added {
@@ -542,6 +644,44 @@ impl PartEditor {
             state.scope = Scope::Component;
         }
         state.sync_part(engine);
+        // A read SVG joins the marking it was picked for.
+        if let Some((scope, read)) = state.poll_pick() {
+            let area = match scope {
+                Scope::Component => set.component.marking.as_deref(),
+                Scope::Part(_) => state.part.as_ref().and_then(|p| p.mark.as_deref()),
+            }
+            .and_then(|m| match m.area {
+                AreaChoice::Explicit { size_mm, .. } => Some(size_mm),
+                AreaChoice::FromModel => None,
+            })
+            .unwrap_or([set.package.envelope[0], set.package.envelope[1]]);
+            let (asset, item) = artwork_item(&read.text, read.size_mm, area);
+            let spec = match scope {
+                Scope::Component => Some(&mut set.component.marking),
+                Scope::Part(id) => state
+                    .part
+                    .as_mut()
+                    .filter(|p| p.id == id)
+                    .map(|p| &mut p.mark),
+            };
+            match spec {
+                Some(spec)
+                    if spec
+                        .as_ref()
+                        .is_none_or(|s| s.items.len() < MAX_MARKING_ITEMS) =>
+                {
+                    spec.get_or_insert_with(Default::default).items.push(item);
+                    if state.staged.iter().all(|a| a.hash != asset.hash) {
+                        state.staged.push(asset);
+                    }
+                }
+                Some(_) => {
+                    state.artwork_error =
+                        Some(format!("a marking has at most {MAX_MARKING_ITEMS} items"));
+                }
+                None => state.artwork_error = Some("the Part draft is gone".into()),
+            }
+        }
         let fields = field_names(&set.component, library);
         let envelope = set.package.envelope;
         let part_open = self.parts.is_open();
@@ -550,6 +690,7 @@ impl PartEditor {
             Some(spec) => format!("{} items", spec.items.len()),
             None => "None".to_owned(),
         };
+        let mut pick = false;
         kit::summary_section(ui, "model-marking", "Marking", false, &summary, |ui| {
             if !parts.is_empty() {
                 let mut options = vec![(Scope::Component, "Every instance".to_owned())];
@@ -571,6 +712,12 @@ impl PartEditor {
             };
             let mut inputs =
                 preview_inputs(&set.component, library, part, [envelope[0], envelope[1]]);
+            let reading = matches!(
+                state.pick,
+                ArtworkPick::Picking(..) | ArtworkPick::Reading(..)
+            );
+            let artwork_error = state.artwork_error.clone();
+            let scope = state.scope;
             let spec = match state.scope {
                 Scope::Component => &mut set.component.marking,
                 Scope::Part(id) => {
@@ -584,7 +731,13 @@ impl PartEditor {
                     &mut edit.mark
                 }
             };
-            spec_rows(ui, spec, &fields);
+            spec_rows(ui, spec, &fields, &mut pick);
+            if reading {
+                kit::note(ui, "Reading the SVG…");
+            }
+            if let Some(error) = &artwork_error {
+                kit::note(ui, &format!("Artwork not added: {error}"));
+            }
             if let Some(body) = spec.as_deref() {
                 if let AreaChoice::Explicit { size_mm, .. } = body.area {
                     inputs.area_mm = size_mm;
@@ -596,7 +749,7 @@ impl PartEditor {
                     kit::note(ui, note);
                 }
             }
-            if state.scope == Scope::Component {
+            if scope == Scope::Component {
                 kit::note(
                     ui,
                     "A Part's top mark replaces this on instances of that Part",
@@ -607,16 +760,110 @@ impl PartEditor {
                 "Display only: never in the saved 3D model or fabrication output",
             );
         });
+        if pick {
+            state.start_pick(ui.ctx());
+        }
         let interacting =
             ui.ctx().memory(|m| m.focused().is_some()) || ui.ctx().input(|i| i.pointer.any_down());
         if !interacting && !part_open {
             operation = state.take_part_edit(engine);
         }
-        operation
+        state.with_artwork(operation)
     }
 }
 
 impl MarkingProps {
+    /// Ask for an SVG with the native picker (made here, awaited on a
+    /// worker, as the other pickers are).
+    fn start_pick(&mut self, ctx: &egui::Context) {
+        if !matches!(self.pick, ArtworkPick::Idle) {
+            return;
+        }
+        self.artwork_error = None;
+        let future = rfd::AsyncFileDialog::new()
+            .set_title("Add SVG artwork to the marking")
+            .add_filter("SVG drawing", &["svg", "SVG"])
+            .pick_file();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let picked = pollster::block_on(future).map(|h| h.path().to_path_buf());
+            let _ = sender.send(picked);
+            ctx.request_repaint();
+        });
+        self.pick = ArtworkPick::Picking(self.scope, receiver);
+    }
+
+    /// Advance the pick; a read SVG and the marking it is for.
+    fn poll_pick(&mut self) -> Option<(Scope, ReadArtwork)> {
+        match std::mem::take(&mut self.pick) {
+            ArtworkPick::Idle => None,
+            ArtworkPick::Picking(scope, receiver) => match receiver.try_recv() {
+                Ok(Some(path)) => {
+                    let (sender, reading) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(read_artwork(&path));
+                    });
+                    self.pick = ArtworkPick::Reading(scope, reading);
+                    None
+                }
+                Ok(None) => None,
+                Err(TryRecvError::Empty) => {
+                    self.pick = ArtworkPick::Picking(scope, receiver);
+                    None
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.artwork_error = Some("the file picker closed unexpectedly".into());
+                    None
+                }
+            },
+            ArtworkPick::Reading(scope, receiver) => match receiver.try_recv() {
+                Ok(Ok(read)) => Some((scope, read)),
+                Ok(Err(error)) => {
+                    self.artwork_error = Some(error);
+                    None
+                }
+                Err(TryRecvError::Empty) => {
+                    self.pick = ArtworkPick::Reading(scope, receiver);
+                    None
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.artwork_error = Some("reading the SVG stopped unexpectedly".into());
+                    None
+                }
+            },
+        }
+    }
+
+    /// `operation` carrying the staged SVG files its edits name: a
+    /// `library.edit` becomes `library.pack_artwork`, one undo step.
+    /// Files no edit names stay staged.
+    pub fn with_artwork(&mut self, operation: Option<Operation>) -> Option<Operation> {
+        let Some(Operation::Library(LibraryCommand::Edit { edits })) = operation else {
+            return operation;
+        };
+        let named: Vec<pcbcraft_core::ContentHash> = edits
+            .iter()
+            .flat_map(|e| match &e.definition {
+                Definition::Component(c) => c.marking.iter().flat_map(|m| m.artwork()).collect(),
+                Definition::Part(p) => p.top_mark.iter().flat_map(|m| m.artwork()).collect(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let (artwork, kept): (Vec<PackedAsset>, Vec<PackedAsset>) =
+            std::mem::take(&mut self.staged)
+                .into_iter()
+                .partition(|a| named.contains(&a.hash));
+        self.staged = kept;
+        if artwork.is_empty() {
+            return Some(Operation::Library(LibraryCommand::Edit { edits }));
+        }
+        Some(Operation::Library(LibraryCommand::PackArtwork {
+            edits,
+            artwork,
+        }))
+    }
+
     /// Load the chosen Part draft's top mark, unless the section holds an
     /// unsent edit of it.
     fn sync_part(&mut self, engine: &Engine) {
@@ -855,6 +1102,85 @@ mod tests {
             }]
         );
         Ok(())
+    }
+
+    /// Add item › SVG artwork… is offered; a read SVG joins the
+    /// component's marking sized to the area, and the commit packs it with
+    /// the edit as one `library.pack_artwork` (one undo step).
+    #[test]
+    fn svg_artwork_joins_the_marking_and_packs_with_its_edit() -> TestResult {
+        let mut h = Harness::new()?;
+        h.click("Choose an item")?;
+        let shown = h.texts();
+        assert!(shown.iter().any(|t| t == "SVG artwork…"), "{shown:?}");
+        h.card(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="4mm" height="2mm" viewBox="0 0 4 2"><rect width="4" height="2"/></svg>"#;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(Ok(ReadArtwork {
+            text: svg.into(),
+            size_mm: [4.0, 2.0],
+        }))?;
+        h.editor.marking.pick = ArtworkPick::Reading(Scope::Component, receiver);
+        h.card(vec![]);
+        let revision = h.engine.revision();
+        let before = h.engine.to_file();
+        let operation = h.editor.commit(&h.ctx, &h.engine).ok_or("no commit")?;
+        let Operation::Library(LibraryCommand::PackArtwork { artwork, .. }) = &operation else {
+            return Err(format!("expected library.pack_artwork, got {operation:?}").into());
+        };
+        assert_eq!(artwork.len(), 1);
+        let hash = artwork[0].hash;
+        h.engine.apply(revision, operation)?;
+        h.editor.commit(&h.ctx, &h.engine);
+        let stored = h.stored()?.ok_or("no marking stored")?;
+        let [
+            MarkingItem::Artwork {
+                svg: named,
+                size_mm,
+                licence,
+                ..
+            },
+        ] = stored.items.as_slice()
+        else {
+            return Err(format!("{:?}", stored.items).into());
+        };
+        assert_eq!(*named, hash);
+        assert!(
+            (size_mm[0] / size_mm[1] - 2.0).abs() < 1e-9,
+            "aspect kept: {size_mm:?}"
+        );
+        assert_eq!(licence, &None);
+        assert!(
+            h.engine
+                .project()
+                .library
+                .assets
+                .iter()
+                .any(|a| a.hash == hash && a.media_type == marking::ARTWORK_MEDIA_TYPE)
+        );
+        let shown = h.texts();
+        assert!(
+            shown
+                .iter()
+                .any(|t| t == "State the artwork's licence before publishing"),
+            "{shown:?}"
+        );
+        h.engine.undo()?;
+        assert_eq!(h.engine.to_file(), before, "one undo step");
+        Ok(())
+    }
+
+    #[test]
+    fn artwork_is_sized_into_the_area_with_its_aspect() {
+        assert_eq!(artwork_size([4.0, 2.0], [2.0, 2.0]), [1.2, 0.6]);
+        assert_eq!(artwork_size([1.0, 4.0], [10.0, 2.0]), [0.3, 1.2]);
+        assert_eq!(artwork_size([f64::NAN, 1.0], [1.0, 1.0]), [1.0, 1.0]);
     }
 
     #[test]

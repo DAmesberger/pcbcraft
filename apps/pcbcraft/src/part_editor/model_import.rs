@@ -14,19 +14,18 @@ use crate::kit;
 use crate::kit::severity::Level;
 use crate::refusal::{self, Origin};
 use egui::Ui;
+use pcbcraft_core::library::MAX_LABEL;
 use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
 use pcbcraft_core::library::model3d::{
-    AssetRef, CustomMaterial, ImportModel, LeadMapEntry, LeadTag, MarkingArea, ModelBody,
-    ModelDefinition, ModelFormat, ModelHints, ModelMaterial, ModelProvenance, Mount,
+    AssetRef, AssignModel, CustomMaterial, ImportModel, LeadMapEntry, LeadTag, MarkingArea,
+    ModelBody, ModelDefinition, ModelFormat, ModelHints, ModelMaterial, ModelProvenance, Mount,
     Redistribution, SourceFrame, UpAxis,
 };
 use pcbcraft_core::library::{
-    Basis, BodyRole, Definition, FootprintDefinition, PackageDefinition, PackageEdit, PackageModel,
-    PackedAsset, Provenance,
+    Basis, BodyRole, Definition, FootprintDefinition, PackageDefinition, PackedAsset, Provenance,
 };
-use pcbcraft_core::library::{LibraryModel, MAX_LABEL};
 use pcbcraft_core::materials::MaterialId;
-use pcbcraft_core::{DefinitionId, Engine, LibraryCommand, ModelRef, Operation};
+use pcbcraft_core::{DefinitionId, Engine, LibraryCommand, Operation};
 use pcbcraft_solidcraft::models::imported;
 use pcbcraft_solidcraft::models::inspect::{self, InspectedBody, ModelInspection};
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -137,7 +136,7 @@ pub fn measure(mut request: ImportModel) -> Result<ImportModel, String> {
     let bytes = request
         .assets
         .first()
-        .map(|a| a.data.0.as_slice())
+        .map(|a| a.data.as_slice())
         .ok_or("The import carries no file")?;
     let contacts = imported::lead_contacts(definition, bytes)
         .map_err(|e| format!("Measuring the lead contacts failed: {e}"))?;
@@ -574,23 +573,27 @@ impl Wizard {
             assets: vec![PackedAsset {
                 hash: definition.asset.hash,
                 media_type: definition.asset.media_type.clone(),
-                data: AssetBytes(self.bytes.as_ref().clone()),
+                data: AssetBytes::new(self.bytes.as_ref().clone()),
             }],
             definition: Box::new(definition),
+            assign: None,
         })
     }
 }
 
-/// The model draft's assignment to the package: its pending revision and
-/// the lead map previewed in Review.
-pub fn assign(package_id: DefinitionId, model: ModelRef, lead_map: Vec<LeadMapEntry>) -> Operation {
-    Operation::Library(LibraryCommand::EditPackage {
-        draft: package_id,
-        edits: vec![PackageEdit::SetModel(PackageModel::Library(LibraryModel {
-            model,
-            lead_map,
-        }))],
-    })
+/// The request assigning its new model to the package draft with the lead
+/// map previewed in Review: Finish is one gesture, so import and
+/// assignment are one command and one undo step.
+pub fn assigning(
+    mut request: ImportModel,
+    package_id: DefinitionId,
+    lead_map: Vec<LeadMapEntry>,
+) -> ImportModel {
+    request.assign = Some(AssignModel {
+        package: package_id,
+        lead_map,
+    });
+    request
 }
 
 /// Model drafts in the engine, in draft order.
@@ -656,13 +659,12 @@ enum State {
         terminals: Box<PackageDefinition>,
         receiver: Receiver<Result<ImportModel, String>>,
     },
-    /// `library.import_model` was sent; waiting for its Model draft.
+    /// `library.import_model` (with its assignment) was sent; waiting for
+    /// its Model draft.
     Importing {
         wizard: Box<Wizard>,
         before: Vec<DefinitionId>,
         revision: u64,
-        package: DefinitionId,
-        lead_map: Vec<LeadMapEntry>,
     },
 }
 
@@ -811,13 +813,11 @@ impl ModelImport {
                     wizard,
                     before: model_drafts(engine),
                     revision: engine.revision(),
-                    package,
-                    lead_map,
                 };
                 self.refusal = None;
                 refusal::mark(ctx, Origin::Dialog(wizard_id()));
                 Some(Operation::Library(LibraryCommand::ImportModel(Box::new(
-                    request,
+                    assigning(request, package, lead_map),
                 ))))
             }
             Err(why) => {
@@ -828,8 +828,9 @@ impl ModelImport {
         }
     }
 
-    /// Wait for the Model draft `library.import_model` creates, then assign
-    /// it; a refusal returns to Review with the refusal shown.
+    /// Wait for the Model draft `library.import_model` creates (already
+    /// assigned to the package) and close; a refusal returns to Review
+    /// with the refusal shown.
     fn settle(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
         let State::Importing { revision, .. } = &self.state else {
             return None;
@@ -839,23 +840,16 @@ impl ModelImport {
         if refused.is_none() && !changed {
             return None;
         }
-        let State::Importing {
-            wizard,
-            before,
-            package,
-            lead_map,
-            ..
-        } = std::mem::replace(&mut self.state, State::Idle)
+        let State::Importing { wizard, before, .. } =
+            std::mem::replace(&mut self.state, State::Idle)
         else {
             return None;
         };
         let created = model_drafts(engine)
             .into_iter()
-            .find(|id| !before.contains(id))
-            .and_then(|id| engine.drafts().get(id))
-            .and_then(|d| Some(ModelRef::new(d.id, d.pending()?)));
+            .any(|id| !before.contains(&id));
         match (refused, created) {
-            (None, Some(model)) => {
+            (None, true) => {
                 kit::toast::post(
                     ctx,
                     Level::Info,
@@ -866,7 +860,7 @@ impl ModelImport {
                     Vec::new(),
                 );
                 self.refusal = None;
-                Some(assign(package, model, lead_map))
+                None
             }
             (refused, _) => {
                 self.refusal =
@@ -1391,6 +1385,7 @@ mod tests {
     use super::*;
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::PadId;
+    use pcbcraft_core::library::LibraryModel;
     use pcbcraft_core::library::{PackageTerminal, Pad};
 
     /// An original two-lead chip-like file: a body block and two metal
@@ -1828,7 +1823,7 @@ mod tests {
         let request = w.request()?;
         assert_eq!(request.name, "chip-0805");
         assert_eq!(request.assets.len(), 1);
-        assert_eq!(request.assets[0].data.0, w.bytes.as_ref().clone());
+        assert_eq!(request.assets[0].data.to_vec(), w.bytes.as_ref().clone());
         assert_eq!(request.assets[0].hash, asset_hash(&w.bytes));
         let d = &request.definition;
         assert_eq!(d.asset.hash, request.assets[0].hash);
@@ -1849,10 +1844,10 @@ mod tests {
         // The previewed lead map: both leads, by exact designation.
         let map = lead_map_of(d, &package);
         assert_eq!(map.len(), 2);
+        let request = assigning(w.request()?, DefinitionId(7), map);
         assert!(matches!(
-            assign(DefinitionId(7), ModelRef::new(DefinitionId(9), pcbcraft_core::Revision::FIRST), map),
-            Operation::Library(LibraryCommand::EditPackage { draft: DefinitionId(7), ref edits })
-                if matches!(edits.as_slice(), [PackageEdit::SetModel(PackageModel::Library(m))] if m.lead_map.len() == 2)
+            &request.assign,
+            Some(AssignModel { package: DefinitionId(7), lead_map }) if lead_map.len() == 2
         ));
         Ok(())
     }
@@ -1876,7 +1871,7 @@ mod tests {
         use crate::refusal::{Origin, Refused};
         use egui::{Pos2, Rect};
         use pcbcraft_core::library::model3d::{ModelFormat, ModelMaterial};
-        use pcbcraft_core::library::{BodyRole, PackageDefinition, PackageEdit, PackageModel};
+        use pcbcraft_core::library::{BodyRole, PackageDefinition, PackageModel};
         use pcbcraft_core::{LibraryCommand, ModelRef, Revision};
         use pcbcraft_solidcraft::models::{imported, inspect};
 
@@ -2164,7 +2159,17 @@ mod tests {
                     lead.contact
                 );
             }
-            // The app applies it: D1 packs the bytes and creates the draft.
+            // Finish assigns the model in the same command.
+            assert_eq!(
+                request
+                    .assign
+                    .as_ref()
+                    .map(|a| (a.package, a.lead_map.len())),
+                Some((package, 2))
+            );
+            // The app applies it: D1 packs the bytes, creates the draft and
+            // sets it on the package, as one undo step.
+            let before = h.engine.to_file();
             let created = h.engine.apply(
                 h.engine.revision(),
                 Operation::Library(LibraryCommand::ImportModel(request.clone())),
@@ -2181,15 +2186,12 @@ mod tests {
                     .any(|a| a.hash == request.definition.asset.hash),
                 "the file is packed in the project"
             );
-            let (_, assigned) = h.card(vec![]);
-            let Some(Operation::Library(LibraryCommand::EditPackage { draft, edits })) = assigned
-            else {
-                return Err("expected library.edit_package".into());
+            let (_, after) = h.card(vec![]);
+            assert!(after.is_none(), "nothing more is sent: {after:?}");
+            let PackageModel::Library(model) = h.package_definition()?.model else {
+                return Err("expected the package to use the library model".into());
             };
-            assert_eq!(draft, package);
-            let [PackageEdit::SetModel(PackageModel::Library(model))] = edits.as_slice() else {
-                return Err("expected SetModel(Library)".into());
-            };
+            let model = &model;
             assert_eq!(model.model, ModelRef::new(id, Revision::FIRST));
             assert_eq!(model.lead_map.len(), 2);
             assert!(!h.editor.model_import.is_open(), "the wizard closes");
@@ -2206,6 +2208,9 @@ mod tests {
                 &pcbcraft_core::library::ModelPlacement::default(),
             )?;
             assert_eq!(shown.len(), 3);
+            // One undo after Finish restores the state before the import.
+            h.engine.undo()?;
+            assert_eq!(h.engine.to_file(), before);
             Ok(())
         }
 

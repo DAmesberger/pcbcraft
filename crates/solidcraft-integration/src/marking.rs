@@ -45,8 +45,18 @@ use std::sync::Arc;
 pub use fill::MAX_FILL_EDGES;
 pub use shapes::{CHORD_MM, MAX_TEXT_CHARS, TEXT_HEIGHT_MM};
 
-/// Height of a decal above its face, mm.
-pub const DECAL_OFFSET_MM: f64 = 0.001;
+/// Height of a decal above its face, mm: 5 µm, thinner than marking ink
+/// and far below what the eye resolves, yet clear of z-fighting. The
+/// viewport's depth buffer is reversed 32-bit float (Solidcraft's
+/// `reversed_depth`), whose steps grow with distance: a lift `h` seen from
+/// `d` away separates the decal from its face by at least `h / d · 2²³`
+/// depth steps, about 42 at 1 m, the farthest a board-fit view of a large
+/// board stands ([`DECAL_DEPTH_STEPS_AT_1_M`]). Decals draw in the same
+/// opaque pass as the bodies, so Solidcraft's face bias pushes both alike.
+pub const DECAL_OFFSET_MM: f64 = 0.005;
+/// The reversed-float depth steps between a decal and its face seen from
+/// 1 m (see [`DECAL_OFFSET_MM`]).
+pub const DECAL_DEPTH_STEPS_AT_1_M: f64 = DECAL_OFFSET_MM / 1000.0 * 8_388_608.0;
 /// Triangles one decal may have.
 pub const MAX_DECAL_TRIANGLES: usize = 65_536;
 /// Elements one layout may have.

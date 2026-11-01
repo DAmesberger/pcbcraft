@@ -23,14 +23,14 @@ pub(crate) fn packed(data: &[u8], media_type: &str) -> PackedAsset {
     PackedAsset {
         hash: asset_hash(data),
         media_type: media_type.into(),
-        data: AssetBytes(data.to_vec()),
+        data: AssetBytes::new(data.to_vec()),
     }
 }
 
 pub(crate) fn asset_ref(asset: &PackedAsset, file_name: &str) -> AssetRef {
     AssetRef {
         hash: asset.hash,
-        bytes: asset.data.0.len() as u64,
+        bytes: asset.data.len() as u64,
         media_type: asset.media_type.clone(),
         file_name: file_name.into(),
     }
@@ -134,6 +134,7 @@ pub(crate) fn import_request(
         name: name.into(),
         assets: vec![asset.clone()],
         definition: Box::new(definition),
+        assign: None,
     })))
 }
 
@@ -310,7 +311,7 @@ fn import_model_refusals_change_nothing() -> Fallible<()> {
     let mut wrong_size = model(&asset);
     wrong_size.asset.bytes += 1;
     let mut corrupt = asset.clone();
-    corrupt.data.0.push(0);
+    corrupt.data.make_mut().push(0);
     let attempts = [
         import_request(" ", &asset, model(&asset)),
         import_request("Unnamed asset", &other, model(&asset)),
@@ -321,6 +322,7 @@ fn import_model_refusals_change_nothing() -> Fallible<()> {
             name: "Nothing staged".into(),
             assets: vec![],
             definition: Box::new(model(&asset)),
+            assign: None,
         }))),
     ];
     for attempt in attempts {
@@ -344,6 +346,7 @@ fn a_second_import_reuses_the_packed_bytes() -> Fallible<()> {
             name: "Second".into(),
             assets: vec![],
             definition: Box::new(model(&asset)),
+            assign: None,
         }))),
     )?;
     apply(&mut engine, import_request("Third", &asset, model(&asset)))?;
@@ -735,4 +738,130 @@ fn model_details_are_empty_for_equal_models() {
             "3D model redistribution permitted → forbidden."
         ]
     );
+}
+
+/// The wizard's Finish: `library.import_model` with `assign` packs the
+/// bytes, creates the Model draft and sets it, with its lead map, on the
+/// package draft, all in one undo step; an assignment the package refuses
+/// refuses the import.
+#[test]
+fn import_and_assign_is_one_undo_step() -> Fallible<()> {
+    let mut engine = Engine::demo()?;
+    let fixture = demo_fixture(&engine)?;
+    let terminals = terminal_ids(&engine, fixture.package)?;
+    let asset = packed(&bytes("import-assign"), "model/step");
+    let lead_map = vec![LeadMapEntry {
+        lead: 0,
+        terminal: *terminals.first().ok_or("terminal")?,
+    }];
+    let before = engine.to_file();
+    let revision = engine.revision();
+    let request = |assign| {
+        Operation::Library(LibraryCommand::ImportModel(Box::new(ImportModel {
+            name: "Assigned body".into(),
+            assets: vec![asset.clone()],
+            definition: Box::new(model(&asset)),
+            assign,
+        })))
+    };
+    // A package draft that does not exist refuses the whole import.
+    let missing = request(Some(AssignModel {
+        package: DefinitionId(999_999),
+        lead_map: lead_map.clone(),
+    }));
+    assert!(engine.apply(revision, missing).is_err());
+    assert_eq!(engine.to_file(), before);
+    let Outcome::DraftCreated { id } = apply(
+        &mut engine,
+        request(Some(AssignModel {
+            package: fixture.package,
+            lead_map: lead_map.clone(),
+        })),
+    )?
+    else {
+        return Err("a draft".into());
+    };
+    assert_eq!(engine.revision(), revision + 1, "one step");
+    let Definition::Package(package) = &engine
+        .drafts()
+        .get(fixture.package)
+        .ok_or("package draft")?
+        .definition
+    else {
+        return Err("a package".into());
+    };
+    let PackageModel::Library(used) = &package.model else {
+        return Err("the package uses the model".into());
+    };
+    assert_eq!(used.model.id, id);
+    assert_eq!(used.lead_map, lead_map);
+    engine.undo()?;
+    assert_eq!(
+        engine.to_file(),
+        before,
+        "one undo restores the state before the import"
+    );
+    Ok(())
+}
+
+/// Bytes already packed under another media type are refused, not
+/// accepted now and refused later by the snapshot.
+#[test]
+fn a_hash_packed_with_another_media_type_is_refused() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let asset = packed(&bytes("media"), "model/step");
+    apply(&mut engine, import_request("First", &asset, model(&asset)))?;
+    let mut gltf = asset.clone();
+    gltf.media_type = "model/gltf-binary".into();
+    let mut definition = model(&gltf);
+    definition.format = ModelFormat::Gltf;
+    let before = engine.to_file();
+    let revision = engine.revision();
+    let result = engine.apply(revision, import_request("Second", &gltf, definition));
+    let Err(error) = result else {
+        return Err("accepted a second media type".into());
+    };
+    assert!(
+        error.to_string().contains("already packed as model/step"),
+        "{error}"
+    );
+    assert_eq!(engine.to_file(), before);
+    Ok(())
+}
+
+/// With a 64 MiB model packed, a library edit neither copies nor
+/// re-hashes the bytes: the edited document, the undo snapshot and the
+/// imported request share one allocation, whose hash was computed once.
+/// Measured: the edit takes milliseconds (printed), against the hundreds a
+/// re-hash of 64 MiB costs.
+#[test]
+fn library_edits_share_and_do_not_rehash_a_large_packed_asset() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let big = packed(&vec![3u8; 64 * 1024 * 1024], "model/step");
+    let start = std::time::Instant::now();
+    apply(&mut engine, import_request("Large", &big, model(&big)))?;
+    let first = start.elapsed();
+    let held = |e: &Engine| {
+        e.project()
+            .library
+            .assets
+            .iter()
+            .find(|a| a.hash == big.hash)
+            .map(|a| a.data.clone())
+    };
+    let packed_bytes = held(&engine).ok_or("packed")?;
+    assert!(packed_bytes.shares(&big.data), "packed without a copy");
+    // A second library change (another model packed) revalidates the
+    // library, the large asset included.
+    let small = packed(&bytes("small"), "model/step");
+    let start = std::time::Instant::now();
+    apply(&mut engine, import_request("Small", &small, model(&small)))?;
+    let edit = start.elapsed();
+    let after = held(&engine).ok_or("still packed")?;
+    assert!(after.shares(&packed_bytes), "the edit copied the bytes");
+    eprintln!("64 MiB packed: import {first:?}, next library edit {edit:?}");
+    assert!(edit.as_millis() < 250, "{edit:?}");
+    engine.undo()?;
+    assert!(held(&engine).ok_or("after undo")?.shares(&packed_bytes));
+    Ok(())
 }

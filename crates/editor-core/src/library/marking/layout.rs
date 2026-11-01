@@ -297,6 +297,7 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
                 svg,
                 size_mm,
                 anchor,
+                ..
             } => {
                 if size_mm[0] > w - 2.0 * margin || size_mm[1] > h - 2.0 * margin {
                     cx.does_not_fit("The artwork");

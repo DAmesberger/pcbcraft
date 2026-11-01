@@ -197,7 +197,7 @@ fn generated(seed: u64) -> Result<Library> {
                 library.assets.push(PackedAsset {
                     hash,
                     media_type: "application/pdf".into(),
-                    data: bundle::AssetBytes(bytes),
+                    data: bundle::AssetBytes::new(bytes),
                 });
             }
         }
@@ -613,7 +613,7 @@ fn bundle_validation_refuses_dangling_noncanonical_and_unpacked_content() -> Res
     extra.assets.push(PackedAsset {
         hash: bundle::asset_hash(&bytes),
         media_type: "text/plain".into(),
-        data: bundle::AssetBytes(bytes),
+        data: bundle::AssetBytes::new(bytes),
     });
     rejected(&extra, "no record names")?;
 
@@ -652,7 +652,7 @@ fn packed_assets_travel_by_hash_and_unpacked_ones_are_reported() -> Result<()> {
     // Bytes that do not hash to their name are refused.
     let mut forged = plan.bundle.clone();
     if let Some(asset) = forged.assets.first_mut() {
-        asset.data.0.push(0);
+        asset.data.make_mut().push(0);
     }
     rejected(&forged, "content hash")?;
 
@@ -1465,7 +1465,7 @@ fn part_with_asset(library: &Library, index: usize, data: Vec<u8>) -> Result<Bun
     let asset = PackedAsset {
         hash: bundle::asset_hash(&data),
         media_type: "application/pdf".into(),
-        data: bundle::AssetBytes(data),
+        data: bundle::AssetBytes::new(data),
     };
     let record = plan
         .bundle

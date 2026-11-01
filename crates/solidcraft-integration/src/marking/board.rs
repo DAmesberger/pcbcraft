@@ -19,7 +19,7 @@ use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::ids::{ContentHash, Id};
 use pcbcraft_core::library::marking::MarkingLayout;
 use pcbcraft_core::library::model3d::MarkingArea;
-use pcbcraft_core::{Engine, Layer, Project, Query, QueryResult};
+use pcbcraft_core::{Layer, Project};
 use solidcraft_engine::geom::{Mesh, Vec3};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -33,7 +33,7 @@ const FLAT_COS: f64 = 0.999;
 /// Vertices this close to the outermost height lie on the face, mm.
 const FACE_EPS_MM: f64 = 1e-4;
 /// Media type of SVG artwork assets.
-const SVG_MEDIA_TYPE: &str = "image/svg+xml";
+const SVG_MEDIA_TYPE: &str = pcbcraft_core::library::marking::ARTWORK_MEDIA_TYPE;
 
 /// Bodies a marking is printed on.
 fn printable(kind: BodyKind) -> bool {
@@ -201,7 +201,11 @@ pub fn project_artwork(project: &Project) -> impl Fn(&ContentHash) -> Option<Str
             .assets
             .iter()
             .find(|a| a.hash == *hash && a.media_type == SVG_MEDIA_TYPE)
-            .and_then(|a| String::from_utf8(a.data.0.clone()).ok())
+            .and_then(|a| {
+                std::str::from_utf8(a.data.as_slice())
+                    .map(str::to_owned)
+                    .ok()
+            })
     }
 }
 
@@ -230,29 +234,35 @@ pub fn any_marked(project: &Project) -> bool {
     })
 }
 
-/// Each placed instance's resolved marking layout (`instance.marking`),
-/// leaving out instances without one or whose marking cannot be laid out.
-/// Reads through a read-only engine over a copy of the project, only when
-/// [`any_marked`] says there is something to read.
-pub fn instance_layouts(project: &Project) -> BTreeMap<Id, MarkingLayout> {
-    let mut out = BTreeMap::new();
+/// The placed instances' resolved marking layouts (`instance.marking`),
+/// and the instances whose marking could not be laid out, with why.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InstanceLayouts {
+    /// Instances with something to draw.
+    pub layouts: BTreeMap<Id, MarkingLayout>,
+    /// Instances whose marking the core refused to lay out; they show no
+    /// marking. Never silent: the worker reports them.
+    pub failures: Vec<(Id, String)>,
+}
+
+/// Each placed instance's resolved marking layout, read straight from the
+/// valid `project` through the core's pure `instance.marking`
+/// ([`pcbcraft_core::commands::instance_marking`]): no project copy, no
+/// engine and no revalidation of the library or its packed assets. Only
+/// when [`any_marked`] says there is something to read.
+pub fn instance_layouts(project: &Project) -> InstanceLayouts {
+    let mut out = InstanceLayouts::default();
     if !any_marked(project) {
         return out;
     }
-    let file = pcbcraft_core::format::EditorFile {
-        version: pcbcraft_core::format::FILE_VERSION,
-        project: project.clone(),
-        drafts: Default::default(),
-    };
-    let Ok(engine) = Engine::from_file(file) else {
-        return out;
-    };
     for placement in &project.placements {
         let instance = placement.instance;
-        if let Ok(QueryResult::Marking(Some(layout))) = engine.query(Query::Marking { instance })
-            && !layout.elements.is_empty()
-        {
-            out.insert(instance, layout);
+        match pcbcraft_core::commands::instance_marking(project, instance) {
+            Ok(Some(layout)) if !layout.elements.is_empty() => {
+                out.layouts.insert(instance, layout);
+            }
+            Ok(_) => {}
+            Err(error) => out.failures.push((instance, error.to_string())),
         }
     }
     out
@@ -331,6 +341,7 @@ pub fn preview_decal(
 #[derive(Default)]
 pub struct BoardMarkings {
     cache: DecalCache,
+    failures: Vec<(Id, String)>,
 }
 
 impl BoardMarkings {
@@ -342,12 +353,19 @@ impl BoardMarkings {
         geometry: &[Geometry],
         sources: &[Source],
     ) -> Vec<Geometry> {
-        let layouts = instance_layouts(project);
+        let InstanceLayouts { layouts, failures } = instance_layouts(project);
+        self.failures = failures;
         if layouts.is_empty() {
             self.cache.sweep();
             return Vec::new();
         }
         board_decals(project, geometry, sources, &layouts, &mut self.cache)
+    }
+
+    /// The instances of the last build whose marking could not be laid
+    /// out, with why.
+    pub fn failures(&self) -> &[(Id, String)] {
+        &self.failures
     }
 
     /// The cache, for evidence of what was rebuilt.

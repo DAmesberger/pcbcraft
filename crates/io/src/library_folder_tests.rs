@@ -26,7 +26,7 @@ pub(crate) fn asset(bytes: &[u8]) -> PackedAsset {
     PackedAsset {
         hash: asset_hash(bytes),
         media_type: "application/pdf".into(),
-        data: AssetBytes(bytes.to_vec()),
+        data: AssetBytes::new(bytes.to_vec()),
     }
 }
 
@@ -234,7 +234,7 @@ fn bundles_write_one_pretty_file_per_revision_and_read_back() -> Result<()> {
     }
     assert_eq!(
         std::fs::read(dir.path().join(asset_path(pdf.hash)))?,
-        pdf.data.0
+        pdf.data.to_vec()
     );
 
     let stored = read_records(&folder)?;

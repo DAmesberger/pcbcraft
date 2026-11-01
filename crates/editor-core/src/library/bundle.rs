@@ -29,6 +29,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 /// Revision records one bundle carries (a root and its closure).
 pub const MAX_BUNDLE_RECORDS: usize = 1024;
@@ -126,13 +127,97 @@ pub struct RevisionRecord {
     pub assets: Vec<ContentHash>,
 }
 
-/// Asset bytes, written as standard base64 with padding.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AssetBytes(pub Vec<u8>);
+/// Asset bytes, written as standard base64 with padding. Immutable and
+/// shared: cloning a project (each command's candidate, each undo
+/// snapshot, each save) shares the bytes instead of copying up to
+/// [`MAX_PACKED_BYTES`], and the bytes' [`asset_hash`] is computed once
+/// per allocation and remembered with them, so revalidating an unchanged
+/// asset never hashes it again. Equality is by identity first, then by
+/// content.
+#[derive(Clone, Default)]
+pub struct AssetBytes(Arc<SharedBytes>);
+
+#[derive(Clone, Default)]
+struct SharedBytes {
+    bytes: Vec<u8>,
+    hash: OnceLock<ContentHash>,
+}
+
+impl AssetBytes {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Arc::new(SharedBytes {
+            bytes,
+            hash: OnceLock::new(),
+        }))
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0.bytes
+    }
+
+    /// [`asset_hash`] of the bytes, computed on first use only.
+    pub fn hash(&self) -> ContentHash {
+        *self.0.hash.get_or_init(|| asset_hash(&self.0.bytes))
+    }
+
+    /// Whether `self` and `other` share one allocation (no bytes copied).
+    pub fn shares(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// The bytes to change, copied first when shared; the remembered hash
+    /// is dropped.
+    pub fn make_mut(&mut self) -> &mut Vec<u8> {
+        let inner = Arc::make_mut(&mut self.0);
+        inner.hash = OnceLock::new();
+        &mut inner.bytes
+    }
+
+    /// The bytes, copied only when shared.
+    pub fn into_vec(self) -> Vec<u8> {
+        match Arc::try_unwrap(self.0) {
+            Ok(inner) => inner.bytes,
+            Err(shared) => shared.bytes.clone(),
+        }
+    }
+}
+
+impl From<Vec<u8>> for AssetBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl std::ops::Deref for AssetBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0.bytes
+    }
+}
+
+impl AsRef<[u8]> for AssetBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0.bytes
+    }
+}
+
+impl PartialEq for AssetBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.shares(other) || self.0.bytes == other.0.bytes
+    }
+}
+
+impl Eq for AssetBytes {}
+
+impl std::fmt::Debug for AssetBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AssetBytes({} bytes)", self.0.bytes.len())
+    }
+}
 
 impl Serialize for AssetBytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&base64_encode(&self.0))
+        s.serialize_str(&base64_encode(&self.0.bytes))
     }
 }
 
@@ -140,7 +225,7 @@ impl<'de> Deserialize<'de> for AssetBytes {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let text = String::deserialize(d)?;
         base64_decode(&text)
-            .map(Self)
+            .map(Self::new)
             .ok_or_else(|| serde::de::Error::custom("asset data must be standard base64"))
     }
 }
@@ -610,18 +695,24 @@ fn closure_step(
     Ok(())
 }
 
-/// Content hashes a body names: the attached copies of a Part's references
-/// and a 3D model's asset and appearance pair (D1), sorted and without
+/// Content hashes a body names: the attached copies of a Part's references,
+/// a 3D model's asset and appearance pair (D1), and the SVG artwork of a
+/// component's marking or a Part's top mark (D4), sorted and without
 /// repeats. A hash that is not 64 lower-case hex digits is `invalid_input`.
 pub fn named_assets(definition: &Definition) -> Result<Vec<ContentHash>> {
     if let Definition::Model(model) = definition {
         let hashes: BTreeSet<ContentHash> = model.assets().map(|a| a.hash).collect();
         return Ok(hashes.into_iter().collect());
     }
+    if let Definition::Component(component) = definition {
+        let hashes: BTreeSet<ContentHash> =
+            component.marking.iter().flat_map(|m| m.artwork()).collect();
+        return Ok(hashes.into_iter().collect());
+    }
     let Definition::Part(part) = definition else {
         return Ok(Vec::new());
     };
-    let mut out = BTreeSet::new();
+    let mut out: BTreeSet<ContentHash> = part.top_mark.iter().flat_map(|m| m.artwork()).collect();
     for reference in &part.references {
         if let Some(text) = &reference.asset {
             let hash = ContentHash::parse(text).ok_or_else(|| {
@@ -1033,7 +1124,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
     let mut encoded: usize = 0;
     for asset in assets {
         encoded = encoded
-            .checked_add(encoded_len(asset.data.0.len()))
+            .checked_add(encoded_len(asset.data.len()))
             .filter(|n| *n <= MAX_PACKED_BYTES)
             .ok_or_else(|| {
                 Error::Limit(format!(
@@ -1041,7 +1132,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
                     MAX_PACKED_BYTES / (1024 * 1024)
                 ))
             })?;
-        if asset.data.0.len() > MAX_ASSET_BYTES {
+        if asset.data.len() > MAX_ASSET_BYTES {
             return Err(Error::Limit(format!(
                 "asset {} exceeds {MAX_ASSET_BYTES} bytes",
                 asset.hash
@@ -1056,7 +1147,7 @@ pub fn validate_assets(assets: &[PackedAsset]) -> Result<()> {
                 asset.hash
             )));
         }
-        if asset_hash(&asset.data.0) != asset.hash {
+        if asset.data.hash() != asset.hash {
             return Err(Error::Invalid(format!(
                 "asset {} does not match its content hash",
                 asset.hash
@@ -1126,7 +1217,8 @@ pub fn validate_snapshot(library: &Library) -> Result<()> {
         }
     }
     validate_assets(&library.assets)?;
-    super::model3d::snapshot_problems(library)
+    super::model3d::snapshot_problems(library)?;
+    super::marking::snapshot_problems(library)
 }
 
 /// Advisory findings of the asset store (D7): `asset.missing` for each Part
