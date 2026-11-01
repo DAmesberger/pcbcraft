@@ -13,6 +13,8 @@ use pcbcraft_core::Layer;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Body names per `appearance.assign` call.
 const APPEARANCE_CHUNK: usize = 1024;
@@ -170,11 +172,16 @@ pub struct BoardJoint {
 /// A native Solidcraft design under construction or opened from disk.
 pub struct Native {
     session: Session,
+    /// Set by another thread to stop a build at its next command.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Native {
     fn with(session: Session) -> Self {
-        let mut native = Self { session };
+        let mut native = Self {
+            session,
+            cancel: None,
+        };
         if cfg!(test) {
             native.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
         }
@@ -195,6 +202,11 @@ impl Native {
         Ok(native)
     }
 
+    /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
+    pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
+        self.cancel = Some(cancel);
+    }
+
     pub fn session(&self) -> &Session {
         &self.session
     }
@@ -204,6 +216,13 @@ impl Native {
             "parameters.add",
             json!({"name": name, "expression": expression.into()}),
         )?;
+        Ok(())
+    }
+
+    /// Add or change many parameters in one command, from a JSON list of
+    /// `{name, expression}` rows (all or nothing).
+    pub fn import_parameters(&mut self, rows: &str) -> Result<()> {
+        self.call("parameters.import", json!({"text": rows}))?;
         Ok(())
     }
 
@@ -254,6 +273,32 @@ impl Native {
     /// component's other bodies, so touching copper stays separate bodies).
     pub fn profile_body(&mut self, body: ProfileBody<'_>) -> Result<()> {
         let sketch = self.sketch(body.name, body.offset, body.contours)?;
+        self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(())
+    }
+
+    /// [`Self::profile_body`] for many contours (a laminate slab and its
+    /// thousands of drills): the contours go into the sketch in one
+    /// command, so building it does not grow with the square of their
+    /// number. Overlapping contours are one boundary (the sketch's own
+    /// arrangement unites them); nesting is even-odd.
+    pub fn batched_body(&mut self, body: ProfileBody<'_>) -> Result<()> {
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": Plane::Xy.name(), "offset": body.offset.0,
+                "name": format!("{} sketch", body.name)}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        let drawing = dxf(body.contours)?;
+        self.call(
+            "sketch.insert_dxf",
+            json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+        )?;
+        self.call("sketch.finish", json!({}))?;
         self.call(
             "solid.extrude",
             json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
@@ -367,6 +412,46 @@ impl Native {
         self.activate_root()?;
         let reply = self.call("occurrence.copy", json!({"component": component}))?;
         id(&reply, "occurrence")
+    }
+
+    /// Place `component` once more under the root, moved `by` (world
+    /// axes) from where its first occurrence is now, in one command;
+    /// returns the new occurrence.
+    pub fn copy_occurrence_by(&mut self, component: u64, by: [f64; 3]) -> Result<u64> {
+        if self.session.active_component != 0 {
+            self.activate_root()?;
+        }
+        let reply = self.call(
+            "occurrence.copy",
+            json!({"component": component, "translate": by}),
+        )?;
+        id(&reply, "occurrence")
+    }
+
+    /// Place `component` once per offset (world axes) from where its first
+    /// occurrence is now, all in one command; returns the new occurrences
+    /// in the offsets' order.
+    pub fn copy_occurrences(&mut self, component: u64, offsets: &[[f64; 3]]) -> Result<Vec<u64>> {
+        if offsets.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.session.active_component != 0 {
+            self.activate_root()?;
+        }
+        let reply = self.call(
+            "occurrence.copy",
+            json!({"component": component, "translations": offsets}),
+        )?;
+        reply
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .ok_or_else(|| Error::Verification(format!("copies named no occurrences: {reply}")))?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .ok_or_else(|| Error::Verification(format!("bad occurrence id {v}")))
+            })
+            .collect()
     }
 
     /// Move an occurrence rigidly by a row-major 3×4 matrix (rotation then
@@ -499,31 +584,23 @@ impl Native {
         frame: &JointFrame,
         lift: Option<&str>,
     ) -> Result<()> {
-        let (top, offset) = match (&joint.mount, lift) {
-            (Mount::Side(Layer::Top), None) => (true, json!("board_thickness")),
-            (Mount::Side(Layer::Bottom), None) => (false, json!("0 mm")),
-            (Mount::Side(Layer::Top), Some(lift)) => {
-                (true, json!(format!("board_thickness + ({lift})")))
-            }
-            (Mount::Side(Layer::Bottom), Some(lift)) => (false, json!(format!("- ({lift})"))),
-            (Mount::Height(z), None) => (true, z.0.clone()),
-            (Mount::Height(z), Some(lift)) => {
-                let z = match &z.0 {
-                    Value::String(e) => e.clone(),
-                    other => format!("{other} mm"),
-                };
-                (true, json!(format!("({z}) + ({lift})")))
-            }
-        };
-        self.call(
-            "joint.create",
-            json!({"type": "planar", "name": format!("placement-{}", joint.occurrence),
-                "a": {"occurrence": joint.board, "point": [0, 0, 0], "z": [0, 0, 1], "x": [1, 0, 0]},
-                "b": {"occurrence": joint.occurrence, "point": frame.point, "z": frame.z, "x": frame.x},
-                "flip": top, "angle": 0,
-                "offset": offset,
-                "values": [joint.x.0, joint.y.0, joint.angle.0]}),
-        )?;
+        self.call("joint.create", joint_params(&joint, frame, lift))?;
+        Ok(())
+    }
+
+    /// Many [`Self::board_joint_at`] joints made and solved together in
+    /// one command (one by one, each solves every joint made before it).
+    pub fn board_joints(
+        &mut self,
+        joints: &[(BoardJoint, JointFrame, Option<String>)],
+    ) -> Result<()> {
+        for chunk in joints.chunks(MAX_JOINTS_PER_CALL) {
+            let list: Vec<Value> = chunk
+                .iter()
+                .map(|(joint, frame, lift)| joint_params(joint, frame, lift.as_deref()))
+                .collect();
+            self.call("joint.create", json!({"joints": list}))?;
+        }
         Ok(())
     }
 
@@ -594,6 +671,13 @@ impl Native {
 
     /// Escape hatch for commands without a typed builder yet (test fixtures).
     pub(crate) fn call(&mut self, command: &str, params: Value) -> Result<Value> {
+        if self
+            .cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+        {
+            return Err(Error::Cancelled);
+        }
         self.session
             .execute(command, &params)
             .map_err(|error| Error::Engine {
@@ -601,6 +685,99 @@ impl Native {
                 message: error.to_string(),
             })
     }
+}
+
+/// Most joints one `joint.create` makes (Solidcraft's limit a design).
+const MAX_JOINTS_PER_CALL: usize = 10_000;
+
+/// `joint.create`'s parameters for a [`BoardJoint`] holding `frame` of the
+/// occurrence, raised `lift` off the board face.
+fn joint_params(joint: &BoardJoint, frame: &JointFrame, lift: Option<&str>) -> Value {
+    let (top, offset) = match (&joint.mount, lift) {
+        (Mount::Side(Layer::Top), None) => (true, json!("board_thickness")),
+        (Mount::Side(Layer::Bottom), None) => (false, json!("0 mm")),
+        (Mount::Side(Layer::Top), Some(lift)) => {
+            (true, json!(format!("board_thickness + ({lift})")))
+        }
+        (Mount::Side(Layer::Bottom), Some(lift)) => (false, json!(format!("- ({lift})"))),
+        (Mount::Height(z), None) => (true, z.0.clone()),
+        (Mount::Height(z), Some(lift)) => {
+            let z = match &z.0 {
+                Value::String(e) => e.clone(),
+                other => format!("{other} mm"),
+            };
+            (true, json!(format!("({z}) + ({lift})")))
+        }
+    };
+    json!({"type": "planar", "name": format!("placement-{}", joint.occurrence),
+        "a": {"occurrence": joint.board, "point": [0, 0, 0], "z": [0, 0, 1], "x": [1, 0, 0]},
+        "b": {"occurrence": joint.occurrence, "point": frame.point, "z": frame.z, "x": frame.x},
+        "flip": top, "angle": 0,
+        "offset": offset,
+        "values": [joint.x.0, joint.y.0, joint.angle.0]})
+}
+
+/// How close two drawn points must be to be one sketch point in a batched
+/// sketch: far below any copper or drill feature, above rounding.
+const DXF_JOIN_MM: f64 = 1e-6;
+
+/// Most bytes of one batched drawing (Solidcraft refuses drawings over 64 MiB).
+const MAX_DRAWING_BYTES: usize = 48 << 20;
+
+/// Closed contours as an ASCII DXF drawing in millimetres (circles, and
+/// closed polylines whose arcs keep their bulge), the form Solidcraft's
+/// sketch insert reads in one command. Numbers are written in Rust's
+/// shortest round-trip form, so every coordinate is read back exactly.
+fn dxf(contours: &[Contour]) -> Result<String> {
+    use pcbcraft_core::library::Segment;
+    use std::fmt::Write;
+    let mut out = String::from("0\nSECTION\n2\nENTITIES\n");
+    let finite = |v: f64| {
+        v.is_finite()
+            .then_some(v)
+            .ok_or_else(|| Error::Invalid("a sketch contour is not finite".into()))
+    };
+    for contour in contours {
+        match contour {
+            Contour::Circle { center, radius } => {
+                let (x, y, r) = (finite(center[0])?, finite(center[1])?, finite(*radius)?);
+                let _ = write!(out, "0\nCIRCLE\n8\n0\n10\n{x}\n20\n{y}\n40\n{r}\n");
+            }
+            Contour::Outline(outline) => {
+                // Vertex k carries the bulge of the segment from it to the
+                // next; the closing segment ends at the start again.
+                let mut vertices = vec![(outline.start, 0.0)];
+                for segment in &outline.segments {
+                    let (to, bulge) = match *segment {
+                        Segment::Line { to } => (to, 0.0),
+                        Segment::Arc { to, bulge } => (to, bulge),
+                    };
+                    if let Some(last) = vertices.last_mut() {
+                        last.1 = bulge;
+                    }
+                    vertices.push((to, 0.0));
+                }
+                // A closed polyline repeats no point: drop a final point
+                // back at the start, keeping the bulge before it.
+                if vertices.len() > 2 && vertices.last().map(|v| v.0) == Some(outline.start) {
+                    vertices.pop();
+                }
+                let _ = write!(out, "0\nLWPOLYLINE\n8\n0\n90\n{}\n70\n1\n", vertices.len());
+                for ([x, y], bulge) in vertices {
+                    let (x, y, bulge) = (finite(x)?, finite(y)?, finite(bulge)?);
+                    let _ = write!(out, "10\n{x}\n20\n{y}\n");
+                    if bulge != 0.0 {
+                        let _ = write!(out, "42\n{bulge}\n");
+                    }
+                }
+            }
+        }
+        if out.len() > MAX_DRAWING_BYTES {
+            return Err(Error::Invalid("the sketch has too many contours".into()));
+        }
+    }
+    out.push_str("0\nENDSEC\n0\nEOF\n");
+    Ok(out)
 }
 
 pub fn validate_path(path: &str) -> Result<()> {

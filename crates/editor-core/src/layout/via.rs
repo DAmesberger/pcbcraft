@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Most vias on one board.
-pub const MAX_VIAS: usize = 4_096;
+pub const MAX_VIAS: usize = 16_384;
 /// Default through-via drill and pad, in mm (a common fabricator standard
 /// via, not a qualification).
 pub const DEFAULT_VIA_DRILL_MM: f64 = 0.3;
@@ -414,7 +414,7 @@ pub(super) fn set_lock(project: &mut Project, id: Id, locked: bool) -> Result<()
 /// sane geometry inside the board, through vias only for now.
 pub(super) fn validate(project: &Project, nets: &BTreeSet<Id>) -> Result<()> {
     if project.vias.len() > MAX_VIAS {
-        return invalid("prototype supports at most 4096 vias");
+        return invalid(&format!("prototype supports at most {MAX_VIAS} vias"));
     }
     let mut ids = BTreeSet::new();
     for via in &project.vias {

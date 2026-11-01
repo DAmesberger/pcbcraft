@@ -20,7 +20,7 @@ Read [native integration research](../../docs/solidcraft-interop-research.md) fo
 
 Represent traces, pads, filled zones and plated barrels with physical thickness and stackup position. Preserve object/net/layer identity through geometry, GPU batching, picking and native persistence.
 
-Reuse shared-engine primitives or add a native copper collection with item/chunk-local caching. Avoid whole-board unions or thousands of sequential Boolean operations in an interactive gesture. Define overlap handling so display surfaces do not flicker and exact measurements do not double-count copper. Exact aggregate solids, when needed, are evaluated through Solidcraft.
+Reuse shared-engine primitives or add a native copper collection with item/chunk-local caching. Avoid whole-board unions or thousands of sequential Boolean operations in an interactive gesture. Every Solidcraft command evaluates parameters and solves joints again, so build with one command per kind of thing (`sketch.insert_dxf`, `parameters.import`, `occurrence.copy` with `translations`, `joint.create` with `joints`), repeated parts as placements of one definition, and the laminate as extruded slabs rather than Boolean cuts ([build cost](../../docs/pcb-realism.md#build-cost-measured)). Define overlap handling so display surfaces do not flicker and exact measurements do not double-count copper. Exact aggregate solids, when needed, are evaluated through Solidcraft.
 
 Camera/highlight changes reuse geometry. Local edits invalidate the changed objects and actual dependents. Batch GPU work without losing item-level selection; use shared meshes for repeated definitions. Long work is cancellable/revision-tagged, and stale results cannot overwrite current edits.
 

@@ -3,7 +3,40 @@
 use crate::material::{BodyKind, Detail};
 use solidcraft_engine::geom::Mesh;
 use solidcraft_engine::render::surface::OpaqueSurface;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// A body's volume in mm³, known or measured once when first read: the
+/// native measure is exact but costly (a laminate slab of thousands of
+/// holes measures slower than it builds), and nothing on the way to the
+/// screen needs it. Clones share the one measurement.
+#[derive(Clone)]
+pub struct Volume {
+    cell: Arc<OnceLock<f64>>,
+    measure: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+}
+
+impl Volume {
+    pub fn known(volume: f64) -> Self {
+        Self {
+            cell: Arc::new(OnceLock::from(volume)),
+            measure: None,
+        }
+    }
+
+    /// Measured by `measure` when first read (NaN when it fails).
+    pub fn lazy(measure: impl Fn() -> f64 + Send + Sync + 'static) -> Self {
+        Self {
+            cell: Arc::new(OnceLock::new()),
+            measure: Some(Arc::new(measure)),
+        }
+    }
+
+    pub fn get(&self) -> f64 {
+        *self
+            .cell
+            .get_or_init(|| self.measure.as_ref().map_or(f64::NAN, |m| m()))
+    }
+}
 
 #[derive(Clone)]
 pub struct Geometry {
@@ -22,7 +55,15 @@ pub struct Geometry {
     /// Procedural detail the 3D view draws over the surface (display only).
     pub detail: Detail,
     pub mesh: Arc<Mesh>,
-    pub volume: f64,
+    /// The body's volume, measured when first read ([`Geometry::volume`]).
+    pub volume: Volume,
     pub min: [f64; 3],
     pub max: [f64; 3],
+}
+
+impl Geometry {
+    /// The body's volume in mm³.
+    pub fn volume(&self) -> f64 {
+        self.volume.get()
+    }
 }

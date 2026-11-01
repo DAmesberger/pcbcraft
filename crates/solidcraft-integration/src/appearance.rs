@@ -1007,7 +1007,7 @@ pub(crate) fn push(
         surface: material::material(kind, looks).surface()?,
         detail: material::detail(kind, looks),
         mesh: Arc::new(mesh),
-        volume,
+        volume: crate::scene::Volume::known(volume),
         min: [bounds.min.x, bounds.min.y, bounds.min.z],
         max: [bounds.max.x, bounds.max.y, bounds.max.z],
     });

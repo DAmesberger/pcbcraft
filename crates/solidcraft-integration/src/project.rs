@@ -12,7 +12,7 @@ use crate::material::{self, BodyKind};
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
-use crate::scene::Geometry;
+use crate::scene::{Geometry, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::{ModelPlacement, PackageDefinition, Pad, PadDefaults, PadShape};
@@ -24,9 +24,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Segments of an inner via ring's outline: the ring body and the
-/// laminate's cut share it, so the two meet exactly.
-const INNER_RING_SEGMENTS: usize = 64;
 const METADATA_KEY: &str = "org.pcbcraft.electronics";
 /// Body kinds: `org.pcbcraft.electronics.bodies.0`, `.1`, … each
 /// `{kind: [body names]}`, below Solidcraft's 64 KiB value limit.
@@ -36,16 +33,23 @@ const BODIES_CHUNK_BYTES: usize = 48 * 1024;
 const MAX_BODY_CHUNKS: usize = 200;
 
 /// Which Pcbcraft object a native body came from. Stored in the native file's
-/// metadata so identity survives reopening.
+/// metadata so identity survives reopening. Absent fields are left out of
+/// the file, so a board's sources fit Solidcraft's bounded metadata.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
     pub pick_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad: Option<PadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track: Option<Id>,
     /// The board via a via body came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<CopperLayer>,
     pub label: String,
     pub component: u64,
@@ -122,6 +126,20 @@ impl Builder {
         self.native.parameter(name, format!("{value} {unit}"))
     }
 
+    /// Many parameters in one command (one by one, each addition evaluates
+    /// every parameter and joint again).
+    fn params(&mut self, params: &[(String, f64, &str)]) -> Result<()> {
+        for chunk in params.chunks(MAX_IMPORTED_PARAMS) {
+            let rows: Vec<serde_json::Value> = chunk
+                .iter()
+                .map(|(name, value, unit)| json!({"name": name, "expression": format!("{value} {unit}")}))
+                .collect();
+            self.native
+                .import_parameters(&serde_json::to_string(&rows)?)?;
+        }
+        Ok(())
+    }
+
     fn body(&mut self, kind: BodyKind, body: BoxBody<'_>) -> Result<()> {
         let name = body.name.to_owned();
         self.native.solid_box(body)?;
@@ -155,8 +173,24 @@ impl Builder {
                     .appearance(&names, &material::material(kind, &Fabrication::default()))?;
             }
         }
+        // Vias are recorded compactly on their own (a board has thousands
+        // and Solidcraft's metadata is bounded); the rest one by one.
+        let others: Vec<&Source> = sources.iter().filter(|s| s.via.is_none()).collect();
+        let listed = source_chunks(&others)?;
+        let mut listed = listed.into_iter();
+        let first = listed.next().unwrap_or_default();
         self.native
-            .set_metadata(METADATA_KEY, json!({"version": 1, "sources": sources}))?;
+            .set_metadata(METADATA_KEY, json!({"version": 1, "sources": first}))?;
+        for (index, chunk) in listed.enumerate() {
+            self.native.set_metadata(
+                &format!("{SOURCES_KEY}{}", index + 1),
+                json!({"sources": chunk}),
+            )?;
+        }
+        for (index, chunk) in saved_vias(&sources)?.iter().enumerate() {
+            self.native
+                .set_metadata(&format!("{VIAS_KEY}{index}"), json!(chunk))?;
+        }
         let chunks = kind_chunks(&self.bodies)?;
         for (index, chunk) in chunks.iter().enumerate() {
             self.native
@@ -165,6 +199,170 @@ impl Builder {
         models::record(&mut self.native, &self.models)?;
         finish_with(self.native, sources, self.models)
     }
+}
+
+/// Board vias as the native file records them: `org.pcbcraft.electronics.vias.0`,
+/// `.1`, … each a run of vias of one definition, in placement order, with
+/// occurrence and via ids as differences from the one before and nets as
+/// runs, so ten thousand vias take a few tens of KiB.
+const VIAS_KEY: &str = "org.pcbcraft.electronics.vias.";
+/// Vias per record: well below Solidcraft's 64 KiB a value even with
+/// 20-digit ids and a net change at every via.
+const VIAS_PER_RECORD: usize = 512;
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SavedVias {
+    component: u64,
+    /// Each occurrence less the one before (the first less 0).
+    occurrences: Vec<i128>,
+    /// Each via id less the one before.
+    vias: Vec<i128>,
+    /// `(net, count)`: the next `count` vias are on `net`.
+    nets: Vec<(Id, usize)>,
+}
+
+/// Differences of consecutive values, the first from 0.
+fn deltas(values: impl Iterator<Item = u64>) -> Vec<i128> {
+    let mut last = 0i128;
+    values
+        .map(|v| {
+            let v = i128::from(v);
+            let d = v - last;
+            last = v;
+            d
+        })
+        .collect()
+}
+
+/// The values [`deltas`] were taken of; `None` when one leaves `u64`.
+fn undelta(deltas: &[i128]) -> Option<Vec<u64>> {
+    let mut last = 0i128;
+    deltas
+        .iter()
+        .map(|d| {
+            last = last.checked_add(*d)?;
+            u64::try_from(last).ok()
+        })
+        .collect()
+}
+
+/// The via sources as records of [`VIAS_PER_RECORD`] vias of one
+/// definition each.
+fn saved_vias(sources: &[Source]) -> Result<Vec<SavedVias>> {
+    let vias: Vec<&Source> = sources.iter().filter(|s| s.via.is_some()).collect();
+    let mut out = Vec::new();
+    let mut runs: BTreeMap<u64, Vec<&Source>> = BTreeMap::new();
+    for source in vias {
+        runs.entry(source.component).or_default().push(source);
+    }
+    for (component, run) in runs {
+        for chunk in run.chunks(VIAS_PER_RECORD) {
+            let occurrence = |s: &Source| {
+                s.occurrence
+                    .ok_or_else(|| Error::Verification(format!("{} has no occurrence", s.label)))
+            };
+            let occurrences = chunk
+                .iter()
+                .map(|s| occurrence(s))
+                .collect::<Result<Vec<_>>>()?;
+            let mut nets: Vec<(Id, usize)> = Vec::new();
+            for s in chunk {
+                let net = s.net.unwrap_or_default();
+                match nets.last_mut() {
+                    Some((last, count)) if *last == net => *count += 1,
+                    _ => nets.push((net, 1)),
+                }
+            }
+            out.push(SavedVias {
+                component,
+                occurrences: deltas(occurrences.into_iter()),
+                vias: deltas(chunk.iter().filter_map(|s| s.via)),
+                nets,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Sources listed one by one past the first value's: `org.pcbcraft.electronics.sources.1`, `.2`, …
+const SOURCES_KEY: &str = "org.pcbcraft.electronics.sources.";
+
+/// `sources` split into lists of at most [`BODIES_CHUNK_BYTES`] serialized.
+fn source_chunks<'a>(sources: &[&'a Source]) -> Result<Vec<Vec<&'a Source>>> {
+    let mut chunks: Vec<Vec<&Source>> = vec![Vec::new()];
+    let mut size = 2;
+    for source in sources {
+        let entry = serde_json::to_string(source)?.len() + 1;
+        if entry + 2 > BODIES_CHUNK_BYTES {
+            return Err(Error::Invalid(format!(
+                "{} is too large to record",
+                source.label
+            )));
+        }
+        if size + entry > BODIES_CHUNK_BYTES {
+            chunks.push(Vec::new());
+            size = 2;
+        }
+        if let Some(chunk) = chunks.last_mut() {
+            chunk.push(source);
+            size += entry;
+        }
+    }
+    Ok(chunks)
+}
+
+/// Every source a saved native model records: the objects listed one by
+/// one, then its vias, numbered on from them.
+pub fn saved_sources(native: &Native) -> Result<Vec<Source>> {
+    let metadata = &native.session().doc.metadata.0;
+    let listed = metadata
+        .get(METADATA_KEY)
+        .and_then(|m| m.get("sources"))
+        .cloned()
+        .ok_or_else(|| Error::Verification("native model has no Pcbcraft sources".into()))?;
+    let mut sources: Vec<Source> = serde_json::from_value(listed)?;
+    for index in 1usize.. {
+        let Some(value) = metadata.get(&format!("{SOURCES_KEY}{index}")) else {
+            break;
+        };
+        let listed = value.get("sources").cloned().unwrap_or_default();
+        sources.extend(serde_json::from_value::<Vec<Source>>(listed)?);
+    }
+    for index in 0usize.. {
+        let Some(value) = metadata.get(&format!("{VIAS_KEY}{index}")) else {
+            break;
+        };
+        let saved: SavedVias = serde_json::from_value(value.clone())?;
+        let broken = || Error::Verification(format!("via record {index} is inconsistent"));
+        let occurrences = undelta(&saved.occurrences).ok_or_else(broken)?;
+        let vias = undelta(&saved.vias).ok_or_else(broken)?;
+        let nets: Vec<Id> = saved
+            .nets
+            .iter()
+            .flat_map(|(net, count)| std::iter::repeat_n(*net, *count))
+            .take(vias.len().saturating_add(1))
+            .collect();
+        if occurrences.len() != vias.len() || nets.len() != vias.len() {
+            return Err(broken());
+        }
+        let mut pick = sources.iter().map(|s| s.pick_id).max().unwrap_or(0);
+        for ((occurrence, via), net) in occurrences.into_iter().zip(vias).zip(nets) {
+            pick = pick.saturating_add(1);
+            sources.push(Source {
+                pick_id: pick,
+                instance: None,
+                pad: None,
+                track: None,
+                via: Some(via),
+                net: Some(net),
+                layer: None,
+                label: format!("Via {via}"),
+                component: saved.component,
+                occurrence: Some(occurrence),
+            });
+        }
+    }
+    Ok(sources)
 }
 
 /// The body → kind map split over metadata values: Solidcraft caps each
@@ -307,6 +505,13 @@ fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
     finish_with(native, sources, Vec::new())
 }
 
+/// A definition body's measure at one placement: volume, box (low, high)
+/// and where that placement moved it.
+type Measured = (f64, [f64; 3], [f64; 3], [f64; 3]);
+
+/// Via definitions by drill and diameter (their bits).
+type ViaKey = (u64, u64);
+
 /// [`finish`] for a model whose generated definitions are `models`.
 fn finish_with(
     native: Native,
@@ -320,6 +525,18 @@ fn finish_with(
     let generated = models::recorded(&native)?;
     let shared = shared_picks(&native, &sources)?;
     let doc = &native.session().doc;
+    // The first source of each component of its own, and each source by pick.
+    let mut own: BTreeMap<u64, u64> = BTreeMap::new();
+    let mut by_pick: BTreeMap<u64, &Source> = BTreeMap::new();
+    for s in &sources {
+        if s.occurrence.is_none() {
+            own.entry(s.component).or_insert(s.pick_id);
+        }
+        by_pick.entry(s.pick_id).or_insert(s);
+    }
+    // Placements that only move a definition (every via) measure the same:
+    // each definition body is measured once, at its first placement.
+    let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
     for (index, body) in native.session().world_state().bodies.iter().enumerate() {
         let name = body.definition_name();
@@ -347,17 +564,51 @@ fn finish_with(
                 crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             )
         };
-        let m = body
-            .measure()
-            .map_err(|e| Error::Verification(e.to_string()))?;
-        let item = shared.get(&index).copied().or_else(|| {
-            sources
-                .iter()
-                .find(|s| s.component == body.component && s.occurrence.is_none())
-                .map(|s| s.pick_id)
-        });
+        let t = body.source_transform;
+        let moved = t[3];
+        let translation = t[0] == [1.0, 0.0, 0.0, 0.0]
+            && t[1] == [0.0, 1.0, 0.0, 0.0]
+            && t[2] == [0.0, 0.0, 1.0, 0.0]
+            && moved[3] == 1.0;
+        let key = (body.component, name.to_owned());
+        let mesh = body.mesh();
+        let (volume, min, max) = match measured.get(&key).filter(|_| translation) {
+            Some((volume, min, max, at)) => {
+                let shift = |p: &[f64; 3]| std::array::from_fn(|i| p[i] + moved[i] - at[i]);
+                (Volume::known(*volume), shift(min), shift(max))
+            }
+            // A laminate slab's box is its outline's, whose corners its mesh
+            // has exactly; its volume (measuring thousands of drilled
+            // holes) is measured only if asked for.
+            None if kind == BodyKind::Substrate => {
+                let b = mesh.bounds();
+                let body = body.clone();
+                (
+                    Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
+                    [b.min.x, b.min.y, b.min.z],
+                    [b.max.x, b.max.y, b.max.z],
+                )
+            }
+            None => {
+                let m = body
+                    .measure()
+                    .map_err(|e| Error::Verification(e.to_string()))?;
+                let (min, max) = (
+                    [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
+                    [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
+                );
+                if translation {
+                    measured.insert(key, (m.volume, min, max, [moved[0], moved[1], moved[2]]));
+                }
+                (Volume::known(m.volume), min, max)
+            }
+        };
+        let item = shared
+            .get(&index)
+            .copied()
+            .or_else(|| own.get(&body.component).copied());
         let layer = item
-            .and_then(|pick| sources.iter().find(|s| s.pick_id == pick))
+            .and_then(|pick| by_pick.get(&pick).copied())
             .filter(|_| !kind.is_envelope() && !kind.is_generated())
             .and_then(|s| s.layer)
             .and_then(|layer| body_layer(name, layer));
@@ -367,10 +618,10 @@ fn finish_with(
             layer,
             surface,
             detail,
-            mesh: body.mesh(),
-            volume: m.volume,
-            min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
-            max: [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
+            mesh,
+            volume,
+            min,
+            max,
         });
     }
     Ok(NativeModel {
@@ -715,17 +966,6 @@ fn polygon(points: &[Point]) -> Option<Contour> {
     }))
 }
 
-/// A regular polygon of `INNER_RING_SEGMENTS` sides about a circle (its
-/// vertices on it).
-fn ring_outline(center: Point, radius: f64) -> Vec<Point> {
-    (0..INNER_RING_SEGMENTS)
-        .map(|k| {
-            let a = std::f64::consts::TAU * k as f64 / INNER_RING_SEGMENTS as f64;
-            [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
-        })
-        .collect()
-}
-
 /// A track's copper rectangle on the board.
 fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
     let d = [end[0] - start[0], end[1] - start[1]];
@@ -743,6 +983,22 @@ fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
+    build_with(project, None)
+}
+
+/// [`build`] that stops with [`Error::Cancelled`] at its next native
+/// command once `cancel` is set (a newer board replaced this one).
+pub fn build_cancellable(
+    project: &Project,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<NativeModel> {
+    build_with(project, Some(cancel))
+}
+
+fn build_with(
+    project: &Project,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     if project
         .vias
@@ -755,52 +1011,18 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     }
     let stackup = &project.stackup;
     let mut b = Builder::new(&project.name)?;
+    if let Some(cancel) = cancel {
+        b.native.cancel_with(cancel);
+    }
     stackup_params(&mut b, project)?;
     let board = b.native.component("PCB substrate", true)?.occurrence;
-    b.body(
-        BodyKind::Substrate,
-        BoxBody {
-            name: "Substrate",
-            corner: [0.into(), 0.into(), 0.into()],
-            size: [
-                "board_width".into(),
-                "board_depth".into(),
-                "board_thickness".into(),
-            ],
-        },
-    )?;
     let pads = placed_pads(project)?;
-    // Every drill through the laminate, cut in one feature: the holes sit
-    // where the pads are placed now (they do not follow placement
-    // parameters edited in Solidcraft).
-    let mut drills: Vec<Contour> = pads
-        .iter()
-        .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
-        .collect();
-    if drills.len().saturating_add(project.vias.len()) > MAX_DRILLS {
-        return Err(Error::Invalid(format!(
-            "the board has more than {MAX_DRILLS} drilled holes"
-        )));
-    }
-    drills.extend(project.vias.iter().map(|via| Contour::Circle {
-        center: via.position,
-        radius: via.drill / 2.0,
-    }));
-    if !drills.is_empty() {
-        b.native.profile_cut(
-            "Drills",
-            0.into(),
-            &drills,
-            "board_thickness".into(),
-            &["Substrate"],
-        )?;
-    }
-    inner_copper_cuts(&mut b, project)?;
+    b.params(&object_params(project, &pads)?)?;
+    laminate(&mut b, project, &pads)?;
     let mut sources = vec![];
     let mut parts = vec![];
-    // Joints of shared definitions wait until every occurrence is placed:
-    // a copy starts where its first occurrence stands.
-    let mut shared_joints = vec![];
+    // Board joints of every part, made at the end (see there).
+    let mut joints: Vec<(BoardJoint, JointFrame, Option<String>)> = vec![];
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -814,13 +1036,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         let package = &physical.package.definition;
         let footprint = &physical.footprint.definition;
         let prefix = format!("instance_{}", instance.id);
-        for (suffix, value, unit) in [
-            ("x", placement.position[0], "mm"),
-            ("y", placement.position[1], "mm"),
-            ("angle", placement.rotation_deg, "deg"),
-        ] {
-            b.param(&format!("{prefix}_{suffix}"), value, unit)?;
-        }
         if models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
             let created = b.model(&stem, package)?;
@@ -838,7 +1053,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                     generated: true,
                 });
             }
-            shared_joints.push((
+            joints.push((
                 BoardJoint {
                     board,
                     occurrence: created.occurrence,
@@ -848,7 +1063,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                     mount: placement.layer.into(),
                 },
                 holding_frame(&frame),
-                copper_param(placement.layer.into()),
+                Some(copper_param(placement.layer.into())),
             ));
             sources.push(Source {
                 pick_id: pick,
@@ -866,12 +1081,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         }
         let label = format!("{} envelope", instance.designator);
         let created = b.native.component(&label, false)?;
-        for (axis, value) in ["length", "width", "height"]
-            .into_iter()
-            .zip(package.envelope)
-        {
-            b.param(&format!("{prefix}_{axis}"), value, "mm")?;
-        }
         let body = Body::of(package);
         // The box in its model frame (z = 0 the seating plane), held at
         // its placement in the datum frame as a generated model is.
@@ -892,7 +1101,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             },
         )?;
         let frame = datum_frame(package);
-        b.native.board_joint_at(
+        joints.push((
             BoardJoint {
                 board,
                 occurrence: created.occurrence,
@@ -901,9 +1110,9 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 angle: format!("{prefix}_angle").into(),
                 mount: placement.layer.into(),
             },
-            &holding_frame(&frame),
-            Some(&copper_param(placement.layer.into())),
-        )?;
+            holding_frame(&frame),
+            Some(copper_param(placement.layer.into())),
+        ));
         let pick = next_pick(&sources);
         // The display-only terminations, overcoat and fillets are drawn in
         // the package frame: only while the model frame is that frame.
@@ -929,9 +1138,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             component: created.component,
             occurrence: None,
         });
-    }
-    for (joint, frame, lift) in shared_joints {
-        b.native.board_joint_at(joint, &frame, Some(&lift))?;
     }
     let mut lands = Vec::with_capacity(pads.len());
     for pad in &pads {
@@ -1010,9 +1216,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         };
         match axis_box(pad) {
             Some(along_y) => {
-                let [length, width] = local.shape.extent();
-                b.param(&format!("{pp}_length"), length, "mm")?;
-                b.param(&format!("{pp}_width"), width, "mm")?;
                 let (x, y) = if along_y {
                     (format!("{pp}_width"), format!("{pp}_length"))
                 } else {
@@ -1056,14 +1259,18 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
         let y =
             format!("{prefix}_y + sin({prefix}_angle) * {dx} mm + cos({prefix}_angle) * {dy} mm");
-        b.native.board_joint(BoardJoint {
-            board,
-            occurrence: created.occurrence,
-            x: x.into(),
-            y: y.into(),
-            angle: format!("{prefix}_angle").into(),
-            mount: pad.placed.layer.into(),
-        })?;
+        joints.push((
+            BoardJoint {
+                board,
+                occurrence: created.occurrence,
+                x: x.into(),
+                y: y.into(),
+                angle: format!("{prefix}_angle").into(),
+                mount: pad.placed.layer.into(),
+            },
+            JointFrame::ORIGIN,
+            None,
+        ));
         sources.push(Source {
             pick_id: pick,
             instance: Some(pad.placed.instance),
@@ -1084,15 +1291,6 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
-        for (suffix, value) in [
-            ("x0", track.start[0]),
-            ("y0", track.start[1]),
-            ("x1", track.end[0]),
-            ("y1", track.end[1]),
-            ("width", track.width),
-        ] {
-            b.param(&format!("{prefix}_{suffix}"), value, "mm")?;
-        }
         let created = b.native.component(&prefix, false)?;
         let length = format!("sqrt(({prefix}_x1-{prefix}_x0)^2 + ({prefix}_y1-{prefix}_y0)^2)");
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
@@ -1108,14 +1306,18 @@ pub fn build(project: &Project) -> Result<NativeModel> {
                 ],
             },
         )?;
-        b.native.board_joint(BoardJoint {
-            board,
-            occurrence: created.occurrence,
-            x: format!("{prefix}_x0").into(),
-            y: format!("{prefix}_y0").into(),
-            angle: angle.into(),
-            mount,
-        })?;
+        joints.push((
+            BoardJoint {
+                board,
+                occurrence: created.occurrence,
+                x: format!("{prefix}_x0").into(),
+                y: format!("{prefix}_y0").into(),
+                angle: angle.into(),
+                mount,
+            },
+            JointFrame::ORIGIN,
+            None,
+        ));
         let pick = next_pick(&sources);
         // Inner copper is buried: no mask cap or finish over it.
         if let Some(side) = track.layer.side() {
@@ -1141,7 +1343,11 @@ pub fn build(project: &Project) -> Result<NativeModel> {
         });
     }
     let display = appearance::Board::of(project);
-    let marks = vias(&mut b, project, board, &mut sources)?;
+    let marks = vias(&mut b, project, &mut sources)?;
+    // Every joint goes in once the parts are built, solved together (one
+    // by one, each would solve all the joints made before it); a copy of a
+    // shared definition starts where its first occurrence stands.
+    b.native.board_joints(&joints)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
@@ -1170,79 +1376,135 @@ pub fn build(project: &Project) -> Result<NativeModel> {
     Ok(model)
 }
 
-/// Every board via as saved copper: its plated barrel through the laminate
-/// and an annular ring on each copper layer it joins, in one component
-/// held upright on the board at the via's position parameters. Returns
-/// what the display layers draw of each.
-fn vias(
-    b: &mut Builder,
-    project: &Project,
-    board: u64,
-    sources: &mut Vec<Source>,
-) -> Result<Vec<ViaMark>> {
+/// One via definition per drill and diameter: its plated barrel through
+/// the laminate and an annular ring on each copper layer, standing on the
+/// board's bottom face at its origin. Every via of that size is an
+/// occurrence of it, so a board of thousands of vias builds (and meshes)
+/// each size of via once and places the rest.
+struct ViaStyle {
+    component: u64,
+    /// Where the definition's first occurrence stands; `None` while it is
+    /// unplaced, with that occurrence.
+    origin: Option<Point>,
+    first: u64,
+}
+
+/// The definition of `via`'s size.
+fn via_style(b: &mut Builder, project: &Project, via: &pcbcraft_core::Via) -> Result<ViaStyle> {
     let stackup = &project.stackup;
     let layers = stackup.layers();
-    let mut marks = Vec::with_capacity(project.vias.len());
-    for via in &project.vias {
-        let prefix = format!("via_{}", via.id);
-        b.param(&format!("{prefix}_x"), via.position[0], "mm")?;
-        b.param(&format!("{prefix}_y"), via.position[1], "mm")?;
-        let created = b.native.component(&prefix, false)?;
-        let drill = via.drill / 2.0;
-        let bore = drill - PLATING_MM;
-        let ring = via.diameter / 2.0;
-        let circle = |radius| Contour::Circle {
-            center: [0.0, 0.0],
-            radius,
-        };
-        if bore > 0.0 {
-            let name = format!("{prefix}_barrel");
-            b.native.profile_body(ProfileBody {
-                name: &name,
-                offset: 0.into(),
-                contours: &[circle(drill), circle(bore)],
-                height: "board_thickness".into(),
-            })?;
-            b.record(&name, BodyKind::ViaCopper)?;
-        }
-        for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
-            let name = format!("{prefix}_ring_{}", layer_slug(*layer));
-            let height = copper_param(*layer);
-            // Outer rings cap the barrel; inner rings stand round it.
-            let (offset, contours): (Expr, Vec<Contour>) = match layer {
-                CopperLayer::Top => ("board_thickness".into(), vec![circle(ring), circle(bore)]),
-                CopperLayer::Bottom => (
-                    format!("- {height}").into(),
-                    vec![circle(ring), circle(bore)],
-                ),
-                CopperLayer::Inner(_) => (
-                    inner_base(stackup, *layer)?.into(),
-                    vec![
-                        polygon(&ring_outline([0.0, 0.0], ring))
-                            .ok_or_else(|| Error::Invalid("empty via ring".into()))?,
-                        circle(drill),
-                    ],
-                ),
-            };
-            if bore <= 0.0 && layer.side().is_some() {
-                continue;
-            }
-            b.native.profile_body(ProfileBody {
-                name: &name,
-                offset,
-                contours: &contours,
-                height: height.as_str().into(),
-            })?;
-            b.record(&name, BodyKind::ViaCopper)?;
-        }
-        b.native.board_joint(BoardJoint {
-            board,
-            occurrence: created.occurrence,
-            x: format!("{prefix}_x").into(),
-            y: format!("{prefix}_y").into(),
-            angle: 0.into(),
-            mount: Mount::Height(0.into()),
+    let name = format!("via_{}_{}", mm_slug(via.drill), mm_slug(via.diameter));
+    let created = b.native.component(&name, false)?;
+    let drill = via.drill / 2.0;
+    let bore = drill - PLATING_MM;
+    let ring = via.diameter / 2.0;
+    let circle = |radius| Contour::Circle {
+        center: [0.0, 0.0],
+        radius,
+    };
+    if bore > 0.0 {
+        let body = format!("{name}_barrel");
+        b.native.profile_body(ProfileBody {
+            name: &body,
+            offset: 0.into(),
+            contours: &[circle(drill), circle(bore)],
+            height: "board_thickness".into(),
         })?;
+        b.record(&body, BodyKind::ViaCopper)?;
+    }
+    // Through vias join every layer.
+    for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
+        if bore <= 0.0 && layer.side().is_some() {
+            continue;
+        }
+        let body = format!("{name}_ring_{}", layer_slug(*layer));
+        let height = copper_param(*layer);
+        // Outer rings cap the barrel; inner rings stand round it, in the
+        // circle the laminate's foil level leaves for them.
+        let (offset, contours): (Expr, [Contour; 2]) = match layer {
+            CopperLayer::Top => ("board_thickness".into(), [circle(ring), circle(bore)]),
+            CopperLayer::Bottom => (format!("- {height}").into(), [circle(ring), circle(bore)]),
+            CopperLayer::Inner(_) => (
+                inner_base(stackup, *layer)?.into(),
+                [circle(ring), circle(drill)],
+            ),
+        };
+        b.native.profile_body(ProfileBody {
+            name: &body,
+            offset,
+            contours: &contours,
+            height: height.as_str().into(),
+        })?;
+        b.record(&body, BodyKind::ViaCopper)?;
+    }
+    Ok(ViaStyle {
+        component: created.component,
+        origin: None,
+        first: created.occurrence,
+    })
+}
+
+/// A length in body and component names: `0.3` → `0p3`.
+fn mm_slug(value: f64) -> String {
+    format!("{value}").replace('.', "p").replace('-', "m")
+}
+
+/// Every board via as saved copper: an occurrence of its size's definition
+/// ([`via_style`]) moved to the via. Like the drills, a via sits where it
+/// is now. Returns what the display layers draw of each.
+fn vias(b: &mut Builder, project: &Project, sources: &mut Vec<Source>) -> Result<Vec<ViaMark>> {
+    let mut styles: BTreeMap<ViaKey, ViaStyle> = BTreeMap::new();
+    // Each via's definition, and the copies each definition still needs:
+    // (via index, offset from the definition's first occurrence).
+    let mut style_of = Vec::with_capacity(project.vias.len());
+    let mut copies: BTreeMap<ViaKey, Vec<(usize, [f64; 3])>> = BTreeMap::new();
+    let mut occurrences: Vec<Option<u64>> = vec![None; project.vias.len()];
+    for (index, via) in project.vias.iter().enumerate() {
+        let key = (via.drill.to_bits(), via.diameter.to_bits());
+        let style = match styles.entry(key) {
+            std::collections::btree_map::Entry::Occupied(style) => style.into_mut(),
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(via_style(b, project, via)?)
+            }
+        };
+        let [x, y] = via.position;
+        match style.origin {
+            None => {
+                b.native.activate_root()?;
+                b.native.move_occurrence(
+                    style.first,
+                    [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, y], [0.0, 0.0, 1.0, 0.0]],
+                )?;
+                style.origin = Some(via.position);
+                occurrences[index] = Some(style.first);
+            }
+            Some([x0, y0]) => copies
+                .entry(key)
+                .or_default()
+                .push((index, [x - x0, y - y0, 0.0])),
+        }
+        style_of.push(style.component);
+    }
+    // Every further via of a size is placed in one command.
+    for (key, wanted) in copies {
+        let style = styles
+            .get(&key)
+            .ok_or_else(|| Error::Verification("via definition missing".into()))?;
+        let offsets: Vec<[f64; 3]> = wanted.iter().map(|(_, t)| *t).collect();
+        let placed = b.native.copy_occurrences(style.component, &offsets)?;
+        if placed.len() != wanted.len() {
+            return Err(Error::Verification("via copies went missing".into()));
+        }
+        for ((index, _), occurrence) in wanted.into_iter().zip(placed) {
+            if let Some(slot) = occurrences.get_mut(index) {
+                *slot = Some(occurrence);
+            }
+        }
+    }
+    let mut marks = Vec::with_capacity(project.vias.len());
+    for ((via, component), occurrence) in project.vias.iter().zip(style_of).zip(occurrences) {
+        let occurrence =
+            occurrence.ok_or_else(|| Error::Verification(format!("via {} is unplaced", via.id)))?;
         let pick = next_pick(sources);
         sources.push(Source {
             pick_id: pick,
@@ -1253,8 +1515,8 @@ fn vias(
             net: Some(via.net),
             layer: None,
             label: format!("Via {}", via.id),
-            component: created.component,
-            occurrence: None,
+            component,
+            occurrence: Some(occurrence),
         });
         marks.push(ViaMark {
             pick,
@@ -1276,46 +1538,186 @@ fn layer_slug(layer: CopperLayer) -> String {
     }
 }
 
-/// Inner copper is embedded in the laminate: cut the union of each inner
-/// layer's copper (tracks and via rings) out of the substrate at its
-/// height, in one feature per layer, so the saved bodies stay disjoint and
-/// the laminate's mass is physical. Like the drills, the cuts sit where the
-/// copper is now.
-fn inner_copper_cuts(b: &mut Builder, project: &Project) -> Result<()> {
+/// Most parameters per import.
+const MAX_IMPORTED_PARAMS: usize = 8192;
+
+/// Every placement's, pad's and track's own parameters, added together
+/// before the objects that use them: each placement's position and angle
+/// (and an envelope's size), an axis-aligned land's size, and each track's
+/// ends and width.
+fn object_params(
+    project: &Project,
+    pads: &[PlacedPad<'_>],
+) -> Result<Vec<(String, f64, &'static str)>> {
+    let mut out = Vec::new();
+    for placement in &project.placements {
+        let instance = project
+            .instance(placement.instance)
+            .ok_or_else(|| Error::Invalid("missing instance".into()))?;
+        let physical = instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+            .ok_or_else(|| {
+                Error::Invalid("placed instance has no physical implementation".into())
+            })?;
+        let prefix = format!("instance_{}", instance.id);
+        out.push((format!("{prefix}_x"), placement.position[0], "mm"));
+        out.push((format!("{prefix}_y"), placement.position[1], "mm"));
+        out.push((format!("{prefix}_angle"), placement.rotation_deg, "deg"));
+        let package = &physical.package.definition;
+        if !models::is_generated(package) {
+            for (axis, value) in ["length", "width", "height"]
+                .into_iter()
+                .zip(package.envelope)
+            {
+                out.push((format!("{prefix}_{axis}"), value, "mm"));
+            }
+        }
+    }
+    for pad in pads {
+        let local = pad.pad();
+        if pad_outline::copper(local) == Copper::None
+            || pad_outline::shape_contour(&local.shape, 0.0).is_none()
+            || axis_box(pad).is_none()
+        {
+            continue;
+        }
+        let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
+        let [length, width] = local.shape.extent();
+        out.push((format!("{pp}_length"), length, "mm"));
+        out.push((format!("{pp}_width"), width, "mm"));
+    }
+    for track in &project.tracks {
+        let prefix = format!("trace_{}", track.id);
+        for (suffix, value) in [
+            ("x0", track.start[0]),
+            ("y0", track.start[1]),
+            ("x1", track.end[0]),
+            ("y1", track.end[1]),
+            ("width", track.width),
+        ] {
+            out.push((format!("{prefix}_{suffix}"), value, "mm"));
+        }
+    }
+    Ok(out)
+}
+
+/// The sum of `dielectrics[range]`'s thickness parameters, `0` for none.
+fn dielectric_sum(stackup: &Stackup, range: std::ops::Range<usize>) -> String {
+    if let [_] = stackup.dielectrics.as_slice() {
+        return if range.is_empty() {
+            "0 mm".into()
+        } else {
+            "board_thickness".into()
+        };
+    }
+    let terms: Vec<String> = range.map(dielectric_param).collect();
+    if terms.is_empty() {
+        "0 mm".into()
+    } else {
+        terms.join(" + ")
+    }
+}
+
+/// The laminate as the stack it is made of: each dielectric a slab
+/// extruded from the board outline with every drill as a hole, and where
+/// an inner foil lies at the top of a dielectric, the foil's level a slab
+/// of its own whose holes are also that layer's copper (tracks and via
+/// rings, united by the sketch where they overlap). The saved bodies are
+/// disjoint and the laminate's mass is physical, without a Boolean: a
+/// board of thousands of vias is built in time linear in their number.
+/// Like the drills, the outline and the holes sit where the board and its
+/// copper are now (they do not follow parameters edited in Solidcraft);
+/// the slabs' heights follow the stackup parameters.
+fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Result<()> {
     let stackup = &project.stackup;
+    let [width, depth] = project.board_size;
+    let outline = polygon(&[[0.0, 0.0], [width, 0.0], [width, depth], [0.0, depth]])
+        .ok_or_else(|| Error::Invalid("the board has no outline".into()))?;
+    let pad_drills: Vec<Contour> = pads
+        .iter()
+        .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
+        .collect();
+    if pad_drills.len().saturating_add(project.vias.len()) > MAX_DRILLS {
+        return Err(Error::Invalid(format!(
+            "the board has more than {MAX_DRILLS} drilled holes"
+        )));
+    }
+    let via_drills = project.vias.iter().map(|via| Contour::Circle {
+        center: via.position,
+        radius: via.drill / 2.0,
+    });
+    let mut dielectric = vec![outline.clone()];
+    dielectric.extend(pad_drills.iter().cloned());
+    dielectric.extend(via_drills);
     let layers = stackup.layers();
-    for layer in layers.iter().filter(|l| l.side().is_none()) {
-        let mut loops: Vec<Vec<Point>> = project
-            .tracks
+    let count = stackup.dielectrics.len();
+    let mut slab = 0usize;
+    let mut name = || {
+        slab += 1;
+        if slab == 1 {
+            "Substrate".to_owned()
+        } else {
+            format!("Substrate {slab}")
+        }
+    };
+    for index in 0..count {
+        let low = dielectric_sum(stackup, index + 1..count);
+        let thickness = dielectric_sum(stackup, index..index + 1);
+        // An inner foil at this dielectric's top (`inner_base`).
+        let foil = layers
             .iter()
-            .filter(|t| t.layer == *layer)
-            .map(|t| track_outline(t.start, t.end, t.width))
-            .filter(|l| !l.is_empty())
-            .collect();
-        loops.extend(
+            .copied()
+            .find(|l| l.side().is_none() && stackup.index(*l) == Some(index));
+        let Some(layer) = foil else {
+            let name = name();
+            b.native.batched_body(ProfileBody {
+                name: &name,
+                offset: low.as_str().into(),
+                contours: &dielectric,
+                height: thickness.as_str().into(),
+            })?;
+            b.record(&name, BodyKind::Substrate)?;
+            continue;
+        };
+        // The foil's level: its copper is cut out with the pad drills (via
+        // drills lie inside their rings).
+        let mut level = vec![outline.clone()];
+        level.extend(pad_drills.iter().cloned());
+        level.extend(
+            project
+                .tracks
+                .iter()
+                .filter(|t| t.layer == layer)
+                .filter_map(|t| polygon(&track_outline(t.start, t.end, t.width))),
+        );
+        level.extend(
             project
                 .vias
                 .iter()
-                .filter(|v| v.on(*layer, &layers))
-                .map(|v| ring_outline(v.position, v.diameter / 2.0)),
+                .filter(|v| v.on(layer, &layers))
+                .map(|v| Contour::Circle {
+                    center: v.position,
+                    radius: v.diameter / 2.0,
+                }),
         );
-        if loops.is_empty() {
-            continue;
-        }
-        let outline = appearance::union(&loops).ok_or_else(|| {
-            Error::Invalid(format!("{} has too much copper to model", layer.name()))
+        let foil_name = name();
+        let foil_height = copper_param(layer);
+        b.native.batched_body(ProfileBody {
+            name: &foil_name,
+            offset: inner_base(stackup, layer)?.into(),
+            contours: &level,
+            height: foil_height.as_str().into(),
         })?;
-        let contours: Vec<Contour> = outline.iter().filter_map(|l| polygon(l)).collect();
-        if contours.is_empty() {
-            continue;
-        }
-        b.native.profile_cut(
-            &format!("{} copper", layer.name()),
-            inner_base(stackup, *layer)?.into(),
-            &contours,
-            copper_param(*layer).into(),
-            &["Substrate"],
-        )?;
+        b.record(&foil_name, BodyKind::Substrate)?;
+        let below = name();
+        b.native.batched_body(ProfileBody {
+            name: &below,
+            offset: low.as_str().into(),
+            contours: &dielectric,
+            height: format!("{thickness} - {foil_height}").into(),
+        })?;
+        b.record(&below, BodyKind::Substrate)?;
     }
     Ok(())
 }

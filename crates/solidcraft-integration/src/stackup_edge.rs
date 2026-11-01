@@ -209,7 +209,7 @@ mod tests {
             assert!(g.max[1] > 10.0 && g.max[1] < 10.01);
             // A thin frame: far less than the slab it would be if filled.
             let filled = 20.0 * 10.0 * (g.max[2] - g.min[2]);
-            assert!(g.volume < filled / 100.0, "{:?}", g.kind);
+            assert!(g.volume() < filled / 100.0, "{:?}", g.kind);
         }
         Ok(())
     }

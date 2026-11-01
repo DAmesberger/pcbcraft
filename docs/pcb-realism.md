@@ -118,11 +118,24 @@ The board and ERC checks pass with no findings.
 
 ### Saved physical bodies
 
-- Inner-layer copper sits at its stackup heights. It is cut out of the laminate once per
-  layer, so the saved bodies stay disjoint.
+- The laminate is the stack it is made of, with no Boolean: each dielectric is a slab
+  extruded from the board outline with every drill as a hole (`Substrate`, `Substrate 2`,
+  …), and where an inner foil lies at the top of a dielectric, the foil's level is a slab
+  of its own whose holes are also that layer's copper (tracks and via rings; the sketch
+  unites them where they overlap). The saved bodies stay disjoint and a board of
+  thousands of vias builds in time about linear in their number. The sketches go in with
+  one `sketch.insert_dxf` each. Like the drills before, the outline and the holes sit where
+  they are now; the slab heights follow the stackup parameters.
 - Through vias are saved copper (`BodyKind::ViaCopper`): a plated barrel with an annular
-  ring on every copper layer. Each via is a component `via_<id>` with parameters
-  `via_<id>_x` and `via_<id>_y`.
+  ring on every copper layer (inner rings exact circles round the drill, the circle the
+  foil level leaves). Each via size is one component `via_<drill>_<diameter>` (`via_0p3_0p6`)
+  built once; every via of that size is an occurrence of it, placed at the via (all but the
+  first in one `occurrence.copy` with `translations`), so each size is also meshed once.
+  Vias sit where they are now (no per-via position parameters).
+- Sources are saved compactly: absent fields are left out, the listed sources spill over
+  `org.pcbcraft.electronics.sources.N`, and vias are recorded per definition in
+  `org.pcbcraft.electronics.vias.N` (occurrence and via ids as differences, nets as runs);
+  `saved_sources` reads them back.
 - The stackup becomes native parameters:
   - `dielectric_N_thickness` for each dielectric;
   - `board_thickness`, their sum;
@@ -235,19 +248,75 @@ from the GUI. The core warning that restated them is no longer shown twice.
 ## Build cost (measured)
 
 `build_timings` (`cargo test --profile ci -p pcbcraft-solidcraft build_timings -- --ignored
---nocapture`, one machine, release-like `ci` profile):
+--nocapture`, one 18-core machine shared with other builds, release-like `ci` profile). The
+via boards are `via_board` in `project/tests.rs`: the showcase on 4 layers with that many
+vias on a 1.27 mm grid and about 260 tracks (200 inner).
 
-| Board | Native bodies | Drawn | Build p50 |
+| Board | Native bodies | Before | After |
 | --- | --- | --- | --- |
-| Demo | 13 | 30 | 117 ms |
-| Showcase (4 layers, 11 vias) | 240 | 459 | 7.0 s |
-| Demo on 4 layers, 50 vias, 25 inner tracks | 288 | 484 | 30.3 s |
-| Demo, 400 tracks | 413 | 830 | 13.5 s |
+| Demo | 13 | 117 ms | 93 ms |
+| Showcase (4 layers, 11 vias) | 244 | 7.0 s | 2.3 s |
+| Demo on 4 layers, 50 vias, 25 inner tracks | 292 | 30.3 s | 0.32 s |
+| Demo, 400 tracks | 413 | 13.5 s | 3.8 s |
+| Showcase, 4 layers, 1,000 vias | 5,441 | fails (200 vias did) | 7.0 s |
+| Showcase, 4 layers, 4,096 vias | 20,929 | fails (200 vias did) | 12.9 s |
+| Showcase, 4 layers, 10,000 vias | 50,444 | refused (over 4,096) | 71 s |
 
-Each via is its own native component, and the laminate is cut once per layer around every
-drill, so vias cost far more than tracks. 200 vias on 4 layers fail to build: Solidcraft
-refuses the laminate cut ("planar tool comparison budget exceeded"). Validation allows
-4,096 vias, so via counts above about 50 are an unmeasured target, not a supported size.
+"Before" is the pinned `pcbcraft-product-look` build (the showcase with 50 vias took 607 s
+there); "after" was measured at a load average of about 15–40 from other builds, one run for
+the two largest boards.
+
+What made vias expensive, and what changed:
+
+- **Booleans.** The drills were one profile cut of the laminate and each inner layer's
+  copper another; past Solidcraft's prism budgets these fell back to its general B-rep
+  Boolean (607 s for 50 vias on the showcase) and refused 200 vias. The laminate is now
+  stacked slabs extruded with their holes, and no Boolean runs.
+- **A command per thing.** Every Solidcraft command evaluates parameters and solves every
+  joint again, so N commands cost N². Sketch contours go in with one `sketch.insert_dxf`, the
+  placements' parameters with one `parameters.import`, every via of a size with one
+  `occurrence.copy` (`translations`) and every board joint with one `joint.create`
+  (`joints`), the last two added to the Solidcraft fork for this.
+- **Per-via components.** A via was its own component with its own features, meshed on
+  its own. A via size is now one definition placed per via.
+- **Quadratic sketch steps.** Choosing a drilled plate's profiles compared every hole with
+  every profile, and merging regions every segment with every other: both now look up a
+  grid (`BoxIndex` in the fork's geometry crate). Above 10,000 profiles the profile choice
+  used to take every profile, which filled every hole in; it now checks them all.
+- **Measuring.** Every body was measured exactly as it was built; a placement of a via
+  definition reuses its definition's measure, and a laminate slab's volume is measured only
+  when read.
+
+Where the time goes now (sampled at 10,000 vias, before the joints were batched): meshing the five laminate slabs (each
+face of 10,000 hole walls is a NURBS cylinder that the reference mesher and its seam
+classification sample one by one) about 40 %, extruding them (orienting each new body by
+meshing it coarsely, and its planar checks) about 25 %, the remaining per-part commands
+(pads, tracks: parameters evaluated again by each) about 20 %, and copying the sketch on each
+sketch step. Per via, building and placing are now about linear.
+
+The 3D view cannot show 1,000 vias yet: each via body is meshed at its own scale (about
+700 triangles a body, five bodies a via), and every placement is copied into the vertex
+stream, far over the view's 88 MiB cap (about 480,000 triangles).
+
+Plan to reach thousands of vias in a few seconds and an instant 3D view:
+
+1. Draw vias instanced: one mesh per via definition body (Solidcraft already keeps it,
+   `ModelBody::mesh_in_place`), drawn once per placement with a per-placement pick id. This
+   needs a PBR instanced pipeline in the fork's GPU crate (its `InstancedMesh` is
+   palette-lit only), with its coarser levels for small placements.
+2. Mesh repeated faces once: the hole walls of one drill size differ only by a translation;
+   a translation-keyed face-mesh cache in the kernel's reference mesher, and orientation of
+   an extrusion from its profile instead of a coarse mesh.
+3. One evaluation per build: a batch scope in the engine that defers parameter evaluation
+   and joint solving to its end, for the remaining per-part commands.
+4. Incremental rebuilds: keep the native session between builds and change only the
+   features of the parts that changed (a moved via is one occurrence move, a moved track
+   its parameters), instead of rebuilding the board on every edit.
+
+The 3D model is prepared in the background while the board is edited in 2D (debounced
+350 ms after the last change), a build that a newer board replaces stops at its next
+native command, and the 3D view shows the last finished model under "Updating" while a
+newer one builds, so opening the 3D view does not wait for a build that has finished.
 
 ## Merge points with the sidebar redesign
 
@@ -272,7 +341,10 @@ purpose:
   Via drill and pad are the defaults (0.3/0.6 mm) when placed in the app.
 - The GUI could not be checked live: the screen was locked during both runs, so windows drew
   nothing. The offscreen GPU pictures and the egui tests are the evidence.
-- Builds slow down steeply with vias, and 200 vias on 4 layers fail (see Build cost).
+- 10,000 vias build without error but take about a minute, and the 3D view cannot show
+  1,000 vias yet: every via body is meshed at its own scale (about 700 triangles a body),
+  far over the view's 88 MiB vertex cap. See Build cost for where the time goes and the
+  plan.
 - Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
   whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
   its moiré at overview distance are in Solidcraft's shader. Seen from below, the key

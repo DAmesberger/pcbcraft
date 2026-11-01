@@ -283,8 +283,8 @@ mod tests {
             assert!((top - face - crown).abs() < 1e-9, "{side:?}: {top}");
             // A solid of revolution: about the disc's area times its mean
             // height, and outward (positive volume).
-            assert!(dome.volume > 0.0);
-            assert!(dome.volume < std::f64::consts::PI * r * r * crown);
+            assert!(dome.volume() > 0.0);
+            assert!(dome.volume() < std::f64::consts::PI * r * r * crown);
             // Sagging over the drill: lower at the centre than over the ring.
             let h0 = tent_height(&board, &via(true), side, 0.0);
             let h1 = tent_height(&board, &via(true), side, 0.25);

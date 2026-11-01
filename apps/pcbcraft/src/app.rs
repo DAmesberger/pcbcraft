@@ -568,10 +568,18 @@ impl App {
         }
     }
 
-    fn request_model(&mut self) {
+    /// Ask for the model the active 3D view shows; while the board is
+    /// edited in 2D, prepare its model in the background (debounced), so
+    /// switching to 3D shows it at once.
+    fn request_model(&mut self, ctx: &egui::Context) {
         if let Some(key) = self.model_key() {
             self.scene
                 .request(key, self.part.preview_package().as_ref());
+        } else if self.workspace == Workspace::Pcb {
+            let key = ModelKey::Project(Arc::clone(self.engine.project_arc()));
+            if let Some(wait) = self.scene.prefetch(key, self.now) {
+                ctx.request_repaint_after(wait);
+            }
         }
     }
 
@@ -735,7 +743,7 @@ impl eframe::App for App {
         self.messages_window(&ctx);
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);
-        self.request_model();
+        self.request_model(&ctx);
     }
 }
 

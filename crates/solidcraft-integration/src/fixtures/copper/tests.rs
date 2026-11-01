@@ -23,7 +23,7 @@ fn copper_has_physical_thickness_empty_drill_and_expected_volumes() -> Result<()
         b.geometry
             .iter()
             .filter(|g| g.item == Some(id))
-            .map(|g| g.volume)
+            .map(|g| g.volume())
             .sum::<f64>()
     };
     near(volume(1), 10.0 * 0.5 * 0.035);
@@ -104,7 +104,7 @@ fn width_undo_and_rejection_are_atomic() -> Result<()> {
         b.geometry
             .iter()
             .filter(|g| g.item == Some(1))
-            .map(|g| g.volume)
+            .map(|g| g.volume())
             .sum(),
         10.0 * 0.8 * 0.035,
     );
@@ -138,7 +138,7 @@ fn native_reopen_retains_identity_and_regenerates_copper() -> Result<()> {
         .iter()
         .find(|g| g.item == Some(1))
         .ok_or_else(|| Error::Verification("missing trace".into()))?;
-    near(trace.volume, 10.0 * 0.8 * 0.07);
+    near(trace.volume(), 10.0 * 0.8 * 0.07);
     near(trace.max[2], 1.67);
     Ok(())
 }

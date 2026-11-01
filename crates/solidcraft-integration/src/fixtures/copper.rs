@@ -340,7 +340,7 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
                 .surface()?,
             detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             mesh: body.mesh(),
-            volume: m.volume,
+            volume: crate::scene::Volume::known(m.volume),
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
             max: [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
         });

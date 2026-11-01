@@ -10,7 +10,9 @@ use pcbcraft_core::library::PackageDefinition;
 use pcbcraft_core::{Id, Project};
 use pcbcraft_solidcraft::project::Source;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 /// What a model was built from. Projects compare by shared identity, so a
 /// draft-only edit never rebuilds the board model.
@@ -41,7 +43,9 @@ impl ModelKey {
 }
 
 enum Job {
-    Project(u64, Arc<Project>),
+    /// A board, with the flag that stops its build once a newer request
+    /// replaces it.
+    Project(u64, Arc<Project>, Arc<AtomicBool>),
     Package(u64, Box<PackageDefinition>),
 }
 
@@ -51,7 +55,8 @@ struct Built {
 }
 
 /// One background thread building native models. Only the newest queued
-/// request is built; older ones are skipped.
+/// request is built; older ones are skipped, and a board build a newer
+/// request replaced stops at its next native command.
 struct Worker {
     sender: Sender<Job>,
     receiver: Receiver<Built>,
@@ -67,9 +72,10 @@ impl Worker {
                     job = newer;
                 }
                 let (ticket, result) = match job {
-                    Job::Project(ticket, project) => {
-                        (ticket, pcbcraft_solidcraft::project::build(&project))
-                    }
+                    Job::Project(ticket, project, cancel) => (
+                        ticket,
+                        pcbcraft_solidcraft::project::build_cancellable(&project, cancel),
+                    ),
                     Job::Package(ticket, package) => {
                         (ticket, pcbcraft_solidcraft::project::preview(&package))
                     }
@@ -116,9 +122,61 @@ pub fn display(shown: Option<&ModelKey>, requested: &ModelKey, ready: bool) -> D
     }
 }
 
+/// How long a board must stay unchanged before its 3D model is prepared in
+/// the background: a drag or a burst of edits is built once, at its end.
+pub const PREFETCH_DELAY: Duration = Duration::from_millis(350);
+
+/// The debounce of background model preparation: what was last asked for,
+/// and since when (seconds of input time).
+#[derive(Default)]
+pub struct Prefetch {
+    pending: Option<(ModelKey, f64)>,
+}
+
+/// What [`Prefetch::due`] says to do now.
+#[derive(Debug, PartialEq)]
+pub enum Due {
+    /// Already requested (or built): nothing to do.
+    Nothing,
+    /// Build it now.
+    Build,
+    /// Ask again after this long.
+    Wait(Duration),
+}
+
+impl Prefetch {
+    /// Whether `key`, wanted at `now`, is due to be built, given what the
+    /// worker was last asked for.
+    pub fn due(&mut self, key: &ModelKey, now: f64, requested: Option<&ModelKey>) -> Due {
+        if requested == Some(key) {
+            self.pending = None;
+            return Due::Nothing;
+        }
+        let delay = PREFETCH_DELAY.as_secs_f64();
+        match &self.pending {
+            Some((pending, since)) if pending == key => {
+                let left = delay - (now - since);
+                if left <= 0.0 || !left.is_finite() {
+                    self.pending = None;
+                    Due::Build
+                } else {
+                    Due::Wait(Duration::from_secs_f64(left.min(delay)))
+                }
+            }
+            _ => {
+                self.pending = Some((key.clone(), now));
+                Due::Wait(PREFETCH_DELAY)
+            }
+        }
+    }
+}
+
 pub struct SceneController {
     worker: Worker,
     pub viewport: Viewport,
+    prefetch: Prefetch,
+    /// Stops the board build in flight once a newer request replaces it.
+    cancel: Option<Arc<AtomicBool>>,
     ticket: u64,
     key: Option<ModelKey>,
     shown: Option<ModelKey>,
@@ -134,6 +192,8 @@ impl SceneController {
         Self {
             worker: Worker::start(ctx),
             viewport,
+            prefetch: Prefetch::default(),
+            cancel: None,
             ticket: 0,
             key: None,
             shown: None,
@@ -165,8 +225,11 @@ impl SceneController {
             self.status = Status::Failed("model request identity exhausted".into());
             return;
         };
+        let cancel = Arc::new(AtomicBool::new(false));
         let job = match (&key, package) {
-            (ModelKey::Project(project), _) => Job::Project(ticket, Arc::clone(project)),
+            (ModelKey::Project(project), _) => {
+                Job::Project(ticket, Arc::clone(project), Arc::clone(&cancel))
+            }
             (ModelKey::Package(_), Some(package)) => {
                 Job::Package(ticket, Box::new(package.clone()))
             }
@@ -174,11 +237,29 @@ impl SceneController {
         };
         match self.worker.sender.send(job) {
             Ok(()) => {
+                if let Some(previous) = self.cancel.replace(cancel) {
+                    previous.store(true, Ordering::Relaxed);
+                }
                 self.ticket = ticket;
                 self.key = Some(key);
                 self.status = Status::Building;
             }
             Err(error) => self.status = Status::Failed(error.to_string()),
+        }
+    }
+
+    /// Prepare the board's model in the background while it is edited in
+    /// 2D, once it has stayed unchanged for [`PREFETCH_DELAY`], so opening
+    /// the 3D view shows it at once (or the last one, updating). Returns
+    /// when to look again, if the board is still settling.
+    pub fn prefetch(&mut self, key: ModelKey, now: f64) -> Option<Duration> {
+        match self.prefetch.due(&key, now, self.key.as_ref()) {
+            Due::Nothing => None,
+            Due::Build => {
+                self.request(key, None);
+                None
+            }
+            Due::Wait(wait) => Some(wait),
         }
     }
 
@@ -303,6 +384,40 @@ mod tests {
     }
 
     #[test]
+    fn a_settling_board_is_prepared_once_after_it_stops_changing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let edited = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let mut prefetch = Prefetch::default();
+        let delay = PREFETCH_DELAY.as_secs_f64();
+        // Each change restarts the wait; nothing is built mid-gesture.
+        assert_eq!(prefetch.due(&first, 0.0, None), Due::Wait(PREFETCH_DELAY));
+        assert!(matches!(
+            prefetch.due(&first, delay / 2.0, None),
+            Due::Wait(_)
+        ));
+        assert_eq!(
+            prefetch.due(&edited, delay * 0.9, None),
+            Due::Wait(PREFETCH_DELAY)
+        );
+        assert!(matches!(
+            prefetch.due(&edited, delay * 1.5, None),
+            Due::Wait(_)
+        ));
+        // Unchanged for the delay: built once, then never asked again.
+        assert_eq!(prefetch.due(&edited, delay * 2.0, None), Due::Build);
+        assert_eq!(
+            prefetch.due(&edited, delay * 3.0, Some(&edited)),
+            Due::Nothing
+        );
+        assert_eq!(
+            prefetch.due(&edited, delay * 9.0, Some(&edited)),
+            Due::Nothing
+        );
+        Ok(())
+    }
+
+    #[test]
     fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut package = demo_package()?;
         let key = ModelKey::package(&package);
@@ -317,7 +432,11 @@ mod tests {
         let project = Arc::new(Engine::demo()?.project().clone());
         let mut broken = (*project).clone();
         broken.board_size[0] = 0.0;
-        worker.sender.send(Job::Project(1, Arc::new(broken)))?;
+        worker.sender.send(Job::Project(
+            1,
+            Arc::new(broken),
+            Arc::new(AtomicBool::new(false)),
+        ))?;
         worker
             .sender
             .send(Job::Package(2, Box::new(demo_package()?)))?;
