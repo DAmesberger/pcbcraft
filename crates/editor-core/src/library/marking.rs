@@ -9,8 +9,12 @@
 //! code is never drawn. [`MarkingLayout`] is the 2D result the integration
 //! crate (`pcbcraft-solidcraft::marking`, D5) turns into a decal mesh.
 pub mod codes;
+mod layout;
+mod template;
+#[cfg(test)]
+mod tests;
 
-use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
+use crate::diagnostics::{Finding, ObjectRef, Result, Stage};
 use crate::ids::{ContentHash, DefinitionId, FieldRef};
 use crate::materials::MaterialId;
 use schemars::JsonSchema;
@@ -30,6 +34,19 @@ pub const MAX_MARKING_VAR: usize = 32;
 /// Smallest legible text height by default, mm (an estimate for laser
 /// marking on a 0603; data, not a rule).
 pub const DEFAULT_MIN_TEXT_HEIGHT_MM: f64 = 0.3;
+/// Advance of one character as a fraction of the text height: the box
+/// width a laid line may use is `chars × TEXT_ADVANCE × height_mm`. D5
+/// scales glyph outlines to stay inside it.
+pub const TEXT_ADVANCE: f64 = 0.6;
+/// The gap between stacked lines as a fraction of the minimum height.
+pub const LINE_GAP: f64 = 0.5;
+/// The clear margin around the marking area's edge as a fraction of its
+/// smaller side.
+pub const AREA_MARGIN: f64 = 0.05;
+/// Bytes of one rendered line.
+pub const MAX_RENDERED_LINE: usize = 128;
+/// Largest marking area side, mm (bounds arithmetic, not a rule).
+pub const MAX_AREA_MM: f64 = 1000.0;
 
 /// A text template over fields: `{mpn}`, `{manufacturer}`,
 /// `{field:<id>}`, `{field:<id>|code3}`, `{var:date_code}`,
@@ -183,10 +200,24 @@ impl InstanceMarking {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+    /// Persistence bounds: the variable count and sizes, variable names,
+    /// and the replacing spec's bounds.
+    pub fn within_bounds(&self) -> bool {
+        self.vars.len() <= MAX_MARKING_VARS
+            && self.vars.iter().all(|(name, value)| {
+                template::var_name_valid(name)
+                    && value.len() <= MAX_MARKING_VAR
+                    && !value.chars().any(char::is_control)
+            })
+            && self.replace.as_ref().is_none_or(MarkingSpec::within_bounds)
+    }
 }
 
 /// One laid-out line of text, in the area's 2D frame (mm, origin at the
-/// area centre, +x along the area's u axis).
+/// area centre, +x along the area's u axis, +y towards the pin-1 side).
+/// `origin` is the bottom-left corner of the line's box, which is
+/// `text.chars().count() × TEXT_ADVANCE × height_mm` wide and `height_mm`
+/// tall.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LaidText {
@@ -200,17 +231,22 @@ pub struct LaidText {
 #[serde(tag = "element", rename_all = "snake_case")]
 pub enum LaidElement {
     Text(LaidText),
+    /// `origin` is the artwork's centre.
     Artwork {
         svg: ContentHash,
         origin: [f64; 2],
         size_mm: [f64; 2],
     },
+    /// `origin` is the mark's centre; a dot is a circle of diameter
+    /// `size_mm[0]`, a bar and a band are rectangles.
     Polarity {
         mark: PolarityMark,
         origin: [f64; 2],
         size_mm: [f64; 2],
     },
-    /// Colour bands from the −x end: IEC 60062 colour indices.
+    /// Colour bands from the −x end: IEC 60062 colour indices
+    /// ([`codes::BAND_COLOURS`]). Band `i` of `n` is centred at
+    /// `x = (i − (n − 1) / 2) × pitch_mm` and spans the area's height.
     Bands {
         colours: Vec<u8>,
         pitch_mm: f64,
@@ -254,24 +290,105 @@ pub fn effective<'a>(
     instance.replace.as_ref().or(part).or(component)
 }
 
-/// Lay out `spec` for `inputs`. Contract stub until D4.
-pub fn layout(_spec: &MarkingSpec, _inputs: &MarkingInputs) -> Result<MarkingLayout> {
-    Err(Error::Unsupported(
-        "marking.unsupported: instance markings are not available yet (slice D4)".into(),
-    ))
+/// Lay out `spec` for `inputs`: text lines stacked and auto-fitted in the
+/// area, codes chosen (an `Auto` list picks the first representable code
+/// that fits at the minimum legible height), polarity marks, artwork and
+/// colour bands placed. An item that cannot be represented or does not fit
+/// draws nothing and adds an Info finding; findings name no objects (the
+/// caller adds the instance). Errors only on non-finite inputs.
+pub fn layout(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingLayout> {
+    layout::run(spec, inputs)
 }
 
-/// Publish findings of a marking spec (`marking.template`, bounds).
-/// Contract: any non-empty spec is refused with `marking.unsupported`
-/// until D4.
+fn positive(value: f64) -> bool {
+    value.is_finite() && value > 0.0 && value <= MAX_AREA_MM
+}
+
+/// Publish findings of a marking spec (`marking.template`): bounds,
+/// template syntax, code schemes and sizes. They block publishing.
 pub fn spec_findings(owner: DefinitionId, spec: &MarkingSpec) -> Vec<Finding> {
-    if spec.items.is_empty() {
-        return Vec::new();
+    let mut problems = Vec::new();
+    if spec.items.len() > MAX_MARKING_ITEMS {
+        problems.push(format!("a marking lists at most {MAX_MARKING_ITEMS} items"));
     }
-    vec![Finding::blocking(
-        "marking.unsupported",
-        "Markings cannot be published yet.".into(),
-        vec![ObjectRef::Definition { id: owner }],
-        Stage::Publish,
-    )]
+    if spec.min_text_height_mm.is_some_and(|h| !positive(h)) {
+        problems.push("the minimum text height must be a positive size".into());
+    }
+    if let AreaChoice::Explicit { centre, size_mm } = spec.area
+        && (!size_mm.iter().all(|s| positive(*s))
+            || !centre
+                .iter()
+                .all(|c| c.is_finite() && c.abs() <= MAX_AREA_MM))
+    {
+        problems.push("the explicit marking area needs a finite centre and positive size".into());
+    }
+    for (index, item) in spec.items.iter().enumerate() {
+        let n = index + 1;
+        match item {
+            MarkingItem::Text {
+                template,
+                height_mm,
+                ..
+            } => {
+                if template.0.len() > MAX_TEMPLATE {
+                    problems.push(format!(
+                        "item {n}: a template is at most {MAX_TEMPLATE} bytes"
+                    ));
+                } else if let Err(problem) = template::parse(&template.0) {
+                    problems.push(format!("item {n}: {problem} in \"{}\"", template.0));
+                }
+                if height_mm.is_some_and(|h| !positive(h)) {
+                    problems.push(format!("item {n}: the text height must be a positive size"));
+                }
+            }
+            MarkingItem::Code { scheme, .. } => {
+                if let Some(problem) = scheme.problem() {
+                    problems.push(format!("item {n}: {problem}"));
+                }
+            }
+            MarkingItem::Artwork { size_mm, .. } => {
+                if !size_mm.iter().all(|s| positive(*s)) {
+                    problems.push(format!("item {n}: artwork needs a positive size"));
+                }
+            }
+            MarkingItem::Polarity { .. } | MarkingItem::Bands { .. } => {}
+        }
+    }
+    problems
+        .into_iter()
+        .map(|problem| {
+            Finding::blocking(
+                "marking.template",
+                format!("Marking: {problem}."),
+                vec![ObjectRef::Definition { id: owner }],
+                Stage::Publish,
+            )
+        })
+        .collect()
+}
+
+/// The marking area size a package's model offers, mm: a library model's
+/// `marking_area`, else the top of the typed body (a chip between its
+/// terminations, a leaded or no-lead body's moulding, otherwise the
+/// envelope's length and width). `None` when there is none.
+pub fn package_area(
+    library: &super::Library,
+    package: &super::PackageDefinition,
+) -> Option<[f64; 2]> {
+    use super::package_form::PackageForm;
+    use super::package_model::PackageModel;
+    let size = match (&package.model, &package.form) {
+        (PackageModel::Library(model), _) => library
+            .model(model.model)
+            .and_then(|m| m.definition.marking_area)
+            .map(|area| area.size_mm)?,
+        (_, PackageForm::Chip(c)) => [c.length - 2.0 * c.termination, c.width],
+        (_, PackageForm::GullWing(g)) => [g.body_length, g.body_width],
+        (_, PackageForm::NoLead(n)) => [n.body_length, n.body_width],
+        (_, form) => {
+            let [l, w, _] = form.envelope().unwrap_or(package.envelope);
+            [l, w]
+        }
+    };
+    size.iter().all(|s| positive(*s)).then_some(size)
 }
