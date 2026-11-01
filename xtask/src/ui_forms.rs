@@ -57,17 +57,9 @@ const METHODS: &[&str] = &[
 /// removes its entry; no file may gain one.
 const LEGACY_MESSAGES: &[(&str, usize)] = &[
     ("library_sources.rs", 5),
-    ("part_editor.rs", 2),
-    ("part_editor/details_card.rs", 2),
-    ("part_editor/footprint_params_ui.rs", 3),
-    ("part_editor/footprint_template_picker.rs", 3),
-    ("part_editor/model_body.rs", 2),
-    ("part_editor/model_props.rs", 3),
-    ("part_editor/symbol_props.rs", 1),
-    ("pcb_editor/board_card.rs", 1),
-    ("place_palette.rs", 2),
+    ("part_editor/footprint_template_picker.rs", 2),
+    ("part_editor/model_props.rs", 2),
     ("schematic_editor/instance_card.rs", 1),
-    ("update_preview.rs", 3),
 ];
 
 /// Message tones that only `kit::field_error` and `kit::refusal` may show.
@@ -221,7 +213,7 @@ mod tests {
 
     #[test]
     fn error_and_warning_text_is_counted_against_the_legacy_sites() -> Result<(), syn::Error> {
-        let source = "fn f(ui: &mut egui::Ui){ kit::status(ui, \"x\", kit::Tone::Error); kit::finding_row(ui, \"y\", Tone::Warning, None); kit::status(ui, \"z\", Tone::Dim); }";
+        let source = "fn f(ui: &mut egui::Ui){ kit::status(ui, \"x\", kit::Tone::Error); kit::status(ui, \"y\", Tone::Warning); kit::status(ui, \"z\", Tone::Dim); }";
         let found = super::guard(source)?;
         assert_eq!(found.problems, vec![1, 1]);
         assert!(super::message_violation("a.rs", &found.problems, 2).is_none());

@@ -102,10 +102,6 @@ impl PartEditor {
     /// to a package terminal without a footprint object beside it, shows
     /// the Mapping tab with that terminal's electrical terminal selected.
     /// Selection only. Returns whether it showed anything.
-    #[allow(
-        dead_code,
-        reason = "the workspace's issues::Locate (slice W1a) calls it per tab"
-    )]
     pub(super) fn locate_mapping(&mut self, refs: &[pcbcraft_core::ObjectRef]) -> bool {
         use pcbcraft_core::ObjectRef;
         let Some(set) = &self.draft else {

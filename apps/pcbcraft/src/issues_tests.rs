@@ -149,9 +149,6 @@ fn every_demo_issue_locates_in_its_workspace() -> Fallible<()> {
         let mut pcb = crate::pcb_editor::PcbEditor::default();
         let refs: Vec<ObjectRef> = row.objects().copied().collect();
         let shown = {
-            let mut part = interim::Part(&mut part);
-            let mut schematic = interim::Schematic(&mut schematic);
-            let mut pcb = interim::Pcb(&mut pcb);
             let mut editors = Editors {
                 part: &mut part,
                 schematic: &mut schematic,

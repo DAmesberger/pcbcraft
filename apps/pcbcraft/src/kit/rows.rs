@@ -11,7 +11,6 @@
 //! feature-panel header (`panel.rs` `header_actions`), MIT option; see
 //! ATTRIBUTION.md. Upstream keeps these crate-private, so the geometry is
 //! reproduced on the public tokens, fonts and buttons.
-#![allow(dead_code, reason = "slice K4 kit; the W slices use it")]
 
 use super::severity::{Level, severity_glyph};
 use egui::{Align, Color32, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};

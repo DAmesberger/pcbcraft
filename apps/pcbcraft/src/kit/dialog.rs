@@ -13,7 +13,6 @@
 //! (`footer_with_left`, `ActionLook`'s danger fill, `keyboard`),
 //! `dialogs.rs` (`reveal_refusal`) and `ui_kit/confirm.rs` (the Danger
 //! tone's disc), MIT option; see ATTRIBUTION.md.
-#![allow(dead_code, reason = "slice K4 kit; slices R1 and the W slices use it")]
 
 use super::card::FOOTER_HEIGHT;
 use super::severity::{Level, severity_glyph};

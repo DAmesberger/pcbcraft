@@ -335,64 +335,36 @@ impl App {
             });
     }
 
-    /// The right column: the subject card above the always-visible Issues
-    /// card (docs/sidebar-ia.md, "Layout").
+    /// The right column: the subject slot above the always-visible Issues
+    /// card (docs/sidebar-ia.md, "Layout"). The active editor lays out the
+    /// whole slot: its Properties card, a tool card, a docked dialog or a
+    /// docked review.
     fn column(&mut self, ctx: &egui::Context, rect: Rect) {
         let column = kit::card::column(rect, self.issues.expanded());
-        // A docked dialog takes the subject slot; the Issues bar stays.
-        if self.dialog_open() {
-            shell::column_card(
-                ctx,
-                "properties",
-                column.subject,
-                shell::COLUMN_CARD_INSET,
-                |ui| self.dialog(ui),
-            );
-            self.issues_column(ctx, column);
-            return;
-        }
-        let header = match self.workspace {
-            Workspace::Part => self.part.header(&self.engine),
-            Workspace::Schematic => self.schematic.header(&self.engine),
-            Workspace::Pcb => self.pcb.header(&self.engine),
-        };
-        // Until the W slices name their subjects, a new workspace or kind
-        // of selection is a new subject.
-        let inspector = kit::card::Inspector {
-            subject: egui::Id::new(("properties", self.workspace, header.kind)),
-            header,
-            footer: false,
-            issues: None,
-        };
-        // A review docks in the subject slot with its own header and pinned
-        // footer (slice R1), in place of the Properties card.
-        let reviewing = inspector.header.kind == crate::update_preview::KIND;
-        let card = shell::column_card(
+        let slot = shell::column_card(
             ctx,
             "properties",
             column.subject,
             shell::COLUMN_CARD_INSET,
-            |ui| {
-                if reviewing {
-                    self.inspector(ui);
-                    return kit::card::CardResponse {
-                        output: None,
-                        show_issues: false,
-                    };
-                }
-                kit::card::card(ui, &inspector, |ui, region| {
-                    if region == kit::card::Region::Body {
-                        self.inspector(ui);
-                    }
-                    None::<pcbcraft_core::Operation>
-                })
+            |ui| match self.workspace {
+                Workspace::Part => self.part.subject_slot(ui, &self.engine),
+                Workspace::Schematic => self.schematic.subject_slot(ui, &self.engine),
+                Workspace::Pcb => self.pcb.subject_slot(ui, &self.engine),
             },
         );
-        if let Some(card) = card {
-            if card.show_issues {
+        if let Some(slot) = slot {
+            if slot.show_issues {
                 self.issues.show_selection();
             }
-            self.apply(ctx, crate::refusal::Origin::Command, card.output);
+            // Editors mark a field or dialog origin themselves; the rest
+            // are commands.
+            self.apply(ctx, crate::refusal::Origin::Command, slot.output);
+        }
+        self.open_new_part();
+        if let Some(id) = self.pcb.take_show_in_schematic() {
+            self.workspace = Workspace::Schematic;
+            self.schematic
+                .select_instance(Some(id), self.engine.project());
         }
         self.issues_column(ctx, column);
     }
@@ -437,13 +409,10 @@ impl App {
     fn issue_request(&mut self, ctx: &egui::Context, request: Option<issues::Request>) {
         match request {
             Some(issues::Request::Locate { refs, area }) => {
-                let mut part = issues::interim::Part(&mut self.part);
-                let mut schematic = issues::interim::Schematic(&mut self.schematic);
-                let mut pcb = issues::interim::Pcb(&mut self.pcb);
                 let mut editors = issues::Editors {
-                    part: &mut part,
-                    schematic: &mut schematic,
-                    pcb: &mut pcb,
+                    part: &mut self.part,
+                    schematic: &mut self.schematic,
+                    pcb: &mut self.pcb,
                 };
                 match issues::route(&mut editors, &self.engine, &refs, issues::workspace(area)) {
                     Some(workspace) => {
@@ -572,7 +541,8 @@ impl App {
         let t = Tokens::get();
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
-        let buttons = if pcb_3d { 2.0 } else { 1.0 };
+        let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
+        let buttons = if pcb_3d || pcb_view { 2.0 } else { 1.0 };
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             t.control_height + 2.0 * t.space_4,
@@ -610,6 +580,15 @@ impl App {
                     Workspace::Pcb => self.pcb.fit(),
                 }
             }
+        }
+        if pcb_view {
+            // Layers and view toggles (W3): a popover above the bar.
+            let response = shell::icon_button(&mut child, "display", "Layers and view", true);
+            Container::new(ui.ctx(), Surface::Popup)
+                .menu(&response)
+                .align(egui::RectAlign::TOP_START)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| self.pcb.view_menu(ui));
         }
         if pcb_3d {
             let hidden = self.scene.viewport.hide_substrate();

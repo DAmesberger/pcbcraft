@@ -44,11 +44,10 @@ mod symbol_card;
 mod symbol_props;
 mod working_set;
 
-use crate::kit::{self, Tone, severity::Level};
+use crate::kit::{self, severity::Level};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui};
 pub use model_view::reset_model_view;
 pub use part_props::{PartReturn, meaning_label, spec_text};
-use pcbcraft_core::completeness::CheckTarget;
 use pcbcraft_core::functions::{Direction, TerminalFunctions};
 use pcbcraft_core::geometry::{Bounds, Shape};
 use pcbcraft_core::library::graphics::{
@@ -62,7 +61,7 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, LibraryCommand, ObjectRef,
-    Operation, PackageTerminalId, PadId, Point, Query, QueryResult, Stage, TerminalId, UnitId,
+    Operation, PackageTerminalId, PadId, Point, Query, QueryResult, TerminalId, UnitId,
 };
 use solidcraft_ui_egui::{fonts, theme::Tokens};
 use std::sync::Arc;
@@ -142,8 +141,6 @@ pub struct PartEditor {
     request: Option<Request>,
     view: View,
     selected: Option<TerminalId>,
-    /// Text the footprint and 3D files still set (slice W1b retires it).
-    notice: String,
     /// Toasts to post on the next frame with a context: command results
     /// and gesture refusals (the editor `notice` string's replacement).
     posts: Vec<kit::toast::Posted>,
@@ -166,7 +163,6 @@ pub struct PartEditor {
     fit_on_build: bool,
     /// Footprint sketch dimensions, constraints, drags and parameters.
     footprint_dims: footprint_dims::DimsState,
-    findings: Option<(u64, Vec<Listed>)>,
     /// The footprint graphic a clicked finding names, outlined on the
     /// canvas.
     finding_graphic: Option<GraphicId>,
@@ -226,7 +222,6 @@ impl Default for PartEditor {
             request: None,
             view: View::Details,
             selected: Some(TerminalId(1)),
-            notice: String::new(),
             posts: Vec::new(),
             terminal_card: None,
             issue_slot: None,
@@ -238,7 +233,6 @@ impl Default for PartEditor {
             template_picker: Default::default(),
             fit_on_build: false,
             footprint_dims: Default::default(),
-            findings: None,
             finding_graphic: None,
             update: Default::default(),
             field_buffers: Default::default(),
@@ -820,6 +814,9 @@ impl PartEditor {
         match self.inspected() {
             Inspected::Review => Header::new("component", "Update placed instances", "Review"),
             Inspected::Empty => Header::new("component", "No component", ""),
+            Inspected::Tab(View::Footprint) => self
+                .footprint_header()
+                .unwrap_or_else(|| Header::new("component", component(), "Footprint")),
             Inspected::Tab(_) => Header::new("component", component(), "Component"),
             Inspected::Tool(tool) => Header::new(tool.icon(), tool.label(), "Tool"),
             Inspected::Pin(terminal) => Header::new("point", self.pin_title(terminal), "Pin"),
@@ -1229,54 +1226,6 @@ impl PartEditor {
         self.selected_pad = None;
     }
 
-    /// Blocking publish findings of the committed drafts, from the engine.
-    #[cfg(test)]
-    fn findings(&mut self, engine: &Engine) -> Vec<String> {
-        self.listed_findings(engine)
-            .into_iter()
-            .filter(|f| f.blocking)
-            .map(|f| f.text)
-            .collect()
-    }
-
-    /// Every finding of the committed drafts: blocking ones first, then
-    /// the advisory lint, each with the objects it names.
-    fn listed_findings(&mut self, engine: &Engine) -> Vec<Listed> {
-        if let Some((revision, findings)) = &self.findings
-            && *revision == engine.revision()
-        {
-            return findings.clone();
-        }
-        let mut listed = Vec::new();
-        if let Some(set) = &self.draft
-            && let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {})
-        {
-            let mut ids = set.ids.all();
-            // A blank new Part's findings wait in the Parts section.
-            ids.extend(part_props::PartProps::typed_draft_ids(
-                engine,
-                set.ids.component,
-            ));
-            listed.extend(
-                reports
-                    .into_iter()
-                    .filter(|r| matches!(r.target, CheckTarget::Draft(id) if ids.contains(&id)))
-                    .flat_map(|r| r.findings)
-                    .map(|f| Listed {
-                        blocking: f.blocks_stage(Stage::Publish),
-                        text: match fix_hint(&f.code) {
-                            Some(hint) => format!("{} {hint}", f.message),
-                            None => f.message,
-                        },
-                        objects: f.objects,
-                    }),
-            );
-            listed.sort_by_key(|f| !f.blocking);
-        }
-        self.findings = Some((engine.revision(), listed.clone()));
-        listed
-    }
-
     /// The Properties card's frame for the current subject: its header,
     /// the identity whose change resets the scroll, whether it has a pinned
     /// footer, and its issue slot (docs/sidebar-ia.md, "Contract"). The
@@ -1290,16 +1239,6 @@ impl PartEditor {
             subject: egui::Id::new(("component-card", self.lineage, inspected)),
             footer: self.has_footer(engine, inspected),
             issues: self.issue_slot(engine, inspected),
-        }
-    }
-
-    /// What the subject slot holds: Properties, or the armed tool's card.
-    #[allow(dead_code, reason = "the column calls it once it hands the slot over")]
-    pub fn subject_kind(&self) -> kit::card::Subject {
-        match self.inspected() {
-            Inspected::Tool(_) => kit::card::Subject::Tool,
-            Inspected::Review => kit::card::Subject::Review,
-            _ => kit::card::Subject::Properties,
         }
     }
 
@@ -1320,29 +1259,20 @@ impl PartEditor {
         }
     }
 
-    /// The whole subject slot for a column that hands it over: the armed
-    /// tool's card ([`kit::tool_card`]), or the Properties card with its
-    /// pinned issue slot and footer.
-    #[allow(dead_code, reason = "the column calls it once it hands the slot over")]
-    pub fn subject(&mut self, ui: &mut Ui, engine: &Engine) -> kit::card::CardResponse<Operation> {
+    /// The whole subject slot for the right column, exactly one of: the
+    /// docked instance review, the Part dialog, the Footprint tab's
+    /// template or Assign dialog, the armed tool's card
+    /// ([`kit::tool_card`]), or the Properties card with its issue slot and
+    /// pinned footer (docs/sidebar-ia.md, "Layout").
+    pub fn subject_slot(
+        &mut self,
+        ui: &mut Ui,
+        engine: &Engine,
+    ) -> kit::card::CardResponse<Operation> {
         self.sync(engine);
         self.flush(ui.ctx());
-        if let Inspected::Tool(tool) = self.inspected() {
-            let key = tool_key(tool);
-            let card = kit::ToolCard {
-                icon: tool.icon(),
-                name: tool.label(),
-                key: &key,
-                hint: tool.tip(),
-                tip: "",
-                finish: tool.is_chain().then_some("Finish"),
-            };
-            let response = kit::tool_card(ui, &card, |ui| self.tool_rows(ui, engine));
-            self.tool_card_response(response);
-            return kit::card::CardResponse {
-                output: None,
-                show_issues: false,
-            };
+        if let Some(operation) = self.slot_subject(ui, engine) {
+            return kit::card::CardResponse::output(operation);
         }
         let inspector = self.inspector_card(engine);
         kit::card::card(ui, &inspector, |ui, region| {
@@ -1350,10 +1280,80 @@ impl PartEditor {
         })
     }
 
-    /// The Properties card for a column that draws the header itself and
-    /// hands over one scrolling body: the body, then the issue slot and
-    /// the footer's actions at its end.
+    /// What the subject slot holds: the review, a dialog (the Part dialog,
+    /// or the Footprint tab's template or Assign dialog), the armed tool's
+    /// card, or Properties.
+    pub fn subject_kind(&self) -> kit::card::Subject {
+        use kit::card::Subject;
+        if self.update.is_open() {
+            Subject::Review
+        } else if self.parts.is_open() {
+            Subject::Dialog
+        } else if self.draft.is_some() && self.view == View::Footprint {
+            self.footprint_subject()
+        } else if matches!(self.inspected(), Inspected::Tool(_)) {
+            Subject::Tool
+        } else {
+            Subject::Properties
+        }
+    }
+
+    /// A subject that fills the slot without a Properties card: `Some`
+    /// with the operation it sends this frame, `None` for the card.
+    fn slot_subject(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Option<Operation>> {
+        use kit::card::Subject;
+        if self.update.is_open() {
+            return Some(self.update.show(ui, engine));
+        }
+        // It also drafts a New Part requested from the schematic.
+        if let Some(operation) = self.part_dialog(ui, engine) {
+            return Some(operation);
+        }
+        match (self.subject_kind(), self.view) {
+            (Subject::Dialog, _) => {
+                self.post_footprint_refusals(ui.ctx());
+                Some(if self.template_picker.is_open() {
+                    self.template_dialog(ui)
+                } else {
+                    self.assign_dialog(ui)
+                })
+            }
+            (Subject::Tool, View::Footprint) => {
+                self.post_footprint_refusals(ui.ctx());
+                self.footprint_tool_card(ui);
+                Some(None)
+            }
+            (Subject::Tool, _) => {
+                let Inspected::Tool(tool) = self.inspected() else {
+                    return None;
+                };
+                let key = tool_key(tool);
+                let card = kit::ToolCard {
+                    icon: tool.icon(),
+                    name: tool.label(),
+                    key: &key,
+                    hint: tool.tip(),
+                    tip: "",
+                    finish: tool.is_chain().then_some("Finish"),
+                };
+                let response = kit::tool_card(ui, &card, |ui| self.tool_rows(ui, engine));
+                self.tool_card_response(response);
+                Some(None)
+            }
+            (Subject::Properties | Subject::Review, _) => None,
+        }
+    }
+
+    /// The subject slot in one body, for tests that drive the card without
+    /// the column: a slot subject as the slot draws it, else the card's
+    /// body, then its issue slot and footer actions.
+    #[cfg(test)]
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        self.sync(engine);
+        self.flush(ui.ctx());
+        if let Some(operation) = self.slot_subject(ui, engine) {
+            return operation;
+        }
         let inspector = self.inspector_card(engine);
         let operation = self.inspector_region(ui, engine, kit::card::Region::Body);
         let slot = inspector.issues.unwrap_or_default();
@@ -1375,18 +1375,9 @@ impl PartEditor {
         engine: &Engine,
         inspected: Inspected,
     ) -> Option<Operation> {
-        if inspected == Inspected::Review {
-            return self.update.show(ui, engine);
-        }
-        if let Some(operation) = self.part_dialog(ui, engine) {
-            return operation;
-        }
-        // Slice W1b retires the footprint and 3D files' notice text.
-        if !self.notice.is_empty() {
-            kit::status(ui, &self.notice, Tone::Note);
-        }
         match inspected {
-            Inspected::Review => None,
+            // These fill the slot without the card ([`Self::slot_subject`]).
+            Inspected::Review | Inspected::Tool(_) => None,
             Inspected::Empty => {
                 kit::hint(
                     ui,
@@ -1403,11 +1394,6 @@ impl PartEditor {
                 None
             }
             Inspected::Tab(View::Model) => self.model_card(ui, engine),
-            Inspected::Tool(tool) => {
-                self.tool_rows(ui, engine);
-                kit::hint(ui, tool.tip(), "");
-                None
-            }
             Inspected::Pin(terminal) => {
                 self.pin_card(ui, terminal);
                 None
@@ -1773,29 +1759,8 @@ pub fn run(engine: &mut Engine, request: Request) -> pcbcraft_core::Result<Optio
     }
 }
 
-/// Where an author fixes a blocking finding the Component editor shows,
-/// by finding code.
-/// One finding as the Findings section lists it.
-#[derive(Clone, Debug, PartialEq)]
-struct Listed {
-    text: String,
-    /// It blocks publishing; otherwise it is advisory lint.
-    blocking: bool,
-    objects: Vec<pcbcraft_core::diagnostics::ObjectRef>,
-}
-
 /// A terminal or unit refused because the component ran out of local IDs.
 const NO_MORE_TERMINALS: &str = "No more terminals can be added to this component";
-
-fn fix_hint(code: &str) -> Option<&'static str> {
-    match code {
-        "package.form_terminals" => Some("Change Body on the 3D tab, or remove terminals."),
-        "package.envelope_derived" | "package.form_range" => {
-            Some("Check the package dimensions on the 3D tab.")
-        }
-        _ => None,
-    }
-}
 
 /// What the Component card inspects (docs/sidebar-ia.md, "Properties card
 /// by subject"). Its value identifies the subject, so the card's scroll
@@ -1830,7 +1795,6 @@ struct IssueKey {
 }
 
 /// The key cap a tool card shows ("R", "⇧L").
-#[allow(dead_code, reason = "used by `PartEditor::subject`")]
 fn tool_key(tool: drawing::Tool) -> String {
     tool.key()
         .map(|k| {
@@ -1957,10 +1921,21 @@ impl crate::issues::Locate for PartEditor {
         let targets: Vec<Target> = targets.into_iter().filter(|t| t.view() == view).collect();
         self.view = view;
         self.finding_graphic = None;
-        if view == View::Symbol {
-            self.drawing.arm(drawing::Tool::Select);
-            self.gesture = None;
+        // The Footprint, Mapping and 3D tabs locate through their own
+        // targets (footprint_card.rs, mapping_card.rs, model_card.rs).
+        match view {
+            View::Footprint => return self.locate_footprint(refs),
+            View::Mapping => return self.locate_mapping(refs),
+            View::Model => return self.locate_model(refs),
+            View::Details => return true,
+            View::Symbol => {
+                self.drawing.arm(drawing::Tool::Select);
+                self.gesture = None;
+            }
         }
+        let Some(set) = self.draft.as_ref() else {
+            return false;
+        };
         let mut selection = arrange::Selection::new();
         let mut unit = None;
         let mut card = None;
@@ -1991,28 +1966,11 @@ impl crate::issues::Locate for PartEditor {
                         selection.insert(Selected::Graphic(graphic));
                     }
                 }
-                Target::Pad(pad) => {
-                    self.selected_pad = Some(pad);
-                    if let Some(electrical) = set
-                        .footprint
-                        .pads
-                        .iter()
-                        .find(|p| p.id == pad)
-                        .and_then(|p| p.terminal)
-                        .and_then(|t| set.binding.terminal_of(t))
-                    {
-                        self.selected = Some(electrical);
-                    }
-                }
-                Target::FootprintGraphic(graphic) => self.finding_graphic = Some(graphic),
-                Target::PackageTerminal(id) => {
-                    if let Some(electrical) = set.binding.terminal_of(id) {
-                        self.selected = Some(electrical);
-                    }
-                }
+                // Other tabs returned above.
+                Target::Pad(_) | Target::FootprintGraphic(_) | Target::PackageTerminal(_) => {}
             }
         }
-        if view == View::Symbol {
+        {
             if unit.is_some()
                 && unit != self.unit.or_else(|| set.symbol.units.first().map(|u| u.id))
             {
@@ -2136,6 +2094,54 @@ fn grow_body_to(unit: &mut Unit, body: GraphicId, y: f64) -> Option<Bounds> {
         .find(|g| g.id == body)
         .and_then(rect)
         .and_then(|(a, b)| Bounds::of([*a, *b]))
+}
+
+/// One draft finding, as the tests read the engine's checks.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+struct Listed {
+    text: String,
+    /// It blocks publishing; otherwise it is advisory lint.
+    blocking: bool,
+    objects: Vec<pcbcraft_core::diagnostics::ObjectRef>,
+}
+
+#[cfg(test)]
+impl PartEditor {
+    /// Every finding of the committed component drafts, from the engine:
+    /// blocking ones first, then the advisory lint. The card shows none of
+    /// them (Issues does); tests read them to locate and to check wording.
+    fn listed_findings(&self, engine: &Engine) -> Vec<Listed> {
+        let Some(set) = &self.draft else {
+            return Vec::new();
+        };
+        use pcbcraft_core::{Stage, completeness::CheckTarget};
+        let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {}) else {
+            return Vec::new();
+        };
+        let ids = set.ids.all();
+        let mut listed: Vec<Listed> = reports
+            .into_iter()
+            .filter(|r| matches!(r.target, CheckTarget::Draft(id) if ids.contains(&id)))
+            .flat_map(|r| r.findings)
+            .map(|f| Listed {
+                blocking: f.blocks_stage(Stage::Publish),
+                text: f.message,
+                objects: f.objects,
+            })
+            .collect();
+        listed.sort_by_key(|f| !f.blocking);
+        listed
+    }
+
+    /// Blocking publish findings of the committed drafts.
+    fn findings(&self, engine: &Engine) -> Vec<String> {
+        self.listed_findings(engine)
+            .into_iter()
+            .filter(|f| f.blocking)
+            .map(|f| f.text)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -2750,10 +2756,10 @@ mod draft_tests {
                 area: pcbcraft_core::issues::IssueArea::Component,
             };
             match engine.query(Query::Issues { scope })? {
-                QueryResult::Issues(report) => Ok(report
-                    .rows
-                    .iter()
-                    .any(|r| r.finding.message == finding && r.blocks() == Some(Stage::Publish))),
+                QueryResult::Issues(report) => Ok(report.rows.iter().any(|r| {
+                    r.finding.message == finding
+                        && r.blocks() == Some(pcbcraft_core::Stage::Publish)
+                })),
                 _ => Err("not an issue report".into()),
             }
         };

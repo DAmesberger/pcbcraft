@@ -361,7 +361,7 @@ fn locate_opens_tabs_and_cards_without_editing() -> TestResult {
 }
 
 /// Refused gestures are one-line toasts with an explicit severity that
-/// follow the message style, never a persistent card notice.
+/// follow the message style; the card has no notice text at all.
 #[test]
 fn refusals_are_styled_toasts() -> TestResult {
     let mut h = Harness::new()?;
@@ -378,7 +378,6 @@ fn refusals_are_styled_toasts() -> TestResult {
         let problems = pcbcraft_core::issues::style::check(&post.text);
         assert!(problems.is_empty(), "{:?}: {problems:?}", post.text);
     }
-    assert!(h.editor.notice.is_empty(), "no card notice");
     Ok(())
 }
 

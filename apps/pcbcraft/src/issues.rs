@@ -36,10 +36,7 @@ pub trait Locate {
 }
 
 /// A dialog an issue's Fix opens. Each issues its own typed operation.
-#[allow(
-    dead_code,
-    reason = "the W slices add these dialogs; until then no Fix opens them"
-)]
+#[allow(dead_code, reason = "the dialogs exist; no FIXES entry opens them yet")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FixDialog {
     AssignPads,
@@ -1070,102 +1067,6 @@ impl Badges {
             }
         }
         out
-    }
-}
-
-/// Locate through each editor's public selection, until the W slices give
-/// every editor its own [`Locate`] (with framing and tab switching); then
-/// [`route`] takes the editors themselves and this module goes.
-pub mod interim {
-    use super::{Locate, instance_of, owners};
-    use crate::{
-        part_editor::PartEditor, pcb_editor::PcbEditor, schematic_editor::SchematicEditor,
-    };
-    use pcbcraft_core::{Engine, ObjectRef};
-
-    pub struct Part<'a>(pub &'a mut PartEditor);
-    pub struct Schematic<'a>(pub &'a mut SchematicEditor);
-    pub struct Pcb<'a>(pub &'a mut PcbEditor);
-
-    fn net(refs: &[ObjectRef]) -> Option<pcbcraft_core::Id> {
-        refs.iter().find_map(|r| match r {
-            ObjectRef::Net { id } => Some(*id),
-            _ => None,
-        })
-    }
-
-    /// Opens the component that owns the first definition referred to.
-    impl Locate for Part<'_> {
-        fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
-            let owners = owners(engine);
-            let owner = refs.iter().find_map(|r| match r {
-                ObjectRef::Definition { id } | ObjectRef::LibraryObject { definition: id, .. } => {
-                    owners.get(id).copied()
-                }
-                _ => None,
-            });
-            match owner {
-                Some(id) => {
-                    self.0.open(id, engine);
-                    true
-                }
-                None => false,
-            }
-        }
-    }
-
-    /// Selects the first instance referred to, else the first net.
-    impl Locate for Schematic<'_> {
-        fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
-            let project = engine.project();
-            if let Some(id) = refs
-                .iter()
-                .find_map(|r| instance_of(engine, r))
-                .filter(|id| project.instance(*id).is_some())
-            {
-                self.0.select_instance(Some(id), project);
-                return true;
-            }
-            match net(refs) {
-                Some(id) => {
-                    self.0.select_net(id, project);
-                    true
-                }
-                None => false,
-            }
-        }
-    }
-
-    /// Selects the first placement (or not-placed instance) referred to,
-    /// else the first track, and highlights the first net.
-    impl Locate for Pcb<'_> {
-        fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
-            let project = engine.project();
-            let net = net(refs);
-            if let Some(id) = refs
-                .iter()
-                .find(|r| !matches!(r, ObjectRef::Occurrence { .. }))
-                .and_then(|r| instance_of(engine, r))
-                .filter(|id| project.instance(*id).is_some())
-            {
-                self.0.set_selection(Some(id), None, net);
-                return true;
-            }
-            if let Some(track) = refs.iter().find_map(|r| match r {
-                ObjectRef::Track { id } => project.tracks.iter().find(|t| t.id == *id),
-                _ => None,
-            }) {
-                self.0.set_selection(None, Some(track.id), Some(track.net));
-                return true;
-            }
-            match net {
-                Some(id) => {
-                    self.0.set_selection(None, None, Some(id));
-                    true
-                }
-                None => false,
-            }
-        }
     }
 }
 

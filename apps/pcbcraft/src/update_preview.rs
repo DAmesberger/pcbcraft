@@ -28,10 +28,6 @@ use pcbcraft_core::{
 use solidcraft_ui_egui::theme::Tokens;
 use std::collections::BTreeSet;
 
-/// The kind chip editors give their header while a review is open; the
-/// column hosts such a subject as a docked review, not a Properties card.
-pub const KIND: &str = "Review";
-
 /// One shown title, at most this many characters.
 const MAX_LINE: usize = pcbcraft_core::issues::MAX_TITLE;
 

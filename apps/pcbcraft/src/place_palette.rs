@@ -269,6 +269,7 @@ impl PlacePalette {
         self.open && matches!(self.mode, Mode::Assign { .. })
     }
 
+    #[cfg(test)]
     pub fn mode(&self) -> &Mode {
         &self.mode
     }

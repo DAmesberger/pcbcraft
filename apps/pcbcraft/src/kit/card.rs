@@ -22,10 +22,6 @@ pub const FOOTER_HEIGHT: f32 = 48.0;
 pub const SUBJECT_ROWS: f32 = 10.0;
 
 /// What the subject slot holds. Exactly one at a time.
-#[allow(
-    dead_code,
-    reason = "Properties is the only subject until the R and W slices add the others"
-)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Subject {
     Properties,
@@ -80,6 +76,17 @@ pub struct CardResponse<R> {
     pub output: Option<R>,
     /// The issue slot was clicked: show Issues scoped to this object.
     pub show_issues: bool,
+}
+
+impl<R> CardResponse<R> {
+    /// The response of a subject without an issue slot (a dialog, a tool
+    /// card or a docked review).
+    pub fn output(output: Option<R>) -> Self {
+        Self {
+            output,
+            show_issues: false,
+        }
+    }
 }
 
 /// The right column's two rectangles.

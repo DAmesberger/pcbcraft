@@ -14,21 +14,25 @@ impl PartEditor {
     }
 
     /// `Locate` target of the 3D tab: a reference to the package draft
-    /// itself (its form, envelope or model placement) shows the 3D tab.
-    /// Returns whether it showed anything.
-    #[allow(
-        dead_code,
-        reason = "the workspace's issues::Locate (slice W1a) calls it per tab"
-    )]
+    /// itself (its form, envelope or model placement), or to a package
+    /// object other than a terminal, shows the 3D tab. Returns whether it
+    /// showed anything.
     pub(super) fn locate_model(&mut self, refs: &[ObjectRef]) -> bool {
         let Some(set) = &self.draft else {
             return false;
         };
         let package = set.ids.package;
-        if !refs
-            .iter()
-            .any(|r| matches!(r, ObjectRef::Definition { id } if *id == package))
-        {
+        if !refs.iter().any(|r| match *r {
+            ObjectRef::Definition { id } => id == package,
+            ObjectRef::LibraryObject { definition, local } => {
+                definition == package
+                    && set
+                        .package
+                        .terminal(pcbcraft_core::PackageTerminalId(local))
+                        .is_none()
+            }
+            _ => false,
+        }) {
             return false;
         }
         self.view = super::View::Model;

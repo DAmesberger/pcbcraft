@@ -22,10 +22,6 @@ impl PartEditor {
 
     /// The header of the Footprint tab's Properties card: the selected pad,
     /// or the component's footprint. Dialogs and tool cards draw their own.
-    #[allow(
-        dead_code,
-        reason = "the inspector dispatch (slice W1a) names the card's subject with it"
-    )]
     pub(super) fn footprint_header(&self) -> Option<crate::shell::Header> {
         use crate::shell::Header;
         let set = self.draft.as_ref()?;
@@ -56,17 +52,10 @@ impl PartEditor {
         )
     }
 
+    /// The Footprint tab's Properties card body; its dialogs and tool card
+    /// fill the slot instead (`PartEditor::slot_subject`).
     pub(super) fn footprint_card(&mut self, ui: &mut Ui) -> Option<Operation> {
         self.post_footprint_refusals(ui.ctx());
-        match self.footprint_subject() {
-            Subject::Dialog if self.template_picker.is_open() => return self.template_dialog(ui),
-            Subject::Dialog => return self.assign_dialog(ui),
-            Subject::Tool => {
-                self.footprint_tool_card(ui);
-                return None;
-            }
-            Subject::Properties | Subject::Review => {}
-        }
         match self.inspected_pad() {
             Some(_) => self.pad_sections(ui),
             None => self.footprint_overview(ui),
@@ -172,10 +161,6 @@ impl PartEditor {
     /// frame the footprint; a reference to the footprint itself shows the
     /// footprint card. Selection and camera only. Returns whether it showed
     /// anything.
-    #[allow(
-        dead_code,
-        reason = "the workspace's issues::Locate (slice W1a) calls it per tab"
-    )]
     pub(super) fn locate_footprint(&mut self, refs: &[pcbcraft_core::ObjectRef]) -> bool {
         use pcbcraft_core::ObjectRef;
         let Some(set) = &self.draft else {

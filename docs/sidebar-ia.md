@@ -1,6 +1,6 @@
 # Right sidebar and feedback: information architecture
 
-Status: **contract (slice S0)**. This page fixes the information architecture (IA) of the right column, the Issues surface and transient feedback, plus the code contract the implementation slices build on. Behaviour does not change until those slices land. It condenses the reviewed design from the 2026 UX audit; the founder decisions it records are in [Decisions](#decisions).
+Status: **implemented through wave 4** (A1, R1, W1a–W1c, W2a, W2b, W3); V1 evidence is pending. This page fixes the information architecture (IA) of the right column, the Issues surface and transient feedback, plus the code contract the implementation slices build on. It condenses the reviewed design from the 2026 UX audit; the founder decisions it records are in [Decisions](#decisions).
 
 Vocabulary: a **card** is one bordered panel in the right column. The **subject slot** is the upper card. **Issues** is the list of document findings. A **refusal** is an operation the engine rejected.
 
@@ -228,19 +228,19 @@ These signatures are fixed. Bodies are minimal and not yet wired, so behaviour i
 | Messages | `kit/messages.rs` | `Messages::{push(level, text, now), clear, entries, copy_all, window(ctx) -> MessagesResponse}`, `KEEP = 200`, `MAX_CHARS = 4000`; K3 added `len`, `is_empty` |
 | Dialog | `kit/dialog.rs` | `DialogPanel { id, icon, title, kind, body_rows, primary, primary_kind, primary_disabled, refusal, reset_scroll }::show(ui, body) -> Option<DialogAction>`; `confirm(ctx, id, title, text, proceed) -> Option<bool>` |
 | Review | `kit/review.rs` | `ReviewPanel { id, icon, title, summary, stale, blockers: &[ReviewLine], groups: &[ReviewGroup], apply }::show(ui, acked) -> Option<ReviewAction>`; R1 added `show_with(ui, acked, refusal, inputs)` (the refusal row, and a review's own inputs between blockers and groups) |
-| Update review | `update_preview.rs` | R1: `KIND` (the header kind the column hosts as a docked review, without a Properties card), `content(&UpdatePlan, &Project, note, choices) -> Content`, `marks(&UpdatePlan) -> Marks { changed, removed, tracks, issues, focus }`, `UpdatePreview::marks()` and `paint_board(painter, project, &marks, screen, outline)` for the canvas preview |
+| Update review | `update_preview.rs` | R1: `content(&UpdatePlan, &Project, note, choices) -> Content`, `marks(&UpdatePlan) -> Marks { changed, removed, tracks, issues, focus }`, `UpdatePreview::marks()` and `paint_board(painter, project, &marks, screen, outline)` for the canvas preview |
 | Rows | `kit/rows.rs` | `tool_card(ui, &ToolCard, rows) -> ToolCardResponse { done }`, `hint(ui, text, tip)`, `list_frame(ui, len, max_rows, row) -> ListFrameResponse { show_all }`, `table(ui, &[TableColumn], rows, cell, add_row) -> TableResponse { add }`, `summary_row(ui, summary, action) -> bool`, `field_error(ui, &field, message, not_stored)`, `refusal(ui, message)`, `LIST_MAX_ROWS = 8` |
 | Locate | `issues.rs` | `trait Locate { fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool }`. It takes the engine so an editor can resolve tabs and frames; it changes selection and camera only. |
-| Issues surface | `issues.rs` | A1 added `Surface` (the card's state and cached answers: `card`, `pill`, `badge`, `ribbon_toggle`, `badges`, `toggle`, `open`, `show_selection`), `Request { Locate { refs, area }, Fix }`, `Editors` and `route(editors, engine, refs, preferred) -> Option<Workspace>` (the issue's area first, then the others), `Badges`, `report_text` and `interim::{Part, Schematic, Pcb}` (locate through each editor's public selection until its W slice implements `Locate`; then `route` takes the editor and `interim` goes) |
+| Issues surface | `issues.rs` | A1 added `Surface` (the card's state and cached answers: `card`, `pill`, `badge`, `ribbon_toggle`, `badges`, `toggle`, `open`, `show_selection`), `Request { Locate { refs, area }, Fix }`, `Editors` and `route(editors, engine, refs, preferred) -> Option<Workspace>` (the issue's area first, then the others), `Badges` and `report_text`. `Editors` holds the three editors themselves; each implements `Locate` |
 | Ribbon toggle | `shell.rs` | A1 added `IssuesToggle { counts, expanded }`, a fourth `ribbon` argument and `RibbonEvent::Issues` |
 | Browser badge | `kit/tree.rs` | A1 added `Row::issue: Option<Level>` |
 | Pill width | `kit/toast.rs` | A1: `pill` truncates its text into the room left after ×, so a narrow pill keeps its ×; the Showing pill keeps clear of the badge corner |
 | Fix launchers | `issues.rs` | `Fix { Apply { label, operation }, Open { label, dialog: FixDialog } }`, `fix(&IssueRow) -> Option<Fix>` |
-| Docked dialog (W2b, additive) | `app.rs`, `app/chrome.rs` | while the active editor reports `dialog_open()`, the column draws its `dialog(ui)` in the subject slot instead of the Properties card; the Issues bar stays. Schematic: `SchematicEditor::{dialog_open, dialog}`, `PlacePalette::{choosing, choose_dialog(ui, engine) -> Option<ChooseAction>}`, `CHOOSE_DIALOG` (its `Origin::Dialog` id); `ResolveParts::window(ctx, engine)` |
+| Subject slot | `app/chrome.rs`, the three editors | The column hands the whole slot to the active editor: `PartEditor`, `SchematicEditor` and `PcbEditor` each have `subject_slot(ui, &Engine) -> CardResponse<Operation>` and draw exactly one subject: a docked review, a docked dialog, a tool card, or their Properties card through `kit::card::card`. `CardResponse::output(op)` answers a subject without an issue slot. The Issues card below stays. Schematic dialogs: `PlacePalette::{choosing, choose_dialog(ui, engine) -> Option<ChooseAction>}`, `CHOOSE_DIALOG` (its `Origin::Dialog` id); `ResolveParts::window(ctx, engine)` is a window, not a subject |
 | Refusal hand-back | `refusal.rs` | `Refused { origin: Origin, error: Error }`, `Origin { Field(egui::Id), Dialog(egui::Id), Canvas, Command }`, `Refused::claim(origin) -> Option<String>`, `shown_error(&Error) -> String`; K3 added `mark(ctx, origin)` (an editor declares the origin of the operation it returns this frame; otherwise the call site's default applies: inspector and draft commits `Command`, canvas `Canvas`), `claim(ctx, origin) -> Option<String>` (on the next frame), `level(&Error) -> Level`, `presentable(text)` and `clip(text, max)` |
-| Component card | `part_editor.rs` | W1a added, for the column to adopt: `PartEditor::{inspector_card(&Engine) -> Inspector, inspector_region(ui, &Engine, Region) -> Option<Operation>, subject(ui, &Engine) -> CardResponse<Operation>, subject_kind() -> Subject}` and `impl issues::Locate for PartEditor`. Until `app/chrome.rs` calls `subject`, `inspector()` draws the body, the issue slot and the footer's actions in the one body it is handed, and the header names the tool while one is armed. |
+| Component card | `part_editor.rs` | `PartEditor::{inspector_card(&Engine) -> Inspector, inspector_region(ui, &Engine, Region) -> Option<Operation>, subject_kind() -> Subject}` and `impl issues::Locate for PartEditor`. `subject_kind` decides the slot: the instance review, a dialog (the Part dialog, or the Footprint tab's template or Assign dialog), a tool card (Symbol or Footprint), else Properties. `Locate` picks the tab and delegates the Footprint, Mapping and 3D tabs to `locate_footprint`, `locate_mapping` and `locate_model` in their card files. The editors' `inspector()` (the slot in one body) is test-only. |
 
-The kit files carry `#![allow(dead_code)]` until their slice wires them; the slice that wires a file removes the allowance. After wave 3, `kit/card.rs` keeps one only on `Subject` (Properties is the only subject until R1 and the W slices), and the kit re-exports other than `issues_bar` and `rows` stay allowed until A1, R1 and the W slices use them. A1 removed the allowances on `kit/issues.rs`, `kit/severity.rs` and `pill`; only `issue_row` (no caller outside the list yet) and `Level::ALL` (tests only) keep one.
+After wave 4 the kit files carry no file-wide `dead_code` allowance. Item allowances remain only on contract pieces without a caller: `issue_row` (the list draws its rows itself), `Level::ALL` (tests only), `ReviewPanel::show` (the update review uses `show_with`), `ToastAction::Show`, `Toasts::{items, get, is_empty}`, `Messages::{entries, len, is_empty}`, `Fix::Apply`, and the `FixDialog` variants no `FIXES` entry opens yet (Assign pads, Choose part, Update instances, Mapping).
 
 ## Slices and file ownership
 
@@ -259,13 +259,13 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 | **C2** Core review data (done) | Structured update plan (changes by kind, area and refs; line + detail); findings diff (new/resolved) replacing the "Candidate … check" lines; conflicting tracks with net, layer and length; wording of the `updates.rs` blockers | `crates/editor-core/src/updates.rs`, `updates/` | S0 |
 | **C3** Core commands (done) | `FootprintFromTemplate { replace }` (atomic clear + build, one undo, on CLI/MCP); track width/layer edit commands if absent | `crates/editor-core/src/commands/`, `library/templates/` | S0 |
 | **A1** Issues surface (done) | `issues.rs`; Issues card content; ribbon Issues toggle replaces Check; canvas badge; cross-workspace locate through `Locate`; Showing pill; Browser badges | `issues.rs`, `app/browser.rs`, ribbon wiring | K1, K2, C1 |
-| **R1** Review panel (done) | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview; the column hosts a `KIND` subject as a docked review (`app/chrome.rs`), and the PCB canvas outlines the plan (`pcb_editor.rs`, one call) | `update_preview.rs` | K4, C2 |
+| **R1** Review panel (done) | `update_preview.rs` on `ReviewPanel` with C2 data and canvas preview; each editor docks its open review in the subject slot, and the PCB canvas outlines the plan (`pcb_editor.rs`, one call) | `update_preview.rs` | K4, C2 |
 | **W1a** Component Details + Symbol (done) | Details tab (with LIBRARY), Symbol, pin/terminal/graphic/text cards, grid popover, draw tool cards, `Locate`, this workspace's `notice` sites | `part_editor.rs` (the `inspector()` dispatch, tabs and the workspace's `Locate`), `part_editor/{details,symbol}_card.rs`, `part_editor/symbol_props.rs` | S1, K1, K3, K4 |
-| **W1b** Component Footprint + Mapping + 3D | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate` targets for its tabs (methods in its own files that W1a's `Locate` calls); `notice` sites | `part_editor/footprint_*.rs` (with `footprint_card.rs`), `part_editor/{mapping,model}_card.rs`, `part_editor/model_{body,props}.rs` | S1, K1, K3, K4 |
-| **W1c** Part dialog (done) | Part as a `DialogPanel` with cascade publish, gated primary and return link. Additive hooks: `PartEditor::part_dialog` is called first in `inspector()`; the app sets `part_return_to` on a schematic New Part request and follows `take_part_return` back to the instance | `part_editor/part_props.rs` | S1, K4 |
-| **W2a** Schematic cards (done) | Sheet, Instance (live per field), Net/Wire, Place preview; Checks section and the ribbon's Check removed; `Locate`; `notice` sites. The editor offers `inspector_card() -> Inspector` and `card_region(ui, engine, Region)` for the column to pin its footer and fill its issue slot, and `take_show_issues()` for a slot click; until the column calls them, `inspector()` draws the slot and footer at the end of the body | `schematic_editor.rs`, `schematic_editor/{sheet,instance,net}_card.rs`, `place_palette.rs` (preview) | S1, K1, K3 |
+| **W1b** Component Footprint + Mapping + 3D (done) | Footprint and pad cards with `summary_row`; template dialog (C3 when merged, else Clear + confirm); Assign dialog; Pad tool card; Mapping table; 3D card; `Locate` targets for its tabs (methods in its own files that W1a's `Locate` calls); `notice` sites | `part_editor/footprint_*.rs` (with `footprint_card.rs`), `part_editor/{mapping,model}_card.rs`, `part_editor/model_{body,props}.rs` | S1, K1, K3, K4 |
+| **W1c** Part dialog (done) | Part as a `DialogPanel` with cascade publish, gated primary and return link. The dialog holds the subject slot (`PartEditor::part_dialog`); the app sets `part_return_to` on a schematic New Part request and follows `take_part_return` back to the instance | `part_editor/part_props.rs` | S1, K4 |
+| **W2a** Schematic cards (done) | Sheet, Instance (live per field), Net/Wire, Place preview; Checks section and the ribbon's Check removed; `Locate`; `notice` sites. `subject_slot` draws the card with its pinned footer and issue slot | `schematic_editor.rs`, `schematic_editor/{sheet,instance,net}_card.rs`, `place_palette.rs` (preview) | S1, K1, K3 |
 | **W2b** Schematic dialogs (done) | Choose part dialog; Resolve parts table Window | `resolve_parts.rs`, `place_palette.rs` (assign part; merged after W2a) | S1, K4 |
-| **W3** PCB | Board card + Board setup; Placement and Track cards; Route tool card; view popover; 3D rules; unplaced state; `Locate`; `notice` sites | `pcb_editor.rs`, `pcb_editor/{board,placement,track,route}_card.rs` | S1, K1, K3, K4, C3 (track edits) |
+| **W3** PCB (done) | Board card + Board setup; Placement and Track cards; Route tool card; view popover; 3D rules; unplaced state; `Locate`; `notice` sites | `pcb_editor.rs`, `pcb_editor/{board,placement,track,route}_card.rs` | S1, K1, K3, K4, C3 (track edits) |
 | **V1** Evidence | After-screenshots of every audit state; measure the one-screen target; update [editor evidence](editor-evidence.md); scenarios for locate, toast, refusal on a field, review gating and a stable layout while typing | `docs/`, tests | all |
 
 **Waves.**
@@ -278,21 +278,21 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 
 ### Card files after S1
 
-Paths are relative to `apps/pcbcraft/src`. Each editor's `inspector()` stays in the editor file and only dispatches to these files.
+Paths are relative to `apps/pcbcraft/src`. Each editor's `subject_slot` and card dispatch stay in the editor file and dispatch to these files.
 
 | File | Holds |
 | --- | --- |
-| `part_editor.rs` | the card dispatch by subject (`Inspected`): header, subject identity, footer and issue slot; the Details and Symbol tabs; `Locate` |
+| `part_editor.rs` | the subject slot (`subject_slot`, `subject_kind`) and the card dispatch by subject (`Inspected`): header, subject identity, footer and issue slot; the Details and Symbol tabs; `Locate` |
 | `part_editor/details_card.rs` | the Details tab: DEFINITION, FIELDS, PARTS, LIBRARY, PROVENANCE; Update placed instances… |
 | `part_editor/symbol_card.rs` | the Symbol tab: SYMBOL (unit, terminal list), the PIN · Electrical and TERMINAL cards |
-| `part_editor/footprint_card.rs` | the Footprint tab: tool options, template section, footprint and pad sections (bodies in `footprint_*.rs`) |
-| `part_editor/mapping_card.rs` | the Mapping tab: package terminals and their mapping |
-| `part_editor/model_card.rs` | the 3D tab: Body and placement (bodies in `model_body.rs`, `model_props.rs`) |
-| `part_editor/part_props.rs` | the Parts section and its glue (`part_section`) |
-| `schematic_editor/sheet_card.rs` | Sheet, Place and Checks |
+| `part_editor/footprint_card.rs` | the Footprint tab: its subject (`footprint_subject`, `footprint_header`), the footprint and pad cards, `locate_footprint` (bodies, dialogs and the tool card in `footprint_*.rs`) |
+| `part_editor/mapping_card.rs` | the Mapping tab: package terminals and their mapping; `locate_mapping` |
+| `part_editor/model_card.rs` | the 3D tab: Body and placement (bodies in `model_body.rs`, `model_props.rs`); `locate_model` |
+| `part_editor/part_props.rs` | the Parts list (`part_section`) and the Part dialog (`part_dialog`) |
+| `schematic_editor/sheet_card.rs` | Sheet and Place; checks live in Issues |
 | `schematic_editor/instance_card.rs` | the selected instance: properties, Part, pin functions |
 | `schematic_editor/net_card.rs` | the selected wire's net |
-| `pcb_editor/board_card.rs` | Board and fabrication, Layers, Board checks |
-| `pcb_editor/placement_card.rs` | Placement, and the not-placed state |
-| `pcb_editor/track_card.rs` | the selected track |
-| `pcb_editor/route_card.rs` | Routing |
+| `pcb_editor/board_card.rs` | W3: the Board card (size, copper, finish + Setup…), the Board setup dialog and the view popover (layers, view from bottom, net highlight, airwires); Board checks moved to Issues |
+| `pcb_editor/placement_card.rs` | W3: Placement (live position pair, rotation, side, lock), Connections, the Rotate 90° / Flip / Schematic › footer, and the not-placed state |
+| `pcb_editor/track_card.rs` | W3: Track (net, live layer and width through `layout.track_set`, length, ends, lock) and the Delete track footer |
+| `pcb_editor/route_card.rs` | W3: the Route tool card (width, layer, net); the route in progress is a canvas pill |

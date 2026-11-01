@@ -75,17 +75,17 @@ impl Messages {
         self.entries.clear();
     }
 
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn entries(&self) -> impl Iterator<Item = &Message> {
         self.entries.iter()
     }
 
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

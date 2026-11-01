@@ -43,6 +43,32 @@ fn frame(
     (out, command)
 }
 
+/// The texts one frame of the docked dialog draws.
+fn dialog_texts(editor: &mut SchematicEditor, engine: &Engine, ctx: &egui::Context) -> Vec<String> {
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 1800.0))),
+            ..Default::default()
+        },
+        |ui| {
+            let _ = editor.dialog(ui, engine);
+        },
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut out);
+    }
+    out
+}
+
 /// Click the text `label`; returns the operation of the release frame.
 fn click(
     editor: &mut SchematicEditor,
@@ -114,7 +140,7 @@ fn the_part_row_chooses_in_assign_mode_and_clears_through_the_engine() -> TestRe
     assert!(editor.palette.is_open());
     assert_eq!(
         editor.palette.mode(),
-        &PaletteMode::Assign {
+        &crate::place_palette::Mode::Assign {
             instances: vec![r1]
         }
     );
@@ -123,7 +149,10 @@ fn the_part_row_chooses_in_assign_mode_and_clears_through_the_engine() -> TestRe
         crate::resolve_parts::query_for(&engine, r1)
     );
     assert!(editor.palette.query().starts_with("kind:part"));
-    assert_eq!(editor.header(&engine).title, "Choose part");
+    // Choose part docks as a dialog in the subject slot, under its title.
+    assert!(editor.dialog_open());
+    let shown = dialog_texts(&mut editor, &engine, &ctx);
+    assert!(shown.iter().any(|t| t == "Choose part"), "{shown:?}");
     // Esc closes the palette without a choice.
     editor.palette.close();
     let operation = click(&mut editor, &engine, &ctx, "Clear")?.ok_or("Clear sent nothing")?;
@@ -257,7 +286,7 @@ fn resolve_opens_the_window_and_choose_docks_the_dialog() -> TestResult {
     window_click(&mut editor, &engine, &ctx, "Choose…")?;
     assert_eq!(
         editor.palette.mode(),
-        &PaletteMode::Assign {
+        &crate::place_palette::Mode::Assign {
             instances: first.instances.clone()
         }
     );

@@ -7,12 +7,18 @@
 //! ([`layout::pick_pad`], [`layout::pick_graphic`]); it never decides pad or
 //! graphic geometry. The cached board is rebuilt per document revision, not
 //! on selection, layer or camera changes.
+use crate::kit::{
+    self,
+    card::{CardResponse, Inspector, IssueSlot, Region, Subject},
+};
+use crate::refusal::{self, Origin};
 use crate::symbol_view::{self, View};
 use egui::{Align2, Color32, FontId, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
 use pcbcraft_core::{
-    Engine, Id, Layer, Operation, Placement, Point, Project,
+    Engine, Id, Layer, ObjectRef, Operation, Placement, Point, Project, Query, QueryResult,
     geometry::{Shape as CoreShape, Transform2},
     instances,
+    issues::{IssueArea, IssueScope},
     layout::{
         self, BoardCopper, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem,
         PlacedPad, RouteRequest, WorldPad,
@@ -168,6 +174,46 @@ impl BoardView {
     }
 }
 
+/// A card field whose commit can be refused; a refusal shows under it
+/// (`refusal::Origin::Field`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Field {
+    Position,
+    Rotation,
+    Side,
+    TrackWidth,
+    TrackLayer,
+}
+
+impl Field {
+    const ALL: [Field; 5] = [
+        Field::Position,
+        Field::Rotation,
+        Field::Side,
+        Field::TrackWidth,
+        Field::TrackLayer,
+    ];
+    fn id(self) -> egui::Id {
+        egui::Id::new(("pcb-field", self))
+    }
+}
+
+/// Refused commits, by the field that sent them, in shown wording. They
+/// are dropped when the subject or the document changes.
+#[derive(Default)]
+struct FieldErrors(std::collections::BTreeMap<Field, String>);
+
+/// What the slot's Properties card inspects, for its scroll key and its
+/// cached issue slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Inspected {
+    Board,
+    Placement(Id),
+    Unplaced(Id),
+    Track(Id),
+    Review,
+}
+
 struct DragAirwires {
     key: (u64, Id, Point),
     connections: Vec<(WorldPad, WorldPad)>,
@@ -209,6 +255,24 @@ pub struct PcbEditor {
     labelled: BTreeSet<Id>,
     layers: Layers,
     from_bottom: bool,
+    /// The staged width of the selected track, committed on focus loss.
+    track_width: f64,
+    /// The field that had keyboard focus last frame, so Esc reverts it.
+    editing: Option<Field>,
+    /// The staged values last sent, so a refused commit is not resent
+    /// every frame while the field still shows it.
+    sent: std::collections::BTreeMap<Field, [f64; 2]>,
+    errors: FieldErrors,
+    /// The Board setup dialog while it is open.
+    setup: Option<board_card::BoardSetup>,
+    /// Board bounds a Locate asked the next Layout frame to frame.
+    frame_request: Option<[Point; 2]>,
+    /// Instance whose schematic symbol the app should show next.
+    show_in_schematic: Option<Id>,
+    /// Every Connections row instead of the first eight.
+    connections_all: bool,
+    /// The issue slot of the last inspected subject, per document revision.
+    issue_slot: Option<((u64, usize, Inspected), Option<IssueSlot>)>,
 }
 
 impl Default for PcbEditor {
@@ -244,6 +308,15 @@ impl Default for PcbEditor {
             labelled: BTreeSet::new(),
             layers: Layers::default(),
             from_bottom: false,
+            track_width: 0.0,
+            editing: None,
+            sent: Default::default(),
+            errors: FieldErrors::default(),
+            setup: None,
+            frame_request: None,
+            show_in_schematic: None,
+            connections_all: false,
+            issue_slot: None,
         }
     }
 }
@@ -252,9 +325,14 @@ impl PcbEditor {
     pub fn is_3d(&self) -> bool {
         self.view_3d
     }
+    /// Switch between Layout and 3D. 3D has no 2D tools: an armed Route
+    /// ends, so no 2D tool card shows there; selection is kept.
     pub fn set_3d(&mut self, enabled: bool) {
         self.view_3d = enabled;
         self.route_start = None;
+        if enabled {
+            self.tool = Tool::Select;
+        }
         self.cancel_drag();
     }
     pub fn selected_instance(&self) -> Option<Id> {
@@ -266,21 +344,31 @@ impl PcbEditor {
     pub fn highlighted_net(&self) -> Option<Id> {
         self.highlighted
     }
-    pub fn highlight_net(&mut self, net: Option<Id>) {
-        self.highlighted = net;
-    }
     pub fn set_selection(&mut self, instance: Option<Id>, track: Option<Id>, net: Option<Id>) {
-        self.instance = instance;
-        self.track = track;
         self.net = net;
         self.highlighted = net;
+        if instance != self.instance {
+            self.connections_all = false;
+        }
+        self.instance = instance;
+        self.track = track;
         self.discard_staged();
     }
 
-    /// Drop unapplied Position, Rotation and Side edits; the next sync reloads
-    /// them from the document. Called on every tool or subject change.
+    /// Drop uncommitted field edits and their refusals; the next sync
+    /// reloads the fields from the document. Called on every tool or
+    /// subject change.
     fn discard_staged(&mut self) {
         self.property_key = None;
+        self.editing = None;
+        self.sent.clear();
+        self.errors.0.clear();
+    }
+
+    /// The instance whose symbol the Schematic workspace should select
+    /// ("Schematic ›" in the placement footer), once.
+    pub fn take_show_in_schematic(&mut self) -> Option<Id> {
+        self.show_in_schematic.take()
     }
 
     fn sync(&mut self, engine: &Engine) {
@@ -315,8 +403,19 @@ impl PcbEditor {
                 self.route_start = None;
             }
         }
-        let key = (engine.revision(), self.instance);
+        let key = (engine.revision(), self.instance.or(self.track));
         if self.property_key != Some(key) {
+            // A new revision or subject: the fields show the document again.
+            self.sent.clear();
+            self.errors.0.clear();
+            if let Some(track) = engine
+                .project()
+                .tracks
+                .iter()
+                .find(|t| Some(t.id) == self.track)
+            {
+                self.track_width = track.width;
+            }
             if let Some(p) = engine
                 .project()
                 .placements
@@ -493,21 +592,134 @@ impl PcbEditor {
         None
     }
 
+    /// What the Properties card inspects.
+    fn inspected(&self, project: &Project) -> Inspected {
+        if self.update.is_open() {
+            return Inspected::Review;
+        }
+        if let Some(id) = self.instance.filter(|id| project.instance(*id).is_some()) {
+            return if project.placements.iter().any(|p| p.instance == id) {
+                Inspected::Placement(id)
+            } else {
+                Inspected::Unplaced(id)
+            };
+        }
+        match self
+            .track
+            .filter(|id| project.tracks.iter().any(|t| t.id == *id))
+        {
+            Some(id) => Inspected::Track(id),
+            None => Inspected::Board,
+        }
+    }
+
     pub fn header(&self, engine: &Engine) -> crate::shell::Header {
         use crate::shell::Header;
         let project = engine.project();
+        match self.inspected(project) {
+            Inspected::Review => Header::new("component", "Update PCB", "Review"),
+            Inspected::Placement(id) | Inspected::Unplaced(id) => {
+                let designator = project
+                    .instance(id)
+                    .map_or_else(String::new, |i| i.designator.clone());
+                let kind = if matches!(self.inspected(project), Inspected::Placement(_)) {
+                    "Placement"
+                } else {
+                    "Not placed"
+                };
+                Header::new("component", designator, kind)
+            }
+            Inspected::Track(id) => {
+                let net = project
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map_or("", |t| project.net_name(t.net));
+                Header::new("trace", format!("Track · {net}"), "Track")
+            }
+            Inspected::Board => Header::new("plane", "Board", "Board"),
+        }
+    }
+
+    /// What the subject slot shows: the update review, the Board setup
+    /// dialog, the Route tool card while Route is armed in Layout, or the
+    /// Properties card (docs/sidebar-ia.md, "Layout").
+    pub fn subject(&self) -> Subject {
         if self.update.is_open() {
-            return Header::new("component", "Update PCB", "Review");
+            Subject::Review
+        } else if self.setup.is_some() {
+            Subject::Dialog
+        } else if self.tool == Tool::Route && !self.view_3d {
+            Subject::Tool
+        } else {
+            Subject::Properties
         }
-        if let Some(instance) = self.instance.and_then(|id| project.instance(id)) {
-            let placed = project.placements.iter().any(|p| p.instance == instance.id);
-            let kind = if placed { "Placement" } else { "Not placed" };
-            return Header::new("component", instance.designator.clone(), kind);
+    }
+
+    /// The Properties card's frame: header, scroll key, footer and the
+    /// reserved issue slot.
+    pub fn card(&mut self, engine: &Engine) -> Inspector {
+        let inspected = self.inspected(engine.project());
+        Inspector {
+            header: self.header(engine),
+            subject: egui::Id::new(("pcb-card", inspected)),
+            footer: matches!(inspected, Inspected::Placement(_) | Inspected::Track(_)),
+            issues: self.issue_slot(engine, inspected),
         }
-        if let Some(track) = self.track {
-            return Header::new("trace", format!("Track {track}"), "Track");
+    }
+
+    /// The whole subject slot for the right column: the docked update
+    /// review, the tool card, the Board setup dialog, or the Properties
+    /// card with its pinned footer and issue slot. Refusals of this editor's fields and dialog are
+    /// claimed here, the frame after they were refused.
+    pub fn subject_slot(&mut self, ui: &mut Ui, engine: &Engine) -> CardResponse<Operation> {
+        self.sync(engine);
+        self.claim_refusals(ui.ctx());
+        match self.subject() {
+            Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
+            Subject::Dialog => CardResponse::output(self.board_setup(ui, engine)),
+            // The review docks with its own header and pinned footer
+            // (slice R1), in place of the Properties card.
+            Subject::Review => CardResponse::output(self.update.show(ui, engine)),
+            Subject::Properties => {
+                let inspector = self.card(engine);
+                kit::card::card(ui, &inspector, |ui, region| match region {
+                    Region::Body => self.inspector(ui, engine),
+                    Region::Footer => self.footer(ui, engine),
+                })
+            }
         }
-        Header::new("plane", "Board", "PCB")
+    }
+
+    /// Take the refusals handed back for this editor's fields and dialog.
+    fn claim_refusals(&mut self, ctx: &egui::Context) {
+        for field in Field::ALL {
+            if let Some(text) = refusal::claim(ctx, Origin::Field(field.id())) {
+                self.errors.0.insert(field, text);
+            }
+        }
+        if let Some(setup) = &mut self.setup {
+            setup.claim(ctx);
+        }
+    }
+
+    /// The issue slot of `inspected`: its Board issues from the one
+    /// `project.issues` query, cached per document revision. `None` (an
+    /// empty slot) when the query refuses.
+    fn issue_slot(&mut self, engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
+        let key = (
+            engine.revision(),
+            std::sync::Arc::as_ptr(engine.project_arc()) as usize,
+            inspected,
+        );
+        if let Some((cached, slot)) = &self.issue_slot
+            && *cached == key
+        {
+            return slot.clone();
+        }
+        let slot = issue_slot_of(engine, inspected);
+        self.issue_slot = Some((key, slot.clone()));
+        slot
     }
 
     /// Return the layout view to its fitted scale.
@@ -524,27 +736,41 @@ impl PcbEditor {
             return self.update.show(ui, engine);
         }
         let project = engine.project();
-        let operation = if let Some(placement) = project
-            .placements
-            .iter()
-            .find(|p| Some(p.instance) == self.instance)
-        {
-            self.placement_section(ui, placement)
-        } else if let Some(instance) = self.instance.and_then(|id| project.instance(id)) {
-            self.unplaced_section(ui, engine, &instance.designator);
-            None
-        } else if let Some(track) = project.tracks.iter().find(|t| Some(t.id) == self.track) {
-            track_card::track_section(ui, project, track)
-        } else {
-            board_card::board_section(ui, project)
-        };
-        self.routing_section(ui, project);
-        // The 2D layer toggles do not drive the 3D scene; hide them there.
-        if !self.view_3d {
-            self.layers_section(ui);
+        match self.inspected(project) {
+            Inspected::Placement(id) => {
+                let placement = project.placements.iter().find(|p| p.instance == id)?;
+                self.placement_section(ui, project, placement)
+            }
+            Inspected::Unplaced(_) => {
+                self.unplaced_section(ui, engine);
+                None
+            }
+            Inspected::Track(id) => {
+                let track = project.tracks.iter().find(|t| t.id == id)?;
+                self.track_section(ui, project, track)
+            }
+            Inspected::Board | Inspected::Review => {
+                self.board_section(ui, project);
+                None
+            }
         }
-        self.checks_section(ui);
-        operation
+    }
+
+    /// The pinned footer's object actions: Rotate 90°, Flip and Schematic ›
+    /// for a placement, Delete track for a track. Never Apply.
+    pub fn footer(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let project = engine.project();
+        match self.inspected(project) {
+            Inspected::Placement(id) => {
+                let placement = project.placements.iter().find(|p| p.instance == id)?;
+                self.placement_footer(ui, placement)
+            }
+            Inspected::Track(id) => {
+                let track = project.tracks.iter().find(|t| t.id == id)?;
+                track_card::track_footer(ui, track)
+            }
+            _ => None,
+        }
     }
 
     /// The two parts of each courtyard-overlap finding, with the side.
@@ -585,6 +811,9 @@ impl PcbEditor {
                 self.pan = zoom_pan(rect, project.board_size, self.zoom, zoom, self.pan, p);
             }
             self.zoom = zoom;
+        }
+        if let Some(bounds) = self.frame_request.take() {
+            (self.zoom, self.pan) = frame_view(rect, project.board_size, bounds, self.from_bottom);
         }
         let view = board_view(
             rect,
@@ -665,9 +894,10 @@ impl PcbEditor {
                                 layer: self.layer,
                             },
                         }));
-                        // End the speculative gesture even if the engine rejects
-                        // it. A later route never starts from uncommitted copper.
-                        self.route_start = None;
+                        // The route stays in progress until the engine takes
+                        // it: a refusal (a toast) leaves the start, so the
+                        // next click tries again; an accepted segment is a
+                        // new revision, whose sync ends the route.
                     }
                 } else {
                     if let Some((_, Some(net))) = snapped {
@@ -706,13 +936,13 @@ impl PcbEditor {
             rect.left_bottom() + egui::vec2(t.space_16, -t.space_16),
             Align2::LEFT_BOTTOM,
             format!(
-                "{} · {:?} copper · grid 0.5 mm · {} airwires{}",
+                "{} · {} copper · grid 0.5 mm · {} airwires{}",
                 if self.tool == Tool::Route {
                     "Route"
                 } else {
                     "Select / move"
                 },
-                self.layer,
+                layer_name(self.layer),
                 self.visible_airwires().len(),
                 if self.from_bottom {
                     " · viewed from bottom"
@@ -723,7 +953,45 @@ impl PcbEditor {
             FontId::proportional(t.font_small),
             t.text_dim,
         );
+        self.pills(ui, rect, project);
         operation
+    }
+
+    /// Pills for the persistent modes, top-centre of the canvas: the route
+    /// in progress, else the highlighted net. × ends the mode.
+    fn pills(&mut self, ui: &mut Ui, rect: Rect, project: &Project) {
+        let t = Tokens::get();
+        let text = match (self.route_start, self.net, self.highlighted) {
+            (Some(_), Some(net), _) => format!(
+                "Routing {} · {} mm",
+                project.net_name(net),
+                kit::number_text(self.width)
+            ),
+            (None, _, Some(net)) if project.net(net).is_some() => {
+                format!("{} highlighted", project.net_name(net))
+            }
+            _ => return,
+        };
+        // The pill hugs its text: its frame fills the rect it is given.
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(text.clone(), FontId::proportional(t.font_label), t.text)
+            .size()
+            .x;
+        let width = (text_width + 3.0 * t.control_height).min(rect.width());
+        let area = Rect::from_min_size(
+            rect.center_top() + egui::vec2(-width / 2.0, t.space_8),
+            egui::vec2(width, t.control_height + t.space_8),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
+        let pill = kit::pill(&mut child, None, &text);
+        if pill.closed {
+            if self.route_start.is_some() {
+                self.route_start = None;
+            } else {
+                self.highlighted = None;
+            }
+        }
     }
 
     /// The pad a route click at `at` snaps to: a visible pad with a net and
@@ -1269,6 +1537,153 @@ fn locate(objects: &[pcbcraft_core::diagnostics::ObjectRef]) -> Option<Selection
     }
 }
 
+/// The Board issues on `inspected` and the words after their counts ("on
+/// R13"), from `project.issues`. The board card counts the whole board.
+fn issue_slot_of(engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
+    let project = engine.project();
+    let designator = |id: Id| {
+        project
+            .instance(id)
+            .map_or_else(String::new, |i| i.designator.clone())
+    };
+    let (scope, label) = match inspected {
+        Inspected::Review => return None,
+        Inspected::Board => (
+            IssueScope::Area {
+                area: IssueArea::Board,
+            },
+            "on this board".to_owned(),
+        ),
+        Inspected::Placement(id) | Inspected::Unplaced(id) => (
+            IssueScope::Selection {
+                objects: vec![ObjectRef::Instance { id }],
+            },
+            format!("on {}", designator(id)),
+        ),
+        Inspected::Track(id) => (
+            IssueScope::Selection {
+                objects: vec![ObjectRef::Track { id }],
+            },
+            "on this track".to_owned(),
+        ),
+    };
+    let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues { scope }) else {
+        return None;
+    };
+    let mut counts = pcbcraft_core::issues::IssueCounts::default();
+    for row in report.rows.iter().filter(|r| r.area == IssueArea::Board) {
+        let slot = match row.severity {
+            pcbcraft_core::issues::Severity::Error => &mut counts.error,
+            pcbcraft_core::issues::Severity::Warning => &mut counts.warning,
+            pcbcraft_core::issues::Severity::ToDo => &mut counts.to_do,
+            pcbcraft_core::issues::Severity::Info => &mut counts.info,
+        };
+        *slot = slot.saturating_add(1);
+    }
+    Some(IssueSlot { counts, label })
+}
+
+/// Whether the widget with keyboard focus lies inside `rect` (one card
+/// row), so the row's edit is still in progress.
+fn focus_within(ui: &Ui, rect: Rect) -> bool {
+    ui.memory(|m| m.focused())
+        .and_then(|id| ui.ctx().read_response(id))
+        .is_some_and(|r| rect.expand(1.0).contains_rect(r.rect))
+}
+
+/// The board-space bounds of the objects `refs` names, for framing: a
+/// part's package envelope, a pad's outline, a track and every pad and
+/// track of a net. `None` when none is on the board.
+fn bounds_of(editor: &PcbEditor, project: &Project, refs: &[ObjectRef]) -> Option<[Point; 2]> {
+    let mut points: Vec<Point> = Vec::new();
+    let pads_where = |keep: &dyn Fn(&PlacedPad) -> bool, points: &mut Vec<Point>| {
+        for pad in editor.board_pads.iter().filter(|b| keep(&b.placed)) {
+            points.extend(pad.outline.flatten(0.05));
+        }
+    };
+    for object in refs {
+        match *object {
+            ObjectRef::Instance { id }
+            | ObjectRef::Unit { instance: id, .. }
+            | ObjectRef::Property { instance: id, .. } => {
+                if let Some(placement) = project.placements.iter().find(|p| p.instance == id) {
+                    match body_polygon(project, placement) {
+                        Some(polygon) => points.extend(polygon),
+                        None => points.push(placement.position),
+                    }
+                }
+            }
+            ObjectRef::Terminal { endpoint } => {
+                pads_where(&|p| p.terminal == Some(endpoint), &mut points)
+            }
+            ObjectRef::Pad { instance, pad } => {
+                pads_where(&|p| p.instance == instance && p.pad.id == pad, &mut points)
+            }
+            ObjectRef::Track { id } => {
+                for track in project.tracks.iter().filter(|t| t.id == id) {
+                    points.extend(layout::track_polygon(track));
+                }
+            }
+            ObjectRef::Net { id } => {
+                pads_where(&|p| p.net == Some(id), &mut points);
+                for track in project.tracks.iter().filter(|t| t.net == id) {
+                    points.extend(layout::track_polygon(track));
+                }
+            }
+            _ => {}
+        }
+    }
+    let first = *points.first()?;
+    Some(points.iter().fold([first, first], |[lo, hi], p| {
+        [
+            [lo[0].min(p[0]), lo[1].min(p[1])],
+            [hi[0].max(p[0]), hi[1].max(p[1])],
+        ]
+    }))
+}
+
+/// The zoom and pan that frame `bounds` in the canvas `rect`: centred, at
+/// about a third of the canvas, never zoomed out past the fitted board.
+fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
+    let fit = fit_scale(rect, board);
+    let size = [
+        (bounds[1][0] - bounds[0][0]).max(1.0) as f32,
+        (bounds[1][1] - bounds[0][1]).max(1.0) as f32,
+    ];
+    let wanted = (rect.width() / (3.0 * size[0])).min(rect.height() / (3.0 * size[1]));
+    let zoom = (wanted / fit).clamp(1.0, *ZOOM_RANGE.end());
+    let centre = [
+        (bounds[0][0] + bounds[1][0]) / 2.0,
+        (bounds[0][1] + bounds[1][1]) / 2.0,
+    ];
+    let unpanned = board_view(rect, board, zoom, Vec2::ZERO, from_bottom);
+    (zoom, rect.center() - unpanned.screen(centre))
+}
+
+impl crate::issues::Locate for PcbEditor {
+    /// Select the first board object of `refs` (a part, else a track, else
+    /// a net) and frame all of them on the next Layout frame. Selection
+    /// and camera only: the tool, document and geometry stay as they are.
+    fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
+        self.sync(engine);
+        let project = engine.project();
+        let Some((instance, track, net)) = locate(refs) else {
+            return false;
+        };
+        let exists = instance.is_some_and(|id| project.instance(id).is_some())
+            || track.is_some_and(|id| project.tracks.iter().any(|t| t.id == id))
+            || (instance.is_none()
+                && track.is_none()
+                && net.is_some_and(|id| project.net(id).is_some()));
+        if !exists {
+            return false;
+        }
+        self.set_selection(instance, track, net);
+        self.frame_request = bounds_of(self, project, refs);
+        true
+    }
+}
+
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
     let instance = project.instance(placement.instance)?;
     let physical = instances::resolve(&project.library, instance)
@@ -1283,7 +1698,6 @@ fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> 
 #[cfg(test)]
 mod tests {
     use super::board_card::fabrication_edit;
-    use super::placement_card::placement_edit;
     use super::*;
     use pcbcraft_core::{Fabrication, MaskColour};
 
@@ -1398,7 +1812,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                command = editor.inspector(ui, engine);
+                command = editor.subject_slot(ui, engine).output;
+                // The app reads the origin in the same frame (`App::apply`).
+                let mark = refusal::take_mark(ui.ctx());
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::new("test-mark"), mark));
             },
         );
         // No renderer in tests: drop font-atlas uploads instead of applying them.
@@ -1456,94 +1874,32 @@ mod tests {
         .1)
     }
 
+    /// Board setup… opens the docked dialog; choosing a mask colour and OK
+    /// issue `layout.set_fabrication` with the other attributes kept; the
+    /// engine applies it as one undo step and the rebuilt 3D layers take
+    /// the look. The dialog closes once the document has moved on.
     #[test]
-    fn apply_issues_the_move_the_engine_accepts_and_lock_disables_it()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut engine = Engine::demo()?;
-        let (r1, _) = ids(&engine);
-        let placement = |engine: &Engine| {
-            engine
-                .project()
-                .placements
-                .iter()
-                .find(|p| p.instance == r1)
-                .cloned()
-                .ok_or("fixture placement missing")
-        };
-        let before = placement(&engine)?;
-        assert!(
-            placement_edit(&before, before.position, before.rotation_deg, before.layer).is_none()
-        );
-        let ctx = egui::Context::default();
-        fonts::setup_bundled_fonts(&ctx);
-        let mut editor = PcbEditor::default();
-        editor.set_selection(Some(r1), None, None);
-        frame(&mut editor, &engine, &ctx, vec![]);
-        assert_eq!(editor.position, before.position);
-        // The form edits that the Position, Rotation and Side rows produce.
-        editor.position = [12.0, 9.5];
-        editor.rotation = 90.0;
-        editor.placement_layer = Layer::Bottom;
-        let expected = placement_edit(&before, [12.0, 9.5], 90.0, Layer::Bottom)
-            .ok_or("moved placement has no edit")?;
-        let LayoutCommand::Move {
-            instance,
-            position,
-            rotation_deg,
-            layer,
-        } = expected
-        else {
-            return Err("Apply is not a move".into());
-        };
-        assert_eq!(
-            (instance, position, rotation_deg, layer),
-            (r1, [12.0, 9.5], 90.0, Layer::Bottom)
-        );
-        let operation = click(&mut editor, &engine, &ctx, "Apply")?.ok_or("Apply did nothing")?;
-        let Operation::Layout(LayoutCommand::Move {
-            instance: i,
-            position: p,
-            rotation_deg: r,
-            layer: l,
-        }) = &operation
-        else {
-            return Err("Apply issued another command".into());
-        };
-        assert_eq!((*i, *p, *r, *l), (instance, position, rotation_deg, layer));
-        engine.apply(engine.revision(), operation)?;
-        let after = placement(&engine)?;
-        assert_eq!(
-            (after.position, after.rotation_deg, after.layer),
-            (position, rotation_deg, layer)
-        );
-        // The engine rejects moving a locked placement, so the form offers none.
-        engine.apply(
-            engine.revision(),
-            Operation::Layout(LayoutCommand::SetPlacementLock {
-                instance: r1,
-                locked: true,
-            }),
-        )?;
-        let locked = placement(&engine)?;
-        assert!(placement_edit(&locked, [1.0, 1.0], 0.0, Layer::Top).is_none());
-        editor.position = [1.0, 1.0];
-        assert!(click(&mut editor, &engine, &ctx, "Apply")?.is_none());
-        Ok(())
-    }
-
-    /// Choosing a mask colour in the Board section issues
-    /// `layout.set_fabrication` with the other attributes kept; the engine
-    /// applies it as one undo step and the rebuilt 3D layers take the look.
-    #[test]
-    fn board_soldermask_row_issues_set_fabrication() -> Result<(), Box<dyn std::error::Error>> {
+    fn board_setup_dialog_issues_set_fabrication() -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = Engine::demo()?;
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
         let mut editor = PcbEditor::default();
         assert!(fabrication_edit(Fabrication::default(), Fabrication::default()).is_none());
-        // Open the Soldermask dropdown, then choose Blue.
+        // The Board card shows the finish in one line, not the form.
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            painted(&output)
+                .texts
+                .iter()
+                .any(|t| t == "Green · ENIG · White silk")
+        );
+        assert!(!painted(&output).texts.iter().any(|t| t == "Soldermask"));
+        assert!(click(&mut editor, &engine, &ctx, "Setup…")?.is_none());
+        assert_eq!(editor.subject(), Subject::Dialog);
+        // Open the Soldermask dropdown, choose Blue: nothing is sent yet.
         assert!(click(&mut editor, &engine, &ctx, "Green")?.is_none());
-        let operation = click(&mut editor, &engine, &ctx, "Blue")?.ok_or("Blue did nothing")?;
+        assert!(click(&mut editor, &engine, &ctx, "Blue")?.is_none());
+        let operation = click(&mut editor, &engine, &ctx, "OK")?.ok_or("OK did nothing")?;
         let expected = Fabrication {
             mask_colour: MaskColour::Blue,
             ..Fabrication::default()
@@ -1552,8 +1908,14 @@ mod tests {
             return Err("the row issued another command".into());
         };
         assert_eq!(*issued, expected);
+        assert_eq!(
+            marked(&ctx),
+            Some(Origin::Dialog(egui::Id::new("pcb-board-setup")))
+        );
         engine.apply(engine.revision(), operation)?;
         assert_eq!(engine.project().fabrication, expected);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(editor.subject(), Subject::Properties);
         let model = pcbcraft_solidcraft::project::build(engine.project())?;
         let blue = pcbcraft_solidcraft::material::material(
             pcbcraft_solidcraft::material::BodyKind::MaskTop,
@@ -1563,15 +1925,14 @@ mod tests {
         assert!(model.geometry.iter().any(|g| g.kind
             == pcbcraft_solidcraft::material::BodyKind::MaskTop
             && g.surface == blue));
-        // The form follows the document: the row now shows Blue, and undo
-        // restores Green.
+        // The summary follows the document, and undo restores Green.
         let (output, none) = frame(&mut editor, &engine, &ctx, vec![]);
         assert!(none.is_none());
         assert!(
-            output
-                .shapes
+            painted(&output)
+                .texts
                 .iter()
-                .any(|s| text_position(&s.shape, "Blue").is_some())
+                .any(|t| t == "Blue · ENIG · White silk")
         );
         engine.undo()?;
         assert_eq!(engine.project().fabrication, Fabrication::default());
@@ -1676,11 +2037,9 @@ mod tests {
                 .iter()
                 .any(|s| text_position(&s.shape, label).is_some())
         };
-        assert!(has(
-            "R3 is not on the board yet. Run Update PCB to place it."
-        ));
+        assert!(has("Not on the board yet"));
         // Not the Board body under a placement header.
-        assert!(!has("Soldermask"));
+        assert!(!has("Finish"));
         assert!(click(&mut editor, &engine, &ctx, "Update PCB…")?.is_none());
         assert!(editor.update.is_open());
         assert_eq!(editor.header(&engine).title, "Update PCB");
@@ -1689,31 +2048,6 @@ mod tests {
         let mut placed = PcbEditor::default();
         placed.set_selection(Some(r1), None, None);
         assert_eq!(placed.header(&engine).kind, "Placement");
-        Ok(())
-    }
-
-    /// B-b: a Board checks row is a button that selects the part it names.
-    #[test]
-    fn a_board_check_row_click_selects_the_named_part() -> Result<(), Box<dyn std::error::Error>> {
-        let engine = Engine::demo()?;
-        let ctx = egui::Context::default();
-        fonts::setup_bundled_fonts(&ctx);
-        let mut editor = PcbEditor::default();
-        editor.sync(&engine);
-        let (message, expected) = editor
-            .issues
-            .iter()
-            .find_map(|f| Some((f.message.clone(), locate(&f.objects)?)))
-            .ok_or("the demo board has no locatable finding")?;
-        assert!(click(&mut editor, &engine, &ctx, &message)?.is_none());
-        assert_eq!(
-            (
-                editor.selected_instance(),
-                editor.selected_track(),
-                editor.net
-            ),
-            expected
-        );
         Ok(())
     }
 
@@ -1768,10 +2102,6 @@ mod tests {
         let document = (before.position, before.rotation_deg, before.layer);
         editor.set_selection(Some(r1), None, None);
         frame(&mut editor, &engine, &ctx, vec![]);
-        // Staged edits survive plain redraws until applied.
-        stage(&mut editor);
-        frame(&mut editor, &engine, &ctx, vec![]);
-        assert_eq!(shown(&editor), ([12.0, 9.5], 90.0, Layer::Bottom));
         for tool in ["route", "select"] {
             stage(&mut editor);
             editor.on_tool(tool, &engine);
@@ -2236,6 +2566,502 @@ mod tests {
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
         let after = pad_label(&output).ok_or("pad number 1 not drawn after zoom")?;
         assert!((after - before).length() < 0.5, "{before:?} → {after:?}");
+        Ok(())
+    }
+
+    /// The refusal origin the last `frame` marked for its operation.
+    fn marked(ctx: &egui::Context) -> Option<Origin> {
+        ctx.data(|d| d.get_temp::<Option<Origin>>(egui::Id::new("test-mark")))
+            .flatten()
+    }
+
+    fn texts(output: &egui::FullOutput) -> Vec<String> {
+        painted(output).texts
+    }
+
+    fn placement_of(engine: &Engine, id: Id) -> Result<Placement, Box<dyn std::error::Error>> {
+        Ok(engine
+            .project()
+            .placements
+            .iter()
+            .find(|p| p.instance == id)
+            .cloned()
+            .ok_or("fixture placement missing")?)
+    }
+
+    /// A Position edit commits live once the field is left: one Move with
+    /// both coordinates, sent once, marked as the Position field's. A
+    /// locked placement commits nothing.
+    #[test]
+    fn a_left_position_field_commits_one_move_and_lock_stops_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let before = placement_of(&engine, r1)?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r1), None, None);
+        let (_, none) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(none.is_none(), "an unedited card sends nothing");
+        assert_eq!(editor.position, before.position);
+        // What typing 12 and 9.5 into Position leaves once focus moves on.
+        editor.position = [12.0, 9.5];
+        let (_, operation) = frame(&mut editor, &engine, &ctx, vec![]);
+        let operation = operation.ok_or("the left field did not commit")?;
+        let Operation::Layout(LayoutCommand::Move {
+            instance,
+            position,
+            rotation_deg,
+            layer,
+        }) = &operation
+        else {
+            return Err("Position issued another command".into());
+        };
+        assert_eq!(
+            (*instance, *position, *rotation_deg, *layer),
+            (r1, [12.0, 9.5], before.rotation_deg, before.layer)
+        );
+        assert_eq!(marked(&ctx), Some(Origin::Field(Field::Position.id())));
+        // Not resent while the document has not caught up.
+        assert!(frame(&mut editor, &engine, &ctx, vec![]).1.is_none());
+        engine.apply(engine.revision(), operation)?;
+        assert_eq!(placement_of(&engine, r1)?.position, [12.0, 9.5]);
+        assert!(frame(&mut editor, &engine, &ctx, vec![]).1.is_none());
+        // A rotation edit is its own step, keeping the position.
+        editor.rotation = 90.0;
+        let Some(Operation::Layout(LayoutCommand::Move {
+            position,
+            rotation_deg,
+            ..
+        })) = frame(&mut editor, &engine, &ctx, vec![]).1
+        else {
+            return Err("Rotation did not commit a move".into());
+        };
+        assert_eq!((position, rotation_deg), ([12.0, 9.5], 90.0));
+        // Locked: the fields are disabled and nothing commits.
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::SetPlacementLock {
+                instance: r1,
+                locked: true,
+            }),
+        )?;
+        frame(&mut editor, &engine, &ctx, vec![]);
+        editor.position = [1.0, 1.0];
+        assert!(frame(&mut editor, &engine, &ctx, vec![]).1.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "Rotate 90°")?.is_none());
+        Ok(())
+    }
+
+    /// An off-board Position is refused by the engine; the refusal comes
+    /// back to the field, which keeps the typed value marked with the
+    /// board bounds under it, and the document is unchanged.
+    #[test]
+    fn a_refused_position_shows_under_the_field_and_is_not_resent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let before = engine.project().clone();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r1), None, None);
+        frame(&mut editor, &engine, &ctx, vec![]);
+        editor.position = [500.0, 9.0];
+        let operation = frame(&mut editor, &engine, &ctx, vec![])
+            .1
+            .ok_or("the field did not commit")?;
+        let origin = marked(&ctx).ok_or("no origin marked")?;
+        let error = engine
+            .apply(engine.revision(), operation)
+            .err()
+            .ok_or("the engine took an off-board placement")?;
+        assert_eq!(engine.project(), &before);
+        // The app hands it back during the frame that applied it.
+        let mut refused = Some(refusal::Refused { origin, error });
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            if let Some(refused) = refused.take() {
+                refusal::hand_back(ui.ctx(), refused, false);
+            }
+        })
+        .textures_delta
+        .clear();
+        let (output, again) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(again.is_none(), "a refused value is not resent");
+        let shown = texts(&output);
+        assert!(
+            shown
+                .iter()
+                .any(|t| t == "Must stay inside the board (60 × 40 mm)"),
+            "{shown:?}"
+        );
+        assert_eq!(editor.position, [500.0, 9.0], "the typed value stays");
+        assert!(refusal::unclaimed(&ctx).is_empty(), "the field claimed it");
+        // Another subject drops the edit and its refusal.
+        editor.set_selection(None, None, None);
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            !texts(&output)
+                .iter()
+                .any(|t| t.starts_with("Must stay inside"))
+        );
+        Ok(())
+    }
+
+    /// The placement footer: Rotate 90° and Flip issue one Move each, and
+    /// Schematic › asks the app to show the symbol.
+    #[test]
+    fn the_placement_footer_rotates_flips_and_opens_the_schematic()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let before = placement_of(&engine, r1)?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r1), None, None);
+        assert!(editor.card(&engine).footer);
+        let Some(Operation::Layout(LayoutCommand::Move { rotation_deg, .. })) =
+            click(&mut editor, &engine, &ctx, "Rotate 90°")?
+        else {
+            return Err("Rotate 90° issued no move".into());
+        };
+        assert_eq!(rotation_deg, (before.rotation_deg + 90.0).rem_euclid(360.0));
+        let Some(Operation::Layout(LayoutCommand::Move { layer, .. })) =
+            click(&mut editor, &engine, &ctx, "Flip")?
+        else {
+            return Err("Flip issued no move".into());
+        };
+        assert_eq!(layer, opposite(before.layer));
+        assert!(click(&mut editor, &engine, &ctx, "Schematic ›")?.is_none());
+        assert_eq!(editor.take_show_in_schematic(), Some(r1));
+        assert_eq!(editor.take_show_in_schematic(), None);
+        Ok(())
+    }
+
+    /// Connections lists every pad with its net and routing state from the
+    /// core's unrouted findings; routing the net makes both pads routed.
+    #[test]
+    fn connections_follow_the_core_unrouted_findings() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let mut editor = PcbEditor::default();
+        editor.sync(&engine);
+        let rows = editor.connections(r1);
+        assert_eq!(rows.len(), 2);
+        let pad2 = rows
+            .iter()
+            .find(|r| r.pad == "Pad 2")
+            .ok_or("R1 pad 2 missing")?;
+        assert!(pad2.net.is_some());
+        assert!(pad2.unrouted);
+        assert_eq!(pad2.state, "unrouted");
+        let routed = routed_board()?;
+        let mut editor = PcbEditor::default();
+        editor.sync(&routed);
+        let pad2 = editor
+            .connections(r1)
+            .into_iter()
+            .find(|r| r.pad == "Pad 2")
+            .ok_or("R1 pad 2 missing")?;
+        assert_eq!((pad2.state, pad2.unrouted), ("routed", false));
+        Ok(())
+    }
+
+    /// The Track card: header "Track · net", the ends it meets, and live
+    /// Width and Layer edits through `layout.track_set`; Delete track sits
+    /// in the footer.
+    #[test]
+    fn the_track_card_edits_width_and_layer_live() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = routed_board()?;
+        let track = engine.project().tracks[0].clone();
+        let net = engine.project().net_name(track.net).to_owned();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(None, Some(track.id), Some(track.net));
+        let header = editor.header(&engine);
+        assert_eq!(
+            (header.title.as_str(), header.kind),
+            (format!("Track · {net}").as_str(), "Track")
+        );
+        let (output, none) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(none.is_none());
+        let shown = texts(&output);
+        assert!(
+            shown.iter().any(|t| t == "R1 pad 2 → R2 pad 1"),
+            "{shown:?}"
+        );
+        assert!(shown.iter().any(|t| t == "5.6 mm"), "{shown:?}");
+        editor.track_width = 0.5;
+        let operation = frame(&mut editor, &engine, &ctx, vec![])
+            .1
+            .ok_or("Width did not commit")?;
+        let Operation::Layout(LayoutCommand::SetTrack { id, width, layer }) = &operation else {
+            return Err("Width issued another command".into());
+        };
+        assert_eq!((*id, *width, *layer), (track.id, Some(0.5), None));
+        assert_eq!(marked(&ctx), Some(Origin::Field(Field::TrackWidth.id())));
+        engine.apply(engine.revision(), operation)?;
+        assert_eq!(engine.project().tracks[0].width, 0.5);
+        assert_eq!(engine.project().tracks[0].id, track.id);
+        // Layer: open the dropdown, choose Bottom.
+        assert!(click(&mut editor, &engine, &ctx, "Top")?.is_none());
+        let Some(Operation::Layout(LayoutCommand::SetTrack { layer, width, .. })) =
+            click(&mut editor, &engine, &ctx, "Bottom")?
+        else {
+            return Err("Layer issued no track edit".into());
+        };
+        assert_eq!((layer, width), (Some(Layer::Bottom), None));
+        let Some(Operation::Layout(LayoutCommand::DeleteTrack { id })) =
+            click(&mut editor, &engine, &ctx, "Delete track")?
+        else {
+            return Err("Delete track did nothing".into());
+        };
+        assert_eq!(id, track.id);
+        Ok(())
+    }
+
+    /// Route armed in Layout replaces Properties with the Route tool card;
+    /// Done returns to the Properties card of the same selection. 3D shows
+    /// no 2D tool card, and the route stays in progress after a refusal.
+    #[test]
+    fn route_shows_a_tool_card_only_in_layout() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.set_selection(Some(r1), None, None);
+        editor.on_tool("route", &engine);
+        assert_eq!(editor.subject(), Subject::Tool);
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let shown = texts(&output);
+        for label in [
+            "Route",
+            "Done",
+            "Width",
+            "Layer",
+            "Net",
+            "From the first pad",
+        ] {
+            assert!(
+                shown.iter().any(|t| t == label),
+                "{label} missing: {shown:?}"
+            );
+        }
+        // Not a placement section under the tool.
+        assert!(!shown.iter().any(|t| t == "PLACEMENT"));
+        assert!(click(&mut editor, &engine, &ctx, "Done")?.is_none());
+        assert_eq!(editor.subject(), Subject::Properties);
+        assert_eq!(editor.selected_instance(), Some(r1));
+        editor.on_tool("route", &engine);
+        editor.set_3d(true);
+        assert_eq!(editor.subject(), Subject::Properties);
+        assert!(!editor.has_view_menu());
+        editor.set_3d(false);
+        assert!(editor.has_view_menu());
+        Ok(())
+    }
+
+    /// A route segment the engine refuses leaves the route in progress
+    /// (its start and the pill); an accepted one ends it.
+    #[test]
+    fn a_refused_route_segment_keeps_the_route_in_progress()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        editor.sync(&engine);
+        // The net of R1 pad 2 and R2 pad 1, as `routed_board` routes it.
+        let net = engine
+            .project()
+            .net_of(pcbcraft_core::Endpoint {
+                instance: ids(&engine).0,
+                terminal: pcbcraft_core::TerminalId(2),
+            })
+            .map(|n| n.id)
+            .ok_or("demo net")?;
+        editor.on_tool("route", &engine);
+        editor.net = Some(net);
+        editor.route_start = Some([9.2, 8.0]);
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let pill = format!("Routing {} · 0.3 mm", engine.project().net_name(net));
+        assert!(texts(&output).contains(&pill));
+        // A click far outside the board is refused by the engine.
+        let operation = {
+            let click = |p: Pos2| {
+                vec![
+                    egui::Event::PointerMoved(p),
+                    egui::Event::PointerButton {
+                        pos: p,
+                        button: PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: p,
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            };
+            canvas_frame(&mut editor, &engine, &ctx, click(Pos2::new(5.0, 5.0)))
+                .1
+                .ok_or("no route requested")?
+        };
+        assert!(engine.apply(engine.revision(), operation).is_err());
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(editor.route_start, Some([9.2, 8.0]));
+        // An accepted segment is a new revision: the route ends.
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Route {
+                request: RouteRequest {
+                    net,
+                    start: [9.2, 8.0],
+                    end: [14.8, 8.0],
+                    width: 0.3,
+                    layer: Layer::Top,
+                },
+            }),
+        )?;
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(editor.route_start, None);
+        Ok(())
+    }
+
+    /// Locate selects the first part a finding names and frames it on the
+    /// next Layout frame, without touching the document or the cached
+    /// board; refs with nothing on the board locate nothing.
+    #[test]
+    fn locate_selects_and_frames_the_named_part() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::issues::Locate;
+        let engine = shaped_board()?;
+        let (_, r2) = ids(&engine);
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let cached = editor.board_pads.as_ptr();
+        let revision = engine.revision();
+        let pad = editor
+            .board_pads
+            .iter()
+            .find(|b| b.placed.instance == r2)
+            .map(|b| b.placed.pad.id)
+            .ok_or("R2 pad")?;
+        assert!(editor.locate(
+            &engine,
+            &[
+                ObjectRef::Net { id: 999 },
+                ObjectRef::Pad { instance: r2, pad }
+            ]
+        ));
+        assert_eq!(editor.selected_instance(), Some(r2));
+        let bounds = editor.frame_request.ok_or("no framing asked")?;
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(editor.frame_request.is_none());
+        assert!(editor.zoom > 1.0);
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let view = board_view(
+            rect,
+            engine.project().board_size,
+            editor.zoom,
+            editor.pan,
+            false,
+        );
+        let centre = [
+            (bounds[0][0] + bounds[1][0]) / 2.0,
+            (bounds[0][1] + bounds[1][1]) / 2.0,
+        ];
+        assert!((view.screen(centre) - rect.center()).length() < 0.5);
+        assert_eq!(engine.revision(), revision);
+        assert_eq!(editor.board_pads.as_ptr(), cached);
+        assert!(!editor.locate(&engine, &[ObjectRef::Instance { id: 999 }]));
+        assert!(!editor.locate(&engine, &[]));
+        Ok(())
+    }
+
+    /// The card's issue slot counts the inspected object's Board issues
+    /// from `project.issues`; the Board card counts the whole board.
+    #[test]
+    fn the_issue_slot_counts_the_objects_board_issues() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let (r1, _) = ids(&engine);
+        let mut editor = PcbEditor::default();
+        let board = editor.card(&engine).issues.ok_or("no board slot")?;
+        let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues {
+            scope: IssueScope::Area {
+                area: IssueArea::Board,
+            },
+        }) else {
+            return Err("issues query refused".into());
+        };
+        assert_eq!(board.counts, report.counts);
+        assert_eq!(board.label, "on this board");
+        // The demo's net between R1 and R2 is unrouted: a To do on R1.
+        editor.set_selection(Some(r1), None, None);
+        let slot = editor.card(&engine).issues.ok_or("no placement slot")?;
+        assert_eq!(slot.label, "on R1");
+        assert!(slot.counts.to_do >= 1, "{:?}", slot.counts);
+        assert!(slot.counts.to_do <= board.counts.to_do);
+        Ok(())
+    }
+
+    /// The view popover holds the layer and overlay toggles in Layout.
+    #[test]
+    fn the_view_popover_toggles_layers_without_document_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let run = |editor: &mut PcbEditor, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| editor.view_menu(ui),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let output = run(&mut editor, vec![]);
+        let at = output
+            .shapes
+            .iter()
+            .find_map(|s| text_position(&s.shape, "Courtyard"))
+            .ok_or("Courtyard toggle missing")?;
+        for label in ["Top copper", "Show airwires", "View from bottom"] {
+            assert!(texts(&output).iter().any(|t| t == label), "{label}");
+        }
+        run(
+            &mut editor,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run(
+            &mut editor,
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!editor.layers.courtyard);
         Ok(())
     }
 }

@@ -596,11 +596,14 @@ pub fn issues_bar(
     x = paint_counts(ui, x, cy, &segs, &font);
     if segs.is_empty() {
         let none = galley(ui, &Level::Ok.count_words(0), font, t.text_dim);
+        let width = none.size().x;
         ui.painter().galley(
             pos2(x + t.space_4, cy - none.size().y / 2.0),
             none,
             t.text_dim,
         );
+        // The elsewhere note clips against the end of "No issues".
+        x += t.space_4 + width;
     }
     let mut name = format!("Issues: {}", counts_words(counts, true, true));
     if let Some(elsewhere) = elsewhere.filter(|e| !e.is_empty()) {

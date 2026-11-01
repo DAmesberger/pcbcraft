@@ -23,11 +23,11 @@ pub const MAX_TOAST_ROWS: usize = 3;
 /// The widest a toast grows, as upstream's centred toasts (440 pt).
 const MAX_TOAST_WIDTH: f32 = 440.0;
 /// The most toasts an editor can post in one frame.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+#[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
 const MAX_POSTED: usize = 16;
 
 /// An action a toast offers.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+#[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToastAction {
     Undo,
@@ -111,18 +111,18 @@ impl Toasts {
         self.items.retain(|toast| now - toast.at < TOAST_SECONDS);
     }
 
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn items(&self) -> impl Iterator<Item = &Toast> {
         self.items.iter()
     }
 
     /// The toast at `index` (oldest first), as a [`ToastEvent`] names it.
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn get(&self, index: usize) -> Option<&Toast> {
         self.items.get(index)
     }
 
-    #[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+    #[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -248,7 +248,7 @@ fn posted_id() -> egui::Id {
 
 /// Post a toast from an editor ("Assigned 2 pads", Undo). It shows from
 /// this frame and goes to Messages; at most a few per frame are kept.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
+#[allow(dead_code, reason = "kit contract (docs/sidebar-ia.md); no caller yet")]
 pub fn post(ctx: &egui::Context, level: Level, text: impl Into<String>, actions: Vec<ToastAction>) {
     let text = text.into();
     ctx.data_mut(|d| {

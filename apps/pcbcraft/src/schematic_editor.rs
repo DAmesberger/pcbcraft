@@ -7,8 +7,8 @@
 //! one typed command at a time, a reserved issue slot and a pinned footer.
 //! Findings live in Issues; a refused field edit shows under its field.
 use crate::kit;
-use crate::kit::card::{Inspector, IssueSlot, Region};
-use crate::place_palette::{ChooseAction, Mode as PaletteMode, PaletteAction, PlacePalette};
+use crate::kit::card::{CardResponse, Inspector, IssueSlot, Region};
+use crate::place_palette::{ChooseAction, PaletteAction, PlacePalette};
 use crate::refusal::{self, Origin};
 use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
@@ -124,8 +124,6 @@ pub struct SchematicEditor {
     frame_request: Option<Bounds>,
     /// The net card lists every member instead of the first eight.
     all_members: bool,
-    /// The issue slot was clicked: the app shows Issues for the subject.
-    show_issues: bool,
     /// What each occurrence draws, resolved by core once per revision so
     /// selection and hover never re-resolve.
     /// Shared so a frame can hold it while selection mutates the editor.
@@ -182,7 +180,6 @@ impl Default for SchematicEditor {
             slot: None,
             frame_request: None,
             all_members: false,
-            show_issues: false,
             placed: Arc::default(),
             placed_bounds: BTreeMap::new(),
             view: Vec2::ZERO,
@@ -273,14 +270,31 @@ pub type NewPartRequest = (
 );
 
 impl SchematicEditor {
+    /// The whole subject slot for the right column: the docked update
+    /// review, the Choose part dialog, or the Properties card with its
+    /// issue slot and pinned footer (docs/sidebar-ia.md, "Layout").
+    pub fn subject_slot(&mut self, ui: &mut egui::Ui, engine: &Engine) -> CardResponse<Operation> {
+        self.refresh_connectivity(engine);
+        if self.update.is_open() {
+            return CardResponse::output(self.update.show(ui, engine));
+        }
+        if self.dialog_open() {
+            return CardResponse::output(self.dialog(ui, engine));
+        }
+        let inspector = self.inspector_card(engine);
+        kit::card::card(ui, &inspector, |ui, region| {
+            self.card_region(ui, engine, region)
+        })
+    }
+
     /// Whether a docked dialog takes the subject slot: Choose part.
-    pub fn dialog_open(&self) -> bool {
+    fn dialog_open(&self) -> bool {
         self.palette.choosing() && !self.update.is_open()
     }
 
     /// The docked dialog in the subject slot `ui` offers (Choose part);
     /// returns the operation it issues.
-    pub fn dialog(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
+    fn dialog(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         match self.palette.choose_dialog(ui, engine)? {
             ChooseAction::Assign { instances, part } => {
                 Some(resolve_parts::assign(instances, Some(part)))
@@ -617,7 +631,7 @@ impl SchematicEditor {
     /// The Properties card of the current subject: header, the subject's
     /// identity (the body scroll resets when it changes), whether it has a
     /// pinned footer and its issue slot.
-    pub fn inspector_card(&mut self, engine: &Engine) -> Inspector {
+    fn inspector_card(&mut self, engine: &Engine) -> Inspector {
         let subject = self.subject(engine.project());
         Inspector {
             header: self.header(engine),
@@ -690,13 +704,6 @@ impl SchematicEditor {
         });
         self.slot = Some((engine.revision(), document, subject, slot.clone()));
         slot
-    }
-
-    /// The issue slot was clicked since the last call: show Issues for the
-    /// card's subject.
-    #[allow(dead_code, reason = "the column's Issues card (slice A1) asks for it")]
-    pub fn take_show_issues(&mut self) -> bool {
-        std::mem::take(&mut self.show_issues)
     }
 
     /// Turn or mirror the selected occurrence on the sheet about its origin:
@@ -794,17 +801,15 @@ impl SchematicEditor {
         self.report.as_ref().map(|(_, _, report)| report)
     }
 
-    /// The Properties card's content as the column draws it today: the
-    /// body, then the issue slot and the footer actions at its end. The
-    /// column can instead draw [`Self::inspector_card`] itself and ask
-    /// [`Self::card_region`] for each region, which pins the footer.
+    /// The Properties card's regions in one body, for tests that drive
+    /// the card without the column: the body, then the issue slot and the
+    /// footer actions at its end.
+    #[cfg(test)]
     pub fn inspector(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         let card = self.inspector_card(engine);
         let mut output = self.card_region(ui, engine, Region::Body);
         let slot = card.issues.unwrap_or_default();
-        if kit::issue_line(ui, &slot.counts, &slot.label).clicked() && !slot.is_empty() {
-            self.show_issues = true;
-        }
+        kit::issue_line(ui, &slot.counts, &slot.label);
         if card.footer {
             kit::rule(ui);
             kit::actions(ui, |ui| {
@@ -818,7 +823,7 @@ impl SchematicEditor {
 
     /// One region of the Properties card: the scrolling body or the pinned
     /// footer (object actions; never Apply).
-    pub fn card_region(
+    fn card_region(
         &mut self,
         ui: &mut egui::Ui,
         engine: &Engine,

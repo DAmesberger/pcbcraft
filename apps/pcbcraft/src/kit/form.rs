@@ -381,36 +381,6 @@ pub fn status(ui: &mut Ui, text: &str, tone: Tone) -> Response {
     ui.add(egui::Label::new(RichText::new(text).size(t.font_label).color(tone_ink(tone))).wrap())
 }
 
-/// A check finding as one full-width row. The text is not selectable; with
-/// `locate`, the row is a button (hover fill, pointing hand) whose click
-/// should select the object the finding names.
-pub fn finding_row(ui: &mut Ui, text: &str, tone: Tone, locate: Option<&str>) -> Response {
-    let t = Tokens::get();
-    let ink = match tone {
-        Tone::Dim => t.text_dim,
-        Tone::Note => t.form_primary,
-        Tone::Warning => t.warning,
-        Tone::Error => t.error,
-    };
-    let fill = ui.painter().add(egui::Shape::Noop);
-    let label = egui::Label::new(RichText::new(text).size(t.font_label).color(ink))
-        .wrap()
-        .selectable(false);
-    let Some(hint) = locate else {
-        return ui.add(label);
-    };
-    let response = ui.add(label.sense(egui::Sense::click()));
-    if response.hovered() {
-        let rect = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), response.rect.y_range())
-            .expand2(egui::vec2(0.0, 1.0));
-        ui.painter()
-            .set(fill, egui::Shape::rect_filled(rect, t.radius_sm, t.hover));
-    }
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(hint)
-}
-
 /// A small dim note, for guidance under a group of rows.
 pub fn note(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get();

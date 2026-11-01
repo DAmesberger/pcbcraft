@@ -30,16 +30,7 @@ pub use rows::*;
 pub use search::*;
 pub use toast::pill;
 pub use tree::*;
-#[allow(
-    unused_imports,
-    reason = "S0 contract; slices A1, R1 and the W slices use it"
-)]
-pub use {
-    dialog::{DialogPanel, confirm},
-    issues::{detail, issue_line, issue_row},
-    review::ReviewPanel,
-    severity::severity_glyph,
-};
+pub use {dialog::DialogPanel, issues::issue_line, severity::severity_glyph};
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};
 use solidcraft_ui_egui::{icons, theme::Tokens};

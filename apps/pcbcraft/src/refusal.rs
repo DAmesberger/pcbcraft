@@ -18,7 +18,6 @@ use pcbcraft_core::issues::{MAX_TITLE, style};
 use std::sync::Arc;
 
 /// Where a refused operation came from.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Origin {
     /// A card field, by the id of its control.
@@ -32,14 +31,12 @@ pub enum Origin {
 }
 
 /// A refusal handed back to the editor that produced the operation.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 #[derive(Debug)]
 pub struct Refused {
     pub origin: Origin,
     pub error: Error,
 }
 
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 impl Refused {
     /// The refusal for `origin`, if it is this one; otherwise it stays
     /// unclaimed.
@@ -141,7 +138,6 @@ fn with_inbox<R>(ctx: &egui::Context, f: impl FnOnce(&mut Inbox) -> R) -> R {
 /// Declare where the operation an editor returns this frame comes from, so
 /// a refusal of it is handed back there. Without a mark, the call site's
 /// default origin applies.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 pub fn mark(ctx: &egui::Context, origin: Origin) {
     let frame = ctx.cumulative_frame_nr();
     with_inbox(ctx, |inbox| inbox.mark = Some((frame, origin)));
@@ -175,7 +171,6 @@ pub(crate) fn hand_back(ctx: &egui::Context, refused: Refused, toasted: bool) {
 /// The refusal for `origin` handed back from an earlier frame, worded for
 /// display, if there is one. Claiming it means the editor shows it at its
 /// source, so no toast appears for it.
-#[allow(dead_code, reason = "the editors use it from slices W1–W3 and A1")]
 pub fn claim(ctx: &egui::Context, origin: Origin) -> Option<String> {
     let frame = ctx.cumulative_frame_nr();
     with_inbox(ctx, |inbox| {

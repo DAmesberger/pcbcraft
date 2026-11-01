@@ -141,6 +141,22 @@ fn the_bar_is_28_points_and_shows_every_count() {
         issues_bar(ui, &counts(0, 0, 0, 0), true, None)
     });
     assert!(find(&painted, "No issues").is_some(), "{painted:?}");
+    // With nothing here and blockers elsewhere, the two never overlap.
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        issues_bar(
+            ui,
+            &counts(0, 0, 0, 0),
+            false,
+            Some("2 blocking in Schematic, 3 blocking in Board, 1 in Component"),
+        )
+    });
+    let none = rect_of(&painted, "No issues");
+    let elsewhere = painted
+        .iter()
+        .find(|p| p.text.contains("blocking") || p.text.ends_with('\u{2026}'))
+        .map(|p| p.rect)
+        .unwrap_or_else(|| panic!("the elsewhere note: {painted:?}"));
+    assert!(none.right() < elsewhere.left(), "{none:?} {elsewhere:?}");
     let clicked = h.click(rect.center(), |ui| {
         issues_bar(ui, &counts(1, 0, 0, 0), false, None).clicked()
     });
