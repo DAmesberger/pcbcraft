@@ -36,15 +36,20 @@ pub const MAX_BUNDLE_RECORDS: usize = 1024;
 pub const MAX_LINKS: usize = 256;
 /// Assets one bundle or project snapshot packs.
 pub const MAX_ASSETS: usize = 256;
-/// Bytes of one packed asset.
-pub const MAX_ASSET_BYTES: usize = 8 * 1024 * 1024;
+/// Bytes of one packed asset: the container's per-asset target (D0).
+pub const MAX_ASSET_BYTES: usize = 64 * 1024 * 1024;
+const _: () = assert!(MAX_ASSET_BYTES as u64 == crate::format::CONTAINER_MAX_ASSET_BYTES);
 /// Encoded bytes all packed assets of one bundle or project snapshot may
-/// take together: their base64 text, 4 bytes per 3 (padded). The project
-/// file is bounded at 16 MiB, so this leaves 5 MiB for everything else; an
-/// import that would exceed it is refused instead of leaving a project
-/// that can no longer be saved. One asset of [`MAX_ASSET_BYTES`] fits.
-pub const MAX_PACKED_BYTES: usize = 11 * 1024 * 1024;
+/// take together: their base64 text, 4 bytes per 3 (padded), as bundles
+/// and automation payloads carry them. The project file stores assets as
+/// raw container entries (D0), so this no longer competes with the 16 MiB
+/// document. It stays well below the 512 MiB container target because the
+/// document's asset bytes are still copied by every command and kept by
+/// every undo step; one asset of [`MAX_ASSET_BYTES`] fits. Raising it
+/// toward the container target waits for shared asset bytes.
+pub const MAX_PACKED_BYTES: usize = 96 * 1024 * 1024;
 const _: () = assert!(MAX_ASSET_BYTES.div_ceil(3) * 4 <= MAX_PACKED_BYTES);
+const _: () = assert!((MAX_PACKED_BYTES as u64) < crate::format::CONTAINER_MAX_BYTES);
 /// Bytes of a media type.
 pub const MAX_MEDIA_TYPE: usize = 128;
 

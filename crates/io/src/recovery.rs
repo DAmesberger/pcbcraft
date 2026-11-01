@@ -1,6 +1,12 @@
 //! Independent, bounded recovery snapshots. Each live session owns a unique file;
 //! restoring never writes to the original project path.
-use crate::{Error, Result, persistence};
+//!
+//! A snapshot is a project container (see [`crate::persistence::container`])
+//! with one more entry, `recovery.json`, holding [`RecoveryRecord`]'s
+//! metadata. Assets are stored rather than deflated, so frequent snapshots
+//! stay cheap. Listing reads only the document and metadata entries.
+use crate::persistence::container::{self, Load, Method, Role};
+use crate::{Error, Result};
 use pcbcraft_core::format::{EditorFile, encode_bounded};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,7 +17,10 @@ use std::{
 const PREFIX: &str = "session-";
 const SUFFIX: &str = ".pcbcraft-recovery";
 const MAX_ENTRIES: usize = 128;
-const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+/// Bytes a listing decompresses in total: documents and metadata, never
+/// asset entries.
+const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+const RECORD_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +29,32 @@ pub struct RecoveryRecord {
     pub document: EditorFile,
     pub original_path: Option<PathBuf>,
     pub saved_unix_ms: u64,
+}
+
+/// The `recovery.json` entry: everything of a record but its document.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryMeta {
+    version: u32,
+    original_path: Option<PathBuf>,
+    saved_unix_ms: u64,
+}
+
+impl RecoveryMeta {
+    fn parse(bytes: &[u8]) -> Result<Self> {
+        let meta: Self = serde_json::from_slice(bytes)?;
+        if meta.version != RECORD_VERSION {
+            return Err(Error::Invalid("unsupported recovery record version".into()));
+        }
+        if meta
+            .original_path
+            .as_ref()
+            .is_some_and(|p| p.as_os_str().len() > 4096)
+        {
+            return Err(Error::Invalid("recovery original path is too long".into()));
+        }
+        Ok(meta)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -74,13 +109,17 @@ impl RecoveryStore {
             .as_millis();
         let saved_unix_ms = u64::try_from(saved_unix_ms)
             .map_err(|_| Error::Invalid("recovery timestamp exceeds supported range".into()))?;
-        let record = RecoveryRecord {
-            version: 1,
-            document: document.clone(),
+        let meta = RecoveryMeta {
+            version: RECORD_VERSION,
             original_path: original_path.map(Path::to_path_buf),
             saved_unix_ms,
         };
-        persistence::atomic_write(&self.path, &encode_bounded(&record)?)
+        container::write(
+            &self.path,
+            document,
+            Some(&encode_bounded(&meta)?),
+            Method::Stored,
+        )
     }
     pub fn remove_own(&self) -> Result<()> {
         remove_entry(&self.directory, &self.path)
@@ -94,19 +133,27 @@ pub fn read(path: &Path) -> Result<RecoveryRecord> {
             "recovery entry must be a regular file, not a link".into(),
         ));
     }
-    let record: RecoveryRecord = serde_json::from_slice(&persistence::read_bytes(path)?)?;
-    if record.version != 1 {
-        return Err(Error::Invalid("unsupported recovery record version".into()));
+    let contents = container::read(path, Role::Recovery, Load::Everything)?;
+    let meta = RecoveryMeta::parse(contents.recovery.as_deref().unwrap_or_default())?;
+    Ok(RecoveryRecord {
+        version: meta.version,
+        document: contents.file,
+        original_path: meta.original_path,
+        saved_unix_ms: meta.saved_unix_ms,
+    })
+}
+
+/// The metadata and document of a snapshot, without reading its assets.
+fn summary(path: &Path) -> Result<(RecoveryMeta, EditorFile, u64)> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(Error::Invalid(
+            "recovery entry must be a regular file, not a link".into(),
+        ));
     }
-    if record
-        .original_path
-        .as_ref()
-        .is_some_and(|p| p.as_os_str().len() > 4096)
-    {
-        return Err(Error::Invalid("recovery original path is too long".into()));
-    }
-    record.document.validate()?;
-    Ok(record)
+    let contents = container::read(path, Role::Recovery, Load::Summary)?;
+    let meta = RecoveryMeta::parse(contents.recovery.as_deref().unwrap_or_default())?;
+    Ok((meta, contents.file, contents.read_bytes))
 }
 
 fn session_name(path: &Path) -> bool {
@@ -123,7 +170,9 @@ fn session_name(path: &Path) -> bool {
 }
 
 /// Corrupt records remain visible with an error so the user can discard one
-/// explicitly without losing access to valid recovery candidates.
+/// explicitly without losing access to valid recovery candidates. A listing
+/// reads each snapshot's document and metadata only; [`read`] checks its
+/// assets and validates it before anything is restored.
 pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -151,21 +200,23 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
         if meta.len() == 0 {
             continue;
         } // reserved by a session awaiting its first dirty snapshot
-        bytes = bytes.saturating_add(meta.len());
-        if bytes > MAX_SCAN_BYTES {
-            return Err(Error::Invalid(
-                "recovery directory exceeds the 64 MiB scan limit".into(),
-            ));
-        }
-        match read(&path) {
-            Ok(record) => result.push(RecoveryEntry {
-                path,
-                original_path: record.original_path,
-                saved_unix_ms: record.saved_unix_ms,
-                instances: record.document.project.instances.len(),
-                project_name: record.document.project.name,
-                error: None,
-            }),
+        match summary(&path) {
+            Ok((record, document, read)) => {
+                bytes = bytes.saturating_add(read);
+                if bytes > MAX_SCAN_BYTES {
+                    return Err(Error::Invalid(
+                        "recovery directory exceeds the 256 MiB scan limit".into(),
+                    ));
+                }
+                result.push(RecoveryEntry {
+                    path,
+                    original_path: record.original_path,
+                    saved_unix_ms: record.saved_unix_ms,
+                    instances: document.project.instances.len(),
+                    project_name: document.project.name,
+                    error: None,
+                })
+            }
             Err(error) => result.push(RecoveryEntry {
                 path,
                 original_path: None,

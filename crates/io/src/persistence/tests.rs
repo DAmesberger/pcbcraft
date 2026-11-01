@@ -69,8 +69,21 @@ fn invalid_files_are_refused_without_side_effects() -> Result<()> {
         std::fs::write(&path, bytes)?;
         assert!(read_project(&path).is_err());
     }
+    // A container whose document is of a newer version.
+    container::tests::raw_zip(
+        &path,
+        &[(
+            format::CONTAINER_DOCUMENT,
+            &serde_json::to_vec(&newer)?,
+            zip::CompressionMethod::Deflated,
+        )],
+    )?;
+    assert!(matches!(
+        read_project(&path),
+        Err(Error::Document(pcbcraft_core::Error::Unsupported(_)))
+    ));
     let large = std::fs::File::create(&path)?;
-    large.set_len(MAX_FILE_BYTES as u64 + 1)?;
+    large.set_len(format::CONTAINER_MAX_BYTES + 1)?;
     assert!(matches!(read_project(&path), Err(Error::TooLarge(_))));
     assert!(read_project(&dir.path().join("wrong.json")).is_err());
     assert_eq!(engine.to_file(), before);
