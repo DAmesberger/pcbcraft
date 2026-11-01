@@ -27,6 +27,10 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Segments of an inner via ring's outline: the ring body and the
 /// laminate's cut share it, so the two meet exactly.
 const INNER_RING_SEGMENTS: usize = 64;
+/// Chords of each round end cap of a track's 3D copper. The core checks
+/// measure the exact cap; 8 chords keep the native model's vertex count
+/// bounded (within 2 % of the radius) on boards of thousands of tracks.
+const TRACK_CAP_SEGMENTS: usize = 8;
 const METADATA_KEY: &str = "org.pcbcraft.electronics";
 /// Body kinds: `org.pcbcraft.electronics.bodies.0`, `.1`, … each
 /// `{kind: [body names]}`, below Solidcraft's 64 KiB value limit.
@@ -726,20 +730,33 @@ fn ring_outline(center: Point, radius: f64) -> Vec<Point> {
         .collect()
 }
 
-/// A track's copper rectangle on the board.
+/// A track's copper stadium ([`layout::track_shape`]): round end caps of
+/// `TRACK_CAP_SEGMENTS` chords each, vertices on the true arc,
+/// counter-clockwise. The track body and an inner layer's laminate cut
+/// share it, so the two meet exactly.
 fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
     let d = [end[0] - start[0], end[1] - start[1]];
     let length = d[0].hypot(d[1]);
     if length <= 0.0 {
         return Vec::new();
     }
-    let n = [-d[1] / length * width / 2.0, d[0] / length * width / 2.0];
-    vec![
-        [start[0] - n[0], start[1] - n[1]],
-        [end[0] - n[0], end[1] - n[1]],
-        [end[0] + n[0], end[1] + n[1]],
-        [start[0] + n[0], start[1] + n[1]],
-    ]
+    let r = width / 2.0;
+    let u = [d[0] / length, d[1] / length];
+    let mut out = Vec::with_capacity(2 * TRACK_CAP_SEGMENTS + 2);
+    // Each cap turns half a circle about its end, from the right side of
+    // the direction it faces to the left.
+    for (center, toward) in [(end, u), (start, [-u[0], -u[1]])] {
+        let side = [-toward[1], toward[0]];
+        for k in 0..=TRACK_CAP_SEGMENTS {
+            let a = std::f64::consts::PI * (k as f64 / TRACK_CAP_SEGMENTS as f64 - 0.5);
+            let (s, c) = a.sin_cos();
+            out.push([
+                center[0] + (toward[0] * c + side[0] * s) * r,
+                center[1] + (toward[1] * c + side[1] * s) * r,
+            ]);
+        }
+    }
+    out
 }
 
 pub fn build(project: &Project) -> Result<NativeModel> {
@@ -1089,25 +1106,22 @@ pub fn build(project: &Project) -> Result<NativeModel> {
             ("y0", track.start[1]),
             ("x1", track.end[0]),
             ("y1", track.end[1]),
-            ("width", track.width),
         ] {
             b.param(&format!("{prefix}_{suffix}"), value, "mm")?;
         }
         let created = b.native.component(&prefix, false)?;
-        let length = format!("sqrt(({prefix}_x1-{prefix}_x0)^2 + ({prefix}_y1-{prefix}_y0)^2)");
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
-        b.body(
-            BodyKind::CopperTrack,
-            BoxBody {
-                name: &prefix,
-                corner: [0.into(), format!("-{prefix}_width / 2").into(), 0.into()],
-                size: [
-                    length.into(),
-                    format!("{prefix}_width").into(),
-                    copper_param(track.layer).into(),
-                ],
-            },
-        )?;
+        // The stadium in the track's frame: start at the origin, along +x.
+        let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
+        let contour = polygon(&track_outline([0.0, 0.0], [length, 0.0], track.width))
+            .ok_or_else(|| Error::Invalid(format!("track {} has no length", track.id)))?;
+        b.native.profile_body(ProfileBody {
+            name: &prefix,
+            offset: 0.into(),
+            contours: &[contour],
+            height: copper_param(track.layer).into(),
+        })?;
+        b.record(&prefix, BodyKind::CopperTrack)?;
         b.native.board_joint(BoardJoint {
             board,
             occurrence: created.occurrence,

@@ -233,45 +233,17 @@ const LAYER_CHANGES: &[LayerChange] = &[
     ),
 ];
 
-fn sub(a: Point, b: Point) -> Point {
-    [a[0] - b[0], a[1] - b[1]]
-}
-
-fn unit(v: Point) -> Point {
-    let length = v[0].hypot(v[1]);
-    if length > 0.0 {
-        [v[0] / length, v[1] / length]
-    } else {
-        [0.0, 0.0]
-    }
-}
-
-/// The tracks of one path. Butt-capped tracks leave a notch at the outside
-/// of a corner, so at every interior corner both tracks are lengthened by
-/// `width / 2 · tan(turn / 2)`, which fills the mitre.
+/// The tracks of one path, joined end to end at its corners: the round
+/// end caps fill every corner.
 fn tracks(net: Id, layer: CopperLayer, width: f64, points: &[Point]) -> Vec<RouteRequest> {
-    let directions: Vec<Point> = points.windows(2).map(|w| unit(sub(w[1], w[0]))).collect();
-    let extension = |k: usize| -> f64 {
-        let (Some(a), Some(b)) = (directions.get(k), directions.get(k + 1)) else {
-            return 0.0;
-        };
-        let turn = (a[0] * b[0] + a[1] * b[1]).clamp(-1.0, 1.0).acos();
-        width / 2.0 * (turn / 2.0).tan().min(1.0)
-    };
     points
         .windows(2)
-        .enumerate()
-        .map(|(k, w)| {
-            let d = directions.get(k).copied().unwrap_or([0.0, 0.0]);
-            let before = if k == 0 { 0.0 } else { extension(k - 1) };
-            let after = extension(k);
-            RouteRequest {
-                net,
-                start: [w[0][0] - d[0] * before, w[0][1] - d[1] * before],
-                end: [w[1][0] + d[0] * after, w[1][1] + d[1] * after],
-                width,
-                layer,
-            }
+        .map(|w| RouteRequest {
+            net,
+            start: w[0],
+            end: w[1],
+            width,
+            layer,
         })
         .collect()
 }
