@@ -121,3 +121,16 @@ Each task builds on this commit. Expected conflicts are small:
 - (2) and (4) both touch `model_scene.rs`. (2) adds kinds and layers; (4) changes segmentation.
 - (2) and (3) both touch `material.rs`.
 - (1) and (2) meet at the stackup and via data; read only the contract types above.
+
+## Contract changes made by the native task (2)
+
+Additive except where noted; every caller is inside `pcbcraft-solidcraft` unless named.
+
+- `BodyKind::ViaBore` (new, appearance): the dark sleeve lining an open via's bore. `ViewLayer::of` classifies it with `ViaCopper` as `Vias` (one line in `layer_view.rs`).
+- `BodyKind::EdgeDielectric` now has the weave detail (strength per glass style from `stackup_edge::weave_strength`); `BodyKind::Silkscreen` has the silkscreen grain.
+- `native::BoardJoint.layer: Layer` is replaced by `mount: Mount`, with `Mount::Side(Layer)` (`From<Layer>`) and `Mount::Height(Expr)` (upright at a board height).
+- `appearance::Board` replaces `copper` with `copper_top`/`copper_bottom` and adds `mask_top`/`mask_bottom` and `Board::of(project)`; `appearance::board` takes the vias (`ViaMark`) too.
+- `silkscreen::films(project, &Legend { board, lands, paths, vias, picks })` replaces `films(project, board, lands)`: films climb track caps and tents and share their part's pick.
+- `appearance::union(loops)` (new): the outline of a union of loops, used for the inner-copper laminate cuts.
+- Native parameters: `dielectric_N_thickness` (multilayer), `board_thickness` (their sum), `copper_thickness` (top), `copper_bottom_thickness`, `copper_inner_N_thickness`; vias are components `via_<id>` with `via_<id>_x`/`_y`.
+- Edge mask lips are `MaskCap` bodies without a pick identity, standing outside the routed outline.

@@ -138,14 +138,33 @@ impl JointFrame {
     };
 }
 
-/// A planar joint attaching an occurrence to the board's top or bottom face.
+/// Where a board joint holds an occurrence.
+#[derive(Clone, Debug)]
+pub enum Mount {
+    /// On a board face: the top face (z = `board_thickness`, the
+    /// occurrence's +z up) or hanging from the bottom face (z = 0, turned
+    /// over).
+    Side(Layer),
+    /// Upright (the occurrence's +z up, unmirrored) with its origin at the
+    /// board height `z`, a length expression: inner copper and vias.
+    Height(Expr),
+}
+
+impl From<Layer> for Mount {
+    fn from(side: Layer) -> Self {
+        Self::Side(side)
+    }
+}
+
+/// A planar joint attaching an occurrence to the board: on its top or
+/// bottom face, or upright at a height inside it.
 pub struct BoardJoint {
     pub board: u64,
     pub occurrence: u64,
     pub x: Expr,
     pub y: Expr,
     pub angle: Expr,
-    pub layer: Layer,
+    pub mount: Mount,
 }
 
 /// A native Solidcraft design under construction or opened from disk.
@@ -447,7 +466,8 @@ impl Native {
     }
 
     /// Top-layer parts sit on the board's top face (flipped, offset by the
-    /// board thickness); bottom-layer parts hang from its bottom face.
+    /// board thickness); bottom-layer parts hang from its bottom face; a
+    /// [`Mount::Height`] occurrence stands upright at its height.
     pub fn board_joint(&mut self, joint: BoardJoint) -> Result<()> {
         self.board_joint_at(joint, &JointFrame::ORIGIN, None)
     }
@@ -461,12 +481,21 @@ impl Native {
         frame: &JointFrame,
         lift: Option<&str>,
     ) -> Result<()> {
-        let top = joint.layer == Layer::Top;
-        let offset = match (lift, top) {
-            (None, true) => "board_thickness".to_owned(),
-            (None, false) => "0 mm".to_owned(),
-            (Some(lift), true) => format!("board_thickness + ({lift})"),
-            (Some(lift), false) => format!("- ({lift})"),
+        let (top, offset) = match (&joint.mount, lift) {
+            (Mount::Side(Layer::Top), None) => (true, json!("board_thickness")),
+            (Mount::Side(Layer::Bottom), None) => (false, json!("0 mm")),
+            (Mount::Side(Layer::Top), Some(lift)) => {
+                (true, json!(format!("board_thickness + ({lift})")))
+            }
+            (Mount::Side(Layer::Bottom), Some(lift)) => (false, json!(format!("- ({lift})"))),
+            (Mount::Height(z), None) => (true, z.0.clone()),
+            (Mount::Height(z), Some(lift)) => {
+                let z = match &z.0 {
+                    Value::String(e) => e.clone(),
+                    other => format!("{other} mm"),
+                };
+                (true, json!(format!("({z}) + ({lift})")))
+            }
         };
         self.call(
             "joint.create",

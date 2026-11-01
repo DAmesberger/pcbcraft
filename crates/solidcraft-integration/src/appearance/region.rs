@@ -106,12 +106,28 @@ pub fn slab(region: &Region, z0: f64, z1: f64, tile: f64) -> Mesh {
         let n = points.len();
         for i in 0..n {
             let (a, b) = (points[i], points[(i + 1) % n]);
-            // Short pieces, so each is classified in the tile it lies in.
-            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
-            let pieces = ((length / (step / 2.0)).ceil() as usize).clamp(1, 4096);
-            for k in 0..pieces {
-                let t0 = k as f64 / pieces as f64;
-                let t1 = (k + 1) as f64 / pieces as f64;
+            // Pieces cut at the tile lines, so each lies in the tile it is
+            // classified in.
+            let mut ts = vec![0.0, 1.0];
+            for k in 0..2 {
+                let d = b[k] - a[k];
+                if d.abs() < EPS {
+                    continue;
+                }
+                let (from, to) = (a[k].min(b[k]), a[k].max(b[k]));
+                let first = ((from - lo[k]) / step).ceil() as i64;
+                let last = ((to - lo[k]) / step).floor() as i64;
+                for line in first.max(0)..=last.min(first.max(0) + 4096) {
+                    let t = (lo[k] + line as f64 * step - a[k]) / d;
+                    if t > 0.0 && t < 1.0 {
+                        ts.push(t);
+                    }
+                }
+            }
+            ts.sort_by(f64::total_cmp);
+            ts.dedup_by(|x, y| (*x - *y).abs() < EPS);
+            for w in ts.windows(2) {
+                let (t0, t1) = (w[0], w[1]);
                 let p = [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0];
                 let q = [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1];
                 let m = [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0];
@@ -153,12 +169,60 @@ pub fn slab(region: &Region, z0: f64, z1: f64, tile: f64) -> Mesh {
                 })
                 .collect();
             let edges = edges_of(&around);
+            // Loops sharing an edge the same way round (two round ends on
+            // one centre) stand one wall there, not two.
+            let mut stood: std::collections::HashSet<[i64; 4]> = Default::default();
+            let key = |p: Point, q: Point| {
+                let k = |v: f64| (v * 1e7).round() as i64;
+                [k(p[0]), k(p[1]), k(q[0]), k(q[1])]
+            };
             for &(p, q) in &walls[index] {
-                wall(&mut mesh, &edges, p, q, z0, z1);
+                // A piece another loop crosses is inside on one part and
+                // outside on the other: classify each part on its own.
+                for (a, b) in split(p, q, &around) {
+                    if stood.insert(key(a, b)) {
+                        wall(&mut mesh, &edges, a, b, z0, z1);
+                    }
+                }
             }
         }
     }
     mesh
+}
+
+/// The piece `p`–`q` split where any edge of `loops` crosses it.
+fn split(p: Point, q: Point, loops: &[(Vec<Point>, bool)]) -> Vec<(Point, Point)> {
+    let r = [q[0] - p[0], q[1] - p[1]];
+    let mut ts: Vec<f64> = Vec::new();
+    let count: usize = loops.iter().map(|(l, _)| l.len()).sum();
+    let edges = loops.iter().flat_map(|(l, _)| {
+        let n = l.len();
+        (0..n).map(move |i| (l[i], l[(i + 1) % n]))
+    });
+    if count <= MAX_CROSSING_EDGES {
+        for (lo, hi) in edges {
+            let s = [hi[0] - lo[0], hi[1] - lo[1]];
+            let d = r[0] * s[1] - r[1] * s[0];
+            if d.abs() < EPS * EPS {
+                continue;
+            }
+            let w = [lo[0] - p[0], lo[1] - p[1]];
+            let t = (w[0] * s[1] - w[1] * s[0]) / d;
+            let u = (w[0] * r[1] - w[1] * r[0]) / d;
+            if t > EPS && t < 1.0 - EPS && (0.0..=1.0).contains(&u) {
+                ts.push(t);
+            }
+        }
+    }
+    if ts.is_empty() {
+        return vec![(p, q)];
+    }
+    ts.push(0.0);
+    ts.push(1.0);
+    ts.sort_by(f64::total_cmp);
+    ts.dedup_by(|a, b| (*a - *b).abs() < EPS);
+    let at = |t: f64| [p[0] + r[0] * t, p[1] + r[1] * t];
+    ts.windows(2).map(|w| (at(w[0]), at(w[1]))).collect()
 }
 
 /// Distinct points, counter-clockwise, at least a triangle.
@@ -366,14 +430,25 @@ fn trapezoid(mesh: &mut Mesh, a: [f64; 2], b: [f64; 2], ya: f64, yb: f64, z0: f6
             vertex(mesh, Vec3::new(b[0], yb, z), n),
         ];
         let face = u32::from(!up);
-        if up {
-            mesh.triangles.push([q[0], q[1], q[2]]);
-            mesh.triangles.push([q[0], q[2], q[3]]);
-        } else {
-            mesh.triangles.push([q[0], q[2], q[1]]);
-            mesh.triangles.push([q[0], q[3], q[2]]);
+        // A trapezoid narrowing to a point has one triangle, not a second
+        // of no area.
+        let (low, high) = (a[1] - a[0] >= EPS, b[1] - b[0] >= EPS);
+        if low {
+            mesh.triangles.push(if up {
+                [q[0], q[1], q[2]]
+            } else {
+                [q[0], q[2], q[1]]
+            });
+            mesh.tri_face.push(face);
         }
-        mesh.tri_face.extend([face, face]);
+        if high {
+            mesh.triangles.push(if up {
+                [q[0], q[2], q[3]]
+            } else {
+                [q[0], q[3], q[2]]
+            });
+            mesh.tri_face.push(face);
+        }
     }
 }
 
@@ -462,6 +537,72 @@ mod tests {
         for tile in [100.0, 1.1] {
             let mesh = slab(&region, 0.0, 0.1, tile);
             near(face_area(&mesh, 0), 60.0 - (2.0 - 0.5 * 0.8));
+        }
+    }
+
+    /// Overlapping fills cross inside wall pieces: the slab stays a closed
+    /// solid of the union's volume whatever the tiling.
+    #[test]
+    fn crossing_fills_make_a_closed_union_on_any_tiling() {
+        let bar = |a: Point, b: Point, h: f64| -> Vec<Point> {
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let l = d[0].hypot(d[1]);
+            let n = [-d[1] / l * h, d[0] / l * h];
+            vec![
+                [a[0] - n[0], a[1] - n[1]],
+                [b[0] - n[0], b[1] - n[1]],
+                [b[0] + n[0], b[1] + n[1]],
+                [a[0] + n[0], a[1] + n[1]],
+            ]
+        };
+        // Two round-ended strokes meeting at a corner share an edge of
+        // their ends: the union is less than the two.
+        let end = |c: Point, from: f64| -> Vec<Point> {
+            let mut out = Vec::new();
+            for k in 0..=4 {
+                let a = std::f64::consts::PI * (from + k as f64 / 4.0);
+                out.push([c[0] + 0.1 * a.cos(), c[1] + 0.1 * a.sin()]);
+            }
+            out
+        };
+        let mut along = end([1.0, 0.0], -0.5);
+        along.extend(end([0.0, 0.0], 0.5));
+        let mut up = end([1.0, 1.0], 0.0);
+        up.extend(end([1.0, 0.0], 1.0));
+        let one = slab(
+            &Region {
+                fills: vec![along.clone()],
+                cuts: vec![],
+            },
+            0.0,
+            1.0,
+            1.0,
+        );
+        let both = slab(
+            &Region {
+                fills: vec![along, up],
+                cuts: vec![],
+            },
+            0.0,
+            1.0,
+            1.0,
+        );
+        let (v1, v2) = (one.measure().volume, both.measure().volume);
+        assert!(v2 < 2.0 * v1 && v2 > 1.8 * v1, "{v1} {v2}");
+        near(face_area(&both, 0), v2);
+        // A cross of two bars 0.2 wide, 2 long: 0.8 mm², its middle once.
+        let region = Region {
+            fills: vec![
+                bar([-1.0, 0.0], [1.0, 0.0], 0.1),
+                bar([0.0, -1.0], [0.0, 1.0], 0.1),
+            ],
+            cuts: vec![],
+        };
+        for tile in [100.0, 2.0, 0.3, 0.07] {
+            let mesh = slab(&region, 0.0, 1.0, tile);
+            near(mesh.measure().volume, 0.8 - 0.04);
+            near(face_area(&mesh, 0), 0.76);
+            near(face_area(&mesh, 2), 8.0);
         }
     }
 

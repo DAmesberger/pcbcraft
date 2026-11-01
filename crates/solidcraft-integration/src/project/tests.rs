@@ -133,7 +133,8 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     // Native: the substrate, per placement a chip-resistor envelope, per
     // pad its copper and per trace its copper. Display: two mask slabs, per
     // chip two wrapped terminations and an overcoat, per pad its finish and
-    // per free trace one mask cap.
+    // per free trace one mask cap, and at the routed edge a mask lip per
+    // side over a line per copper foil and the core's band.
     assert_eq!(native(&model).count(), 9);
     for (kind, n) in [
         (BodyKind::Substrate, 1),
@@ -146,7 +147,9 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
         (BodyKind::PadCopper, 4),
         (BodyKind::PadFinish, 4),
         (BodyKind::CopperTrack, 2),
-        (BodyKind::MaskCap, 2),
+        (BodyKind::MaskCap, 2 + 2),
+        (BodyKind::EdgeCopper, 2),
+        (BodyKind::EdgeDielectric, 1),
     ] {
         assert_eq!(count(&model, kind), n, "{kind:?}");
     }
@@ -509,7 +512,10 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
     let model = build(&fixture()?)?;
     looks_match_the_native_file(&model)?;
     for geometry in &model.geometry {
-        let board = geometry.kind.is_board() && geometry.kind != BodyKind::MaskCap;
+        // Board-level bodies and the edge bands (standing proud of the
+        // routed outline) have no pick identity; everything else does.
+        let edge = geometry.min[0] < 0.0;
+        let board = (geometry.kind.is_board() && geometry.kind != BodyKind::MaskCap) || edge;
         assert_eq!(geometry.item.is_none(), board, "{:?}", geometry.kind);
     }
     let copper = material::material(BodyKind::PadCopper, &Fabrication::default()).surface()?;
