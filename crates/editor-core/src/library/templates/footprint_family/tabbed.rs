@@ -18,9 +18,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Whether the picker offers this template.
-pub const AVAILABLE: bool = true;
-
 /// Most leads one tabbed template places (each is its own pad).
 pub const MAX_TABBED_LEADS: u32 = 64;
 

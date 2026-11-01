@@ -62,13 +62,39 @@ pub(crate) fn new_from_template(
 
 /// `library.package_from_template` (`Outcome::PackageReplaced`): the
 /// package draft's form, terminals, envelope and generated model, and its
-/// one landing footprint draft's pads and drawings, as one step.
+/// one landing footprint draft's pads and drawings, as one step. When no
+/// footprint draft lands the package, the step also creates one and lists
+/// it in the package's binding draft when exactly one binding draft
+/// implements the package (else `binding.footprint_unbound` says which to
+/// edit).
 pub(crate) fn package_from_template(
     document: &mut Document,
     request: PackageFromTemplate,
     _evaluator: Option<&dyn FootprintEvaluator>,
 ) -> Result<Outcome> {
-    let (edits, plan) = candidate(document, &request)?;
+    let fresh = DefinitionId(document.project.next_id);
+    let Candidate {
+        edits,
+        created,
+        plan,
+    } = candidate(document, &request, fresh)?;
+    if let Some(created) = created {
+        let project = Arc::make_mut(&mut document.project);
+        let id = DefinitionId(project.allocate()?);
+        if id != created.id {
+            return Err(Error::Conflict(
+                "template.footprint: the footprint identity changed while it was planned".into(),
+            ));
+        }
+        drafts::create(
+            Arc::make_mut(&mut document.drafts),
+            &project.library,
+            created.id,
+            None,
+            created.meta,
+            created.definition,
+        )?;
+    }
     drafts::edit(Arc::make_mut(&mut document.drafts), edits)?;
     Ok(Outcome::PackageReplaced { plan })
 }
@@ -109,14 +135,25 @@ pub(crate) fn package_plan(
     request: &PackageFromTemplate,
     _evaluator: Option<&dyn FootprintEvaluator>,
 ) -> Result<PackagePlan> {
-    candidate(document, request).map(|(_, plan)| plan)
+    candidate(document, request, DefinitionId(document.project.next_id)).map(|c| c.plan)
+}
+
+/// What `package_from_template` would change: the edits of existing
+/// drafts (package first), the footprint draft it creates, if any, and
+/// the plan.
+struct Candidate {
+    edits: Vec<DraftEdit>,
+    created: Option<DraftEdit>,
+    plan: PackagePlan,
 }
 
 /// The draft edits of `request` and their plan, without changing anything.
+/// `fresh` is the identity a created footprint draft would take.
 fn candidate(
     document: &Document,
     request: &PackageFromTemplate,
-) -> Result<(Vec<DraftEdit>, PackagePlan)> {
+    fresh: DefinitionId,
+) -> Result<Candidate> {
     let current = document
         .drafts
         .get(request.draft)
@@ -129,7 +166,7 @@ fn candidate(
     };
     let resolved = catalog::resolve_row(&document.project.library, &request.row)?;
     let (form, as_row) = catalog::checked_values(&resolved.row, request.values.as_ref())?;
-    let family_rev = FamilyKind::of(&form).and_then(FamilyKind::family_rev);
+    let family_rev = FamilyKind::of(&form).map(FamilyKind::family_rev);
     let mut landing = document
         .drafts
         .items
@@ -157,7 +194,8 @@ fn candidate(
             draft.meta.name
         )));
     }
-    let mut next = replaced_package(package, form)?;
+    let floor = package_floor(document, current, package);
+    let mut next = replaced_package(package, form, floor)?;
     if let Some(rev) = family_rev {
         // The generated model of the new family; a family without a
         // builder keeps its model.
@@ -182,6 +220,7 @@ fn candidate(
             as_row,
             resolved: &resolved,
             family_rev,
+            fresh,
         },
     )
 }
@@ -194,13 +233,14 @@ struct Replacement<'a> {
     as_row: bool,
     resolved: &'a catalog::ResolvedRow,
     family_rev: Option<u16>,
+    fresh: DefinitionId,
 }
 
 fn finish(
     document: &Document,
     request: &PackageFromTemplate,
     replacement: Replacement<'_>,
-) -> Result<(Vec<DraftEdit>, PackagePlan)> {
+) -> Result<Candidate> {
     let Replacement {
         current,
         before,
@@ -209,27 +249,78 @@ fn finish(
         as_row,
         resolved,
         family_rev,
+        fresh,
     } = replacement;
     let mut findings = Vec::new();
     let mut edits = Vec::new();
     let mut meta = current.meta.clone();
     meta.provenance = catalog::provenance(resolved, as_row);
-    let mut pads_after = 0;
-    if let Some((draft, footprint)) = landing {
-        let lands = resolved.row.lands.as_ref().filter(|_| as_row);
-        let rebuilt = rebuilt_footprint(footprint, &next, lands)?;
-        pads_after = u32::try_from(rebuilt.pads.len()).unwrap_or(u32::MAX);
-        findings.extend(package_fit::placement_findings(&next, &rebuilt, draft.id));
-        let mut edit = vec![DraftEdit {
-            id: draft.id,
-            meta: draft.meta.clone(),
-            definition: Definition::Footprint(rebuilt),
-        }];
-        if next.terminals.len() > 2 {
-            samples::mark_pin_one(&mut edit);
+    let lands = resolved.row.lands.as_ref().filter(|_| as_row);
+    let (footprint_id, footprint_meta, footprint, floor, create) = match landing {
+        Some((draft, footprint)) => (
+            draft.id,
+            draft.meta.clone(),
+            footprint.clone(),
+            footprint_floor(document, draft, footprint),
+            false,
+        ),
+        None => {
+            let revision = current.pending().ok_or_else(|| {
+                Error::Limit(format!(
+                    "the package ‘{}’ has no next revision",
+                    current.meta.name
+                ))
+            })?;
+            let footprint = FootprintDefinition {
+                package: PackageRef::new(request.draft, revision),
+                next_local: 1,
+                ..FootprintDefinition::default()
+            };
+            let mut footprint_meta = meta.clone();
+            footprint_meta.name = footprint_name(&current.meta.name);
+            (fresh, footprint_meta, footprint, 1, true)
         }
-        edits.extend(edit);
+    };
+    let mut rebuilt = rebuilt_footprint(&footprint, &next, lands, floor)?;
+    let pads_after = u32::try_from(rebuilt.pads.len()).unwrap_or(u32::MAX);
+    findings.extend(package_fit::placement_findings(
+        &next,
+        &rebuilt,
+        footprint_id,
+    ));
+    if next.terminals.len() > 2 {
+        // The pin-1 pad lands the first terminal in lead order (pad
+        // identities start at the footprint's floor, not at 1).
+        let first = next.terminals.first().map(|t| t.id);
+        if let Some(pad) = rebuilt
+            .pads
+            .iter()
+            .find(|p| p.terminal == first)
+            .map(|p| p.id)
+        {
+            samples::mark_polarity(&mut rebuilt, pad);
+        }
     }
+    let footprint_edit = DraftEdit {
+        id: footprint_id,
+        meta: footprint_meta,
+        definition: Definition::Footprint(rebuilt),
+    };
+    let mut bound = None;
+    let created = if create {
+        let reference = FootprintRef::new(footprint_id, Revision::FIRST);
+        match bind_created(document, request.draft, reference) {
+            Ok(edit) => {
+                bound = Some(edit.id);
+                edits.push(edit);
+            }
+            Err(finding) => findings.push(finding),
+        }
+        Some(footprint_edit)
+    } else {
+        edits.push(footprint_edit);
+        None
+    };
     findings.extend(mapping_findings(document, request.draft, &next));
     findings.extend(retained_findings(document, request.draft, before, &next));
     let plan = PackagePlan {
@@ -237,6 +328,9 @@ fn finish(
         terminals_after: u32::try_from(next.terminals.len()).unwrap_or(u32::MAX),
         pads_after,
         model_family_rev: family_rev,
+        footprint: Some(footprint_id),
+        footprint_created: created.is_some(),
+        footprint_bound: bound,
         findings,
     };
     edits.insert(
@@ -247,7 +341,130 @@ fn finish(
             definition: Definition::Package(next),
         },
     );
-    Ok((edits, plan))
+    Ok(Candidate {
+        edits,
+        created,
+        plan,
+    })
+}
+
+/// The name of a footprint draft created for the package `name`, within
+/// the 256-byte name bound.
+fn footprint_name(name: &str) -> String {
+    const SUFFIX: &str = " footprint";
+    let mut end = name.len().min(256 - SUFFIX.len());
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{SUFFIX}", &name[..end])
+}
+
+/// The binding-draft edit that lists a created footprint, when exactly one
+/// binding draft implements `package`; else the finding that says which
+/// binding to edit (none, or several to choose from).
+fn bind_created(
+    document: &Document,
+    package: DefinitionId,
+    footprint: FootprintRef,
+) -> std::result::Result<DraftEdit, Finding> {
+    let bindings: Vec<_> = document
+        .drafts
+        .items
+        .iter()
+        .filter_map(|d| match &d.definition {
+            Definition::Binding(b) if b.package.id == package => Some((d, b)),
+            _ => None,
+        })
+        .collect();
+    if let [(draft, binding)] = bindings.as_slice() {
+        let mut body = (*binding).clone();
+        body.footprints.push(footprint);
+        return Ok(DraftEdit {
+            id: draft.id,
+            meta: draft.meta.clone(),
+            definition: Definition::Binding(body),
+        });
+    }
+    let mut objects = vec![ObjectRef::Definition { id: footprint.id }];
+    let message = if bindings.is_empty() {
+        "No binding draft implements the package; list the new footprint in the binding that does before publishing.".to_owned()
+    } else {
+        let names: Vec<&str> = bindings.iter().map(|(d, _)| d.meta.name.as_str()).collect();
+        objects.extend(
+            bindings
+                .iter()
+                .map(|(d, _)| ObjectRef::Definition { id: d.id }),
+        );
+        format!(
+            "{} binding drafts implement the package ({}); list the new footprint in the ones that use it.",
+            bindings.len(),
+            names.join(", ")
+        )
+    };
+    Err(Finding::new("binding.footprint_unbound", message, objects))
+}
+
+/// The first local identity a package draft may allocate: above its
+/// counter, its terminals and its base revision's counter, and never 0.
+fn package_floor(
+    document: &Document,
+    draft: &crate::library::Draft,
+    package: &PackageDefinition,
+) -> u32 {
+    let base = draft
+        .base
+        .and_then(|revision| {
+            document
+                .project
+                .library
+                .package(PackageRef::new(draft.id, revision))
+        })
+        .map_or(0, |p| p.definition.next_local);
+    floor(
+        package.next_local,
+        base,
+        package.terminals.iter().map(|t| t.id.0),
+    )
+}
+
+/// The first local identity a footprint draft may allocate once it is
+/// cleared: above its counter, every identity it holds now (they retire
+/// with the cleared pads and drawings) and its base revision's counter,
+/// and never 0.
+fn footprint_floor(
+    document: &Document,
+    draft: &crate::library::Draft,
+    footprint: &FootprintDefinition,
+) -> u32 {
+    let base = draft
+        .base
+        .and_then(|revision| {
+            document
+                .project
+                .library
+                .footprint(FootprintRef::new(draft.id, revision))
+        })
+        .map_or(0, |p| p.definition.next_local);
+    let arrays = footprint
+        .source
+        .as_deref()
+        .into_iter()
+        .flat_map(|s| s.arrays.iter().map(|a| a.id.0));
+    let used = footprint
+        .pads
+        .iter()
+        .map(|p| p.id.0)
+        .chain(footprint.graphics.iter().map(|g| g.id.0))
+        .chain(arrays);
+    floor(footprint.next_local, base, used)
+}
+
+/// The largest of the counter, the base counter, one past every used
+/// identity and 1, saturating: an exhausted space then refuses at the
+/// first allocation and the document stays unchanged.
+fn floor(counter: u32, base: u32, used: impl Iterator<Item = u32>) -> u32 {
+    used.map(|id| id.saturating_add(1))
+        .fold(counter.max(base).max(1), u32::max)
 }
 
 /// `package` with `form`: its envelope, and its terminals for the form's
@@ -260,9 +477,11 @@ fn finish(
 fn replaced_package(
     package: &PackageDefinition,
     form: crate::library::PackageForm,
+    floor: u32,
 ) -> Result<PackageDefinition> {
     let count = samples::form_terminal_count(&form);
     let mut next = package.clone();
+    next.next_local = floor;
     let keep = usize::try_from(count)
         .unwrap_or(usize::MAX)
         .min(next.terminals.len());
@@ -289,15 +508,18 @@ fn replaced_package(
 
 /// `footprint` with its template content replaced: form-derived lands for
 /// `package`'s terminals in lead order (with cited land overrides), new
-/// pad identities from its counter, and the standard drawings. Authored
+/// pad identities from `floor` (see [`footprint_floor`]), and the
+/// standard drawings. Authored
 /// mask and paste defaults and the datum stay; identities never repeat.
 fn rebuilt_footprint(
     footprint: &FootprintDefinition,
     package: &PackageDefinition,
     lands: Option<&catalog::LandValues>,
+    floor: u32,
 ) -> Result<FootprintDefinition> {
     let mut next = footprint_family::cleared(footprint);
     next.graphics.clear();
+    next.next_local = floor;
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
     let mut pads = samples::template_lands(&package.form, &terminals, lands).ok_or_else(|| {
         Error::Invalid(format!(

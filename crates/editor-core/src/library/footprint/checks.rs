@@ -11,6 +11,9 @@ use std::collections::BTreeSet;
 /// Smallest solder-mask web between two openings the lint accepts, in mm
 /// (an estimated prototype default, not a fabricator qualification).
 pub const MIN_MASK_WEB_MM: f64 = 0.1;
+/// Rounding allowance of the mask-web comparison, in mm (1 nm, far below
+/// any fabrication tolerance).
+const WEB_TOLERANCE_MM: f64 = 1e-6;
 /// Thinnest silkscreen stroke the lint accepts (`footprint.silk_width`),
 /// in mm (an estimated prototype default; fabricators state their own).
 pub const MIN_SILK_WIDTH_MM: f64 = 0.1;
@@ -661,7 +664,9 @@ impl FootprintDefinition {
                     continue;
                 }
                 let web = ring_gap(ra, rb) - ga - gb;
-                if web < MIN_MASK_WEB_MM && reported < 64 {
+                // A web of exactly the minimum passes: sums of decimal
+                // sizes and positions land a few ulps either side of it.
+                if web < MIN_MASK_WEB_MM - WEB_TOLERANCE_MM && reported < 64 {
                     reported += 1;
                     out.push(Finding::new(
                         "footprint.mask_web",

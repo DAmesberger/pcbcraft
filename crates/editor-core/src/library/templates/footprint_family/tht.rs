@@ -28,9 +28,6 @@ use crate::library::package_form::{FamilyForm, PackageForm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Whether the picker offers this template.
-pub const AVAILABLE: bool = true;
-
 /// How the pads are laid out.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

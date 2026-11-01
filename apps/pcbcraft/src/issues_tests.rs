@@ -376,7 +376,7 @@ fn the_card_lists_groups_and_a_row_click_locates_it() -> Fallible<()> {
         surface.card(ui, &engine, Workspace::Pcb, &[])
     });
     match request {
-        Some(Request::Locate { refs, area }) => {
+        Some(Request::Locate { refs, area, .. }) => {
             assert_eq!(area, IssueArea::Board);
             assert_eq!(refs, row.objects().copied().collect::<Vec<_>>());
         }

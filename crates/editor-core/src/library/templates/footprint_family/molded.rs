@@ -12,9 +12,6 @@ use crate::library::package_form::PackageForm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Whether the picker offers this template.
-pub const AVAILABLE: bool = true;
-
 /// The molded two-terminal (SOD, SMA, tantalum, MELF) land pattern's driving values.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]

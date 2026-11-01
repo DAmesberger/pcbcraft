@@ -1,15 +1,14 @@
 //! Slice C7: the footprint and model steps of the EXM-48 scenario over
 //! JSON. The pinout import leaves the package and binding drafts without
 //! pads; the agent reads the package drawing, finds a package row with
-//! `library.templates` (B1), drafts a footprint for the imported package,
-//! builds package and lands from the row with
+//! `library.templates` (B1), builds package, footprint draft and lands
+//! from the row and lists the footprint in the binding with one
 //! `library.package_from_template` (previewed by `library.package_plan`),
-//! lists the footprint in the binding and checks the generated model with
+//! and checks the generated model with
 //! `library.models` (D1). `pinout_tests::publish_and_place` then publishes
 //! the whole working set and places U1 with its physical side.
 use super::pinout_tests::{Fallible, Imported, Scenario, codes, library_op};
 use super::*;
-use pcbcraft_core::library::FootprintDefinition;
 
 /// The diagnostic code of a refused reply.
 fn refused(reply: &Value) -> Option<String> {
@@ -73,11 +72,10 @@ fn pads(draft: &Value) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// Steps 8a–8e: the package drawing says QFN-48, 7 × 7 mm, 0.5 mm pitch
-/// with a 5.3 mm exposed pad. Find the row, draft a footprint for the
-/// imported package, preview and build package and pads from the row in
-/// one step, list the footprint in the binding, and check the model the
-/// package now generates.
+/// Steps 8a–8d: the package drawing says QFN-48, 7 × 7 mm, 0.5 mm pitch
+/// with a 5.3 mm exposed pad. Find the row; preview and build package,
+/// footprint draft, lands and the binding's footprint listing from the row
+/// in one request; and check the model the package now generates.
 pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible<Physical> {
     let binding = imported.binding;
     let binding_body = s.draft(binding)?["draft"]["definition"]["body"].clone();
@@ -114,25 +112,9 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
     assert_eq!(hit["family"], "no_lead", "{hit}");
     let row = json!({"source": "starter", "name": hit["starter"]});
 
-    // 8b. A footprint draft for the imported package (the import made none).
-    let mut footprint = serde_json::to_value(FootprintDefinition::default())?;
-    footprint["package"] = binding_body["package"].clone();
-    footprint["next_local"] = json!(1);
-    let mut meta = before["draft"]["meta"].clone();
-    meta["name"] = json!("EXM-48 QFN-48 footprint");
-    let created = s.apply(
-        "footprint draft",
-        library_op(
-            "library.new_draft",
-            json!({"meta": meta,
-                "definition": {"kind": "footprint", "body": footprint}}),
-        ),
-    )?;
-    let footprint = created["outcome"]["id"]
-        .as_u64()
-        .ok_or_else(|| format!("the footprint draft: {created}"))?;
-
-    // 8c. Preview, then build package and lands from the row: one step.
+    // 8b. Preview, then build package, a footprint draft for the imported
+    // package (the import made none) with its lands, and its listing in
+    // the one binding draft from the row: one request, one undo step.
     let request = json!({"draft": package, "row": row});
     let plan = s.query(
         "package plan",
@@ -143,10 +125,25 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
     assert_eq!(plan["terminals_after"], 49, "{plan}");
     assert_eq!(plan["pads_after"], 49, "{plan}");
     assert!(plan["model_family_rev"].is_u64(), "{plan}");
-    s.apply(
+    assert_eq!(plan["footprint_created"], true, "{plan}");
+    assert_eq!(plan["footprint_bound"], binding, "{plan}");
+    let applied = s.apply(
         "package from template",
         library_op("library.package_from_template", request),
     )?;
+    let applied = &applied["outcome"]["plan"];
+    assert_eq!(applied["footprint"], plan["footprint"], "{applied}");
+    let footprint = applied["footprint"]
+        .as_u64()
+        .ok_or_else(|| format!("the created footprint: {applied}"))?;
+    // One undo step takes back the footprint draft and its listing too.
+    s.send("undo", json!({"command": "project.undo", "params": {}}))?;
+    assert!(s.draft(footprint).is_err(), "undo removes the footprint");
+    assert_eq!(
+        s.draft(binding)?["draft"]["definition"]["body"]["footprints"],
+        json!([])
+    );
+    s.send("redo", json!({"command": "project.redo", "params": {}}))?;
     // Terminal identities are kept, so the import's mappings still hold;
     // leads keep their numbers and the 49th is designated EP.
     let built = s.draft(package)?;
@@ -179,20 +176,18 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
         "conflict",
     )?;
 
-    // 8d. The binding offers the footprint.
-    let mut body = binding_body;
-    let mut reference = body["package"].clone();
-    reference["id"] = json!(footprint);
-    body["footprints"] = json!([reference]);
-    let meta = s.draft(binding)?["draft"]["meta"].clone();
-    s.apply(
-        "bind footprint",
-        library_op(
-            "library.edit",
-            json!({"edits": [{"id": binding, "meta": meta,
-                "definition": {"kind": "binding", "body": body}}]}),
-        ),
-    )?;
+    // 8c. The binding offers the footprint, pinned at its first revision.
+    let listed = s.draft(binding)?["draft"]["definition"]["body"]["footprints"].clone();
+    assert_eq!(
+        listed,
+        json!([{"id": footprint, "revision": 1}]),
+        "the binding lists the created footprint"
+    );
+    let named = s.draft(footprint)?["draft"]["meta"]["name"].clone();
+    assert!(
+        named.as_str().is_some_and(|n| n.ends_with(" footprint")),
+        "{named}"
+    );
     for id in [package, footprint, binding] {
         let check = &s.draft(id)?["check"];
         assert_eq!(check["result"]["publishable"], true, "{id}: {check}");
@@ -202,7 +197,7 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
         );
     }
 
-    // 8e. The model: the chooser for this package ranks the generated
+    // 8d. The model: the chooser for this package ranks the generated
     // no-lead model first, with its fit.
     let models = s.query(
         "models",

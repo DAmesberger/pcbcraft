@@ -23,9 +23,6 @@ use crate::library::package_form::grid::{GridContact, MAX_DEPOPULATED, NSMD_LAND
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Whether the picker offers this template.
-pub const AVAILABLE: bool = true;
-
 /// The skipped letters of the JEDEC row alphabet (JESD95-1 concept).
 pub const JEDEC_SKIP_LETTERS: &str = "IOQSXZ";
 

@@ -34,10 +34,10 @@ fn starter_rows() -> Result<Vec<StarterRow>> {
 
 /// The provenance review list: what a reviewer checks before the rows are
 /// trusted. Cited rows are grouped by document with the citation details
-/// still missing; estimated and held rows are listed with their reasons.
+/// still missing; estimated rows are listed with their reasons.
 fn review(rows: &[StarterRow]) -> Value {
     let mut by_document: BTreeMap<&str, (Vec<&str>, Vec<&str>, &RowCitation)> = BTreeMap::new();
-    for row in rows.iter().filter(|r| r.held.is_none()) {
+    for row in rows {
         if let Some(c) = &row.definition.citation {
             let entry = by_document
                 .entry(c.document.as_str())
@@ -77,7 +77,7 @@ fn review(rows: &[StarterRow]) -> Value {
                 json!({
                     "name": r.name,
                     "file": r.file,
-                    "reason": r.held.as_ref().or(r.note.as_ref()),
+                    "reason": r.note.as_ref(),
                     "citation": r.definition.citation.as_ref().map(|c| &c.document),
                 })
             })
@@ -89,20 +89,18 @@ fn review(rows: &[StarterRow]) -> Value {
         "cited": count("cited"),
         "cited_unverified": count("cited_unverified"),
         "estimated": count("estimated"),
-        "held": count("held"),
         "rule": "Values are typed from public outline drawings (JEDEC, EIA, manufacturers' package drawings) or marked estimated; never from an EDA library. Confirm each cited row against its drawing and record the revision and page.",
         "cited_sources": sources,
         "estimated_rows": listed("estimated"),
-        "held_rows": listed("held"),
     })
 }
 
-/// A project holding every publishable starter row as a first revision.
+/// A project holding every starter row as a first revision.
 fn project(rows: &[StarterRow]) -> Result<(Project, Vec<DefinitionRef>)> {
     let mut library = Library::default();
     let mut roots = Vec::new();
     let mut next: u64 = 1;
-    for row in rows.iter().filter(|r| r.held.is_none()) {
+    for row in rows {
         let id = DefinitionId(next);
         next = next.checked_add(1).ok_or("identity space exhausted")?;
         library.package_rows.push(Published {
@@ -165,7 +163,7 @@ fn write(path: &str, name: &str, rows: &[StarterRow]) -> Result<Value> {
     Ok(json!({
         "library": library,
         "path": path,
-        "rows_published": rows.iter().filter(|r| r.held.is_none()).count(),
+        "rows_published": rows.len(),
         "records_written": records,
         "review": review(rows),
     }))
@@ -221,16 +219,14 @@ mod tests {
             assert!(source["missing"].is_array() && source["document"].is_string());
             named.extend(source["rows"].as_array().into_iter().flatten().cloned());
         }
-        for key in ["estimated_rows", "held_rows"] {
-            for row in list[key].as_array().into_iter().flatten() {
-                assert!(row["reason"].is_string(), "{row}");
-                named.push(row["name"].clone());
-            }
+        for row in list["estimated_rows"].as_array().into_iter().flatten() {
+            assert!(row["reason"].is_string(), "{row}");
+            named.push(row["name"].clone());
         }
         assert_eq!(named.len(), rows.len());
         let unique: BTreeSet<String> = named.iter().map(Value::to_string).collect();
         assert_eq!(unique.len(), rows.len());
-        let total: u64 = ["cited", "cited_unverified", "estimated", "held"]
+        let total: u64 = ["cited", "cited_unverified", "estimated"]
             .iter()
             .filter_map(|k| list[*k].as_u64())
             .sum();
@@ -242,7 +238,7 @@ mod tests {
     fn the_project_holds_every_publishable_row_once() -> TestResult {
         let rows = starter_rows()?;
         let (project, roots) = project(&rows)?;
-        let publishable = rows.iter().filter(|r| r.held.is_none()).count();
+        let publishable = rows.len();
         assert_eq!(roots.len(), publishable);
         assert_eq!(project.library.package_rows.len(), publishable);
         assert!(project.next_id > u64::try_from(roots.len())?);
@@ -264,7 +260,7 @@ mod tests {
         let temp = TempPath::new("write")?;
         let path = temp.0.to_string_lossy().into_owned();
         let report = write(&path, DEFAULT_NAME, &rows)?;
-        let publishable = rows.iter().filter(|r| r.held.is_none()).count();
+        let publishable = rows.len();
         assert_eq!(
             report["rows_published"].as_u64(),
             Some(u64::try_from(publishable)?)

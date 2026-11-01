@@ -2,8 +2,8 @@
 //! `package_from_template` and its plan, `save_package_row` and the row
 //! publish findings, all through the public engine.
 use super::*;
-use crate::diagnostics::Finding;
-use crate::ids::{DefinitionKind, LibraryId};
+use crate::diagnostics::{Finding, ObjectRef};
+use crate::ids::{DefinitionKind, FootprintRef, LibraryId};
 use crate::library::bundle::{Bundle, RevisionRecord};
 use crate::library::package_form::{ChipForm, ChipKind, LeadSides, NoLeadForm};
 use crate::library::samples::Preset;
@@ -11,7 +11,7 @@ use crate::library::templates::catalog::{
     BUILT_FAMILY_REV, FamilyRef, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan,
     RowFrom, RowSource, SavePackageRow,
 };
-use crate::library::{Definition, DefinitionMeta, PadShape};
+use crate::library::{Definition, DefinitionMeta, DraftEdit, PadShape};
 use crate::{Engine, LibraryCommand, Operation, Outcome, Query, QueryResult};
 use std::sync::Arc;
 
@@ -460,10 +460,7 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
 #[test]
 fn every_custom_family_builds_a_publishable_component() -> Fallible<()> {
     for family in FamilyKind::ALL {
-        let Some(values) = family.custom_values() else {
-            assert!(family.family_rev().is_none(), "{family:?}");
-            continue;
-        };
+        let values = family.custom_values();
         let mut engine = Engine::default();
         let skeleton = FamilyKind::default_skeleton(&values);
         let ids = new_from(
@@ -978,13 +975,12 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
     use crate::library::{PadKind, samples};
     let mut sources: Vec<(String, RowSource, PackageRowDefinition)> = FamilyKind::ALL
         .into_iter()
-        .filter_map(|family| {
-            let values = family.custom_values()?;
-            Some((
+        .map(|family| {
+            (
                 format!("custom {family:?}"),
                 RowSource::Custom { family },
-                row(values, &[]),
-            ))
+                row(family.custom_values(), &[]),
+            )
         })
         .collect();
     for starter in crate::library::templates::starter::rows().map_err(|e| e.to_owned())? {
@@ -1195,5 +1191,404 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
         .chain(["EP".to_owned()])
         .collect();
     assert_eq!(designations, expected);
+    Ok(())
+}
+
+/// A gull-wing working set from its custom entry, with its footprint draft
+/// discarded and the binding's footprint list cleared (as a pinout import
+/// leaves it), and the request that rebuilds its package from the same
+/// family.
+fn without_footprint(engine: &mut Engine) -> Fallible<(Vec<DefinitionId>, PackageFromTemplate)> {
+    let ids = bridge(engine)?;
+    apply(engine, LibraryCommand::DiscardDraft { id: ids[3] })?;
+    let binding = engine.drafts().get(ids[4]).ok_or("binding")?.clone();
+    let Definition::Binding(mut body) = binding.definition else {
+        return Err("binding".into());
+    };
+    body.footprints.clear();
+    apply(
+        engine,
+        LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id: ids[4],
+                meta: binding.meta,
+                definition: Definition::Binding(body),
+            }],
+        },
+    )?;
+    let request = PackageFromTemplate {
+        draft: ids[2],
+        row: RowSource::Custom {
+            family: FamilyKind::GullWing,
+        },
+        values: None,
+        replace: false,
+    };
+    Ok((ids, request))
+}
+
+/// The five drafts of a gull-wing part from its custom entry.
+fn bridge(engine: &mut Engine) -> Fallible<Vec<DefinitionId>> {
+    new_from(
+        engine,
+        NewFromTemplate {
+            row: RowSource::Custom {
+                family: FamilyKind::GullWing,
+            },
+            values: None,
+            skeleton: SkeletonHint::IcBox,
+            name: "Bridge".into(),
+            designator_prefix: None,
+        },
+    )
+}
+
+#[test]
+fn a_missing_footprint_is_created_and_bound_in_one_step() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let (ids, request) = without_footprint(&mut engine)?;
+    let before = engine.to_file();
+    let revision = engine.revision();
+    let previewed = plan(&engine, &request)?;
+    assert!(previewed.footprint_created);
+    assert_eq!(previewed.footprint_bound, Some(ids[4]));
+    assert_eq!(previewed.pads_after, 8);
+    assert!(
+        !codes(&previewed.findings).contains(&"binding.footprint_unbound"),
+        "{:?}",
+        previewed.findings
+    );
+    assert_eq!(engine.to_file(), before, "a plan changes nothing");
+    let Outcome::PackageReplaced { plan: applied } = apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(request)),
+    )?
+    else {
+        return Err("replaced".into());
+    };
+    assert_eq!(applied, previewed);
+    assert_eq!(engine.revision(), revision + 1, "one undo step");
+    let created = applied.footprint.ok_or("the created footprint")?;
+    let draft = engine.drafts().get(created).ok_or("footprint draft")?;
+    assert_eq!(draft.base, None, "a new lineage");
+    let Definition::Footprint(footprint) = &draft.definition else {
+        return Err("footprint".into());
+    };
+    assert_eq!(footprint.package.id, ids[2]);
+    assert_eq!(footprint.pads.len(), 8);
+    let Definition::Package(package) = &engine.drafts().get(ids[2]).ok_or("package")?.definition
+    else {
+        return Err("package".into());
+    };
+    let first = package.terminals.first().map(|t| t.id);
+    let polarity = footprint.polarity.as_ref().ok_or("pin 1 is marked")?;
+    assert_eq!(
+        footprint.pad(polarity.pad).map(|p| p.terminal),
+        Some(first),
+        "pin 1 lands the first terminal"
+    );
+    let Definition::Binding(binding) = &engine.drafts().get(ids[4]).ok_or("binding")?.definition
+    else {
+        return Err("binding".into());
+    };
+    assert_eq!(
+        binding.footprints,
+        [FootprintRef::new(created, Revision::FIRST)]
+    );
+    // The working set publishes as it is: the created footprint is valid.
+    let mut set = ids.clone();
+    set[3] = created;
+    apply(&mut engine, LibraryCommand::Publish { drafts: set })?;
+    engine.undo()?;
+    engine.undo()?;
+    assert_eq!(engine.to_file(), before, "one undo takes it all back");
+    Ok(())
+}
+
+#[test]
+fn a_created_footprint_without_one_binding_reports_what_to_bind() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let (ids, request) = without_footprint(&mut engine)?;
+    // A second binding draft of the package: which one uses the footprint
+    // is the author's choice.
+    let binding = engine.drafts().get(ids[4]).ok_or("binding")?.clone();
+    let Outcome::DraftCreated { id: second } = apply(
+        &mut engine,
+        LibraryCommand::NewDraft {
+            meta: meta("Bridge alternate binding"),
+            definition: binding.definition.clone(),
+        },
+    )?
+    else {
+        return Err("second binding".into());
+    };
+    let several = plan(&engine, &request)?;
+    assert!(several.footprint_created);
+    assert_eq!(several.footprint_bound, None);
+    let unbound = several
+        .findings
+        .iter()
+        .find(|f| f.code == "binding.footprint_unbound")
+        .ok_or("binding.footprint_unbound")?;
+    for id in [ids[4], second] {
+        assert!(
+            unbound.objects.contains(&ObjectRef::Definition { id }),
+            "{unbound:?}"
+        );
+    }
+    let revision = engine.revision();
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(request.clone())),
+    )?;
+    assert_eq!(engine.revision(), revision + 1);
+    let created = several.footprint.ok_or("footprint")?;
+    assert!(engine.drafts().get(created).is_some());
+    for id in [ids[4], second] {
+        let Some(Definition::Binding(b)) = engine.drafts().get(id).map(|d| &d.definition) else {
+            return Err("binding".into());
+        };
+        assert!(b.footprints.is_empty(), "nothing is bound by guesswork");
+    }
+    // With no binding draft at all, the finding says so.
+    engine.undo()?;
+    for id in [second, ids[4]] {
+        apply(&mut engine, LibraryCommand::DiscardDraft { id })?;
+    }
+    let none = plan(&engine, &request)?;
+    assert_eq!(none.footprint_bound, None);
+    assert!(codes(&none.findings).contains(&"binding.footprint_unbound"));
+    Ok(())
+}
+
+/// Set the package and footprint drafts' identity counters of a working
+/// set (an imported or hand-edited draft may carry any counter).
+fn set_counters(
+    engine: &mut Engine,
+    ids: &[DefinitionId],
+    package: u32,
+    footprint: u32,
+) -> Fallible<()> {
+    let mut edits = Vec::new();
+    for id in [ids[2], ids[3]] {
+        let mut draft = engine.drafts().get(id).ok_or("draft")?.clone();
+        match &mut draft.definition {
+            Definition::Package(p) => p.next_local = package,
+            Definition::Footprint(f) => f.next_local = footprint,
+            _ => return Err("package and footprint".into()),
+        }
+        edits.push(DraftEdit {
+            id,
+            meta: draft.meta,
+            definition: draft.definition,
+        });
+    }
+    apply(engine, LibraryCommand::Edit { edits })?;
+    Ok(())
+}
+
+#[test]
+fn package_from_template_allocates_valid_ids_from_any_counter() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let ids = bridge(&mut engine)?;
+    let held: Vec<u32> = match &engine.drafts().get(ids[3]).ok_or("footprint")?.definition {
+        Definition::Footprint(f) => f
+            .pads
+            .iter()
+            .map(|p| p.id.0)
+            .chain(f.graphics.iter().map(|g| g.id.0))
+            .collect(),
+        _ => return Err("footprint".into()),
+    };
+    // Counters of 0: a naive allocation would hand out identity 0 and
+    // reuse the identities the drafts hold.
+    set_counters(&mut engine, &ids, 0, 0)?;
+    let qfn = PackageFromTemplate {
+        draft: ids[2],
+        row: RowSource::Custom {
+            family: FamilyKind::NoLead,
+        },
+        values: None,
+        replace: true,
+    };
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(qfn.clone())),
+    )?;
+    let Some(Definition::Package(package)) = engine.drafts().get(ids[2]).map(|d| &d.definition)
+    else {
+        return Err("package".into());
+    };
+    assert!(package.terminals.len() > 8, "new terminals were allocated");
+    let mut seen = std::collections::BTreeSet::new();
+    for terminal in &package.terminals {
+        assert!(terminal.id.0 > 0 && terminal.id.0 < package.next_local);
+        assert!(seen.insert(terminal.id.0), "unique terminals");
+    }
+    let Some(Definition::Footprint(footprint)) = engine.drafts().get(ids[3]).map(|d| &d.definition)
+    else {
+        return Err("footprint".into());
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let locals = footprint
+        .pads
+        .iter()
+        .map(|p| p.id.0)
+        .chain(footprint.graphics.iter().map(|g| g.id.0));
+    for local in locals {
+        assert!(local > 0 && local < footprint.next_local, "{local}");
+        assert!(!held.contains(&local), "{local} retired with the old pads");
+        assert!(seen.insert(local), "unique locals");
+    }
+    // Rebuilt in its own family from counters of 0, the set publishes:
+    // publication checks every local identity.
+    engine.undo()?;
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(PackageFromTemplate {
+            row: RowSource::Custom {
+                family: FamilyKind::GullWing,
+            },
+            ..qfn.clone()
+        })),
+    )?;
+    apply(
+        &mut engine,
+        LibraryCommand::Publish {
+            drafts: ids.clone(),
+        },
+    )?;
+
+    // An exhausted counter is refused and changes nothing.
+    let mut engine = Engine::default();
+    let ids = bridge(&mut engine)?;
+    set_counters(&mut engine, &ids, 9, u32::MAX)?;
+    let before = engine.to_file();
+    let revision = engine.revision();
+    let refused = apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(qfn)),
+    );
+    assert!(matches!(refused, Err(Error::Limit(_))), "{refused:?}");
+    assert_eq!((engine.revision(), engine.to_file()), (revision, before));
+    Ok(())
+}
+
+/// The estimated lands of every no-lead and chip starter row keep the
+/// minimum solder-mask web (`footprint.mask_web`) with the default mask
+/// rules, corner pads of the four-sided QFNs included. (Gull-wing rows at
+/// 0.65 mm pitch and below still raise it; see editor evidence.)
+#[test]
+fn no_lead_and_chip_starter_rows_keep_the_mask_web() -> Fallible<()> {
+    let mut checked = 0;
+    for starter in crate::library::templates::starter::rows().map_err(|e| e.to_owned())? {
+        if !matches!(
+            starter.definition.values,
+            PackageForm::NoLead(_) | PackageForm::Chip(_)
+        ) {
+            continue;
+        }
+        let mut engine = Engine::default();
+        let ids = new_from(
+            &mut engine,
+            NewFromTemplate {
+                row: RowSource::Starter {
+                    name: starter.name.clone(),
+                },
+                values: None,
+                skeleton: starter.definition.skeleton,
+                name: starter.name.clone(),
+                designator_prefix: None,
+            },
+        )?;
+        let Some(Definition::Footprint(footprint)) =
+            engine.drafts().get(ids[3]).map(|d| &d.definition)
+        else {
+            return Err(format!("{}: footprint", starter.name).into());
+        };
+        let webs: Vec<String> = footprint
+            .lint(ids[3])
+            .into_iter()
+            .filter(|f| f.code == "footprint.mask_web")
+            .map(|f| f.message)
+            .collect();
+        assert!(webs.is_empty(), "{}: {webs:?}", starter.name);
+        checked += 1;
+    }
+    assert!(checked > 40, "{checked}");
+    Ok(())
+}
+
+/// QFN-48 7 × 7 mm at 0.5 mm pitch: the corner lands (pins 1 and 48, and
+/// the other three corners) give up the same heel length, the least that
+/// leaves 0.2 mm of copper (a 0.1 mm web inside 0.05 mm mask openings);
+/// toes stay, every land still covers its terminal, and the lands between
+/// the corners are unchanged.
+#[test]
+fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
+    use crate::library::samples;
+    use crate::library::{MASK_EXPANSION_MM, MIN_MASK_WEB_MM};
+    let starter = crate::library::templates::starter::row("QFN-48 7×7 0.5 EP 5.3")?;
+    let PackageForm::NoLead(form) = &starter.definition.values else {
+        return Err("a no-lead row".into());
+    };
+    let terminals: Vec<_> = (1..=49).map(crate::ids::PackageTerminalId).collect();
+    let pads =
+        samples::template_lands(&starter.definition.values, &terminals, None).ok_or("lands")?;
+    let pad = |number: &str| {
+        pads.iter()
+            .find(|p| p.number == number)
+            .ok_or(format!("pad {number}"))
+    };
+    let gap = |a: &str, b: &str| -> Fallible<f64> {
+        let (a, b) = (pad(a)?.bounds(), pad(b)?.bounds());
+        let dx = (a.min[0] - b.max[0]).max(b.min[0] - a.max[0]).max(0.0);
+        let dy = (a.min[1] - b.max[1]).max(b.min[1] - a.max[1]).max(0.0);
+        Ok(dx.hypot(dy))
+    };
+    let need = MIN_MASK_WEB_MM + 2.0 * MASK_EXPANSION_MM;
+    for (a, b) in [("1", "48"), ("12", "13"), ("24", "25"), ("36", "37")] {
+        let g = gap(a, b)?;
+        assert!(g >= need - 1e-9 && g < need + 1e-3, "{a}–{b}: {g}");
+    }
+    let length = |n: &str| -> Fallible<f64> {
+        let size = pad(n)?.bounds().size();
+        Ok(size[0].max(size[1]))
+    };
+    let (corner, middle) = (length("1")?, length("6")?);
+    assert!(corner < middle, "the corner land is shortened");
+    for n in ["12", "13", "24", "25", "36", "37", "48"] {
+        assert!((length(n)? - corner).abs() < 1e-9, "pad {n} matches pad 1");
+    }
+    // Pins 1–12 run along the bottom side: toes stay at the middle lands'
+    // toe, and the land still spans the terminal (body edge inwards by the
+    // terminal length).
+    let (one, six) = (pad("1")?.bounds(), pad("6")?.bounds());
+    assert!(
+        (one.min[1] - six.min[1]).abs() < 1e-9,
+        "toe kept: {one:?} {six:?}"
+    );
+    let inner = -form.body_width / 2.0 + form.terminal_length;
+    assert!(one.max[1] >= inner, "the land covers its terminal: {one:?}");
+    // A web of exactly 0.1 mm passes the lint; 1 µm less is reported.
+    let mut footprint = crate::library::FootprintDefinition {
+        pads,
+        next_local: 50,
+        ..Default::default()
+    };
+    let webs = |f: &crate::library::FootprintDefinition| {
+        f.lint(DefinitionId(1))
+            .iter()
+            .filter(|f| f.code == "footprint.mask_web")
+            .count()
+    };
+    assert_eq!(webs(&footprint), 0);
+    let six = footprint
+        .pads
+        .iter_mut()
+        .find(|p| p.number == "6")
+        .ok_or("pad 6")?;
+    six.position[0] += 0.001;
+    assert_eq!(webs(&footprint), 1, "pads 6 and 7 at 0.099 mm");
     Ok(())
 }

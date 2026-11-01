@@ -479,6 +479,12 @@ const TOE_HEEL_SHIFT_MM: f64 = 0.1;
 /// rule of thumb; it only trims the heels of the smallest sizes).
 const CHIP_MIN_GAP_MM: f64 = 0.2;
 
+/// The least copper gap between two estimated no-lead lands: the minimum
+/// mask web plus the default mask expansion on both sides, so the lint's
+/// `footprint.mask_web` holds for a footprint with the default rules.
+const NO_LEAD_COPPER_GAP_MM: f64 =
+    super::footprint::MIN_MASK_WEB_MM + 2.0 * super::footprint::MASK_EXPANSION_MM;
+
 /// Lands for the leads of a typed `form`, in lead order, landing
 /// `terminals[k]` (pad IDs from 1, numbers from [`form_designations`]):
 /// each centred on its lead contact (a toe-heavy land just outside a
@@ -517,7 +523,13 @@ pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option
                 }
             }
             PackageForm::NoLead(n) => {
-                let land = [n.terminal_width + 0.05, n.terminal_length + 0.4];
+                // 0.05 mm wider than the terminal, but never so wide that
+                // neighbours at the pitch lose the mask web; never
+                // narrower than the terminal.
+                let width = (n.terminal_width + 0.05)
+                    .min(n.pitch - NO_LEAD_COPPER_GAP_MM)
+                    .max(n.terminal_width);
+                let land = [width, n.terminal_length + 0.4];
                 if across_x(n.sides, n.terminals_per_side, k) {
                     [land[1], land[0]]
                 } else {
@@ -894,9 +906,98 @@ pub fn template_lands(
     let mut pads = form_lands(form, terminals)?;
     match lands {
         Some(lands) => apply_lands(&mut pads, form, lands),
-        None => trim_pads(&mut pads, heel_trim(form)),
+        None => {
+            trim_pads(&mut pads, heel_trim(form));
+            clear_corners(&mut pads, form);
+        }
     }
     Some(pads)
+}
+
+/// Pull back the heels of the estimated lands that meet at a corner of a
+/// four-sided no-lead form (pins 1 and N, and the other three corners):
+/// the end lands of two sides run towards each other, so without this
+/// their inner corners touch. Both lands of a pair give up the same
+/// length, the least that leaves [`NO_LEAD_COPPER_GAP_MM`] of copper
+/// between them; the toes stay. A pair that cannot be cleared within half
+/// of the shorter land is left as it is (the lint then reports it).
+fn clear_corners(pads: &mut [Pad], form: &PackageForm) {
+    let PackageForm::NoLead(n) = form else {
+        return;
+    };
+    if n.sides != LeadSides::Four {
+        return;
+    }
+    // Perimeter lands: index, long axis, outward sign and extent.
+    let lands: Vec<(usize, usize, f64, Bounds)> = pads
+        .iter()
+        .enumerate()
+        .filter_map(|(k, pad)| {
+            let PadShape::Rect { size } = pad.shape else {
+                return None;
+            };
+            if pad.number == "EP" {
+                return None;
+            }
+            let axis = usize::from(size[1] > size[0]);
+            let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
+            Some((k, axis, outward, pad.bounds()))
+        })
+        .collect();
+    let pulled = |(_, axis, outward, bounds): &(usize, usize, f64, Bounds), by: f64| {
+        let mut b = *bounds;
+        if *outward > 0.0 {
+            b.min[*axis] += by;
+        } else {
+            b.max[*axis] -= by;
+        }
+        b
+    };
+    let mut pull = vec![0.0_f64; pads.len()];
+    for (i, a) in lands.iter().enumerate() {
+        for b in lands.iter().skip(i + 1) {
+            if a.1 == b.1 || rect_gap(&a.3, &b.3) >= NO_LEAD_COPPER_GAP_MM {
+                continue;
+            }
+            let length = |l: &(usize, usize, f64, Bounds)| l.3.size()[l.1];
+            let most = length(a).min(length(b)) / 2.0;
+            let gap = |by: f64| rect_gap(&pulled(a, by), &pulled(b, by));
+            if gap(most) < NO_LEAD_COPPER_GAP_MM {
+                continue;
+            }
+            let (mut lo, mut hi) = (0.0, most);
+            for _ in 0..48 {
+                let mid = (lo + hi) / 2.0;
+                if gap(mid) >= NO_LEAD_COPPER_GAP_MM {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            pull[a.0] = pull[a.0].max(hi);
+            pull[b.0] = pull[b.0].max(hi);
+        }
+    }
+    for (k, axis, outward, _) in lands {
+        let by = pull[k];
+        if by <= 0.0 {
+            continue;
+        }
+        if let Some(pad) = pads.get_mut(k)
+            && let PadShape::Rect { size } = &mut pad.shape
+        {
+            size[axis] -= by;
+            pad.position[axis] += outward * by / 2.0;
+        }
+    }
+}
+
+/// The distance between two axis-aligned rectangles (0 when they touch or
+/// overlap).
+fn rect_gap(a: &Bounds, b: &Bounds) -> f64 {
+    let dx = (a.min[0] - b.max[0]).max(b.min[0] - a.max[0]).max(0.0);
+    let dy = (a.min[1] - b.max[1]).max(b.min[1] - a.max[1]).max(0.0);
+    dx.hypot(dy)
 }
 
 fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
@@ -1040,44 +1141,50 @@ pub const PIN_ONE_DOT_RADIUS_MM: f64 = 0.2;
 /// a footprint, or a footprint without pad 1, are left unchanged.
 pub fn mark_pin_one(edits: &mut [DraftEdit]) {
     for edit in edits {
-        let Definition::Footprint(footprint) = &mut edit.definition else {
-            continue;
-        };
-        let Some(pad) = footprint.pad(PadId(1)) else {
-            continue;
-        };
-        let at = pad.position;
-        let half = pad.bounds().size().map(|v| v / 2.0);
-        let gap = templates::footprint::SILK_PAD_CLEARANCE_MM
-            + pad
-                .mask_expansion(&footprint.defaults)
-                .unwrap_or(0.0)
-                .max(0.0)
-            + 2.0 * PIN_ONE_DOT_RADIUS_MM;
-        let center = [at[0] - half[0] - gap, at[1]];
-        let id = GraphicId(footprint.next_local);
-        let Some(next) = footprint.next_local.checked_add(1) else {
-            continue;
-        };
-        footprint.next_local = next;
-        footprint.graphics.push(graphics::FootprintGraphic {
-            id,
-            layer: graphics::DrawingLayer::Silkscreen,
-            side: graphics::Side::Component,
-            item: graphics::Item::Shape {
-                shape: crate::geometry::Shape::Circle {
-                    center,
-                    radius: PIN_ONE_DOT_RADIUS_MM,
-                },
-                width: 0.0,
-                fill: graphics::Fill::Solid,
-            },
-        });
-        footprint.polarity = Some(graphics::Polarity {
-            pad: PadId(1),
-            markers: vec![id],
-        });
+        if let Definition::Footprint(footprint) = &mut edit.definition {
+            mark_polarity(footprint, PadId(1));
+        }
     }
+}
+
+/// Mark `pad` of `footprint` as the polarity pad, as [`mark_pin_one`]
+/// does for pad 1. A missing pad or an exhausted identity counter leaves
+/// the footprint unchanged.
+pub fn mark_polarity(footprint: &mut FootprintDefinition, pad_id: PadId) {
+    let Some(pad) = footprint.pad(pad_id) else {
+        return;
+    };
+    let at = pad.position;
+    let half = pad.bounds().size().map(|v| v / 2.0);
+    let gap = templates::footprint::SILK_PAD_CLEARANCE_MM
+        + pad
+            .mask_expansion(&footprint.defaults)
+            .unwrap_or(0.0)
+            .max(0.0)
+        + 2.0 * PIN_ONE_DOT_RADIUS_MM;
+    let center = [at[0] - half[0] - gap, at[1]];
+    let id = GraphicId(footprint.next_local);
+    let Some(next) = footprint.next_local.checked_add(1) else {
+        return;
+    };
+    footprint.next_local = next;
+    footprint.graphics.push(graphics::FootprintGraphic {
+        id,
+        layer: graphics::DrawingLayer::Silkscreen,
+        side: graphics::Side::Component,
+        item: graphics::Item::Shape {
+            shape: crate::geometry::Shape::Circle {
+                center,
+                radius: PIN_ONE_DOT_RADIUS_MM,
+            },
+            width: 0.0,
+            fill: graphics::Fill::Solid,
+        },
+    });
+    footprint.polarity = Some(graphics::Polarity {
+        pad: pad_id,
+        markers: vec![id],
+    });
 }
 
 /// Shorten every rectangular land but the exposed pad of the footprint

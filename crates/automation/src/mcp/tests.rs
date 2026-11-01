@@ -272,6 +272,8 @@ fn the_instructions_describe_the_reviewed_pinout_workflow() -> super::scenario::
         "library.templates",
         "library.package_plan",
         "library.package_from_template",
+        "footprint_bound",
+        "binding.footprint_unbound",
         "library.models",
         "library.publish",
         "library.assign_terminals",
