@@ -152,9 +152,11 @@ pub fn field_placeholder(field: FieldRef) -> String {
 
 /// A template with field placeholders shown by field name.
 pub fn named_template(template: &str, fields: &[(FieldRef, String)]) -> String {
-    fields.iter().fold(template.to_owned(), |text, (field, name)| {
-        text.replace(&field_placeholder(*field), &format!("{{{name}}}"))
-    })
+    fields
+        .iter()
+        .fold(template.to_owned(), |text, (field, name)| {
+            text.replace(&field_placeholder(*field), &format!("{{{name}}}"))
+        })
 }
 
 /// The selected fields of `component`, by name.
@@ -163,9 +165,10 @@ fn field_names(component: &ComponentDefinition, library: &Library) -> Vec<(Field
         .fields
         .iter()
         .map(|s| {
-            let name = library
-                .field_view(s.field)
-                .map_or_else(|| format!("Field {}", s.field.id), |v| v.field.meta.name.clone());
+            let name = library.field_view(s.field).map_or_else(
+                || format!("Field {}", s.field.id),
+                |v| v.field.meta.name.clone(),
+            );
             (s.field, name)
         })
         .collect()
@@ -220,9 +223,9 @@ fn preview(spec: &MarkingSpec, inputs: &MarkingInputs) -> (String, Vec<String>) 
                 (text, notes)
             }
         }
-        // The core refuses until the marking layout exists; the spec is
-        // still edited and saved.
-        Err(error) => ("Not available yet".into(), vec![error.to_string()]),
+        // A spec the core cannot lay out is still edited and saved; the
+        // refusal says why (publishing names it as `marking.template`).
+        Err(error) => ("Cannot be laid out".into(), vec![error.to_string()]),
     }
 }
 
@@ -499,7 +502,10 @@ pub fn spec_rows(
             changed = true;
         }
         if first_field.is_none() {
-            kit::note(ui, "Value codes and bands read a field: add one under Details");
+            kit::note(
+                ui,
+                "Value codes and bands read a field: add one under Details",
+            );
         }
     }
     if spec.is_some() {
@@ -601,8 +607,8 @@ impl PartEditor {
                 "Display only: never in the saved 3D model or fabrication output",
             );
         });
-        let interacting = ui.ctx().memory(|m| m.focused().is_some())
-            || ui.ctx().input(|i| i.pointer.any_down());
+        let interacting =
+            ui.ctx().memory(|m| m.focused().is_some()) || ui.ctx().input(|i| i.pointer.any_down());
         if !interacting && !part_open {
             operation = state.take_part_edit(engine);
         }
@@ -783,7 +789,7 @@ mod tests {
         assert!(shown.iter().any(|t| t == "Add item"), "{shown:?}");
         assert_eq!(h.stored()?, None);
         h.click("Choose an item")?;
-        assert_eq!(h.click("Text")?, None, "a working-copy edit");
+        assert!(h.click("Text")?.is_none(), "a working-copy edit");
         assert!(h.commit()?, "one commit");
         let stored = h.stored()?.ok_or("no marking stored")?;
         assert_eq!(
@@ -799,9 +805,15 @@ mod tests {
         let shown = h.texts();
         assert!(shown.iter().any(|t| t == "Finish"), "{shown:?}");
         assert!(shown.iter().any(|t| t == "Preview"), "{shown:?}");
-        // The core's layout is not built yet: the preview says so rather
-        // than drawing a guess.
-        assert!(shown.iter().any(|t| t == "Not available yet"), "{shown:?}");
+        // The core lays the line out: a component has no MPN, so nothing
+        // is drawn and the preview says why rather than drawing a guess.
+        assert!(shown.iter().any(|t| t == "Nothing drawn"), "{shown:?}");
+        assert!(
+            shown
+                .iter()
+                .any(|t| t.contains("no manufacturer part number")),
+            "{shown:?}"
+        );
         h.click("Remove marking")?;
         assert!(h.commit()?);
         assert_eq!(h.stored()?, None);
@@ -863,27 +875,39 @@ mod tests {
     fn the_preview_reads_the_component_defaults() -> TestResult {
         let engine = Engine::demo()?;
         let library = &engine.project().library;
-        let component = library
+        // The demo resistor selects its quantity field without a default:
+        // give the selection one, as a component author would.
+        let mut component = library
             .components
             .iter()
             .find(|c| {
                 c.definition.fields.iter().any(|s| {
                     library.field_view(s.field).is_some_and(|v| {
                         matches!(
-                            s.default.as_ref().or(v.field.definition.default.as_ref()),
-                            Some(FieldValue::Quantity { .. })
+                            v.field.definition.value_type,
+                            fields::ValueType::Quantity { .. }
                         )
                     })
                 })
             })
-            .ok_or("no component with a quantity default")?;
+            .ok_or("no component with a quantity field")?
+            .clone();
+        for selection in &mut component.definition.fields {
+            selection.default = Some(FieldValue::Quantity {
+                si: 10_000.0,
+                display_unit: None,
+            });
+        }
         let body = &component.definition;
         let inputs = preview_inputs(body, library, Some(("X1", "Maker")), [1.6, 0.8]);
         assert_eq!(inputs.designator, format!("{}1", body.designator_prefix));
         assert_eq!(inputs.mpn.as_deref(), Some("X1"));
         assert_eq!(inputs.area_mm, [1.6, 0.8]);
         assert!(
-            inputs.fields.values().any(|(text, si)| si.is_some() && !text.is_empty()),
+            inputs
+                .fields
+                .values()
+                .any(|(text, si)| si.is_some() && !text.is_empty()),
             "{:?}",
             inputs.fields
         );

@@ -90,6 +90,17 @@ pub fn default_frame(format: ModelFormat) -> SourceFrame {
     }
 }
 
+/// The frame that leaves the reader's millimetres as they are (scale 1, Z
+/// up, no offset): an inspection in it reports source bounds, which the
+/// import wizard moves into any frame with [`frame_bounds`].
+pub fn reader_frame(format: ModelFormat) -> SourceFrame {
+    SourceFrame {
+        unit_mm: format_unit_mm(format),
+        up: UpAxis::Z,
+        origin_offset: [0.0; 3],
+    }
+}
+
 /// The frame's checked scale from the reader's millimetres.
 fn frame_scale(frame: &SourceFrame, format: ModelFormat) -> Result<f64> {
     let scale = frame.unit_mm / format_unit_mm(format);
@@ -856,4 +867,4 @@ pub fn preview(
 
 #[cfg(test)]
 #[path = "imported_tests.rs"]
-mod tests;
+pub(crate) mod tests;

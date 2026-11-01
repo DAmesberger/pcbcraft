@@ -1561,3 +1561,106 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
     assert!(((a1.0 + a1.1) / 2.0 - 5.0).abs() > 1.0, "R1 moved");
     Ok(())
 }
+
+/// D2's board hook: a package with a library model (an original GLB with
+/// its own clear-coated material) builds one shared definition its
+/// instances occur in, its bodies carrying their instance's pick, the
+/// lead bound to its terminal, and the model material's full look drawn.
+#[test]
+fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> {
+    use crate::models::imported::tests::{fixture_glb, lead_key, model, use_lead};
+    use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset};
+    use pcbcraft_core::library::model3d::{LeadTag, ModelFormat};
+    use pcbcraft_core::library::{DefinitionMeta, Published};
+    use pcbcraft_core::{DefinitionId, ModelRef, Revision};
+    let bytes = fixture_glb();
+    let seen = crate::models::inspect::inspect(&bytes, ModelFormat::Gltf)?;
+    let mut definition = model(ModelFormat::Gltf, &bytes, &seen);
+    definition.leads = vec![LeadTag {
+        key: lead_key(&seen)?,
+        designation: "1".into(),
+        contact: [0.0; 3],
+    }];
+    definition.leads[0].contact = models::imported::lead_contacts(&definition, &bytes)?[0];
+    definition.provenance.record.licence = Some("CC0-1.0".into());
+    let mut project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    let id = DefinitionId(
+        project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?,
+    );
+    let reference = ModelRef::new(id, Revision(1));
+    project.library.assets.push(PackedAsset {
+        hash: definition.asset.hash,
+        media_type: definition.asset.media_type.clone(),
+        data: AssetBytes(bytes.clone()),
+    });
+    project.library.models.push(Published {
+        id,
+        revision: Revision(1),
+        meta: DefinitionMeta {
+            name: "Original fixture".into(),
+            ..DefinitionMeta::default()
+        },
+        definition,
+    });
+    let package = &mut project.library.packages[0];
+    let terminal = package
+        .definition
+        .terminals
+        .first()
+        .map(|t| t.id.0)
+        .ok_or_else(|| Error::Verification("demo package has no terminal".into()))?;
+    package.definition.model = PackageModel::Library(pcbcraft_core::library::LibraryModel {
+        model: reference,
+        ..use_lead(terminal)
+    });
+    let (r1, r2) = instances(&project)?;
+    let built = build(&project)?;
+    assert_eq!(built.models.len(), 1, "one definition per package revision");
+    for instance in [r1, r2] {
+        let pick = built
+            .sources
+            .iter()
+            .find(|s| s.instance == Some(instance) && s.occurrence.is_some())
+            .map(|s| s.pick_id)
+            .ok_or_else(|| Error::Verification(format!("{instance} has no model")))?;
+        let bodies: Vec<&Geometry> = built
+            .geometry
+            .iter()
+            .filter(|g| g.item == Some(pick))
+            .collect();
+        assert!(bodies.iter().any(|g| g.kind == BodyKind::ModelLead));
+        let moulding = bodies
+            .iter()
+            .find(|g| g.kind == BodyKind::ModelBody)
+            .ok_or_else(|| Error::Verification("no model body".into()))?;
+        assert!(
+            moulding.surface.clear_coat().is_some(),
+            "the model material's coat is drawn"
+        );
+    }
+    // A model or asset the project does not hold refuses the build,
+    // naming it; nothing falls back to an envelope.
+    let mut no_model = project.clone();
+    no_model.library.models.clear();
+    let refused = build(&no_model).err().map(|e| e.to_string());
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|e| e.contains("3D model") && e.contains("missing")),
+        "{refused:?}"
+    );
+    project.library.assets.clear();
+    let refused = build(&project).err().map(|e| e.to_string());
+    assert!(
+        refused
+            .as_deref()
+            .is_some_and(|e| e.contains("fixture.glb") && e.contains("not packed")),
+        "{refused:?}"
+    );
+    Ok(())
+}

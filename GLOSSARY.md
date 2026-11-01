@@ -70,6 +70,31 @@ A built-in material a 3D body is made of (epoxy mould compound, alumina, tin, go
 **Generated model**:
 A package's parametric 3D model built from its package form by a family builder, with a body role and a physical material on every body; one shared native definition per package revision, used by every instance.
 
+**Library model** (3D model):
+A revisioned library definition of a package's 3D model from a file (GLB for appearance, STEP for mechanical shape, `.solidcraft` for parametric): its packed asset by content hash, source frame, bounds, every body mapped explicitly to a role and material, lead tags with measured contacts, an optional marking area and provenance with redistribution. Packages share it by exact revision.
+_Avoid_: Imported model, vendor model
+
+**Lead tag**:
+A body (or one face of a body) of a library model named as a lead, with its designation and its contact point, measured on the geometry and rechecked when the model is built.
+
+**Lead map**:
+The explicit pairing of a library model's lead tags with a package's terminals, stored where the package uses the model. Exact designation matches are only proposed, never inferred.
+
+**Project container**:
+The `.pcbcraft` file: a ZIP archive of `project.json` and one raw entry per packed asset under `assets/sha256/<hash>`, read with bounds on the decompressed bytes and written atomically.
+
+**Packed asset**:
+File bytes a project carries by content hash (a model file, SVG artwork), so it reopens offline; stored as their own container entries.
+
+**Marking**:
+The lettering and marks on a package top (top mark, value code, polarity mark, colour bands): a spec on the component or a Part's top mark, overridden per instance. Display only: never in the saved native model or fabrication output.
+
+**Value code**:
+A marking item that encodes a field value with a cited scheme (3- or 4-digit resistor code, EIA-96, capacitor pF code, tantalum voltage letter, IEC 60062 colour bands); a value the scheme cannot hold exactly gives no code, never a rounded one.
+
+**Marking decal**:
+The display-only mesh of an instance's laid-out marking, 1 µm above the package's marked face, drawn with the finish's look and shown with the Markings layer toggle.
+
 **Model placement**:
 The authored rigid transform of a package's 3D model relative to its footprint datum; the seating plane (z = 0) is the top of the land copper. Fit leads to pads, quick actions and the triad each set it with one command.
 
@@ -252,7 +277,7 @@ A named layer of the stackup that carries copper: Top, Inner 1…n or Bottom. Tr
 A plated hole that joins its net's copper on every copper layer it spans, placed on the board (distinct from a pad via inside a footprint pad). It is tented (covered by mask) or open, and it is real copper in the native model. Only through vias exist yet.
 
 **Display-only layer**:
-A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations and solder. The saved native model holds only the physical bodies.
+A body the 3D view draws for realism but never saves: soldermask and via tents, plated finish, open-via bores, silkscreen films, edge stackup bands, terminations, solder and marking decals. The saved native model holds only the physical bodies.
 
 **Layer view**:
 Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It is display state: hiding a layer filters what is drawn and picked and never rebuilds geometry. Outer copper and silkscreen share their state with PCB 2D.

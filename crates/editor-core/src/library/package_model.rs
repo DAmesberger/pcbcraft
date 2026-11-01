@@ -28,8 +28,8 @@ pub enum PackageModel {
         family_rev: u16,
         materials: GeneratedMaterials,
     },
-    /// A revisioned 3D library model (slice D1) with an explicit lead map.
-    /// Refused with `package.model_unsupported` until D1.
+    /// A revisioned 3D library model with an explicit lead map
+    /// ([`super::model3d`]).
     Library(super::model3d::LibraryModel),
 }
 

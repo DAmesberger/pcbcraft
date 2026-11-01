@@ -25,10 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The body kind decals are drawn as: a display-only appearance layer
-/// among the component bodies. Interim until a marking kind of its own
-/// exists (a new `BodyKind` changes exhaustive matches in other slices'
-/// files, so it is wired at integration).
-pub const DECAL_KIND: BodyKind = BodyKind::Overcoat;
+/// with its own view toggle (Markings), hidden with the bodies it sits on.
+pub const DECAL_KIND: BodyKind = BodyKind::Marking;
 /// A face is flat when its triangles' normals are this close to the
 /// face normal (cosine).
 const FLAT_COS: f64 = 0.999;

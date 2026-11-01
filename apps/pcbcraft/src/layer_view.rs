@@ -6,9 +6,9 @@
 //! in the order the layers lie in the board, top to bottom.
 //!
 //! Markings (founder decision F7) are display-only decals on the component
-//! bodies: no saved body carries them, so no [`BodyKind`] maps to their
-//! toggle. The decal pass asks [`LayerView::shows_markings`], which also
-//! hides them with the bodies they sit on.
+//! bodies: only the appearance kind [`BodyKind::Marking`] maps to their
+//! toggle, and no saved body has it. They are drawn while
+//! [`LayerView::shows_markings`]: hiding the bodies hides them too.
 use crate::shell;
 use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
@@ -119,6 +119,7 @@ impl ViewLayer {
             | BodyKind::PartBody
             | BodyKind::ModelBody
             | BodyKind::ModelLead => Self::Bodies,
+            BodyKind::Marking => Self::Markings,
         }
     }
 }
@@ -189,7 +190,17 @@ impl LayerView {
 
     /// Whether a body is drawn and pickable.
     pub fn shows(&self, geometry: &Geometry) -> bool {
-        self.visible(ViewLayer::of(geometry.kind, geometry.layer))
+        self.draws(ViewLayer::of(geometry.kind, geometry.layer))
+    }
+
+    /// Whether the bodies of `layer` are drawn: its toggle shown, and for
+    /// the markings also the bodies they sit on ([`Self::visible`] is the
+    /// toggle alone, as the popover shows it).
+    pub fn draws(&self, layer: ViewLayer) -> bool {
+        match layer {
+            ViewLayer::Markings => self.shows_markings(),
+            layer => self.visible(layer),
+        }
     }
 
     /// Whether the marking decals are drawn: their own toggle and the
@@ -428,7 +439,8 @@ mod tests {
     }
 
     /// The Markings toggle hides the decals and nothing else; hiding the
-    /// components hides their markings too; no saved body is a marking.
+    /// components hides their markings too; only the display-only marking
+    /// kind belongs to the toggle, so no saved body is a marking.
     #[test]
     fn the_markings_toggle_hides_only_the_decals() -> Result<(), String> {
         let ctx = egui::Context::default();
@@ -440,15 +452,25 @@ mod tests {
         for kind in BodyKind::ALL {
             for layer in [None, Some(CopperLayer::Top), Some(CopperLayer::Bottom)] {
                 let toggle = ViewLayer::of(kind, layer);
-                assert_ne!(toggle, ViewLayer::Markings, "{kind:?}");
-                assert!(view.visible(toggle), "{kind:?} on {layer:?}");
+                assert_eq!(
+                    toggle == ViewLayer::Markings,
+                    kind == BodyKind::Marking,
+                    "{kind:?}"
+                );
+                assert_eq!(
+                    view.visible(toggle),
+                    kind != BodyKind::Marking,
+                    "{kind:?} on {layer:?}"
+                );
             }
         }
+        assert!(BodyKind::Marking.is_appearance(), "never saved");
         assert!(click(&ctx, &mut view, "Markings")?);
         assert!(view.shows_markings());
         assert!(click(&ctx, &mut view, "Components")?);
         assert!(view.visible(ViewLayer::Markings));
         assert!(!view.shows_markings(), "no decals without their bodies");
+        assert!(!view.draws(ViewLayer::Markings));
         Ok(())
     }
 }

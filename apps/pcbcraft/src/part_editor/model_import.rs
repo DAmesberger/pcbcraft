@@ -27,6 +27,7 @@ use pcbcraft_core::library::{
 use pcbcraft_core::library::{LibraryModel, MAX_LABEL};
 use pcbcraft_core::materials::MaterialId;
 use pcbcraft_core::{DefinitionId, Engine, LibraryCommand, ModelRef, Operation};
+use pcbcraft_solidcraft::models::imported;
 use pcbcraft_solidcraft::models::inspect::{self, InspectedBody, ModelInspection};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::path::{Path, PathBuf};
@@ -98,64 +99,55 @@ pub fn format_of(path: &Path) -> Option<ModelFormat> {
     }
 }
 
-/// The packed asset's media type.
+/// The packed asset's media type: the format's canonical one
+/// ([`ModelFormat::media_type`]), `model/gltf+json` for a `.gltf` file.
 pub fn media_type(format: ModelFormat, file_name: &str) -> &'static str {
     match format {
-        ModelFormat::Step => "model/step",
         ModelFormat::Gltf if file_name.to_ascii_lowercase().ends_with(".gltf") => "model/gltf+json",
-        ModelFormat::Gltf => "model/gltf-binary",
-        ModelFormat::Solidcraft => "application/vnd.solidcraft+zip",
+        format => format.media_type(),
     }
 }
 
-/// A source point in the model frame: scaled to millimetres, turned from
-/// Y-up to Z-up when the file is Y-up, then offset.
-pub fn frame_point(frame: &SourceFrame, p: [f64; 3]) -> [f64; 3] {
-    let s = [
-        p[0] * frame.unit_mm,
-        p[1] * frame.unit_mm,
-        p[2] * frame.unit_mm,
-    ];
-    let turned = match frame.up {
-        UpAxis::Z => s,
-        // Y up becomes Z up; the old Z (towards the viewer) becomes −Y.
-        UpAxis::Y => [s[0], -s[2], s[1]],
-    };
-    [
-        turned[0] + frame.origin_offset[0],
-        turned[1] + frame.origin_offset[1],
-        turned[2] + frame.origin_offset[2],
-    ]
-}
-
-/// Source bounds in the model frame.
-pub fn framed_bounds(frame: &SourceFrame, bounds: [[f64; 3]; 2]) -> [[f64; 3]; 2] {
-    let mut out = [[f64::MAX; 3], [f64::MIN; 3]];
-    for corner in 0..8 {
-        let p = [
-            bounds[corner & 1][0],
-            bounds[(corner >> 1) & 1][1],
-            bounds[(corner >> 2) & 1][2],
-        ];
-        let q = frame_point(frame, p);
-        for axis in 0..3 {
-            out[0][axis] = out[0][axis].min(q[axis]);
-            out[1][axis] = out[1][axis].max(q[axis]);
-        }
-    }
-    out
-}
-
-/// A tagged body's contact: the bottom centre of its framed bounds (the
-/// integration crate derives the exact lowest point on import and
-/// rechecks it on reopen).
-pub fn contact(frame: &SourceFrame, bounds: [[f64; 3]; 2]) -> [f64; 3] {
-    let b = framed_bounds(frame, bounds);
-    [
+/// A body's estimated contact: the bottom centre of its framed bounds,
+/// shown while leads are named and used to propose designations. Finish
+/// replaces it with the integration crate's measured contact
+/// ([`imported::lead_contacts`]), which a build rechecks.
+pub fn contact(
+    frame: &SourceFrame,
+    format: ModelFormat,
+    bounds: [[f64; 3]; 2],
+) -> Option<[f64; 3]> {
+    let b = imported::frame_bounds(frame, format, bounds).ok()?;
+    Some([
         (b[0][0] + b[1][0]) / 2.0,
         (b[0][1] + b[1][1]) / 2.0,
         b[0][2],
-    ]
+    ])
+}
+
+/// Measure every lead tag's contact on the file's geometry, as a build
+/// does, so the recorded contacts are the ones a build rechecks. Runs off
+/// the UI thread. `.solidcraft` models are not built yet; their estimates
+/// stay.
+pub fn measure(mut request: ImportModel) -> Result<ImportModel, String> {
+    let definition = &mut request.definition;
+    if definition.leads.is_empty() || definition.format == ModelFormat::Solidcraft {
+        return Ok(request);
+    }
+    let bytes = request
+        .assets
+        .first()
+        .map(|a| a.data.0.as_slice())
+        .ok_or("The import carries no file")?;
+    let contacts = imported::lead_contacts(definition, bytes)
+        .map_err(|e| format!("Measuring the lead contacts failed: {e}"))?;
+    if contacts.len() != definition.leads.len() {
+        return Err("Measuring the lead contacts gave a different lead count".into());
+    }
+    for (lead, at) in definition.leads.iter_mut().zip(contacts) {
+        lead.contact = at;
+    }
+    Ok(request)
 }
 
 fn srgb_to_linear(c: f64) -> f64 {
@@ -210,7 +202,10 @@ pub struct Metadata {
     pub family: String,
 }
 
-/// A read file and its inspection, going through the steps.
+/// A read file and its inspection, going through the steps. The
+/// inspection is in the reader's frame ([`imported::reader_frame`]); the
+/// wizard's frame moves its bounds with [`imported::frame_bounds`], the
+/// same transform a build applies.
 pub struct Wizard {
     pub file_name: String,
     pub bytes: Arc<Vec<u8>>,
@@ -263,7 +258,7 @@ impl Wizard {
             format,
             inspection,
             step: Step::File,
-            frame: SourceFrame::default(),
+            frame: imported::default_frame(format),
             bodies,
             selected: 0,
             show_all: false,
@@ -275,13 +270,19 @@ impl Wizard {
         }
     }
 
-    pub fn bounds(&self) -> [[f64; 3]; 2] {
-        framed_bounds(&self.frame, self.inspection.bounds_mm)
+    /// The model's bounds in the wizard's frame; refused while the frame
+    /// is out of range.
+    pub fn bounds(&self) -> Result<[[f64; 3]; 2], String> {
+        imported::frame_bounds(&self.frame, self.format, self.inspection.bounds_mm)
+            .map_err(|e| e.to_string())
     }
 
     /// Seat the model on the board: its lowest point at z = 0.
     pub fn seat(&mut self) {
-        let low = self.bounds()[0][2];
+        let Ok(bounds) = self.bounds() else {
+            return;
+        };
+        let low = bounds[0][2];
         if low.is_finite() {
             self.frame.origin_offset[2] -= low;
         }
@@ -289,7 +290,9 @@ impl Wizard {
 
     /// Centre the model's bounds on the origin in x and y.
     pub fn centre(&mut self) {
-        let [low, high] = self.bounds();
+        let Ok([low, high]) = self.bounds() else {
+            return;
+        };
         for (offset, (lo, hi)) in self
             .frame
             .origin_offset
@@ -381,14 +384,16 @@ impl Wizard {
                 Some((at, terminal.designation.clone()))
             })
             .collect();
-        let frame = self.frame;
+        let (frame, format) = (self.frame, self.format);
         let mut proposed = 0;
         for body in self
             .bodies
             .iter_mut()
             .filter(|b| b.role == Some(BodyRole::Lead) && b.designation.trim().is_empty())
         {
-            let c = contact(&frame, body.source.bounds_mm);
+            let Some(c) = contact(&frame, format, body.source.bounds_mm) else {
+                continue;
+            };
             let nearest = pads
                 .iter()
                 .map(|(p, d)| ((p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2), d))
@@ -413,8 +418,9 @@ impl Wizard {
             Step::Frame => {
                 let ok = self.frame.unit_mm.is_finite()
                     && UNIT_MM.contains(&self.frame.unit_mm)
-                    && self.frame.origin_offset.iter().all(|v| v.is_finite());
-                (!ok).then(|| "The unit and offset must be finite numbers".into())
+                    && self.frame.origin_offset.iter().all(|v| v.is_finite())
+                    && self.bounds().is_ok();
+                (!ok).then(|| "The unit and offset must be finite numbers in range".into())
             }
             Step::Materials => {
                 let unmapped = self
@@ -495,13 +501,16 @@ impl Wizard {
             .collect::<Result<Vec<_>, _>>()?;
         let leads: Vec<LeadTag> = self
             .leads()
-            .map(|(_, b)| LeadTag {
-                key: b.source.key.clone(),
-                designation: b.designation.trim().to_owned(),
-                contact: contact(&self.frame, b.source.bounds_mm),
+            .map(|(_, b)| {
+                Ok(LeadTag {
+                    key: b.source.key.clone(),
+                    designation: b.designation.trim().to_owned(),
+                    contact: contact(&self.frame, self.format, b.source.bounds_mm)
+                        .ok_or("The frame is out of range")?,
+                })
             })
-            .collect();
-        let bounds = self.bounds();
+            .collect::<Result<_, String>>()?;
+        let bounds = self.bounds()?;
         let marking_area = self.marking_on_top.then(|| MarkingArea {
             origin: [
                 (bounds[0][0] + bounds[1][0]) / 2.0,
@@ -623,7 +632,7 @@ fn read(path: &Path) -> Result<Loaded, String> {
     if bytes.len() > inspect::MAX_INSPECT_BYTES {
         return Err(format!("{file_name} grew while it was read"));
     }
-    let inspection = inspect::inspect(&bytes, format)
+    let inspection = inspect::inspect_in(&bytes, format, &imported::reader_frame(format))
         .map_err(|e| format!("{file_name} could not be inspected: {e}"))?;
     Ok(Loaded {
         file_name,
@@ -638,6 +647,15 @@ enum State {
     Picking(Receiver<Option<PathBuf>>),
     Reading(Receiver<Result<Loaded, String>>),
     Steps(Box<Wizard>),
+    /// Finish pressed: the lead contacts are being measured off the UI
+    /// thread before `library.import_model` is sent.
+    Measuring {
+        wizard: Box<Wizard>,
+        package: DefinitionId,
+        /// The package as the Leads step saw it: the lead map's target.
+        terminals: Box<PackageDefinition>,
+        receiver: Receiver<Result<ImportModel, String>>,
+    },
     /// `library.import_model` was sent; waiting for its Model draft.
     Importing {
         wizard: Box<Wizard>,
@@ -670,7 +688,10 @@ fn wizard_id() -> egui::Id {
 impl ModelImport {
     /// Whether the wizard's steps fill the 3D tab's card.
     pub fn is_open(&self) -> bool {
-        matches!(self.state, State::Steps(_) | State::Importing { .. })
+        matches!(
+            self.state,
+            State::Steps(_) | State::Measuring { .. } | State::Importing { .. }
+        )
     }
 
     /// Whether a file is being picked or read.
@@ -708,7 +729,9 @@ impl ModelImport {
     #[cfg(test)]
     pub fn wizard(&self) -> Option<&Wizard> {
         match &self.state {
-            State::Steps(w) | State::Importing { wizard: w, .. } => Some(w),
+            State::Steps(w)
+            | State::Measuring { wizard: w, .. }
+            | State::Importing { wizard: w, .. } => Some(w),
             _ => None,
         }
     }
@@ -756,6 +779,52 @@ impl ModelImport {
                 }
             },
             other => self.state = other,
+        }
+    }
+
+    /// Send `library.import_model` once the lead contacts are measured; a
+    /// failure returns to Review with the reason shown.
+    fn measured(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
+        let State::Measuring { receiver, .. } = &self.state else {
+            return None;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => {
+                Err("Measuring the lead contacts stopped unexpectedly".into())
+            }
+        };
+        let State::Measuring {
+            wizard,
+            package,
+            terminals,
+            ..
+        } = std::mem::replace(&mut self.state, State::Idle)
+        else {
+            return None;
+        };
+        match result {
+            Ok(request) => {
+                let lead_map = lead_map_of(&request.definition, &terminals);
+                self.state = State::Importing {
+                    wizard,
+                    before: model_drafts(engine),
+                    revision: engine.revision(),
+                    package,
+                    lead_map,
+                };
+                self.refusal = None;
+                refusal::mark(ctx, Origin::Dialog(wizard_id()));
+                Some(Operation::Library(LibraryCommand::ImportModel(Box::new(
+                    request,
+                ))))
+            }
+            Err(why) => {
+                self.refusal = Some(why);
+                self.state = State::Steps(wizard);
+                None
+            }
         }
     }
 
@@ -821,13 +890,22 @@ impl PartEditor {
         if let Some(operation) = self.model_import.settle(&ctx, engine) {
             return Some(operation);
         }
+        if let Some(operation) = self.model_import.measured(&ctx, engine) {
+            return Some(operation);
+        }
         let set = self.draft.as_ref()?;
         let package_id = set.ids.package;
         let package = set.package.clone();
         let footprint = set.footprint.clone();
         let import = &mut self.model_import;
-        let importing = matches!(import.state, State::Importing { .. });
-        let (State::Steps(wizard) | State::Importing { wizard, .. }) = &mut import.state else {
+        let importing = matches!(
+            import.state,
+            State::Measuring { .. } | State::Importing { .. }
+        );
+        let (State::Steps(wizard)
+        | State::Measuring { wizard, .. }
+        | State::Importing { wizard, .. }) = &mut import.state
+        else {
             return None;
         };
         let action = steps(
@@ -846,23 +924,24 @@ impl PartEditor {
             }
             Some(Action::Finish) if !importing => match wizard.request() {
                 Ok(request) => {
-                    let lead_map = lead_map_of(&request.definition, &package);
                     let State::Steps(wizard) = std::mem::replace(&mut import.state, State::Idle)
                     else {
                         return None;
                     };
-                    import.state = State::Importing {
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    let repaint = ctx.clone();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(measure(request));
+                        repaint.request_repaint();
+                    });
+                    import.state = State::Measuring {
                         wizard,
-                        before: model_drafts(engine),
-                        revision: engine.revision(),
                         package: package_id,
-                        lead_map,
+                        terminals: Box::new(package.clone()),
+                        receiver,
                     };
                     import.refusal = None;
-                    refusal::mark(&ctx, Origin::Dialog(wizard_id()));
-                    Some(Operation::Library(LibraryCommand::ImportModel(Box::new(
-                        request,
-                    ))))
+                    None
                 }
                 Err(why) => {
                     import.refusal = Some(why);
@@ -1056,9 +1135,15 @@ fn frame_rows(ui: &mut Ui, wizard: &mut Wizard) {
             -1000.0..=1000.0,
         );
     }
-    let b = wizard.bounds();
-    kit::value_row(ui, "Size", &size_line(b));
-    kit::value_row(ui, "Bottom at", &format!("z = {:.3} mm", b[0][2]));
+    match wizard.bounds() {
+        Ok(b) => {
+            kit::value_row(ui, "Size", &size_line(b));
+            kit::value_row(ui, "Bottom at", &format!("z = {:.3} mm", b[0][2]));
+        }
+        Err(why) => {
+            kit::hint(ui, "The frame is out of range", &why);
+        }
+    }
     kit::actions(ui, |ui| {
         if ui_kit::button(ui, "Seat on board", Button::Small)
             .on_hover_text("Move the model so its lowest point is on the board (z = 0)")
@@ -1213,19 +1298,20 @@ fn lead_rows(
             wizard.selected = *first;
         }
         body_list(ui, wizard, &rows);
-        let frame = wizard.frame;
+        let (frame, format) = (wizard.frame, wizard.format);
         if let Some(body) = wizard.bodies.get_mut(wizard.selected) {
             kit::value_row(ui, "Lead", &body.source.key);
             let response = kit::text_row(ui, "Designation", &mut body.designation);
             if body.designation.len() > MAX_DESIGNATION {
                 kit::field_error(ui, &response, "At most 64 bytes", false);
             }
-            let c = contact(&frame, body.source.bounds_mm);
-            kit::value_row(
-                ui,
-                "Contact",
-                &format!("{:.3}, {:.3}, {:.3} mm", c[0], c[1], c[2]),
-            );
+            if let Some(c) = contact(&frame, format, body.source.bounds_mm) {
+                kit::value_row(
+                    ui,
+                    "Contact (estimate)",
+                    &format!("{:.3}, {:.3}, {:.3} mm", c[0], c[1], c[2]),
+                );
+            }
         }
     }
     kit::check_row(
@@ -1273,7 +1359,9 @@ fn review_rows(
     let _ = builtins;
     kit::value_row(ui, "Name", wizard.meta.name.trim());
     kit::value_row(ui, "File", &wizard.file_name);
-    kit::value_row(ui, "Size", &size_line(wizard.bounds()));
+    if let Ok(b) = wizard.bounds() {
+        kit::value_row(ui, "Size", &size_line(b));
+    }
     let mapped = wizard
         .bodies
         .iter()
@@ -1336,6 +1424,8 @@ mod tests {
             materials: Vec::new(),
             bounds_mm: [[-1.0, -0.4, 0.0], [1.0, 0.4, 0.45]],
             has_textures: false,
+            frame: imported::reader_frame(ModelFormat::Step),
+            warnings: Vec::new(),
         }
     }
 
@@ -1386,33 +1476,53 @@ mod tests {
         assert_eq!(media_type(ModelFormat::Gltf, "a.gltf"), "model/gltf+json");
         assert_eq!(media_type(ModelFormat::Gltf, "a.glb"), "model/gltf-binary");
         assert_eq!(media_type(ModelFormat::Step, "a.step"), "model/step");
+        for format in [
+            ModelFormat::Step,
+            ModelFormat::Gltf,
+            ModelFormat::Solidcraft,
+        ] {
+            assert!(
+                format.media_types().contains(&media_type(format, "a.x")),
+                "{format:?}: the publish rules accept the media type"
+            );
+        }
     }
 
     #[test]
-    fn the_frame_scales_turns_and_offsets() {
+    fn the_frame_scales_turns_and_offsets() -> Result<(), Box<dyn std::error::Error>> {
         let inch = SourceFrame {
             unit_mm: 25.4,
             up: UpAxis::Y,
             origin_offset: [1.0, 2.0, 3.0],
         };
         // Y-up (0, 1, 0) is Z-up (0, 0, 1), then scaled and offset.
-        assert_eq!(frame_point(&inch, [0.0, 1.0, 0.0]), [1.0, 2.0, 28.4]);
-        assert_eq!(frame_point(&inch, [0.0, 0.0, 1.0]), [1.0, 2.0 - 25.4, 3.0]);
-        let b = framed_bounds(&inch, [[0.0, 0.0, 0.0], [1.0, 2.0, 3.0]]);
+        let point = |p| imported::frame_point(&inch, ModelFormat::Step, p);
+        assert_eq!(point([0.0, 1.0, 0.0])?, [1.0, 2.0, 28.4]);
+        assert_eq!(point([0.0, 0.0, 1.0])?, [1.0, 2.0 - 25.4, 3.0]);
+        let b = imported::frame_bounds(&inch, ModelFormat::Step, [[0.0; 3], [1.0, 2.0, 3.0]])?;
         assert_eq!(b[0], [1.0, 2.0 - 3.0 * 25.4, 3.0]);
         assert_eq!(b[1], [1.0 + 25.4, 2.0, 3.0 + 2.0 * 25.4]);
+        // A glTF file starts in metres with Y up: its reader's millimetres
+        // stay unscaled and turn to Z up.
+        let mut w = wizard();
+        w.format = ModelFormat::Gltf;
+        w.frame = imported::default_frame(ModelFormat::Gltf);
+        let [low, high] = w.bounds()?;
+        assert_eq!((low[2], high[2]), (-0.4, 0.4), "file y is board z");
+        Ok(())
     }
 
     #[test]
-    fn seat_and_centre_put_the_model_on_the_origin() {
+    fn seat_and_centre_put_the_model_on_the_origin() -> Result<(), String> {
         let mut w = wizard();
         w.frame.origin_offset = [3.0, -2.0, 1.5];
         w.seat();
         w.centre();
-        let b = w.bounds();
+        let b = w.bounds()?;
         assert!(b[0][2].abs() < 1e-12);
         assert!((b[0][0] + b[1][0]).abs() < 1e-12);
         assert!((b[0][1] + b[1][1]).abs() < 1e-12);
+        Ok(())
     }
 
     #[test]
@@ -1490,6 +1600,214 @@ mod tests {
         assert_eq!(w.problem(Step::Leads), None);
     }
 
+    /// Closed boxes as one triangle mesh (glTF file units, Y up).
+    fn boxes(list: &[([f32; 3], [f32; 3])]) -> (Vec<f32>, Vec<u32>) {
+        let (mut positions, mut indices) = (Vec::new(), Vec::new());
+        for (lo, hi) in list {
+            let base = u32::try_from(positions.len() / 3).unwrap_or(0);
+            for i in 0..8u32 {
+                for (axis, bit) in [1u32, 2, 4].into_iter().enumerate() {
+                    positions.push(if i & bit == 0 { lo[axis] } else { hi[axis] });
+                }
+            }
+            for [a, b, c, d] in [
+                [0, 2, 3, 1],
+                [4, 5, 7, 6],
+                [0, 1, 5, 4],
+                [2, 6, 7, 3],
+                [0, 4, 6, 2],
+                [1, 3, 7, 5],
+            ] {
+                indices.extend([a, b, c, a, c, d].map(|v| base + v));
+            }
+        }
+        (positions, indices)
+    }
+
+    /// One box of a test mesh: low and high corners, mm.
+    type TestBox = ([f32; 3], [f32; 3]);
+
+    /// A GLB of named meshes (each a list of boxes in mm, glTF axes: Y
+    /// up), each with an optional material index into `materials`.
+    pub(super) fn glb(
+        meshes: &[(&str, Vec<TestBox>, Option<usize>)],
+        materials: serde_json::Value,
+    ) -> Vec<u8> {
+        let mut bin: Vec<u8> = Vec::new();
+        let (mut views, mut accessors, mut gltf_meshes, mut nodes) =
+            (vec![], vec![], vec![], vec![]);
+        for (k, (name, list, material)) in meshes.iter().enumerate() {
+            let metres: Vec<_> = list
+                .iter()
+                .map(|(lo, hi)| (lo.map(|c| c / 1000.0), hi.map(|c| c / 1000.0)))
+                .collect();
+            let (positions, indices) = boxes(&metres);
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for p in positions.chunks(3) {
+                for a in 0..3 {
+                    lo[a] = lo[a].min(p[a]);
+                    hi[a] = hi[a].max(p[a]);
+                }
+            }
+            let start = bin.len();
+            bin.extend(positions.iter().flat_map(|v| v.to_le_bytes()));
+            views.push(serde_json::json!({"buffer": 0, "byteOffset": start,
+                "byteLength": positions.len() * 4}));
+            accessors.push(
+                serde_json::json!({"bufferView": 2 * k, "componentType": 5126,
+                "count": positions.len() / 3, "type": "VEC3", "min": lo, "max": hi}),
+            );
+            let start = bin.len();
+            bin.extend(indices.iter().flat_map(|v| v.to_le_bytes()));
+            views.push(serde_json::json!({"buffer": 0, "byteOffset": start,
+                "byteLength": indices.len() * 4}));
+            accessors.push(
+                serde_json::json!({"bufferView": 2 * k + 1, "componentType": 5125,
+                "count": indices.len(), "type": "SCALAR"}),
+            );
+            let mut primitive = serde_json::json!({
+                "attributes": {"POSITION": 2 * k}, "indices": 2 * k + 1});
+            if let Some(m) = material {
+                primitive["material"] = serde_json::json!(m);
+            }
+            gltf_meshes.push(serde_json::json!({"name": name, "primitives": [primitive]}));
+            nodes.push(serde_json::json!({"mesh": k, "name": name}));
+        }
+        let node_ids: Vec<usize> = (0..nodes.len()).collect();
+        let mut document = serde_json::json!({
+            "asset": {"version": "2.0", "generator": "pcbcraft test"},
+            "scene": 0,
+            "scenes": [{"nodes": node_ids}],
+            "nodes": nodes,
+            "meshes": gltf_meshes,
+            "buffers": [{"byteLength": bin.len()}],
+            "bufferViews": views,
+            "accessors": accessors,
+        });
+        if materials.as_array().is_some_and(|m| !m.is_empty()) {
+            document["materials"] = materials;
+        }
+        let mut json = document.to_string().into_bytes();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        let total = 12 + 8 + json.len() + 8 + bin.len();
+        let word = |n: usize| u32::try_from(n).unwrap_or(0).to_le_bytes();
+        let mut out = Vec::with_capacity(total);
+        out.extend(b"glTF");
+        out.extend(2u32.to_le_bytes());
+        out.extend(word(total));
+        out.extend(word(json.len()));
+        out.extend(b"JSON");
+        out.extend(json);
+        out.extend(word(bin.len()));
+        out.extend(b"BIN\0");
+        out.extend(bin);
+        out
+    }
+
+    /// An original GLB: a moulded body and one gull-wing lead whose foot
+    /// (x 2.0…2.5 mm, on the ground) lies beside a raised shoulder (x
+    /// 1.8…2.0 mm), so the lowest point is not the bottom centre of the
+    /// lead's bounds.
+    fn gull_wing_glb() -> Vec<u8> {
+        glb(
+            &[
+                ("Body", vec![([-1.8, 0.2, -1.0], [1.8, 1.0, 1.0])], None),
+                (
+                    "Lead",
+                    vec![
+                        ([2.0, 0.0, -0.2], [2.5, 0.1, 0.2]),
+                        ([1.8, 0.2, -0.2], [2.0, 0.5, 0.2]),
+                    ],
+                    None,
+                ),
+            ],
+            serde_json::json!([]),
+        )
+    }
+
+    /// An original 0805-like chip GLB: an epoxy body and two tin end caps
+    /// (glTF materials), the caps over the pads at x = ±0.9 mm.
+    pub(super) fn chip_glb() -> Vec<u8> {
+        glb(
+            &[
+                ("body", vec![([-0.8, 0.0, -0.4], [0.8, 0.45, 0.4])], Some(0)),
+                (
+                    "cap-left",
+                    vec![([-1.0, 0.0, -0.4], [-0.8, 0.45, 0.4])],
+                    Some(1),
+                ),
+                (
+                    "cap-right",
+                    vec![([0.8, 0.0, -0.4], [1.0, 0.45, 0.4])],
+                    Some(1),
+                ),
+            ],
+            serde_json::json!([
+                {"name": "Epoxy", "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.02, 0.02, 0.02, 1.0],
+                    "metallicFactor": 0.0, "roughnessFactor": 0.5}},
+                {"name": "Tin", "pbrMetallicRoughness": {
+                    "baseColorFactor": [0.8, 0.8, 0.8, 1.0],
+                    "metallicFactor": 1.0, "roughnessFactor": 0.3}}
+            ]),
+        )
+    }
+
+    /// The wizard on a real file: the reader-frame inspection is framed as
+    /// a build frames it, the estimated contact is replaced by the
+    /// measured one at Finish, and the result passes a build's recheck,
+    /// which the estimate alone does not.
+    #[test]
+    fn finish_measures_the_contacts_a_build_rechecks() -> Result<(), Box<dyn std::error::Error>> {
+        let bytes = gull_wing_glb();
+        let format = ModelFormat::Gltf;
+        let seen = inspect::inspect_in(&bytes, format, &imported::reader_frame(format))?;
+        let mut w = Wizard::new("gull.glb".into(), Arc::new(bytes.clone()), format, seen);
+        let framed = inspect::inspect(&bytes, format)?;
+        let b = w.bounds()?;
+        for (got, want) in b.iter().flatten().zip(framed.bounds_mm.iter().flatten()) {
+            assert!((got - want).abs() < 1e-6, "{b:?} vs {:?}", framed.bounds_mm);
+        }
+        for body in &mut w.bodies {
+            let lead = body.source.key.contains("Lead");
+            body.role = Some(if lead { BodyRole::Lead } else { BodyRole::Body });
+            body.material = Some(ModelMaterial::Builtin(if lead {
+                MaterialId::TinMatte
+            } else {
+                MaterialId::EpoxyMould
+            }));
+            if lead {
+                body.designation = "1".into();
+            }
+        }
+        w.meta.licence = "CC0-1.0".into();
+        let estimated = w.request()?;
+        assert!((estimated.definition.leads[0].contact[0] - 2.15).abs() < 1e-6);
+        let measured = measure(estimated.clone())?;
+        let c = measured.definition.leads[0].contact;
+        assert!((c[0] - 2.25).abs() < 1e-4 && c[2].abs() < 1e-4, "{c:?}");
+        let use_ = LibraryModel {
+            lead_map: vec![LeadMapEntry {
+                lead: 0,
+                terminal: PackageTerminalId(1),
+            }],
+            ..LibraryModel::default()
+        };
+        let placement = pcbcraft_core::library::ModelPlacement::default();
+        let shown = imported::preview(&measured.definition, &use_, &bytes, &placement)?;
+        assert_eq!(shown.len(), 2);
+        assert!(
+            imported::preview(&estimated.definition, &use_, &bytes, &placement).is_err(),
+            "the bounds estimate is not what a build measures"
+        );
+        Ok(())
+    }
+
     #[test]
     fn the_request_carries_the_bytes_and_an_explicit_definition() -> Result<(), String> {
         let (package, footprint) = package();
@@ -1518,7 +1836,8 @@ mod tests {
         assert_eq!(d.bodies.len(), 3);
         assert_eq!(d.leads.len(), 2);
         assert_eq!(d.leads[0].designation, "1");
-        // Contacts are the bottom centres of the lead bodies.
+        // Contacts are estimated as the bottom centres of the lead bodies;
+        // Finish measures them on the geometry (`measure`).
         assert_eq!(d.leads[0].contact, [-0.9, 0.0, 0.0]);
         assert_eq!(d.hints.pins, Some(2));
         assert_eq!(d.provenance.record.licence.as_deref(), Some("CC0-1.0"));
@@ -1556,11 +1875,10 @@ mod tests {
         use super::super::{State, Step, Wizard, wizard_id};
         use crate::refusal::{Origin, Refused};
         use egui::{Pos2, Rect};
-        use pcbcraft_core::library::model3d::ModelMaterial;
-        use pcbcraft_core::library::{
-            BodyRole, Definition, DefinitionMeta, PackageEdit, PackageModel,
-        };
-        use pcbcraft_core::{Error, LibraryCommand, ModelRef, Revision};
+        use pcbcraft_core::library::model3d::{ModelFormat, ModelMaterial};
+        use pcbcraft_core::library::{BodyRole, PackageDefinition, PackageEdit, PackageModel};
+        use pcbcraft_core::{LibraryCommand, ModelRef, Revision};
+        use pcbcraft_solidcraft::models::{imported, inspect};
 
         type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -1667,6 +1985,16 @@ mod tests {
             fn step(&self) -> Option<Step> {
                 self.editor.model_import.wizard().map(|w| w.step)
             }
+
+            fn package_definition(&self) -> Result<PackageDefinition, Box<dyn std::error::Error>> {
+                Ok(self
+                    .editor
+                    .draft
+                    .as_ref()
+                    .ok_or("no working set")?
+                    .package
+                    .clone())
+            }
         }
 
         #[test]
@@ -1728,13 +2056,37 @@ mod tests {
             Ok(())
         }
 
-        fn walk_to_review(h: &mut Harness) -> TestResult {
-            h.editor.model_import.open(Wizard::new(
-                "chip-0805.step".into(),
-                std::sync::Arc::new(b"ISO-10303-21; original test bytes".to_vec()),
-                pcbcraft_core::library::model3d::ModelFormat::Step,
-                super::inspection(),
-            ));
+        /// The chip GLB read as the worker reads a picked file.
+        fn chip_wizard() -> Result<Wizard, Box<dyn std::error::Error>> {
+            let bytes = super::chip_glb();
+            let format = ModelFormat::Gltf;
+            let seen = inspect::inspect_in(&bytes, format, &imported::reader_frame(format))?;
+            Ok(Wizard::new(
+                "chip-0805.glb".into(),
+                std::sync::Arc::new(bytes),
+                format,
+                seen,
+            ))
+        }
+
+        /// Frames until the wizard sends an operation or settles (the lead
+        /// contacts are measured on a worker thread).
+        fn settle(h: &mut Harness) -> Result<Option<Operation>, Box<dyn std::error::Error>> {
+            for _ in 0..2000 {
+                let (_, operation) = h.card(vec![]);
+                if operation.is_some() {
+                    return Ok(operation);
+                }
+                if !matches!(h.editor.model_import.state, State::Measuring { .. }) {
+                    return Ok(None);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err("the lead contacts were never measured".into())
+        }
+
+        fn walk_to_review(h: &mut Harness, wizard: Wizard) -> TestResult {
+            h.editor.model_import.open(wizard);
             let shown = h.texts();
             assert!(
                 shown.iter().any(|t| t.contains("1 OF 6")),
@@ -1770,7 +2122,7 @@ mod tests {
         fn the_wizard_imports_then_assigns_the_new_model_with_its_lead_map() -> TestResult {
             let mut h = Harness::new()?;
             let package = h.package()?;
-            walk_to_review(&mut h)?;
+            walk_to_review(&mut h, chip_wizard()?)?;
             let shown = h.texts();
             assert!(
                 shown
@@ -1778,42 +2130,57 @@ mod tests {
                     .any(|t| t == "2 of 2 terminals map by designation (2 lead tags)"),
                 "the lead map is previewed: {shown:?}"
             );
-            let Some(Operation::Library(LibraryCommand::ImportModel(request))) =
-                h.click("Import model")?
+            assert!(
+                h.click("Import model")?.is_none(),
+                "the contacts are measured first"
+            );
+            let Some(Operation::Library(LibraryCommand::ImportModel(request))) = settle(&mut h)?
             else {
                 return Err("expected library.import_model".into());
             };
-            assert_eq!(request.definition.bodies.len(), 3);
+            let definition = &request.definition;
+            assert_eq!(definition.bodies.len(), 3);
+            // The file's own materials, mapped explicitly by Use suggestions.
+            assert_eq!(definition.custom_materials.len(), 2);
             assert!(
-                request
-                    .definition
+                definition
                     .bodies
                     .iter()
-                    .all(|b| matches!(b.material, ModelMaterial::Builtin(_)))
+                    .all(|b| matches!(b.material, ModelMaterial::Custom(_)))
             );
             assert_eq!(
-                request
-                    .definition
+                definition
                     .bodies
                     .iter()
                     .filter(|b| b.role == BodyRole::Lead)
                     .count(),
                 2
             );
-            // Stand in for D1: the import creates a Model draft.
+            // The measured contacts are the caps' footprints on the board.
+            for (lead, x) in definition.leads.iter().zip([-0.9, 0.9]) {
+                assert!(
+                    (lead.contact[0] - x).abs() < 1e-4 && lead.contact[2].abs() < 1e-4,
+                    "{:?}",
+                    lead.contact
+                );
+            }
+            // The app applies it: D1 packs the bytes and creates the draft.
             let created = h.engine.apply(
                 h.engine.revision(),
-                Operation::Library(LibraryCommand::NewDraft {
-                    meta: DefinitionMeta {
-                        name: request.name.clone(),
-                        ..Default::default()
-                    },
-                    definition: Definition::Model(request.definition.clone()),
-                }),
+                Operation::Library(LibraryCommand::ImportModel(request.clone())),
             )?;
             let pcbcraft_core::Outcome::DraftCreated { id } = created else {
                 return Err("no draft".into());
             };
+            assert!(
+                h.engine
+                    .project()
+                    .library
+                    .assets
+                    .iter()
+                    .any(|a| a.hash == request.definition.asset.hash),
+                "the file is packed in the project"
+            );
             let (_, assigned) = h.card(vec![]);
             let Some(Operation::Library(LibraryCommand::EditPackage { draft, edits })) = assigned
             else {
@@ -1826,22 +2193,68 @@ mod tests {
             assert_eq!(model.model, ModelRef::new(id, Revision::FIRST));
             assert_eq!(model.lead_map.len(), 2);
             assert!(!h.editor.model_import.is_open(), "the wizard closes");
+            // The Component 3D preview resolves the draft model and its
+            // packed bytes, and builds it.
+            let mut previewed = h.package_definition()?;
+            previewed.model = PackageModel::Library(model.clone());
+            let asset =
+                crate::scene::library_asset(&h.engine, &previewed)?.ok_or("no library asset")?;
+            let shown = imported::preview(
+                &asset.model,
+                model,
+                &asset.bytes,
+                &pcbcraft_core::library::ModelPlacement::default(),
+            )?;
+            assert_eq!(shown.len(), 3);
             Ok(())
         }
 
+        /// A refusal returns to Review with the reason shown: a file whose
+        /// contacts cannot be measured, and an import the engine refuses.
         #[test]
         fn a_refused_import_returns_to_review_with_the_refusal() -> TestResult {
             let mut h = Harness::new()?;
-            walk_to_review(&mut h)?;
-            let Some(operation) = h.click("Import model")? else {
+            walk_to_review(
+                &mut h,
+                Wizard::new(
+                    "chip-0805.step".into(),
+                    std::sync::Arc::new(b"ISO-10303-21; original test bytes".to_vec()),
+                    ModelFormat::Step,
+                    super::inspection(),
+                ),
+            )?;
+            assert!(h.click("Import model")?.is_none());
+            assert!(settle(&mut h)?.is_none(), "nothing is sent");
+            assert_eq!(h.step(), Some(Step::Review));
+            assert!(
+                h.editor
+                    .model_import
+                    .refusal
+                    .as_deref()
+                    .is_some_and(|r| r.starts_with("Measuring the lead contacts failed")),
+                "{:?}",
+                h.editor.model_import.refusal
+            );
+            assert!(matches!(h.editor.model_import.state, State::Steps(_)));
+            // A measured import the engine refuses (here: a size that does
+            // not match the packed file).
+            let mut h = Harness::new()?;
+            walk_to_review(&mut h, chip_wizard()?)?;
+            h.click("Import model")?;
+            let Some(Operation::Library(LibraryCommand::ImportModel(mut request))) =
+                settle(&mut h)?
+            else {
                 return Err("expected library.import_model".into());
             };
-            // The app applies it; the contract handler refuses.
+            request.definition.asset.bytes += 1;
             let error = h
                 .engine
-                .apply(h.engine.revision(), operation)
+                .apply(
+                    h.engine.revision(),
+                    Operation::Library(LibraryCommand::ImportModel(request)),
+                )
                 .err()
-                .unwrap_or(Error::Unsupported("refused".into()));
+                .ok_or("the engine accepted a mismatched size")?;
             // As App::apply does: hand the refusal back during a frame.
             let mut error = Some(error);
             let mut output = h.ctx.run_ui(egui::RawInput::default(), |ui| {

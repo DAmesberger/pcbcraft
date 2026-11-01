@@ -50,7 +50,7 @@ A Library row is a **lineage**: one identity with many immutable revisions.
 | D4 | No built-in category tree: shelves, tags and data-derived facets; at most ten original starter shelves | Default, revisit if needed |
 | D5 | **Generic and exact parts.** `Part` is its own lineage pinning a component and a binding; the longer cascade is accepted. Atomic = component + one Part. | **Decided** |
 | D6 | Generic symbol reuse by `library.duplicate` with origin now; true shared symbols later | Default, revisit if needed |
-| D7 | Asset bytes for offline reopen: **packed into the project file by content hash** (`Library.assets`); a folder stores them under `assets/sha256/<hash>` | **Decided** |
+| D7 | Asset bytes for offline reopen: **packed into the project file by content hash** (`Library.assets`); a folder stores them under `assets/sha256/<hash>`, and the `.pcbcraft` ZIP container does the same (64 MiB per asset, 512 MiB per project; [D0](component-model.md#3d-model-library-project-container-and-markings-d0d6-as-built)). Library models (3D) are a revisioned kind whose files are packed assets | **Decided** |
 | D8 | The library appears first in the Place palette and Browser (S1); the Library workspace follows (S4) | Default, revisit if needed |
 | D9 | **Supplier connectors come after the first edition.** Files store only identity the user chose: manufacturer, MPN, distributor, SKU, link. Specs are authored from the manufacturer's datasheet. | **Decided** |
 | D10 | Lifecycle: authored or user-CSV observations with date and source; obsolete parts hidden in Place by default and counted as "N hidden" | Default, revisit if needed |

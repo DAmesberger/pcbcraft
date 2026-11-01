@@ -96,7 +96,7 @@ fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
 pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
-        .filter(|(layer, _)| view.visible(*layer))
+        .filter(|(layer, _)| view.draws(*layer))
         .collect();
     let too_large = || "model too large for the 3D view".to_string();
     let total = bodies
@@ -158,7 +158,7 @@ pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), 
 pub fn keep_visible(bytes: &mut Vec<u8>, runs: &[(ViewLayer, Range<usize>)], view: &LayerView) {
     let mut end = 0;
     for (layer, run) in runs {
-        if !view.visible(*layer) || run.end > bytes.len() || run.start > run.end {
+        if !view.draws(*layer) || run.end > bytes.len() || run.start > run.end {
             continue;
         }
         let len = run.end - run.start;
@@ -499,7 +499,7 @@ pub(crate) mod tests {
             keep_visible(&mut kept, &scene.runs, &view);
             let (packed, runs) = pack(&scene.geometry, &view)?;
             assert_eq!(kept, packed, "{view:?}");
-            assert!(runs.iter().all(|(l, _)| view.visible(*l)));
+            assert!(runs.iter().all(|(l, _)| view.draws(*l)));
             if view != LayerView::default() {
                 assert!(kept.len() < scene.pbr.len(), "{view:?} hides something");
             }
@@ -667,9 +667,9 @@ pub(crate) mod tests {
         Ok((build(geometry)?, count))
     }
 
-    /// PCB 3D: decals pack with the component bodies (a layer view hides
-    /// them with the bodies, nothing rebuilt), take their finish's look and
-    /// highlight with their instance.
+    /// PCB 3D: decals pack in their own Markings run (the Markings toggle or
+    /// hiding the bodies drops them, nothing rebuilt), take their finish's
+    /// look and highlight with their instance.
     #[test]
     fn marking_decals_draw_and_hide_with_the_component_bodies()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -680,15 +680,23 @@ pub(crate) mod tests {
         let decals: Vec<&Geometry> = scene.geometry[plain.geometry.len()..].iter().collect();
         assert_eq!(decals.len(), count);
         let triangles: usize = decals.iter().map(|g| g.mesh.triangles.len()).sum();
-        // The Bodies run grows by exactly the decal vertices.
-        let run = |s: &ModelScene| {
+        // The decal vertices are exactly the Markings run; the bodies'
+        // run is unchanged.
+        let run = |s: &ModelScene, layer: ViewLayer| {
             s.runs
                 .iter()
-                .find(|(l, _)| *l == ViewLayer::Bodies)
+                .find(|(l, _)| *l == layer)
                 .map(|(_, r)| r.len())
                 .unwrap_or(0)
         };
-        assert_eq!(run(&scene), run(&plain) + 3 * PBR_DETAILED_SIZE * triangles);
+        assert_eq!(
+            run(&scene, ViewLayer::Bodies),
+            run(&plain, ViewLayer::Bodies)
+        );
+        assert_eq!(
+            run(&scene, ViewLayer::Markings),
+            3 * PBR_DETAILED_SIZE * triangles
+        );
         assert_eq!(
             scene.pbr.len(),
             plain.pbr.len() + 3 * PBR_DETAILED_SIZE * triangles
@@ -697,18 +705,22 @@ pub(crate) mod tests {
         for g in &decals {
             assert_eq!(g.kind, DECAL_KIND);
             assert_eq!(g.surface.base_color(), laser.base_color());
-            assert!(
-                scene.highlight.iter().any(|(item, layer, _)| {
-                    Some(*item) == g.item && *layer == ViewLayer::Bodies
-                })
-            );
+            assert!(scene.highlight.iter().any(|(item, layer, _)| {
+                Some(*item) == g.item && *layer == ViewLayer::Markings
+            }));
         }
-        // Hiding the bodies drops the decals too; shadows are unchanged.
-        let mut view = LayerView::default();
-        view.set(ViewLayer::Bodies, false);
-        let (marked, _) = pack(&scene.geometry, &view)?;
-        let (unmarked, _) = pack(&plain.geometry, &view)?;
-        assert_eq!(marked, unmarked);
+        // Hiding the bodies drops the decals too, and the Markings toggle
+        // drops only them; shadows are unchanged.
+        for hidden in [ViewLayer::Bodies, ViewLayer::Markings] {
+            let mut view = LayerView::default();
+            view.set(hidden, false);
+            let (marked, _) = pack(&scene.geometry, &view)?;
+            let (unmarked, _) = pack(&plain.geometry, &view)?;
+            assert_eq!(marked, unmarked, "{hidden:?}");
+            let mut kept = scene.pbr.clone();
+            keep_visible(&mut kept, &scene.runs, &view);
+            assert_eq!(kept, marked, "{hidden:?}: kept without a repack");
+        }
         assert_eq!(scene.shadows.top.len(), plain.shadows.top.len());
         Ok(())
     }

@@ -1,6 +1,8 @@
 # Component catalog, templates, pin functions and 3D library: contract (C0)
 
-Status: contract only. Every type, command, query, schema, finding code, module-map row, layer rule and limit below exists and compiles. Every new handler refuses with an explicit error (`Error::Unsupported` in core and firmware, `Error::Invalid("<code>: …")` in io and the integration crate, which have no `Unsupported` variant). No handler panics or uses an unfinished-code macro. The UI call sites are wired to stub modules that draw nothing, so the app looks and behaves as before. The design behind this is the "Component catalog, templates, pin functions and 3D library" design note of 1 November 2026, with its founder decisions F1–F8. **F2 is decided differently from the note's recommendation: pin rules are sandboxed Rhai scripts** (see [C1](#pin-rules-c1-rhai-scripts-f2)).
+**Track "models" (D0–D6) is built and integrated (1 November 2026).** Its as-built description, including the integration choices below, is [D0–D6 as built](component-model.md#3d-model-library-project-container-and-markings-d0d6-as-built); its rows here are kept only as the record of what the fan-out owned. Integration wired D2's board hook (`project::build` builds a package's library model once per package revision), the library-model Component 3D preview (`scene::library_asset` and `imported::preview`), D5's decals into the model worker as their own display-only `BodyKind::Marking` with the D6 Markings toggle, and the import wizard's frame and contacts through D2's functions (contacts measured off the UI thread at Finish). It removed the `marking.unsupported`, `model.unsupported` and `package.model_unsupported` finding codes; `model.unsupported:` remains a refusal prefix of the integration crate for models it does not build yet (B2 families, `.solidcraft`). Tracks "libui" and "pins" still follow this contract.
+
+Status (tracks "libui" and "pins"): contract only. Every type, command, query, schema, finding code, module-map row, layer rule and limit below exists and compiles. Every new handler refuses with an explicit error (`Error::Unsupported` in core and firmware, `Error::Invalid("<code>: …")` in io and the integration crate, which have no `Unsupported` variant). No handler panics or uses an unfinished-code macro. The UI call sites are wired to stub modules that draw nothing, so the app looks and behaves as before. The design behind this is the "Component catalog, templates, pin functions and 3D library" design note of 1 November 2026, with its founder decisions F1–F8. **F2 is decided differently from the note's recommendation: pin rules are sandboxed Rhai scripts** (see [C1](#pin-rules-c1-rhai-scripts-f2)).
 
 `tests/contract.rs` (core) and the automation `session/*_tests.rs` files pin the contract: the new queries and commands exist on the wire, refuse as `unsupported`, leave the document and its revision unchanged, and existing documents serialize exactly as before (every new field is `serde(default)` and skipped when empty).
 
@@ -69,10 +71,10 @@ MCP tools are generated from the automation catalog, so every request above is a
 - **C1 rules:** `rule.unsupported` (contract refusal; removed by C1), `rule.bounds`, `rule.script` (compile error), `rule.budget`, `rule.runtime`, `rule.reference`, `rule.default_conflict`.
 - **C1/C2 issues:** `config.rule_unmet` (Error, blocks ElectricallyResolved), `config.rule_note` (Warning), `config.pin_option` (an invalid pin config after a library update).
 - **C3/C5 review (F8):** `pinout.uncertain` (blocks publishing), `pinout.unreviewed` (Warning).
-- **D4 markings:** `marking.unsupported` (contract), `marking.template`, `marking.unrepresentable` (Info), `marking.does_not_fit` (Info).
-- **D1 models:** `model.unsupported` (contract), `model.bounds`, `model.licence`, `model.leads`, `model.body_unmapped`, `model.asset`. The existing `package.model_unsupported` now refuses `PackageModel::Library` until D1.
+- **D4 markings (built):** `marking.template`, `marking.unrepresentable` (Info), `marking.does_not_fit` (Info).
+- **D1 models (built):** `model.bounds`, `model.licence`, `model.leads`, `model.body_unmapped`, `model.asset`.
 - **B1 rows:** `package_row.unsupported` (contract), `package_row.family`, `package_row.range`, `package_row.alias`, `package_row.provenance`.
-- Refusal prefixes, which are not findings: `template.unsupported`, `footprint.template_unsupported`, `pin_config.unsupported`, `pins.unsupported`, `functions.suggest_unsupported`, `pinout.unsupported`, `firmware.unsupported`, `library.preview_unsupported`, `container.unsupported`.
+- Refusal prefixes, which are not findings: `template.unsupported`, `footprint.template_unsupported`, `pin_config.unsupported`, `pins.unsupported`, `functions.suggest_unsupported`, `pinout.unsupported`, `firmware.unsupported`, `library.preview_unsupported` (`container.unsupported` is gone: D0 built the container).
 
 ### Pin rules (C1): Rhai scripts (F2)
 
@@ -111,7 +113,7 @@ Waves follow the design note (wave 2: A1, A2, B1, B2a, C1, C3, D0, D1, D4; wave 
 | **C6** Pin-mux panel | The docked panel, suggest, cycle and apply, inline rule explanations, package mini-view, Issues locate | `apps/pcbcraft/src/pin_mux.rs`, `schematic_editor/instance_card.rs` (except the C0 call to `marking_row`) |
 | **C7** Automation and MCP workflow | JSON-only scenario tests (import EXM-48 → review → apply → assign → report → export) and the MCP instructions | `crates/automation/src/session/{templates,pinout,firmware,models}_tests.rs`, `crates/automation/src/mcp.rs`, `crates/automation/src/mcp/**` |
 
-### Track "models"
+### Track "models" (built; see the note at the top)
 
 | Slice | Builds | Owns |
 | --- | --- | --- |

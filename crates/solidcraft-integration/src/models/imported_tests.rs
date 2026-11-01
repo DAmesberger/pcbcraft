@@ -46,7 +46,7 @@ fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> (Vec<f32>, Vec<u32>) {
 /// A GLB of two boxes in metres with Y up: a body (`Epoxy`, clear-coated)
 /// standing 0.2 mm off the ground and a lead (`Tin`) touching it at x =
 /// 2…2.5 mm.
-fn fixture_glb() -> Vec<u8> {
+pub(crate) fn fixture_glb() -> Vec<u8> {
     let meshes = [
         (
             "Body",
@@ -125,7 +125,7 @@ fn fixture_step() -> Result<Vec<u8>> {
 
 const BOUNDS: [[f64; 3]; 2] = [[-2.0, -1.5, 0.0], [2.5, 1.5, 1.2]];
 
-fn model(format: ModelFormat, bytes: &[u8], seen: &ModelInspection) -> ModelDefinition {
+pub(crate) fn model(format: ModelFormat, bytes: &[u8], seen: &ModelInspection) -> ModelDefinition {
     let mut bodies = Vec::new();
     for body in &seen.bodies {
         let lead = body.key.contains("Lead");
@@ -158,7 +158,7 @@ fn model(format: ModelFormat, bytes: &[u8], seen: &ModelInspection) -> ModelDefi
     }
 }
 
-fn lead_key(seen: &ModelInspection) -> Result<String> {
+pub(crate) fn lead_key(seen: &ModelInspection) -> Result<String> {
     seen.bodies
         .iter()
         .find(|b| b.key.contains("Lead"))
@@ -166,7 +166,7 @@ fn lead_key(seen: &ModelInspection) -> Result<String> {
         .ok_or_else(|| fail("no lead body"))
 }
 
-fn use_lead(terminal: u32) -> LibraryModel {
+pub(crate) fn use_lead(terminal: u32) -> LibraryModel {
     LibraryModel {
         lead_map: vec![LeadMapEntry {
             lead: 0,
@@ -309,6 +309,37 @@ fn lead_contacts_are_the_lowest_points_of_the_tag() -> Result<()> {
             lead_contacts(&m, &bytes),
             Err(Error::Invalid(e)) if e.starts_with("model.leads")
         ));
+    }
+    Ok(())
+}
+
+/// The import wizard inspects in the reader's frame and moves the bounds
+/// with `frame_bounds`; that gives the bounds an inspection in the frame
+/// reports, and the contacts it then measures pass a build's recheck.
+#[test]
+fn the_wizard_path_matches_what_a_build_rechecks() -> Result<()> {
+    for (format, bytes) in [
+        (ModelFormat::Gltf, fixture_glb()),
+        (ModelFormat::Step, fixture_step()?),
+    ] {
+        let raw = inspect::inspect_in(&bytes, format, &reader_frame(format))?;
+        let framed = inspect::inspect(&bytes, format)?;
+        let moved = frame_bounds(&default_frame(format), format, raw.bounds_mm)?;
+        assert!(
+            near(moved[0], framed.bounds_mm[0], EPS) && near(moved[1], framed.bounds_mm[1], EPS),
+            "{format:?}: {moved:?} vs {:?}",
+            framed.bounds_mm
+        );
+        let mut m = model(format, &bytes, &framed);
+        m.bounds_mm = moved;
+        m.leads = vec![LeadTag {
+            key: lead_key(&raw)?,
+            designation: "1".into(),
+            contact: [0.0; 3],
+        }];
+        m.leads[0].contact = lead_contacts(&m, &bytes)?[0];
+        let mut native = Native::new("Board")?;
+        build_library_model(&mut native, "pkg5r1", &m, &use_lead(1), &bytes)?;
     }
     Ok(())
 }

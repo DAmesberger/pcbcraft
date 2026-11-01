@@ -171,7 +171,11 @@ fn library_specs<'a>(
 }
 
 /// What the instance shows: the resolved text, or why there is none.
-fn resolved(engine: &Engine, instance: &ComponentInstance, source: Source) -> (String, Vec<String>) {
+fn resolved(
+    engine: &Engine,
+    instance: &ComponentInstance,
+    source: Source,
+) -> (String, Vec<String>) {
     if source == Source::Hidden {
         return ("Hidden".into(), Vec::new());
     }
@@ -315,7 +319,8 @@ pub fn row(ui: &mut egui::Ui, engine: &Engine, instance: &ComponentInstance) -> 
         ) {
             output = set(with_var(marking, LOT, &value));
         }
-        let inherited = marking::effective(&InstanceMarking::default(), part, component);
+        let none = InstanceMarking::default();
+        let inherited = marking::effective(&none, part, component);
         match custom {
             Some(_) => {
                 if let Some(value) = text_row(
@@ -430,7 +435,7 @@ mod tests {
             Some(vec![MarkingItem::Text {
                 template: Template("XYZ".into()),
                 height_mm: Some(0.6),
-                align: Align::Start,
+                align: Align::Centre,
             }])
         );
         assert_eq!(with_custom_text(&custom, " ", Some(&inherited)), marking);
@@ -559,7 +564,8 @@ mod tests {
             Ok(click_at(editor, engine, ctx, point))
         }
 
-        fn ready() -> Result<(egui::Context, Engine, SchematicEditor, u64), Box<dyn std::error::Error>>
+        fn ready()
+        -> Result<(egui::Context, Engine, SchematicEditor, u64), Box<dyn std::error::Error>>
         {
             let ctx = egui::Context::default();
             fonts::setup_bundled_fonts(&ctx);
@@ -588,8 +594,7 @@ mod tests {
             assert!(shown.iter().any(|(t, _)| t == "No marking"), "{shown:?}");
             let operation = click(&mut editor, &engine, &ctx, "Hide marking")?
                 .ok_or("Hide marking sent nothing")?;
-            let Operation::Instance(InstanceCommand::SetMarking { instance, marking }) =
-                &operation
+            let Operation::Instance(InstanceCommand::SetMarking { instance, marking }) = &operation
             else {
                 return Err(format!("not set_marking: {operation:?}").into());
             };
