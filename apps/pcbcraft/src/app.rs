@@ -930,6 +930,8 @@ impl eframe::App for App {
         self.file_effects(&ctx);
         self.library_sources(&ctx);
         self.component_subject(&ctx);
+        // A2: the Component workspace catalog's action and feed.
+        self.catalog(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
