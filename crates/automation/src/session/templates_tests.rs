@@ -1,26 +1,28 @@
-//! Slice C7 (contract C0): JSON-only scenario tests of the template gallery (B1). The
-//! contract test pins the request surface and the explicit refusal of
-//! the stubs; C7 replaces it with the scenario (import EXM-48 → review →
-//! apply → assign → report → export).
+//! Slice C7: the footprint step of the EXM-48 scenario over JSON. After
+//! importing the pinout, the agent reads the package drawing and looks for
+//! a package row with `library.templates` (B1). Staged as `pinout_tests`
+//! explains: the B1 stub's explicit refusal (nothing changed) ends the step
+//! until slice I sets `REQUIRE_COMPLETE`.
+use super::pinout_tests::{Fallible, Scenario, finish};
 use super::*;
 
-type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-/// The diagnostic code of a refused reply.
-fn refused(reply: &Value) -> Option<String> {
-    (reply["ok"] == false).then(|| {
-        reply["error"]["code"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned()
-    })
-}
-
 #[test]
-fn the_template_queries_refuse_until_b1() -> Fallible<()> {
-    let mut session = Session::new(Engine::demo()?);
-    let reply = session.dispatch(json!({"command": "project.query",
-        "params": {"query": "library.templates", "params": {"query": "soic pins:8"}}}));
-    assert_eq!(refused(&reply).as_deref(), Some("unsupported"), "{reply}");
-    Ok(())
+fn the_exm48_package_is_found_among_the_no_lead_templates() -> Fallible<()> {
+    finish((|| -> Fallible<()> {
+        let mut s = Scenario::demo()?;
+        let report = s.query(
+            "templates",
+            "library.templates",
+            json!({"query": "qfn pins:48", "limit": 8}),
+        )?;
+        let hits = report["hits"].as_array().ok_or("hits")?;
+        assert!(!hits.is_empty(), "{report}");
+        assert!(hits.len() <= 8, "the limit holds: {report}");
+        assert!(report["more"].is_u64(), "{report}");
+        assert!(
+            hits.iter().all(|h| h["family"] == "no_lead"),
+            "a QFN is a no-lead package: {report}"
+        );
+        Ok(())
+    })())
 }
