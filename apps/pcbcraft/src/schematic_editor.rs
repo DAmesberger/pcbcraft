@@ -86,6 +86,8 @@ enum Tool {
 }
 
 pub struct SchematicEditor {
+    /// Two-finger scrolling across frames.
+    trackpad: crate::navigation::Trackpad,
     tool: Tool,
     component: Option<ComponentRef>,
     /// The selected instance and the occurrence that was picked.
@@ -153,6 +155,7 @@ pub struct SchematicEditor {
 impl Default for SchematicEditor {
     fn default() -> Self {
         Self {
+            trackpad: Default::default(),
             tool: Tool::Select,
             component: None,
             selected: None,
@@ -982,15 +985,15 @@ impl SchematicEditor {
             self.frame_bounds(bounds, rect);
         }
         let mut output = None;
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let old_scale = self.scale;
-                self.scale = (self.scale * (scroll * 0.002).exp()).clamp(2.0, 60.0);
-                if let Some(pointer) = response.hover_pos() {
-                    let relative = pointer - rect.center();
-                    self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
-                }
+        // The wheel and a pinch zoom about the pointer; two fingers pan.
+        let wheel = self.trackpad.read(ui, false);
+        if response.contains_pointer() && wheel.moves() {
+            self.pan += wheel.pan;
+            let old_scale = self.scale;
+            self.scale = (self.scale * wheel.scale_factor()).clamp(2.0, 60.0);
+            if let Some(pointer) = response.hover_pos() {
+                let relative = pointer - rect.center();
+                self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
             }
         }
         if response.dragged_by(egui::PointerButton::Middle) {
@@ -2652,6 +2655,46 @@ mod tests {
             labels = shown(&output).into_iter().map(|(t, _)| t).collect();
         }
         (labels, operations)
+    }
+
+    /// Two fingers pan the sheet and never zoom; a pinch zooms about the
+    /// pointer, which keeps its sheet point.
+    #[test]
+    fn two_fingers_pan_the_sheet_and_a_pinch_zooms_about_the_pointer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::navigation::tests::swipe;
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let at = pos2(300.0, 260.0);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::PointerMoved(at)],
+        );
+        let (scale, pan) = (editor.scale, editor.pan);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            swipe(vec2(-5.0, 8.0), egui::Modifiers::NONE, 2),
+        );
+        assert_eq!(editor.scale, scale, "two fingers must not zoom");
+        assert_eq!(editor.pan - pan, vec2(-10.0, 16.0));
+        // The sheet point under the pointer, relative to the canvas centre.
+        let centre = pos2(400.0, 400.0);
+        let sheet = |e: &SchematicEditor| (at - centre - e.pan) / e.scale;
+        let before = sheet(&editor);
+        workspace_frame(&mut editor, &engine, &ctx, vec![egui::Event::Zoom(1.5)]);
+        assert!(
+            (editor.scale - scale * 1.5).abs() < 1e-4,
+            "{}",
+            editor.scale
+        );
+        assert!((sheet(&editor) - before).length() < 1e-4);
+        Ok(())
     }
 
     /// Clicking a row picks it: the palette closes, the Place tool is armed

@@ -266,6 +266,8 @@ struct DragAirwires {
 }
 
 pub struct PcbEditor {
+    /// Two-finger scrolling across frames.
+    trackpad: crate::navigation::Trackpad,
     view_3d: bool,
     tool: Tool,
     instance: Option<Id>,
@@ -347,6 +349,7 @@ pub struct PcbEditor {
 impl Default for PcbEditor {
     fn default() -> Self {
         Self {
+            trackpad: Default::default(),
             view_3d: false,
             tool: Tool::Select,
             instance: None,
@@ -1036,12 +1039,13 @@ impl PcbEditor {
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
-        if response.hovered() {
-            // Scroll, or a pinch (and Ctrl+scroll), zooms about the hovered
-            // board point: it stays under the cursor.
-            let (scroll, pinch) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            let zoom = (self.zoom * (scroll * 0.002).exp() * pinch)
-                .clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
+        // The wheel, or a pinch (and Cmd/Ctrl+wheel), zooms about the
+        // hovered board point: it stays under the cursor. Two fingers pan.
+        let wheel = self.trackpad.read(ui, false);
+        if response.contains_pointer() && wheel.moves() {
+            self.pan += wheel.pan;
+            let zoom =
+                (self.zoom * wheel.scale_factor()).clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
             if zoom != self.zoom
                 && let Some(p) = response.hover_pos()
             {
@@ -3143,6 +3147,34 @@ mod tests {
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
         let after = pad_label(&output).ok_or("pad number 1 not drawn after zoom")?;
         assert!((after - before).length() < 0.5, "{before:?} → {after:?}");
+        Ok(())
+    }
+
+    /// Two fingers pan the board with the fingers and never zoom; a mouse
+    /// wheel notch zooms.
+    #[test]
+    fn two_fingers_pan_the_canvas_and_the_wheel_zooms() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::navigation::tests::{notch, swipe};
+        let engine = shaped_board()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let (zoom, pan) = (editor.zoom, editor.pan);
+        let mut events = vec![egui::Event::PointerMoved(Pos2::new(300.0, 300.0))];
+        events.extend(swipe(egui::vec2(4.0, -6.0), egui::Modifiers::NONE, 3));
+        canvas_frame(&mut editor, &engine, &ctx, events);
+        assert_eq!(editor.zoom, zoom, "two fingers must not zoom");
+        assert_eq!(editor.pan - pan, egui::vec2(12.0, -18.0));
+        for _ in 0..20 {
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        }
+        assert_eq!(editor.zoom, zoom, "nor their smoothing tail");
+        canvas_frame(&mut editor, &engine, &ctx, vec![notch(1.0)]);
+        for _ in 0..20 {
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        }
+        assert!(editor.zoom > zoom, "{zoom} → {}", editor.zoom);
         Ok(())
     }
 

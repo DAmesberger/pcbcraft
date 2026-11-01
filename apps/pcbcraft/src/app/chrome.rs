@@ -571,7 +571,14 @@ impl App {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         child.spacing_mut().item_spacing.x = t.space_4;
-        if shell::icon_button(&mut child, "fit", "Fit view", true).clicked() {
+        // The navigation help is the Fit button's hover help (where
+        // Solidcraft's navigation bar explains its buttons).
+        let help = match (three_d, self.workspace) {
+            (true, Workspace::Pcb) => crate::navigation::help_3d(),
+            (true, _) => crate::navigation::help_3d_placement(),
+            (false, workspace) => crate::navigation::help_2d(workspace == Workspace::Part),
+        };
+        if shell::icon_button_help(&mut child, "fit", "Fit view", &help, true).clicked() {
             if three_d {
                 self.scene.viewport.fit();
             } else {

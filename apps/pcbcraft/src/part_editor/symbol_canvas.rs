@@ -609,18 +609,18 @@ impl PartEditor {
             self.space_held = false;
         }
         let space = self.space_held;
-        if let Some(p) = pointer {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.0 {
-                let factor = (scroll / 200.0).exp();
-                let scale = (view_state.scale * factor).clamp(0.5, 200.0);
-                let world = view.world(p);
-                let origin = p - vec2(world[0] as f32 * scale, -(world[1] as f32) * scale);
-                self.symbol_view = Some(ViewState {
-                    pan: origin - rect.center(),
-                    scale,
-                });
-            }
+        // The wheel and a pinch zoom about the pointer; two fingers pan.
+        let wheel = self.trackpad.read(ui, false);
+        if let Some(p) = pointer.filter(|_| response.contains_pointer())
+            && wheel.moves()
+        {
+            let scale = (view_state.scale * wheel.scale_factor()).clamp(0.5, 200.0);
+            let world = view.world(p);
+            let origin = p - vec2(world[0] as f32 * scale, -(world[1] as f32) * scale);
+            self.symbol_view = Some(ViewState {
+                pan: origin - rect.center() + wheel.pan,
+                scale,
+            });
         }
         let panning = response.dragged_by(egui::PointerButton::Middle)
             || (space && response.dragged_by(egui::PointerButton::Primary));

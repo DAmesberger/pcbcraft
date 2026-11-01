@@ -194,6 +194,8 @@ pub struct PartEditor {
     focus_text: bool,
     /// Space was pressed on the canvas (momentary pan) and is still down.
     space_held: bool,
+    /// Two-finger scrolling across frames (symbol and footprint canvases).
+    trackpad: crate::navigation::Trackpad,
     /// The drawn unit and its snap targets, kept while the working copy and
     /// engine revision are unchanged so idle frames redo nothing.
     drawn_cache: Option<symbol_canvas::DrawnCache>,
@@ -250,6 +252,7 @@ impl Default for PartEditor {
             field_choice: None,
             focus_text: false,
             space_held: false,
+            trackpad: Default::default(),
             drawn_cache: None,
             body: None,
             parts: Default::default(),

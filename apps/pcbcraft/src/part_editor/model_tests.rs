@@ -91,7 +91,7 @@ impl Harness {
             },
             |ui| {
                 editor.model_view_prepare(viewport, engine);
-                viewport.show(ui);
+                viewport.show(ui, crate::viewport::NavCaps::PLACEMENT);
                 sent.extend(editor.model_view(ui, viewport, engine));
             },
         );

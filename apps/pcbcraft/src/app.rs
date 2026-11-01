@@ -633,7 +633,7 @@ impl App {
             self.scene.highlight(None, None, None);
             self.part
                 .model_view_prepare(&mut self.scene.viewport, &self.engine);
-            self.scene.viewport.show(ui);
+            self.scene.viewport.show(ui, viewport::NavCaps::PLACEMENT);
             let operation = self.part.model_view(ui, &self.scene.viewport, &self.engine);
             self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
             None
@@ -645,7 +645,18 @@ impl App {
                 self.pcb.selected_track(),
                 self.pcb.highlighted_net(),
             );
-            self.scene.viewport.show(ui)
+            let pick = self.scene.viewport.show(ui, viewport::NavCaps::BOARD);
+            // How to move the view; the Fit view button's hover help lists
+            // every binding.
+            if let Some(rect) = self.scene.viewport.rect() {
+                crate::kit::canvas_hint(
+                    &ui.painter_at(rect),
+                    rect,
+                    solidcraft_ui_egui::theme::Tokens::get().space_16,
+                    crate::navigation::hint_3d(),
+                );
+            }
+            pick
         };
         if display == Display::Stale {
             // The last model stays up while a newer one builds; picks on it
