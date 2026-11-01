@@ -715,10 +715,7 @@ fn check_request_with_nets(
         layer: request.layer,
         locked: false,
     };
-    if track_polygon(&track)
-        .iter()
-        .any(|p| !inside_board(project, *p))
-    {
+    if !track_inside_board(project, &track) {
         return invalid("track copper must lie inside the board outline");
     }
     Ok(())
@@ -797,10 +794,7 @@ pub fn validate(project: &Project) -> Result<()> {
         if !project.stackup.has(track.layer) {
             return invalid("track lies on a copper layer the stackup lacks");
         }
-        if track_polygon(track)
-            .iter()
-            .any(|p| !inside_board(project, *p))
-        {
+        if !track_inside_board(project, track) {
             return invalid("track copper lies outside board outline");
         }
     }
@@ -814,22 +808,50 @@ fn inside_board(project: &Project, point: Point) -> bool {
         && point[1] <= project.board_size[1] + EPS
 }
 
-/// Straight tracks use a rectangular cross-section and butt end caps. The
-/// Solidcraft native adapter uses the same footprint, including at diagonal angles.
-pub fn track_polygon(track: &Track) -> [Point; 4] {
+/// A track's copper: the stadium a round aperture of its width sweeps from
+/// start to end. Its round end caps join seamlessly at any angle, as
+/// fabricated. Exact (the caps are true half circles); the checks, the
+/// Layout view and the Solidcraft adapter all use this outline.
+pub fn track_shape(track: &Track) -> Shape {
+    let half = track.width * 0.5;
     let dx = track.end[0] - track.start[0];
     let dy = track.end[1] - track.start[1];
     let length = dx.hypot(dy).max(EPS);
-    let normal = [
-        -dy / length * track.width * 0.5,
-        dx / length * track.width * 0.5,
-    ];
-    [
-        add(track.start, normal),
-        add(track.end, normal),
-        sub(track.end, normal),
-        sub(track.start, normal),
-    ]
+    let along = [dx / length * half, dy / length * half];
+    let normal = [-along[1], along[0]];
+    let (a, b) = (sub(track.start, along), add(track.end, along));
+    Shape::Polygon {
+        points: vec![
+            sub(a, normal),
+            sub(b, normal),
+            add(b, normal),
+            add(a, normal),
+        ],
+        radii: vec![half; 4],
+    }
+}
+
+/// [`track_shape`] flattened within [`CURVE_SLACK_MM`], its vertices on the
+/// true outline, counter-clockwise.
+pub fn track_outline(track: &Track) -> Vec<Point> {
+    track_shape(track).flatten(CURVE_SLACK_MM)
+}
+
+/// Whether `point` lies on a track's copper, or within `tolerance` of it.
+pub fn track_contains(track: &Track, point: Point, tolerance: f64) -> bool {
+    crate::geometry::segment_distance(point, track.start, track.end)
+        <= track.width * 0.5 + tolerance
+}
+
+/// Whether a track's whole copper, round caps included, lies on the board.
+fn track_inside_board(project: &Project, track: &Track) -> bool {
+    let half = track.width * 0.5;
+    [track.start, track.end].iter().all(|p| {
+        p[0] - half >= -EPS
+            && p[1] - half >= -EPS
+            && p[0] + half <= project.board_size[0] + EPS
+            && p[1] + half <= project.board_size[1] + EPS
+    })
 }
 
 fn add(a: Point, b: Point) -> Point {

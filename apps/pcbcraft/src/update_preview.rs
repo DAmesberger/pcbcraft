@@ -805,24 +805,17 @@ pub fn paint_board(
         }
     }
     let focused = |object: &ObjectRef| marks.focus.contains(object);
-    // A halo a few points outside the corners, so it reads over copper.
-    let ring = |corners: [Point; 4], color: egui::Color32, width: f32| {
+    // A halo a few points outside a convex outline, so it reads over copper.
+    let ring = |corners: &[Point], color: egui::Color32, width: f32| {
         let points: Vec<Pos2> = corners.iter().map(|p| screen(*p)).collect();
-        let centre = points
-            .iter()
-            .fold(egui::Vec2::ZERO, |sum, p| sum + p.to_vec2())
-            / points.len().max(1) as f32;
-        let halo = points
-            .iter()
-            .map(|p| *p + (p.to_vec2() - centre).normalized() * (t.space_4 + width))
-            .collect();
+        let halo = halo(&points, t.space_4 + width);
         painter.add(egui::Shape::closed_line(halo, Stroke::new(width, color)));
     };
     for track in &project.tracks {
         if !marks.tracks.contains(&track.id) {
             continue;
         }
-        let corners = layout::track_polygon(track);
+        let corners = layout::track_outline(track);
         let points: Vec<Pos2> = corners.iter().map(|p| screen(*p)).collect();
         painter.add(egui::Shape::convex_polygon(
             points,
@@ -834,7 +827,7 @@ pub fn paint_board(
         } else {
             1.5
         };
-        ring(corners, t.error, width);
+        ring(&corners, t.error, width);
     }
     for (ids, color) in [
         (&marks.issues, t.warning),
@@ -850,7 +843,7 @@ pub fn paint_board(
             } else {
                 2.0
             };
-            ring(corners, color, width);
+            ring(&corners, color, width);
         }
     }
     // What Show named but the plan does not outline (a pad's part, or a
@@ -863,12 +856,41 @@ pub fn paint_board(
                     && !marks.issues.contains(id) =>
             {
                 if let Some(corners) = outline(*id) {
-                    ring(corners, t.body_selected, 3.0);
+                    ring(&corners, t.body_selected, 3.0);
                 }
             }
             _ => {}
         }
     }
+}
+
+/// A convex screen outline moved `by` points outward, each vertex along
+/// the mitre of its two edges' outward normals.
+fn halo(points: &[Pos2], by: f32) -> Vec<Pos2> {
+    let n = points.len();
+    let centre = points
+        .iter()
+        .fold(egui::Vec2::ZERO, |sum, p| sum + p.to_vec2())
+        / n.max(1) as f32;
+    let outward = |a: Pos2, b: Pos2| {
+        let d = (b - a).normalized();
+        let normal = egui::vec2(d.y, -d.x);
+        // Outward is away from the centre of a convex outline.
+        if normal.dot(a.to_vec2() - centre) < 0.0 {
+            -normal
+        } else {
+            normal
+        }
+    };
+    (0..n)
+        .map(|i| {
+            let p = points[i];
+            let n0 = outward(points[(i + n - 1) % n], p);
+            let n1 = outward(p, points[(i + 1) % n]);
+            let k = (1.0 + n0.dot(n1)).max(0.125);
+            p + (n0 + n1) * (by / k)
+        })
+        .collect()
 }
 
 #[cfg(test)]
