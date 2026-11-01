@@ -17,10 +17,16 @@ fn refused(reply: &Value) -> Option<String> {
 }
 
 #[test]
-fn the_template_queries_refuse_until_b1() -> Fallible<()> {
+fn the_template_queries_answer_on_the_wire() -> Fallible<()> {
     let mut session = Session::new(Engine::demo()?);
     let reply = session.dispatch(json!({"command": "project.query",
         "params": {"query": "library.templates", "params": {"query": "soic pins:8"}}}));
-    assert_eq!(refused(&reply).as_deref(), Some("unsupported"), "{reply}");
+    assert_eq!(refused(&reply), None, "{reply}");
+    // The SOIC-8 custom entry of the gull-wing family.
+    let hits = reply["result"]["result"]["hits"].as_array().ok_or("hits")?;
+    assert!(hits.iter().any(|h| h["family"] == "gull_wing"), "{reply}");
+    let reply = session.dispatch(json!({"command": "project.query",
+        "params": {"query": "library.templates", "params": {"query": "kind:part"}}}));
+    assert_eq!(refused(&reply).as_deref(), Some("invalid_input"), "{reply}");
     Ok(())
 }

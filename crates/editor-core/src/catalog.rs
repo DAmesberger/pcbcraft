@@ -15,9 +15,11 @@ pub mod synthetic;
 pub mod templates;
 
 pub use query::{
-    Badge, CatalogQuery, FieldTest, MAX_QUERY, MAX_TERMS, Op, QueryError, RESERVED, Term, Test,
-    Vocabulary, VocabularyField, VocabularyKind, fold, parse, parse_query, rkm,
+    BODY_TOLERANCE_MM, Badge, CatalogQuery, FieldTest, MAX_QUERY, MAX_TERMS, Op,
+    PITCH_TOLERANCE_MM, QueryError, RESERVED, SizeSystem, Term, Test, Vocabulary, VocabularyField,
+    VocabularyKind, fold, parse, parse_query, rkm,
 };
+pub use templates::{PackageShape, SourceRow};
 
 use crate::diagnostics::{Error, Result};
 use crate::fields::{
@@ -101,6 +103,10 @@ pub struct SourceCatalog {
     /// them) to survive io's cache; [`Index::with_sources`] puts them back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ratings: Vec<EntryRating>,
+    /// The source's package template rows at their latest revisions, in
+    /// source-lineage order (`library.templates` searches them).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<SourceRow>,
 }
 
 /// One rated reading of a [`SourceCatalog`] entry field.
@@ -202,6 +208,7 @@ pub fn source_catalog(
         fields: held.fields.clone(),
         ..Library::default()
     };
+    let rows = templates::source_rows(held, &source_of)?;
     Ok(SourceCatalog {
         library,
         name: name.to_owned(),
@@ -210,6 +217,7 @@ pub fn source_catalog(
         fields,
         revisions,
         ratings,
+        rows,
     })
 }
 
@@ -466,6 +474,11 @@ pub struct CatalogEntry {
     /// entry are kept under this library identity (see [`Self::user_key`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
+    /// The typed shapes of the entry's packages (lead count, pitch, body),
+    /// in `packages` order where a package has a typed form: what the
+    /// `pins:`, `pitch:` and `body:` filters test.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<PackageShape>,
 }
 
 impl CatalogEntry {
@@ -539,6 +552,7 @@ fn entry_of(
         .filter_map(|selection| entry_field(library, selection))
         .collect();
     let mut packages = Vec::new();
+    let mut shapes = Vec::new();
     let mut badges = Badges {
         symbol: component
             .representations
@@ -564,6 +578,11 @@ fn entry_of(
             if !packages.contains(&package.meta.name) {
                 packages.push(package.meta.name.clone());
             }
+            if let Some(shape) = PackageShape::of(&package.definition.form)
+                && !shapes.contains(&shape)
+            {
+                shapes.push(shape);
+            }
         }
     }
     CatalogEntry {
@@ -584,6 +603,7 @@ fn entry_of(
         source_lineage: None,
         update: None,
         origin: None,
+        shapes,
     }
 }
 
@@ -630,6 +650,7 @@ fn part_entry(
         ..Badges::default()
     };
     let mut packages = Vec::new();
+    let mut shapes = Vec::new();
     if let Some(binding) = library.binding(part.binding) {
         badges.footprint = binding
             .definition
@@ -639,6 +660,7 @@ fn part_entry(
         if let Some(package) = library.package(binding.definition.package) {
             badges.model = package.definition.envelope_valid();
             packages.push(package.meta.name.clone());
+            shapes.extend(PackageShape::of(&package.definition.form));
         }
     }
     CatalogEntry {
@@ -659,6 +681,7 @@ fn part_entry(
         source_lineage: None,
         update: None,
         origin: None,
+        shapes,
     }
 }
 
@@ -1037,6 +1060,24 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                     .mpn
                     .as_ref()
                     .is_some_and(|m| m.contains(text.as_str()))
+                {
+                    return None;
+                }
+                None
+            }
+            Term::Pins { .. } | Term::Pitch { .. } | Term::Body { .. } => {
+                if !entry.shapes.iter().any(|s| s.meets(term)) {
+                    return None;
+                }
+                None
+            }
+            // A component's package carries labels, not size codes: a code
+            // in one system matches the label text, as `pkg:` does.
+            Term::SizeCode { code, .. } => {
+                if !entry
+                    .packages
+                    .iter()
+                    .any(|p| fold(p).contains(code.as_str()))
                 {
                     return None;
                 }

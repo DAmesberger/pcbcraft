@@ -8,10 +8,13 @@
 //! the same `range_problems` as a package and can never describe something
 //! its generator cannot build. Aliases are text, never identity.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
-use crate::ids::{DefinitionId, PackageRowRef};
+use crate::ids::{DefinitionId, MAX_LABEL, PackageRowRef, printable};
 use crate::library::bundle::Bundle;
-use crate::library::package_form::PackageForm;
-use crate::library::part::Provenance;
+use crate::library::package_form::{ChipKind, PackageForm};
+use crate::library::part::{Basis, Provenance};
+use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
+use crate::library::templates::footprint_family::TemplateKind;
+use crate::library::{Definition, DefinitionMeta, DraftEdit, Library};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +27,16 @@ pub const MAX_ALIAS: usize = 64;
 /// Drafts `library.new_from_template` creates in one undo step: component,
 /// symbol, package, footprint, binding.
 pub const NEW_FROM_TEMPLATE_DRAFTS: usize = 5;
+/// Bytes of one size code (`01005`, `1608`).
+pub const MAX_SIZE_CODE: usize = 8;
+/// Bytes of a citation's document revision.
+pub const MAX_CITATION_REVISION: usize = 64;
+/// Bytes of a designator prefix a template request names.
+pub const MAX_PREFIX: usize = 16;
+/// The revision of the four families whose generators exist (`Chip`,
+/// `GullWing`, `NoLead`, `Header`): forms, lands and model builders at
+/// `models::family_rev` 1.
+pub const BUILT_FAMILY_REV: u16 = 1;
 
 /// A package family: one [`PackageForm`] variant with its generators.
 #[derive(
@@ -57,6 +70,65 @@ impl FamilyKind {
         Self::Tht,
     ];
 
+    /// The footprint template kind that builds this family's lands.
+    pub fn template_kind(self) -> TemplateKind {
+        match self {
+            Self::Chip => TemplateKind::Chip,
+            Self::GullWing => TemplateKind::GullWing,
+            Self::NoLead => TemplateKind::Qfn,
+            Self::Header => TemplateKind::PinHeader,
+            Self::Tabbed => TemplateKind::Tabbed,
+            Self::Molded => TemplateKind::Molded,
+            Self::Grid => TemplateKind::Grid,
+            Self::Tht => TemplateKind::Tht,
+        }
+    }
+
+    /// The family revision rows are checked against now; `None` while the
+    /// family's generators are not built (its footprint template is not
+    /// available), so no row of it can be published or used.
+    pub fn family_rev(self) -> Option<u16> {
+        self.template_kind().available().then_some(BUILT_FAMILY_REV)
+    }
+
+    /// The gallery's family label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Chip => "Chip",
+            Self::GullWing => "Gull-wing",
+            Self::NoLead => "No-lead",
+            Self::Header => "Pin header",
+            Self::Tabbed => "Tabbed gull-wing",
+            Self::Molded => "Molded 2-terminal",
+            Self::Grid => "Grid array",
+            Self::Tht => "Through-hole",
+        }
+    }
+
+    /// The values of the family's built-in "custom" entry: original typical
+    /// values a user then edits (estimated, never a cited row). `None` for a
+    /// family whose generators are not built.
+    pub fn custom_values(self) -> Option<PackageForm> {
+        self.family_rev()?;
+        Some(match self {
+            Self::Chip => Preset::Chip0603.form(),
+            Self::GullWing => Preset::Soic8.form(),
+            Self::NoLead => Preset::Qfn16.form(),
+            Self::Header => Preset::Header2x5.form(),
+            Self::Tabbed | Self::Molded | Self::Grid | Self::Tht => return None,
+        })
+    }
+
+    /// The skeleton a new row of `form` starts from.
+    pub fn default_skeleton(form: &PackageForm) -> SkeletonHint {
+        match form {
+            PackageForm::Chip(_) => SkeletonHint::TwoTerminal { polarised: false },
+            PackageForm::Header(_) => SkeletonHint::Connector,
+            PackageForm::Generic => SkeletonHint::Blank,
+            _ => SkeletonHint::IcBox,
+        }
+    }
+
     /// The family of a typed form; `None` for `Generic`.
     pub fn of(form: &PackageForm) -> Option<Self> {
         Some(match form {
@@ -88,6 +160,21 @@ pub struct FamilyRef {
 pub struct SizeCode {
     pub imperial: String,
     pub metric: String,
+}
+
+impl SizeCode {
+    /// Both codes are 1–[`MAX_SIZE_CODE`] ASCII digits.
+    pub fn valid(&self) -> bool {
+        let code = |c: &str| {
+            !c.is_empty() && c.len() <= MAX_SIZE_CODE && c.bytes().all(|b| b.is_ascii_digit())
+        };
+        code(&self.imperial) && code(&self.metric)
+    }
+
+    /// "0402 imperial · 1005 metric": both meanings, nothing guessed.
+    pub fn label(&self) -> String {
+        format!("{} imperial · {} metric", self.imperial, self.metric)
+    }
 }
 
 /// Optional land overrides for the family's footprint template, from a
@@ -164,22 +251,224 @@ impl PackageRowDefinition {
         self.aliases.len() <= MAX_ROW_ALIASES
             && self.aliases.iter().all(|a| a.len() <= MAX_ALIAS)
             && self.values.within_bounds()
+            && self.size_code.as_ref().is_none_or(|c| {
+                c.imperial.len() <= MAX_SIZE_CODE && c.metric.len() <= MAX_SIZE_CODE
+            })
+            && self.citation.as_ref().is_none_or(|c| {
+                c.document.len() <= MAX_LABEL
+                    && c.document_revision
+                        .as_ref()
+                        .is_none_or(|r| r.len() <= MAX_CITATION_REVISION)
+            })
+            && self
+                .provenance
+                .licence
+                .as_ref()
+                .is_none_or(|l| l.len() <= MAX_LABEL)
     }
 
     pub(crate) fn values_finite(&self) -> bool {
         self.values.lengths().iter().all(|v| v.is_finite())
+            && self.lands.as_ref().is_none_or(LandValues::finite)
     }
 
-    /// Publish findings (`package_row.family`, `package_row.range`,
-    /// `package_row.alias`, `package_row.provenance`). Contract: refused
-    /// with `package_row.unsupported` until B1.
+    /// The row's values are cited from an outline drawing.
+    pub fn cited(&self) -> bool {
+        self.citation.is_some()
+    }
+
+    /// The row carries land overrides, which its citation covers (a row
+    /// without a citation has estimated lands even when it overrides them).
+    pub fn lands_cited(&self) -> bool {
+        self.lands.is_some() && self.citation.is_some()
+    }
+
+    /// Publish findings: `package_row.family` (no family, a family that
+    /// does not match the values, or a family revision the generators do
+    /// not build), `package_row.range` (the family's own range rules and
+    /// land overrides), `package_row.alias` (blank, repeated or
+    /// unprintable aliases and malformed size codes) and
+    /// `package_row.provenance` (a malformed citation, or a Part-reference
+    /// basis, which a row cannot have). A row without a citation is
+    /// estimated, which is allowed.
     pub(crate) fn findings(&self, id: DefinitionId, out: &mut Vec<Finding>) {
-        out.push(Finding::blocking(
-            "package_row.unsupported",
-            "Package template rows cannot be published yet.".into(),
-            vec![ObjectRef::Definition { id }],
-            Stage::Publish,
-        ));
+        let this = || vec![ObjectRef::Definition { id }];
+        let block =
+            |code: &str, message: String| Finding::blocking(code, message, this(), Stage::Publish);
+        let actual = FamilyKind::of(&self.values);
+        match (self.family, actual) {
+            (None, _) => out.push(block(
+                "package_row.family",
+                "A package template row needs a family and family revision.".into(),
+            )),
+            (Some(_), None) => out.push(block(
+                "package_row.family",
+                "A package template row needs typed family values.".into(),
+            )),
+            (Some(family), Some(actual)) if family.family != actual => out.push(block(
+                "package_row.family",
+                format!(
+                    "The row names the {} family but its values are {}.",
+                    family.family.label(),
+                    actual.label()
+                ),
+            )),
+            (Some(family), Some(_)) => match family.family.family_rev() {
+                None => out.push(block(
+                    "package_row.family",
+                    format!(
+                        "The {} family's generators are not built yet.",
+                        family.family.label()
+                    ),
+                )),
+                Some(rev) if family.family_rev == 0 || family.family_rev > rev => {
+                    out.push(block(
+                        "package_row.family",
+                        format!(
+                            "The row was checked against {} family revision {}; revision {rev} is built.",
+                            family.family.label(),
+                            family.family_rev
+                        ),
+                    ));
+                }
+                Some(_) => {}
+            },
+        }
+        for problem in self.values.range_problems() {
+            out.push(block("package_row.range", problem));
+        }
+        if let Some(lands) = &self.lands {
+            for problem in lands.problems() {
+                out.push(block("package_row.range", problem));
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for alias in &self.aliases {
+            if !printable(alias) || alias.len() > MAX_ALIAS {
+                out.push(block(
+                    "package_row.alias",
+                    format!("An alias needs 1–{MAX_ALIAS} bytes of printable text."),
+                ));
+            } else if !seen.insert(fold_text(alias.trim())) {
+                out.push(block(
+                    "package_row.alias",
+                    format!("The alias ‘{}’ is listed twice.", alias.trim()),
+                ));
+            }
+        }
+        if let Some(code) = &self.size_code {
+            if !code.valid() {
+                out.push(block(
+                    "package_row.alias",
+                    format!(
+                        "A size code gives both its imperial and its metric code, 1–{MAX_SIZE_CODE} digits each."
+                    ),
+                ));
+            }
+            if !matches!(self.values, PackageForm::Chip(_)) {
+                out.push(block(
+                    "package_row.alias",
+                    "Only chip rows carry a size code.".into(),
+                ));
+            }
+        }
+        if let Some(citation) = &self.citation {
+            if !printable(&citation.document) {
+                out.push(block(
+                    "package_row.provenance",
+                    "A citation names its public outline drawing in 1–256 bytes of printable text."
+                        .into(),
+                ));
+            }
+            if citation
+                .document_revision
+                .as_ref()
+                .is_some_and(|r| !printable(r) || r.len() > MAX_CITATION_REVISION)
+            {
+                out.push(block(
+                    "package_row.provenance",
+                    format!(
+                        "A citation's document revision is 1–{MAX_CITATION_REVISION} bytes of printable text."
+                    ),
+                ));
+            }
+            if citation.page == Some(0) {
+                out.push(block(
+                    "package_row.provenance",
+                    "Citation pages are numbered from 1.".into(),
+                ));
+            }
+        }
+        if matches!(self.provenance.basis, Basis::FromReference(_)) {
+            out.push(block(
+                "package_row.provenance",
+                "A row cites its drawing with a citation, not a Part reference.".into(),
+            ));
+        }
+    }
+
+    /// The text a component built from this row records as its drafts'
+    /// provenance: the row, and its citation or that it is estimated.
+    pub fn provenance_text(&self, name: &str) -> String {
+        let basis = match &self.citation {
+            Some(c) => {
+                let mut text = format!("values from {}", c.document);
+                if let Some(rev) = &c.document_revision {
+                    text.push_str(&format!(" rev. {rev}"));
+                }
+                if let Some(page) = c.page {
+                    text.push_str(&format!(" p. {page}"));
+                }
+                text
+            }
+            None => "estimated values".into(),
+        };
+        let lands = if self.lands_cited() {
+            "lands from the cited drawing"
+        } else {
+            "estimated lands"
+        };
+        format!(
+            "From package template row ‘{name}’ ({basis}; {lands}); verify against the selected component datasheet."
+        )
+    }
+}
+
+impl LandValues {
+    fn finite(&self) -> bool {
+        [self.pad_length, self.pad_width, self.gap]
+            .into_iter()
+            .flatten()
+            .chain(self.exposed_pad.into_iter().flatten())
+            .all(f64::is_finite)
+    }
+
+    /// Range problems of the overrides: every given size is positive and
+    /// at most the typed-form limit.
+    pub fn problems(&self) -> Vec<String> {
+        use crate::library::package_form::{FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM};
+        let mut out = Vec::new();
+        let mut check = |name: &str, v: f64| {
+            if !(v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v)) {
+                out.push(format!(
+                    "{name} must be {FORM_LENGTH_MIN_MM}–{FORM_LENGTH_LIMIT_MM} mm (is {v})."
+                ));
+            }
+        };
+        if let Some(v) = self.pad_length {
+            check("Land length", v);
+        }
+        if let Some(v) = self.pad_width {
+            check("Land width", v);
+        }
+        if let Some(v) = self.gap {
+            check("Land span", v);
+        }
+        if let Some([x, y]) = self.exposed_pad {
+            check("Exposed land length", x);
+            check("Exposed land width", y);
+        }
+        out
     }
 }
 
@@ -263,9 +552,296 @@ pub fn unsupported() -> Error {
     )
 }
 
-/// The drafts of a new component built from a row. Contract stub until B1.
+/// A template row ready to build: its display name and definition. A
+/// `Custom` source gives an estimated row of the request's values.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedRow {
+    pub name: String,
+    pub row: PackageRowDefinition,
+}
+
+/// The row a request names, checked: a published project row, the root
+/// record of a folder bundle (which must be a package row; nothing is
+/// imported), or the family's custom entry. A row with blocking findings is
+/// refused.
+pub fn resolve_row(library: &Library, source: &RowSource) -> Result<ResolvedRow> {
+    let resolved = match source {
+        RowSource::Project { row } => {
+            let published = library.package_row(*row).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "template.row_missing: package template row {} r{} is not in the project library",
+                    row.id, row.revision
+                ))
+            })?;
+            ResolvedRow {
+                name: published.meta.name.clone(),
+                row: published.definition.clone(),
+            }
+        }
+        RowSource::Bundle { bundle } => {
+            crate::library::bundle::validate_bundle(bundle)?;
+            let record = bundle
+                .records
+                .iter()
+                .find(|r| r.lineage == bundle.root.lineage && r.revision == bundle.root.revision)
+                .ok_or_else(|| {
+                    Error::Invalid("template.row_missing: the bundle lacks its root record".into())
+                })?;
+            let Definition::PackageRow(row) = &record.definition else {
+                return Err(Error::Invalid(format!(
+                    "template.row_kind: the bundle's root is a {}, not a package template row",
+                    crate::library::names::noun(record.kind)
+                )));
+            };
+            ResolvedRow {
+                name: record.meta.name.clone(),
+                row: (**row).clone(),
+            }
+        }
+        RowSource::Custom { family } => {
+            let values = family.custom_values().ok_or_else(|| {
+                Error::Invalid(format!(
+                    "template.family: the {} family's generators are not built yet",
+                    family.label()
+                ))
+            })?;
+            ResolvedRow {
+                name: format!("Custom {}", family.label().to_lowercase()),
+                row: PackageRowDefinition {
+                    family: Some(FamilyRef {
+                        family: *family,
+                        family_rev: BUILT_FAMILY_REV,
+                    }),
+                    skeleton: FamilyKind::default_skeleton(&values),
+                    values,
+                    ..PackageRowDefinition::default()
+                },
+            }
+        }
+    };
+    let mut findings = Vec::new();
+    resolved.row.findings(DefinitionId(0), &mut findings);
+    if let Some(first) = findings.iter().find(|f| f.blocks.is_some()) {
+        return Err(Error::Invalid(format!(
+            "{}: the template row ‘{}’ cannot be used: {}",
+            first.code, resolved.name, first.message
+        )));
+    }
+    Ok(resolved)
+}
+
+/// The values a request builds: its edited `values`, or the row's. Edited
+/// values stay in the row's family and pass the family's range rules;
+/// edited values make the result a custom package, so the row's land
+/// overrides and citation no longer apply (returned `false`).
+pub fn checked_values(
+    row: &PackageRowDefinition,
+    values: Option<&PackageForm>,
+) -> Result<(PackageForm, bool)> {
+    let (form, as_row) = match values {
+        Some(v) if v != &row.values => (v.clone(), false),
+        _ => (row.values.clone(), true),
+    };
+    let family = row.family.map(|f| f.family);
+    if FamilyKind::of(&form) != family || family.is_none() {
+        return Err(Error::Invalid(format!(
+            "template.values: edited values must stay in the row's {} family",
+            family.map_or("(none)", FamilyKind::label)
+        )));
+    }
+    if !(form.within_bounds() && form.lengths().iter().all(|v| v.is_finite())) {
+        return Err(Error::Limit(
+            "template.values: the values exceed the form's limits".into(),
+        ));
+    }
+    if let Some(problem) = form.range_problems().into_iter().next() {
+        return Err(Error::Invalid(format!("package.form_range: {problem}")));
+    }
+    Ok((form, as_row))
+}
+
+/// The default designator prefix of a skeleton and form: R, C or L for a
+/// chip of that construction, D for another polarised two-terminal part,
+/// J for a connector, U otherwise. A starting value the user edits.
+pub fn default_prefix(skeleton: SkeletonHint, form: &PackageForm) -> &'static str {
+    match (skeleton, form) {
+        (SkeletonHint::TwoTerminal { polarised: true }, _) => "D",
+        (SkeletonHint::TwoTerminal { .. }, PackageForm::Chip(c)) => match c.kind {
+            ChipKind::Resistor => "R",
+            ChipKind::Capacitor => "C",
+            ChipKind::Inductor => "L",
+        },
+        (SkeletonHint::TwoTerminal { .. }, _) => "R",
+        (SkeletonHint::Connector, _) => "J",
+        (SkeletonHint::IcBox | SkeletonHint::Blank, _) => "U",
+    }
+}
+
+/// The five drafts of a new component built from a row
+/// (`library.new_from_template`), in `refs`' lineages: component first,
+/// then symbol, package, footprint and binding. Pure; refuses a blank
+/// name, a bad prefix, values outside the row's family or ranges, and a
+/// skeleton that does not fit the package.
 pub fn new_from_template(
-    _request: &NewFromTemplate,
-) -> Result<Vec<(super::super::DefinitionMeta, super::super::Definition)>> {
-    Err(unsupported())
+    library: &Library,
+    request: &NewFromTemplate,
+    refs: SampleRefs,
+) -> Result<Vec<DraftEdit>> {
+    if !printable(&request.name) {
+        return Err(Error::Invalid(
+            "template.name: a new component needs a printable name of 1–256 bytes".into(),
+        ));
+    }
+    let resolved = resolve_row(library, &request.row)?;
+    let (form, as_row) = checked_values(&resolved.row, request.values.as_ref())?;
+    let prefix = match &request.designator_prefix {
+        Some(p) => {
+            let p = p.trim();
+            if p.is_empty()
+                || p.len() > MAX_PREFIX
+                || !p.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return Err(Error::Invalid(format!(
+                    "template.prefix: a designator prefix is 1–{MAX_PREFIX} letters or digits"
+                )));
+            }
+            p.to_owned()
+        }
+        None => default_prefix(request.skeleton, &form).to_owned(),
+    };
+    let provenance = if as_row {
+        resolved.row.provenance_text(&resolved.name)
+    } else {
+        format!(
+            "Custom values edited from package template row ‘{}’ (estimated values and lands); verify against the selected component datasheet.",
+            resolved.name
+        )
+    };
+    let lands = resolved.row.lands.as_ref().filter(|_| as_row);
+    let edits = samples::from_template(
+        &TemplateSpec {
+            name: request.name.trim(),
+            form,
+            skeleton: request.skeleton,
+            prefix: &prefix,
+            lands,
+            provenance: &provenance,
+        },
+        refs,
+    )?;
+    if edits.len() != NEW_FROM_TEMPLATE_DRAFTS {
+        return Err(Error::Invalid(
+            "template.drafts: a template builds exactly five drafts".into(),
+        ));
+    }
+    Ok(edits)
+}
+
+/// A new package-row draft body and meta (`library.save_package_row`):
+/// the family and family revision of `values`, its aliases and
+/// provenance, no citation (the row is estimated until one is added).
+pub fn row_draft(
+    request: &SavePackageRow,
+    values: PackageForm,
+) -> Result<(DefinitionMeta, Definition)> {
+    if !printable(&request.name) {
+        return Err(Error::Invalid(
+            "template.name: a package template row needs a printable name of 1–256 bytes".into(),
+        ));
+    }
+    let family = FamilyKind::of(&values).ok_or_else(|| {
+        Error::Invalid(
+            "template.family: a row needs typed family values, not a generic envelope".into(),
+        )
+    })?;
+    let family_rev = family.family_rev().ok_or_else(|| {
+        Error::Invalid(format!(
+            "template.family: the {} family's generators are not built yet",
+            family.label()
+        ))
+    })?;
+    if let Some(problem) = values.range_problems().into_iter().next() {
+        return Err(Error::Invalid(format!("package.form_range: {problem}")));
+    }
+    let mut aliases: Vec<String> = Vec::new();
+    for alias in &request.aliases {
+        let alias = alias.trim();
+        if !printable(alias) || alias.len() > MAX_ALIAS {
+            return Err(Error::Invalid(format!(
+                "package_row.alias: an alias is 1–{MAX_ALIAS} bytes of printable text"
+            )));
+        }
+        let folded = fold_text(alias);
+        if !aliases.iter().any(|a| fold_text(a) == folded) {
+            aliases.push(alias.to_owned());
+        }
+    }
+    if aliases.len() > MAX_ROW_ALIASES {
+        return Err(Error::Limit(format!(
+            "package_row.alias: a row lists at most {MAX_ROW_ALIASES} aliases"
+        )));
+    }
+    if matches!(request.provenance.basis, Basis::FromReference(_)) {
+        return Err(Error::Invalid(
+            "package_row.provenance: a row cites its drawing with a citation, not a Part reference"
+                .into(),
+        ));
+    }
+    let row = PackageRowDefinition {
+        family: Some(FamilyRef { family, family_rev }),
+        skeleton: FamilyKind::default_skeleton(&values),
+        values,
+        aliases,
+        size_code: None,
+        lands: None,
+        provenance: request.provenance.clone(),
+        citation: None,
+    };
+    let meta = DefinitionMeta {
+        name: request.name.trim().to_owned(),
+        description: String::new(),
+        provenance: "Saved from package values; estimated until a citation is added.".into(),
+    };
+    Ok((meta, Definition::PackageRow(Box::new(row))))
+}
+
+/// The preset forms as estimated rows: the first rows of the starter
+/// table and test data. No citation: these are original typical values.
+pub fn preset_rows() -> Vec<(String, PackageRowDefinition)> {
+    Preset::ALL
+        .into_iter()
+        .filter_map(|preset| {
+            let values = preset.form();
+            let family = FamilyKind::of(&values)?;
+            let size_code = match preset {
+                Preset::Chip0603 => Some(("0603", "1608")),
+                Preset::Chip0805 => Some(("0805", "2012")),
+                _ => None,
+            }
+            .map(|(imperial, metric)| SizeCode {
+                imperial: imperial.into(),
+                metric: metric.into(),
+            });
+            Some((
+                preset.label().to_owned(),
+                PackageRowDefinition {
+                    family: Some(FamilyRef {
+                        family,
+                        family_rev: BUILT_FAMILY_REV,
+                    }),
+                    skeleton: FamilyKind::default_skeleton(&values),
+                    aliases: vec![preset.label().to_owned()],
+                    values,
+                    size_code,
+                    ..PackageRowDefinition::default()
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Case folding for alias comparison (the catalog's folding: lower case,
+/// micro sign as Greek mu).
+fn fold_text(text: &str) -> String {
+    text.to_lowercase().replace('\u{b5}', "\u{3bc}")
 }
