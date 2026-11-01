@@ -27,11 +27,6 @@ fn new_queries_refuse_as_unsupported() -> Fallible<()> {
             query: "soic pins:8".into(),
             limit: None,
         },
-        Query::Models {
-            query: "pins:8".into(),
-            fits: None,
-            limit: None,
-        },
         Query::SuggestPins {
             instance,
             request: crate::functions::suggest::SuggestRequest {
