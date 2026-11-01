@@ -8,6 +8,7 @@ mod library_sources;
 mod lighting;
 mod model_library;
 mod model_scene;
+mod navigation;
 mod palette;
 mod part_editor;
 mod pcb_editor;

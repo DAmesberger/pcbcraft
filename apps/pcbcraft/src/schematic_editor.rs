@@ -22,13 +22,13 @@ use pcbcraft_core::library::{Rotation, TextMetric, Unit};
 use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, ObjectRef, Operation,
-    PhysicalChoice, Point, Project, Query, QueryResult,
-    schematic::{self, SchematicCommand},
+    PhysicalChoice, Point, Project, Query, QueryResult, WireEnd,
+    schematic::{self, SchematicCommand, WirePoint, WireTarget},
     updates::{Change, InstanceChange},
 };
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod instance_card;
@@ -56,6 +56,53 @@ enum Arrange {
 
 /// Pick tolerance around drawn symbol content, in pixels.
 const HIT_PX: f32 = 6.0;
+/// Pick radius of a pin end or junction, and of a wire's path, in pixels.
+const PIN_HIT_PX: f32 = 9.0;
+const WIRE_HIT_PX: f32 = 6.0;
+/// The junction dot's radius in sheet millimetres, and its on-screen bounds
+/// in pixels so it stays visible zoomed out and tidy zoomed in.
+const DOT_RADIUS_MM: f32 = 0.3;
+const DOT_RADIUS_PX: (f32, f32) = (2.0, 10.0);
+
+/// How a pin end is marked on the sheet, by the schematic convention: a
+/// wired end needs no mark (a junction dot is drawn where three or more
+/// conductors meet); an end still needing a decision shows the Issues
+/// to-do ring; a decided no-connect shows a cross.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PinMark {
+    Wired,
+    ToDo,
+    NoConnect,
+}
+
+/// The pin mark of every terminal, from core's accounting (the same rule
+/// that raises the Issues to-do for an unconnected terminal).
+fn pin_marks(project: &Project) -> BTreeMap<Endpoint, PinMark> {
+    let wired: BTreeSet<Endpoint> = project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal)
+        .collect();
+    pcbcraft_core::nets::terminals(project)
+        .into_iter()
+        .map(|e| {
+            let mark = if wired.contains(&e) {
+                PinMark::Wired
+            } else if pcbcraft_core::nets::accounted_for(project, e) {
+                PinMark::NoConnect
+            } else {
+                PinMark::ToDo
+            };
+            (e, mark)
+        })
+        .collect()
+}
+
+/// The junction dot radius on screen at `scale` pixels per millimetre.
+fn dot_radius(scale: f32) -> f32 {
+    (DOT_RADIUS_MM * scale).clamp(DOT_RADIUS_PX.0, DOT_RADIUS_PX.1)
+}
 /// Half the nominal symbol box a library placement keeps clear, in mm: a
 /// 25 × 15 mm box and half a sheet grid of clearance on each side.
 const PLACE_HALF: [f64; 2] = [15.0, 10.0];
@@ -87,6 +134,8 @@ enum Tool {
 }
 
 pub struct SchematicEditor {
+    /// Two-finger scrolling across frames.
+    trackpad: crate::navigation::Trackpad,
     tool: Tool,
     component: Option<ComponentRef>,
     /// The selected instance and the occurrence that was picked.
@@ -95,7 +144,8 @@ pub struct SchematicEditor {
     selected_wire: Option<Id>,
     /// Net-name edit buffer for the selected wire's net.
     net_label: Option<(Id, String)>,
-    wire_from: Option<Endpoint>,
+    /// Where the Wire tool's wire starts.
+    wire_from: Option<WireTarget>,
     draft_reference: String,
     draft_fields: Vec<FieldBuffer>,
     draft_position: Point,
@@ -113,6 +163,12 @@ pub struct SchematicEditor {
     observed_revision: Option<u64>,
     nets_revision: Option<u64>,
     nets: Vec<Net>,
+    /// Each wire's net, by wire ID, once per revision.
+    wire_nets: BTreeMap<Id, Id>,
+    /// Junction dots core derives from connectivity, once per revision.
+    dots: Vec<(WireEnd, Point)>,
+    /// How each pin end is marked, once per revision.
+    pin_marks: BTreeMap<Endpoint, PinMark>,
     /// A refusal handed back to one card field: the field's id and the
     /// words shown under it until the field is edited again.
     refused: Option<(egui::Id, String)>,
@@ -154,6 +210,7 @@ pub struct SchematicEditor {
 impl Default for SchematicEditor {
     fn default() -> Self {
         Self {
+            trackpad: Default::default(),
             tool: Tool::Select,
             component: None,
             selected: None,
@@ -176,6 +233,9 @@ impl Default for SchematicEditor {
             observed_revision: None,
             nets_revision: None,
             nets: Vec::new(),
+            wire_nets: BTreeMap::new(),
+            dots: Vec::new(),
+            pin_marks: BTreeMap::new(),
             refused: None,
             purchasing_watch: None,
             slot: None,
@@ -454,6 +514,9 @@ impl SchematicEditor {
     fn refresh_connectivity(&mut self, engine: &Engine) {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
+            self.wire_nets = pcbcraft_core::nets::wire_nets(engine.project());
+            self.dots = schematic::junction_dots(engine.project());
+            self.pin_marks = pin_marks(engine.project());
             self.placed = Arc::new(
                 engine
                     .project()
@@ -739,10 +802,8 @@ impl SchematicEditor {
     /// The net of the selected wire.
     pub fn selected_net(&self, engine: &Engine) -> Option<Id> {
         let project = engine.project();
-        let wire = self
-            .selected_wire
-            .and_then(|id| project.wires.iter().find(|w| w.id == id))?;
-        project.net_of(wire.from).map(|n| n.id)
+        let wire = self.selected_wire.and_then(|id| project.wire(id))?;
+        schematic::wire_net(project, wire).map(|n| n.id)
     }
 
     /// Select an instance from outside the canvas (the Browser).
@@ -756,7 +817,7 @@ impl SchematicEditor {
         let wire = project
             .wires
             .iter()
-            .find(|w| project.net_of(w.from).is_some_and(|n| n.id == net));
+            .find(|w| schematic::wire_net(project, w).is_some_and(|n| n.id == net));
         self.select(None, None, project);
         self.selected_wire = wire.map(|w| w.id);
         self.tool = Tool::Select;
@@ -983,15 +1044,15 @@ impl SchematicEditor {
             self.frame_bounds(bounds, rect);
         }
         let mut output = None;
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let old_scale = self.scale;
-                self.scale = (self.scale * (scroll * 0.002).exp()).clamp(2.0, 60.0);
-                if let Some(pointer) = response.hover_pos() {
-                    let relative = pointer - rect.center();
-                    self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
-                }
+        // The wheel and a pinch zoom about the pointer; two fingers pan.
+        let wheel = self.trackpad.read(ui, false);
+        if response.contains_pointer() && wheel.moves() {
+            self.pan += wheel.pan;
+            let old_scale = self.scale;
+            self.scale = (self.scale * wheel.scale_factor()).clamp(2.0, 60.0);
+            if let Some(pointer) = response.hover_pos() {
+                let relative = pointer - rect.center();
+                self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
             }
         }
         if response.dragged_by(egui::PointerButton::Middle) {
@@ -1100,26 +1161,35 @@ impl SchematicEditor {
         let mut body_hits = Vec::new();
         let removing = self.update.marks().map(|m| m.removed).unwrap_or_default();
         let mut hit_wire = None;
-        let selected_net = self
-            .wire_from
-            .or_else(|| {
-                self.selected_wire
-                    .and_then(|id| project.wires.iter().find(|w| w.id == id))
-                    .map(|w| w.from)
-            })
-            .and_then(|endpoint| self.nets.iter().find(|n| n.terminals.contains(&endpoint)));
+        // The net being wired from or the selected wire's net.
+        let selected_net: Option<Id> = match self.wire_from {
+            Some(WireTarget::Terminal(e)) => self
+                .nets
+                .iter()
+                .find(|n| n.terminals.contains(&e))
+                .map(|n| n.id),
+            Some(WireTarget::Junction(j)) => project
+                .wires_at(WireEnd::Junction(j))
+                .find_map(|w| self.wire_nets.get(&w.id).copied()),
+            Some(WireTarget::OnWire(p)) => self.wire_nets.get(&p.wire).copied(),
+            None => self
+                .selected_wire
+                .and_then(|id| self.wire_nets.get(&id).copied()),
+        };
+        let wire_active = |id: Id| {
+            self.selected_wire == Some(id)
+                || selected_net.is_some_and(|n| self.wire_nets.get(&id) == Some(&n))
+        };
+        // Each drawn wire's screen path, for picking a wire or a point on it.
+        let mut wire_paths: Vec<(Id, [Pos2; 3])> = Vec::with_capacity(project.wires.len());
         for wire in &project.wires {
-            if let Some((a, b)) = schematic::pin_position(project, wire.from)
-                .zip(schematic::pin_position(project, wire.to))
-            {
-                let a = screen(self.preview_endpoint(project, wire.from, a));
-                let b = screen(self.preview_endpoint(project, wire.to, b));
-                let mid = (a.x + b.x) * 0.5;
-                let points = vec![a, pos2(mid, a.y), pos2(mid, b.y), b];
-                let active = self.selected_wire == Some(wire.id)
-                    || selected_net.is_some_and(|n| n.terminals.contains(&wire.from));
+            if let Some((a, b)) = schematic::wire_ends(project, wire) {
+                let a = self.preview_end(project, wire.from, a);
+                let b = self.preview_end(project, wire.to, b);
+                let points = schematic::wire_route(a, b).map(screen);
+                let active = wire_active(wire.id);
                 painter.add(egui::Shape::line(
-                    points.clone(),
+                    points.to_vec(),
                     Stroke::new(
                         if active { 2.5 } else { 1.5 },
                         if active { t.accent } else { t.form_success },
@@ -1130,11 +1200,23 @@ impl SchematicEditor {
                     && let Some(p) = response.interact_pointer_pos()
                     && points
                         .windows(2)
-                        .any(|s| segment_distance(p, s[0], s[1]) < 6.0)
+                        .any(|s| segment_distance(p, s[0], s[1]) < WIRE_HIT_PX)
                 {
                     hit_wire = Some(wire.id);
                 }
+                wire_paths.push((wire.id, points));
             }
+        }
+        // Solid dots where three or more conductors meet, derived by core.
+        let radius = dot_radius(scale);
+        let mut junction_hits = Vec::new();
+        for (end, at) in &self.dots {
+            let p = screen(self.preview_end(project, *end, *at));
+            let active = project.wires_at(*end).any(|w| wire_active(w.id));
+            painter.circle_filled(p, radius, if active { t.accent } else { t.form_success });
+        }
+        for junction in &project.junctions {
+            junction_hits.push((WireEnd::junction(junction.id), screen(junction.position)));
         }
         if self.tool == Tool::Place
             && let Some(component) = self.component
@@ -1203,9 +1285,19 @@ impl SchematicEditor {
                     terminal: pin.terminal,
                 };
                 let p = view.screen(pin.end);
-                let active = self.wire_from == Some(endpoint);
-                let color = if active { t.accent } else { t.form_success };
-                painter.circle_stroke(p, if active { 5.0 } else { 3.5 }, Stroke::new(1.5, color));
+                if self.wire_from == Some(WireTarget::Terminal(endpoint)) {
+                    painter.circle_stroke(p, 5.0, Stroke::new(1.5, t.accent));
+                } else {
+                    paint_pin_mark(
+                        &painter,
+                        p,
+                        self.pin_marks
+                            .get(&endpoint)
+                            .copied()
+                            .unwrap_or(PinMark::ToDo),
+                        dim,
+                    );
+                }
                 pin_hits.push((endpoint, p));
             }
         }
@@ -1222,12 +1314,58 @@ impl SchematicEditor {
                 })
                 .map(|(id, occurrence, _, _)| (*id, *occurrence))
         };
+        let wiring = self.tool == Tool::Wire && !self.palette.is_open();
+        // Where a Wire tool click at `pointer` lands: a pin end, then a
+        // junction, then a point on a wire's path (snapped to the grid when
+        // that stays on the wire), with its screen position.
+        let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
+            let nearest = |hits: &[(WireTarget, Pos2)]| {
+                hits.iter()
+                    .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
+                    .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
+                    .copied()
+            };
+            let pins: Vec<(WireTarget, Pos2)> = pin_hits
+                .iter()
+                .map(|(e, p)| (WireTarget::Terminal(*e), *p))
+                .collect();
+            let junctions: Vec<(WireTarget, Pos2)> = junction_hits
+                .iter()
+                .map(|(e, p)| (WireTarget::from(*e), *p))
+                .collect();
+            nearest(&pins).or_else(|| nearest(&junctions)).or_else(|| {
+                let (wire, _) = wire_paths
+                    .iter()
+                    .map(|(id, path)| {
+                        let d = path
+                            .windows(2)
+                            .map(|s| segment_distance(pointer, s[0], s[1]))
+                            .fold(f32::INFINITY, f32::min);
+                        (*id, d)
+                    })
+                    .filter(|(_, d)| *d < WIRE_HIT_PX)
+                    .min_by(|a, b| a.1.total_cmp(&b.1))?;
+                let here = view.world(pointer);
+                let on = schematic::nearest_on_wire(project, wire, here)?;
+                let snapped = snap(on, grid);
+                let at = schematic::nearest_on_wire(project, wire, snapped)
+                    .filter(|p| {
+                        (p[0] - snapped[0]).hypot(p[1] - snapped[1])
+                            <= schematic::JUNCTION_TOLERANCE_MM
+                    })
+                    .map_or(on, |_| snapped);
+                Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
+            })
+        };
         if let Some(pointer) = response.hover_pos() {
             let hit = pin_hits
                 .iter()
-                .filter(|(_, p)| p.distance(pointer) < 9.0)
+                .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)));
-            if let Some((_, p)) = hit {
+            let landing = if wiring { target_at(pointer) } else { None };
+            if let Some((_, p)) = landing {
+                painter.circle_stroke(p, 7.0, Stroke::new(1.0, t.accent));
+            } else if let Some((_, p)) = hit {
                 painter.circle_stroke(*p, 7.0, Stroke::new(1.0, t.accent));
             }
             if self.tool == Tool::Place
@@ -1252,12 +1390,10 @@ impl SchematicEditor {
                         .line_segment([ghost.screen(pin.end), ghost.screen(pin.body_end)], stroke);
                 }
             }
-            if let Some(from) = self
-                .wire_from
-                .and_then(|e| schematic::pin_position(project, e))
-            {
+            if let Some(from) = self.wire_from.and_then(|e| target_position(project, e)) {
+                // The route core will draw: along x first, then y.
                 let a = screen(from);
-                let b = hit.map(|(_, p)| *p).unwrap_or(pointer);
+                let b = landing.map_or(pointer, |(_, p)| p);
                 painter.add(egui::Shape::line(
                     vec![a, pos2(b.x, a.y), b],
                     Stroke::new(1.5, t.accent),
@@ -1269,7 +1405,7 @@ impl SchematicEditor {
         {
             let pin = pin_hits
                 .iter()
-                .filter(|(_, p)| p.distance(pointer) < 9.0)
+                .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
                 .map(|(e, _)| *e);
             match self.tool {
@@ -1291,7 +1427,7 @@ impl SchematicEditor {
                     }
                 }
                 Tool::Wire => {
-                    if let Some(to) = pin {
+                    if let Some((to, _)) = target_at(pointer) {
                         if let Some(from) = self.wire_from.take() {
                             if from != to {
                                 output = self.stage_update(
@@ -1434,6 +1570,15 @@ impl SchematicEditor {
             .unwrap_or(centre)
     }
 
+    /// Where a wire end is drawn while a dragged occurrence moves its pin.
+    /// Junctions stay where they are.
+    fn preview_end(&self, project: &Project, end: WireEnd, original: Point) -> Point {
+        match end {
+            WireEnd::Terminal(endpoint) => self.preview_endpoint(project, endpoint, original),
+            WireEnd::Junction(_) => original,
+        }
+    }
+
     /// Where a wire end is drawn while its unit's occurrence is dragged.
     fn preview_endpoint(&self, project: &Project, endpoint: Endpoint, original: Point) -> Point {
         if let Some((id, position)) = self.preview
@@ -1522,9 +1667,9 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
     }
     Some(match editor.tool {
         Tool::Wire if editor.wire_from.is_some() => {
-            "Click a second terminal · Esc cancels".to_owned()
+            "Click a terminal or wire to end · Esc cancels".to_owned()
         }
-        Tool::Wire => "Click a terminal to start a wire".to_owned(),
+        Tool::Wire => "Click a terminal or wire to start a wire".to_owned(),
         Tool::Place => match editor.component.and_then(|c| project.library.component(c)) {
             Some(component) => format!("Click to place {} · Esc ends", component.meta.name),
             None => "Publish a component to place it".to_owned(),
@@ -1641,12 +1786,12 @@ impl SchematicEditor {
         kit::section(ui, "wiring", "Wire", true, None, |ui| {
             let start = self
                 .wire_from
-                .map_or_else(|| "Not started".to_owned(), |e| endpoint_label(project, e));
+                .map_or_else(|| "Not started".to_owned(), |e| target_label(project, e));
             kit::value_row(ui, "Start", &start);
             kit::hint(
                 ui,
                 "Crossing wires are not joined",
-                "A wire joins exactly the two terminals it was drawn between.",
+                "A wire joins where its end lands on a pin or another wire; a dot marks the junction.",
             );
         });
     }
@@ -1727,6 +1872,62 @@ fn focus_left(ui: &egui::Ui, key: egui::Id, rect: Rect) -> Option<bool> {
     (was && !inside).then(|| ui.input(|i| i.key_pressed(egui::Key::Escape)))
 }
 
+/// Paint a pin end's mark: nothing for a wired end, the Issues to-do ring
+/// for one still needing a decision, a cross for a decided no-connect.
+fn paint_pin_mark(
+    painter: &egui::Painter,
+    p: Pos2,
+    mark: PinMark,
+    dim: impl Fn(egui::Color32) -> egui::Color32,
+) {
+    let t = Tokens::get();
+    match mark {
+        PinMark::Wired => {}
+        PinMark::ToDo => {
+            let ink = dim(kit::severity::ink(kit::severity::Level::ToDo));
+            painter.circle_stroke(p, 3.5, Stroke::new(1.5, ink));
+        }
+        PinMark::NoConnect => {
+            let ink = dim(t.text_dim);
+            let h = 3.0;
+            let stroke = Stroke::new(1.5, ink);
+            painter.line_segment([p + egui::vec2(-h, -h), p + egui::vec2(h, h)], stroke);
+            painter.line_segment([p + egui::vec2(-h, h), p + egui::vec2(h, -h)], stroke);
+        }
+    }
+}
+
+/// Where a Wire tool target sits on the sheet.
+fn target_position(project: &Project, target: WireTarget) -> Option<Point> {
+    match target {
+        WireTarget::Terminal(e) => schematic::pin_position(project, e),
+        WireTarget::Junction(j) => project.junction(j.junction).map(|j| j.position),
+        WireTarget::OnWire(p) => Some(p.at),
+    }
+}
+
+/// A wire end as people name it: a terminal label or "Junction".
+fn end_label(project: &Project, end: WireEnd) -> String {
+    match end {
+        WireEnd::Terminal(e) => endpoint_label(project, e),
+        WireEnd::Junction(_) => "Junction".to_owned(),
+    }
+}
+
+/// A Wire tool target as people name it.
+fn target_label(project: &Project, target: WireTarget) -> String {
+    match target {
+        WireTarget::Terminal(e) => endpoint_label(project, e),
+        WireTarget::Junction(_) => "Junction".to_owned(),
+        WireTarget::OnWire(p) => {
+            let net = project
+                .wire(p.wire)
+                .and_then(|w| schematic::wire_net(project, w));
+            net.map_or_else(|| "Wire".to_owned(), |n| format!("Wire on {}", n.name))
+        }
+    }
+}
+
 /// A terminal as people name it: the instance's designator and the
 /// terminal's name ("R1 pin 2", "U3 pin VOUT").
 fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
@@ -1745,6 +1946,8 @@ fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
     format!("{} pin {name}", instance.designator)
 }
 
+#[cfg(test)]
+mod junction_tests;
 #[cfg(test)]
 mod part_tests;
 #[cfg(test)]
@@ -1765,10 +1968,10 @@ mod tests {
         let r1 = engine.project().instances[0].id;
         let occurrence = engine.project().occurrences[0].id;
         let mut editor = SchematicEditor {
-            wire_from: Some(Endpoint {
+            wire_from: Some(WireTarget::Terminal(Endpoint {
                 instance: r1,
                 terminal: pcbcraft_core::TerminalId(2),
-            }),
+            })),
             drag: Some((occurrence, [0.0, 0.0])),
             preview: Some((occurrence, [10.0, 10.0])),
             ..Default::default()
@@ -2661,6 +2864,46 @@ mod tests {
         (labels, operations)
     }
 
+    /// Two fingers pan the sheet and never zoom; a pinch zooms about the
+    /// pointer, which keeps its sheet point.
+    #[test]
+    fn two_fingers_pan_the_sheet_and_a_pinch_zooms_about_the_pointer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::navigation::tests::swipe;
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let at = pos2(300.0, 260.0);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![egui::Event::PointerMoved(at)],
+        );
+        let (scale, pan) = (editor.scale, editor.pan);
+        workspace_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            swipe(vec2(-5.0, 8.0), egui::Modifiers::NONE, 2),
+        );
+        assert_eq!(editor.scale, scale, "two fingers must not zoom");
+        assert_eq!(editor.pan - pan, vec2(-10.0, 16.0));
+        // The sheet point under the pointer, relative to the canvas centre.
+        let centre = pos2(400.0, 400.0);
+        let sheet = |e: &SchematicEditor| (at - centre - e.pan) / e.scale;
+        let before = sheet(&editor);
+        workspace_frame(&mut editor, &engine, &ctx, vec![egui::Event::Zoom(1.5)]);
+        assert!(
+            (editor.scale - scale * 1.5).abs() < 1e-4,
+            "{}",
+            editor.scale
+        );
+        assert!((sheet(&editor) - before).length() < 1e-4);
+        Ok(())
+    }
+
     /// Clicking a row picks it: the palette closes, the Place tool is armed
     /// with that revision, and one click on the sheet places it once.
     #[test]
@@ -2935,10 +3178,10 @@ mod tests {
         click_at(&mut editor, &engine, &ctx, pin_one);
         assert_eq!(
             editor.wire_from,
-            Some(Endpoint {
+            Some(WireTarget::Terminal(Endpoint {
                 instance: r1,
                 terminal: pcbcraft_core::TerminalId(1)
-            })
+            }))
         );
         engine.undo()?;
         engine.undo()?;
@@ -3058,7 +3301,12 @@ mod tests {
         let wire = engine.project().wires[0].id;
         let net = engine
             .project()
-            .net_of(engine.project().wires[0].from)
+            .net_of(
+                engine.project().wires[0]
+                    .from
+                    .terminal()
+                    .ok_or("terminal end")?,
+            )
             .ok_or("net")?;
         editor.select(None, None, engine.project());
         editor.selected_wire = Some(wire);
@@ -3117,8 +3365,8 @@ mod tests {
         };
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         let labels: Vec<String> = shown(&output).into_iter().map(|(t, _)| t).collect();
-        let from = endpoint_label(engine.project(), wire.from);
-        let to = endpoint_label(engine.project(), wire.to);
+        let from = end_label(engine.project(), wire.from);
+        let to = end_label(engine.project(), wire.to);
         for text in [
             "NET",
             "Members",
@@ -3151,7 +3399,10 @@ mod tests {
             vec![egui::Event::PointerMoved(at), press(true)],
         );
         frame(&mut editor, &engine, &ctx, vec![press(false)]);
-        assert_eq!(editor.selected_instance(), Some(wire.to.instance));
+        assert_eq!(
+            editor.selected_instance(),
+            wire.to.terminal().map(|e| e.instance)
+        );
         Ok(())
     }
 

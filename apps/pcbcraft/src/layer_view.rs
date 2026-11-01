@@ -328,7 +328,9 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let output = ctx.run_ui(input, |ui| changed = popover(ui, view, &copper));
+            let mut output = ctx.run_ui(input, |ui| changed = popover(ui, view, &copper));
+            // Tests have no renderer to apply texture deltas.
+            output.textures_delta.clear();
             (output, changed)
         };
         let (output, _) = frame(view, vec![]);

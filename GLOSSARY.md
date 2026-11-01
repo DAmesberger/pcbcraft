@@ -193,6 +193,10 @@ The value a field has on an instance, with its origin: assigned, component defau
 **Net**:
 A set of electrical connection points intended to be joined. Each net has a persistent ID and an editable name; tracks refer to the ID. Connecting merges nets (the routed, else older, ID survives) and disconnecting splits them (the larger group keeps the ID). Sharing a net does not establish that PCB copper actually connects those points.
 
+**Junction**:
+A schematic connection point where wires meet away from a terminal, made where a wire end lands on another wire's segment. The solid junction dot is drawn wherever three or more conductors meet (a pin counts as one); it is derived from connectivity, not stored. A plain wire crossing is not a junction.
+_Avoid_: Dot (as the stored object)
+
 **No-connect marker**:
 A project decision to leave a particular connection point unconnected. It is distinct from a manufacturer's declaration that a package terminal must not be connected.
 

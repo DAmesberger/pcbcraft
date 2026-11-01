@@ -312,8 +312,8 @@ impl Engine {
                 engine.apply(
                     engine.revision,
                     Operation::Schematic(schematic::SchematicCommand::Connect {
-                        from: pair[0],
-                        to: pair[1],
+                        from: pair[0].into(),
+                        to: pair[1].into(),
                     }),
                 )?;
             }
@@ -431,11 +431,13 @@ impl Engine {
                 from: Endpoint {
                     instance: first,
                     terminal: TerminalId(2),
-                },
+                }
+                .into(),
                 to: Endpoint {
                     instance: second,
                     terminal: TerminalId(1),
-                },
+                }
+                .into(),
             }),
         )?;
         engine.apply(
@@ -598,6 +600,7 @@ impl Engine {
         };
         if !Arc::ptr_eq(&candidate.project, &self.document.project) {
             let project = Arc::make_mut(&mut candidate.project);
+            schematic::tidy(project);
             nets::reconcile(project)?;
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
