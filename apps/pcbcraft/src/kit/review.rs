@@ -10,7 +10,6 @@
 //! `crates/ui-egui/src/ui_kit/review.rs` (`ReviewAndApply`: impact rows,
 //! acknowledgement and gated apply; a modal `Confirm` there, docked here),
 //! MIT option; see ATTRIBUTION.md.
-#![allow(dead_code, reason = "slice K4 kit; slice R1 uses it")]
 
 use super::dialog::{DialogAction, DialogPanel};
 use super::severity::{Level, severity_glyph};
@@ -91,7 +90,25 @@ pub fn apply_gate(stale: bool, blockers: &[ReviewLine], acked: &[bool]) -> Optio
 
 impl ReviewPanel<'_> {
     /// Draw the review. `acked[n]` holds blocker `n`'s acknowledgement.
+    #[allow(
+        dead_code,
+        reason = "the contract's plain form; the update review uses show_with"
+    )]
     pub fn show(&self, ui: &mut Ui, acked: &mut [bool]) -> Option<ReviewAction> {
+        self.show_with(ui, acked, None, |_| {})
+    }
+
+    /// [`Self::show`] with the engine's refusal of the last Apply as the
+    /// body's last row (it does not gate a retry), and `inputs` drawn after
+    /// the blockers and before the change groups (a review's own choices,
+    /// such as which instances an update moves). Slice R1, additive.
+    pub fn show_with(
+        &self,
+        ui: &mut Ui,
+        acked: &mut [bool],
+        refusal: Option<&str>,
+        inputs: impl FnOnce(&mut Ui),
+    ) -> Option<ReviewAction> {
         let mut action = None;
         let gate = apply_gate(self.stale, self.blockers, acked);
         let mut panel = DialogPanel::new(self.id, self.icon, self.title, self.apply);
@@ -100,6 +117,7 @@ impl ReviewPanel<'_> {
         panel.body_rows = f32::INFINITY;
         panel.primary_disabled = gate;
         panel.status = gate;
+        panel.refusal = refusal;
         let footer = panel.show(ui, |ui| {
             let t = Tokens::get();
             if self.stale {
@@ -134,6 +152,7 @@ impl ReviewPanel<'_> {
                     }
                 });
             }
+            inputs(ui);
             for (n, group) in self.groups.iter().enumerate() {
                 let expanded_id = self.id.with(("group_all", n));
                 super::section(

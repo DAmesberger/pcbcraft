@@ -352,12 +352,22 @@ impl App {
             footer: false,
             issues: None,
         };
+        // A review docks in the subject slot with its own header and pinned
+        // footer (slice R1), in place of the Properties card.
+        let reviewing = inspector.header.kind == crate::update_preview::KIND;
         let card = shell::column_card(
             ctx,
             "properties",
             column.subject,
             shell::COLUMN_CARD_INSET,
             |ui| {
+                if reviewing {
+                    self.inspector(ui);
+                    return kit::card::CardResponse {
+                        output: None,
+                        show_issues: false,
+                    };
+                }
                 kit::card::card(ui, &inspector, |ui, region| {
                     if region == kit::card::Region::Body {
                         self.inspector(ui);

@@ -684,6 +684,13 @@ impl PcbEditor {
         }
         self.refresh_drag_airwires(engine);
         self.paint_board(&painter, view, project);
+        // Slice R1: the docked review's canvas preview.
+        if let Some(marks) = self.update.marks() {
+            crate::update_preview::paint_board(&painter, project, &marks, screen, |id| {
+                let placement = project.placements.iter().find(|p| p.instance == id)?;
+                body_polygon(project, placement)
+            });
+        }
         if let (Some(start), Some(at)) = (self.route_start, cursor) {
             let end = self
                 .route_snap(at, scale)
