@@ -29,6 +29,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "erc.open_drain_contention"
         // Geometry past the limit is unchecked, so errors may be uncounted.
         | "board.check_limit"
+        | "board.shape_unsolved"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
@@ -52,6 +53,8 @@ pub(super) fn group_title(code: &str) -> String {
         "board.via_drill_clearance" => "Via drills too close to copper",
         "board.via_hole_spacing" => "Via drills too close together",
         "board.via_dangling" => "Vias joining nothing",
+        "board.constraint_unresolved" => "Edge constraints unresolved",
+        "board.shape_unsolved" => "Board shape does not solve",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -141,6 +144,8 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.via_annular_ring" => "Enlarge the via pad or shrink its drill",
         "board.via_drill_clearance" | "board.via_hole_spacing" => "Move the via",
         "board.via_dangling" => "Route copper to the via or delete it",
+        "board.constraint_unresolved" => "Edit or delete the edge constraint",
+        "board.shape_unsolved" => "Fix the board sketch's dimensions",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -350,8 +355,10 @@ pub const KNOWN_CODES: &[&str] = &[
     "binding.unavailable_unknown",
     "board.check_limit",
     "board.clearance",
+    "board.constraint_unresolved",
     "board.courtyard_overlap",
     "board.outside_outline",
+    "board.shape_unsolved",
     "board.unplaced",
     "board.unrouted",
     "board.via_annular_ring",

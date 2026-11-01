@@ -703,6 +703,9 @@ impl Engine {
                     project.nets.iter().map(|n| n.id).collect();
                 project.rules.assignments.retain(|a| live.contains(&a.net));
             }
+            // Constrained parts, fills and keepouts follow their board
+            // edges (and a move away from one is refused).
+            layout::outline::follow(&self.document.project, project, evaluators.board)?;
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
             }

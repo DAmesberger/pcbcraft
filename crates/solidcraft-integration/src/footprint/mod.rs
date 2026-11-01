@@ -12,11 +12,11 @@
 //! - [`view`]: a read-only, id-keyed sketch view for the Footprint tab.
 
 mod arrays;
-mod check;
+pub(crate) mod check;
 mod classify;
-mod edit;
-mod evaluate;
-mod params;
+pub(crate) mod edit;
+pub(crate) mod evaluate;
+pub(crate) mod params;
 #[cfg(test)]
 mod tests;
 pub mod view;
