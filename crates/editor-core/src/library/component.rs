@@ -190,6 +190,11 @@ impl ComponentDefinition {
             &self.resources,
             &self.constraints,
         ));
+        out.extend(
+            functions::pin_config::declaration_problems(&declarations, &self.resources)
+                .into_iter()
+                .map(|p| issue(p.code, p.message, vec![object(id, p.local)])),
+        );
         out.extend(functions::rules::declaration_findings(id, &self.pin_rules));
         if let Some(marking) = &self.marking {
             out.extend(super::marking::spec_findings(id, marking));

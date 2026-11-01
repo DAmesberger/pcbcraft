@@ -1,7 +1,7 @@
 //! Slice C5: the Pins tab (between Symbol and Footprint) with its Table,
 //! Peripherals and Rules sub-views, and its Properties card for the
 //! selected terminal, function, peripheral or rule. Owned by C5, with
-//! `pins_table.rs` and `rules_editor.rs` (docs/library-pins-3d-contract.md).
+//! `pins_table.rs` and `rules_editor.rs` (docs/component-model.md, pin functions as built).
 //!
 //! Every edit changes the working copy and travels through the editor's
 //! one commit (`library.edit`, one undo step per finished edit), exactly as

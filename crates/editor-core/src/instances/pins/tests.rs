@@ -943,3 +943,33 @@ fn declaration_problems_name_malformed_pin_data() {
         .is_empty()
     );
 }
+
+/// Publication refuses malformed pin data with the problem's code, and
+/// changes nothing.
+#[test]
+fn publication_refuses_a_repeated_gpio() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let fixture = exq_draft(&mut engine, vec![])?;
+    with(&mut engine, fixture.component, component_body, |c| {
+        let gpio = c.terminals.iter().find_map(|t| match &t.class {
+            TerminalClass::Electrical(f) if t.id.0 == PA0 => f.gpio.clone(),
+            _ => None,
+        });
+        if let Some(TerminalClass::Electrical(f)) = c
+            .terminals
+            .iter_mut()
+            .find(|t| t.id.0 == PA1)
+            .map(|t| &mut t.class)
+        {
+            f.gpio = gpio;
+        }
+    })?;
+    let before = engine.document().clone();
+    let refused = publish(&mut engine, fixture.all());
+    assert!(
+        matches!(&refused, Err(Error::Conflict(m)) if m.contains("repeats GPIO")),
+        "{refused:?}"
+    );
+    assert_eq!(engine.document(), &before);
+    Ok(())
+}

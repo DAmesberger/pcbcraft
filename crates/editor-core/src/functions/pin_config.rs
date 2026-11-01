@@ -96,7 +96,7 @@ pub struct PinConfig {
     pub initial: Option<Level>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schmitt: Option<bool>,
-    /// Firmware identifier override; the net name is the default.
+    /// Firmware identifier override; a named net's name is the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
@@ -255,14 +255,10 @@ pub fn config_within_bounds(config: &PinConfig) -> bool {
             .is_none_or(|n| n.len() <= MAX_FIRMWARE_NAME)
 }
 
-/// What is wrong with a component's C2 pin data, as publication would
-/// report it. Each problem names the terminal, function or resource local
-/// ID it concerns.
-///
-/// Integration item: these are not wired into publication yet because the
-/// finding codes (`function.mux`, `function.gpio`, `function.pin_option`,
-/// `resource.kind`, `resource.signal`) are not registered in the frozen
-/// `KNOWN_CODES`, and the call site (`library/component.rs`) is frozen.
+/// What is wrong with a component's pin data. Publication reports each as
+/// a blocking finding (`function.mux`, `function.gpio`,
+/// `function.pin_option`, `resource.kind`, `resource.signal`) on the
+/// terminal, function or resource local ID it names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PinDataProblem {
     /// The finding code publication would use.

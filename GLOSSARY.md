@@ -37,7 +37,7 @@ A declared capability of an electrical terminal, with its own identity, electric
 The intended active function chosen for a terminal of a particular component instance. It determines that terminal's displayed function and electrical checking behavior without changing its identity or package mapping.
 
 **Peripheral resource**:
-A named functional resource within a component, such as a UART instance or ADC channel. Pin functions may refer to that resource and its signal roles, with explicit rules governing compatible selections.
+A named functional resource within a component, such as a UART instance or ADC channel; also called a peripheral instance. Pin functions may refer to that resource and its signal roles, with explicit rules governing compatible selections. Its optional kind (`uart`, `spi`, …) is grouping text and never selects behaviour.
 
 **Terminal class**:
 How a component definition classifies a terminal: electrical, with one or more pin functions; device NC, declared by the device as not connected; or reserved. Device-NC and reserved terminals have no functions, cannot be wired and need no project decision.
@@ -46,7 +46,25 @@ How a component definition classifies a terminal: electrical, with one or more p
 How an output or bidirectional function drives its net: push-pull, open drain or open source. Inputs, passive and power functions have no drive. Electrical checks use the active function's drive, so several open-drain drivers with a pull-up are not a conflict.
 
 **Resource role**:
-A part of a peripheral resource, such as a UART's transmit line, with a capacity (how many active functions may take it at once) and whether it is required once the resource is used.
+A part of a peripheral resource, such as a UART's transmit line, with a capacity (how many active functions may take it at once), whether it is required once the resource is used and optionally the datasheet's signal name for it (signal role).
+
+**Mux code**:
+The datasheet's selector for one pin function, such as an alternate-function number, stored as explicit text on the function. It is shown and exported, never parsed out of a name.
+
+**GPIO identity**:
+The port and index a datasheet gives a terminal (`A`, 9). One identity belongs to one terminal of a component.
+
+**Pin option** / **Pin configuration**:
+A pin option is a setting a terminal declares with its allowed values: pull, speed, initial level or Schmitt input. A pin configuration is an instance's chosen values for one terminal, plus an optional firmware name; it is checked against the declared options and never changes electrical checks.
+
+**Pin rule**:
+A datasheet restriction on pin-function combinations, stored in the component revision as a short sandboxed Rhai script that reads a read-only view of one assignment and returns ok, forbid, require or warn. Forbid rejects the assignment, require leaves it incomplete and warn is a note; a script that fails to compile, raises an error or exceeds its budget is a finding.
+
+**Pinout document**:
+A typed, format-versioned description of a device's pins, peripherals, functions, options and rules, filled from a datasheet by a person or an agent. Importing it is previewed as a plan, applied against that plan's base and leaves every written row unreviewed; a row flagged uncertain blocks publishing until it is corrected or cleared (import review).
+
+**Firmware pin configuration**:
+The format-1 description of one instance's configured pins (function, peripheral, role, mux code, GPIO, options and firmware name) derived from its function resolution, pin configuration and named nets, and emitted as JSON, a C header, a Zephyr overlay skeleton, Rust constants or a user template. It is a starting point, not clock, register or HAL setup.
 
 **Design default**:
 The function a multi-function terminal uses when an instance makes no explicit selection. A terminal with one function is fixed and needs no default; a reset state is never a design default.
