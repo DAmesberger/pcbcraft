@@ -258,8 +258,8 @@ pub fn drill_table_text(project: &Project, table: &DrillTable) -> String {
     let _ = writeln!(s);
     let _ = writeln!(
         s,
-        "{:<6}{:<10}{:<12}{:<7}{:<12}{:>7}  {}",
-        "Tool", "Diameter", "Plating", "Kind", "Function", "Count", "Symbol"
+        "{:<6}{:<10}{:<12}{:<7}{:<12}{:>7}  Symbol",
+        "Tool", "Diameter", "Plating", "Kind", "Function", "Count"
     );
     let (mut plated, mut other, mut slots) = (0usize, 0usize, 0usize);
     for (i, tool) in table.tools.iter().enumerate() {
