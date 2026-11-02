@@ -85,7 +85,12 @@ fn text(text: &str, height: f64) -> LaidElement {
     LaidElement::Text(LaidText {
         text: text.into(),
         height_mm: height,
-        origin: [0.0, 0.0],
+        // Centred on the area: the core gives the box's bottom-left corner.
+        origin: [
+            -(text.chars().count() as f64) * pcbcraft_core::library::marking::TEXT_ADVANCE * height
+                / 2.0,
+            -height / 2.0,
+        ],
     })
 }
 
@@ -93,8 +98,16 @@ fn layout(elements: Vec<LaidElement>, finish: Finish) -> MarkingLayout {
     MarkingLayout {
         elements,
         finish,
-        findings: Vec::new(),
+
+        ..MarkingLayout::default()
     }
+}
+
+fn all_ccw_decal(flat: &FlatDecal) -> bool {
+    flat.triangles().iter().all(|t| {
+        let [a, b, c] = t.map(|i| flat.points()[i as usize]);
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 0.0
+    })
 }
 
 fn top(origin: [f64; 3], size: [f64; 2]) -> MarkingArea {
@@ -109,9 +122,15 @@ fn top(origin: [f64; 3], size: [f64; 2]) -> MarkingArea {
 /// Every triangle of `mesh` faces its normal, and every vertex is in the
 /// plane `DECAL_OFFSET_MM` off the area.
 fn check_plane(mesh: &DecalMesh, area: &MarkingArea) {
-    let n = mesh.normal.map(f64::from);
+    let n = mesh
+        .normals
+        .first()
+        .copied()
+        .unwrap_or_default()
+        .map(f64::from);
     let at = |i: u32| mesh.positions[i as usize].map(f64::from);
-    let plane: f64 = (0..3).map(|k| area.origin[k] * n[k]).sum::<f64>() + DECAL_OFFSET_MM;
+    let plane: f64 = (0..3).map(|k| area.origin[k] * n[k]).sum::<f64>()
+        + mesh.finish.lift_mm().max(DECAL_OFFSET_MM);
     for p in &mesh.positions {
         let d: f64 = (0..3).map(|k| f64::from(p[k]) * n[k]).sum();
         assert!((d - plane).abs() < 1e-5, "{d} vs {plane}");
@@ -135,7 +154,7 @@ fn a_value_code_becomes_glyph_outlines_on_the_face() -> TestResult {
     let area = top([10.0, 5.0, 0.55], [1.6, 0.8]);
     let mesh = decal(&layout(vec![text("103", 0.4)], Finish::LaserEtch), &area)?;
     assert!(mesh.triangle_count() > 20, "{}", mesh.triangle_count());
-    assert_eq!(mesh.normal, [0.0, 0.0, 1.0]);
+    assert!(mesh.normals.iter().all(|n| *n == [0.0, 0.0, 1.0]));
     assert_eq!(mesh.finish, Finish::LaserEtch);
     check_plane(&mesh, &area);
     // Centred on the area, inside it, about as tall as asked.
@@ -157,23 +176,19 @@ fn a_value_code_becomes_glyph_outlines_on_the_face() -> TestResult {
 fn glyph_counters_stay_open() -> TestResult {
     let flat = flatten(
         &layout(vec![text("O", 2.0)], Finish::InkWhite),
-        [5.0, 5.0],
+        &Region::plane([5.0, 5.0]),
         &no_artwork,
     )?;
     assert!(!flat.is_empty());
-    assert!(
-        !covers(&flat.flat, [0.0, 0.0]),
-        "the counter of O is filled"
-    );
-    assert!(all_ccw(&flat.flat));
+    assert!(!flat.covers([0.0, 0.0]), "the counter of O is filled");
+    assert!(all_ccw_decal(&flat));
     // The stroke of the O, left of its counter, is filled.
     let left = flat
-        .flat
-        .points
+        .points()
         .iter()
         .map(|p| p[0])
         .fold(f64::INFINITY, f64::min);
-    assert!(covers(&flat.flat, [left + 0.08, 0.0]));
+    assert!(flat.covers([left + 0.08, 0.0]));
     Ok(())
 }
 
@@ -182,10 +197,10 @@ fn a_line_the_font_sets_wider_than_the_area_is_shrunk_to_fit() -> TestResult {
     let area = [1.0, 0.6];
     let flat = flatten(
         &layout(vec![text("10K0", 0.5)], Finish::LaserEtch),
-        area,
+        &Region::plane(area),
         &no_artwork,
     )?;
-    let xs = flat.flat.points.iter().map(|p| p[0]);
+    let xs = flat.points().iter().map(|p| p[0]);
     let (lo, hi) = xs.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), x| {
         (l.min(x), h.max(x))
     });
@@ -204,12 +219,12 @@ fn the_decal_follows_the_area_frame() -> TestResult {
         size_mm: [3.0, 1.5],
     };
     let mesh = decal(&layout(vec![text("U1", 0.8)], Finish::InkWhite), &area)?;
-    assert_eq!(mesh.normal, [0.0, 0.0, -1.0]);
+    assert!(mesh.normals.iter().all(|n| *n == [0.0, 0.0, -1.0]));
     check_plane(&mesh, &area);
     assert!(
         mesh.positions
             .iter()
-            .all(|p| (f64::from(p[2]) - (-1.6 - DECAL_OFFSET_MM)).abs() < 1e-5)
+            .all(|p| (f64::from(p[2]) - (-1.6 - Finish::InkWhite.lift_mm())).abs() < 1e-5)
     );
     // The line runs along u (+y): longer in y than in x.
     let span = |k: usize| {
@@ -229,19 +244,22 @@ fn a_changed_value_refills_only_its_own_decal() -> TestResult {
     let ten_k = layout(vec![text("103", 0.4)], Finish::LaserEtch);
     let one_k = layout(vec![text("102", 0.4)], Finish::LaserEtch);
     let first = cache.flat(a, &ten_k, size, &no_artwork)?;
-    cache.flat(b, &ten_k, size, &no_artwork)?;
-    assert_eq!(cache.built(), 2);
+    // Another instance showing the same marking on the same face shares
+    // the one flat decal.
+    let shared = cache.flat(b, &ten_k, size, &no_artwork)?;
+    assert!(Arc::ptr_eq(&first, &shared));
+    assert_eq!(cache.built(), 1);
     cache.sweep();
     // Same layouts again: nothing is built.
     let again = cache.flat(a, &ten_k, size, &no_artwork)?;
     assert!(Arc::ptr_eq(&first, &again));
     cache.flat(b, &ten_k, size, &no_artwork)?;
-    assert_eq!(cache.built(), 2);
+    assert_eq!(cache.built(), 1);
     cache.sweep();
     // b's value changes: only b is built, and a's decal is the same.
     cache.flat(a, &ten_k, size, &no_artwork)?;
     let changed = cache.flat(b, &one_k, size, &no_artwork)?;
-    assert_eq!(cache.built(), 3);
+    assert_eq!(cache.built(), 2);
     assert_ne!(*changed, *first);
     cache.sweep();
     assert_eq!(cache.len(), 2, "the old decal of b is dropped");
@@ -290,7 +308,7 @@ fn polarity_marks_and_bands_fill_their_boxes() -> TestResult {
             }],
             Finish::InkWhite,
         ),
-        [2.0, 1.0],
+        &Region::plane([2.0, 1.0]),
         &no_artwork,
     )?;
     let disc = std::f64::consts::PI * 0.15 * 0.15;
@@ -299,7 +317,7 @@ fn polarity_marks_and_bands_fill_their_boxes() -> TestResult {
         "{}",
         dot.area_mm2()
     );
-    assert!(covers(&dot.flat, [-0.5, 0.2]));
+    assert!(dot.covers([-0.5, 0.2]));
 
     let colours = vec![1, 0, 2, 10];
     let banded = flatten(
@@ -310,19 +328,26 @@ fn polarity_marks_and_bands_fill_their_boxes() -> TestResult {
             }],
             Finish::LaserEtch,
         ),
-        [4.0, 1.6],
+        &Region::plane([4.0, 1.6]),
         &no_artwork,
     )?;
-    let runs: Vec<u8> = banded.bands.iter().map(|(c, _)| *c).collect();
+    let runs: Vec<u8> = banded
+        .runs()
+        .iter()
+        .filter_map(|(ink, _)| match ink {
+            Ink::Band(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
     assert_eq!(runs, colours);
     // Each band is half a pitch wide across the area.
     assert!((banded.area_mm2() - 4.0 * 0.4 * 1.6).abs() < 1e-9);
     // The first band is centred one pitch from the −x end.
-    assert!(covers(&banded.flat, [-2.0 + 0.8, 0.0]));
-    assert!(!covers(&banded.flat, [-2.0 + 0.4, 0.0]));
+    assert!(banded.covers([-2.0 + 0.8, 0.0]));
+    assert!(!banded.covers([-2.0 + 0.4, 0.0]));
     let mesh = place(&banded, &top([0.0, 0.0, 1.0], [4.0, 1.6]))?;
-    assert_eq!(mesh.bands.len(), 4);
-    assert!(mesh.bands.iter().all(|r| r.indices.len() % 3 == 0));
+    assert_eq!(mesh.runs.len(), 4);
+    assert!(mesh.runs.iter().all(|r| r.indices.len() % 3 == 0));
     for colour in 0..12 {
         band_colour(colour)?;
         band_surface(colour)?;
@@ -335,7 +360,7 @@ fn polarity_marks_and_bands_fill_their_boxes() -> TestResult {
         }],
         Finish::LaserEtch,
     );
-    assert!(flatten(&bad, [4.0, 1.6], &no_artwork).is_err());
+    assert!(flatten(&bad, &Region::plane([4.0, 1.6]), &no_artwork).is_err());
     Ok(())
 }
 
@@ -357,9 +382,9 @@ fn artwork_is_scaled_into_its_box() -> TestResult {
         }],
         Finish::LaserEtch,
     );
-    let flat = flatten(&marked, [3.0, 3.0], &source)?;
+    let flat = flatten(&marked, &Region::plane([3.0, 3.0]), &source)?;
     assert!(!flat.is_empty());
-    let xs = flat.flat.points.iter().map(|p| p[0]);
+    let xs = flat.points().iter().map(|p| p[0]);
     let (lo, hi) = xs.fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), x| {
         (l.min(x), h.max(x))
     });
@@ -368,7 +393,7 @@ fn artwork_is_scaled_into_its_box() -> TestResult {
     // The square is filled: 1 mm × 1 mm at a tenth of its size.
     assert!(flat.area_mm2() > 1.0, "{}", flat.area_mm2());
     // Without the asset, artwork draws nothing.
-    assert!(flatten(&marked, [3.0, 3.0], &no_artwork)?.is_empty());
+    assert!(flatten(&marked, &Region::plane([3.0, 3.0]), &no_artwork)?.is_empty());
     Ok(())
 }
 
@@ -538,7 +563,7 @@ fn a_package_preview_gets_its_decal_on_top() -> TestResult {
         .fold(f64::MIN, f64::max);
     for g in &decal {
         assert!(
-            (g.min[2] - roof - DECAL_OFFSET_MM).abs() < 1e-5,
+            (g.min[2] - roof - Finish::InkWhite.lift_mm()).abs() < 1e-5,
             "{} vs {roof}",
             g.min[2]
         );

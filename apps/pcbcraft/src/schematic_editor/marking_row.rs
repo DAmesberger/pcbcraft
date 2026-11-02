@@ -72,16 +72,18 @@ impl Source {
 /// then its polarity marks and bands named.
 pub fn layout_text(layout: &MarkingLayout) -> String {
     let mut words: Vec<String> = Vec::new();
-    for element in &layout.elements {
+    for element in layout.all().flat_map(|l| l.elements.iter()) {
         match element {
             LaidElement::Text(text) if !text.text.is_empty() => words.push(text.text.clone()),
             LaidElement::Text(_) => {}
             LaidElement::Artwork { .. } => words.push("artwork".into()),
+            LaidElement::Matrix { .. } => words.push("QR code".into()),
             LaidElement::Polarity { mark, .. } => words.push(
                 match mark {
                     PolarityMark::Dot => "dot",
                     PolarityMark::Bar => "bar",
                     PolarityMark::Band => "band",
+                    PolarityMark::Stripe => "stripe",
                 }
                 .into(),
             ),
@@ -383,6 +385,7 @@ mod tests {
             },
             finish: Finish::InkWhite,
             min_text_height_mm: None,
+            ..MarkingSpec::default()
         }
     }
 

@@ -282,6 +282,9 @@ pub enum Request {
     /// Set a component draft's marking with SVG artwork as text.
     #[serde(rename = "library.set_marking")]
     SetMarking(marking::SetMarkingParams),
+    /// Where a package can be marked: model area, box faces, anchors.
+    #[serde(rename = "library.marking_surfaces")]
+    MarkingSurfaces(marking::MarkingSurfacesParams),
 }
 
 impl Request {
@@ -401,7 +404,11 @@ impl Request {
             ),
             info::<marking::SetMarkingParams>(
                 "library.set_marking",
-                "Set or clear a component draft's generic marking (display-only decals on the package's top face; a module's shield can): text items from templates such as {mpn}, SVG artwork given as text with its licence (the session packs it by SHA-256), and polarity marks, in the model's marking area or an explicit one, laser-etched or white ink. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
+                "Set or clear a component draft's generic marking: display-only decals on the 3D model, never saved to .solidcraft or fabrication output. Items: text from templates ({mpn}, {designator}, {field:<id>}, {var:lot}), SVG artwork given as text with its licence (packed by SHA-256; never supply a logo you have no right to: a placeholder box marks where the user's own goes), polarity marks, a generated QR code (code2d: payload template, size_mm, anchor) and an electrolytic's µF/V text with its negative stripe. placement.on picks the surface: model (top marking area), a box face (top, bottom, pos_x, neg_x, pos_y, neg_y) or a named anchor from library.marking_surfaces (module: can_top, can_pos_x…, pcb_top, antenna_area; radial: top, sleeve; axial or MELF: body); then offset_mm, rotation_deg, scale, mirror, clip and, on a cylinder, wrap {seam_deg, wrap_deg, along_mm, repeat} with arc length kept. finish: laser_etch, laser_etch_metal (shield cans), ink_white (silkscreen), {ink: {colour}}, {pad_print: {colour}} or engraved. decals: up to four further decals, each with its own items, finish and placement. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
+            ),
+            info::<marking::MarkingSurfacesParams>(
+                "library.marking_surfaces",
+                "List where a package draft or published package can be marked, for library.set_marking's placement.on: the model area, the six box faces and its family's named anchors (each with a description, plane or cylinder, and size; a cylinder's circumference and whether its u runs along the axis). Not a document change.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -615,6 +622,7 @@ impl Session {
             Request::FirmwareExport(params) => return self.firmware(params, true),
             Request::InspectModelFile(params) => return self.inspect_model_file(params),
             Request::SetMarking(params) => return self.set_marking(params),
+            Request::MarkingSurfaces(params) => return self.marking_surfaces(params),
         }
         Ok(self.snapshot())
     }

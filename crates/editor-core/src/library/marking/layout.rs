@@ -9,8 +9,8 @@
 use super::codes;
 use super::template::{self, Missing};
 use super::{
-    AREA_MARGIN, Align, Anchor, LINE_GAP, LaidElement, LaidText, MAX_RENDERED_LINE, MarkingInputs,
-    MarkingItem, MarkingLayout, MarkingSpec, PolarityMark, TEXT_ADVANCE, positive,
+    AREA_MARGIN, Align, Anchor, Chart, LINE_GAP, LaidElement, LaidText, MAX_RENDERED_LINE,
+    MarkingInputs, MarkingItem, MarkingLayout, MarkingSpec, PolarityMark, TEXT_ADVANCE, positive,
 };
 use crate::diagnostics::{Error, Finding, Result};
 use crate::quantity::format_number;
@@ -73,10 +73,10 @@ fn polarity(mark: PolarityMark, at: Anchor, area: [f64; 2], margin: f64) -> ([f6
             [d, d]
         }
         PolarityMark::Bar => [0.1 * w, h - 2.0 * margin],
-        PolarityMark::Band => [0.15 * w, h],
+        PolarityMark::Band | PolarityMark::Stripe => [0.15 * w, h],
     };
     // A band sits on the body edge; the others keep the margin.
-    let inset = if mark == PolarityMark::Band {
+    let inset = if matches!(mark, PolarityMark::Band | PolarityMark::Stripe) {
         0.0
     } else {
         margin
@@ -89,6 +89,170 @@ fn polarity(mark: PolarityMark, at: Anchor, area: [f64; 2], margin: f64) -> ([f6
         (_, Anchor::End) => [-start, 0.0],
     };
     (size, centre)
+}
+
+/// Narrow the text's flow rectangle past a mark anchored at a side (a
+/// centred one leaves it; text may run over it).
+fn shrink(rect: &mut Rect, at: Anchor, origin: [f64; 2], size: [f64; 2], margin: f64) {
+    match at {
+        Anchor::Centre => {}
+        Anchor::End => rect[1] = rect[1].min(origin[0] - size[0] / 2.0 - margin),
+        Anchor::Start | Anchor::Pin1Corner => {
+            rect[0] = rect[0].max(origin[0] + size[0] / 2.0 + margin);
+        }
+    }
+}
+
+/// The symbol of a 2D code item and its module size, or nothing with a
+/// finding.
+fn code2d(
+    cx: &mut Context<'_>,
+    symbology: super::Symbology,
+    payload: &str,
+    size_mm: f64,
+    ecc: super::Ecc,
+) -> Option<(super::Symbol, f64)> {
+    let rendered = template::parse(payload)
+        .map_err(|problem| Missing::Value(format!("the payload \"{payload}\" has {problem}")))
+        .and_then(|pieces| template::render(&pieces, cx.inputs));
+    let text = match rendered {
+        Ok(text) => text,
+        Err(Missing::Value(message) | Missing::Code(message)) => {
+            cx.unrepresentable(message);
+            return None;
+        }
+    };
+    let symbol = match super::matrix::encode(symbology, &text, ecc) {
+        Ok(symbol) => symbol,
+        Err(message) => {
+            cx.unrepresentable(message);
+            return None;
+        }
+    };
+    let module = size_mm / f64::from(symbol.size.max(1));
+    if !(module.is_finite() && module >= super::matrix::MIN_MODULE_MM) {
+        cx.unrepresentable(format!(
+            "a {size_mm} mm code of {} modules has modules under {} mm",
+            symbol.size,
+            super::matrix::MIN_MODULE_MM
+        ));
+        return None;
+    }
+    Some((symbol, module))
+}
+
+/// An electrolytic's text lines from its values: the capacitance in µF
+/// and the rated voltage. Whether the values are there for a stripe too.
+fn electrolytic(
+    cx: &mut Context<'_>,
+    capacitance: crate::ids::DefinitionId,
+    voltage: Option<crate::ids::DefinitionId>,
+) -> (Vec<Line>, bool) {
+    let value = |cx: &mut Context<'_>, id, what: &str| -> Option<f64> {
+        match cx.inputs.fields.get(&id).cloned() {
+            Some((_, Some(si))) if si.is_finite() && si > 0.0 => Some(si),
+            Some((text, _)) => {
+                cx.unrepresentable(format!("{text} is not a {what}"));
+                None
+            }
+            None => {
+                cx.unrepresentable(format!("field {id} has no {what}"));
+                None
+            }
+        }
+    };
+    let Some(farads) = value(cx, capacitance, "capacitance") else {
+        return (Vec::new(), false);
+    };
+    let mut lines = vec![Line {
+        text: format!("{}µF", format_number(farads * 1e6)),
+        height: None,
+        align: Align::Centre,
+    }];
+    if let Some(volts) = voltage.and_then(|v| value(cx, v, "voltage")) {
+        lines.push(Line {
+            text: format!("{}V", format_number(volts)),
+            height: None,
+            align: Align::Centre,
+        });
+    }
+    (lines, true)
+}
+
+/// Share of a full turn an electrolytic's negative stripe spans (est.:
+/// sleeves print it over a fifth to a quarter of the circumference).
+pub const STRIPE_TURN_SHARE: f64 = 0.22;
+
+/// An electrolytic's negative stripe on the negative lead's side: at
+/// angle 0 of a sleeve wrapped round its axis (where the anchor's zero
+/// direction faces lead 2), as a band at the +x end of an axial chart, or
+/// at the +x end of a flat area. The text's rectangle keeps clear of it.
+fn stripe_element(
+    cx: &mut Context<'_>,
+    out: &mut MarkingLayout,
+    rect: &mut Rect,
+    area: [f64; 2],
+    margin: f64,
+) {
+    let [w, h] = area;
+    let tau = std::f64::consts::TAU;
+    match cx.inputs.chart {
+        Chart::Wrap {
+            radius_mm,
+            centre,
+            span,
+            along_u: false,
+        } => {
+            let width = (STRIPE_TURN_SHARE * tau * radius_mm).min(w / 2.0);
+            // The arc from the layout centre to angle 0, within half a turn.
+            let d = (-centre + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
+            let u0 = d * radius_mm;
+            let full = span >= tau - 1e-9;
+            if !full && u0.abs() + width / 2.0 > w / 2.0 + 1e-9 {
+                cx.unrepresentable(
+                    "the wrap does not reach the negative lead's side for the stripe".into(),
+                );
+                return;
+            }
+            out.elements.push(LaidElement::Polarity {
+                mark: PolarityMark::Stripe,
+                origin: [u0, 0.0],
+                size_mm: [width, h],
+            });
+            // The text goes in the widest stretch beside the stripe; on a
+            // full turn that is the far side, centred opposite it.
+            let half = if full {
+                (w - width) / 2.0 - margin
+            } else {
+                0.0
+            };
+            if full {
+                let mut c = u0 + w / 2.0;
+                if c > w / 2.0 {
+                    c -= w;
+                }
+                rect[0] = c - half;
+                rect[1] = c + half;
+            } else {
+                let left = (u0 - width / 2.0 - margin) - rect[0];
+                let right = rect[1] - (u0 + width / 2.0 + margin);
+                if left >= right {
+                    rect[1] = rect[0] + left.max(0.0);
+                } else {
+                    rect[0] = rect[1] - right.max(0.0);
+                }
+            }
+        }
+        Chart::Wrap { along_u: true, .. } | Chart::Flat => {
+            let (size, origin) = polarity(PolarityMark::Stripe, Anchor::End, area, margin);
+            rect[1] = rect[1].min(origin[0] - size[0] / 2.0 - margin);
+            out.elements.push(LaidElement::Polarity {
+                mark: PolarityMark::Stripe,
+                origin,
+                size_mm: size,
+            });
+        }
+    }
 }
 
 fn anchored(at: Anchor, size: [f64; 2], area: [f64; 2], margin: f64) -> [f64; 2] {
@@ -249,7 +413,10 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
         elements: Vec::new(),
         finish: spec.finish,
         findings: Vec::new(),
+        placement: spec.placement.clone(),
+        decals: Vec::new(),
     };
+
     if spec.items.is_empty() {
         return Ok(out);
     }
@@ -289,10 +456,55 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
         }
     }
 
+    // Generated marks that take room before the text: an electrolytic's
+    // stripe, 2D codes and artwork at a side.
+    let mut texts: Vec<Line> = Vec::new();
+    for item in &spec.items {
+        match item {
+            MarkingItem::Electrolytic {
+                capacitance,
+                voltage,
+                stripe,
+            } => {
+                let (lines, mark) = electrolytic(&mut cx, capacitance.id, voltage.map(|v| v.id));
+                texts.extend(lines);
+                if *stripe && mark {
+                    stripe_element(&mut cx, &mut out, &mut rect, area, margin);
+                }
+            }
+            MarkingItem::Code2d {
+                symbology,
+                payload,
+                size_mm,
+                anchor,
+                ecc,
+            } => {
+                if let Some(element) = code2d(&mut cx, *symbology, &payload.0, *size_mm, *ecc) {
+                    let (symbol, module) = element;
+                    let quiet = f64::from(super::matrix::QUIET_ZONE) * module;
+                    let boxed = [size_mm + 2.0 * quiet; 2];
+                    if boxed[0] > w || boxed[1] > h {
+                        cx.does_not_fit("The 2D code with its quiet zone");
+                    } else {
+                        let origin = anchored(*anchor, boxed, area, 0.0);
+                        shrink(&mut rect, *anchor, origin, boxed, margin);
+                        out.elements.push(LaidElement::Matrix {
+                            symbol,
+                            origin,
+                            module_mm: module,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     let mut lines = Vec::new();
     for item in &spec.items {
         match item {
-            MarkingItem::Polarity { .. } => {}
+            MarkingItem::Polarity { .. } | MarkingItem::Code2d { .. } => {}
+            MarkingItem::Electrolytic { .. } => lines.append(&mut texts),
             MarkingItem::Artwork {
                 svg,
                 size_mm,
@@ -302,13 +514,16 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
                 if size_mm[0] > w - 2.0 * margin || size_mm[1] > h - 2.0 * margin {
                     cx.does_not_fit("The artwork");
                 } else {
+                    let origin = anchored(*anchor, *size_mm, area, margin);
+                    shrink(&mut rect, *anchor, origin, *size_mm, margin);
                     out.elements.push(LaidElement::Artwork {
                         svg: *svg,
-                        origin: anchored(*anchor, *size_mm, area, margin),
+                        origin,
                         size_mm: *size_mm,
                     });
                 }
             }
+
             MarkingItem::Bands { value, tolerance } => {
                 let value_si = inputs.fields.get(&value.id).and_then(|(_, si)| *si);
                 let tolerance_si =
