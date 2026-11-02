@@ -297,7 +297,7 @@ Paths are relative to `apps/pcbcraft/src`. Each editor's `subject_slot` and card
 | `pcb_editor/board_card.rs` | W3: the Board card (size, copper, finish + Setup…), the Board setup dialog and the view popover (layers, view from bottom, net highlight, airwires); Board checks moved to Issues |
 | `pcb_editor/placement_card.rs` | W3: Placement (live position pair, rotation, side, lock), Connections, the Rotate 90° / Flip / Schematic › footer, and the not-placed state |
 | `pcb_editor/track_card.rs` | W3: Track (net, live layer and width through `layout.track_set`, length, ends, lock) and the Delete track footer |
-| `pcb_editor/route_card.rs` | W3: the Route tool card (width, layer, net); the route in progress is a canvas pill |
+| `pcb_editor/route_card.rs` | W3: the Route tool card (mode, width, layer, via size, net, keys); the route in progress is a canvas pill |
 | `pcb_editor/fill_card.rs` | the Fill card (fill, clearance, connections, style), its Refill / Delete fill footer and the view popover's Fills row |
 | `pcb_editor/fill_tool.rs` | the Fill tool card and outline drawing, and the selected fill's outline handles (drag a vertex or midpoint, double-click a vertex to remove it) |
 | `pcb_editor/fill_paint.rs` | fill copper in Layout: solid, hatched or outlines only, under its layer's tracks; fill picking |
