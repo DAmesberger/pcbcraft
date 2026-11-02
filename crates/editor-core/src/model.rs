@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub mod board;
 pub mod fill;
+pub mod production;
 mod stackup;
 mod via;
 pub use board::{BoardShape, EdgeConstraint, SolvedBoard};
@@ -313,6 +314,9 @@ pub struct Project {
     pub fills: Vec<Fill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keepouts: Vec<Keepout>,
+    /// Waived pre-flight findings for fabrication output.
+    #[serde(default, skip_serializing_if = "production::Production::is_default")]
+    pub production: production::Production,
 }
 
 impl Default for Project {
@@ -339,6 +343,7 @@ impl Default for Project {
             edge_constraints: vec![],
             fills: vec![],
             keepouts: vec![],
+            production: production::Production::default(),
         }
     }
 }

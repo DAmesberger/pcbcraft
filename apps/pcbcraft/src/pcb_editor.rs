@@ -52,6 +52,7 @@ pub(crate) mod net_classes;
 mod pair_tests;
 mod pair_tool;
 mod placement_card;
+mod production;
 #[cfg(test)]
 mod raster_tests;
 mod route_card;
@@ -377,6 +378,8 @@ pub struct PcbEditor {
     setup: Option<board_card::BoardSetup>,
     /// The Design rules panel while it is open.
     rules: Option<rules_panel::RulesPanel>,
+    /// The Production files dialog while it is open.
+    production: Option<production::ProductionDialog>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
     /// Instance whose schematic symbol the app should show next.
@@ -461,6 +464,7 @@ impl Default for PcbEditor {
             errors: FieldErrors::default(),
             setup: None,
             rules: None,
+            production: None,
             frame_request: None,
             show_in_schematic: None,
             connections_all: false,
@@ -890,6 +894,14 @@ impl PcbEditor {
                             .tip("Compute the copper of every fill from the board as it is now"),
                     ],
                 },
+                Group {
+                    label: "Output",
+                    tools: vec![
+                        Button::new("production", "export", "Production")
+                            .selected(self.production.is_some())
+                            .tip("Check the board and write Gerber, drill, assembly and drawing files"),
+                    ],
+                },
             ],
             notice: None,
         }
@@ -933,6 +945,7 @@ impl PcbEditor {
                     self.fill_draw.net = self.highlighted;
                 }
             }
+            "production" => self.open_production(),
             "refill" if !engine.project().fills.is_empty() => {
                 return Some(Operation::Fill(layout::fill::FillCommand::Refill {
                     target: layout::fill::RefillTarget::All,
@@ -1041,6 +1054,8 @@ impl PcbEditor {
     pub fn subject(&self) -> Subject {
         if self.update.is_open() {
             Subject::Review
+        } else if let Some(subject) = self.production_subject() {
+            subject
         } else if let Some(subject) = self.rules_subject() {
             subject
         } else if self.setup.is_some() || self.net_classes.is_some() || self.signals.is_some() {
@@ -1081,6 +1096,9 @@ impl PcbEditor {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
         match self.subject() {
+            Subject::Dialog if self.production.is_some() && !self.update.is_open() => {
+                self.production_slot(ui, engine)
+            }
             Subject::Dialog | Subject::Review if self.rules.is_some() && !self.update.is_open() => {
                 self.rules_slot(ui, engine)
             }

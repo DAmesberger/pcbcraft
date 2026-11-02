@@ -1160,6 +1160,15 @@ fn defaults() -> Vec<Command> {
         .icon("update")
         .keywords("pour zone recompute"),
         tool(
+            "pcb.production",
+            "Production files…",
+            C::Pcb,
+            Workspace::Pcb,
+            "production",
+        )
+        .icon("export")
+        .keywords("gerber drill excellon fabrication manufacturing bom pick place zip"),
+        tool(
             "pcb.board-shape",
             "Board shape",
             C::PcbLayout,

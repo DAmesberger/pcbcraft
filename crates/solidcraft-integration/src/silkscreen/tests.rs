@@ -1,5 +1,5 @@
 use super::*;
-use pcbcraft_core::library::graphics::{Justify, VAlign};
+use pcbcraft_core::library::graphics::{HAlign, Justify, TextMetric, VAlign};
 use pcbcraft_core::{Engine, Track};
 
 fn text(s: &str, mirrored: bool, rotation_deg: f64) -> PlacedText {
@@ -39,7 +39,7 @@ fn legend_text_fills_the_core_metric_box_and_mirrors_within_it() {
     assert!(!upright.is_empty());
     let box_ = text("R10", false, 0.0).bounds(TextMetric::default());
     let [x0, y0, x1, y1] = extent(&upright);
-    let half = (TEXT_STROKE_SHARE * 1.0).max(MIN_STROKE_MM) / 2.0;
+    let half = (layout::legend::TEXT_STROKE_SHARE * 1.0).max(layout::legend::MIN_STROKE_MM) / 2.0;
     // Inside the core's box, grown by half a stroke, and filling most of it.
     assert!(x0 >= box_.min[0] - half - 1e-9 && x1 <= box_.max[0] + half + 1e-9);
     assert!(y0 >= box_.min[1] - half - 1e-9 && y1 <= box_.max[1] + half + 1e-9);

@@ -27,6 +27,7 @@ pub mod fill;
 mod grid;
 pub mod impedance;
 pub mod length;
+pub mod legend;
 pub mod limits;
 pub mod meander;
 pub mod obstacles;
