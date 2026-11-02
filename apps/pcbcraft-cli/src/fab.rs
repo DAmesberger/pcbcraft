@@ -118,7 +118,7 @@ mod tests {
     fn epoch_seconds_print_as_utc_dates() {
         assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00Z");
-        assert_eq!(iso_utc(1_793_664_000), "2026-11-02T00:00:00Z");
+        assert_eq!(iso_utc(1_793_577_600), "2026-11-02T00:00:00Z");
         assert_eq!(iso_utc(-1), "1969-12-31T23:59:59Z");
     }
 }
