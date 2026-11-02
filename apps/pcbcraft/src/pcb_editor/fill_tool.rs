@@ -306,20 +306,21 @@ impl PcbEditor {
         if self.tool != Tool::Fill || ui.ctx().egui_wants_keyboard_input() {
             return (None, false);
         }
-        let pressed = |key| ui.input(|i| i.key_pressed(key));
-        if pressed(egui::Key::A) {
+        let pressed = |id| crate::keys::pressed(ui.ctx(), id);
+        if pressed("fill.arc") {
             self.fill_draw.arc = !self.fill_draw.arc;
             self.fill_draw.arc_end = None;
         }
-        if pressed(egui::Key::Backspace) {
+        if pressed("fill.back") {
             self.fill_draw.back();
         }
-        let operation = if pressed(egui::Key::Enter) {
+        let operation = if pressed("fill.close") {
             self.fill_draw.close().map(|o| self.add_fill(o))
         } else {
             None
         };
-        let escaped = pressed(egui::Key::Escape) && self.fill_draw.start.is_some();
+        // Esc stays with the Layout's cancel unless an outline is open.
+        let escaped = self.fill_draw.start.is_some() && pressed("fill.drop");
         if escaped {
             self.fill_draw.clear();
         }
@@ -410,7 +411,8 @@ impl PcbEditor {
                         "",
                         PRIORITY_RANGE,
                     );
-                    kit::check_row(ui, "Arcs (A)", &mut self.fill_draw.arc);
+                    let arcs = crate::keys::labelled(ui.ctx(), "Arcs", "fill.arc");
+                    kit::check_row(ui, &arcs, &mut self.fill_draw.arc);
                 })
             })
             .inner;

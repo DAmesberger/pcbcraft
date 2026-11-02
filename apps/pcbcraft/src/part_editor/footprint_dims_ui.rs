@@ -255,16 +255,13 @@ impl PartEditor {
         let busy = self.footprint_dims.field.is_some()
             || self.footprint_dims.drag.is_some()
             || !self.footprint_dims.picks.is_empty();
-        if busy && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if busy && crate::keys::pressed(ui.ctx(), "footprint.cancel") {
             self.footprint_dims.cancel();
             return true;
         }
         if !typing
             && let Some(selected) = self.footprint_dims.selected.clone()
-            && ui.input_mut(|i| {
-                i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-            })
+            && crate::keys::pressed(ui.ctx(), "footprint.delete")
         {
             self.footprint_dims.selected = None;
             self.queue_footprint_edits(vec![FootprintEdit::Sketch(SketchEdit::Delete {

@@ -164,7 +164,6 @@ impl Chord {
     }
 
     /// The canonical name, as Solidcraft's keymap stores it: `Ctrl+Shift+S`.
-    #[allow(dead_code, reason = "user keymaps store it; no preferences page yet")]
     pub fn name(self) -> String {
         solidcraft_ui_egui::keymap::key_name(self.key, self.modifiers())
     }
@@ -250,6 +249,16 @@ impl Chord {
         self.display(cfg!(target_os = "macos"))
     }
 
+    /// Whether a key event with `held` modifiers is this chord: ⌘/Ctrl,
+    /// Shift and Alt match exactly, and on macOS a held ⌃ (not ⌘) is never
+    /// a plain key.
+    pub fn matches(self, held: egui::Modifiers) -> bool {
+        held.command == self.command
+            && held.shift == self.shift
+            && held.alt == self.alt
+            && (held.command || !held.ctrl)
+    }
+
     /// Whether the chord was pressed this frame; consumes it if so. Shift
     /// and Alt must match exactly; with neither held, a plain key does not
     /// fire while ⌘/Ctrl is down.
@@ -326,12 +335,31 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).
-pub const FILL_KEYS: &[(&str, &str)] = &[
-    ("A", "Switch lines and arcs"),
-    ("Enter", "Close the outline"),
-    ("Backspace", "Take back the last point"),
-    ("Esc", "Drop the outline"),
+pub const FILL_KEYS: &[KeyDecl] = &[
+    KeyDecl::new("fill.arc", "A", "Switch lines and arcs"),
+    KeyDecl::new("fill.close", "Enter", "Close the outline"),
+    KeyDecl::new("fill.back", "Backspace", "Take back the last point"),
+    KeyDecl::new("fill.drop", "Esc", "Drop the outline"),
 ];
+
+/// One key of a tool mode or canvas gesture, declared by the editor that
+/// handles it: a stable command id, its default key cell (as
+/// [`key_cell`] reads it: `Enter`, `Shift+W`, `Delete or Backspace`) and
+/// what it does. The editor asks [`crate::keys::pressed`] for the id, so
+/// a rebinding changes what the key does, not only its label. A cell
+/// that names no key (`Click`) is listed as written and cannot be bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyDecl {
+    pub id: &'static str,
+    pub keys: &'static str,
+    pub title: &'static str,
+}
+
+impl KeyDecl {
+    pub const fn new(id: &'static str, keys: &'static str, title: &'static str) -> Self {
+        Self { id, keys, title }
+    }
+}
 
 /// Who acts on a command's key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,6 +388,8 @@ pub enum AppCommand {
     ToggleIssues,
     Messages,
     LibrarySources,
+    /// The Settings window (its Keyboard section).
+    Settings,
     Workspace(Workspace),
     FitView,
     /// Switch the PCB between its Layout and 3D views.
@@ -459,6 +489,10 @@ impl Command {
         self.chord = chord;
         self
     }
+    fn also(mut self, chords: &[Chord]) -> Self {
+        self.also = chords.to_vec();
+        self
+    }
     fn in_place(mut self) -> Self {
         self.handler = Handler::InPlace;
         self
@@ -486,6 +520,8 @@ pub struct ToolEntry {
     pub label: &'static str,
     pub icon: &'static str,
     pub chord: Option<Chord>,
+    /// Further default keys of the same command (Backspace besides Delete).
+    pub also: &'static [Chord],
 }
 
 /// Two commands that would take the same chord in overlapping contexts.
@@ -532,34 +568,41 @@ impl Registry {
             commands,
             custom: BTreeMap::new(),
         }
-        .with_key_table(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
-        .with_key_table(Context::PcbFill, FILL_KEYS)
-        .with_key_table(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
-        .with_key_table(Context::Pcb3d, crate::navigation::NAVIGATION_3D)
+        .with_keys(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
+        .with_keys(Context::PcbFill, FILL_KEYS)
+        .with_keys(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
+        .with_gestures(Context::Pcb3d, crate::navigation::NAVIGATION_3D)
     }
 
-    /// Add a gesture's key table (key, what it does) for display, e.g. a
-    /// tool's `ROUTE_KEYS`. A key cell names one or more keys as
-    /// [`key_cell`] reads them; a cell it cannot read ("Click") is shown
-    /// as written and takes no key.
-    pub fn with_key_table(mut self, context: Context, table: &[(&str, &str)]) -> Self {
-        let prefix = format!("keys.{context:?}").to_lowercase();
-        for (index, (key, what)) in table.iter().enumerate() {
+    /// Add a view's pointer gestures ("Shift + two fingers", what it does)
+    /// for display only: rows that name no key, so they take none and
+    /// cannot be bound (navigation stays with `navigation.rs`).
+    pub fn with_gestures(mut self, context: Context, gestures: &[(&str, &str)]) -> Self {
+        let prefix = format!("gesture.{context:?}").to_lowercase();
+        for (index, (input, what)) in gestures.iter().enumerate() {
             let mut command =
-                Command::new(format!("{prefix}.{index}"), *what, context, Action::Key)
-                    .in_place()
-                    .icon("params");
-            match key_cell(key) {
+                Command::new(format!("{prefix}.{index}"), *what, context, Action::Key).in_place();
+            command.key_text = Some((*input).to_owned());
+            self.commands.push(command);
+        }
+        self
+    }
+
+    /// Add an editor's declared keys ([`KeyDecl`]) as in-place commands of
+    /// `context`, under their own ids.
+    pub fn with_keys(mut self, context: Context, keys: &[KeyDecl]) -> Self {
+        for decl in keys {
+            let mut command = Command::new(decl.id, decl.title, context, Action::Key).in_place();
+            match key_cell(decl.keys) {
                 Some((chords, shown)) => {
                     let mut chords = chords.into_iter();
                     command.chord = chords.next();
                     command.also = chords.collect();
-                    // One chord shows as a chord; several as their cell.
                     if !command.also.is_empty() {
                         command.key_text = Some(shown);
                     }
                 }
-                None => command.key_text = Some((*key).to_owned()),
+                None => command.key_text = Some(decl.keys.to_owned()),
             }
             self.commands.push(command);
         }
@@ -582,20 +625,106 @@ impl Registry {
         }
     }
 
-    /// Every chord the command takes: its effective one and a key-table
-    /// row's others.
+    /// Every chord the command takes: the user's one, else its default and
+    /// a key-table row's others.
     pub fn chords(&self, command: &Command) -> Vec<Chord> {
-        self.chord(command)
-            .into_iter()
-            .chain(command.also.iter().copied())
-            .collect()
+        match self.custom.get(&command.id) {
+            Some(custom) => custom.iter().copied().collect(),
+            None => command
+                .chord
+                .into_iter()
+                .chain(command.also.iter().copied())
+                .collect(),
+        }
     }
 
-    /// The shortcut as shown: a several-key cell as its text, else the
-    /// chord, else the text.
+    /// Whether `chord` is one of the command's effective keys, without
+    /// building the list.
+    pub fn takes(&self, command: &Command, chord: Chord) -> bool {
+        match self.custom.get(&command.id) {
+            Some(custom) => *custom == Some(chord),
+            None => command.chord == Some(chord) || command.also.contains(&chord),
+        }
+    }
+
+    /// Whether the user changed the command's key.
+    pub fn is_custom(&self, id: &str) -> bool {
+        self.custom.contains_key(id)
+    }
+
+    /// The user's changes: command id → chord (`None`: no key).
+    pub fn overrides(&self) -> &BTreeMap<String, Option<Chord>> {
+        &self.custom
+    }
+
+    /// Whether the command can take a key: a row that names no key
+    /// ("Click") cannot.
+    pub fn bindable(command: &Command) -> bool {
+        command.chord.is_some() || command.key_text.is_none()
+    }
+
+    /// The command that already takes `chord` where `id` would see it, if
+    /// any (the registry's context and [`SHADOWS`] rules).
+    pub fn conflict_for(&self, id: &str, chord: Chord) -> Option<&Command> {
+        let command = self.get(id)?;
+        self.commands
+            .iter()
+            .find(|c| c.id != id && self.takes(c, chord) && clash(command, c, chord))
+    }
+
+    /// Give `id` the chord `chord`, and the command holding it `id`'s
+    /// current key (or none), as one change. Refused, changing nothing,
+    /// when either key would conflict with a third command.
+    pub fn swap(&mut self, id: &str, chord: Chord) -> Result<(), String> {
+        let Some(other) = self.conflict_for(id, chord).map(|c| c.id.clone()) else {
+            return self.rebind(id, Some(chord));
+        };
+        let mine = self.get(id).and_then(|c| self.chord(c));
+        let before = self.custom.clone();
+        // Free the key first so neither step sees the other as a conflict.
+        let result = self
+            .rebind(&other, None)
+            .and_then(|()| self.rebind(id, Some(chord)))
+            .and_then(|()| self.rebind(&other, mine));
+        if result.is_err() {
+            self.custom = before;
+        }
+        result
+    }
+
+    /// Back to the default keymap.
+    pub fn reset_all(&mut self) {
+        self.custom.clear();
+    }
+
+    /// Back to the command's default key, even where it now conflicts
+    /// ([`Self::conflicts`] reports that).
+    pub fn reset(&mut self, id: &str) {
+        self.custom.remove(id);
+    }
+
+    /// The command with id `prefix.name`, found without building the id.
+    pub fn get_parts(&self, prefix: &str, name: &str) -> Option<&Command> {
+        self.commands.iter().find(|c| {
+            c.id.len() == prefix.len() + 1 + name.len()
+                && c.id.starts_with(prefix)
+                && c.id.ends_with(name)
+                && c.id.as_bytes().get(prefix.len()) == Some(&b'.')
+        })
+    }
+
+    /// The shortcut as shown: the user's key, else a several-key cell as
+    /// its text, else the chord, else the text.
     pub fn shortcut(&self, command: &Command) -> Option<String> {
+        if let Some(custom) = self.custom.get(&command.id) {
+            return custom.map(Chord::shown);
+        }
         if !command.also.is_empty() {
-            return command.key_text.clone();
+            return command.key_text.clone().or_else(|| {
+                let shown: Vec<String> =
+                    self.chords(command).into_iter().map(Chord::shown).collect();
+                Some(shown.join(", "))
+            });
         }
         self.chord(command)
             .map(Chord::shown)
@@ -615,22 +744,23 @@ impl Registry {
     }
 
     /// Change a command's key; `None` clears it. Refused when the id is
-    /// unknown or the chord conflicts with another command.
-    #[allow(dead_code, reason = "user keymaps: no preferences page yet")]
+    /// unknown, the row names no key, or the chord conflicts with another
+    /// command ([`Self::conflict_for`]).
     pub fn rebind(&mut self, id: &str, chord: Option<Chord>) -> Result<(), String> {
         let Some(command) = self.get(id) else {
             return Err(format!("No command {id}"));
         };
+        if !Self::bindable(command) {
+            return Err(format!("{} is not a key", command.title));
+        }
         if let Some(chord) = chord
-            && let Some(other) = self
-                .commands
-                .iter()
-                .find(|c| c.id != id && self.chords(c).contains(&chord) && clash(command, c, chord))
+            && let Some(other) = self.conflict_for(id, chord)
         {
             return Err(format!("{} already uses {}", other.title, chord.shown()));
         }
         let default = command.chord;
-        if chord == default {
+        // A several-key default is only the default while untouched.
+        if chord == default && command.also.is_empty() {
             self.custom.remove(id);
         } else {
             self.custom.insert(id.to_owned(), chord);
@@ -652,7 +782,7 @@ impl Registry {
             .find_map(|context| {
                 self.commands
                     .iter()
-                    .find(|c| c.context == *context && self.chords(c).contains(&chord))
+                    .find(|c| c.context == *context && self.takes(c, chord))
             })
     }
 
@@ -834,6 +964,7 @@ fn tools(
                 Action::Ribbon(workspace, RibbonEvent::Tool(t.id)),
             )
             .maybe(t.chord)
+            .also(t.also)
             .in_place()
             .icon(t.icon)
         })
@@ -930,6 +1061,10 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::M).with_shift())
             .icon("list")
             .keywords("log history notifications"),
+        app("app.settings", "Settings…", A::Settings)
+            .chord(Chord::cmd(K::Comma))
+            .icon("params")
+            .keywords("preferences options keyboard keymap shortcuts rebind keys"),
         app("library.sources", "Library sources…", A::LibrarySources)
             .icon("component")
             .keywords("folders libraries rescan"),
@@ -1041,7 +1176,8 @@ fn defaults() -> Vec<Command> {
             "Delete selection",
             C::Footprint,
             Chord::key(K::Delete),
-        ),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         key(
             "footprint.cancel",
             "Cancel the tool",
@@ -1291,7 +1427,7 @@ fn defaults() -> Vec<Command> {
         )
         .icon("move"),
         tool("pcb.route", "Route", C::PcbLayout, Workspace::Pcb, "route")
-            .chord(Chord::key(K::X))
+            .chord(Chord::key(K::R))
             .icon("trace")
             .keywords("track trace copper wire"),
         tool("pcb.via", "Via", C::PcbLayout, Workspace::Pcb, "via")
@@ -1370,14 +1506,6 @@ fn defaults() -> Vec<Command> {
             PcbView::Airwires,
         )
         .keywords("ratsnest unrouted connections"),
-        // The Route tool reads F with any Shift, so ⇧F flips the elbow too
-        // while routing (and must not also flip the board view).
-        key(
-            "route.flip-shift",
-            "Flip the elbow corner",
-            C::PcbRoute,
-            Chord::key(K::F).with_shift(),
-        ),
         // Board shape keys besides its tools.
         key(
             "shape.construction",
@@ -1390,7 +1518,8 @@ fn defaults() -> Vec<Command> {
             "Delete selection",
             C::BoardShape,
             Chord::key(K::Delete),
-        ),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         key(
             "shape.cancel",
             "Cancel the tool",

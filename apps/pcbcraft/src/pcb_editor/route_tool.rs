@@ -11,6 +11,8 @@
 //! change ends the route. The elbow geometry comes from
 //! [`layout::posture`], which the preview and the commit share.
 use super::{BoardInk, BoardView, PcbEditor, Tool, capsule, pad_on};
+use crate::commands::KeyDecl;
+use crate::keys;
 use egui::{Shape, Stroke};
 use pcbcraft_core::{
     CopperLayer, Id, Operation, Point, Project,
@@ -21,23 +23,62 @@ use pcbcraft_core::{
 };
 use std::cmp::Ordering;
 
-/// The Route tool's keys while the canvas is hovered: (key, what it does).
-/// The Route card lists them; a command palette can list them too.
-pub const ROUTE_KEYS: &[(&str, &str)] = &[
-    ("Click", "Corner; a pad or track of the net finishes"),
-    ("Enter", "Finish the route (or double-click)"),
-    ("Esc", "End the route (or right-click); again: Select"),
-    ("Backspace", "Remove the last segment"),
-    ("V, Shift+V", "Via to the next or previous layer"),
-    ("1 to 9", "Via to that layer of the stackup"),
-    ("/", "Next mode: 45°, 90°, free"),
-    ("F", "Flip the elbow corner"),
-    ("W, Shift+W", "Next or previous track width"),
-    ("D, Shift+D", "Next or previous via size"),
-    (
+/// The Route tool's keys while the canvas is hovered. Each is a registry
+/// command (`crate::commands::KeyDecl`), read through `crate::keys`, so a
+/// rebinding changes the key itself. The Route card lists them.
+pub const ROUTE_KEYS: &[KeyDecl] = &[
+    KeyDecl::new(
+        "route.click",
+        "Click",
+        "Corner; a pad or track of the net finishes",
+    ),
+    KeyDecl::new(
+        "route.finish",
+        "Enter",
+        "Finish the route (or double-click)",
+    ),
+    KeyDecl::new(
+        "route.end",
+        "Esc",
+        "End the route (or right-click); again: Select",
+    ),
+    KeyDecl::new("route.back", "Backspace", "Remove the last segment"),
+    KeyDecl::new("route.via-next", "V", "Via to the next layer"),
+    KeyDecl::new("route.via-previous", "Shift+V", "Via to the previous layer"),
+    KeyDecl::new("route.layer-1", "1", "Via to stackup layer 1"),
+    KeyDecl::new("route.layer-2", "2", "Via to stackup layer 2"),
+    KeyDecl::new("route.layer-3", "3", "Via to stackup layer 3"),
+    KeyDecl::new("route.layer-4", "4", "Via to stackup layer 4"),
+    KeyDecl::new("route.layer-5", "5", "Via to stackup layer 5"),
+    KeyDecl::new("route.layer-6", "6", "Via to stackup layer 6"),
+    KeyDecl::new("route.layer-7", "7", "Via to stackup layer 7"),
+    KeyDecl::new("route.layer-8", "8", "Via to stackup layer 8"),
+    KeyDecl::new("route.layer-9", "9", "Via to stackup layer 9"),
+    KeyDecl::new("route.posture", "/", "Next mode: 45°, 90°, free"),
+    // F with any Shift: ⇧F must not also flip the board view.
+    KeyDecl::new("route.flip", "F, Shift+F", "Flip the elbow corner"),
+    KeyDecl::new("route.width-next", "W", "Next track width"),
+    KeyDecl::new("route.width-previous", "Shift+W", "Previous track width"),
+    KeyDecl::new("route.via-size-next", "D", "Next via size"),
+    KeyDecl::new("route.via-size-previous", "Shift+D", "Previous via size"),
+    KeyDecl::new(
+        "route.pair",
         "P",
         "Pair routing on or off (a pad of a pair starts both halves)",
     ),
+];
+
+/// The ids of the "via to stackup layer N" keys, layer 1 first.
+pub const ROUTE_LAYER_KEYS: [&str; 9] = [
+    "route.layer-1",
+    "route.layer-2",
+    "route.layer-3",
+    "route.layer-4",
+    "route.layer-5",
+    "route.layer-6",
+    "route.layer-7",
+    "route.layer-8",
+    "route.layer-9",
 ];
 
 /// The route in progress besides its head (`PcbEditor::route_start`) and
@@ -485,50 +526,46 @@ impl PcbEditor {
         revision: u64,
         pointer: Option<Point>,
     ) -> Option<Operation> {
-        use egui::Key;
         if self.tool != Tool::Route || ui.ctx().egui_wants_keyboard_input() {
             return None;
         }
-        let pressed = |key| ui.input(|i| i.key_pressed(key));
-        let shift = ui.input(|i| i.modifiers.shift);
-        if pressed(Key::Enter) {
+        let pressed = |id| keys::pressed(ui.ctx(), id);
+        if pressed("route.finish") {
             self.finish_route();
         }
-        if pressed(Key::Slash) {
+        if pressed("route.posture") {
             self.route.posture = self.route.posture.next();
         }
-        if pressed(Key::F) {
+        if pressed("route.flip") {
             self.route.flipped = !self.route.flipped;
         }
-        if pressed(Key::W) {
-            self.cycle_width(project, shift);
+        for (id, reverse) in [("route.width-next", false), ("route.width-previous", true)] {
+            if pressed(id) {
+                self.cycle_width(project, reverse);
+            }
         }
-        if pressed(Key::D) {
-            self.cycle_via_size(project, shift);
+        for (id, reverse) in [
+            ("route.via-size-next", false),
+            ("route.via-size-previous", true),
+        ] {
+            if pressed(id) {
+                self.cycle_via_size(project, reverse);
+            }
         }
-        if pressed(Key::P) && !shift {
+        if pressed("route.pair") {
             self.route.single = !self.route.single;
         }
-        if pressed(Key::V) {
-            self.next_layer(project, pointer, shift);
+        for (id, reverse) in [("route.via-next", false), ("route.via-previous", true)] {
+            if pressed(id) {
+                self.next_layer(project, pointer, reverse);
+            }
         }
-        let digits = [
-            Key::Num1,
-            Key::Num2,
-            Key::Num3,
-            Key::Num4,
-            Key::Num5,
-            Key::Num6,
-            Key::Num7,
-            Key::Num8,
-            Key::Num9,
-        ];
-        if let Some(index) = digits.iter().position(|k| pressed(*k))
+        if let Some(index) = ROUTE_LAYER_KEYS.iter().position(|id| pressed(id))
             && let Some(&layer) = self.stack.get(index)
         {
             self.change_layer_to(project, layer, pointer);
         }
-        if pressed(Key::Backspace) {
+        if pressed("route.back") {
             return self.route_back(revision);
         }
         None
@@ -594,6 +631,6 @@ mod tests {
         assert_eq!(cycle(&widths, 0.25, false, by_value), Some(0.3));
         assert_eq!(cycle(&widths, 0.25, true, by_value), Some(0.2));
         assert_eq!(cycle::<f64>(&[], 0.25, true, by_value), None);
-        assert_eq!(ROUTE_KEYS.len(), 11);
+        assert_eq!(ROUTE_KEYS.len(), 22);
     }
 }

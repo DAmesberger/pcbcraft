@@ -79,6 +79,7 @@ impl ShortcutSheet {
             "Keyboard shortcuts",
         )
         .show_body(ctx, |ui| {
+            kit::note(ui, crate::reveal::hint_line());
             kit::filter_field(
                 ui,
                 egui::Id::new("keyboard-shortcuts-filter"),

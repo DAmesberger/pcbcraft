@@ -473,57 +473,33 @@ impl PartEditor {
     /// Keyboard: tools, arrange, finish, cancel and popping points. Plain
     /// letters only act while no text field has the keyboard.
     fn symbol_keys(&mut self, ui: &Ui, grid: f64) {
-        use egui::{Key, Modifiers};
+        use crate::keys::{pressed, pressed_tool};
         // A disabled canvas (the Details tab's preview) takes no keys.
         if !ui.is_enabled() || ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        // Cmd+Z pops a pending point before the app's undo sees it.
-        let shift_held = ui.input(|i| i.modifiers.shift);
-        if self.drawing.busy()
-            && !shift_held
-            && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z))
-        {
+        let ctx = ui.ctx().clone();
+        // Undo pops a pending point before the app's undo sees it.
+        if self.drawing.busy() && pressed(&ctx, "edit.undo") {
             self.drawing.undo_point();
         }
-        let pressed = |modifiers, key| ui.input_mut(|i| i.consume_key(modifiers, key));
-        if pressed(Modifiers::COMMAND, Key::D) {
-            self.arrange(Arrange::Duplicate, grid);
+        for action in Arrange::ALL {
+            if pressed_tool(&ctx, "symbol", action.id()) {
+                self.arrange(action, grid);
+            }
         }
-        if pressed(Modifiers::COMMAND, Key::R) {
-            self.arrange(Arrange::Rotate, grid);
-        }
-        // Shift chords first: a plain pattern also matches with Shift held.
-        if pressed(Modifiers::SHIFT, Key::X) {
-            self.arrange(Arrange::Mirror, grid);
-        }
-        if pressed(Modifiers::SHIFT, Key::R) && self.drawing.repeat() {
+        if pressed(&ctx, "symbol.repeat") && self.drawing.repeat() {
             self.selection.clear();
         }
         for tool in Tool::ALL {
-            if let Some(k) = tool.key().filter(|k| k.shift)
-                && pressed(Modifiers::SHIFT, k.key)
-            {
+            if pressed_tool(&ctx, "symbol", tool.id()) {
                 self.arm_tool(tool);
             }
         }
-        for tool in Tool::ALL {
-            if let Some(k) = tool.key().filter(|k| !k.shift)
-                && ui.input(|i| !i.modifiers.shift && !i.modifiers.command && !i.modifiers.alt)
-                && ui.input_mut(|i| i.consume_key(Modifiers::NONE, k.key))
-            {
-                self.arm_tool(tool);
-            }
-        }
-        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete))
-            || ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace))
-        {
-            self.arrange(Arrange::Delete, grid);
-        }
-        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+        if pressed(&ctx, "symbol.finish") {
             self.finish_chain();
         }
-        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        if pressed(&ctx, "symbol.cancel") {
             self.cancel_tool();
         }
     }

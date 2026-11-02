@@ -1493,7 +1493,10 @@ impl PartEditor {
                 let Inspected::Tool(tool) = self.inspected() else {
                     return None;
                 };
-                let key = tool_key(tool);
+                let key = crate::keys::registry(ui.ctx())
+                    .get_parts("symbol", tool.id())
+                    .and_then(|c| crate::keys::registry(ui.ctx()).shortcut(c))
+                    .unwrap_or_default();
                 let card = kit::ToolCard {
                     icon: tool.icon(),
                     name: tool.label(),
@@ -2010,6 +2013,8 @@ fn tool_chord(key: egui::Key, shift: bool) -> crate::commands::Chord {
 /// The Symbol tab's drawing and arrange tools for the command registry,
 /// with the keys `symbol_keys` handles.
 pub(crate) fn symbol_tool_entries() -> Vec<crate::commands::ToolEntry> {
+    const BACKSPACE: &[crate::commands::Chord] =
+        &[crate::commands::Chord::key(egui::Key::Backspace)];
     use crate::commands::{Chord, ToolEntry};
     use symbol_canvas::Arrange;
     let mut entries: Vec<ToolEntry> = drawing::Tool::ALL
@@ -2019,6 +2024,7 @@ pub(crate) fn symbol_tool_entries() -> Vec<crate::commands::ToolEntry> {
             label: t.label(),
             icon: t.icon(),
             chord: t.key().map(|k| tool_chord(k.key, k.shift)),
+            also: &[],
         })
         .collect();
     entries.extend(Arrange::ALL.into_iter().map(|a| ToolEntry {
@@ -2031,6 +2037,10 @@ pub(crate) fn symbol_tool_entries() -> Vec<crate::commands::ToolEntry> {
             Arrange::Duplicate => Chord::cmd(egui::Key::D),
             Arrange::Delete => Chord::key(egui::Key::Delete),
         }),
+        also: match a {
+            Arrange::Delete => BACKSPACE,
+            _ => &[],
+        },
     }));
     entries
 }
@@ -2048,23 +2058,10 @@ pub(crate) fn footprint_tool_entries() -> Vec<crate::commands::ToolEntry> {
                 label,
                 icon,
                 chord: t.key().map(|k| tool_chord(k.key, k.shift)),
+                also: &[],
             }
         })
         .collect()
-}
-
-/// The key cap a tool card shows ("R", "⇧L").
-fn tool_key(tool: drawing::Tool) -> String {
-    tool.key()
-        .map(|k| {
-            let name = k.key.name();
-            if k.shift {
-                format!("\u{21e7}{name}")
-            } else {
-                name.to_owned()
-            }
-        })
-        .unwrap_or_default()
 }
 
 /// Where one referenced object shows in the Component workspace.

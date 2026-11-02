@@ -388,25 +388,17 @@ impl PcbEditor {
         let mut operation = None;
         let mut refused = None;
         if response.hovered() && !typing {
-            let (escape, delete, shift) = ui.input(|i| {
-                (
-                    i.key_pressed(egui::Key::Escape),
-                    i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
-                    i.modifiers.shift,
-                )
-            });
-            if escape {
+            let ctx = ui.ctx().clone();
+            if crate::keys::pressed(&ctx, "shape.cancel") {
                 self.shape.escape();
             }
+            let delete = crate::keys::pressed(&ctx, "shape.delete");
             for tool in ShapeTool::ALL {
-                if let Some((key, with_shift)) = tool.key()
-                    && with_shift == shift
-                    && ui.input(|i| i.key_pressed(key))
-                {
+                if crate::keys::pressed_tool(&ctx, "shape", tool.id()) {
                     let _ = self.shape_tool(tool.id(), engine);
                 }
             }
-            if ui.input(|i| i.key_pressed(egui::Key::X)) {
+            if crate::keys::pressed(&ctx, "shape.construction") {
                 self.shape.options.construction = !self.shape.options.construction;
             }
             if delete && self.shape.tool == ShapeTool::Select {
@@ -545,7 +537,7 @@ impl PcbEditor {
                 "Board shape · {} · {status}{}",
                 tool.label(),
                 if self.shape.options.construction {
-                    " · construction (X)"
+                    " · construction"
                 } else {
                     ""
                 }

@@ -19,6 +19,7 @@ pub(crate) fn shape_tool_entries() -> Vec<ToolEntry> {
                 let chord = Chord::key(key);
                 if shift { chord.with_shift() } else { chord }
             }),
+            also: &[],
         })
         .collect()
 }

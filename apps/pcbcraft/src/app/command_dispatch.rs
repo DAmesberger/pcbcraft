@@ -17,7 +17,7 @@ pub(super) struct RibbonState {
 }
 
 impl RibbonState {
-    fn of(workspace: Workspace, ribbon: &Ribbon) -> Self {
+    pub(super) fn of(workspace: Workspace, ribbon: &Ribbon) -> Self {
         let mut tools = Vec::new();
         for group in &ribbon.groups {
             for tool in &group.tools {
@@ -35,7 +35,7 @@ impl RibbonState {
     }
 
     /// Whether the ribbon can run `event` now; `Err` says why not.
-    fn allows(&self, event: RibbonEvent, context: Context) -> Result<(), String> {
+    pub(super) fn allows(&self, event: RibbonEvent, context: Context) -> Result<(), String> {
         let elsewhere = || format!("Not available here; it applies in {}", context.label());
         match event {
             RibbonEvent::Tab(id) => self.tabs.contains(&id).then_some(()).ok_or_else(elsewhere),
@@ -212,6 +212,7 @@ impl App {
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,
+            AppCommand::Settings => self.settings_window.toggle(),
             AppCommand::LibrarySources => self.sources.open_card(),
             AppCommand::Workspace(workspace) => self.enter(workspace),
             AppCommand::FitView => self.fit_view(),

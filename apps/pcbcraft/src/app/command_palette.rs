@@ -146,6 +146,9 @@ impl CommandPalette {
             }
             rows = rank(&self.query);
             self.navigate(&rows, keys.up, keys.down);
+            if self.query.trim().is_empty() {
+                kit::search_message(ui, crate::reveal::hint_line(), false);
+            }
             if rows.is_empty() {
                 kit::search_message(ui, "No command matches", false);
                 return;
