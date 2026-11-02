@@ -86,7 +86,7 @@ pub(super) fn add(project: &mut Project, request: ViaRequest) -> Result<Id> {
     Ok(id)
 }
 
-fn insert(project: &mut Project, request: ViaRequest) -> Result<Id> {
+pub(super) fn insert(project: &mut Project, request: ViaRequest) -> Result<Id> {
     let id = project.allocate()?;
     project.vias.push(Via {
         id,
@@ -252,7 +252,7 @@ fn budget(pairs: &mut usize) -> Result<()> {
 
 /// Refuse a via closer than the clearance rule to another net's copper on
 /// a layer it joins, as routing refuses a track.
-fn check_clearance(project: &Project, id: Id) -> Result<()> {
+pub(super) fn check_clearance(project: &Project, id: Id) -> Result<()> {
     let via = project
         .via(id)
         .ok_or_else(|| Error::NotFound("unknown via".into()))?;

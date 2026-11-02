@@ -7,6 +7,9 @@ use solidcraft_ui_egui::{fonts, theme::Tokens};
 pub const TREE_ROW_HEIGHT: f32 = 26.0;
 const INDENT: f32 = 14.0;
 const DIM_OPACITY: f32 = 0.4;
+/// Width added when a text is laid out at its own measured width, so
+/// rounding never cuts a text that fits.
+const FIT_SLACK: f32 = 0.5;
 
 /// One Browser row. Feature code fills it; the kit draws it.
 #[derive(Default)]
@@ -99,18 +102,9 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
         );
         x += 21.0;
     }
+    // The marks at the right are laid out first and always keep their
+    // place; the label and the secondary text share what is left.
     let mut right = r.right() - t.space_6;
-    if !row.secondary.is_empty() {
-        let galley = ui.painter().layout_no_wrap(
-            row.secondary.to_owned(),
-            FontId::proportional(t.font_small),
-            t.text_dim,
-        );
-        right -= galley.size().x;
-        ui.painter()
-            .galley(pos2(right, cy - galley.size().y / 2.0), galley, t.text_dim);
-        right -= t.space_6;
-    }
     if let Some(level) = row.issue {
         let size = t.space_12;
         right -= size / 2.0;
@@ -135,16 +129,44 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
     } else {
         FontId::proportional(t.font_label)
     };
-    let mut job =
-        egui::text::LayoutJob::simple(row.label.to_owned(), font, ink, (right - x).max(0.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let galley = ui.painter().layout_job(job);
+    let secondary_font = FontId::proportional(t.font_small);
+    let natural = |text: &str, font: &FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), ink)
+            .size()
+            .x
+    };
+    let room = (right - x).max(0.0);
+    let split = share(
+        room,
+        natural(row.label, &font),
+        if row.secondary.is_empty() {
+            None
+        } else {
+            Some(natural(row.secondary, &secondary_font))
+        },
+        t.space_6,
+    );
+    let clip = ui.painter().with_clip_rect(ui.clip_rect().intersect(r));
+    let mut secondary_cut = false;
+    if !row.secondary.is_empty() {
+        let galley = super::rows::one_line(
+            ui,
+            row.secondary,
+            secondary_font,
+            t.text_dim,
+            split.secondary + FIT_SLACK,
+        );
+        secondary_cut = galley.elided;
+        clip.galley(
+            pos2(right - galley.size().x, cy - galley.size().y / 2.0),
+            galley,
+            t.text_dim,
+        );
+    }
+    let galley = super::rows::one_line(ui, row.label, font, ink, split.label + FIT_SLACK);
     let elided = galley.elided;
-    ui.painter()
-        .with_clip_rect(ui.clip_rect().intersect(r))
-        .galley(pos2(x, cy - galley.size().y / 2.0), galley, ink);
+    clip.galley(pos2(x, cy - galley.size().y / 2.0), galley, ink);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
@@ -153,14 +175,59 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
             row.label,
         )
     });
-    let response = match (elided, row.tip.is_empty()) {
-        (true, true) => response.on_hover_text(row.label),
-        (true, false) => response.on_hover_text(format!("{}\n{}", row.label, row.tip)),
-        (false, false) => response.on_hover_text(row.tip),
-        (false, true) => response,
+    let full = match (elided, secondary_cut) {
+        (true, true) => format!("{}\n{}", row.label, row.secondary),
+        (true, false) => row.label.to_owned(),
+        (false, true) => row.secondary.to_owned(),
+        (false, false) => String::new(),
+    };
+    let response = match (full.is_empty(), row.tip.is_empty()) {
+        (false, true) => response.on_hover_text(full),
+        (false, false) => response.on_hover_text(format!("{full}\n{}", row.tip)),
+        (true, false) => response.on_hover_text(row.tip),
+        (true, true) => response,
     };
     out.clicked = response.clicked() && !on_fold(response.interact_pointer_pos());
     out
+}
+
+/// How a row's label and secondary text share `room`: their widths, a
+/// gap apart.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Share {
+    label: f32,
+    secondary: f32,
+}
+
+/// Split `room` between a label of natural width `label` and an optional
+/// secondary text of natural width `secondary`, `gap` apart. What fits is
+/// shown whole. Otherwise the shorter one keeps its width while it needs
+/// at most half, and the other is cut to the rest; two long texts get half
+/// each. Neither ever pushes the other out of the row (upstream caps the
+/// trailing texts at a share of the row the same way).
+fn share(room: f32, label: f32, secondary: Option<f32>, gap: f32) -> Share {
+    let room = room.max(0.0);
+    let Some(secondary) = secondary else {
+        return Share {
+            label: room,
+            secondary: 0.0,
+        };
+    };
+    let text = (room - gap).max(0.0);
+    let half = text / 2.0;
+    let (label, secondary) = if label + secondary <= text {
+        (label, secondary)
+    } else if label <= half {
+        (label, text - label)
+    } else if secondary <= half {
+        (text - secondary, secondary)
+    } else {
+        (half, half)
+    };
+    Share {
+        label: label.max(0.0),
+        secondary: secondary.max(0.0),
+    }
 }
 
 /// Browser-style card title band: the title, and a dim summary on the right.
@@ -168,9 +235,13 @@ pub fn card_title(ui: &mut Ui, title: &str, summary: &str) {
     let t = Tokens::get();
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), TREE_ROW_HEIGHT), Sense::hover());
-    let galley =
-        ui.painter()
-            .layout_no_wrap(title.to_owned(), fonts::semibold(t.font_heading), t.text);
+    let galley = super::rows::one_line(
+        ui,
+        title,
+        fonts::semibold(t.font_heading),
+        t.text,
+        (rect.width() - t.space_6 * 2.0).max(0.0),
+    );
     let title_right = rect.left() + t.space_6 + galley.size().x;
     ui.painter().galley(
         pos2(
@@ -248,3 +319,7 @@ pub fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) {
     );
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
 }
+
+#[cfg(test)]
+#[path = "tree_tests.rs"]
+mod tests;

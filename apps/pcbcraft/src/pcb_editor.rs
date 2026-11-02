@@ -22,7 +22,7 @@ use pcbcraft_core::{
     issues::{IssueArea, IssueScope},
     layout::{
         self, BoardCopper, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem,
-        PlacedPad, RouteRequest, WorldPad,
+        PlacedPad, WorldPad,
     },
     library::{PadKind, PlacedText, TextMetric},
     updates::Change,
@@ -47,6 +47,9 @@ mod placement_card;
 #[cfg(test)]
 mod raster_tests;
 mod route_card;
+#[cfg(test)]
+mod route_tests;
+pub(crate) mod route_tool;
 mod rules_panel;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
@@ -313,6 +316,9 @@ pub struct PcbEditor {
     /// the layer the route reaches it on. The next click routes there,
     /// places the via and routes on on `layer` (`layout.route_layer_change`).
     pending_via: Option<(Point, CopperLayer)>,
+    /// The route in progress besides its head, and the routing settings
+    /// (`route_tool`).
+    route: route_tool::RouteState,
     /// Whether vias the Via tool and layer changes place are tented.
     via_tented: bool,
     property_key: Option<(u64, Option<Id>)>,
@@ -408,6 +414,7 @@ impl Default for PcbEditor {
             width_from: None,
             route_start: None,
             pending_via: None,
+            route: Default::default(),
             via_tented: true,
             property_key: None,
             position: [0.0; 2],
@@ -512,7 +519,7 @@ impl PcbEditor {
     /// ends, so no 2D tool card shows there; selection is kept.
     pub fn set_3d(&mut self, enabled: bool) {
         self.view_3d = enabled;
-        self.route_start = None;
+        self.reset_route();
         if enabled {
             self.end_route();
         }
@@ -555,8 +562,7 @@ impl PcbEditor {
     /// net highlight the route made goes with it.
     fn end_route(&mut self) {
         self.tool = Tool::Select;
-        self.route_start = None;
-        self.pending_via = None;
+        self.reset_route();
         self.fill_draw.clear();
         if let Some(net) = self.route_lit.take()
             && self.highlighted == Some(net)
@@ -607,10 +613,14 @@ impl PcbEditor {
     }
 
     fn sync(&mut self, engine: &Engine) {
+        // A route step the engine took continues the route; any other
+        // change ends it.
+        let continued = self.settle_route(engine.project(), engine.revision());
         if self.cached_revision != Some(engine.revision()) {
             self.cancel_drag();
-            self.route_start = None;
-            self.pending_via = None;
+            if !continued {
+                self.reset_route();
+            }
             self.stack = engine.project().stackup.layers();
             if !self.stack.contains(&self.layer) {
                 self.layer = CopperLayer::Top;
@@ -660,7 +670,7 @@ impl PcbEditor {
             {
                 self.net = None;
                 self.highlighted = None;
-                self.route_start = None;
+                self.reset_route();
             }
         }
         let key = (
@@ -881,7 +891,9 @@ impl PcbEditor {
             }
             "select" => self.end_route(),
             "route" => {
-                self.pending_via = None;
+                if self.tool != Tool::Route {
+                    self.reset_route();
+                }
                 self.tool = Tool::Route;
             }
             "via" => {
@@ -1235,19 +1247,30 @@ impl PcbEditor {
         };
         let mut operation = closed;
         if response.hovered() && !fill_escaped && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.end_route();
-            self.cancel_drag();
-            self.discard_staged();
+            if self.tool == Tool::Route && self.route_start.is_some() {
+                // The first Esc ends the route; the next leaves Route.
+                self.finish_route();
+            } else {
+                self.end_route();
+                self.cancel_drag();
+                self.discard_staged();
+            }
         }
-        // V changes the routing layer; during a route it also places a
-        // via at the pointer, which the next click routes through.
-        if self.tool == Tool::Route
-            && response.hovered()
-            && !ui.ctx().egui_wants_keyboard_input()
-            && ui.input(|i| i.key_pressed(egui::Key::V))
-        {
-            let reverse = ui.input(|i| i.modifiers.shift);
-            self.change_layer(cursor.map(|at| self.route_point(at, scale)), reverse);
+        // The Route keys (`route_tool::ROUTE_KEYS`). A layer change during
+        // a route puts a via at the pointer, which the next click routes
+        // through.
+        if self.tool == Tool::Route && response.hovered() {
+            let at = cursor.map(|at| self.route_point(at, scale));
+            if let Some(back) = self.route_keys(ui, project, engine.revision(), at) {
+                operation = Some(back);
+            }
+        }
+        if self.tool == Tool::Route && response.clicked_by(PointerButton::Secondary) {
+            self.finish_route();
+        }
+        let double = self.tool == Tool::Route && response.double_clicked();
+        if double {
+            self.finish_route();
         }
         // A handle of the selected fill's outline drags the handle.
         if self.tool == Tool::Select
@@ -1328,50 +1351,8 @@ impl PcbEditor {
             } else if self.tool == Tool::Fill {
                 operation = self.fill_click(view, at);
             } else if self.tool == Tool::Route {
-                let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
-                let destination = snapped
-                    .map(|(c, _)| c)
-                    .unwrap_or_else(|| self.route_point(at, scale));
-                if let Some(start) = self.route_start {
-                    if let Some(net) = self.net {
-                        self.follow_class_width(project);
-                        let request = |start, end, layer| RouteRequest {
-                            net,
-                            start,
-                            end,
-                            width: self.width,
-                            layer,
-                        };
-                        operation = Some(Operation::Layout(match self.pending_via {
-                            Some((via, from)) => LayoutCommand::RouteLayerChange {
-                                request: layout::LayerChangeRequest {
-                                    request: request(start, via, from),
-                                    via: layout::ViaRequest {
-                                        tented: self.via_tented,
-                                        ..layout::class_via(project, net, via)
-                                    },
-                                    to_layer: self.layer,
-                                    end: destination,
-                                },
-                            },
-                            None => LayoutCommand::Route {
-                                request: request(start, destination, self.layer),
-                            },
-                        }));
-                        // The route stays in progress until the engine takes
-                        // it: a refusal (a toast) leaves the start, so the
-                        // next click tries again; an accepted segment is a
-                        // new revision, whose sync ends the route.
-                    }
-                } else {
-                    if let Some((_, Some(net))) = snapped {
-                        self.net = Some(net);
-                        self.route_highlight(self.net);
-                    }
-                    if self.net.is_some() {
-                        self.follow_class_width(project);
-                        self.route_start = Some(destination);
-                    }
+                if !double {
+                    operation = self.route_click(project, engine.revision(), at, scale);
                 }
             } else if self.fill_handle_at(project, view, screen(at)).is_none() {
                 // A click on a handle of the selected fill keeps it
@@ -1398,47 +1379,12 @@ impl PcbEditor {
                 |placement| body_polygon(project, placement),
             );
         }
-        if let (Some(start), Some(at)) = (self.route_start, cursor) {
+        if let (Some(_), Some(at)) = (self.route_start, cursor) {
             let end = self
                 .route_snap(at, scale)
                 .map(PlacedPad::center)
                 .unwrap_or_else(|| self.route_point(at, scale));
-            let width = (self.width as f32 * scale).max(1.0);
-            let leg = |from: Point, to: Point, layer: CopperLayer| {
-                // The copper the segment will add: round caps, opaque.
-                let color =
-                    BoardInk::get().on_board(crate::palette::board().copper_layer(layer), 1.0);
-                painter.add(Shape::convex_polygon(
-                    capsule(screen(from), screen(to), width / 2.0),
-                    color,
-                    Stroke::NONE,
-                ));
-                painter.line_segment(
-                    [screen(from), screen(to)],
-                    Stroke::new(1.0, t.body_selected),
-                );
-            };
-            match self.pending_via {
-                Some((via, from)) => {
-                    leg(start, via, from);
-                    leg(via, end, self.layer);
-                    let (drill, diameter) = self.class_via_size(project);
-                    let radius = (diameter as f32 * scale / 2.0).max(4.0);
-                    painter.circle(
-                        screen(via),
-                        radius,
-                        t.body_selected,
-                        Stroke::new(1.0, t.on_accent),
-                    );
-                    painter.circle_filled(
-                        screen(via),
-                        (drill as f32 * scale / 2.0).max(2.0),
-                        BoardInk::get().drill,
-                    );
-                }
-                None => leg(start, end, self.layer),
-            }
-            painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+            self.paint_route_preview(&painter, view, project, end);
         }
         if self.tool == Tool::Via
             && let Some(at) = cursor
@@ -1458,7 +1404,7 @@ impl PcbEditor {
             &format!(
                 "{} · {} copper · grid 0.5 mm · {} airwires{}",
                 match self.tool {
-                    Tool::Route => "Route (V changes layer)",
+                    Tool::Route => "Route (keys in the Route card)",
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
                     Tool::Select => "Select / move",
@@ -1482,9 +1428,10 @@ impl PcbEditor {
         let t = Tokens::get();
         let text = match (self.route_start, self.net, self.highlighted) {
             (Some(_), Some(net), _) => format!(
-                "Routing {} · {} mm",
+                "Routing {} · {} mm · {}",
                 project.net_name(net),
-                kit::number_text(self.width)
+                kit::number_text(self.width),
+                self.route.posture.label()
             ),
             (None, _, Some(net)) if project.net(net).is_some() => {
                 format!("{} highlighted", project.net_name(net))
@@ -1506,7 +1453,7 @@ impl PcbEditor {
         let pill = kit::pill(&mut child, None, &text);
         if pill.closed {
             if self.route_start.is_some() {
-                self.route_start = None;
+                self.finish_route();
             } else {
                 self.highlighted = None;
             }
@@ -1567,35 +1514,6 @@ impl PcbEditor {
     /// within 8 pixels, else the 0.5 mm grid.
     fn via_point(&self, at: Point, scale: f32) -> Point {
         self.track_end(at, scale, None).unwrap_or_else(|| snap(at))
-    }
-
-    /// V: the next copper layer of the stackup (Shift: the previous one).
-    /// During a route the via goes at `at`, unless that is where the route
-    /// starts or a via is already pending (then only the layer changes).
-    fn change_layer(&mut self, at: Option<Point>, reverse: bool) {
-        let Some(index) = self.stack.iter().position(|l| *l == self.layer) else {
-            self.layer = CopperLayer::Top;
-            return;
-        };
-        let count = self.stack.len().max(1);
-        let next = if reverse {
-            (index + count - 1) % count
-        } else {
-            (index + 1) % count
-        };
-        let Some(&layer) = self.stack.get(next) else {
-            return;
-        };
-        if let (Some(start), Some(at), None) = (self.route_start, at, self.pending_via)
-            && start != at
-        {
-            self.pending_via = Some((at, self.layer));
-        }
-        if self.pending_via.is_some_and(|(_, from)| from == layer) {
-            // Back on the layer the route reached the via on: no via.
-            self.pending_via = None;
-        }
-        self.layer = layer;
     }
 
     /// The via the Via tool places for a click at `at`: on the net of the
@@ -2567,6 +2485,7 @@ fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> 
 mod tests {
     use super::board_card::fabrication_edit;
     use super::*;
+    use pcbcraft_core::layout::RouteRequest;
     use pcbcraft_core::{Fabrication, MaskColour};
 
     fn ids(engine: &Engine) -> (Id, Id) {
@@ -3795,7 +3714,8 @@ mod tests {
     }
 
     /// A route segment the engine refuses leaves the route in progress
-    /// (its start and the pill); an accepted one ends it.
+    /// (its start and the pill); a document change the route did not make
+    /// ends it.
     #[test]
     fn a_refused_route_segment_keeps_the_route_in_progress()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3817,7 +3737,7 @@ mod tests {
         editor.net = Some(net);
         editor.route_start = Some([9.2, 8.0]);
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        let pill = format!("Routing {} · 0.3 mm", engine.project().net_name(net));
+        let pill = format!("Routing {} · 0.3 mm · 45°", engine.project().net_name(net));
         assert!(texts(&output).contains(&pill));
         // A click far outside the board is refused by the engine.
         let operation = {
@@ -3845,7 +3765,7 @@ mod tests {
         assert!(engine.apply(engine.revision(), operation).is_err());
         canvas_frame(&mut editor, &engine, &ctx, vec![]);
         assert_eq!(editor.route_start, Some([9.2, 8.0]));
-        // An accepted segment is a new revision: the route ends.
+        // A change the route did not send ends the route.
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::Route {

@@ -62,6 +62,9 @@ pub struct App {
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
     browser_visible: bool,
+    /// The Browser's width as last dragged (kept per user in the
+    /// settings); the layout clamps it to what the window fits.
+    browser_width: f32,
     /// "Update project copy" imported a revision at this engine revision;
     /// cancelling its review undoes that import (see `review_closed`).
     pending_import: Option<PendingImport>,
@@ -89,6 +92,8 @@ impl App {
         {
             files.request(file_ui::Action::OpenPath(path));
         }
+        let sources = LibrarySources::from_env(&cc.egui_ctx);
+        let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         Ok(Self {
             scene: SceneController::new(
                 cc.egui_ctx.clone(),
@@ -96,7 +101,7 @@ impl App {
             ),
             fills: crate::fill_worker::FillWorker::start(cc.egui_ctx.clone()),
             files,
-            sources: LibrarySources::from_env(&cc.egui_ctx),
+            sources,
             engine,
             workspace: Workspace::Pcb,
             part: Default::default(),
@@ -109,6 +114,7 @@ impl App {
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
+            browser_width,
             pending_import: None,
             closing: false,
             now: 0.0,

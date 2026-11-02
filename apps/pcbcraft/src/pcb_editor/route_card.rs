@@ -1,19 +1,24 @@
-//! The Route tool card: the width, copper layer and net the next route
-//! uses, while Route is armed in Layout (docs/sidebar-ia.md, "Tool card").
-//! The route in progress shows as a canvas pill; view toggles live in the
-//! view popover.
+//! The Route tool card: the mode, width, copper layer, via size and net
+//! the route uses, and the Route keys, while Route is armed in Layout
+//! (docs/sidebar-ia.md, "Tool card"). Every setting takes effect from the
+//! next step, also during a route. The route in progress shows as a canvas
+//! pill; view toggles live in the view popover.
+use super::route_tool::ROUTE_KEYS;
 use super::{PcbEditor, copper_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
-use pcbcraft_core::{Operation, Project, schematic};
+use pcbcraft_core::{Operation, Project, layout, layout::posture::Posture, schematic};
 
 /// Route widths the engine accepts (mm).
 const WIDTH_RANGE: std::ops::RangeInclusive<f64> = 0.05..=5.0;
+/// Via drills and pads the engine accepts (mm).
+const VIA_RANGE: std::ops::RangeInclusive<f64> = 0.1..=6.0;
 
 impl PcbEditor {
-    /// The Route tool card. Done (or Esc on the canvas) returns to Select
-    /// and the Properties card of the previous selection. Tool settings
-    /// are editor state, not document edits, so it issues no operation.
+    /// The Route tool card. Done (or Esc on the canvas without a route)
+    /// returns to Select and the Properties card of the previous
+    /// selection. Tool settings are editor state, not document edits, so
+    /// it issues no operation.
     pub(super) fn route_card(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
         self.follow_class_width(project);
         let routing = self.route_start.is_some();
@@ -22,16 +27,19 @@ impl PcbEditor {
             name: "Route",
             key: "",
             hint: if routing {
-                "Click a point or pad; V changes layer through a via; Esc ends"
+                "Click corners; Enter or a pad of the net finishes"
             } else {
-                "Click a pad, then points or a pad; V changes layer; Esc ends"
+                "Click a pad to start; the keys below work while routing"
             },
-            tip: "Routes run on the chosen copper layer at the chosen width, which starts at \
-                  the routed net's class width (else the design rules' default). While routing, \
-                  V (Shift+V backwards) places a via at the pointer and continues on the next \
-                  layer of the stackup; the next click routes to the via, places it and routes \
-                  on, as one step. A route the clearance rules refuse is not added, and the \
-                  route stays in progress.",
+            tip: "Each click adds one step (an elbow in the chosen mode, at the chosen width) \
+                  as one undo step, and the route continues from its end. A click on a pad, \
+                  track or via of the routed net, Enter or a double-click finishes; Esc or a \
+                  right-click ends the route, and Esc again returns to Select. Backspace \
+                  removes the last step. V, Shift+V or a layer's number continues on that \
+                  layer through a via at the pointer, which the next click places. Width \
+                  and via size start at the net class's (else the design rules' defaults); \
+                  W and D step through the rules' presets. A step the rules refuse is not \
+                  added and the route stays where it was.",
             finish: None,
         };
         let t = solidcraft_ui_egui::theme::Tokens::get();
@@ -40,31 +48,7 @@ impl PcbEditor {
         let response = egui::Frame::NONE
             .inner_margin(margin)
             .show(ui, |ui| {
-                kit::tool_card(ui, &card, |ui| {
-                    kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);
-                    let options = copper_options(&self.stack);
-                    if kit::choice_row(ui, "Layer", &mut self.layer, &options) {
-                        self.route_start = None;
-                        self.pending_via = None;
-                    }
-                    kit::check_row(ui, "Tent vias", &mut self.via_tented);
-                    let mut nets = vec![(None, "From the first pad".to_owned())];
-                    nets.extend(
-                        schematic::nets(project)
-                            .iter()
-                            .map(|net| (Some(net.id), net.name.clone())),
-                    );
-                    if kit::choice_row(ui, "Net", &mut self.net, &nets) {
-                        self.route_start = None;
-                        self.route_highlight(self.net);
-                    }
-                    if let Some(net) = self.net.filter(|n| project.net(*n).is_some()) {
-                        let class = pcbcraft_core::layout::net_class(project, net)
-                            .and_then(|c| project.rules.class(c))
-                            .map_or_else(|| "None".to_owned(), |c| c.name.clone());
-                        kit::value_row(ui, "Class", &class);
-                    }
-                })
+                kit::tool_card(ui, &card, |ui| self.route_rows(ui, project))
             })
             .inner;
         if response.done {
@@ -72,5 +56,97 @@ impl PcbEditor {
             self.discard_staged();
         }
         None
+    }
+
+    fn route_rows(&mut self, ui: &mut Ui, project: &Project) {
+        let modes: Vec<(Posture, String)> = Posture::ALL
+            .iter()
+            .map(|p| (*p, p.label().to_owned()))
+            .collect();
+        kit::choice_row(ui, "Mode", &mut self.route.posture, &modes);
+        kit::check_row(ui, "Flip elbow", &mut self.route.flipped);
+        kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);
+        let options = copper_options(&self.stack);
+        let mut layer = self.layer;
+        if kit::choice_row(ui, "Layer", &mut layer, &options) {
+            // During a route this is a layer change through a via at the
+            // head, as a layer key is.
+            self.change_layer_to(project, layer, None);
+        }
+        self.via_rows(ui, project);
+        kit::check_row(ui, "Tent vias", &mut self.via_tented);
+        let mut nets = vec![(None, "From the first pad".to_owned())];
+        nets.extend(
+            schematic::nets(project)
+                .iter()
+                .map(|net| (Some(net.id), net.name.clone())),
+        );
+        if kit::choice_row(ui, "Net", &mut self.net, &nets) {
+            self.reset_route();
+            self.route.via_draft = None;
+            self.route_highlight(self.net);
+        }
+        if let Some(net) = self.net.filter(|n| project.net(*n).is_some()) {
+            let class = layout::net_class(project, net)
+                .and_then(|c| project.rules.class(c))
+                .map_or_else(|| "None".to_owned(), |c| c.name.clone());
+            kit::value_row(ui, "Class", &class);
+        }
+        kit::section(ui, "route-keys", "Keys", true, None, |ui| {
+            let max = if self.route.keys_all {
+                ROUTE_KEYS.len()
+            } else {
+                kit::LIST_MAX_ROWS
+            };
+            let shown = kit::list_frame(ui, ROUTE_KEYS.len(), max, |ui, index| {
+                if let Some((key, action)) = ROUTE_KEYS.get(index) {
+                    kit::value_row(ui, key, action);
+                }
+            });
+            if shown.show_all {
+                self.route.keys_all = true;
+            }
+        });
+    }
+
+    /// Via drill and pad of the next layer change: the size chosen while
+    /// routing the net, else its class's. A size below the rules' drill or
+    /// annular ring is marked and not used.
+    fn via_rows(&mut self, ui: &mut Ui, project: &Project) {
+        let (mut drill, mut pad) = self
+            .route
+            .via_draft
+            .unwrap_or_else(|| self.route_via_size(project));
+        let drill_input = kit::row(ui, "Via drill", |ui| {
+            kit::number_input(ui, "Via drill", &mut drill, "mm", VIA_RANGE)
+        });
+        if let Some(message) = &drill_input.invalid {
+            kit::field_error(ui, &drill_input.response, message, true);
+        }
+        let pad_input = kit::row(ui, "Via pad", |ui| {
+            kit::number_input(ui, "Via pad", &mut pad, "mm", VIA_RANGE)
+        });
+        if let Some(message) = &pad_input.invalid {
+            kit::field_error(ui, &pad_input.response, message, true);
+        }
+        if drill_input.changed || pad_input.changed {
+            match (self.net, layout::via_size_fits(project, drill, pad)) {
+                (Some(net), Ok(())) => {
+                    self.route.via_size = Some((net, (drill, pad)));
+                    self.route.via_draft = None;
+                }
+                _ => self.route.via_draft = Some((drill, pad)),
+            }
+        }
+        if self.route.via_draft.is_some()
+            && let Err(error) = layout::via_size_fits(project, drill, pad)
+        {
+            let field = if drill_input.changed {
+                &drill_input.response
+            } else {
+                &pad_input.response
+            };
+            kit::field_error(ui, field, &crate::refusal::shown_error(&error), true);
+        }
     }
 }
