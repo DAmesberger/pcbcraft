@@ -34,6 +34,7 @@ mod identity;
 #[cfg(test)]
 mod identity_tests;
 mod mapping_card;
+mod marking_place;
 mod marking_props;
 mod model_body;
 mod model_card;

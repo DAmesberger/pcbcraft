@@ -1,0 +1,32 @@
+{
+  "items": [
+    {"item": "text", "template": "ESP32-S31-WROOM-3", "height_mm": 1.5},
+    {"item": "text", "template": "2.4/5 GHz RADIO MODULE", "height_mm": 0.8}
+  ],
+  "finish": "laser_etch_metal",
+  "placement": {"on": {"surface": "anchor", "name": "can_top"}, "offset_mm": [0.0, 1.5]},
+  "decals": [
+    {
+      "items": [
+        {"item": "artwork", "anchor": "pin1_corner", "size_mm": [6.0, 4.0], "licence": "CC0-1.0",
+         "svg": "<svg xmlns='http://www.w3.org/2000/svg' width='30mm' height='20mm' viewBox='0 0 30 20'><rect x='1' y='1' width='28' height='18' rx='3' fill='none' stroke='black' stroke-width='1.6'/><path d='M6 14 L10 6 L14 14 Z' fill='black'/><text x='21' y='13' font-size='6' text-anchor='middle'>LOGO</text></svg>"}
+      ],
+      "finish": "laser_etch_metal",
+      "placement": {"on": {"surface": "anchor", "name": "can_top"}}
+    },
+    {
+      "items": [
+        {"item": "artwork", "anchor": "start", "size_mm": [6.0, 3.0], "licence": "CC0-1.0",
+         "svg": "<svg xmlns='http://www.w3.org/2000/svg' width='40mm' height='20mm' viewBox='0 0 40 20'><rect x='1' y='1' width='38' height='18' rx='2' fill='none' stroke='black' stroke-width='1.2' stroke-dasharray='3 2'/><text x='20' y='13' font-size='7' text-anchor='middle'>CERT</text></svg>"},
+        {"item": "code2d", "payload": "{designator}", "size_mm": 4.5, "anchor": "end", "ecc": "medium"}
+      ],
+      "finish": "laser_etch_metal",
+      "placement": {"on": {"surface": "anchor", "name": "can_top"}, "offset_mm": [0.0, -6.0]}
+    },
+    {
+      "items": [{"item": "text", "template": "{designator}", "height_mm": 1.2}],
+      "finish": "ink_white",
+      "placement": {"on": {"surface": "anchor", "name": "pcb_top"}}
+    }
+  ]
+}

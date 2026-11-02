@@ -405,9 +405,15 @@ pub fn decal_geometry(
 
 /// SVG artwork from the project's packed assets.
 pub fn project_artwork(project: &Project) -> impl Fn(&ContentHash) -> Option<String> + '_ {
+    project_artwork_of(&project.library)
+}
+
+/// SVG artwork from a library's packed assets.
+pub fn project_artwork_of(
+    library: &pcbcraft_core::library::Library,
+) -> impl Fn(&ContentHash) -> Option<String> + '_ {
     move |hash| {
-        project
-            .library
+        library
             .assets
             .iter()
             .find(|a| a.hash == *hash && a.media_type == SVG_MEDIA_TYPE)

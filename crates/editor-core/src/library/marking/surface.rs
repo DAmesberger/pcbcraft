@@ -48,6 +48,10 @@ pub const CAN_EDGE_MM: f64 = 0.3;
 /// ENIG over 35 µm copper); the module model builder stands the board on
 /// them, so the board's top is this plus its thickness.
 pub const MODULE_PAD_MM: f64 = 0.035;
+/// Thickness of a generated module's printed antenna trace, mm (est.: 35 µm
+/// copper). Board anchors (`pcb_top`, `antenna_area`) stand on it, so a
+/// silkscreen prints over the trace as it does over the mask on it.
+pub const MODULE_TRACE_MM: f64 = 0.035;
 /// The share of a round can top's diameter the `top` anchor's rectangle
 /// spans across and along (a rectangle inscribed in the disc).
 const DISC_RECT: [f64; 2] = [0.8, 0.6];
@@ -518,7 +522,10 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
             // The board beyond the can towards the antenna end.
             let (hl, hw) = (m.length / 2.0, m.width / 2.0);
             let from = (cy + cl / 2.0).max(-hl);
-            let beyond = plane([0.0, (from + hl) / 2.0, pcb], [2.0 * hw, hl - from]);
+            let beyond = plane(
+                [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
+                [2.0 * hw, hl - from],
+            );
             if sized(&beyond) {
                 out.push(anchor(
                     "pcb_top",
@@ -528,7 +535,10 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
             }
             if m.antenna_length > 0.0 {
                 let from = hl - m.antenna_length.min(m.length);
-                let antenna = plane([0.0, (from + hl) / 2.0, pcb], [2.0 * hw, hl - from]);
+                let antenna = plane(
+                    [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
+                    [2.0 * hw, hl - from],
+                );
                 if sized(&antenna) {
                     out.push(anchor(
                         "antenna_area",
@@ -735,7 +745,9 @@ mod tests {
         };
         // The can ends at y = −2.5 + 8.7 = 6.2; the board at 12.5.
         assert!((pcb.size_mm[1] - (12.5 - 6.2)).abs() < 1e-9);
-        assert!((pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness)).abs() < 1e-12);
+        assert!(
+            (pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness + MODULE_TRACE_MM)).abs() < 1e-12
+        );
         assert!((pcb.origin[1] - (6.2 + 12.5) / 2.0).abs() < 1e-9);
         Ok(())
     }

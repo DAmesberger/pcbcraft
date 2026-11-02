@@ -598,7 +598,10 @@ fn module_anchors_place_the_can_and_board_markings() -> TestResult {
     );
     assert!(problems.is_empty(), "{problems:?}");
     let can_top = form.height + Finish::LaserEtchMetal.lift_mm();
-    let pcb_top = core_surface::MODULE_PAD_MM + form.pcb_thickness + Finish::InkWhite.lift_mm();
+    let pcb_top = core_surface::MODULE_PAD_MM
+        + form.pcb_thickness
+        + core_surface::MODULE_TRACE_MM
+        + Finish::InkWhite.lift_mm();
     let can: Vec<&Geometry> = decals
         .iter()
         .filter(|g| (g.min[2] - can_top).abs() < 1e-4)

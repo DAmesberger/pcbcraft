@@ -20,15 +20,16 @@
 //! edit and the packed file are one undo step. The artwork's licence is
 //! stated on its item; publishing needs it (`marking.artwork`).
 use super::PartEditor;
+use super::marking_place::{self, SurfaceChoice};
 use super::part_props::PartProps;
 use crate::kit;
 use egui::Ui;
 use pcbcraft_core::fields::{self, FieldValue};
 use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
 use pcbcraft_core::library::marking::{
-    self, Align, Anchor, AreaChoice, CodeScheme, DEFAULT_MIN_TEXT_HEIGHT_MM, Finish,
+    self, Align, Anchor, AreaChoice, CodeScheme, DEFAULT_MIN_TEXT_HEIGHT_MM, Ecc,
     MAX_MARKING_ITEMS, MAX_TEMPLATE, MarkingInputs, MarkingItem, MarkingSpec, PolarityMark,
-    Template,
+    SurfaceRef, Symbology, Template,
 };
 use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library, PackedAsset};
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, LibraryCommand, Operation};
@@ -86,6 +87,8 @@ pub struct MarkingProps {
     staged: Vec<PackedAsset>,
     /// Why the last artwork could not be added.
     artwork_error: Option<String>,
+    /// Which of the marking (0) and its further decals the rows edit.
+    decal: usize,
 }
 
 /// Fit artwork of `natural` size into 60 % of `area`, aspect kept.
@@ -141,10 +144,19 @@ enum Kind {
     Code,
     Polarity,
     Bands,
+    Code2d,
+    Electrolytic,
 }
 
 impl Kind {
-    const ADDABLE: [Kind; 4] = [Kind::Text, Kind::Code, Kind::Polarity, Kind::Bands];
+    const ADDABLE: [Kind; 6] = [
+        Kind::Text,
+        Kind::Code,
+        Kind::Polarity,
+        Kind::Bands,
+        Kind::Code2d,
+        Kind::Electrolytic,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -152,6 +164,8 @@ impl Kind {
             Self::Code => "Value code",
             Self::Polarity => "Polarity mark",
             Self::Bands => "Colour bands",
+            Self::Code2d => "QR code",
+            Self::Electrolytic => "Electrolytic µF/V and stripe",
         }
     }
 
@@ -176,6 +190,18 @@ impl Kind {
                 value: first_field?,
                 tolerance: None,
             },
+            Self::Code2d => MarkingItem::Code2d {
+                symbology: Symbology::Qr,
+                payload: Template("{designator}".into()),
+                size_mm: 3.0,
+                anchor: Anchor::End,
+                ecc: Ecc::Medium,
+            },
+            Self::Electrolytic => MarkingItem::Electrolytic {
+                capacitance: first_field?,
+                voltage: None,
+                stripe: true,
+            },
         })
     }
 }
@@ -199,6 +225,8 @@ fn item_label(item: &MarkingItem) -> &'static str {
         MarkingItem::Artwork { .. } => "Artwork",
         MarkingItem::Polarity { .. } => "Polarity mark",
         MarkingItem::Bands { .. } => "Colour bands",
+        MarkingItem::Code2d { .. } => "QR code",
+        MarkingItem::Electrolytic { .. } => "Electrolytic",
     }
 }
 
@@ -288,8 +316,75 @@ fn preview_inputs(
 }
 
 /// The preview line of `spec` and its advisory notes.
-fn preview(spec: &MarkingSpec, inputs: &MarkingInputs) -> (String, Vec<String>) {
-    match marking::layout(spec, inputs) {
+/// `spec` laid out for `inputs` on `package`: the marking and each decal
+/// in its own surface's region.
+pub(super) fn laid_out(
+    spec: &MarkingSpec,
+    inputs: &MarkingInputs,
+    library: &Library,
+    package: &pcbcraft_core::library::PackageDefinition,
+) -> pcbcraft_core::Result<marking::MarkingLayout> {
+    let region =
+        |s: &MarkingSpec| marking::surface_region(library, Some(package), s.area, &s.placement);
+    marking::layout_with(spec, inputs, &region)
+}
+
+impl PartEditor {
+    /// The marking the Component 3D view shows: the one the section edits
+    /// (the component's, or the chosen Part's top mark), with what an
+    /// instance with the component's defaults reads, and the SVG text of
+    /// its artwork (packed, or staged with the edit).
+    pub(super) fn shown_marking(
+        &self,
+        engine: &Engine,
+    ) -> Option<(
+        MarkingSpec,
+        MarkingInputs,
+        Vec<(pcbcraft_core::ContentHash, String)>,
+    )> {
+        let set = self.draft.as_ref()?;
+        let library = &engine.project().library;
+        let state = &self.marking;
+        let (spec, part) = match state.scope {
+            Scope::Component => (set.component.marking.as_deref()?, None),
+            Scope::Part(id) => {
+                let mark = state
+                    .part
+                    .as_ref()
+                    .filter(|p| p.id == id)?
+                    .mark
+                    .as_deref()?;
+                let part = match &engine.drafts().get(id)?.definition {
+                    Definition::Part(p) => Some((p.mpn.clone(), p.manufacturer.clone())),
+                    _ => None,
+                };
+                (mark, part)
+            }
+        };
+        let part = part.as_ref().map(|(m, f)| (m.as_str(), f.as_str()));
+        let inputs = preview_inputs(&set.component, library, part, [0.0, 0.0]);
+        let artwork =
+            spec.artwork()
+                .filter_map(|hash| {
+                    let bytes =
+                        library.assets.iter().chain(state.staged.iter()).find(|a| {
+                            a.hash == hash && a.media_type == marking::ARTWORK_MEDIA_TYPE
+                        })?;
+                    let text = std::str::from_utf8(bytes.data.as_slice()).ok()?;
+                    Some((hash, text.to_owned()))
+                })
+                .collect();
+        Some((spec.clone(), inputs, artwork))
+    }
+}
+
+fn preview(
+    spec: &MarkingSpec,
+    inputs: &MarkingInputs,
+    library: &Library,
+    package: &pcbcraft_core::library::PackageDefinition,
+) -> (String, Vec<String>) {
+    match laid_out(spec, inputs, library, package) {
         Ok(layout) => {
             let notes = layout.findings.iter().map(|f| f.message.clone()).collect();
             let text = layout_text(&layout);
@@ -309,16 +404,18 @@ fn preview(spec: &MarkingSpec, inputs: &MarkingInputs) -> (String, Vec<String>) 
 fn layout_text(layout: &marking::MarkingLayout) -> String {
     use marking::LaidElement;
     let words: Vec<String> = layout
-        .elements
-        .iter()
+        .all()
+        .flat_map(|l| l.elements.iter())
         .filter_map(|element| match element {
             LaidElement::Text(text) => (!text.text.is_empty()).then(|| text.text.clone()),
             LaidElement::Artwork { .. } => Some("artwork".into()),
+            LaidElement::Matrix { .. } => Some("QR code".into()),
             LaidElement::Polarity { mark, .. } => Some(
                 match mark {
                     PolarityMark::Dot => "dot",
                     PolarityMark::Bar => "bar",
                     PolarityMark::Band => "band",
+                    PolarityMark::Stripe => "stripe",
                 }
                 .into(),
             ),
@@ -455,6 +552,7 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
                 (PolarityMark::Dot, "Dot".to_owned()),
                 (PolarityMark::Bar, "Bar".to_owned()),
                 (PolarityMark::Band, "Band".to_owned()),
+                (PolarityMark::Stripe, "Stripe".to_owned()),
             ];
             kit::choice_row(ui, "Mark", mark, &marks) | kit::choice_row(ui, "At", at, &anchors())
         }
@@ -468,6 +566,63 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
                 changed = true;
             }
             changed |= field_row(ui, "Tolerance", tolerance, fields, true);
+            changed
+        }
+        MarkingItem::Code2d {
+            payload,
+            size_mm,
+            anchor,
+            ecc,
+            ..
+        } => {
+            let mut text = payload.0.clone();
+            let too_long = text.len() > MAX_TEMPLATE;
+            let response = kit::row(ui, "Payload", |ui| {
+                ui.spacing_mut().text_edit_width = ui.available_width().max(0.0);
+                kit::text_field(ui, "payload", &mut text, "{designator}", too_long)
+                    .on_hover_text("What the code reads: {designator}, {mpn}, {var:serial}, text")
+            });
+            let mut changed = false;
+            if response.changed() && text.len() <= MAX_TEMPLATE {
+                payload.0 = text;
+                changed = true;
+            }
+            if too_long {
+                kit::field_error(
+                    ui,
+                    &response,
+                    &format!("At most {MAX_TEMPLATE} bytes"),
+                    true,
+                );
+            }
+            let eccs = [
+                (Ecc::Low, "Low (7 %)".to_owned()),
+                (Ecc::Medium, "Medium (15 %)".to_owned()),
+                (Ecc::Quartile, "Quartile (25 %)".to_owned()),
+                (Ecc::High, "High (30 %)".to_owned()),
+            ];
+            changed |= kit::number_row(ui, "Side", size_mm, "mm", SIZE_MM)
+                | kit::choice_row(ui, "At", anchor, &anchors())
+                | kit::choice_row(ui, "Recovery", ecc, &eccs);
+            kit::note(ui, "A QR code; its quiet zone is kept clear");
+            changed
+        }
+        MarkingItem::Electrolytic {
+            capacitance,
+            voltage,
+            stripe,
+        } => {
+            let mut changed = false;
+            let mut chosen = Some(*capacitance);
+            if field_row(ui, "Capacitance", &mut chosen, fields, false)
+                && let Some(chosen) = chosen
+            {
+                *capacitance = chosen;
+                changed = true;
+            }
+            changed |= field_row(ui, "Voltage", voltage, fields, true);
+            changed |= kit::check_row(ui, "Negative stripe", stripe);
+            kit::note(ui, "Each instance shows its own µF and V");
             changed
         }
         MarkingItem::Artwork {
@@ -506,9 +661,13 @@ pub fn spec_rows(
     spec: &mut Option<Box<MarkingSpec>>,
     fields: &[(FieldRef, String)],
     pick_artwork: &mut bool,
+    surfaces: &[SurfaceChoice],
+    editing: &mut usize,
 ) -> bool {
     let mut changed = false;
-    if let Some(body) = spec.as_deref_mut() {
+    if let Some(root) = spec.as_deref_mut() {
+        changed |= marking_place::decal_row(ui, root, editing);
+        let body = marking_place::edited(root, *editing);
         let mut remove = None;
         for (index, item) in body.items.iter_mut().enumerate() {
             kit::rule(ui);
@@ -533,17 +692,15 @@ pub fn spec_rows(
             changed = true;
         }
         kit::rule(ui);
-        let finishes = [
-            (Finish::LaserEtch, "Laser etched".to_owned()),
-            (Finish::InkWhite, "White ink".to_owned()),
-        ];
-        changed |= kit::choice_row(ui, "Finish", &mut body.finish, &finishes);
+        changed |= marking_place::finish_rows(ui, &mut body.finish);
+        changed |= marking_place::placement_rows(ui, &mut body.placement, surfaces);
         let mut explicit = matches!(body.area, AreaChoice::Explicit { .. });
+        let on_model = body.placement.on == SurfaceRef::Model;
         let areas = [
             (false, "The model's top face".to_owned()),
             (true, "A rectangle".to_owned()),
         ];
-        if kit::choice_row(ui, "Area", &mut explicit, &areas) {
+        if on_model && kit::choice_row(ui, "Area", &mut explicit, &areas) {
             body.area = if explicit {
                 AreaChoice::Explicit {
                     centre: [0.0, 0.0],
@@ -554,7 +711,7 @@ pub fn spec_rows(
             };
             changed = true;
         }
-        if let AreaChoice::Explicit { centre, size_mm } = &mut body.area {
+        if let (true, AreaChoice::Explicit { centre, size_mm }) = (on_model, &mut body.area) {
             changed |= kit::pair_row(ui, "Centre", centre, "mm", AREA_MM);
             changed |= kit::pair_row(ui, "Size", size_mm, "mm", SIZE_MM);
         }
@@ -566,7 +723,9 @@ pub fn spec_rows(
             changed = true;
         }
     }
-    let count = spec.as_ref().map_or(0, |s| s.items.len());
+    let count = spec
+        .as_deref()
+        .map_or(0, |s| s.all().nth(*editing).map_or(0, |d| d.items.len()));
     if count >= MAX_MARKING_ITEMS {
         kit::hint(
             ui,
@@ -600,9 +759,11 @@ pub fn spec_rows(
             });
         });
         if let Some(item) = added {
-            spec.get_or_insert_with(Default::default).items.push(item);
+            let root = spec.get_or_insert_with(Default::default);
+            marking_place::edited(root, *editing).items.push(item);
             changed = true;
         }
+
         if first_field.is_none() {
             kit::note(
                 ui,
@@ -684,6 +845,8 @@ impl PartEditor {
         }
         let fields = field_names(&set.component, library);
         let envelope = set.package.envelope;
+        let surfaces = marking_place::surfaces(&set.package);
+        let package = set.package.clone();
         let part_open = self.parts.is_open();
         let mut operation = None;
         let summary = match &set.component.marking {
@@ -710,8 +873,7 @@ impl PartEditor {
                     .map(|(_, mpn, manufacturer)| (mpn.as_str(), manufacturer.as_str())),
                 Scope::Component => None,
             };
-            let mut inputs =
-                preview_inputs(&set.component, library, part, [envelope[0], envelope[1]]);
+            let inputs = preview_inputs(&set.component, library, part, [envelope[0], envelope[1]]);
             let reading = matches!(
                 state.pick,
                 ArtworkPick::Picking(..) | ArtworkPick::Reading(..)
@@ -731,7 +893,7 @@ impl PartEditor {
                     &mut edit.mark
                 }
             };
-            spec_rows(ui, spec, &fields, &mut pick);
+            spec_rows(ui, spec, &fields, &mut pick, &surfaces, &mut state.decal);
             if reading {
                 kit::note(ui, "Reading the SVG…");
             }
@@ -739,10 +901,7 @@ impl PartEditor {
                 kit::note(ui, &format!("Artwork not added: {error}"));
             }
             if let Some(body) = spec.as_deref() {
-                if let AreaChoice::Explicit { size_mm, .. } = body.area {
-                    inputs.area_mm = size_mm;
-                }
-                let (shown, notes) = preview(body, &inputs);
+                let (shown, notes) = preview(body, &inputs, library, &package);
                 kit::rule(ui);
                 kit::value_row(ui, "Preview", &shown);
                 for note in &notes {
@@ -1048,7 +1207,7 @@ mod tests {
                 align: Align::Centre,
             }]
         );
-        assert_eq!(stored.finish, Finish::LaserEtch);
+        assert_eq!(stored.finish, marking::Finish::LaserEtch);
         assert_eq!(stored.area, AreaChoice::FromModel);
         let shown = h.texts();
         assert!(shown.iter().any(|t| t == "Finish"), "{shown:?}");

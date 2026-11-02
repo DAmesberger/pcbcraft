@@ -43,8 +43,12 @@ impl PartEditor {
             .source
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &engine.document().drafts));
-        let Some(set) = &self.draft else {
+        if self.draft.is_none() {
             reset_model_view(viewport);
+            return;
+        }
+        self.marking_decals(viewport, engine);
+        let Some(set) = &self.draft else {
             return;
         };
         let tab = &mut self.model;
@@ -65,6 +69,87 @@ impl PartEditor {
             viewport.set_overlay(Some(model_place::overlay(&set.footprint, &set.package)));
             tab.overlay_key = Some(key);
         }
+    }
+
+    /// Ask the view for the edited marking's decals on the preview model.
+    /// Only a change of what draws (the spec, the values it reads, its
+    /// artwork or the package) builds them again, off the UI thread; the
+    /// model itself is not rebuilt.
+    fn marking_decals(&self, viewport: &mut Viewport, engine: &Engine) {
+        use pcbcraft_core::library::marking::{Chart, MarkingSpec};
+        use std::hash::{Hash, Hasher};
+        let Some(set) = &self.draft else {
+            return;
+        };
+        let Some((spec, inputs, artwork)) = self.shown_marking(engine) else {
+            viewport.set_decals(None);
+            return;
+        };
+        // The preview is built in the model frame (no placement).
+        let package = pcbcraft_core::library::PackageDefinition {
+            placement: Default::default(),
+            ..set.package.clone()
+        };
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_vec(&spec).unwrap_or_default().hash(&mut h);
+        serde_json::to_vec(&package.form)
+            .unwrap_or_default()
+            .hash(&mut h);
+        format!("{inputs:?}").hash(&mut h);
+        for (hash, _) in &artwork {
+            hash.to_string().hash(&mut h);
+        }
+        let key = h.finish();
+        if viewport.decals_key() == Some(key) {
+            return;
+        }
+        let library = &engine.project().library;
+        type Regions = Vec<(MarkingSpec, Option<([f64; 2], Chart)>)>;
+        let regions: Regions = spec
+            .all()
+            .map(|s| {
+                let region = pcbcraft_core::library::marking::surface_region(
+                    library,
+                    Some(&package),
+                    s.area,
+                    &s.placement,
+                );
+                (s.clone(), region)
+            })
+            .collect();
+        let build = move |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
+            let region = |s: &MarkingSpec| {
+                regions
+                    .iter()
+                    .find(|(r, _)| {
+                        r.placement == s.placement && r.area == s.area && r.items == s.items
+                    })
+                    .and_then(|(_, region)| *region)
+            };
+            let layout = match pcbcraft_core::library::marking::layout_with(&spec, &inputs, &region)
+            {
+                Ok(layout) => layout,
+                Err(error) => return (Vec::new(), vec![error.to_string()]),
+            };
+            let source = |hash: &pcbcraft_core::ContentHash| {
+                artwork
+                    .iter()
+                    .find(|(h, _)| h == hash)
+                    .map(|(_, text)| text.clone())
+            };
+            let mut cache = pcbcraft_solidcraft::marking::DecalCache::default();
+            pcbcraft_solidcraft::marking::board::preview_decals(
+                &layout,
+                geometry,
+                Some(&package),
+                &source,
+                &mut cache,
+            )
+        };
+        viewport.set_decals(Some(crate::viewport::DecalRequest {
+            key,
+            build: Arc::new(build),
+        }));
     }
 
     /// After the 3D view drew: the triad or point-to-point picks, and lead
@@ -243,6 +328,7 @@ impl PartEditor {
 /// about to show a board.
 pub fn reset_model_view(viewport: &mut Viewport) {
     viewport.set_model_transform(Transform3::IDENTITY);
+    viewport.set_decals(None);
     if viewport.has_overlay() {
         viewport.set_overlay(None);
     }

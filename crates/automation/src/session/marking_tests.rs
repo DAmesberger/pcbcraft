@@ -36,32 +36,73 @@ fn revision(session: &Session) -> u64 {
     session.engine().revision()
 }
 
-/// The can marking of the example: etched model text, a placeholder logo
-/// box (original artwork), a QR code of the designator and serial, and a
-/// silkscreen line on the board beyond the can.
+/// The example's marking (`examples/esp32-s31-wroom-3/marking.json`):
+/// etched model text, a placeholder logo box and a certification
+/// placeholder (original artwork), a QR code of the designator on the
+/// can, and a white silkscreen designator on the board beyond the can.
 pub fn wroom_marking() -> Value {
-    json!({
-        "items": [
-            {"item": "artwork", "anchor": "pin1_corner", "size_mm": [4.0, 4.0],
-             "licence": "CC0-1.0",
-             "svg": "<svg xmlns='http://www.w3.org/2000/svg' width='10mm' height='10mm' viewBox='0 0 10 10'><rect x='0.5' y='0.5' width='9' height='9' rx='1.2' fill='none' stroke='black' stroke-width='0.8'/><path d='M3 7 L5 3 L7 7 Z' fill='black'/></svg>"},
-            {"item": "text", "template": "{mpn}"},
-            {"item": "text", "template": "MODULE {var:lot}"},
-            {"item": "code2d", "payload": "{designator} {var:serial}", "size_mm": 4.5, "anchor": "end"}
-        ],
-        "finish": "laser_etch_metal",
-        "placement": {"on": {"surface": "anchor", "name": "can_top"}},
-        "decals": [{
-            "items": [{"item": "text", "template": "{designator}", "height_mm": 1.2}],
-            "finish": "ink_white",
-            "placement": {"on": {"surface": "anchor", "name": "pcb_top"}}
-        }]
-    })
+    serde_json::from_str(include_str!(
+        "../../../../examples/esp32-s31-wroom-3/marking.json"
+    ))
+    .unwrap_or(Value::Null)
+}
+
+fn component_marking(
+    session: &Session,
+    component: u64,
+) -> Option<pcbcraft_core::library::marking::MarkingSpec> {
+    session
+        .engine()
+        .drafts()
+        .items
+        .iter()
+        .find(|d| d.id.0 == component)
+        .and_then(|d| match &d.definition {
+            Definition::Component(c) => c.marking.as_deref().cloned(),
+            _ => None,
+        })
+}
+
+/// The example carries exactly the marking of `marking.json`: applying
+/// it again changes nothing that draws.
+#[test]
+fn the_example_carries_its_marking() -> TestResult {
+    let (mut session, component, _) = example()?;
+    let stored = component_marking(&session, component).ok_or("the example is not marked")?;
+    let reply = session.dispatch(json!({"command": "library.set_marking", "params": {
+        "expected_revision": revision(&session), "draft": component, "marking": wroom_marking()}}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(component_marking(&session, component), Some(stored));
+    Ok(())
+}
+
+/// Writes the example's marking into the example file (run after the
+/// assistant's replay regenerates it): `PCBCRAFT_WRITE_EXAMPLE=1 cargo
+/// test -p pcbcraft-automation write_the_example_marking -- --ignored`.
+#[test]
+#[ignore = "writes examples/esp32-s31-wroom-3"]
+fn write_the_example_marking() -> TestResult {
+    if std::env::var_os("PCBCRAFT_WRITE_EXAMPLE").is_none() {
+        return Err("set PCBCRAFT_WRITE_EXAMPLE".into());
+    }
+    let (mut session, component, _) = example()?;
+    let reply = session.dispatch(json!({"command": "library.set_marking", "params": {
+        "expected_revision": revision(&session), "draft": component, "marking": wroom_marking()}}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    pcbcraft_io::persistence::write_project(
+        std::path::Path::new(EXAMPLE),
+        &session.engine().to_file(),
+    )?;
+    Ok(())
 }
 
 #[test]
 fn a_module_marking_goes_on_its_can_and_board_in_one_step() -> TestResult {
     let (mut session, component, _) = example()?;
+    // Start unmarked.
+    let cleared = session.dispatch(json!({"command": "library.set_marking", "params": {
+        "expected_revision": revision(&session), "draft": component, "marking": null}}));
+    assert_eq!(cleared["ok"], true, "{cleared}");
     let before = revision(&session);
     let reply = session.dispatch(json!({"command": "library.set_marking", "params": {
         "expected_revision": before, "draft": component, "marking": wroom_marking()}}));
@@ -84,11 +125,20 @@ fn a_module_marking_goes_on_its_can_and_board_in_one_step() -> TestResult {
             name: "can_top".into()
         }
     );
-    assert!(matches!(spec.items[3], MarkingItem::Code2d { .. }));
-    assert_eq!(spec.decals.len(), 1);
-    assert_eq!(spec.decals[0].finish, Finish::InkWhite);
+    assert!(matches!(
+        spec.decals[1].items[1],
+        MarkingItem::Code2d { .. }
+    ));
+    assert_eq!(spec.decals.len(), 3);
+    assert_eq!(spec.decals[2].finish, Finish::InkWhite);
+    assert_eq!(
+        spec.decals[2].placement.on,
+        SurfaceRef::Anchor {
+            name: "pcb_top".into()
+        }
+    );
     // The artwork is packed with the edit: one undo step takes both.
-    assert_eq!(spec.artwork().count(), 1);
+    assert_eq!(spec.artwork().count(), 2);
     let undone = session.dispatch(json!({"command": "project.undo", "params": {}}));
     assert_eq!(undone["ok"], true, "{undone}");
     let marked = session.engine().drafts().items.iter().any(|d| {
@@ -108,7 +158,8 @@ fn bad_marking_placements_are_refused_whole() -> TestResult {
     let mut many = wroom_marking();
     many["decals"] = json!(vec![many["decals"][0].clone(); 5]);
     let mut tiny_code = wroom_marking();
-    tiny_code["items"][3]["size_mm"] = json!(0.0);
+    tiny_code["decals"][1]["items"][1]["size_mm"] = json!(0.0);
+
     let mut bad_wrap = wroom_marking();
     bad_wrap["placement"]["wrap"] = json!({"wrap_deg": 400.0});
     for marking in [bad_anchor, many, tiny_code, bad_wrap] {

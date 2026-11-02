@@ -202,6 +202,11 @@ pub fn streamed(g: &Geometry) -> bool {
 /// The placed and the large bodies of `geometry` grouped by definition
 /// mesh, material and view layer, with coarser levels of each mesh placed
 /// more than once.
+/// [`instance`] for bodies drawn beside a model (Component 3D decals).
+pub fn instance_bodies(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
+    instance(geometry)
+}
+
 fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
     let mut out: Vec<Instanced> = Vec::new();
     let mut by: HashMap<(usize, PbrInstanceLook, ViewLayer), usize> = HashMap::new();
@@ -1242,7 +1247,7 @@ pub(crate) mod tests {
                         origin: [0.0, 0.0],
                     })],
                     finish: Finish::LaserEtch,
-                    findings: Vec::new(),
+                    ..MarkingLayout::default()
                 };
                 (p.instance, layout)
             })

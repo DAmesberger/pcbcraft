@@ -31,7 +31,7 @@ const PAD_MM: f64 = pcbcraft_core::library::marking::surface::MODULE_PAD_MM;
 /// copper 20–25 µm plus finish).
 const PLATING_MM: f64 = 0.03;
 /// Antenna trace thickness on the board (est.: 35 µm copper).
-const TRACE_MM: f64 = 0.035;
+const TRACE_MM: f64 = pcbcraft_core::library::marking::surface::MODULE_TRACE_MM;
 /// Antenna trace width (est.: printed 2.4 GHz meanders run 0.3–0.6 mm).
 const TRACE_WIDTH_MM: f64 = 0.45;
 /// Round of the can's top edges (est.: a drawn can's bend radius).
