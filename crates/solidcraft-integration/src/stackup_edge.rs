@@ -4,7 +4,9 @@
 //! real board. Never saved; the native substrate stays one physical body.
 //!
 //! Each band is a thin frame standing [`EDGE_PROUD_MM`] proud of the
-//! routed faces (and as far inside them, where the laminate hides it):
+//! routed faces (foils and mask lips also as far inside them, where the
+//! laminate hides it; dielectric bands start at the face, so none lies on
+//! the laminate's top or bottom):
 //! the four sides of a rectangular board, or a sketched board's solved
 //! outline and every cutout and slot. The
 //! dielectric bands are split around the inner foils, so no two bands share
@@ -73,8 +75,17 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
                 EDGE_PROUD_MM,
             ),
         };
+        // A dielectric band starts at the routed face rather than inside
+        // it: a strip inside would lie on the laminate's top or bottom
+        // face, facing the same way, and flicker against it (z-fighting).
+        // Foils and mask lips stand off those faces and keep their inner
+        // strip.
+        let inside = match band {
+            Band::Dielectric(_) => 0.0,
+            _ => proud,
+        };
         let mut mesh = Mesh::default();
-        for region in frames(board, proud) {
+        for region in frames(board, proud, inside) {
             append(&mut mesh, slab(&region, z0, z1, f64::MAX));
         }
         let before = out.len();
@@ -91,10 +102,10 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
     Ok(out)
 }
 
-/// Frames `proud` either side of each routed edge: the board outline
-/// (`board_size`'s rectangle, or a sketched board's solved outer
-/// outline) and each cutout and slot of a sketched board.
-fn frames(board: &Board, proud: f64) -> Vec<Region> {
+/// Frames from `inside` within each routed edge to `proud` outside it:
+/// the board outline (`board_size`'s rectangle, or a sketched board's
+/// solved outer outline) and each cutout and slot of a sketched board.
+fn frames(board: &Board, proud: f64, inside: f64) -> Vec<Region> {
     let Some(shape) = &board.shape else {
         let rect = |grow: f64| -> Vec<Point> {
             vec![
@@ -106,7 +117,7 @@ fn frames(board: &Board, proud: f64) -> Vec<Region> {
         };
         return vec![Region {
             fills: vec![rect(proud)],
-            cuts: vec![rect(-proud)],
+            cuts: vec![rect(-inside)],
         }];
     };
     std::iter::once(&shape.outer)
@@ -114,7 +125,11 @@ fn frames(board: &Board, proud: f64) -> Vec<Region> {
         .filter_map(|edge| {
             Some(Region {
                 fills: vec![offset_polygon(edge, proud)?],
-                cuts: vec![offset_polygon(edge, -proud)?],
+                cuts: vec![if inside > 0.0 {
+                    offset_polygon(edge, -inside)?
+                } else {
+                    edge.clone()
+                }],
             })
         })
         .collect()

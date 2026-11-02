@@ -40,6 +40,8 @@ mod model_body;
 mod model_card;
 mod model_import;
 mod model_place;
+#[cfg(test)]
+pub(crate) use model_place::overlay as land_overlay;
 mod model_props;
 #[cfg(test)]
 mod model_tests;

@@ -57,9 +57,16 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
     // bore at the face of the via's finished ring. A track ending at the
     // via centre keeps its copper under it, as the saved model has it, but
     // no longer shows as a bright floor in the hole.
+    // The disc stands half a finish off the copper face: a part seated on
+    // a via in its pad (a QFN's exposed pad) stands on that face, and a
+    // disc on it would share the part's underside seen up the drill.
     for side in [Layer::Top, Layer::Bottom].into_iter().filter(|s| open(*s)) {
         let copper = board.copper(side);
-        let (z0, z1) = board.span(side, copper, copper + FINISH_THICKNESS_MM);
+        let (z0, z1) = board.span(
+            side,
+            copper + FINISH_THICKNESS_MM / 2.0,
+            copper + FINISH_THICKNESS_MM,
+        );
         push(
             out,
             &looks,

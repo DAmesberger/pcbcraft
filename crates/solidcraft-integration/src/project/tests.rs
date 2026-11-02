@@ -714,12 +714,14 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
             near(finish.min[axis], pad.min[axis] - 0.005);
             near(finish.max[axis], pad.max[axis] + 0.005);
         }
+        // The finish plates the land's top and sides, from a finish
+        // thickness off the laminate: never on the copper's bottom face.
         if source.layer == Some(CopperLayer::Top) {
-            near(finish.min[2], pad.min[2]);
+            near(finish.min[2], pad.min[2] + 0.005);
             near(finish.max[2], pad.max[2] + 0.005);
         } else {
             near(finish.min[2], pad.min[2] - 0.005);
-            near(finish.max[2], pad.max[2]);
+            near(finish.max[2], pad.max[2] - 0.005);
         }
     }
     for source in model.sources.iter().filter(|s| s.track.is_some()) {
@@ -1112,9 +1114,10 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
                 source.label
             );
             if top {
-                near(solder.min[2], 1.6 + 0.035 + 0.005);
+                // On the finish, its toe lifted 2 µm off it.
+                near(solder.min[2], 1.6 + 0.035 + 0.005 + 0.002);
             } else {
-                near(solder.max[2], -0.035 - 0.005);
+                near(solder.max[2], -0.035 - 0.005 - 0.002);
             }
             assert!(solder.volume() > 0.0);
         }
