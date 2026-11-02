@@ -14,6 +14,7 @@
 //! caps are exact instead: its gaps are measured from its centre line less
 //! its half-width.
 use super::board_edge::{BoardEdges, EdgeVerdict};
+use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
 use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
 use crate::diagnostics::{Finding, ObjectRef};
@@ -30,6 +31,19 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The chord tolerance curved copper edges are flattened at, in mm, and so
 /// the most a measured gap on a curved edge differs from the exact one.
 pub const CURVE_SLACK_MM: f64 = PAD_ARC_TOLERANCE_MM;
+
+/// The farthest apart two outlines' bounds may be for any board check to
+/// compare them under `limits`: the largest clearance the project's rules
+/// and net classes resolve to (copper, drill to copper, hole to hole) plus
+/// both outlines' curve slack. Shapes farther apart are never compared,
+/// which [`CopperRing::gap`] would reject by their bounds anyway.
+pub(super) fn check_reach(limits: &BoardRules<'_>) -> f64 {
+    limits.max_clearance() + TOUCH_REACH_MM
+}
+
+/// The farthest apart two outlines' bounds may be and still touch within
+/// both outlines' curve slack.
+const TOUCH_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 1e-6;
 
 /// One copper outline in board coordinates: a closed ring, the exact
 /// bounds of the shape it approximates, and how far the ring may stray from
@@ -386,8 +400,11 @@ impl BoardCopper {
         let shapes = self.shapes(&project.tracks, &track_rings);
         let mut parents = (0..shapes.len()).collect::<Vec<_>>();
         let mut joined = vec![false; shapes.len()];
-        let mut pairs = 0usize;
         let limits = BoardRules::of(project);
+        let reach = check_reach(&limits);
+        let grid = BoundsGrid::new(shapes.iter().map(|s| s.ring.bounds), reach);
+        let mut near = Vec::new();
+        let mut pairs = 0usize;
         let edges = BoardEdges::of(project);
         for (i, a) in shapes.iter().enumerate() {
             let edge = || limits.clearance(a.kind, Some(a.net), CopperObject::BoardEdge, None);
@@ -423,7 +440,15 @@ impl BoardCopper {
                     ));
                 }
             }
-            for (j, b) in shapes.iter().enumerate().skip(i + 1) {
+            let Some(bounds) = a.ring.bounds else {
+                continue;
+            };
+            grid.near(&bounds, reach, &mut near);
+            for (j, b) in near
+                .iter()
+                .filter(|j| **j > i)
+                .filter_map(|j| Some((*j, shapes.get(*j)?)))
+            {
                 pairs += 1;
                 if pairs > MAX_CHECK_PAIRS {
                     issues.push(limit_finding());
@@ -503,9 +528,21 @@ impl BoardCopper {
         let track_rings: Vec<CopperRing> = tracks.iter().map(CopperRing::of_track).collect();
         let shapes = self.shapes(tracks, &track_rings);
         let mut parents = (0..shapes.len()).collect::<Vec<_>>();
+        // Only touching joins copper here, so no clearance widens the reach.
+        let reach = TOUCH_REACH_MM;
+        let grid = BoundsGrid::new(shapes.iter().map(|s| s.ring.bounds), reach);
+        let mut near = Vec::new();
         let mut pairs = 0usize;
         'scan: for (i, a) in shapes.iter().enumerate() {
-            for (j, b) in shapes.iter().enumerate().skip(i + 1) {
+            let Some(bounds) = a.ring.bounds else {
+                continue;
+            };
+            grid.near(&bounds, reach, &mut near);
+            for (j, b) in near
+                .iter()
+                .filter(|j| **j > i)
+                .filter_map(|j| Some((*j, shapes.get(*j)?)))
+            {
                 pairs += 1;
                 if pairs > MAX_CHECK_PAIRS {
                     break 'scan;

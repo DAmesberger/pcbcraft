@@ -7,7 +7,7 @@ use super::{Viewport, model_scene};
 use pcbcraft_core::geometry::Transform3;
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
-    scene::Geometry,
+    scene::{Geometry, Place},
 };
 use solidcraft_ui_egui::gpu::GpuScene;
 use solidcraft_ui_egui::viewport::Proj;
@@ -38,16 +38,33 @@ pub fn transformed(geometry: &[Geometry], t: &Transform3) -> Vec<Geometry> {
     geometry
         .iter()
         .map(|g| {
+            let mut bounds = Aabb3::EMPTY;
+            for corner in corners(g.min, g.max) {
+                bounds.add(vec3(t.apply(corner)));
+            }
+            // A placed body keeps its shared mesh: only its place moves.
+            if let Some(place) = g.place {
+                let moved = Place(std::array::from_fn(|r| {
+                    [
+                        t.rotation[r][0],
+                        t.rotation[r][1],
+                        t.rotation[r][2],
+                        t.translation[r],
+                    ]
+                }));
+                return Geometry {
+                    place: Some(moved.then(&place)),
+                    min: array(bounds.min),
+                    max: array(bounds.max),
+                    ..g.clone()
+                };
+            }
             let mut mesh = (*g.mesh).clone();
             for p in &mut mesh.positions {
                 *p = vec3(t.apply(array(*p)));
             }
             for n in &mut mesh.normals {
                 *n = vec3(t.apply_vector(array(*n)));
-            }
-            let mut bounds = Aabb3::EMPTY;
-            for corner in corners(g.min, g.max) {
-                bounds.add(vec3(t.apply(corner)));
             }
             Geometry {
                 mesh: Arc::new(mesh),
@@ -114,7 +131,14 @@ impl Viewport {
         let Some(model) = &self.model else {
             return;
         };
-        let triangles: usize = model.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
+        // Instanced bodies follow by their placements alone; only the
+        // stream is packed again.
+        let triangles: usize = model
+            .geometry
+            .iter()
+            .filter(|g| model_scene::streamed(g))
+            .map(|g| g.mesh.triangles.len())
+            .sum();
         let identity = self.display == Transform3::IDENTITY;
         self.display_limited = !identity && triangles > MAX_LIVE_TRIANGLES;
         if self.display_limited {
@@ -232,6 +256,62 @@ mod tests {
         let key = viewport.key;
         viewport.set_model_transform(Transform3::translation([5.0, 0.0, 1.0]));
         assert_eq!(viewport.key, key);
+        Ok(())
+    }
+
+    /// Under a display transform every instanced body follows by its
+    /// placement alone (the shared meshes are published as they are), the
+    /// large unplaced ones too.
+    #[test]
+    fn a_display_transform_moves_instanced_bodies_by_their_placements()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let project = crate::model_scene::tests::via_project(64)?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        assert!(
+            model
+                .geometry
+                .iter()
+                .any(|g| g.place.is_none()
+                    && g.mesh.triangles.len() >= crate::model_scene::LARGE_BODY),
+            "a large unplaced body is drawn instanced"
+        );
+        let mut viewport = Viewport::detached();
+        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        let published = |v: &Viewport| -> Vec<(usize, Vec<u8>)> {
+            v.slot
+                .lock()
+                .ok()
+                .and_then(|s| {
+                    s.as_ref().map(|s| {
+                        s.instanced
+                            .iter()
+                            .map(|m| (Arc::as_ptr(&m.tris) as usize, m.instances.clone()))
+                            .collect()
+                    })
+                })
+                .unwrap_or_default()
+        };
+        let before = published(&viewport);
+        assert!(!before.is_empty());
+        let t = Transform3::translation([5.0, -2.0, 1.0]);
+        viewport.set_model_transform(t);
+        let after = published(&viewport);
+        assert_eq!(after.len(), before.len());
+        let f = |b: &[u8], k: usize| {
+            b.get(4 * k..4 * k + 4)
+                .and_then(|x| x.try_into().ok())
+                .map_or(f32::NAN, f32::from_le_bytes)
+        };
+        for ((tris, was), (moved_tris, now)) in before.iter().zip(&after) {
+            assert_eq!(tris, moved_tris, "the same shared triangles");
+            assert_eq!(was.len(), now.len(), "every placement, large bodies too");
+            for (a, b) in was.chunks_exact(52).zip(now.chunks_exact(52)) {
+                for (row, by) in [(0, 5.0), (1, -2.0), (2, 1.0)] {
+                    let shift = f(b, 4 * row + 3) - f(a, 4 * row + 3);
+                    assert!((shift - by).abs() < 1e-4, "{shift} against {by}");
+                }
+            }
+        }
         Ok(())
     }
 

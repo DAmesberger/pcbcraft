@@ -59,7 +59,30 @@ impl Level {
             Self::Info => ("note", "notes"),
             Self::Ok => return "No issues".to_owned(),
         };
-        format!("{n} {}", if n == 1 { one } else { many })
+        format!("{} {}", grouped(n), if n == 1 { one } else { many })
+    }
+}
+
+/// `n` with its thousands grouped: `10,000`.
+pub fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `n` short enough for a count chip: grouped below ten thousand
+/// (`4,096`), then in thousands (`10k`, `16k`).
+pub fn compact(n: usize) -> String {
+    if n < 10_000 {
+        grouped(n)
+    } else {
+        format!("{}k", grouped(n / 1000))
     }
 }
 
@@ -159,8 +182,20 @@ mod tests {
         assert_eq!(Level::Warning.count_words(2), "2 warnings");
         assert_eq!(Level::ToDo.count_words(36), "36 to do");
         assert_eq!(Level::Ok.count_words(0), "No issues");
+        assert_eq!(Level::Warning.count_words(10_000), "10,000 warnings");
         let markers: Vec<_> = Level::ALL.iter().map(|l| l.marker()).collect();
         assert_eq!(markers, ["×", "!", "○", "i", "✓"]);
+    }
+
+    #[test]
+    fn large_counts_are_grouped_or_shortened() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1000), "1,000");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(compact(4096), "4,096");
+        assert_eq!(compact(10_000), "10k");
+        assert_eq!(compact(16_384), "16k");
     }
 
     /// Glyphs are drawn, never typed, and every level draws something.

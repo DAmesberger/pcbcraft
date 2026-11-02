@@ -13,6 +13,8 @@ use pcbcraft_core::Layer;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Body names per `appearance.assign` call.
 const APPEARANCE_CHUNK: usize = 1024;
@@ -170,11 +172,27 @@ pub struct BoardJoint {
 /// A native Solidcraft design under construction or opened from disk.
 pub struct Native {
     session: Session,
+    /// Set by another thread to stop a build at its next command.
+    cancel: Option<Arc<AtomicBool>>,
+    /// Every command a build ran, when it records them ([`Self::record`]),
+    /// so a later build of an edited board can update this one in place.
+    log: Option<replay::Log>,
+    /// A build of an edited board compared with [`Self::log`] instead of
+    /// run ([`replay`]).
+    replay: Option<replay::Replay>,
 }
+
+mod replay;
+use replay::Log;
 
 impl Native {
     fn with(session: Session) -> Self {
-        let mut native = Self { session };
+        let mut native = Self {
+            session,
+            cancel: None,
+            log: None,
+            replay: None,
+        };
         if cfg!(test) {
             native.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
         }
@@ -195,13 +213,132 @@ impl Native {
         Ok(native)
     }
 
+    /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
+    pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
+        self.cancel = Some(cancel);
+    }
+
+    /// Record every command from now on, for [`Self::replaying`].
+    pub(crate) fn record(&mut self) {
+        self.log = Some(Log::default());
+    }
+
+    /// This design (built with [`Self::record`]) for a build of an edited
+    /// board: every command the build issues is compared with the one the
+    /// design was built with at that step and answered with its recorded
+    /// reply, nothing runs, until [`Self::settle`] applies what changed.
+    /// A command that differs in more than values (a parameter's
+    /// expression, a sketch's drawing, where a placement stands, recorded
+    /// metadata) fails the build with [`Error::Verification`]: the board
+    /// is then built anew.
+    pub(crate) fn replaying(mut self) -> Option<Self> {
+        let log = self.log.take()?;
+        self.replay = Some(replay::Replay::new(log));
+        // The flag that could stop the build this design came from.
+        self.cancel = None;
+        Some(self)
+    }
+
+    /// Whether this design is being replayed ([`Self::replaying`]).
+    pub(crate) fn is_replaying(&self) -> bool {
+        self.replay.is_some()
+    }
+
+    /// The position in the command stream (recorded or replayed).
+    pub(crate) fn step(&self) -> usize {
+        match (&self.replay, &self.log) {
+            (Some(replay), _) => replay.step(),
+            (None, Some(log)) => log.len(),
+            (None, None) => 0,
+        }
+    }
+
+    /// Mark the commands from `start` to now as the definition `name`.
+    pub(crate) fn mark(&mut self, name: &str, start: usize) {
+        let end = self.step();
+        if let Some(log) = &mut self.log {
+            log.mark(name, start, end);
+        }
+        if let Some(replay) = &mut self.replay {
+            replay.mark(name, start, end);
+        }
+    }
+
+    /// Replaying, pass over the commands that built the definition `name`
+    /// (built from the same immutable source, so they are the same);
+    /// `false` if they are not next.
+    pub(crate) fn pass(&mut self, name: &str) -> bool {
+        self.replay.as_mut().is_some_and(|r| r.pass(name))
+    }
+
+    /// End a replay: apply what changed to the design (the changed
+    /// parameters in one command, each changed sketch redrawn, each moved
+    /// placement moved) and keep the new command stream. Recording, does
+    /// nothing. Returns how many commands the update ran.
+    pub(crate) fn settle(&mut self) -> Result<usize> {
+        let Some(replay) = self.replay.take() else {
+            return Ok(0);
+        };
+        // An update is short and leaves the design consistent only once
+        // done: a newer request does not stop it.
+        self.cancel = None;
+        let (log, ran) = replay.apply(self)?;
+        self.log = Some(log);
+        Ok(ran)
+    }
+
+    /// Drop the design's undo history: a built model is never undone, and
+    /// each step holds a whole design.
+    pub(crate) fn forget_history(&mut self) {
+        self.session.undo.clear();
+        self.session.redo.clear();
+    }
+
+    /// Activate a component of the root by id.
+    pub fn activate(&mut self, component: u64) -> Result<()> {
+        self.call("component.activate", json!({"component": component}))?;
+        Ok(())
+    }
+
     pub fn session(&self) -> &Session {
         &self.session
     }
 
+    /// Put off evaluating the design after each command until [`Native::evaluate_deferred`]
+    /// (Solidcraft's `Session::defer_evaluation`): a board built in hundreds of commands is
+    /// evaluated a few times instead of after every one.
+    /// Replaying ([`Self::replaying`]), nothing runs and nothing is put off.
+    pub fn defer_evaluation(&mut self) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
+        self.session
+            .defer_evaluation()
+            .map_err(|error| Error::Engine {
+                command: "defer evaluation".into(),
+                message: error.to_string(),
+            })
+    }
+
+    /// Evaluate what [`Native::defer_evaluation`] put off, as one undo step; fails, leaving the
+    /// design as it was before, when a feature added meanwhile fails.
+    pub fn evaluate_deferred(&mut self) -> Result<()> {
+        if self.is_replaying() {
+            return Ok(());
+        }
+        self.session
+            .evaluate_deferred()
+            .map_err(|error| Error::Engine {
+                command: "evaluate deferred".into(),
+                message: error.to_string(),
+            })
+    }
+
     /// The session itself, for adding an import feature from bytes
     /// already read (`models::imported`): Solidcraft's import commands
-    /// read files by path, and a packed library asset has none.
+    /// read files by path, and a packed library asset has none. What it
+    /// changes is not recorded ([`Self::record`]): a replay passes over the
+    /// whole definition built with it ([`Self::pass`]).
     pub(crate) fn session_mut(&mut self) -> &mut Session {
         &mut self.session
     }
@@ -211,6 +348,13 @@ impl Native {
             "parameters.add",
             json!({"name": name, "expression": expression.into()}),
         )?;
+        Ok(())
+    }
+
+    /// Add or change many parameters in one command, from a JSON list of
+    /// `{name, expression}` rows (all or nothing).
+    pub fn import_parameters(&mut self, rows: &str) -> Result<()> {
+        self.call("parameters.import", json!({"text": rows}))?;
         Ok(())
     }
 
@@ -241,12 +385,6 @@ impl Native {
         })
     }
 
-    /// Make `component` (an id) the active component.
-    pub fn activate(&mut self, component: u64) -> Result<()> {
-        self.call("component.activate", json!({"component": component}))?;
-        Ok(())
-    }
-
     pub fn activate_root(&mut self) -> Result<()> {
         self.call("component.activate", json!({"component": "root"}))?;
         Ok(())
@@ -275,78 +413,117 @@ impl Native {
         Ok(())
     }
 
-    /// [`Self::profile_body`] for many closed polylines at once (a copper
-    /// fill's regions): they go into the sketch in one `sketch.insert_dxf`
-    /// (closed LWPOLYLINEs in millimetres) instead of one command per
-    /// loop, whose cost grows with the sketch. Nesting is even-odd.
-    pub fn polyline_body(
-        &mut self,
-        name: &str,
-        offset: Expr,
-        loops: &[&[[f64; 2]]],
-        height: Expr,
-    ) -> Result<()> {
-        let sketch = self.polyline_sketch(name, offset, loops)?;
+    /// [`Self::profile_body`] for contours that do not nest (a track's
+    /// stadium): every profile is extruded whole (`profiles: "all"`), so in
+    /// a batch of put-off evaluation ([`Self::defer_evaluation`]) the
+    /// sketch and its extrusion are evaluated with the rest of the board
+    /// at its end instead of evaluating the pending design each. A contour
+    /// inside another would be filled, not a hole: use
+    /// [`Self::profile_body`] for those.
+    pub fn whole_profile_body(&mut self, body: ProfileBody<'_>) -> Result<()> {
+        let sketch = self.sketch(body.name, body.offset, body.contours)?;
         self.call(
             "solid.extrude",
-            json!({"sketch": sketch, "distance": height.0, "operation": "new",
-                "name": name, "body_name": name}),
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "profiles": "all", "name": body.name, "body_name": body.name}),
         )?;
         Ok(())
     }
 
-    /// [`Self::profile_cut`] of many closed polylines inserted at once, as
-    /// [`Self::polyline_body`] inserts them.
-    pub fn polyline_cut(
-        &mut self,
-        name: &str,
-        offset: Expr,
-        loops: &[&[[f64; 2]]],
-        depth: Expr,
-        targets: &[&str],
-    ) -> Result<()> {
-        let sketch = self.polyline_sketch(name, offset, loops)?;
-        self.call(
-            "solid.extrude",
-            json!({"sketch": sketch, "distance": depth.0, "operation": "cut",
-                "name": name, "targets": targets}),
-        )?;
-        Ok(())
-    }
-
-    /// A finished XY sketch of closed polylines, inserted as one DXF;
-    /// returns its feature id. Refuses non-finite points and a sketch of
-    /// no loop of three points or more (shorter loops are skipped).
-    fn polyline_sketch(&mut self, name: &str, offset: Expr, loops: &[&[[f64; 2]]]) -> Result<u64> {
-        use std::fmt::Write as _;
-        let mut dxf = String::from(
-            "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n",
-        );
-        let mut any = false;
-        for points in loops.iter().filter(|l| l.len() >= 3) {
-            if points.iter().flatten().any(|v| !v.is_finite()) {
-                return Err(Error::Invalid(format!(
-                    "{name}: a loop point is not finite"
-                )));
-            }
-            any = true;
-            let _ = write!(dxf, "0\nLWPOLYLINE\n90\n{}\n70\n1\n", points.len());
-            for [x, y] in points.iter() {
-                let _ = write!(dxf, "10\n{x}\n20\n{y}\n");
-            }
-        }
-        if !any {
-            return Err(Error::Invalid(format!("{name}: no loop to sketch")));
-        }
-        dxf.push_str("0\nENDSEC\n0\nEOF\n");
+    /// [`Self::profile_body`] for many contours (a laminate slab and its
+    /// thousands of drills): the contours go into the sketch in one
+    /// command, so building it does not grow with the square of their
+    /// number. Overlapping contours are one boundary (the sketch's own
+    /// arrangement unites them); nesting is even-odd. Returns the bodies
+    /// made: `body.name`, then `body.name (2)`, … when the profile is in
+    /// pieces (laminate left in a fill's clearance).
+    pub fn batched_body(&mut self, body: ProfileBody<'_>) -> Result<Vec<String>> {
         let reply = self.call(
             "sketch.create",
-            json!({"plane": Plane::Xy.name(), "offset": offset.0, "name": format!("{name} sketch")}),
+            json!({"plane": Plane::Xy.name(), "offset": body.offset.0,
+                "name": format!("{} sketch", body.name)}),
         )?;
         let sketch = id(&reply, "sketch")?;
-        self.call("sketch.insert_dxf", json!({"text": dxf}))?;
+        let drawing = dxf(body.contours)?;
+        self.call(
+            "sketch.insert_dxf",
+            json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+        )?;
         self.call("sketch.finish", json!({}))?;
-        Ok(sketch)
+        let reply = self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(created_bodies(&reply, body.name))
+    }
+
+    /// A sketched board's slab: [`Self::batched_body`]'s holes inside
+    /// `outline`, drawn in a command of its own so that redrawing the holes
+    /// (an update) keeps the outline's curves, by which the extrusion picks
+    /// its profile.
+    pub fn outlined_slab(
+        &mut self,
+        body: ProfileBody<'_>,
+        outline: &Contour,
+    ) -> Result<Vec<String>> {
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": Plane::Xy.name(), "offset": body.offset.0,
+                "name": format!("{} sketch", body.name)}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        if !body.contours.is_empty() {
+            let drawing = dxf(body.contours)?;
+            self.call(
+                "sketch.insert_dxf",
+                json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+            )?;
+        }
+        let drawing = dxf(std::slice::from_ref(outline))?;
+        self.call(
+            "sketch.insert_dxf",
+            json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+        )?;
+        self.call("sketch.finish", json!({}))?;
+        let reply = self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(created_bodies(&reply, body.name))
+    }
+
+    /// A board slab: [`Self::batched_body`]'s holes inside the board
+    /// outline, a rectangle from the origin to the length parameters
+    /// `size` (`board_width`, `board_depth`), so the saved slab follows the
+    /// board size.
+    pub fn board_slab(&mut self, body: ProfileBody<'_>, size: [&str; 2]) -> Result<Vec<String>> {
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": Plane::Xy.name(), "offset": body.offset.0,
+                "name": format!("{} sketch", body.name)}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        if !body.contours.is_empty() {
+            let drawing = dxf(body.contours)?;
+            self.call(
+                "sketch.insert_dxf",
+                json!({"text": drawing, "tolerance": DXF_JOIN_MM}),
+            )?;
+        }
+        let [w, d] = size;
+        self.call(
+            "sketch.line",
+            json!({"points": [[0, 0], [w, 0], [w, d], [0, d]], "closed": true}),
+        )?;
+        self.call("sketch.finish", json!({}))?;
+        let reply = self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": body.height.0, "operation": "new",
+                "name": body.name, "body_name": body.name}),
+        )?;
+        Ok(created_bodies(&reply, body.name))
     }
 
     /// Extrude closed contours drawn on an origin `plane` of the active
@@ -454,6 +631,42 @@ impl Native {
         self.activate_root()?;
         let reply = self.call("occurrence.copy", json!({"component": component}))?;
         id(&reply, "occurrence")
+    }
+
+    /// Place `component` once more under the root, moved `by` (world
+    /// axes) from where its first occurrence is now, in one command;
+    /// returns the new occurrence.
+    pub fn copy_occurrence_by(&mut self, component: u64, by: [f64; 3]) -> Result<u64> {
+        self.activate_root()?;
+        let reply = self.call(
+            "occurrence.copy",
+            json!({"component": component, "translate": by}),
+        )?;
+        id(&reply, "occurrence")
+    }
+
+    /// Place `component` once per offset (world axes) from where its first
+    /// occurrence is now, all in one command; returns the new occurrences
+    /// in the offsets' order.
+    pub fn copy_occurrences(&mut self, component: u64, offsets: &[[f64; 3]]) -> Result<Vec<u64>> {
+        if offsets.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.activate_root()?;
+        let reply = self.call(
+            "occurrence.copy",
+            json!({"component": component, "translations": offsets}),
+        )?;
+        reply
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .ok_or_else(|| Error::Verification(format!("copies named no occurrences: {reply}")))?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .ok_or_else(|| Error::Verification(format!("bad occurrence id {v}")))
+            })
+            .collect()
     }
 
     /// Move an occurrence rigidly by a row-major 3×4 matrix (rotation then
@@ -586,31 +799,23 @@ impl Native {
         frame: &JointFrame,
         lift: Option<&str>,
     ) -> Result<()> {
-        let (top, offset) = match (&joint.mount, lift) {
-            (Mount::Side(Layer::Top), None) => (true, json!("board_thickness")),
-            (Mount::Side(Layer::Bottom), None) => (false, json!("0 mm")),
-            (Mount::Side(Layer::Top), Some(lift)) => {
-                (true, json!(format!("board_thickness + ({lift})")))
-            }
-            (Mount::Side(Layer::Bottom), Some(lift)) => (false, json!(format!("- ({lift})"))),
-            (Mount::Height(z), None) => (true, z.0.clone()),
-            (Mount::Height(z), Some(lift)) => {
-                let z = match &z.0 {
-                    Value::String(e) => e.clone(),
-                    other => format!("{other} mm"),
-                };
-                (true, json!(format!("({z}) + ({lift})")))
-            }
-        };
-        self.call(
-            "joint.create",
-            json!({"type": "planar", "name": format!("placement-{}", joint.occurrence),
-                "a": {"occurrence": joint.board, "point": [0, 0, 0], "z": [0, 0, 1], "x": [1, 0, 0]},
-                "b": {"occurrence": joint.occurrence, "point": frame.point, "z": frame.z, "x": frame.x},
-                "flip": top, "angle": 0,
-                "offset": offset,
-                "values": [joint.x.0, joint.y.0, joint.angle.0]}),
-        )?;
+        self.call("joint.create", joint_params(&joint, frame, lift))?;
+        Ok(())
+    }
+
+    /// Many [`Self::board_joint_at`] joints made and solved together in
+    /// one command (one by one, each solves every joint made before it).
+    pub fn board_joints(
+        &mut self,
+        joints: &[(BoardJoint, JointFrame, Option<String>)],
+    ) -> Result<()> {
+        for chunk in joints.chunks(MAX_JOINTS_PER_CALL) {
+            let list: Vec<Value> = chunk
+                .iter()
+                .map(|(joint, frame, lift)| joint_params(joint, frame, lift.as_deref()))
+                .collect();
+            self.call("joint.create", json!({"joints": list}))?;
+        }
         Ok(())
     }
 
@@ -681,13 +886,145 @@ impl Native {
 
     /// Escape hatch for commands without a typed builder yet (test fixtures).
     pub(crate) fn call(&mut self, command: &str, params: Value) -> Result<Value> {
+        if self
+            .cancel
+            .as_ref()
+            .is_some_and(|c| c.load(Ordering::Relaxed))
+        {
+            return Err(Error::Cancelled);
+        }
+        if let Some(replay) = &mut self.replay {
+            return replay.next(command, params);
+        }
+        let reply = self.run(command, &params)?;
+        if let Some(log) = &mut self.log {
+            log.push(command, params, reply.clone());
+        }
+        Ok(reply)
+    }
+
+    /// Run one command on the session, unrecorded.
+    fn run(&mut self, command: &str, params: &Value) -> Result<Value> {
         self.session
-            .execute(command, &params)
+            .execute(command, params)
             .map_err(|error| Error::Engine {
                 command: command.into(),
                 message: error.to_string(),
             })
     }
+}
+
+/// Most joints one `joint.create` makes (Solidcraft's limit a design).
+const MAX_JOINTS_PER_CALL: usize = 10_000;
+
+/// `joint.create`'s parameters for a [`BoardJoint`] holding `frame` of the
+/// occurrence, raised `lift` off the board face.
+fn joint_params(joint: &BoardJoint, frame: &JointFrame, lift: Option<&str>) -> Value {
+    let (top, offset) = match (&joint.mount, lift) {
+        (Mount::Side(Layer::Top), None) => (true, json!("board_thickness")),
+        (Mount::Side(Layer::Bottom), None) => (false, json!("0 mm")),
+        (Mount::Side(Layer::Top), Some(lift)) => {
+            (true, json!(format!("board_thickness + ({lift})")))
+        }
+        (Mount::Side(Layer::Bottom), Some(lift)) => (false, json!(format!("- ({lift})"))),
+        (Mount::Height(z), None) => (true, z.0.clone()),
+        (Mount::Height(z), Some(lift)) => {
+            let z = match &z.0 {
+                Value::String(e) => e.clone(),
+                other => format!("{other} mm"),
+            };
+            (true, json!(format!("({z}) + ({lift})")))
+        }
+    };
+    json!({"type": "planar", "name": format!("placement-{}", joint.occurrence),
+        "a": {"occurrence": joint.board, "point": [0, 0, 0], "z": [0, 0, 1], "x": [1, 0, 0]},
+        "b": {"occurrence": joint.occurrence, "point": frame.point, "z": frame.z, "x": frame.x},
+        "flip": top, "angle": 0,
+        "offset": offset,
+        "values": [joint.x.0, joint.y.0, joint.angle.0]})
+}
+
+/// How close two drawn points must be to be one sketch point in a batched
+/// sketch: far below any copper or drill feature, above rounding.
+/// The bodies an extrusion's reply says it made, or `name` alone when it
+/// names none (a reply put off in a batch).
+fn created_bodies(reply: &Value, name: &str) -> Vec<String> {
+    let made: Vec<String> = reply
+        .get("created_bodies")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    if made.is_empty() {
+        vec![name.to_owned()]
+    } else {
+        made
+    }
+}
+
+const DXF_JOIN_MM: f64 = 1e-6;
+
+/// Most bytes of one batched drawing (Solidcraft refuses drawings over 64 MiB).
+const MAX_DRAWING_BYTES: usize = 48 << 20;
+
+/// Closed contours as an ASCII DXF drawing in millimetres (circles, and
+/// closed polylines whose arcs keep their bulge), the form Solidcraft's
+/// sketch insert reads in one command. Numbers are written in Rust's
+/// shortest round-trip form, so every coordinate is read back exactly.
+fn dxf(contours: &[Contour]) -> Result<String> {
+    use pcbcraft_core::library::Segment;
+    use std::fmt::Write;
+    let mut out = String::from("0\nSECTION\n2\nENTITIES\n");
+    let finite = |v: f64| {
+        v.is_finite()
+            .then_some(v)
+            .ok_or_else(|| Error::Invalid("a sketch contour is not finite".into()))
+    };
+    for contour in contours {
+        match contour {
+            Contour::Circle { center, radius } => {
+                let (x, y, r) = (finite(center[0])?, finite(center[1])?, finite(*radius)?);
+                let _ = write!(out, "0\nCIRCLE\n8\n0\n10\n{x}\n20\n{y}\n40\n{r}\n");
+            }
+            Contour::Outline(outline) => {
+                // Vertex k carries the bulge of the segment from it to the
+                // next; the closing segment ends at the start again.
+                let mut vertices = vec![(outline.start, 0.0)];
+                for segment in &outline.segments {
+                    let (to, bulge) = match *segment {
+                        Segment::Line { to } => (to, 0.0),
+                        Segment::Arc { to, bulge } => (to, bulge),
+                    };
+                    if let Some(last) = vertices.last_mut() {
+                        last.1 = bulge;
+                    }
+                    vertices.push((to, 0.0));
+                }
+                // A closed polyline repeats no point: drop a final point
+                // back at the start, keeping the bulge before it.
+                if vertices.len() > 2 && vertices.last().map(|v| v.0) == Some(outline.start) {
+                    vertices.pop();
+                }
+                let _ = write!(out, "0\nLWPOLYLINE\n8\n0\n90\n{}\n70\n1\n", vertices.len());
+                for ([x, y], bulge) in vertices {
+                    let (x, y, bulge) = (finite(x)?, finite(y)?, finite(bulge)?);
+                    let _ = write!(out, "10\n{x}\n20\n{y}\n");
+                    if bulge != 0.0 {
+                        let _ = write!(out, "42\n{bulge}\n");
+                    }
+                }
+            }
+        }
+        if out.len() > MAX_DRAWING_BYTES {
+            return Err(Error::Invalid("the sketch has too many contours".into()));
+        }
+    }
+    out.push_str("0\nENDSEC\n0\nEOF\n");
+    Ok(out)
 }
 
 pub fn validate_path(path: &str) -> Result<()> {

@@ -28,7 +28,7 @@ pub use form::*;
 pub use issues::{count_badge, issues_bar, issues_list};
 pub use rows::*;
 pub use search::*;
-pub use toast::pill;
+pub use toast::{pill, status_chip};
 pub use tree::*;
 pub use {dialog::DialogPanel, issues::issue_line, severity::severity_glyph};
 

@@ -112,7 +112,7 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
             })
             .sum::<f64>()
             / 2.0;
-        near(g.volume, area * (high - low));
+        near(g.volume(), area * (high - low));
     }
     for id in vias {
         let source = model
@@ -135,10 +135,10 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
         let pi = std::f64::consts::PI;
         let barrel = pi * (d * d - b * b) * stackup.dielectric_mm();
         let outer = 2.0 * pi * (r * r - b * b) * 0.035;
-        // Inner rings follow the 64-gon the laminate is cut by.
-        let gon = |radius: f64| 32.0 * radius * radius * (2.0 * pi / 64.0).sin();
-        let inner = 2.0 * (gon(r) - pi * d * d) * 0.035;
-        let total: f64 = copper.iter().map(|g| g.volume).sum();
+        // Inner rings are exact annuli round the drill, the circle the
+        // laminate's foil level leaves for them.
+        let inner = 2.0 * pi * (r * r - d * d) * 0.035;
+        let total: f64 = copper.iter().map(|g| g.volume()).sum();
         assert!(
             (total - (barrel + outer + inner)).abs() < 1e-4,
             "{total} vs {}",
@@ -162,19 +162,17 @@ fn the_laminate_is_physical_around_inner_copper_and_drills() -> Result<()> {
         m.geometry
             .iter()
             .filter(|g| g.kind == BodyKind::Substrate)
-            .map(|g| g.volume)
+            .map(|g| g.volume())
             .sum::<f64>()
     };
     let pi = std::f64::consts::PI;
     let t = project.stackup.dielectric_mm();
     let foil = 0.035;
     // Each inner layer loses the union of its track and two via rings:
-    // the track's 10 × 0.3 rectangle, the two 64-gons less the half of
+    // the track's 10 × 0.3 rectangle and the two ring discs less what of
     // each the track already covers; the drills go through everything.
-    let gon = 32.0 * 0.09 * (2.0 * pi / 64.0).sin();
+    let disc = pi * 0.3 * 0.3;
     let drill = pi * 0.15 * 0.15;
-    // The rectangle reaches the via centres, so each 64-gon adds what it
-    // has outside the rectangle; measured numerically below.
     let removed = baseline_removed(&project)?;
     let expected =
         laminate(&baseline) - 2.0 * drill * t - 2.0 * removed * foil + 2.0 * 2.0 * drill * foil;
@@ -184,36 +182,33 @@ fn the_laminate_is_physical_around_inner_copper_and_drills() -> Result<()> {
     let error = (laminate(&model) - expected).abs();
     assert!(error < 1e-3, "{error}");
     assert!(2.0 * removed * foil > 200.0 * error);
-    assert!(removed > 10.0 * 0.3 && removed < 10.0 * 0.3 + 2.0 * gon);
+    assert!(removed > 10.0 * 0.3 && removed < 10.0 * 0.3 + 2.0 * disc);
     Ok(())
 }
 
-/// The area one inner layer's union of copper outlines covers.
+/// The area one inner layer's copper covers, exactly: the track's
+/// rectangle (which runs from one via centre to the other) and each ring
+/// disc less the part of it inside the rectangle, a half of the disc's
+/// strip `|y| <= w / 2`.
 fn baseline_removed(project: &Project) -> Result<f64> {
     let layer = CopperLayer::Inner(1);
-    let mut loops: Vec<Vec<Point>> = project
+    let track = project
         .tracks
         .iter()
-        .filter(|t| t.layer == layer)
-        .map(|t| track_outline(t.start, t.end, t.width))
-        .collect();
-    loops.extend(
-        project
-            .vias
-            .iter()
-            .map(|v| ring_outline(v.position, v.diameter / 2.0)),
-    );
-    let outline = appearance::union(&loops).ok_or_else(|| invalid("too large"))?;
-    Ok(outline
+        .find(|t| t.layer == layer)
+        .ok_or_else(|| invalid("no inner track"))?;
+    let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
+    let h = track.width / 2.0;
+    let rings: f64 = project
+        .vias
         .iter()
-        .map(|p| {
-            let n = p.len();
-            (0..n)
-                .map(|i| p[i][0] * p[(i + 1) % n][1] - p[(i + 1) % n][0] * p[i][1])
-                .sum::<f64>()
-                / 2.0
+        .map(|v| {
+            let r = v.diameter / 2.0;
+            let strip_half = h * (r * r - h * h).sqrt() + r * r * (h / r).asin();
+            std::f64::consts::PI * r * r - strip_half
         })
-        .sum())
+        .sum();
+    Ok(length * track.width + rings)
 }
 
 #[test]
@@ -303,8 +298,7 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
             .iter()
             .filter(|g| !matches!(g.kind, BodyKind::Silkscreen))
             .filter_map(|g| {
-                g.mesh
-                    .raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
+                g.raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
                     .map(|(d, _)| (d, g.kind))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -407,7 +401,10 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
         let c = pad.center();
         let z = 1.6 + appearance::MASK_THICKNESS_MM;
         for film in &films {
-            assert!(!film.mesh.contains(Vec3::new(c[0], c[1], z)), "{c:?}");
+            assert!(
+                !film.world_mesh().contains(Vec3::new(c[0], c[1], z)),
+                "{c:?}"
+            );
         }
     }
     // White ink by default; the colour follows the fabrication.

@@ -75,7 +75,7 @@ fn extent(bodies: &[&Geometry]) -> ([f64; 3], [f64; 3], f64) {
             (
                 std::array::from_fn(|k| lo[k].min(g.min[k])),
                 std::array::from_fn(|k| hi[k].max(g.max[k])),
-                v + g.volume,
+                v + g.volume(),
             )
         },
     )
@@ -102,9 +102,9 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 /// A bottom pour of two regions (one with two holes) and an inner plane:
 /// each is one saved copper body on its layer, as thick as its foil and
 /// as large as its regions, its source naming the fill, net and layer.
-/// The inner plane overlaps the laminate, which keeps its volume (the cut
-/// cost the 3D view too much; see the module); the bottom pour wears a
-/// display-only mask cap opened at its holes.
+/// The inner plane lies in its foil level, so the laminate loses exactly
+/// its copper ([`an_inner_fill_lies_in_its_own_foil_level`]); the bottom
+/// pour wears a display-only mask cap opened at its holes.
 #[test]
 fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     let plain = showcase()?;
@@ -181,15 +181,12 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     assert_eq!(source.layer, Some(CopperLayer::Bottom));
     assert!(source.track.is_none() && source.via.is_none() && source.instance.is_none());
 
-    // The laminate is not cut by the inner plane.
-    let substrate = |m: &NativeModel| -> f64 {
-        m.geometry
-            .iter()
-            .filter(|g| g.kind == BodyKind::Substrate)
-            .map(|g| g.volume)
-            .sum()
-    };
-    near(substrate(&unfilled), substrate(&model), 1e-6);
+    // The inner plane takes its place in the laminate.
+    near(
+        substrate(&unfilled) - substrate(&model),
+        30.0 * t_inner,
+        1e-6,
+    );
 
     // The bottom pour's mask cap: display-only, picked as the fill, one
     // per region, below the board.
@@ -204,6 +201,96 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
             .all(|g| g.kind.is_appearance() && g.max[2] <= 1e-9)
     );
     assert!(caps.iter().all(|g| g.min[2] < -t_bottom));
+    Ok(())
+}
+
+fn substrate(m: &NativeModel) -> f64 {
+    m.geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::Substrate)
+        .map(|g| g.volume())
+        .sum()
+}
+
+/// An inner plane is copper in its own foil level, not copper overlapping
+/// the laminate: the laminate loses exactly the plane's copper, less a
+/// same-net via ring inside it (cut already), and keeps the laminate in
+/// the plane's clearance round another net's via, whose ring stays its
+/// exact circle. So the saved bodies are disjoint and the laminate's
+/// mass is physical.
+#[test]
+fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
+    let mut plain = showcase()?;
+    let layer = CopperLayer::Inner(1);
+    let (lo, hi) = ([30.0, 1.0], [40.0, 4.0]);
+    let clear = |a: Point, b: Point, r: f64| {
+        a[0].max(b[0]) + r < lo[0] - 1.0
+            || a[0].min(b[0]) - r > hi[0] + 1.0
+            || a[1].max(b[1]) + r < lo[1] - 1.0
+            || a[1].min(b[1]) - r > hi[1] + 1.0
+    };
+    let layers = plain.stackup.layers();
+    assert!(
+        plain
+            .tracks
+            .iter()
+            .filter(|t| t.layer == layer)
+            .all(|t| clear(t.start, t.end, t.width / 2.0))
+            && plain
+                .vias
+                .iter()
+                .filter(|v| v.on(layer, &layers))
+                .all(|v| clear(v.position, v.position, v.diameter / 2.0)),
+        "the plane's area holds no showcase copper of its layer"
+    );
+    let net = pour(&mut plain, layer)?
+        .net
+        .ok_or_else(|| Error::Verification("plane net".into()))?;
+    let other = plain
+        .nets
+        .iter()
+        .map(|n| n.id)
+        .find(|n| *n != net)
+        .ok_or_else(|| Error::Verification("second net".into()))?;
+    for (net, position) in [(net, [33.0, 2.5]), (other, [37.0, 2.5])] {
+        let id = plain
+            .allocate()
+            .map_err(|e| Error::Verification(e.to_string()))?;
+        plain.vias.push(pcbcraft_core::Via {
+            id,
+            net,
+            position,
+            drill: 0.3,
+            diameter: 0.6,
+            span: pcbcraft_core::ViaSpan::Through,
+            tented: true,
+            locked: false,
+        });
+    }
+    let clearance = hole([37.0, 2.5], 0.6, 96);
+    let mut project = plain.clone();
+    pour(&mut project, layer)?.computed = Some(copper(vec![FilledRegion {
+        outer: rect(lo, hi),
+        holes: vec![clearance.clone()],
+    }]));
+    let (before, after) = (build(&plain)?, build(&project)?);
+    let foil = project
+        .stackup
+        .index(layer)
+        .and_then(|i| project.stackup.copper.get(i))
+        .map(|c| c.thickness_um / 1000.0)
+        .ok_or_else(|| Error::Verification("foil".into()))?;
+    let plane = 30.0 - area(&simplify_loop(&clearance, MODEL_CHORD_MM));
+    let ring = std::f64::consts::PI * 0.3 * 0.3;
+    near(
+        substrate(&before) - substrate(&after),
+        (plane - ring) * foil,
+        1e-5,
+    );
+    // The plane's copper is the rest: its body is the region.
+    let id = pour(&mut project, layer)?.id;
+    let (_, _, copper) = extent(&fill_bodies(&after, id)?);
+    near(copper, plane * foil, 1e-6);
     Ok(())
 }
 

@@ -59,7 +59,7 @@ pub fn face_area(bodies: &[&Geometry], up: bool, u: [f64; 2]) -> Option<MarkingA
         .max_by(|a, b| (s * reach(a, up)).total_cmp(&(s * reach(b, up))))?;
     let height = reach(outer, up);
     let n = Vec3::new(0.0, 0.0, s);
-    let mesh = &outer.mesh;
+    let mesh = outer.world_mesh();
     let mut on: Vec<Vec3> = Vec::new();
     for t in &mesh.triangles {
         let Some(p) = mesh.tri(t) else {
@@ -185,7 +185,8 @@ pub fn decal_geometry(mesh: &DecalMesh, item: Option<u64>) -> Result<Vec<Geometr
             surface,
             detail,
             mesh: Arc::new(display),
-            volume: 0.0,
+            place: None,
+            volume: crate::scene::Volume::known(0.0),
             min: [bounds.min.x, bounds.min.y, bounds.min.z],
             max: [bounds.max.x, bounds.max.y, bounds.max.z],
         });

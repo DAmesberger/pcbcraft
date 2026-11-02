@@ -148,8 +148,7 @@ impl Board {
             .iter()
             .filter(|g| !(hide_substrate && g.item.is_none()))
             .filter_map(|g| {
-                g.mesh
-                    .raycast(origin, direction)
+                g.raycast(origin, direction)
                     .map(|(distance, _)| (distance, g.item))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -340,7 +339,8 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
                 .surface()?,
             detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             mesh: body.mesh(),
-            volume: m.volume,
+            place: None,
+            volume: crate::scene::Volume::known(m.volume),
             min: [m.bbox.min.x, m.bbox.min.y, m.bbox.min.z],
             max: [m.bbox.max.x, m.bbox.max.y, m.bbox.max.z],
         });

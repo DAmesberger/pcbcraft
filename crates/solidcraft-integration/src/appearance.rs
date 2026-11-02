@@ -7,7 +7,7 @@
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
 use crate::material::{self, BodyKind};
-use crate::scene::Geometry;
+use crate::scene::{Geometry, Place};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
 use pcbcraft_core::library::offset_polygon;
@@ -376,7 +376,60 @@ pub fn board(
     vias: &[ViaMark],
     parts: &[Part<'_>],
 ) -> Result<Vec<Geometry>> {
+    board_with(board, lands, paths, vias, parts, &mut Memo::default())
+}
+
+/// Display layers made before, by a digest of what each was made from: a
+/// side's mask (the board and that side's openings), a land's finish (the
+/// board and the land) and a via's dome and bore (the board and the via).
+/// [`board_with`] takes each unchanged one from the last call instead of
+/// making it again, so an edit remakes only what it changed.
+#[derive(Default)]
+pub struct Memo {
+    made: std::collections::HashMap<u64, Vec<Geometry>>,
+}
+
+impl Memo {
+    /// The layers `inputs` (debug-printed: every number exactly) make: the
+    /// last call's if it made them, else `make`'s, kept in `next`.
+    fn unit(
+        &self,
+        next: &mut Self,
+        out: &mut Vec<Geometry>,
+        inputs: &dyn std::fmt::Debug,
+        make: impl FnOnce(&mut Vec<Geometry>) -> Result<()>,
+    ) -> Result<()> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{inputs:?}").hash(&mut h);
+        let key = h.finish();
+        let made = match self.made.get(&key).or_else(|| next.made.get(&key)) {
+            Some(made) => made.clone(),
+            None => {
+                let mut made = Vec::new();
+                make(&mut made)?;
+                made
+            }
+        };
+        out.extend(made.iter().cloned());
+        next.made.insert(key, made);
+        Ok(())
+    }
+}
+
+/// [`board`], taking unchanged layers from `memo` and leaving there this
+/// call's.
+pub fn board_with(
+    board: &Board,
+    lands: &[Land],
+    paths: &[Path],
+    vias: &[ViaMark],
+    parts: &[Part<'_>],
+    memo: &mut Memo,
+) -> Result<Vec<Geometry>> {
+    let mut next = Memo::default();
     let mut out = Vec::new();
+    let mut shared = Shared::default();
     let (fills, edge_cuts) = mask_outline(board);
     for (kind, layer) in [
         (BodyKind::MaskTop, Layer::Top),
@@ -395,15 +448,20 @@ pub fn board(
                 .chain(edge_cuts.iter().cloned())
                 .collect(),
         };
-        push(
-            &mut out,
-            &board.fabrication,
-            kind,
-            None,
-            Some(layer.into()),
-            slab(&region, z0, z1, MASK_TILE_MM),
-        )?;
+        memo.unit(&mut next, &mut out, &(kind, board, &region), |out| {
+            push(
+                out,
+                &board.fabrication,
+                kind,
+                None,
+                Some(layer.into()),
+                slab(&region, z0, z1, MASK_TILE_MM),
+            )
+        })?;
     }
+    // Via picks, looked up per land (a board has thousands of each).
+    let via_picks: std::collections::BTreeMap<u64, &ViaMark> =
+        vias.iter().map(|v| (v.pick, v)).collect();
     for land in lands {
         let Some(copper) = &land.copper else {
             continue;
@@ -426,25 +484,60 @@ pub fn board(
         };
         // A via's finished ring belongs to the via, not to its side's
         // copper: no layer, as its barrel has none.
-        let via = land.pick.is_some() && vias.iter().any(|v| Some(v.pick) == land.pick);
-        push(
-            &mut out,
-            &board.fabrication,
-            BodyKind::PadFinish,
-            land.pick,
-            (!via).then_some(land.layer.into()),
-            slab(&region, z0, z1, f64::MAX),
-        )?;
+        let via = land.pick.and_then(|pick| via_picks.get(&pick).copied());
+        match via {
+            // Made once at the origin per ring shape, placed at each via.
+            Some(via) => {
+                let local = region.shifted([-via.at[0], -via.at[1]]);
+                let mut key = local.key();
+                key.extend([z0.to_bits(), z1.to_bits()]);
+                shared.place(&mut out, key, Some(via.pick), via.at, |made| {
+                    push(
+                        made,
+                        &board.fabrication,
+                        BodyKind::PadFinish,
+                        Some(via.pick),
+                        None,
+                        slab(&local, z0, z1, f64::MAX),
+                    )
+                })?;
+            }
+            None => memo.unit(&mut next, &mut out, &(board, land), |out| {
+                push(
+                    out,
+                    &board.fabrication,
+                    BodyKind::PadFinish,
+                    land.pick,
+                    Some(land.layer.into()),
+                    slab(&region, z0, z1, f64::MAX),
+                )
+            })?,
+        }
     }
     for path in paths {
         track(&mut out, board, lands, vias, path)?;
     }
+    // Vias of one drill, ring and tenting show the same dome and bore: made
+    // once at the origin and placed at each.
     for via in vias {
-        via_layers(&mut out, board, via)?;
+        let key = vec![
+            0,
+            via.drill.to_bits(),
+            via.diameter.to_bits(),
+            u64::from(via.tented),
+        ];
+        let local = ViaMark {
+            at: [0.0, 0.0],
+            ..*via
+        };
+        shared.place(&mut out, key, Some(via.pick), via.at, |made| {
+            via_layers(made, board, &local)
+        })?;
     }
     for part in parts {
         package(&mut out, Some(board), part)?;
     }
+    *memo = next;
     Ok(out)
 }
 
@@ -1053,6 +1146,45 @@ pub fn prism(outline: &[Point], z0: f64, z1: f64) -> Mesh {
     mesh
 }
 
+/// Display bodies alike at every via (its dome, bore and finished rings):
+/// made once at the origin per key and placed at each via, sharing one
+/// mesh, instead of a copy per via.
+#[derive(Default)]
+struct Shared(std::collections::HashMap<Vec<u64>, Vec<Geometry>>);
+
+impl Shared {
+    /// The bodies `make` builds at the origin (made on the key's first use)
+    /// placed at `at` with pick identity `item`.
+    fn place(
+        &mut self,
+        out: &mut Vec<Geometry>,
+        key: Vec<u64>,
+        item: Option<u64>,
+        at: Point,
+        make: impl FnOnce(&mut Vec<Geometry>) -> Result<()>,
+    ) -> Result<()> {
+        let bodies = match self.0.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let mut made = Vec::new();
+                make(&mut made)?;
+                e.insert(made)
+            }
+        };
+        let shift = |p: [f64; 3]| [p[0] + at[0], p[1] + at[1], p[2]];
+        for body in bodies.iter() {
+            out.push(Geometry {
+                item,
+                place: Some(Place::translation([at[0], at[1], 0.0])),
+                min: shift(body.min),
+                max: shift(body.max),
+                ..body.clone()
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Finite and above zero.
 fn positive(value: f64) -> bool {
     value > 0.0 && value.is_finite()
@@ -1086,7 +1218,8 @@ pub(crate) fn push(
         surface: material::material(kind, looks).surface()?,
         detail: material::detail(kind, looks),
         mesh: Arc::new(mesh),
-        volume,
+        place: None,
+        volume: crate::scene::Volume::known(volume),
         min: [bounds.min.x, bounds.min.y, bounds.min.z],
         max: [bounds.max.x, bounds.max.y, bounds.max.z],
     });

@@ -28,7 +28,7 @@ use crate::model_scene::{self, ModelScene, ShadowVertex, next_key};
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     render::Camera,
-    scene::Geometry,
+    scene::{Geometry, Place},
 };
 use solidcraft_ui_egui::gpu::{
     self, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
@@ -48,6 +48,9 @@ const SETTLE: f64 = 0.25;
 const SUPERSAMPLE: f32 = 2.0;
 /// Selection fill opacity over the lit model.
 const HIGHLIGHT_ALPHA: u8 = 110;
+/// The selected object's tint over the model, stronger than its net's
+/// ([`HIGHLIGHT_ALPHA`]) as Solidcraft's selection is than its pre-highlight.
+const SELECTED_ALPHA: u8 = 215;
 /// Peak shadow opacity on light and dark backgrounds (Solidcraft's values).
 const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
 /// Ambient occlusion samples per pixel for a still and a moving view
@@ -97,6 +100,9 @@ pub struct Viewport {
     repack: Option<Repack>,
     bounds: Aabb3,
     highlighted: Vec<u64>,
+    /// The selected object's pick identities among `highlighted`, drawn in
+    /// the strong selection tint (the rest are its net's).
+    selected: Vec<u64>,
     slot: SceneSlot,
     key: u64,
     sketch_key: u64,
@@ -193,6 +199,7 @@ impl Viewport {
             repack: None,
             bounds: Self::initial_bounds(),
             highlighted: vec![],
+            selected: vec![],
             slot: Arc::new(Mutex::new(None)),
             key: next_key(),
             sketch_slot: Arc::new(Mutex::new(None)),
@@ -393,12 +400,56 @@ impl Viewport {
         }
     }
 
+    /// Publish the model's unplaced bodies' PBR vertices `pbr` with its
+    /// placed bodies drawn instanced: the shown layers' definition meshes
+    /// (the same shared triangles each time, so their GPU buffers are kept)
+    /// at their placements under the display transform.
     fn publish_pbr(&mut self, pbr: Vec<u8>) {
         let scene = GpuScene {
             pbr_detailed: pbr,
+            instanced: self.instanced(),
             ..GpuScene::default()
         };
         Self::publish(&self.slot, &mut self.key, scene);
+    }
+
+    /// The display transform as a placement, or `None` for none.
+    fn display_place(&self) -> Option<Place> {
+        let t = &self.display;
+        (*t != pcbcraft_core::geometry::Transform3::IDENTITY).then(|| {
+            Place(std::array::from_fn(|r| {
+                [
+                    t.rotation[r][0],
+                    t.rotation[r][1],
+                    t.rotation[r][2],
+                    t.translation[r],
+                ]
+            }))
+        })
+    }
+
+    /// The shown layers' instanced meshes.
+    fn instanced(&self) -> Vec<gpu::InstancedMesh> {
+        let Some(model) = &self.model else {
+            return Vec::new();
+        };
+        let display = self.display_place();
+        model
+            .instanced
+            .iter()
+            .filter(|i| self.layers.visible(i.layer))
+            .map(|i| match display {
+                // Unmoved: the placements as built, without a pass over them.
+                None => i.mesh.clone(),
+                Some(_) => i.placed(
+                    &model.geometry,
+                    display.as_ref(),
+                    i.mesh.look,
+                    gpu::PaletteIndex(0),
+                    |_| true,
+                ),
+            })
+            .collect()
     }
 
     fn current_shadow_view(&self) -> ShadowView {
@@ -445,9 +496,17 @@ impl Viewport {
         Self::publish(&self.sketch_slot, &mut self.sketch_key, scene);
     }
 
+    #[cfg(test)]
     pub fn highlight(&mut self, ids: Vec<u64>) {
-        if self.highlighted != ids {
+        self.highlight_selected(ids, Vec::new());
+    }
+
+    /// [`Self::highlight`] with `selected` (the picked object's identities,
+    /// also in `ids`) drawn in a stronger tint than the rest (its net).
+    pub fn highlight_selected(&mut self, ids: Vec<u64>, selected: Vec<u64>) {
+        if self.highlighted != ids || self.selected != selected {
             self.highlighted = ids;
+            self.selected = selected;
             self.publish_highlight();
         }
     }
@@ -457,7 +516,8 @@ impl Viewport {
     fn publish_highlight(&mut self) {
         let selected = crate::palette::board().selected;
         let rgba = [selected.r(), selected.g(), selected.b(), HIGHLIGHT_ALPHA];
-        let mut scene = GpuScene::with_palette(Palette::with_stable(vec![rgba]));
+        let strong = [selected.r(), selected.g(), selected.b(), SELECTED_ALPHA];
+        let mut scene = GpuScene::with_palette(Palette::with_stable(vec![rgba, strong]));
         if let Some(model) = &self.model {
             scene.blocks = model
                 .highlight
@@ -467,6 +527,21 @@ impl Viewport {
                 })
                 .map(|(_, _, block)| block.clone())
                 .collect();
+            if !self.highlighted.is_empty() {
+                let highlighted: std::collections::HashSet<u64> =
+                    self.highlighted.iter().copied().collect();
+                let selected: std::collections::HashSet<u64> =
+                    self.selected.iter().copied().collect();
+                let display = self.display_place();
+                scene.selected_instanced = model
+                    .instanced
+                    .iter()
+                    .filter(|i| self.layers.visible(i.layer))
+                    .filter_map(|i| {
+                        i.highlight(&model.geometry, display.as_ref(), &highlighted, &selected)
+                    })
+                    .collect();
+            }
         }
         Self::publish(&self.hl_slot, &mut self.hl_key, scene);
     }
@@ -482,7 +557,7 @@ impl Viewport {
             .iter()
             .filter(|g| self.layers.shows(g))
             .filter(|g| box_hit(g, origin, direction))
-            .filter_map(|g| g.mesh.raycast(origin, direction).map(|(d, _)| (d, g)))
+            .filter_map(|g| g.raycast(origin, direction).map(|(d, _)| (d, g)))
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
@@ -986,6 +1061,246 @@ mod tests {
         viewport.set_model(crate::model_scene::build(model.geometry)?);
         viewport.fit();
         Ok(viewport)
+    }
+
+    fn vias(count: usize) -> Result<Viewport, Box<dyn std::error::Error>> {
+        let project = crate::model_scene::tests::via_project(count)?;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let mut viewport = Viewport::detached();
+        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.fit();
+        Ok(viewport)
+    }
+
+    /// The published instanced meshes: key, triangles' address and
+    /// placements.
+    fn instanced(slot: &SceneSlot) -> Vec<(u64, usize, usize)> {
+        slot.lock()
+            .ok()
+            .and_then(|s| {
+                s.as_ref().map(|s| {
+                    s.instanced
+                        .iter()
+                        .map(|m| (m.key, Arc::as_ptr(&m.tris) as usize, m.count()))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// The via bodies' plan centre and top, seen from straight above.
+    fn above_via(
+        viewport: &mut Viewport,
+        index: usize,
+    ) -> Result<(u64, f64, f64), Box<dyn std::error::Error>> {
+        let (w, h) = (800.0, 600.0);
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let mut items: Vec<u64> = model
+            .geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::ViaCopper)
+            .filter_map(|g| g.item)
+            .collect();
+        items.dedup();
+        let item = *items.get(index).ok_or("no such via")?;
+        let mut b = Aabb3::EMPTY;
+        for g in model.geometry.iter().filter(|g| g.item == Some(item)) {
+            b.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+            b.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+        }
+        // On the ring, beside the drill.
+        let at = Vec3::new(b.center().x + 0.22, b.center().y, b.max.z);
+        viewport.camera.target = at;
+        viewport.camera.yaw = 0.0;
+        viewport.camera.pitch = 1.55;
+        viewport.camera.distance = 6.0;
+        let (x, y, _) = viewport
+            .camera
+            .to_screen(at, w, h, viewport.bounds.diagonal())
+            .ok_or("behind the eye")?;
+        Ok((item, x, y))
+    }
+
+    /// A click over a via picks that via, though its bodies are placements
+    /// of meshes every via shares; with the vias' layer hidden it passes
+    /// through to what lies below.
+    #[test]
+    fn a_click_picks_the_via_instance_under_the_pointer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut viewport = vias(40)?;
+        let (w, h) = (800.0, 600.0);
+        for index in [0, 17, 39] {
+            let (item, x, y) = above_via(&mut viewport, index)?;
+            let hit = viewport.hit(x, y, w, h).ok_or("nothing hit")?;
+            assert!(hit.1.place.is_some(), "{:?} is drawn instanced", hit.1.kind);
+            assert_eq!(viewport.pick(x, y, w, h), Some(item), "via {index}");
+        }
+        let (item, x, y) = above_via(&mut viewport, 17)?;
+        viewport.set_layer(ViewLayer::Vias, false);
+        viewport.set_layer(ViewLayer::Mask(Layer::Top), false);
+        settle(&mut viewport)?;
+        assert_ne!(viewport.pick(x, y, w, h), Some(item));
+        Ok(())
+    }
+
+    /// Hiding the vias' layer leaves their instanced meshes out of the
+    /// published scene; showing it again publishes the same shared
+    /// triangles (their GPU buffers are kept), with every placement, and
+    /// no mesh is rebuilt.
+    #[test]
+    fn a_layer_toggle_hides_instanced_vias_without_a_rebuild()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = vias(40)?;
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let meshes: Vec<usize> = model
+            .geometry
+            .iter()
+            .map(|g| Arc::as_ptr(&g.mesh) as usize)
+            .collect();
+        let of_vias: Vec<u64> = model
+            .instanced
+            .iter()
+            .filter(|i| i.layer == ViewLayer::Vias)
+            .map(|i| i.mesh.key)
+            .collect();
+        assert!(!of_vias.is_empty());
+        let shown = instanced(&viewport.slot);
+        let generation = viewport.generation;
+        viewport.set_layer(ViewLayer::Vias, false);
+        settle(&mut viewport)?;
+        let hidden = instanced(&viewport.slot);
+        assert!(hidden.iter().all(|(key, _, _)| !of_vias.contains(key)));
+        assert_eq!(
+            hidden,
+            shown
+                .iter()
+                .filter(|(key, _, _)| !of_vias.contains(key))
+                .copied()
+                .collect::<Vec<_>>()
+        );
+        viewport.set_layer(ViewLayer::Vias, true);
+        settle(&mut viewport)?;
+        assert_eq!(instanced(&viewport.slot), shown);
+        assert_eq!(viewport.generation, generation, "the model was not rebuilt");
+        let after: Vec<usize> = viewport
+            .model
+            .as_ref()
+            .map(|m| {
+                m.geometry
+                    .iter()
+                    .map(|g| Arc::as_ptr(&g.mesh) as usize)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(after, meshes);
+        Ok(())
+    }
+
+    /// Selecting a via draws exactly its copper placements again in the
+    /// selection colour, from the shared triangles (its display-only bore
+    /// shadow and tent dome, which would cover the open drill, are left
+    /// out); a hidden layer's are left out.
+    #[test]
+    fn a_selected_via_highlights_its_own_placements() -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = vias(40)?;
+        let (item, _, _) = above_via(&mut viewport, 5)?;
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let bodies = model
+            .geometry
+            .iter()
+            .filter(|g| g.item == Some(item) && g.place.is_some())
+            .filter(|g| !matches!(g.kind, BodyKind::ViaBore | BodyKind::MaskCap))
+            .count();
+        assert!(bodies > 0);
+        let model_tris: Vec<usize> = model
+            .instanced
+            .iter()
+            .map(|i| Arc::as_ptr(&i.mesh.tris) as usize)
+            .collect();
+        let key = viewport.key;
+        viewport.highlight(vec![item]);
+        let selected = |v: &Viewport| -> Vec<(usize, usize)> {
+            v.hl_slot
+                .lock()
+                .ok()
+                .and_then(|s| {
+                    s.as_ref().map(|s| {
+                        s.selected_instanced
+                            .iter()
+                            .map(|m| (Arc::as_ptr(&m.tris) as usize, m.count()))
+                            .collect()
+                    })
+                })
+                .unwrap_or_default()
+        };
+        let drawn = selected(&viewport);
+        assert_eq!(drawn.iter().map(|(_, n)| n).sum::<usize>(), bodies);
+        assert!(drawn.iter().all(|(t, _)| model_tris.contains(t)));
+        assert_eq!(viewport.key, key, "the model is not published again");
+        viewport.set_layer(ViewLayer::Vias, false);
+        assert!(
+            selected(&viewport).iter().map(|(_, n)| n).sum::<usize>() < bodies,
+            "the hidden barrel is not highlighted"
+        );
+        Ok(())
+    }
+
+    /// The picked via is drawn in the strong selection tint (palette
+    /// entry 1) and the other vias of its net in the lighter net tint
+    /// (entry 0), so one via stands out among many on the same net.
+    #[test]
+    fn the_picked_via_stands_out_from_its_net() -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = vias(40)?;
+        let (item, _, _) = above_via(&mut viewport, 5)?;
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let copper = |g: &&Geometry| {
+            g.place.is_some() && !matches!(g.kind, BodyKind::ViaBore | BodyKind::MaskCap)
+        };
+        let net: Vec<u64> = model
+            .geometry
+            .iter()
+            .filter(copper)
+            .filter(|g| g.kind == BodyKind::ViaCopper)
+            .filter_map(|g| g.item)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert!(net.len() > 1 && net.contains(&item));
+        let own = model
+            .geometry
+            .iter()
+            .filter(copper)
+            .filter(|g| g.item == Some(item))
+            .count();
+        let all = model
+            .geometry
+            .iter()
+            .filter(copper)
+            .filter(|g| g.item.is_some_and(|i| net.contains(&i)))
+            .count();
+        viewport.highlight_selected(net, vec![item]);
+        let colours: Vec<u32> = viewport
+            .hl_slot
+            .lock()
+            .ok()
+            .and_then(|s| {
+                s.as_ref().map(|s| {
+                    s.selected_instanced
+                        .iter()
+                        .flat_map(|m| {
+                            m.instances
+                                .chunks_exact(solidcraft_ui_egui::gpu::INSTANCE_SIZE)
+                                .filter_map(|c| c.get(48..52)?.try_into().ok())
+                                .map(u32::from_le_bytes)
+                                .collect::<Vec<_>>()
+                        })
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        assert_eq!(colours.iter().filter(|c| **c == 1).count(), own);
+        assert_eq!(colours.iter().filter(|c| **c == 0).count(), all - own);
+        Ok(())
     }
 
     fn blocks(slot: &SceneSlot) -> Vec<(u64, usize)> {

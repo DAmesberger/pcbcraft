@@ -193,7 +193,7 @@ fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
         .iter()
         .filter(|g| g.kind == BodyKind::Silkscreen)
         .collect();
-    assert!(films.iter().all(|g| g.volume > 0.0));
+    assert!(films.iter().all(|g| g.volume() > 0.0));
     // U2's legend is built whole: its flat film and the piece standing on
     // the mask caps it crosses (the piece that failed), not left out.
     let pick = model

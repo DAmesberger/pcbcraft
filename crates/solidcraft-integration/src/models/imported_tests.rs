@@ -540,7 +540,7 @@ fn preview_draws_every_body_at_the_placement() -> Result<()> {
         .fold([f64::INFINITY; 3], |a, b| [0, 1, 2].map(|i| a[i].min(b[i])));
     assert!(near(lo, [-1.0, 0.5, 0.5], EPS), "{lo:?}");
     assert!(geometry.iter().any(|g| g.kind == BodyKind::ModelLead));
-    assert!(geometry.iter().all(|g| g.volume > 0.0));
+    assert!(geometry.iter().all(|g| g.volume() > 0.0));
     Ok(())
 }
 

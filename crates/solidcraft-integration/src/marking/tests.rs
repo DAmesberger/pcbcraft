@@ -470,7 +470,7 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
         let roof = bodies.iter().map(|g| g.max[2]).fold(f64::MIN, f64::max);
         for g in &mine {
             assert_eq!(g.kind, DECAL_KIND);
-            assert_eq!(g.volume, 0.0);
+            assert_eq!(g.volume(), 0.0);
             assert!(g.mesh.triangles.len() > 10);
             // On the roof (or the overcoat on it), inside the body's plan.
             assert!(g.min[2] > roof - 0.1 && (g.max[2] - g.min[2]).abs() < 1e-5);
@@ -503,7 +503,7 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
     assert_eq!(cache.len(), layouts.len());
     assert_eq!(again.len(), decals.len());
     // The native model is untouched: decals are never part of it.
-    assert!(model.geometry.iter().all(|g| g.volume > 0.0));
+    assert!(model.geometry.iter().all(|g| g.volume() > 0.0));
     Ok(())
 }
 
@@ -573,7 +573,8 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
         surface: finish_surface(Finish::LaserEtch)?,
         detail: Detail::NONE,
         mesh: Arc::new(mesh),
-        volume: 1.0,
+        place: None,
+        volume: crate::scene::Volume::known(1.0),
         min: [0.0, 0.0, -2.6],
         max: [2.0, 1.0, -1.6],
     };
@@ -727,7 +728,7 @@ fn board_artwork_is_drawn_from_the_project_s_packed_svg() -> TestResult {
     assert!(
         decals
             .iter()
-            .all(|g| g.kind == DECAL_KIND && g.volume == 0.0)
+            .all(|g| g.kind == DECAL_KIND && g.volume() == 0.0)
     );
     // The square (half the artwork's width) fills a visible share of the
     // 0.8 × 0.4 mm box.

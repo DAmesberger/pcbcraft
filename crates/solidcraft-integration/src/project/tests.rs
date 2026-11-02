@@ -199,12 +199,12 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
         .ok_or_else(|| Error::Verification("missing substrate".into()))?;
     assert_eq!(substrate.item, None);
     bounds(substrate, [0.0, 0.0, 0.0], [60.0, 40.0, 1.6]);
-    near(substrate.volume, 60.0 * 40.0 * 1.6);
+    near(substrate.volume(), 60.0 * 40.0 * 1.6);
     let top = source_geometry(&model, BodyKind::ChipResistor, |s| {
         s.instance == Some(r1) && s.pad.is_none()
     })?;
     bounds(top, [9.8, 11.25, 1.835], [11.0, 13.25, 2.435]);
-    near(top.volume, 2.0 * 1.2 * 0.6);
+    near(top.volume(), 2.0 * 1.2 * 0.6);
     let bottom = source_geometry(&model, BodyKind::ChipResistor, |s| {
         s.instance == Some(r2) && s.pad.is_none()
     })?;
@@ -222,7 +222,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
             [center[0] - 0.7, center[1] - 0.5, z[0]],
             [center[0] + 0.7, center[1] + 0.5, z[1]],
         );
-        near(pad.volume, 1.0 * 1.4 * 0.035);
+        near(pad.volume(), 1.0 * 1.4 * 0.035);
     }
     for track in &project.tracks {
         let geometry =
@@ -239,7 +239,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
             [15.2, track.start[1] + 0.2, z[1]],
         );
         let (_, _, area) = track_plan(track.start, track.end, track.width);
-        near(geometry.volume, area * 0.035);
+        near(geometry.volume(), area * 0.035);
         let source = model
             .sources
             .iter()
@@ -275,7 +275,7 @@ fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
             assert!(min[k] < [5.0, 25.0][k] - 0.19 && max[k] > [9.0, 28.0][k] + 0.19);
         }
         bounds(geometry, [min[0], min[1], z[0]], [max[0], max[1], z[1]]);
-        near(geometry.volume, area * 0.035);
+        near(geometry.volume(), area * 0.035);
     }
     Ok(())
 }
@@ -293,9 +293,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         .into_owned();
     original.save(&path)?;
     let reopened = Native::open(&path)?;
-    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
-    let retained: Vec<Source> =
-        serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
+    let retained = saved_sources(&reopened)?;
     assert_eq!(
         serde_json::to_value(&retained)?,
         serde_json::to_value(&original.sources)?
@@ -314,7 +312,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
             .ok_or_else(|| Error::Verification("reopen lost source geometry".into()))?;
         assert!(same.next().is_none(), "{:?} is ambiguous", previous.kind);
         bounds(restored, previous.min, previous.max);
-        near(restored.volume, previous.volume);
+        near(restored.volume(), previous.volume());
         assert_eq!(restored.surface, previous.surface);
     }
     looks_match_the_native_file(&before)?;
@@ -335,7 +333,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         s.instance == Some(r1) && s.pad.is_none()
     })?;
     bounds(top, [13.25, 17.0, 2.67], [17.25, 18.2, 3.27]);
-    near(top.volume, 4.0 * 1.2 * 0.6);
+    near(top.volume(), 4.0 * 1.2 * 0.6);
     let bottom = source_geometry(&changed, BodyKind::ChipResistor, |s| {
         s.instance == Some(r2) && s.pad.is_none()
     })?;
@@ -354,7 +352,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
             s.pick_id == source.pick_id
         })?;
         let (_, _, area) = track_plan([5.0, 0.0], [15.0, 0.0], 0.4);
-        near(geometry.volume, area * 0.07);
+        near(geometry.volume(), area * 0.07);
         near(
             geometry.min[2],
             if source.layer == Some(CopperLayer::Top) {
@@ -384,7 +382,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     assert_eq!(model.geometry[0].kind, BodyKind::PartBody);
     looks_match_the_native_file(&model)?;
     bounds(&model.geometry[0], [-0.5, -3.5, 0.4], [3.5, -0.5, 2.4]);
-    near(model.geometry[0].volume, 24.0);
+    near(model.geometry[0].volume(), 24.0);
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
     package.envelope = [2.0, 1.25, 0.5];
@@ -488,9 +486,7 @@ fn build_timings() -> Result<()> {
         .map_err(|error| Error::Verification(error.to_string()))?
         .project()
         .clone();
-    // The demo on 4 layers with 50 through vias and 25 inner tracks. (200
-    // vias exceed Solidcraft's planar comparison budget cutting the
-    // laminate: see docs/pcb-realism.md, "Open".)
+    // The demo on 4 layers with 50 through vias and 25 inner tracks.
     let mut vias = demo.clone();
     vias.stackup = Stackup::preset(4).map_err(|error| Error::Verification(error.to_string()))?;
     for k in 0..50 {
@@ -526,11 +522,24 @@ fn build_timings() -> Result<()> {
             });
         }
     }
+    // The showcase on 4 layers with 1000, 4096 and 10000 vias and about
+    // 250 inner and outer tracks (`via_board`).
+    let (v1000, v4096, v10000) = (via_board(1000)?, via_board(4096)?, via_board(10_000)?);
+    // The 10,000-via board at the layout's track limit.
+    let v10000_tracks = with_tracks(10_000, 2_000)?;
     for (name, project, runs) in [
         ("demo", &demo, 15),
         ("400 tracks", &tracks, 3),
         ("showcase", &showcase, 5),
         ("4 layers, 50 vias, 25 inner tracks", &vias, 3),
+        ("showcase, 4 layers, 1000 vias", &v1000, 3),
+        ("showcase, 4 layers, 4096 vias", &v4096, 1),
+        ("showcase, 4 layers, 10000 vias", &v10000, 3),
+        (
+            "showcase, 4 layers, 10000 vias, 2000 tracks",
+            &v10000_tracks,
+            3,
+        ),
     ] {
         let mut times = vec![];
         let mut bodies = (0, 0);
@@ -543,11 +552,91 @@ fn build_timings() -> Result<()> {
         times.sort_by(f64::total_cmp);
         let at = |q: f64| times[((times.len() - 1) as f64 * q).round() as usize];
         println!(
-            "{name}: {} native bodies, {} drawn, build p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
+            "{name}: {} native bodies, {} drawn, build best {:.0} ms, p50 {:.0} ms, p95 {:.0} ms ({runs} runs)",
             bodies.0,
             bodies.1,
+            at(0.0),
             at(0.5),
             at(0.95)
+        );
+        // The founder's bar: 10,000 vias in a few seconds; the target is
+        // 3 s, best of the runs, for the benchmark board (about 260
+        // tracks). At the layout's 2,000 tracks it is not met yet
+        // (docs/pcb-realism.md, Build cost): that case is measured only.
+        if name == "showcase, 4 layers, 10000 vias" {
+            assert!(at(0.0) < 3000.0, "{name}: best {:.0} ms", at(0.0));
+        }
+    }
+    Ok(())
+}
+
+/// [`via_board`]`(count)` with tracks added on the outer layers, between
+/// its via rows, until it has `total` tracks.
+fn with_tracks(count: usize, total: usize) -> Result<Project> {
+    let mut project = via_board(count)?;
+    let net = project.nets[0].id;
+    // The grid's first via (the showcase has vias of its own before it).
+    let base = project
+        .vias
+        .len()
+        .checked_sub(count)
+        .and_then(|first| project.vias.get(first))
+        .map(|v| v.position)
+        .ok_or_else(|| Error::Verification("a via board has vias".into()))?;
+    let mut k = 0usize;
+    while project.tracks.len() < total {
+        let id = project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        let start = [
+            base[0] + (k % 63) as f64 * 1.27 + 0.135,
+            base[1] + (k / 63) as f64 * 1.27 + 0.635,
+        ];
+        project.tracks.push(Track {
+            id,
+            net,
+            start,
+            end: [start[0] + 1.0, start[1]],
+            width: 0.15,
+            layer: if k.is_multiple_of(2) {
+                CopperLayer::Top
+            } else {
+                CopperLayer::Bottom
+            },
+            locked: false,
+        });
+        k += 1;
+    }
+    Ok(project)
+}
+
+/// One via board's build, for profiling (`PCBCRAFT_TRACKS` tracks in all,
+/// [`with_tracks`]): `PCBCRAFT_VIAS=10000 cargo test
+/// --profile ci -p pcbcraft-solidcraft via_build_profile -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn via_build_profile() -> Result<()> {
+    let count = std::env::var("PCBCRAFT_VIAS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10_000);
+    let runs = std::env::var("PCBCRAFT_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let tracks = std::env::var("PCBCRAFT_TRACKS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let project = with_tracks(count, tracks)?;
+    for _ in 0..runs {
+        let start = std::time::Instant::now();
+        let model = build(&project)?;
+        println!(
+            "{count} vias, {} tracks: {} native bodies, build {:.0} ms",
+            project.tracks.len(),
+            native(&model).count(),
+            start.elapsed().as_secs_f64() * 1e3
         );
     }
     Ok(())
@@ -591,8 +680,7 @@ fn first_hit(model: &NativeModel, at: [f64; 2], down: bool) -> Option<&Geometry>
                 )
         })
         .filter_map(|g| {
-            g.mesh
-                .raycast(Vec3::new(at[0], at[1], z), Vec3::new(0.0, 0.0, dz))
+            g.raycast(Vec3::new(at[0], at[1], z), Vec3::new(0.0, 0.0, dz))
                 .map(|(t, _)| (t, g))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -621,7 +709,7 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         let pad = source_geometry(&model, BodyKind::PadCopper, |s| s.pick_id == source.pick_id)?;
         let finish = source_geometry(&model, BodyKind::PadFinish, |s| s.pick_id == source.pick_id)?;
         assert_eq!(pad.surface.metallic(), copper.metallic());
-        near(pad.volume, 1.0 * 1.4 * 0.035);
+        near(pad.volume(), 1.0 * 1.4 * 0.035);
         for axis in 0..2 {
             near(finish.min[axis], pad.min[axis] - 0.005);
             near(finish.max[axis], pad.max[axis] + 0.005);
@@ -730,7 +818,7 @@ fn pieces(model: &NativeModel, track: Id, kind: BodyKind) -> Vec<&Geometry> {
 
 fn no_cap_over_a_pad(model: &NativeModel, caps: &[&Geometry]) {
     for cap in caps {
-        for p in &cap.mesh.positions {
+        for p in &cap.world_mesh().positions {
             for f in pad_finishes(model) {
                 let over = p.x > f.min[0] + 1e-6
                     && p.x < f.max[0] - 1e-6
@@ -853,7 +941,7 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
         }
     }
     // The saved model's volume is the laminate, copper and envelopes only.
-    let volume: f64 = bodies.iter().map(|g| g.volume).sum();
+    let volume: f64 = bodies.iter().map(|g| g.volume()).sum();
     let expected = 60.0 * 40.0 * 1.6
         + 2.0 * (2.0 * 1.2 * 0.6)
         + 4.0 * (1.0 * 1.4 * 0.035)
@@ -861,28 +949,6 @@ fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
             + track_plan([0.0, 0.0], [6.0, 0.0], 0.25).2)
             * 0.035;
     near(volume, expected);
-    Ok(())
-}
-
-#[test]
-fn body_kind_chunks_measure_escaped_names() -> Result<()> {
-    let mut bodies = BTreeMap::new();
-    // Quotes and backslashes serialize at twice their length.
-    for k in 0..3000 {
-        let kind = BodyKind::ALL[k % BodyKind::ALL.len()];
-        bodies.insert(format!("{k:05} \\\"{}", "\\".repeat(20)), kind);
-    }
-    let chunks = kind_chunks(&bodies)?;
-    assert!(chunks.len() > 1);
-    let mut names = 0;
-    for chunk in &chunks {
-        let bytes = serde_json::to_string(chunk)?.len();
-        assert!(bytes <= BODIES_CHUNK_BYTES, "{bytes} bytes");
-        names += chunk.values().map(Vec::len).sum::<usize>();
-    }
-    assert_eq!(names, bodies.len());
-    bodies.insert("x".repeat(BODIES_CHUNK_BYTES), BodyKind::Substrate);
-    assert!(matches!(kind_chunks(&bodies), Err(Error::Invalid(_))));
     Ok(())
 }
 
@@ -982,7 +1048,7 @@ fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()>
             })
         });
         assert!(touches, "fillet does not meet its termination");
-        assert!(solder.volume > 0.0);
+        assert!(solder.volume() > 0.0);
     }
     Ok(())
 }
@@ -1050,7 +1116,7 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
             } else {
                 near(solder.max[2], -0.035 - 0.005);
             }
-            assert!(solder.volume > 0.0);
+            assert!(solder.volume() > 0.0);
         }
     }
     Ok(())
@@ -1183,7 +1249,7 @@ fn copper_z(layer: Layer) -> f64 {
 fn inside(geometry: &[&Geometry], p: Point, z: f64) -> bool {
     geometry
         .iter()
-        .any(|g| g.mesh.contains(Vec3::new(p[0], p[1], z)))
+        .any(|g| g.world_mesh().contains(Vec3::new(p[0], p[1], z)))
 }
 
 fn pad_bodies(model: &NativeModel, instance: Id, pad: PadId) -> Vec<&Geometry> {
@@ -1300,7 +1366,7 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
     // The laminate lost two drills per placement.
     let full = 60.0 * 40.0 * 1.6;
     let drilled = 2.0 * std::f64::consts::PI * (0.3f64.powi(2) + 0.5f64.powi(2)) * 1.6;
-    let volume: f64 = substrate.iter().map(|g| g.volume).sum();
+    let volume: f64 = substrate.iter().map(|g| g.volume()).sum();
     assert!((volume - (full - drilled)).abs() < 2e-3, "{volume}");
     Ok(())
 }
@@ -1385,7 +1451,7 @@ fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<
     let reopened = Native::open(&path)?;
     let before = finish(reopened, original.sources.clone())?;
     assert_eq!(before.geometry.len(), native(&original).count());
-    let total = |m: &NativeModel| -> f64 { native(m).map(|g| g.volume).sum() };
+    let total = |m: &NativeModel| -> f64 { native(m).map(|g| g.volume()).sum() };
     near(total(&before), total(&original));
     let mut native_model = before.native;
     native_model.change_parameters(json!({"board_thickness": "2.4 mm"}))?;
@@ -1494,9 +1560,7 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
         .into_owned();
     original.save(&path)?;
     let reopened = Native::open(&path)?;
-    let metadata = serde_json::to_value(&reopened.session().doc.metadata)?;
-    let retained: Vec<Source> =
-        serde_json::from_value(metadata["org.pcbcraft.electronics"]["sources"].clone())?;
+    let retained = saved_sources(&reopened)?;
     let before = finish(reopened, retained)?;
     // Every generated body keeps its instance's pick, bounds and look.
     let generated = |model: &NativeModel| -> Vec<Geometry> {
@@ -1559,6 +1623,262 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
     near((b1.0 + b1.1) / 2.0, 5.0);
     near((b2.0 + b2.1) / 2.0, (a2.0 + a2.1) / 2.0);
     assert!(((a1.0 + a1.1) / 2.0 - 5.0).abs() > 1.0, "R1 moved");
+    Ok(())
+}
+
+/// The showcase on 4 layers with `count` through vias on a 1.27 mm grid
+/// beside its parts, and 200 inner tracks from vias spread over the grid
+/// (a few hundred pads and tracks with the showcase's own).
+pub(super) fn via_board(count: usize) -> Result<Project> {
+    let mut project = Engine::showcase()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    project.stackup = Stackup::preset(4).map_err(|error| Error::Verification(error.to_string()))?;
+    // The showcase's pours were filled for the showcase's own board and
+    // stackup; this board's would be stale, so they are left unfilled.
+    for fill in &mut project.fills {
+        fill.computed = None;
+    }
+    let net = project.nets[0].id;
+    let columns = 64usize;
+    let rows = count.div_ceil(columns);
+    let stride = (count / 200).max(2);
+    let [width, depth] = project.board_size;
+    project.board_size = [
+        width.max(columns as f64 * 1.27 + 6.0),
+        depth + rows as f64 * 1.27 + 4.0,
+    ];
+    for k in 0..count {
+        let position = [
+            3.0 + (k % columns) as f64 * 1.27,
+            depth + 2.0 + (k / columns) as f64 * 1.27,
+        ];
+        let id = project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        project.vias.push(pcbcraft_core::Via {
+            id,
+            net,
+            position,
+            drill: 0.3,
+            diameter: 0.6,
+            span: pcbcraft_core::ViaSpan::Through,
+            tented: k % 2 == 0,
+            locked: false,
+        });
+        if k % stride == 0 && k % columns != columns - 1 {
+            let id = project
+                .allocate()
+                .map_err(|error| Error::Verification(error.to_string()))?;
+            project.tracks.push(Track {
+                id,
+                net,
+                start: position,
+                end: [position[0] + 1.27, position[1]],
+                width: 0.15,
+                layer: CopperLayer::Inner(1 + u8::from(k % 4 == 0)),
+                locked: false,
+            });
+        }
+    }
+    Ok(project)
+}
+
+/// Hundreds of vias are placements of one definition per size, each with
+/// its barrel and four rings where the via is; the laminate is stacked
+/// slabs (no Boolean); and a saved file records every via compactly, so
+/// reopening it finds each via's copper again.
+#[test]
+fn many_vias_are_placements_of_one_definition_and_survive_reopening() -> Result<()> {
+    let mut project = via_board(600)?;
+    // A second via size gets a definition of its own.
+    if let Some(via) = project.vias.last_mut() {
+        via.drill = 0.4;
+        via.diameter = 0.8;
+    }
+    let model = build(&project)?;
+    let vias: Vec<&Source> = model.sources.iter().filter(|s| s.via.is_some()).collect();
+    assert_eq!(vias.len(), project.vias.len());
+    let definitions: BTreeSet<u64> = vias.iter().map(|s| s.component).collect();
+    assert_eq!(definitions.len(), 2);
+    // Three dielectrics, the two holding an inner foil split at it.
+    let slabs = native(&model)
+        .filter(|g| g.kind == BodyKind::Substrate)
+        .count();
+    assert_eq!(slabs, 5);
+    let t = project.stackup.dielectric_mm();
+    let extent = |copper: &[&Geometry]| {
+        let low = copper.iter().map(|g| g.min).fold([f64::MAX; 3], |a, b| {
+            std::array::from_fn(|i| a[i].min(b[i]))
+        });
+        let high = copper.iter().map(|g| g.max).fold([f64::MIN; 3], |a, b| {
+            std::array::from_fn(|i| a[i].max(b[i]))
+        });
+        (low, high)
+    };
+    for (via, source) in project.vias.iter().zip(&vias) {
+        assert_eq!(source.via, Some(via.id));
+        let copper: Vec<&Geometry> = native(&model)
+            .filter(|g| g.item == Some(source.pick_id) && g.kind == BodyKind::ViaCopper)
+            .collect();
+        assert_eq!(copper.len(), 5, "via {}", via.id);
+        let (low, high) = extent(&copper);
+        let r = via.diameter / 2.0;
+        for (axis, centre) in via.position.iter().enumerate() {
+            assert!(
+                (low[axis] - (centre - r)).abs() < 1e-6,
+                "via {} {low:?}",
+                via.id
+            );
+            assert!(
+                (high[axis] - (centre + r)).abs() < 1e-6,
+                "via {} {high:?}",
+                via.id
+            );
+        }
+        near(low[2], -0.035);
+        near(high[2], t + 0.035);
+    }
+    let temporary = tempfile::tempdir()?;
+    let path = temporary
+        .path()
+        .join("vias.solidcraft")
+        .to_string_lossy()
+        .into_owned();
+    model.save(&path)?;
+    let reopened = Native::open(&path)?;
+    let saved = saved_sources(&reopened)?;
+    let key = |s: &&Source| (s.via, s.net, s.component, s.occurrence);
+    let mut restored: Vec<_> = saved
+        .iter()
+        .filter(|s| s.via.is_some())
+        .map(|s| key(&s))
+        .collect();
+    let mut original: Vec<_> = vias.iter().map(key).collect();
+    restored.sort_unstable();
+    original.sort_unstable();
+    assert_eq!(restored, original);
+    let again = finish(reopened, saved)?;
+    for via in &project.vias {
+        let picks: Vec<u64> = again
+            .sources
+            .iter()
+            .filter(|s| s.via == Some(via.id))
+            .map(|s| s.pick_id)
+            .collect();
+        let copper = again
+            .geometry
+            .iter()
+            .filter(|g| g.item.is_some_and(|i| picks.contains(&i)))
+            .count();
+        assert_eq!(copper, 5, "reopened via {}", via.id);
+    }
+    Ok(())
+}
+
+/// A board build a newer request replaced stops at its next command, and
+/// one never cancelled builds as `build` does.
+#[test]
+fn a_cancelled_build_stops_and_an_uncancelled_one_completes() -> Result<()> {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let project = Engine::demo()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone();
+    let stopped = build_cancellable(&project, Arc::new(AtomicBool::new(true)));
+    assert!(matches!(stopped, Err(Error::Cancelled)));
+    let built = build_cancellable(&project, Arc::new(AtomicBool::new(false)))?;
+    assert_eq!(native(&built).count(), native(&build(&project)?).count());
+    Ok(())
+}
+
+/// A board of 10,000 vias and 1,500 tracks saves its identity within
+/// Solidcraft's metadata limits, and reopening it finds every pad, track
+/// and via's copper again. 1,500, not the document's 2,000 tracks: five
+/// parameters a track reach Solidcraft's 10,000 parameters a design first
+/// (`identity::tests` records 2,000 tracks and 16,384 vias through a real
+/// save). Slow (a full 10,000-via build):
+/// `cargo test --profile ci -p pcbcraft-solidcraft ten_thousand_vias_and_many_tracks -- --ignored --nocapture`.
+#[test]
+#[ignore = "builds a 10,000-via board"]
+fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
+    let mut project = via_board(10_000)?;
+    let net = project.nets[0].id;
+    let columns = 64;
+    let first = project.vias.len() - 10_000;
+    let mut k = 0usize;
+    while project.tracks.len() < 1_500 {
+        let (Some(a), Some(b)) = (
+            project.vias.get(first + k).map(|v| v.position),
+            project.vias.get(first + k + columns).map(|v| v.position),
+        ) else {
+            return Err(Error::Verification("ran out of vias for tracks".into()));
+        };
+        let id = project
+            .allocate()
+            .map_err(|error| Error::Verification(error.to_string()))?;
+        project.tracks.push(Track {
+            id,
+            net,
+            start: a,
+            end: b,
+            width: 0.15,
+            layer: CopperLayer::Inner(1 + u8::from(k.is_multiple_of(2))),
+            locked: false,
+        });
+        k += 1;
+    }
+    let start = std::time::Instant::now();
+    let model = build(&project)?;
+    eprintln!("built in {:?}", start.elapsed());
+    let temporary = tempfile::tempdir()?;
+    let path = temporary
+        .path()
+        .join("large.solidcraft")
+        .to_string_lossy()
+        .into_owned();
+    model.save(&path)?;
+    let reopened = Native::open(&path)?;
+    let metadata = serde_json::to_string(&reopened.session().doc.metadata)?;
+    eprintln!("metadata {} bytes", metadata.len());
+    let saved = saved_sources(&reopened)?;
+    assert_eq!(
+        serde_json::to_value(&saved)?,
+        serde_json::to_value(&model.sources)?
+    );
+    let start = std::time::Instant::now();
+    let again = finish(reopened, saved)?;
+    eprintln!("reopened in {:?}", start.elapsed());
+    let count = |m: &NativeModel, f: &dyn Fn(&Source) -> bool| {
+        let picks: BTreeSet<u64> = m
+            .sources
+            .iter()
+            .filter(|s| f(s))
+            .map(|s| s.pick_id)
+            .collect();
+        let copper = m
+            .geometry
+            .iter()
+            .filter(|g| !g.kind.is_appearance() && g.item.is_some_and(|i| picks.contains(&i)))
+            .count();
+        (picks.len(), copper)
+    };
+    for (what, f) in [
+        (
+            "vias",
+            &(|s: &Source| s.via.is_some()) as &dyn Fn(&Source) -> bool,
+        ),
+        ("tracks", &|s: &Source| s.track.is_some()),
+        ("pads", &|s: &Source| s.pad.is_some()),
+    ] {
+        let (was, now) = (count(&model, f), count(&again, f));
+        assert_eq!(was, now, "{what}");
+        assert!(was.0 > 0 && was.1 >= was.0, "{what}: {was:?}");
+    }
+    assert_eq!(count(&again, &|s| s.via.is_some()).0, project.vias.len());
+    assert_eq!(count(&again, &|s| s.track.is_some()).0, 1_500);
     Ok(())
 }
 
@@ -1648,11 +1968,11 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
     // uses it drops it.
     let sources = models::imported::SourceCache::default();
     let start = std::time::Instant::now();
-    let cold = build_with(&project, &sources)?;
+    let cold = build_with(&project, &sources, None)?;
     let cold_time = start.elapsed();
     assert_eq!(sources.counts(), (0, 1));
     let start = std::time::Instant::now();
-    let warm = build_with(&project, &sources)?;
+    let warm = build_with(&project, &sources, None)?;
     let warm_time = start.elapsed();
     assert_eq!(sources.counts(), (1, 1), "the second build reads nothing");
     assert_eq!(sources.len(), 1);
@@ -1668,7 +1988,9 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
     // naming it; nothing falls back to an envelope.
     let mut no_model = project.clone();
     no_model.library.models.clear();
-    let refused = build_with(&no_model, &sources).err().map(|e| e.to_string());
+    let refused = build_with(&no_model, &sources, None)
+        .err()
+        .map(|e| e.to_string());
     assert!(sources.is_empty(), "an unused model file is dropped");
     assert!(
         refused
@@ -1684,5 +2006,39 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
             .is_some_and(|e| e.contains("fixture.glb") && e.contains("not packed")),
         "{refused:?}"
     );
+    Ok(())
+}
+
+/// A laminate level drops a hole lying wholly inside another (a via ring
+/// under a wide track's copper; one of two alike) and keeps holes that
+/// only overlap, so the sketch leaves no island of laminate in a cut.
+#[test]
+fn nested_holes_are_dropped_and_overlapping_ones_kept() -> Result<()> {
+    let circle = |center: Point, radius: f64| Contour::Circle { center, radius };
+    let wide = polygon(&track_outline([0.0, 0.0], [3.0, 0.0], 1.0))
+        .ok_or_else(|| Error::Verification("no track".into()))?;
+    let narrow = polygon(&track_outline([5.0, 0.0], [8.0, 0.0], 0.2))
+        .ok_or_else(|| Error::Verification("no track".into()))?;
+    let kept = without_nested(vec![
+        wide,
+        circle([3.0, 0.0], 0.3),
+        narrow,
+        circle([8.0, 0.0], 0.3),
+        circle([20.0, 0.0], 0.3),
+        circle([20.0, 0.0], 0.3),
+    ]);
+    let circles: Vec<Point> = kept
+        .iter()
+        .filter_map(|c| match c {
+            Contour::Circle { center, .. } => Some(*center),
+            Contour::Outline(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        kept.len(),
+        4,
+        "both tracks, the overlapping ring, one of the twins"
+    );
+    assert_eq!(circles, vec![[8.0, 0.0], [20.0, 0.0]]);
     Ok(())
 }

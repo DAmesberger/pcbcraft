@@ -119,6 +119,19 @@ impl<'a> BoardRules<'a> {
         }
     }
 
+    /// The largest clearance any pair of objects and classes resolves to:
+    /// how far apart the board checks look for a pair to compare.
+    pub fn max_clearance(&self) -> f64 {
+        let pairs = self.pairs.iter().flatten().copied();
+        let classes = self.project.net_classes.iter().filter_map(|c| c.clearance);
+        let class_pairs = self.project.class_clearances.iter().map(|p| p.mm);
+        pairs
+            .chain(classes)
+            .chain(class_pairs)
+            .filter(|mm| mm.is_finite())
+            .fold(0.0, f64::max)
+    }
+
     /// The effective design rules (profile with overrides).
     pub fn rules(&self) -> &DesignRules {
         &self.effective

@@ -165,7 +165,7 @@ fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
             .geometry
             .iter()
             .filter(|g| g.kind == crate::material::BodyKind::Substrate)
-            .map(|g| g.volume)
+            .map(|g| g.volume())
             .sum())
     };
     let mut plain = engine.project().clone();
@@ -302,7 +302,7 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
             .geometry
             .iter()
             .filter(|g| g.kind == crate::material::BodyKind::Substrate)
-            .map(|g| g.volume)
+            .map(|g| g.volume())
             .sum())
     };
     let shaped = substrate(engine.project())?;

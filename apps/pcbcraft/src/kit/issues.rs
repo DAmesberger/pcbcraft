@@ -236,7 +236,7 @@ fn count_pill(ui: &Ui, right: f32, cy: f32, count: usize) -> f32 {
     let t = Tokens::get();
     let text = galley(
         ui,
-        &format!("×{count}"),
+        &format!("×{}", super::severity::compact(count)),
         FontId::proportional(t.font_small),
         t.form_dim,
     );
@@ -441,7 +441,7 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
             .is_some_and(|fix| trailing_button(ui, rect, x, &mut right, fix).clicked());
     let count = galley(
         ui,
-        &group.rows.to_string(),
+        &super::severity::grouped(group.rows),
         FontId::proportional(t.font_small),
         t.form_dim,
     );
@@ -528,7 +528,7 @@ fn paint_counts(ui: &Ui, left: f32, cy: f32, segs: &[(Level, usize)], font: &Fon
         }
         severity_glyph(ui.painter(), pos2(x + glyph / 2.0, cy), glyph, *level);
         x += glyph + t.space_4;
-        let number = galley(ui, &n.to_string(), font.clone(), t.text);
+        let number = galley(ui, &super::severity::compact(*n), font.clone(), t.text);
         let width = number.size().x;
         ui.painter()
             .galley(pos2(x, cy - number.size().y / 2.0), number, t.text);

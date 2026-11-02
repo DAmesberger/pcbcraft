@@ -479,3 +479,82 @@ pub fn validate(project: &Project) -> Result<()> {
     }
     Ok(())
 }
+
+/// Where fill copper lies on one layer, for the 3D model's foil level:
+/// whether a round-capped shape (a via ring, a track) overlaps it, found
+/// through a row index of the regions' edges.
+pub struct FillContact {
+    index: geom::RegionIndex,
+}
+
+impl FillContact {
+    pub fn new(regions: &[crate::model::fill::FilledRegion]) -> Self {
+        let regions: Vec<geom::Region> = regions.iter().map(as_region).collect();
+        Self {
+            index: geom::RegionIndex::new(&regions),
+        }
+    }
+
+    /// Whether the points within `radius` of segment `a`–`b` (a disc
+    /// when they are one point) overlap the fill copper or come within
+    /// `margin` of its edge.
+    pub fn touches(
+        &self,
+        a: crate::geometry::Point,
+        b: crate::geometry::Point,
+        radius: f64,
+        margin: f64,
+    ) -> bool {
+        let reach = radius + margin;
+        self.index.segment_distance(a, b, reach) < reach || self.index.region_at(a).is_some()
+    }
+}
+
+fn as_region(region: &crate::model::fill::FilledRegion) -> geom::Region {
+    std::iter::once(region.outer.clone())
+        .chain(region.holes.iter().cloned())
+        .collect()
+}
+
+/// The union of fill regions and closed `rings` (copper outlines of either
+/// orientation): disjoint regions, each an outer boundary
+/// (counter-clockwise) and its holes. Each region keeps its holes as
+/// holes; overlapping copper is one region.
+pub fn copper_union(
+    regions: &[crate::model::fill::FilledRegion],
+    rings: &[Vec<crate::geometry::Point>],
+) -> Vec<crate::model::fill::FilledRegion> {
+    let mut all: Vec<geom::Region> = Vec::with_capacity(regions.len() + rings.len());
+    for region in regions {
+        let Some(outer) = geom::ccw(region.outer.clone()) else {
+            continue;
+        };
+        let mut shape = vec![outer];
+        for hole in &region.holes {
+            if let Some(mut hole) = geom::ccw(hole.clone()) {
+                hole.reverse();
+                shape.push(hole);
+            }
+        }
+        all.push(shape);
+    }
+    all.extend(
+        rings
+            .iter()
+            .filter_map(|r| geom::ccw(r.clone()))
+            .map(|r| vec![r]),
+    );
+    geom::union_regions(&all)
+        .into_iter()
+        .filter_map(|mut region| {
+            if region.is_empty() {
+                return None;
+            }
+            let outer = region.remove(0);
+            Some(crate::model::fill::FilledRegion {
+                outer,
+                holes: region,
+            })
+        })
+        .collect()
+}

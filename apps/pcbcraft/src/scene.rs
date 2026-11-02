@@ -3,11 +3,14 @@
 //! electronics objects. Selection and highlight recolour cached meshes; only a
 //! changed project or package preview rebuilds geometry. The worker also
 //! packs the GPU vertices ([`crate::model_scene`]), so the UI thread never
-//! walks a mesh. A board's instance marking decals are made there too and
-//! appended to the drawn geometry (display only, never the native model);
-//! the worker keeps their per-instance cache between builds, and the read
-//! and checked library model files ([`SourceCache`]), so a board rebuild
-//! never re-hashes or re-reads an unchanged STEP or glTF.
+//! walks a mesh. It keeps the last board model it made, and a board edited
+//! only in values (a part, track or via moved, a size changed) updates it
+//! in place ([`pcbcraft_solidcraft::project::update`]) instead of building
+//! the board again. A board's instance marking decals are made there too
+//! and appended to the drawn geometry (display only, never the native
+//! model); the worker keeps their per-instance cache between builds, and
+//! the read and checked library model files ([`SourceCache`]), so a board
+//! rebuild never re-hashes or re-reads an unchanged STEP or glTF.
 use crate::model_scene::{self, ModelScene};
 use crate::viewport::Viewport;
 use pcbcraft_core::library::model3d::ModelDefinition;
@@ -17,7 +20,9 @@ use pcbcraft_solidcraft::marking::board::BoardMarkings;
 use pcbcraft_solidcraft::models::imported::SourceCache;
 use pcbcraft_solidcraft::project::Source;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 /// What a model was built from. Projects compare by shared identity, so a
 /// draft-only edit never rebuilds the board model.
@@ -89,26 +94,55 @@ pub fn library_asset(
 }
 
 enum Job {
-    Project(u64, Arc<Project>),
+    /// A board, with the flag that stops its build once a newer request
+    /// replaces it.
+    Project(u64, Arc<Project>, Arc<AtomicBool>),
     Package(u64, Box<PackageDefinition>, Option<Box<LibraryAsset>>),
 }
 
 /// A built job's display geometry and pick sources.
 type BuiltGeometry = Result<(Vec<pcbcraft_solidcraft::scene::Geometry>, Vec<Source>), String>;
 
+/// What the worker keeps between builds.
+#[derive(Default)]
+struct Kept {
+    /// The last board model, for the next board to update in place.
+    board: Option<pcbcraft_solidcraft::project::NativeModel>,
+    markings: BoardMarkings,
+    sources: SourceCache,
+}
+
 /// Build one job's display geometry and pick sources.
-fn build(job: Job, markings: &mut BoardMarkings, sources: &SourceCache) -> (u64, BuiltGeometry) {
+fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
     match job {
-        Job::Project(ticket, project) => {
-            let built =
-                pcbcraft_solidcraft::project::build_with(&project, sources).map(|mut model| {
-                    let decals = markings.decals(&project, &model.geometry, &model.sources);
-                    for (instance, why) in markings.failures() {
-                        eprintln!("pcbcraft: instance {instance} shows no marking: {why}");
-                    }
-                    model.geometry.extend(decals);
-                    (model.geometry, model.sources)
-                });
+        Job::Project(ticket, project, cancel) => {
+            let made = match kept.board.take() {
+                Some(previous) => pcbcraft_solidcraft::project::update(
+                    previous,
+                    &project,
+                    &kept.sources,
+                    Some(cancel),
+                )
+                .map(|(model, _)| model),
+                None => {
+                    pcbcraft_solidcraft::project::build_with(&project, &kept.sources, Some(cancel))
+                }
+            };
+            let built = made.map(|model| {
+                // The drawn geometry shares the meshes; the model stays
+                // for the next edit to update, without the decals.
+                let mut geometry = model.geometry.clone();
+                geometry.extend(
+                    kept.markings
+                        .decals(&project, &model.geometry, &model.sources),
+                );
+                for (instance, why) in kept.markings.failures() {
+                    eprintln!("pcbcraft: instance {instance} shows no marking: {why}");
+                }
+                let sources = model.sources.clone();
+                kept.board = Some(model);
+                (geometry, sources)
+            });
             (ticket, built.map_err(|e| e.to_string()))
         }
         Job::Package(ticket, package, library) => {
@@ -136,7 +170,9 @@ struct Built {
 }
 
 /// One background thread building native models. Only the newest queued
-/// request is built; older ones are skipped.
+/// request is built; older ones are skipped, and a board build a newer
+/// request replaced stops at its next native command. The last board
+/// model stays with the thread, for the next board request to update.
 struct Worker {
     sender: Sender<Job>,
     receiver: Receiver<Built>,
@@ -147,13 +183,12 @@ impl Worker {
         let (sender, jobs) = mpsc::channel::<Job>();
         let (results, receiver) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut markings = BoardMarkings::default();
-            let sources = SourceCache::default();
+            let mut kept = Kept::default();
             while let Ok(mut job) = jobs.recv() {
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
-                let (ticket, result) = build(job, &mut markings, &sources);
+                let (ticket, result) = build(job, &mut kept);
                 let result = result.and_then(|(geometry, sources)| {
                     model_scene::build(geometry).map(|scene| (scene, sources))
                 });
@@ -175,7 +210,7 @@ pub enum Status {
 }
 
 /// How the canvas shows a requested model.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Display {
     /// Nothing of the requested kind was shown yet: a status message only.
     Blank,
@@ -196,9 +231,61 @@ pub fn display(shown: Option<&ModelKey>, requested: &ModelKey, ready: bool) -> D
     }
 }
 
+/// How long a board must stay unchanged before its 3D model is prepared in
+/// the background: a drag or a burst of edits is built once, at its end.
+pub const PREFETCH_DELAY: Duration = Duration::from_millis(350);
+
+/// The debounce of background model preparation: what was last asked for,
+/// and since when (seconds of input time).
+#[derive(Default)]
+pub struct Prefetch {
+    pending: Option<(ModelKey, f64)>,
+}
+
+/// What [`Prefetch::due`] says to do now.
+#[derive(Debug, PartialEq)]
+pub enum Due {
+    /// Already requested (or built): nothing to do.
+    Nothing,
+    /// Build it now.
+    Build,
+    /// Ask again after this long.
+    Wait(Duration),
+}
+
+impl Prefetch {
+    /// Whether `key`, wanted at `now`, is due to be built, given what the
+    /// worker was last asked for.
+    pub fn due(&mut self, key: &ModelKey, now: f64, requested: Option<&ModelKey>) -> Due {
+        if requested == Some(key) {
+            self.pending = None;
+            return Due::Nothing;
+        }
+        let delay = PREFETCH_DELAY.as_secs_f64();
+        match &self.pending {
+            Some((pending, since)) if pending == key => {
+                let left = delay - (now - since);
+                if left <= 0.0 || !left.is_finite() {
+                    self.pending = None;
+                    Due::Build
+                } else {
+                    Due::Wait(Duration::from_secs_f64(left.min(delay)))
+                }
+            }
+            _ => {
+                self.pending = Some((key.clone(), now));
+                Due::Wait(PREFETCH_DELAY)
+            }
+        }
+    }
+}
+
 pub struct SceneController {
     worker: Worker,
     pub viewport: Viewport,
+    prefetch: Prefetch,
+    /// Stops the board build in flight once a newer request replaces it.
+    cancel: Option<Arc<AtomicBool>>,
     ticket: u64,
     key: Option<ModelKey>,
     shown: Option<ModelKey>,
@@ -214,6 +301,8 @@ impl SceneController {
         Self {
             worker: Worker::start(ctx),
             viewport,
+            prefetch: Prefetch::default(),
+            cancel: None,
             ticket: 0,
             key: None,
             shown: None,
@@ -253,8 +342,11 @@ impl SceneController {
             self.status = Status::Failed("model request identity exhausted".into());
             return;
         };
+        let cancel = Arc::new(AtomicBool::new(false));
         let job = match (&key, package) {
-            (ModelKey::Project(project), _) => Job::Project(ticket, Arc::clone(project)),
+            (ModelKey::Project(project), _) => {
+                Job::Project(ticket, Arc::clone(project), Arc::clone(&cancel))
+            }
             (ModelKey::Package(_), Some(package)) => match library() {
                 Ok(library) => {
                     Job::Package(ticket, Box::new(package.clone()), library.map(Box::new))
@@ -270,11 +362,29 @@ impl SceneController {
         };
         match self.worker.sender.send(job) {
             Ok(()) => {
+                if let Some(previous) = self.cancel.replace(cancel) {
+                    previous.store(true, Ordering::Relaxed);
+                }
                 self.ticket = ticket;
                 self.key = Some(key);
                 self.status = Status::Building;
             }
             Err(error) => self.status = Status::Failed(error.to_string()),
+        }
+    }
+
+    /// Prepare the board's model in the background while it is edited in
+    /// 2D, once it has stayed unchanged for [`PREFETCH_DELAY`], so opening
+    /// the 3D view shows it at once (or the last one, updating). Returns
+    /// when to look again, if the board is still settling.
+    pub fn prefetch(&mut self, key: ModelKey, now: f64) -> Option<Duration> {
+        match self.prefetch.due(&key, now, self.key.as_ref()) {
+            Due::Nothing => None,
+            Due::Build => {
+                self.request(key, None, || Ok(None));
+                None
+            }
+            Due::Wait(wait) => Some(wait),
         }
     }
 
@@ -308,19 +418,29 @@ impl SceneController {
         }
     }
 
-    /// Highlight every body of the selected instance, track or net.
-    pub fn highlight(&mut self, instance: Option<Id>, track: Option<Id>, net: Option<Id>) {
-        let ids = self
-            .sources
-            .iter()
-            .filter(|s| {
-                s.instance.is_some() && s.instance == instance
-                    || s.track.is_some() && s.track == track
-                    || s.net.is_some() && s.net == net
-            })
-            .map(|s| s.pick_id)
-            .collect();
-        self.viewport.highlight(ids);
+    /// Highlight every body of the selected instance, track, via or net;
+    /// the selected object's in a stronger tint than its net's.
+    pub fn highlight(
+        &mut self,
+        instance: Option<Id>,
+        track: Option<Id>,
+        via: Option<Id>,
+        net: Option<Id>,
+    ) {
+        let mut ids = Vec::new();
+        let mut selected = Vec::new();
+        for s in &self.sources {
+            let picked = s.instance.is_some() && s.instance == instance
+                || s.track.is_some() && s.track == track
+                || s.via.is_some() && s.via == via;
+            if picked {
+                selected.push(s.pick_id);
+            }
+            if picked || s.net.is_some() && s.net == net {
+                ids.push(s.pick_id);
+            }
+        }
+        self.viewport.highlight_selected(ids, selected);
     }
 
     /// The electronics object a pick identifies.
@@ -399,11 +519,94 @@ mod tests {
     }
 
     #[test]
+    fn a_settling_board_is_prepared_once_after_it_stops_changing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let edited = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        let mut prefetch = Prefetch::default();
+        let delay = PREFETCH_DELAY.as_secs_f64();
+        // Each change restarts the wait; nothing is built mid-gesture.
+        assert_eq!(prefetch.due(&first, 0.0, None), Due::Wait(PREFETCH_DELAY));
+        assert!(matches!(
+            prefetch.due(&first, delay / 2.0, None),
+            Due::Wait(_)
+        ));
+        assert_eq!(
+            prefetch.due(&edited, delay * 0.9, None),
+            Due::Wait(PREFETCH_DELAY)
+        );
+        assert!(matches!(
+            prefetch.due(&edited, delay * 1.5, None),
+            Due::Wait(_)
+        ));
+        // Unchanged for the delay: built once, then never asked again.
+        assert_eq!(prefetch.due(&edited, delay * 2.0, None), Due::Build);
+        assert_eq!(
+            prefetch.due(&edited, delay * 3.0, Some(&edited)),
+            Due::Nothing
+        );
+        assert_eq!(
+            prefetch.due(&edited, delay * 9.0, Some(&edited)),
+            Due::Nothing
+        );
+        Ok(())
+    }
+
+    #[test]
     fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut package = demo_package()?;
         let key = ModelKey::package(&package);
         package.envelope[0] += 1.0;
         assert_ne!(key, ModelKey::package(&package));
+        Ok(())
+    }
+
+    /// The worker keeps the board it built and makes the next board from
+    /// it: an edited board's model is the edited board's.
+    #[test]
+    fn worker_makes_an_edited_board_from_the_last_one() -> Result<(), Box<dyn std::error::Error>> {
+        let worker = Worker::start(egui::Context::default());
+        let project = Engine::demo()?.project().clone();
+        let mut edited = project.clone();
+        let moved = edited.placements[0].instance;
+        edited.placements[0].position[0] += 2.0;
+        let wait = |ticket: u64| -> Result<Built, Box<dyn std::error::Error>> {
+            loop {
+                let built = worker
+                    .receiver
+                    .recv_timeout(std::time::Duration::from_secs(60))?;
+                if built.ticket == ticket {
+                    return Ok(built);
+                }
+            }
+        };
+        let flag = || Arc::new(AtomicBool::new(false));
+        worker
+            .sender
+            .send(Job::Project(1, Arc::new(project), flag()))?;
+        let first = wait(1)?.result?;
+        worker
+            .sender
+            .send(Job::Project(2, Arc::new(edited.clone()), flag()))?;
+        let (scene, sources) = wait(2)?.result?;
+        let fresh = pcbcraft_solidcraft::project::build(&edited)?;
+        assert_eq!(sources.len(), first.1.len());
+        assert_eq!(scene.geometry.len(), fresh.geometry.len());
+        // The moved part's body is where the edited board has it.
+        let pick = sources
+            .iter()
+            .find(|s| s.instance == Some(moved) && s.pad.is_none())
+            .map(|s| s.pick_id)
+            .ok_or("moved part")?;
+        let min_x = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
+            geometry
+                .iter()
+                .filter(|g| g.item == Some(pick) && !g.kind.is_appearance())
+                .map(|g| g.min[0])
+                .fold(f64::MAX, f64::min)
+        };
+        assert!((min_x(&scene.geometry) - min_x(&fresh.geometry)).abs() < 1e-6);
+        assert!((min_x(&scene.geometry) - min_x(&first.0.geometry) - 2.0).abs() < 1e-6);
         Ok(())
     }
 
@@ -413,7 +616,11 @@ mod tests {
         let project = Arc::new(Engine::demo()?.project().clone());
         let mut broken = (*project).clone();
         broken.board_size[0] = 0.0;
-        worker.sender.send(Job::Project(1, Arc::new(broken)))?;
+        worker.sender.send(Job::Project(
+            1,
+            Arc::new(broken),
+            Arc::new(AtomicBool::new(false)),
+        ))?;
         worker
             .sender
             .send(Job::Package(2, Box::new(demo_package()?), None))?;

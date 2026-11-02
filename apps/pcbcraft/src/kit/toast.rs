@@ -1,5 +1,6 @@
 //! Transient feedback: the toast stack for command results and gesture
-//! refusals, and the viewport pills for persistent modes.
+//! refusals, the viewport pills for persistent modes and the status chip
+//! for background work.
 //!
 //! Slice K3 (docs/sidebar-ia.md, "Feedback"): toasts replace the canvas
 //! status chip. Adapted from Solidcraft 4f3ac07a
@@ -316,6 +317,39 @@ pub fn pill(ui: &mut Ui, level: Option<Level>, text: &str) -> PillResponse {
         });
     });
     out
+}
+
+/// A small viewport chip for background work the view shows the result
+/// of: a spinner while it runs (`level` `None`), else the severity glyph.
+/// It names the work; it has no action, and the view stays usable.
+pub fn status_chip(ui: &mut Ui, level: Option<Level>, text: &str) {
+    let t = Tokens::get();
+    let ctx = ui.ctx().clone();
+    let frame = Container::new(&ctx, Surface::Toast)
+        .frame(&ctx, t.toolbar, Side::Left)
+        .corner_radius(t.radius_lg)
+        .inner_margin(egui::Margin::symmetric(t.space_8 as i8, t.space_2 as i8));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            match level {
+                Some(level) => {
+                    let (glyph, _) = ui.allocate_exact_size(
+                        vec2(t.font_label, t.font_label),
+                        egui::Sense::hover(),
+                    );
+                    severity_glyph(ui.painter(), glyph.center(), t.font_small, level);
+                }
+                None => {
+                    ui.add(egui::Spinner::new().size(t.font_small));
+                }
+            }
+            ui.add(
+                egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim))
+                    .truncate(),
+            )
+            .on_hover_text(text);
+        });
+    });
 }
 
 #[cfg(test)]

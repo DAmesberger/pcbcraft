@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::LayoutCommand;
-use crate::model::Stackup;
+use crate::model::{Stackup, Track};
 use crate::{Engine, Operation, Outcome};
 
 fn layout(engine: &mut Engine, command: LayoutCommand) -> Result<Outcome> {
@@ -434,5 +434,161 @@ fn stackup_heights_stack_from_the_bottom_dielectric_face() -> Result<()> {
     assert!((inner.1 - 0.2).abs() < 1e-12, "{inner:?}");
     assert_eq!(four.copper_span(CopperLayer::Inner(3)), None);
     assert!((four.thickness_mm() - 1.74).abs() < 1e-12);
+    Ok(())
+}
+
+/// The showcase on four layers with `count` through vias on a 1.27 mm grid
+/// below its parts, on two nets in pairs, and inner tracks joining pairs
+/// until the board holds `tracks` tracks.
+fn via_board(count: usize, tracks: usize) -> Result<Project> {
+    let mut project = Engine::showcase()?.project().clone();
+    project.stackup = Stackup::preset(4)?;
+    let nets = [project.nets[0].id, project.nets[1].id];
+    let columns = 100usize;
+    let rows = count.div_ceil(columns);
+    let [width, depth] = project.board_size;
+    project.board_size = [
+        width.max(columns as f64 * 1.27 + 6.0),
+        depth + rows as f64 * 1.27 + 4.0,
+    ];
+    let mut wanted = tracks.saturating_sub(project.tracks.len());
+    for k in 0..count {
+        let position = [
+            3.0 + (k % columns) as f64 * 1.27,
+            depth + 2.0 + (k / columns) as f64 * 1.27,
+        ];
+        let net = nets[(k / 2) % 2];
+        let id = project.allocate()?;
+        project.vias.push(Via {
+            id,
+            net,
+            position,
+            drill: DEFAULT_VIA_DRILL_MM,
+            diameter: DEFAULT_VIA_DIAMETER_MM,
+            span: ViaSpan::Through,
+            tented: k % 2 == 0,
+            locked: false,
+        });
+        if wanted > 0 && k % 2 == 0 {
+            wanted -= 1;
+            let id = project.allocate()?;
+            project.tracks.push(Track {
+                id,
+                net,
+                start: position,
+                end: [position[0] + 1.27, position[1]],
+                width: 0.15,
+                layer: CopperLayer::Inner(1 + u8::from(k % 4 == 0)),
+                locked: false,
+            });
+        }
+    }
+    Ok(project)
+}
+
+fn engine_for(project: Project) -> Result<Engine> {
+    let mut file = Engine::showcase()?.to_file();
+    file.project = project;
+    Engine::from_file(file)
+}
+
+/// Every via of a 10,000-via, 2,000-track board is checked (the checks
+/// compare only nearby copper, so nothing stops at a pair limit), within a
+/// time budget; a fault among the last vias is still found; and an edit on
+/// that board checks its clearance quickly.
+#[test]
+fn ten_thousand_vias_are_all_checked_within_a_budget() -> Result<()> {
+    use std::time::{Duration, Instant};
+    let mut project = via_board(10_000, 2_000)?;
+    assert_eq!(project.tracks.len(), 2_000);
+    // The last two vias: different nets, their pads overlapping and their
+    // drills 0.2 mm apart.
+    let n = project.vias.len();
+    let nets = [project.nets[0].id, project.nets[1].id];
+    if let Some([a, b]) = project.vias.get_mut(n - 2..) {
+        a.net = nets[0];
+        b.net = nets[1];
+        b.position = [a.position[0] + 0.5, a.position[1]];
+    }
+    let (first, last) = (project.vias[n - 2].id, project.vias[n - 1].id);
+    let engine = engine_for(project)?;
+    let project = engine.project();
+    // Best of three: the machine is shared with other builds.
+    let mut best = Duration::MAX;
+    let mut findings = Vec::new();
+    for _ in 0..3 {
+        let start = Instant::now();
+        let copper = BoardCopper::of(project);
+        findings = copper.checks(project);
+        let _ = copper.airwires(&project.tracks);
+        best = best.min(start.elapsed());
+    }
+    eprintln!("10,000 vias, 2,000 tracks: checks and airwires in {best:?}");
+    assert!(
+        !findings.iter().any(|f| f.code == "board.check_limit"),
+        "the checks stopped at a limit"
+    );
+    let names = |code: &str, id: Id| {
+        findings
+            .iter()
+            .any(|f| f.code == code && f.objects.contains(&ObjectRef::Via { id }))
+    };
+    assert!(names("board.clearance", first) && names("board.clearance", last));
+    assert!(names("board.via_hole_spacing", first) && names("board.via_hole_spacing", last));
+    // Only the planted pair breaks a rule among the vias.
+    let broken: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.code.as_str(),
+                "board.clearance" | "board.via_hole_spacing" | "board.via_drill_clearance"
+            ) && f.objects.iter().any(|o| matches!(o, ObjectRef::Via { .. }))
+        })
+        .collect();
+    assert!(
+        broken
+            .iter()
+            .all(|f| f.objects.contains(&ObjectRef::Via { id: first })
+                || f.objects.contains(&ObjectRef::Via { id: last })),
+        "{broken:?}"
+    );
+    assert!(best < Duration::from_secs(1), "checks took {best:?}");
+    // Edits on that board check clearance against nearby copper only: a
+    // wider inner track passes, a via moved onto another net's is refused.
+    let mut engine = engine;
+    let track = engine
+        .project()
+        .tracks
+        .iter()
+        .find(|t| t.layer == CopperLayer::Inner(1))
+        .map(|t| t.id)
+        .ok_or_else(|| Error::NotFound("inner track".into()))?;
+    // The board's own vias come after the showcase's.
+    let base = engine.project().vias.len() - 10_000;
+    let vias = &engine.project().vias;
+    let (via, onto) = (vias[base].id, vias[base + 2].position);
+    let start = Instant::now();
+    layout(
+        &mut engine,
+        LayoutCommand::SetTrack {
+            id: track,
+            width: Some(0.2),
+            layer: None,
+        },
+    )?;
+    let refused = layout(
+        &mut engine,
+        LayoutCommand::MoveVia {
+            id: via,
+            position: [onto[0], onto[1] + 0.5],
+        },
+    );
+    assert!(matches!(refused, Err(Error::Conflict(_))), "{refused:?}");
+    let elapsed = start.elapsed();
+    eprintln!("two edits on that board in {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "the edits took {elapsed:?}"
+    );
     Ok(())
 }
