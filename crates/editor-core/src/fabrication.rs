@@ -41,7 +41,7 @@ pub const MAX_SET_BYTES: usize = 256 * 1024 * 1024;
 
 /// What to produce and how. Every field has a default, so `{}` is a
 /// complete request.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FabricationOptions {
     /// The file name stem (`showcase` gives `showcase-F_Cu.gbr`, …):
@@ -60,17 +60,6 @@ pub struct FabricationOptions {
     pub placement: PlacementConvention,
     #[serde(default)]
     pub outputs: Outputs,
-}
-
-impl Default for FabricationOptions {
-    fn default() -> Self {
-        Self {
-            base_name: None,
-            creation_date: None,
-            placement: PlacementConvention::default(),
-            outputs: Outputs::default(),
-        }
-    }
 }
 
 /// Which groups of files to write (all by default).

@@ -13,6 +13,7 @@ pcbcraft-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+pdf-writer.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 getrandom.workspace = true
