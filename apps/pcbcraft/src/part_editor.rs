@@ -599,9 +599,9 @@ impl PartEditor {
                 .selected(
                     self.gallery.scope() == Some(&crate::template_gallery::Scope::NewComponent),
                 )
-                .tip("Start a new component from a package template (⇧⌘N)"),
+                .tip("Start a new component from a package template"),
             Tool::new("component-open", "open", "Open")
-                .tip("Open a component of this project or a library source (⌘P)"),
+                .tip("Open a component of this project or a library source"),
         ];
         if self.is_read_only() {
             tools.push(
@@ -782,6 +782,16 @@ impl PartEditor {
         if tool != drawing::Tool::Select {
             self.selection.clear();
             self.gesture = None;
+        }
+    }
+
+    /// The keyboard context of the open view, for the command registry.
+    pub fn shortcut_context(&self) -> crate::commands::Context {
+        use crate::commands::Context;
+        match self.view {
+            View::Symbol => Context::Symbol,
+            View::Footprint => Context::Footprint,
+            _ => Context::Component,
         }
     }
 
@@ -1988,6 +1998,58 @@ struct IssueKey {
     objects: Vec<ObjectRef>,
 }
 
+/// A tool-table key as a registry chord.
+fn tool_chord(key: egui::Key, shift: bool) -> crate::commands::Chord {
+    let chord = crate::commands::Chord::key(key);
+    if shift { chord.with_shift() } else { chord }
+}
+
+/// The Symbol tab's drawing and arrange tools for the command registry,
+/// with the keys `symbol_keys` handles.
+pub(crate) fn symbol_tool_entries() -> Vec<crate::commands::ToolEntry> {
+    use crate::commands::{Chord, ToolEntry};
+    use symbol_canvas::Arrange;
+    let mut entries: Vec<ToolEntry> = drawing::Tool::ALL
+        .into_iter()
+        .map(|t| ToolEntry {
+            id: t.id(),
+            label: t.label(),
+            icon: t.icon(),
+            chord: t.key().map(|k| tool_chord(k.key, k.shift)),
+        })
+        .collect();
+    entries.extend(Arrange::ALL.into_iter().map(|a| ToolEntry {
+        id: a.id(),
+        label: a.label(),
+        icon: a.icon(),
+        chord: Some(match a {
+            Arrange::Rotate => Chord::cmd(egui::Key::R),
+            Arrange::Mirror => Chord::key(egui::Key::X).with_shift(),
+            Arrange::Duplicate => Chord::cmd(egui::Key::D),
+            Arrange::Delete => Chord::key(egui::Key::Delete),
+        }),
+    }));
+    entries
+}
+
+/// The Footprint tab's tools for the command registry, with the keys
+/// `footprint_tool_keys` handles.
+pub(crate) fn footprint_tool_entries() -> Vec<crate::commands::ToolEntry> {
+    footprint_tools::FootprintTool::ALL
+        .into_iter()
+        .map(|t| {
+            let (icon, label) = footprint_dims_ui::constrain_look(t)
+                .map_or((t.icon(), t.label()), |(icon, label, _)| (icon, label));
+            crate::commands::ToolEntry {
+                id: t.id(),
+                label,
+                icon,
+                chord: t.key().map(|k| tool_chord(k.key, k.shift)),
+            }
+        })
+        .collect()
+}
+
 /// The key cap a tool card shows ("R", "⇧L").
 fn tool_key(tool: drawing::Tool) -> String {
     tool.key()
@@ -2827,11 +2889,13 @@ mod draft_tests {
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        // The designator placeholder reads prefix + "?"; numbers come from
-        // the working binding; the shown field reads its name (no default).
-        for text in ["R?", "Resistor", "1", "2", "Resistance"] {
+        // The designator placeholder reads prefix + "?"; the shown field
+        // reads its name (no default). A two-terminal passive hides its pin
+        // numbers.
+        for text in ["R?", "Resistor", "Resistance"] {
             assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
         }
+        assert!(!shown.iter().any(|t| t == "1" || t == "2"), "{shown:?}");
         // The view fits the drawn bounds about the origin (3 mm margin).
         let set = editor.draft.as_ref().ok_or("no draft")?;
         let bounds = schematic::definition_unit(

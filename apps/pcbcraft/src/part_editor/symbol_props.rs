@@ -12,6 +12,7 @@ use pcbcraft_core::library::graphics::{
     Fill, HAlign, LINE_SPACING, MAX_PIN_LENGTH_MM, MAX_STROKE_MM, TEXT_HEIGHT_MM, TextContent,
     VAlign, printable_text, upright,
 };
+use pcbcraft_core::library::symbol_style::{ResistorStyle, SymbolConventions};
 use pcbcraft_core::library::{Grid, Item, PinDirection, Rotation};
 use pcbcraft_core::{Engine, GraphicId, LibraryCommand, Operation, TerminalId, UnitId};
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -234,6 +235,17 @@ impl PartEditor {
                     symbol_mm: step,
                     ..grid
                 },
+            }));
+        }
+        let conventions = engine.drafts().symbols;
+        let mut resistor = conventions.resistor;
+        let styles: Vec<(ResistorStyle, String)> = [ResistorStyle::Iec, ResistorStyle::Us]
+            .into_iter()
+            .map(|style| (style, style.label().to_owned()))
+            .collect();
+        if kit::choice_row(ui, "Resistor symbol", &mut resistor, &styles) {
+            operation = Some(Operation::Library(LibraryCommand::SetSymbolConventions {
+                conventions: SymbolConventions { resistor },
             }));
         }
         kit::check_row(ui, "Snap", &mut self.snap);

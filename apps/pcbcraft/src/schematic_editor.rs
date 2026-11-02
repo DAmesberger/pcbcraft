@@ -565,7 +565,7 @@ impl SchematicEditor {
                         Button::new("place", "component", "Place")
                             .enabled(has_parts && !reviewing)
                             .selected(self.tool == Tool::Place)
-                            .tip("Find a component and place it (P)"),
+                            .tip("Find a component and place it"),
                         Button::new("wire", "line", "Wire")
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Wire)
@@ -577,10 +577,10 @@ impl SchematicEditor {
                     tools: vec![
                         Button::new("rotate", "spin", "Rotate")
                             .enabled(arrangeable)
-                            .tip("Turn the selected symbol 90° counter-clockwise (Cmd/Ctrl+R)"),
+                            .tip("Turn the selected symbol 90° counter-clockwise"),
                         Button::new("mirror", "mirror", "Mirror")
                             .enabled(arrangeable)
-                            .tip("Mirror the selected symbol left to right (Shift+X)"),
+                            .tip("Mirror the selected symbol left to right"),
                     ],
                 },
                 Group {
@@ -3010,9 +3010,11 @@ mod tests {
             .filter(|(_, p)| p.x < 800.0)
             .map(|(t, _)| t)
             .collect();
-        for text in ["R1", "R2", "Resistor", "10 kΩ", "1", "2"] {
+        for text in ["R1", "R2", "Resistor", "10 kΩ"] {
             assert!(canvas.iter().any(|t| t == text), "{text} in {canvas:?}");
         }
+        // Two-terminal passives hide their pin numbers.
+        assert!(!canvas.iter().any(|t| t == "1" || t == "2"), "{canvas:?}");
         // 12 px/mm about the canvas centre (400, 400): R1 sits at (−12, 0).
         let r1_body = pos2(400.0 - 12.0 * 12.0, 400.0);
         click_at(&mut editor, &engine, &ctx, r1_body);

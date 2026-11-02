@@ -569,9 +569,11 @@ fn details(ui: &mut egui::Ui, engine: &Engine, found: &Found, feed: &Feed) -> Op
     let mut action = None;
     ui.add_space(6.0);
     ui.separator();
-    ui.label(egui::RichText::new(title).strong());
+    // One line each, cut with an ellipsis (full text on hover), so a long
+    // name never wraps the strip or widens the Browser.
+    ui.add(egui::Label::new(egui::RichText::new(title).strong()).truncate());
     for line in lines {
-        ui.label(egui::RichText::new(line).small().weak());
+        ui.add(egui::Label::new(egui::RichText::new(line).small().weak()).truncate());
     }
     let item = item?;
     kit::actions(ui, |ui| {
@@ -1021,6 +1023,89 @@ mod tests {
             "{shown:?}"
         );
         Ok(())
+    }
+
+    /// The catalog in the Browser card at its narrowest and widest: every
+    /// text (header, search, rows, the open item's strip and its actions)
+    /// stays inside the card, cut with an ellipsis where it does not fit.
+    #[test]
+    fn the_catalog_fits_the_browser_at_every_width() -> Fallible<()> {
+        let (engine, catalog) = fixture()?;
+        let entry = catalog.entries.first().ok_or("entry")?;
+        let pick = FolderPick::of(entry).ok_or("pick")?;
+        for width in [
+            super::super::chrome::MIN_BROWSER_WIDTH,
+            super::super::chrome::BROWSER_WIDTH,
+            super::super::chrome::MAX_BROWSER_WIDTH,
+        ] {
+            let ctx = context();
+            let mut feed = feed(&catalog, &[entry.key()]);
+            feed.folder = Some(OpenFolder {
+                pick: pick.clone(),
+                report: None,
+            });
+            Arc::make_mut(&mut feed.sources).push(SourceRow {
+                library: None,
+                name: "A library folder with a very long name indeed".into(),
+                state: "path missing on this machine".into(),
+                reason: Some("path missing".into()),
+            });
+            publish(&ctx, Some(feed));
+            let card = egui::Rect::from_min_size(egui::pos2(7.0, 7.0), egui::vec2(width, 3000.0));
+            let mut painted = Vec::new();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1400.0, 3100.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        crate::shell::card(
+                            ui.ctx(),
+                            "browser-test",
+                            card,
+                            None,
+                            |ui| kit::card_title(ui, "Browser", "6 components · 2 sheets"),
+                            |ui| {
+                                Catalog::default().show(ui, &engine);
+                            },
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                painted = texts(&output);
+            }
+            assert!(painted.len() > 8, "{width}: {painted:?}");
+            for (text, rect) in &painted {
+                assert!(
+                    rect.left() >= card.left() - 0.5 && rect.right() <= card.right() + 0.5,
+                    "{width}: {text:?} at {rect:?} leaves the card {card:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Every painted text and its screen rectangle.
+    fn texts(output: &egui::FullOutput) -> Vec<(String, egui::Rect)> {
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(text) if !text.galley.is_empty() => out.push((
+                    text.galley.job.text.clone(),
+                    text.galley.rect.translate(text.pos.to_vec2()),
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for shape in &output.shapes {
+            walk(&shape.shape, &mut out);
+        }
+        out
     }
 
     #[test]

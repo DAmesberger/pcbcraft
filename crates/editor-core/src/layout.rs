@@ -28,6 +28,7 @@ mod grid;
 pub mod limits;
 pub mod outline;
 mod placed;
+pub mod posture;
 pub mod showcase;
 pub mod via;
 #[cfg(test)]
@@ -142,6 +143,14 @@ pub struct RouteEditSet {
     pub add: Vec<RouteRequest>,
     pub replace: Vec<Track>,
     pub remove: Vec<Id>,
+    /// Vias to add with the tracks (a route step's layer change). Each is
+    /// checked against other nets' copper once the tracks are in place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vias: Vec<ViaRequest>,
+    /// Vias to remove with the tracks (unwinding a route step); a locked
+    /// via refuses the whole edit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_vias: Vec<Id>,
 }
 
 pub trait RoutingStrategy {
@@ -541,7 +550,13 @@ fn invalid<T>(message: &str) -> Result<T> {
 }
 
 fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
-    if edits.add.len() + edits.replace.len() + edits.remove.len() > MAX_TRACKS {
+    if edits.add.len()
+        + edits.replace.len()
+        + edits.remove.len()
+        + edits.vias.len()
+        + edits.remove_vias.len()
+        > MAX_TRACKS
+    {
         return Err(Error::Limit("routing edit exceeds prototype limit".into()));
     }
     let mut touched = BTreeSet::new();
@@ -584,6 +599,20 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     }
     for request in &edits.add {
         check_request_with_nets(project, request, &nets)?;
+    }
+    let mut removed_vias = BTreeSet::new();
+    for id in edits.remove_vias.iter().copied() {
+        if !removed_vias.insert(id) {
+            return invalid("via appears more than once in routing edit");
+        }
+        via::delete(project, id)?;
+    }
+    let mut added_vias = Vec::with_capacity(edits.vias.len());
+    for request in edits.vias {
+        if !nets.contains(&request.net) {
+            return Err(Error::NotFound("unknown electrical net".into()));
+        }
+        added_vias.push(via::insert(project, request)?);
     }
     project.tracks.retain(|t| !edits.remove.contains(&t.id));
     let mut changed = BTreeSet::new();
@@ -721,6 +750,9 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             }
         }
     }
+    for id in added_vias {
+        via::check_clearance(project, id)?;
+    }
     Ok(())
 }
 
@@ -798,6 +830,73 @@ pub fn class_via(project: &Project, net: Id, position: Point) -> ViaRequest {
         diameter,
         ..ViaRequest::through(net, position)
     }
+}
+
+/// The track widths the Route tool steps through for `net`, ascending: the
+/// net's own width ([`route_width`]), the rule default and every net
+/// class's width, none below the net's minimum.
+pub fn route_widths(project: &Project, net: Id) -> Vec<f64> {
+    let rules = &project.rules;
+    let min = rules.track_width_min(net_class(project, net)).value;
+    let mut widths: Vec<f64> = std::iter::once(route_width(project, net).value)
+        .chain(std::iter::once(rules.track_width(None).value))
+        .chain(rules.net_classes.iter().filter_map(|c| c.track_width))
+        .filter(|w| w.is_finite() && *w + 1e-9 >= min && (0.05..=5.0).contains(w))
+        .collect();
+    widths.sort_by(f64::total_cmp);
+    widths.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    widths
+}
+
+/// The via (drill, pad) sizes the Route tool steps through for `net`,
+/// ascending by pad: the net's own via ([`class_via`]), the rule default
+/// and every net class's via, each with at least the rules' drill and
+/// annular ring.
+pub fn via_sizes(project: &Project, net: Id) -> Vec<(f64, f64)> {
+    let rules = &project.rules;
+    let holes = rules.effective().holes;
+    let base = (holes.via_drill_default, holes.via_diameter_default);
+    let mut sizes: Vec<(f64, f64)> = [
+        rules.via_size(net_class(project, net)).value,
+        rules.via_size(None).value,
+    ]
+    .into_iter()
+    .chain(
+        rules
+            .net_classes
+            .iter()
+            .filter(|c| c.via_drill.is_some() || c.via_diameter.is_some())
+            .map(|c| {
+                (
+                    c.via_drill.unwrap_or(base.0),
+                    c.via_diameter.unwrap_or(base.1),
+                )
+            }),
+    )
+    .filter(|(drill, pad)| via_size_fits(project, *drill, *pad).is_ok())
+    .collect();
+    sizes.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)));
+    sizes.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9);
+    sizes
+}
+
+/// Whether a via of `drill` and `pad` (mm) meets the rules' smallest drill
+/// and via annular ring; the error names the rule it misses.
+pub fn via_size_fits(project: &Project, drill: f64, pad: f64) -> Result<()> {
+    let holes = project.rules.effective().holes;
+    if !drill.is_finite() || !pad.is_finite() || drill + 1e-9 < holes.drill_min {
+        return Err(Error::Invalid(format!(
+            "Via drill needs at least {} mm (min drill)",
+            trim_mm(holes.drill_min)
+        )));
+    }
+    if (pad - drill) / 2.0 + 1e-9 < holes.via_annular_ring_min {
+        return Err(Error::Invalid(format!(
+            "Via pad needs at least {} mm (min via annular ring)",
+            trim_mm(drill + 2.0 * holes.via_annular_ring_min)
+        )));
+    }
+    Ok(())
 }
 
 /// Routing refuses a track narrower than its net's class minimum or the

@@ -102,10 +102,10 @@ impl Arrange {
     }
     pub fn tip(self) -> &'static str {
         match self {
-            Self::Rotate => "Turn the selection 90° counter-clockwise (Cmd/Ctrl+R)",
-            Self::Mirror => "Mirror the selection left to right (Shift+X)",
-            Self::Duplicate => "Copy the selected graphics; pins are not copied (Cmd/Ctrl+D)",
-            Self::Delete => "Remove the selected graphics and pins; terminals stay (Delete)",
+            Self::Rotate => "Turn the selection 90° counter-clockwise",
+            Self::Mirror => "Mirror the selection left to right",
+            Self::Duplicate => "Copy the selected graphics; pins are not copied",
+            Self::Delete => "Remove the selected graphics and pins; terminals stay",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {

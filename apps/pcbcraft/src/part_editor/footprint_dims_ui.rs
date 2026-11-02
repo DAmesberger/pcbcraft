@@ -66,7 +66,9 @@ fn glyph_letter(kind: &str) -> &'static str {
 }
 
 /// A Constrain tool's ribbon look: id, icon, label, tip.
-fn constrain_look(tool: FootprintTool) -> Option<(&'static str, &'static str, &'static str)> {
+pub(super) fn constrain_look(
+    tool: FootprintTool,
+) -> Option<(&'static str, &'static str, &'static str)> {
     use pcbcraft_core::library::footprint_source::GeomConstraint as G;
     let FootprintTool::Constrain(kind) = tool else {
         return match tool {

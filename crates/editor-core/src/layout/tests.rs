@@ -1007,3 +1007,137 @@ fn track_set_is_one_undo_step_with_a_typed_wire_form() -> Result<()> {
     assert!(schemas.contains("layout.track_set"));
     Ok(())
 }
+
+/// A route step with a layer change is one `layout.route_apply` with its
+/// tracks and via: one undo step. Unwinding it removes exactly those tracks
+/// and the via in one more; a locked via refuses the unwind and nothing
+/// changes, and a via too close to another net refuses the whole step.
+#[test]
+fn a_route_step_with_a_via_applies_and_unwinds_atomically() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let edits = posture::step(&posture::StepRequest {
+        net: SHARED,
+        width: 0.3,
+        posture: posture::Posture::Diagonal,
+        flipped: false,
+        head: [9.2, 8.0],
+        layer: CopperLayer::Top,
+        via: Some((
+            ViaRequest::through(SHARED, [12.0, 11.0]),
+            CopperLayer::Bottom,
+        )),
+        to: [16.0, 13.0],
+    });
+    assert_eq!(edits.add.len(), 4, "two elbows of two legs");
+    let first_new = engine.project().next_id;
+    let revision = engine.revision();
+    engine.apply(
+        revision,
+        Operation::Layout(LayoutCommand::ApplyRoute { edits }),
+    )?;
+    assert_eq!(engine.revision(), revision + 1);
+    let tracks: Vec<Id> = engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.id >= first_new)
+        .map(|t| t.id)
+        .collect();
+    let vias: Vec<Id> = engine.project().vias.iter().map(|v| v.id).collect();
+    assert_eq!((tracks.len(), vias.len()), (4, 1));
+    let unwind = |vias: Vec<Id>| {
+        Operation::Layout(LayoutCommand::ApplyRoute {
+            edits: RouteEditSet {
+                remove: tracks.clone(),
+                remove_vias: vias,
+                ..Default::default()
+            },
+        })
+    };
+    let via = vias[0];
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetViaLock {
+            id: via,
+            locked: true,
+        }),
+    )?;
+    let locked = engine.project().clone();
+    assert!(engine.apply(engine.revision(), unwind(vec![via])).is_err());
+    assert_eq!(engine.project(), &locked);
+    engine.undo()?;
+    assert!(
+        engine
+            .apply(engine.revision(), unwind(vec![via, via]))
+            .is_err()
+    );
+    engine.apply(engine.revision(), unwind(vec![via]))?;
+    assert!(engine.project().vias.is_empty());
+    assert!(engine.project().tracks.iter().all(|t| t.id < first_new));
+    // One undo brings the whole step back.
+    engine.undo()?;
+    assert_eq!(engine.project().vias.len(), 1);
+    engine.redo()?;
+    let refused = posture::step(&posture::StepRequest {
+        net: SHARED,
+        width: 0.3,
+        posture: posture::Posture::Free,
+        flipped: false,
+        head: [9.2, 8.0],
+        layer: CopperLayer::Top,
+        via: Some((ViaRequest::through(SHARED, [6.8, 8.0]), CopperLayer::Bottom)),
+        to: [6.8, 12.0],
+    });
+    let before = engine.project().clone();
+    assert!(
+        engine
+            .apply(
+                engine.revision(),
+                Operation::Layout(LayoutCommand::ApplyRoute { edits: refused })
+            )
+            .is_err()
+    );
+    assert_eq!(engine.project(), &before);
+    Ok(())
+}
+
+/// The Route tool's width and via presets come from the rules: the net's
+/// own values, the defaults and every class's, never below the minimums.
+#[test]
+fn route_presets_follow_the_rules_and_classes() -> Result<()> {
+    let mut project = Engine::demo()?.project().clone();
+    assert_eq!(route_widths(&project, SHARED), vec![0.3]);
+    assert_eq!(via_sizes(&project, SHARED), vec![(0.3, 0.6)]);
+    project
+        .rules
+        .net_classes
+        .push(crate::rules::NetClass::from_spec(
+            crate::rules::NetClassId(1),
+            crate::rules::NetClassSpec {
+                name: "Power".into(),
+                track_width: Some(0.8),
+                via_drill: Some(0.4),
+                via_diameter: Some(0.9),
+                ..Default::default()
+            },
+        ));
+    project
+        .rules
+        .net_classes
+        .push(crate::rules::NetClass::from_spec(
+            crate::rules::NetClassId(2),
+            crate::rules::NetClassSpec {
+                name: "Bad via".into(),
+                track_width: Some(0.01),
+                via_drill: Some(0.3),
+                via_diameter: Some(0.35),
+                ..Default::default()
+            },
+        ));
+    assert_eq!(route_widths(&project, SHARED), vec![0.3, 0.8]);
+    assert_eq!(via_sizes(&project, SHARED), vec![(0.3, 0.6), (0.4, 0.9)]);
+    assert!(via_size_fits(&project, 0.3, 0.4).is_err());
+    assert!(via_size_fits(&project, 0.05, 0.6).is_err());
+    assert!(via_size_fits(&project, 0.3, 0.5).is_ok());
+    Ok(())
+}

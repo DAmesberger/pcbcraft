@@ -7,6 +7,7 @@ use crate::ids::{DefinitionKind, FootprintRef, LibraryId};
 use crate::library::bundle::{Bundle, RevisionRecord};
 use crate::library::package_form::{ChipForm, ChipKind, LeadSides, NoLeadForm};
 use crate::library::samples::Preset;
+use crate::library::symbol_style::{self, ResistorStyle, SymbolConventions, SymbolKind};
 use crate::library::templates::catalog::{
     BUILT_FAMILY_REV, FamilyRef, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan,
     RowFrom, RowSource, SavePackageRow,
@@ -352,6 +353,7 @@ fn folder_rows_are_indexed_and_searched_with_their_source_revision() -> Fallible
             skeleton: SkeletonHint::TwoTerminal { polarised: false },
             name: "Resistor 0603".into(),
             designator_prefix: None,
+            symbol: None,
         })),
     )?
     else {
@@ -398,6 +400,7 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
             skeleton: SkeletonHint::IcBox,
             name: "Controller QFN-32".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     assert_eq!(engine.revision(), revision + 1, "one operation");
@@ -471,6 +474,7 @@ fn every_custom_family_builds_a_publishable_component() -> Fallible<()> {
                 skeleton,
                 name: format!("{} part", family.label()),
                 designator_prefix: Some("X".into()),
+                symbol: None,
             },
         )?;
         let published = apply(
@@ -513,6 +517,7 @@ fn refused_template_requests_leave_the_document_unchanged() -> Fallible<()> {
         skeleton: SkeletonHint::IcBox,
         name: "U".into(),
         designator_prefix: None,
+        symbol: None,
     };
     let refused = [
         NewFromTemplate {
@@ -581,6 +586,7 @@ fn edited_values_make_a_custom_package_with_estimated_lands() -> Fallible<()> {
             skeleton: SkeletonHint::Blank,
             name: "Thin QFN".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let package = engine.drafts().get(ids[2]).ok_or("package")?;
@@ -636,6 +642,7 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
             skeleton: SkeletonHint::IcBox,
             name: "Bridge".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let package = ids[2];
@@ -738,6 +745,7 @@ fn a_package_row_is_saved_as_a_draft_and_publishes() -> Fallible<()> {
             skeleton: SkeletonHint::IcBox,
             name: "QFN".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let Outcome::DraftCreated { id } = apply(
@@ -1003,6 +1011,7 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
                 skeleton: definition.skeleton,
                 name: name.clone(),
                 designator_prefix: None,
+                symbol: None,
             },
         )?;
         let draft = |k: usize| {
@@ -1118,6 +1127,7 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
             skeleton: SkeletonHint::IcBox,
             name: "U".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let provenance = |engine: &Engine, id: DefinitionId| {
@@ -1140,6 +1150,7 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
             skeleton: SkeletonHint::IcBox,
             name: "U2".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let text = provenance(&engine, ids[0]);
@@ -1177,6 +1188,7 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
             skeleton: SkeletonHint::IcBox,
             name: "U".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )?;
     let request = PackageFromTemplate {
@@ -1254,6 +1266,7 @@ fn bridge(engine: &mut Engine) -> Fallible<Vec<DefinitionId>> {
             skeleton: SkeletonHint::IcBox,
             name: "Bridge".into(),
             designator_prefix: None,
+            symbol: None,
         },
     )
 }
@@ -1514,6 +1527,7 @@ fn no_lead_and_chip_starter_rows_keep_the_mask_web() -> Fallible<()> {
                 skeleton: starter.definition.skeleton,
                 name: starter.name.clone(),
                 designator_prefix: None,
+                symbol: None,
             },
         )?;
         let Some(Definition::Footprint(footprint)) =
@@ -1605,5 +1619,145 @@ fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
         .ok_or("pad 6")?;
     six.position[0] += 0.001;
     assert_eq!(webs(&footprint), 1, "pads 6 and 7 at 0.099 mm");
+    Ok(())
+}
+
+/// The symbol and component drafts `new_from` built from a starter row.
+fn starter_build(
+    engine: &mut Engine,
+    name: &str,
+    prefix: Option<&str>,
+    symbol: Option<SymbolKind>,
+) -> Fallible<(crate::library::SymbolDefinition, String)> {
+    let row = crate::library::templates::starter::row(name)?;
+    let ids = new_from(
+        engine,
+        NewFromTemplate {
+            row: RowSource::Starter { name: name.into() },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: name.into(),
+            designator_prefix: prefix.map(str::to_owned),
+            symbol,
+        },
+    )?;
+    let draft = |k: usize| {
+        ids.get(k)
+            .and_then(|id| engine.drafts().get(*id))
+            .map(|d| d.definition.clone())
+    };
+    match (draft(0), draft(1)) {
+        (Some(Definition::Component(c)), Some(Definition::Symbol(s))) => {
+            Ok((s, c.designator_prefix))
+        }
+        _ => Err(format!("{name}: component and symbol drafts").into()),
+    }
+}
+
+/// The generated drawing of `kind` for `symbol`'s owner and pins.
+fn expected(
+    symbol: &crate::library::SymbolDefinition,
+    kind: SymbolKind,
+    conventions: SymbolConventions,
+) -> Fallible<crate::library::SymbolDefinition> {
+    let mut terminals: Vec<_> = symbol
+        .units
+        .iter()
+        .flat_map(|u| u.pins.iter().map(|p| p.terminal))
+        .collect();
+    terminals.sort();
+    Ok(symbol_style::generate(
+        kind,
+        conventions,
+        symbol.component,
+        &terminals,
+    )?)
+}
+
+/// Every two-terminal starter row draws its kind's symbol and takes its
+/// prefix: chip capacitors are capacitors (never resistor rectangles),
+/// tantalum and radial rows polarised capacitors, ferrite chips beads,
+/// molded and axial diode rows diodes.
+#[test]
+fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for starter in crate::library::templates::starter::rows().map_err(|e| e.to_owned())? {
+        if !matches!(
+            starter.definition.skeleton,
+            SkeletonHint::TwoTerminal { .. }
+        ) {
+            continue;
+        }
+        let name = starter.name.as_str();
+        let (kind, prefix) =
+            if name.starts_with("Chip resistor") || name.starts_with("Axial resistor") {
+                (SymbolKind::Resistor, "R")
+            } else if name.starts_with("Chip capacitor") {
+                (SymbolKind::Capacitor, "C")
+            } else if name.starts_with("Chip ferrite bead") {
+                (SymbolKind::FerriteBead, "FB")
+            } else if name.starts_with("Tantalum") || name.starts_with("Radial") {
+                (SymbolKind::PolarisedCapacitor, "C")
+            } else {
+                (SymbolKind::Diode, "D")
+            };
+        let mut engine = Engine::default();
+        let (symbol, designator) = starter_build(&mut engine, name, None, None)?;
+        assert_eq!(designator, prefix, "{name}");
+        assert_eq!(
+            symbol,
+            expected(&symbol, kind, SymbolConventions::default())?,
+            "{name}"
+        );
+        seen.insert(format!("{kind:?}"));
+    }
+    assert_eq!(seen.len(), 5, "{seen:?}");
+    Ok(())
+}
+
+/// The user's prefix names the kind (a `D` on a tantalum row draws a
+/// diode); an explicit symbol wins (an NPN on SOT-23); the project's
+/// conventions choose the resistor style; a symbol whose terminal count
+/// differs from the package's is refused with the document unchanged.
+#[test]
+fn prefix_explicit_symbol_and_conventions_choose_the_drawing() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let (diode, _) = starter_build(&mut engine, "Tantalum case A (3216-18)", Some("D"), None)?;
+    assert_eq!(
+        diode,
+        expected(&diode, SymbolKind::Diode, SymbolConventions::default())?
+    );
+    let (npn, prefix) = starter_build(&mut engine, "SOT-23-3", None, Some(SymbolKind::NpnBjt))?;
+    assert_eq!(
+        npn,
+        expected(&npn, SymbolKind::NpnBjt, SymbolConventions::default())?
+    );
+    assert_eq!(
+        prefix, "U",
+        "an explicit symbol leaves the skeleton's prefix"
+    );
+    let us = SymbolConventions {
+        resistor: ResistorStyle::Us,
+    };
+    apply(
+        &mut engine,
+        LibraryCommand::SetSymbolConventions { conventions: us },
+    )?;
+    assert_eq!(engine.drafts().symbols, us);
+    let (zigzag, _) = starter_build(&mut engine, "Chip resistor 0603 (1608 metric)", None, None)?;
+    assert_eq!(zigzag, expected(&zigzag, SymbolKind::Resistor, us)?);
+    // The setting is saved with the file.
+    assert_eq!(Engine::from_file(engine.to_file())?.drafts().symbols, us);
+
+    let before = engine.to_file();
+    let refused = starter_build(
+        &mut engine,
+        "SOIC-8 3.9 mm",
+        None,
+        Some(SymbolKind::Capacitor),
+    );
+    let message = refused.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(message.contains("needs 2 terminals"), "{message}");
+    assert_eq!(engine.to_file(), before);
     Ok(())
 }

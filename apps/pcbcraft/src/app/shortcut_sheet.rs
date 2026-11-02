@@ -1,0 +1,125 @@
+//! The Keyboard shortcuts sheet (⌘/ / Ctrl+/, the palette and the File
+//! menu): every command with a key, grouped by where it applies, the
+//! contexts in force now first. Reading only; keys are changed through the
+//! registry (`Registry::rebind`) once a preferences page exists.
+use crate::commands::{Context, Registry};
+use crate::kit;
+use solidcraft_ui_egui::ui_kit;
+
+const MAX_FILTER: usize = 128;
+
+/// One context's shortcuts: (what it does, key as shown).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Group {
+    pub context: Context,
+    pub here: bool,
+    pub rows: Vec<(String, String)>,
+}
+
+/// The sheet's groups for `filter` (matched against the name, key and
+/// context): contexts in `active` first, then the others in registry order;
+/// empty groups are left out.
+pub(crate) fn groups(registry: &Registry, filter: &str, active: &[Context]) -> Vec<Group> {
+    let filter = filter.trim().to_lowercase();
+    let mut contexts: Vec<Context> = active.iter().rev().copied().collect();
+    contexts.extend(Context::ALL.into_iter().filter(|c| !active.contains(c)));
+    contexts
+        .into_iter()
+        .filter_map(|context| {
+            let mut seen = std::collections::BTreeSet::new();
+            let rows: Vec<(String, String)> = registry
+                .commands()
+                .iter()
+                .filter(|c| c.context == context)
+                .filter_map(|c| Some((c.title.clone(), registry.shortcut(c)?)))
+                // One line per name and key (the palette's two keys).
+                .filter(|row| seen.insert(row.clone()))
+                .filter(|(title, key)| {
+                    filter.is_empty()
+                        || title.to_lowercase().contains(&filter)
+                        || key.to_lowercase().contains(&filter)
+                        || context.label().to_lowercase().contains(&filter)
+                })
+                .collect();
+            (!rows.is_empty()).then(|| Group {
+                context,
+                here: active.contains(&context),
+                rows,
+            })
+        })
+        .collect()
+}
+
+#[derive(Default)]
+pub(crate) struct ShortcutSheet {
+    open: bool,
+    filter: String,
+}
+
+impl ShortcutSheet {
+    pub fn open(&mut self) {
+        self.open = true;
+    }
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+    pub fn toggle(&mut self) {
+        self.open = !self.open;
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, registry: &Registry, active: &[Context]) {
+        if !self.open {
+            return;
+        }
+        let groups = groups(registry, &self.filter, active);
+        let filter = &mut self.filter;
+        let closed = ui_kit::Window::new(
+            egui::Id::new("keyboard-shortcuts"),
+            "list",
+            "Keyboard shortcuts",
+        )
+        .show_body(ctx, |ui| {
+            kit::filter_field(
+                ui,
+                egui::Id::new("keyboard-shortcuts-filter"),
+                filter,
+                "Filter by name or key",
+                false,
+                MAX_FILTER,
+            );
+            if groups.is_empty() {
+                kit::status(ui, "No shortcut matches", kit::Tone::Dim);
+            }
+            for group in &groups {
+                let title = if group.here {
+                    format!("{} · here", group.context.label())
+                } else {
+                    group.context.label().to_owned()
+                };
+                kit::section(
+                    ui,
+                    ("keyboard-shortcuts", group.context),
+                    &title,
+                    true,
+                    Some(group.rows.len()),
+                    |ui| {
+                        for (name, key) in &group.rows {
+                            ui.horizontal(|ui| {
+                                ui.label(name);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        crate::shell::key_cap(ui, key);
+                                    },
+                                );
+                            });
+                        }
+                    },
+                );
+            }
+        });
+        if closed {
+            self.open = false;
+        }
+    }
+}

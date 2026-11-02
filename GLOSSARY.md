@@ -411,3 +411,11 @@ Whether an instance can be bought as designed, derived and never stored: no part
 
 **Resolve parts**:
 The view and query (`library.resolve_groups`) that groups instances without an agreeing Part by component revision, footprint and identical requirements, as the BOM groups them, so that one Part is assigned to a whole group with one `instance.assign_part`, one undo step.
+
+**Command palette**:
+The desktop app's searchable list of every runnable command (⌘P / Ctrl+P), with its shortcut and context; it runs a command through the same path as its ribbon button or key. Distinct from the Place palette, which finds components.
+_Avoid_: Quick open, launcher
+
+**Shortcut context**:
+Where a command's key applies: everywhere, a workspace, one of its views, or an armed tool's mode (Route, Fill, Board shape). A tool mode's keys override its view's while it is active; two commands may not share a key where both could apply.
+_Avoid_: Scope, keymap layer

@@ -443,6 +443,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-204",
    "values": {
     "family": "tht",
@@ -469,6 +470,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-204",
    "values": {
     "family": "tht",
@@ -493,6 +495,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "resistor",
    "cite": null,
    "values": {
     "family": "tht",
@@ -518,6 +521,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "resistor",
    "cite": null,
    "values": {
     "family": "tht",
@@ -544,6 +548,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": null,
    "values": {
     "family": "tht",
@@ -570,6 +575,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": null,
    "values": {
     "family": "tht",
@@ -596,6 +602,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": null,
    "values": {
     "family": "tht",
@@ -622,6 +629,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": null,
    "values": {
     "family": "tht",

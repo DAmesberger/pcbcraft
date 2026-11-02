@@ -16,6 +16,7 @@ use crate::ids::MAX_LABEL;
 use crate::library::MAX_NOTE;
 use crate::library::package_form::PackageForm;
 use crate::library::part::{Basis, Provenance};
+use crate::library::symbol_style::SymbolKind;
 use crate::library::templates::catalog::{
     FamilyKind, FamilyRef, MAX_ALIAS, MAX_PACKAGE_ROWS_PER_SOURCE, MAX_ROW_ALIASES,
     PackageRowDefinition, RowCitation, SizeCode, SkeletonHint,
@@ -200,6 +201,7 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
                 "aliases",
                 "size_code",
                 "skeleton",
+                "symbol",
                 "cite",
                 "note",
                 "values",
@@ -253,6 +255,7 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
         let size_code: Option<SizeCode> =
             typed(row.get("size_code"), &format!("{context}: size_code"))?;
         let skeleton: SkeletonHint = typed(row.get("skeleton"), &format!("{context}: skeleton"))?;
+        let symbol: Option<SymbolKind> = typed(row.get("symbol"), &format!("{context}: symbol"))?;
         let lands = typed(row.get("lands"), &format!("{context}: lands"))?;
         let problems = values.range_problems();
         if !problems.is_empty() {
@@ -268,6 +271,7 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
             size_code,
             lands,
             skeleton,
+            symbol,
             provenance: Provenance {
                 origin: None,
                 basis: Basis::Authored,

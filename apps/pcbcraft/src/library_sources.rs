@@ -28,7 +28,9 @@ use pcbcraft_core::{
 };
 use pcbcraft_io::library_folder::{self as folder, Disabled, Folder};
 use pcbcraft_io::library_folder_index::{self as index, IndexState};
-use pcbcraft_io::settings::{self, MAX_FAVOURITES, MAX_RECENT, MAX_SOURCES, SourceSetting};
+use pcbcraft_io::settings::{
+    self, MAX_FAVOURITES, MAX_PANEL_WIDTH, MAX_RECENT, MAX_SOURCES, SourceSetting,
+};
 use pcbcraft_io::settings::{UserDirs, UserSettings};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::path::{Path, PathBuf};
@@ -717,6 +719,21 @@ impl LibrarySources {
                 })
                 .collect(),
             without_starter_rows: false,
+        }
+    }
+
+    /// The Browser width the user last dragged, if any.
+    pub fn browser_width(&self) -> Option<f32> {
+        self.settings.browser_width
+    }
+
+    /// Remember the Browser width per user (at the end of a drag). A width
+    /// the settings would refuse is not kept.
+    pub fn set_browser_width(&mut self, width: f32) {
+        let width = Some(width).filter(|w| w.is_finite() && *w > 0.0 && *w <= MAX_PANEL_WIDTH);
+        if width.is_some() && width != self.settings.browser_width {
+            self.settings.browser_width = width;
+            self.persist();
         }
     }
 
@@ -1707,6 +1724,32 @@ mod tests {
         mark_duplicates(&mut sources);
         assert!(sources[0].ready());
         assert_eq!(sources[1].reason().as_deref(), Some("same library as /a"));
+    }
+
+    /// The dragged Browser width is kept per user and read back by the
+    /// next session; a width the settings would refuse is not kept.
+    #[test]
+    fn the_browser_width_persists_per_user() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let dirs = UserDirs {
+            config: dir.path().join("config"),
+            cache: dir.path().join("cache"),
+        };
+        let mut sources = LibrarySources::new(Some(dirs.clone()));
+        assert_eq!(sources.browser_width(), None);
+        sources.set_browser_width(333.0);
+        sources.set_browser_width(f32::NAN);
+        sources.set_browser_width(-4.0);
+        sources.wait()?;
+        assert_eq!(sources.problem(), None);
+        assert_eq!(sources.browser_width(), Some(333.0));
+        let again = LibrarySources::new(Some(dirs.clone()));
+        assert_eq!(again.browser_width(), Some(333.0));
+        assert_eq!(
+            settings::read_settings(&dirs.settings_path())?.browser_width,
+            Some(333.0)
+        );
+        Ok(())
     }
 
     /// Favourites and recents of library items are keyed by their library

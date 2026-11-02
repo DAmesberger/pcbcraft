@@ -70,6 +70,13 @@ pub enum LibraryCommand {
     /// now off the symbol grid.
     #[serde(rename = "library.set_grid")]
     SetGrid { grid: Grid },
+    /// Replace the project's symbol drawing conventions (the resistor
+    /// style new generated symbols use; an undoable authoring setting
+    /// saved with the drafts). Existing symbols never change.
+    #[serde(rename = "library.set_symbol_conventions")]
+    SetSymbolConventions {
+        conventions: library::symbol_style::SymbolConventions,
+    },
     /// Apply 1–256 graphic and pin edits to one symbol draft, in order, as
     /// one undo step; any failure leaves the draft unchanged. The outcome
     /// lists the IDs `add` allocated.
@@ -634,6 +641,10 @@ pub(crate) fn apply_library(
                 })
                 .collect();
             Ok(Outcome::GridSet { off_grid })
+        }
+        LibraryCommand::SetSymbolConventions { conventions } => {
+            Arc::make_mut(&mut document.drafts).symbols = conventions;
+            Ok(Outcome::None)
         }
         LibraryCommand::EditGraphics { draft, edits } => {
             let current = document

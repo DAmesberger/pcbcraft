@@ -557,10 +557,16 @@ fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
             assert!(text.height < body_height);
         }
         assert_eq!(symbol.pin_text_height, 1.0);
+        // A two-terminal passive hides its numbers too; the connector,
+        // pins all on its left, shows them.
+        let connector = unit
+            .pins
+            .iter()
+            .all(|p| p.direction == crate::library::PinDirection::Right);
         assert!(
             unit.pins
                 .iter()
-                .all(|p| !p.name.visible && p.number.visible)
+                .all(|p| !p.name.visible && p.number.visible == connector)
         );
         assert!(matches!(
             unit.graphics[0].item,
@@ -694,15 +700,10 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
         schematic::pin_position(engine.project(), ep(r1, 1)),
         Some(pin.end)
     );
-    // The sample hides terminal names, which only repeat the numbers.
+    // The sample hides terminal names, which only repeat the numbers, and
+    // a two-terminal passive's numbers.
     assert!(pin.name.is_none());
-    let number = pin
-        .number
-        .as_ref()
-        .ok_or_else(|| Error::NotFound("pin number".into()))?;
-    assert_eq!(number.text, "1");
-    // Centred on the stub, 0.5 mm above it.
-    assert_eq!(number.at, [-15.75, 0.5]);
+    assert!(placed.pins.iter().all(|p| p.number.is_none()));
 
     // Field text shows the instance's effective value; hidden text and
     // hidden pin numbers are not placed.
@@ -728,7 +729,7 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
             if let Item::Text(t) = &mut s.units[0].graphics[2].item {
                 t.visible = false;
             }
-            s.units[0].pins[0].number.visible = false;
+            s.units[0].pins[0].number.visible = true;
         })
     })?;
     engine.apply_update(
@@ -747,8 +748,15 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
     let placed = schematic::placed_unit(engine.project(), occurrence(&engine)?)?;
     let texts: Vec<&str> = placed.texts.iter().map(|t| t.text.as_str()).collect();
     assert_eq!(texts, vec!["R1", value.as_str()]);
-    assert!(placed.pins[0].number.is_none());
-    assert!(placed.pins[1].number.is_some());
+    // Pin 1's number, shown, is centred on the stub 0.5 mm above it; pin
+    // 2's stays hidden and is not placed.
+    let number = placed.pins[0]
+        .number
+        .as_ref()
+        .ok_or_else(|| Error::NotFound("pin number".into()))?;
+    assert_eq!(number.text, "1");
+    assert_eq!(number.at, [-15.75, 0.5]);
+    assert!(placed.pins[1].number.is_none());
 
     // Without a physical choice numbers are hidden, never guessed.
     let mut engine = Engine::default();
@@ -939,6 +947,12 @@ fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()
         return Err(Error::Invalid("unexpected kinds".into()));
     };
     let library = &engine.project().library;
+    // The sample hides its pin numbers; show them to see the working
+    // binding's.
+    let mut symbol = symbol;
+    for pin in &mut symbol.units[0].pins {
+        pin.number.visible = true;
+    }
     let view = schematic::DefinitionUnit {
         symbol: &symbol,
         unit: UnitId(1),

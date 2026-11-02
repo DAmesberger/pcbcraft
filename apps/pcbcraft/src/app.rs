@@ -7,7 +7,10 @@
 mod browser;
 mod browser_catalog;
 mod chrome;
+mod command_dispatch;
+mod command_palette;
 mod open_timing;
+mod shortcut_sheet;
 
 use crate::file_ui::{self, Effect, FileUi};
 use crate::kit::messages::Messages;
@@ -62,6 +65,9 @@ pub struct App {
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
     browser_visible: bool,
+    /// The Browser's width as last dragged (kept per user in the
+    /// settings); the layout clamps it to what the window fits.
+    browser_width: f32,
     /// "Update project copy" imported a revision at this engine revision;
     /// cancelling its review undoes that import (see `review_closed`).
     pending_import: Option<PendingImport>,
@@ -70,6 +76,10 @@ pub struct App {
     now: f64,
     /// Time from opening the PCB 3D view to its first frame.
     open_timing: open_timing::OpenTiming,
+    /// Every command, its context and its key (`crate::commands`).
+    registry: crate::commands::Registry,
+    palette: command_palette::CommandPalette,
+    shortcut_sheet: shortcut_sheet::ShortcutSheet,
 }
 
 impl App {
@@ -89,6 +99,29 @@ impl App {
         {
             files.request(file_ui::Action::OpenPath(path));
         }
+        let registry = crate::commands::Registry::standard();
+        // A keymap conflict is a defect (the registry tests forbid one);
+        // report it instead of failing silently.
+        let mut messages = Messages::default();
+        for conflict in registry.conflicts() {
+            let title = |id: &str| {
+                registry
+                    .get(id)
+                    .map_or_else(String::new, |c| c.title.clone())
+            };
+            messages.push(
+                Level::Warning,
+                &format!(
+                    "Shortcut {} is taken by both {} and {}",
+                    conflict.chord.shown(),
+                    title(&conflict.first),
+                    title(&conflict.second)
+                ),
+                0.0,
+            );
+        }
+        let sources = LibrarySources::from_env(&cc.egui_ctx);
+        let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         Ok(Self {
             scene: SceneController::new(
                 cc.egui_ctx.clone(),
@@ -96,23 +129,27 @@ impl App {
             ),
             fills: crate::fill_worker::FillWorker::start(cc.egui_ctx.clone()),
             files,
-            sources: LibrarySources::from_env(&cc.egui_ctx),
+            sources,
             engine,
             workspace: Workspace::Pcb,
             part: Default::default(),
             schematic: Default::default(),
             pcb: Default::default(),
             toasts: Toasts::default(),
-            messages: Messages::default(),
+            messages,
             messages_open: false,
             issues: Default::default(),
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
+            browser_width,
             pending_import: None,
             closing: false,
             now: 0.0,
             open_timing: open_timing::OpenTiming::default(),
+            registry,
+            palette: Default::default(),
+            shortcut_sheet: Default::default(),
         })
     }
 
@@ -898,31 +935,6 @@ impl App {
         }
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context) {
-        use egui::{Key, KeyboardShortcut, Modifiers};
-        let pressed = |modifiers, key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(modifiers, key)))
-        };
-        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
-        if pressed(shift, Key::S) {
-            self.files.request(file_ui::Action::SaveAs);
-        } else if pressed(Modifiers::COMMAND, Key::S) {
-            self.files.request(file_ui::Action::Save);
-        }
-        if pressed(Modifiers::COMMAND, Key::O) {
-            self.files.request(file_ui::Action::Open);
-        }
-        if pressed(Modifiers::COMMAND, Key::N) {
-            self.files.request(file_ui::Action::New);
-        }
-        if !ctx.egui_wants_keyboard_input() && pressed(Modifiers::COMMAND, Key::B) {
-            self.toggle_browser();
-        }
-        if let Some(redo) = history_shortcut(ctx) {
-            self.history(redo);
-        }
-    }
-
     /// Closing with unsaved work asks first; the file workflow closes the
     /// window once recovery data is cleaned up.
     fn guard_close(&mut self, ctx: &egui::Context) {
@@ -947,6 +959,9 @@ impl eframe::App for App {
         self.component_subject(&ctx);
         // A2: the Component workspace catalog's action and feed.
         self.catalog(&ctx);
+        // The palette's keys come before any canvas sees them.
+        self.early_keys(&ctx);
+        self.command_palette(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -955,12 +970,14 @@ impl eframe::App for App {
         self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(&ctx, Origin::Command, draft);
-        self.shortcuts(&ctx);
+        self.dispatch_keys(&ctx);
         self.guard_close(&ctx);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
         self.sources.dialogs(&ctx);
         self.messages_window(&ctx);
+        let active = self.active_contexts();
+        self.shortcut_sheet.show(&ctx, &self.registry, &active);
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);
         self.request_model(&ctx);
@@ -1005,74 +1022,6 @@ fn follow_system_theme(ctx: &egui::Context, force: bool) {
     if force || dark != theme::is_dark() {
         theme::set_dark(dark);
         theme::apply(ctx);
-    }
-}
-
-/// `Some(true)` for redo, `Some(false)` for undo. A focused text field owns
-/// its own undo keys, as in Solidcraft.
-fn history_shortcut(ctx: &egui::Context) -> Option<bool> {
-    use egui::{Key, KeyboardShortcut, Modifiers};
-    if ctx.egui_wants_keyboard_input() {
-        return None;
-    }
-    if ctx.input_mut(|i| {
-        i.consume_shortcut(&KeyboardShortcut::new(
-            Modifiers::COMMAND | Modifiers::SHIFT,
-            Key::Z,
-        ))
-    }) {
-        Some(true)
-    } else if ctx
-        .input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)))
-    {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn undo_input() -> egui::RawInput {
-        egui::RawInput {
-            events: vec![egui::Event::Key {
-                key: egui::Key::Z,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::COMMAND,
-            }],
-            ..Default::default()
-        }
-    }
-
-    /// Run one headless frame. Its texture changes are cleared: there is no
-    /// renderer to apply them, and egui's debug check rejects dropping them.
-    fn run(ctx: &egui::Context, input: egui::RawInput, add: impl FnMut(&mut egui::Ui)) {
-        ctx.run_ui(input, add).textures_delta.clear();
-    }
-
-    #[test]
-    fn typing_owns_undo_instead_of_undoing_the_project() {
-        let ctx = egui::Context::default();
-        let mut text = "10k".to_owned();
-        run(&ctx, Default::default(), |ui| {
-            ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"))
-                .request_focus();
-        });
-        let mut shortcut = Some(false);
-        run(&ctx, undo_input(), |ui| {
-            ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"));
-            shortcut = history_shortcut(ui.ctx());
-        });
-        assert_eq!(shortcut, None);
-        let unfocused = egui::Context::default();
-        run(&unfocused, undo_input(), |ui| {
-            shortcut = history_shortcut(ui.ctx());
-        });
-        assert_eq!(shortcut, Some(false));
     }
 }
 

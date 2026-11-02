@@ -501,6 +501,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "ferrite_bead",
    "cite": "murata-blm",
    "values": {
     "family": "chip",
@@ -528,6 +529,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "ferrite_bead",
    "cite": "murata-blm",
    "values": {
     "family": "chip",
@@ -555,6 +557,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "ferrite_bead",
    "cite": "murata-blm",
    "values": {
     "family": "chip",
@@ -582,6 +585,7 @@
     "skeleton": "two_terminal",
     "polarised": false
    },
+   "symbol": "ferrite_bead",
    "cite": "murata-blm",
    "values": {
     "family": "chip",

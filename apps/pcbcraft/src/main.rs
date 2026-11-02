@@ -1,5 +1,6 @@
 //! Pcbcraft desktop editor.
 mod app;
+mod commands;
 mod file_ui;
 mod fill_worker;
 mod issues;

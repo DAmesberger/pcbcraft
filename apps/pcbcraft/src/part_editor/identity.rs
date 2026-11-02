@@ -13,6 +13,7 @@
 //! The Properties title stays the selection's, so the two never repeat.
 use super::PartEditor;
 use super::folder_preview::{self, Preview};
+use crate::commands::keys;
 use crate::kit::{self, severity::Level};
 use crate::library_sources::FolderPick;
 use egui::{RichText, Ui, vec2};
@@ -483,11 +484,11 @@ impl PartEditor {
                     if !recents.is_empty() {
                         kit::rule(ui);
                     }
-                    if ui.button("Open…").on_hover_text("⌘P").clicked() {
+                    if ui.button("Open…").on_hover_text(keys::COMPONENT_OPEN.shown()).clicked() {
                         open = true;
                         ui.close();
                     }
-                    if ui.button("New…").on_hover_text("⇧⌘N").clicked() {
+                    if ui.button("New…").on_hover_text(keys::COMPONENT_NEW.shown()).clicked() {
                         new = true;
                         ui.close();
                     }
@@ -551,25 +552,27 @@ impl PartEditor {
         }
     }
 
-    /// ⌘[ and ⌘] walk the open history; ⌘P opens a component (the start
+    /// ⌘[ and ⌘] walk the open history; ⇧⌘O opens a component (the start
     /// page with its catalog search focused) and ⇧⌘N starts one from a
     /// template, while the Component workspace is shown. The workspace
     /// draws before the app's file shortcuts, so ⇧⌘N never reaches ⌘N.
     fn history_keys(&mut self, ctx: &egui::Context, engine: &Engine) {
-        use egui::{Key, KeyboardShortcut, Modifiers};
+        use egui::KeyboardShortcut;
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let pressed = |modifiers, key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(modifiers, key)))
+        let pressed = |chord: crate::commands::Chord| {
+            ctx.input_mut(|i| {
+                i.consume_shortcut(&KeyboardShortcut::new(chord.modifiers(), chord.key))
+            })
         };
-        if pressed(Modifiers::COMMAND | Modifiers::SHIFT, Key::N) {
+        if pressed(keys::COMPONENT_NEW) {
             self.open_template_gallery();
-        } else if pressed(Modifiers::COMMAND, Key::P) {
+        } else if pressed(keys::COMPONENT_OPEN) {
             self.show_start();
-        } else if pressed(Modifiers::COMMAND, Key::OpenBracket) {
+        } else if pressed(keys::COMPONENT_BACK) {
             self.go_back(engine);
-        } else if pressed(Modifiers::COMMAND, Key::CloseBracket) {
+        } else if pressed(keys::COMPONENT_FORWARD) {
             self.go_forward(engine);
         }
     }
