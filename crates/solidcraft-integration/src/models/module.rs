@@ -451,7 +451,7 @@ mod tests {
         assert!(points.len() > 4);
         for [x, y] in points {
             assert!(x.abs() <= 9.0 - ANTENNA_MARGIN_MM + 1e-9);
-            assert!(y >= 12.5 - 6.0 && y <= 12.5);
+            assert!((12.5 - 6.0..=12.5).contains(&y));
         }
     }
 
