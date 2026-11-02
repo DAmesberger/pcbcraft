@@ -26,7 +26,7 @@ use pcbcraft_core::materials::MaterialId;
 pub(super) const FAMILY_REV: Option<u16> = Some(1);
 
 /// Pad thickness under the board (est.: ENIG over 35 µm copper).
-const PAD_MM: f64 = 0.035;
+const PAD_MM: f64 = pcbcraft_core::library::marking::surface::MODULE_PAD_MM;
 /// Castellation plating thickness in the notch (est.: plated-through
 /// copper 20–25 µm plus finish).
 const PLATING_MM: f64 = 0.03;

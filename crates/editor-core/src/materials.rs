@@ -109,9 +109,9 @@ impl MaterialId {
             | Brass | Aluminium | NickelSilver | MetalLaserMarked => MaterialCategory::Metal,
             Alumina96 | BariumTitanate | Ferrite => MaterialCategory::Ceramic,
             BorosilicateGlass => MaterialCategory::Glass,
-            EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | PadPrintInk | ResistorOvercoat | PvcSleeve
-            | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide | SolderMaskGreen
-            | SolderMaskOverCopper => MaterialCategory::Polymer,
+            EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | PadPrintInk | ResistorOvercoat
+            | PvcSleeve | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide
+            | SolderMaskGreen | SolderMaskOverCopper => MaterialCategory::Polymer,
         }
     }
 }

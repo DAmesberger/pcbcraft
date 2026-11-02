@@ -816,7 +816,9 @@ fn electrolytic_inputs(chart: Chart, area: [f64; 2]) -> MarkingInputs {
         chart,
         ..Default::default()
     };
-    inputs.fields.insert(CAPACITANCE, ("100u".into(), Some(100e-6)));
+    inputs
+        .fields
+        .insert(CAPACITANCE, ("100u".into(), Some(100e-6)));
     inputs.fields.insert(VOLTAGE, ("25".into(), Some(25.0)));
     inputs
 }
@@ -837,8 +839,8 @@ fn stripe(layout: &MarkingLayout) -> Option<([f64; 2], [f64; 2])> {
 /// the negative lead's side, which is the chart's ±edge, and the µF and V
 /// lines centre opposite it.
 #[test]
-fn an_electrolytic_marking_follows_its_values_with_the_stripe_on_the_negative_side()
--> Fallible<()> {
+fn an_electrolytic_marking_follows_its_values_with_the_stripe_on_the_negative_side() -> Fallible<()>
+{
     let r = 2.5;
     let w = std::f64::consts::TAU * r;
     let chart = Chart::Wrap {
@@ -864,9 +866,14 @@ fn an_electrolytic_marking_follows_its_values_with_the_stripe_on_the_negative_si
     }
     // A new value is a new marking.
     let mut inputs = electrolytic_inputs(chart, [w, 6.0]);
-    inputs.fields.insert(CAPACITANCE, ("4.7u".into(), Some(4.7e-6)));
+    inputs
+        .fields
+        .insert(CAPACITANCE, ("4.7u".into(), Some(4.7e-6)));
     inputs.fields.insert(VOLTAGE, ("63".into(), Some(63.0)));
-    assert_eq!(texts(&layout(&electrolytic_spec(), &inputs)?), ["4.7µF", "63V"]);
+    assert_eq!(
+        texts(&layout(&electrolytic_spec(), &inputs)?),
+        ["4.7µF", "63V"]
+    );
     // A seam turned a quarter round moves the stripe with angle 0.
     let turned = Chart::Wrap {
         radius_mm: r,
@@ -885,7 +892,10 @@ fn an_electrolytic_marking_follows_its_values_with_the_stripe_on_the_negative_si
         along_u: false,
     };
 
-    let laid = layout(&electrolytic_spec(), &electrolytic_inputs(away, [w / 2.0, 6.0]))?;
+    let laid = layout(
+        &electrolytic_spec(),
+        &electrolytic_inputs(away, [w / 2.0, 6.0]),
+    )?;
     assert!(stripe(&laid).is_none());
     assert!(finding_codes(&laid).contains(&"marking.unrepresentable"));
     // Flat (an SMD can's top): a band at the +x end.
@@ -938,7 +948,10 @@ fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fal
             _ => None,
         })
         .ok_or("code")?;
-    assert_eq!(symbol, super::matrix::encode(Symbology::Qr, "R1:A7", Ecc::Medium)?);
+    assert_eq!(
+        symbol,
+        super::matrix::encode(Symbology::Qr, "R1:A7", Ecc::Medium)?
+    );
     assert!((module * f64::from(symbol.size) - 4.0).abs() < 1e-12);
     // At the +x end with its quiet zone inside the area.
     let quiet = 4.0 * module;

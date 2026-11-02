@@ -306,7 +306,7 @@ pub fn polarity(mark: PolarityMark, origin: [f64; 2], size: [f64; 2]) -> Result<
     checked_box(origin, size)?;
     Ok(match mark {
         PolarityMark::Dot => circle(origin, size[0].min(size[1]) / 2.0, DOT_SEGMENTS),
-        PolarityMark::Bar | PolarityMark::Band => rect(origin, size),
+        PolarityMark::Bar | PolarityMark::Band | PolarityMark::Stripe => rect(origin, size),
     })
 }
 

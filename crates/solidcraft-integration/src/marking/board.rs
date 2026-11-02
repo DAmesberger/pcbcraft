@@ -1,26 +1,36 @@
-//! Marking decals placed on built models: each marked instance's top face
-//! found in the built display geometry (so it follows every model family,
-//! generated or envelope, and every placement rule of the board build),
-//! its decal taken from the [`DecalCache`] and placed there as display
-//! geometry with the instance's pick identity, so it hides with the
-//! component bodies and highlights with its part.
+//! Marking decals placed on built models: each marked instance's surfaces
+//! found in the built display geometry or from its package's named
+//! anchors, its decals taken from the [`DecalCache`] and placed there as
+//! display geometry with the instance's pick identity, so they hide with
+//! the component bodies and highlight with their part.
 //!
-//! The marked face is the outward flat face of the instance's outermost
-//! package body (the moulding, ceramic or overcoat; never a lead, a
-//! termination or solder): the top for a part on the top side, the
-//! underside's outer face for one on the bottom. Its u axis is the
-//! package +x as placed, turned by the placement angle.
-use super::{DecalCache, DecalMesh, band_surface, finish_detail, finish_surface, place};
+//! Surfaces ([`Placement::on`]):
+//! - **Model**: the outward flat face of the instance's outermost package
+//!   body (the moulding, ceramic or overcoat; never a lead, a termination
+//!   or solder): the top for a part on the top side, the underside's outer
+//!   face for one on the bottom; its u axis the package +x as placed;
+//! - **a box face** of the outermost body along that face's direction in
+//!   the package frame, found in the built mesh, so it follows imported
+//!   models too;
+//! - **a named anchor** of the package form (`can_top`, `pcb_top`,
+//!   `sleeve`, …), exact from the form, moved with the instance's model:
+//!   by the placement of its shared definition mesh, which is the model
+//!   frame as placed (the package placement, the board joint and side).
+use super::map::SurfaceMap;
+use super::{DecalCache, DecalMesh, Ink, Region, finish_detail, ink_surface, place_on};
 use crate::material::{BodyKind, Detail};
 use crate::project::Source;
-use crate::scene::Geometry;
+use crate::scene::{Geometry, Place};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::ids::{ContentHash, Id};
-use pcbcraft_core::library::marking::MarkingLayout;
+use pcbcraft_core::library::PackageDefinition;
+use pcbcraft_core::library::marking::surface::{self, CylinderArea, SurfaceGeometry};
+use pcbcraft_core::library::marking::{BoxFace, MarkingLayout, Placement, SurfaceRef};
 use pcbcraft_core::library::model3d::MarkingArea;
 use pcbcraft_core::{Layer, Project};
 use solidcraft_engine::geom::{Mesh, Vec3};
+use solidcraft_engine::render::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -30,7 +40,7 @@ pub const DECAL_KIND: BodyKind = BodyKind::Marking;
 /// A face is flat when its triangles' normals are this close to the
 /// face normal (cosine).
 const FLAT_COS: f64 = 0.999;
-/// Vertices this close to the outermost height lie on the face, mm.
+/// Vertices this close to the outermost reach lie on the face, mm.
 const FACE_EPS_MM: f64 = 1e-4;
 /// Media type of SVG artwork assets.
 const SVG_MEDIA_TYPE: &str = pcbcraft_core::library::marking::ARTWORK_MEDIA_TYPE;
@@ -48,24 +58,58 @@ fn printable(kind: BodyKind) -> bool {
     )
 }
 
+fn vec3(a: [f64; 3]) -> Vec3 {
+    Vec3::new(a[0], a[1], a[2])
+}
+
+fn arr(v: Vec3) -> [f64; 3] {
+    [v.x, v.y, v.z]
+}
+
 /// The marked face of `bodies` facing `up` (+z or −z), with `u` (in plan)
 /// as its u axis: the flat face of the outermost body at its outermost
 /// height, sized by its extent along u and `normal × u`.
 pub fn face_area(bodies: &[&Geometry], up: bool, u: [f64; 2]) -> Option<MarkingArea> {
     let s = if up { 1.0 } else { -1.0 };
-    // The outermost reach along the face normal.
-    let outer = bodies
-        .iter()
-        .max_by(|a, b| (s * reach(a, up)).total_cmp(&(s * reach(b, up))))?;
-    let height = reach(outer, up);
-    let n = Vec3::new(0.0, 0.0, s);
+    face_towards(bodies, [0.0, 0.0, s], [u[0], u[1], 0.0]).map(|(area, _)| area)
+}
+
+/// The flat face of `bodies` facing `normal` (a unit vector), with `u` as
+/// its u axis (made square to the normal): the face of the outermost body
+/// along `normal` at its outermost reach, sized by its extent along u and
+/// `normal × u`, with that body's look.
+pub fn face_towards(
+    bodies: &[&Geometry],
+    normal: [f64; 3],
+    u: [f64; 3],
+) -> Option<(MarkingArea, OpaqueSurface)> {
+    let n = vec3(normal);
+    let nl = n.dot(n).sqrt();
+    if !(nl.is_finite() && nl > 1e-9) {
+        return None;
+    }
+    let n = n * (1.0 / nl);
+    let reach = |g: &Geometry| {
+        (0..8)
+            .map(|k| {
+                let c = Vec3::new(
+                    if k & 1 == 0 { g.min[0] } else { g.max[0] },
+                    if k & 2 == 0 { g.min[1] } else { g.max[1] },
+                    if k & 4 == 0 { g.min[2] } else { g.max[2] },
+                );
+                c.dot(n)
+            })
+            .fold(f64::NEG_INFINITY, f64::max)
+    };
+    let outer = bodies.iter().max_by(|a, b| reach(a).total_cmp(&reach(b)))?;
+    let height = reach(outer);
     let mesh = outer.world_mesh();
     let mut on: Vec<Vec3> = Vec::new();
     for t in &mesh.triangles {
         let Some(p) = mesh.tri(t) else {
             continue;
         };
-        if p.iter().any(|q| (q.z - height).abs() > FACE_EPS_MM) {
+        if p.iter().any(|q| (q.dot(n) - height).abs() > FACE_EPS_MM) {
             continue;
         }
         let face = (p[1] - p[0]).cross(p[2] - p[0]);
@@ -74,11 +118,13 @@ pub fn face_area(bodies: &[&Geometry], up: bool, u: [f64; 2]) -> Option<MarkingA
             on.extend(p);
         }
     }
-    let ul = u[0].hypot(u[1]);
-    if on.is_empty() || !(ul.is_finite() && ul > 0.0) {
+    let u = vec3(u);
+    let u = u - n * u.dot(n);
+    let ul = u.dot(u).sqrt();
+    if on.is_empty() || !(ul.is_finite() && ul > 1e-9) {
         return None;
     }
-    let uu = Vec3::new(u[0] / ul, u[1] / ul, 0.0);
+    let uu = u * (1.0 / ul);
     let vv = n.cross(uu);
     let span = |axis: Vec3| {
         on.iter()
@@ -93,23 +139,186 @@ pub fn face_area(bodies: &[&Geometry], up: bool, u: [f64; 2]) -> Option<MarkingA
     if !(size[0] > 1e-6 && size[1] > 1e-6) {
         return None;
     }
-    let centre = uu * ((u0 + u1) / 2.0) + vv * ((v0 + v1) / 2.0);
-    Some(MarkingArea {
-        origin: [centre.x, centre.y, height],
-        normal: [n.x, n.y, n.z],
-        u_axis: [uu.x, uu.y, uu.z],
-        size_mm: size,
-    })
+    let centre = uu * ((u0 + u1) / 2.0) + vv * ((v0 + v1) / 2.0) + n * height;
+    Some((
+        MarkingArea {
+            origin: arr(centre),
+            normal: arr(n),
+            u_axis: arr(uu),
+            size_mm: size,
+        },
+        outer.surface,
+    ))
 }
 
-/// A body's outermost height toward its face: its top, or its bottom.
-fn reach(g: &Geometry, up: bool) -> f64 {
-    if up { g.max[2] } else { g.min[2] }
+/// One instance's model as built: its printable bodies, the frame its
+/// model is drawn in (model → world, from a placed definition body), its
+/// side and plan u axis, and its package.
+pub struct Marked<'a> {
+    pub bodies: Vec<&'a Geometry>,
+    /// The model frame as placed; `None` falls back to the plan pose.
+    pub frame: Option<Place>,
+    pub top: bool,
+    /// The package +x as placed, in plan.
+    pub u: [f64; 2],
+    pub package: Option<&'a PackageDefinition>,
 }
 
-/// A placed decal as display geometry: one body in the finish and one per
-/// band colour, each with the pick identity `item`.
-pub fn decal_geometry(mesh: &DecalMesh, item: Option<u64>) -> Result<Vec<Geometry>> {
+impl Marked<'_> {
+    /// Package frame → world: the definition's placement, else the plan
+    /// pose (turned by the placement angle; a bottom part turned over
+    /// about x first, as the board mirrors it across x).
+    fn to_world(&self, v: [f64; 3]) -> Vec3 {
+        match &self.frame {
+            Some(place) => place.vector(vec3(v)),
+            None => {
+                let [c, s] = self.u;
+                let (x, y, z) = if self.top {
+                    (v[0], v[1], v[2])
+                } else {
+                    (v[0], -v[1], -v[2])
+                };
+                Vec3::new(c * x - s * y, s * x + c * y, z)
+            }
+        }
+    }
+
+    fn point(&self, p: [f64; 3]) -> Option<Vec3> {
+        self.frame.as_ref().map(|place| place.point(vec3(p)))
+    }
+
+    /// The look of the body nearest `p` (for an engraving).
+    fn base_near(&self, p: Vec3) -> Option<OpaqueSurface> {
+        let gap = |g: &Geometry| {
+            let d: f64 = (0..3)
+                .map(|k| {
+                    let v = [p.x, p.y, p.z][k];
+                    (g.min[k] - v).max(v - g.max[k]).max(0.0).powi(2)
+                })
+                .sum();
+            d
+        };
+        self.bodies
+            .iter()
+            .min_by(|a, b| gap(a).total_cmp(&gap(b)))
+            .map(|g| g.surface)
+    }
+
+    /// The surface `placement` names, its map and region in world, and
+    /// the face's own look; `None` when the model has no such surface.
+    pub fn resolve(
+        &self,
+        placement: &Placement,
+    ) -> Option<(SurfaceMap, Region, Option<OpaqueSurface>)> {
+        match &placement.on {
+            SurfaceRef::Model => {
+                let s = if self.top { 1.0 } else { -1.0 };
+                let (area, look) =
+                    face_towards(&self.bodies, [0.0, 0.0, s], [self.u[0], self.u[1], 0.0])?;
+                Some((
+                    SurfaceMap::plane(&area).ok()?,
+                    Region::plane(area.size_mm),
+                    Some(look),
+                ))
+            }
+            SurfaceRef::Face { face } => {
+                let (n, u) = face.frame();
+                let (area, look) =
+                    face_towards(&self.bodies, arr(self.to_world(n)), arr(self.to_world(u)))?;
+                Some((
+                    SurfaceMap::plane(&area).ok()?,
+                    Region::plane(area.size_mm),
+                    Some(look),
+                ))
+            }
+            SurfaceRef::Anchor { name } => {
+                let found = surface::anchor_of(&self.package?.form, name)?;
+                let world = |p: [f64; 3]| match self.point(p) {
+                    Some(q) => Some(q),
+                    // Unplaced (a preview drawn in its model frame).
+                    None if self.frame.is_none() => Some(vec3(p)),
+                    None => None,
+                };
+                let dir = |v: [f64; 3]| match &self.frame {
+                    Some(place) => place.vector(vec3(v)),
+                    None => vec3(v),
+                };
+                match found.geometry {
+                    SurfaceGeometry::Plane(a) => {
+                        let origin = world(a.origin)?;
+                        let area = MarkingArea {
+                            origin: arr(origin),
+                            normal: arr(dir(a.normal)),
+                            u_axis: arr(dir(a.u_axis)),
+                            size_mm: a.size_mm,
+                        };
+                        let look = self.base_near(origin);
+                        Some((
+                            SurfaceMap::plane(&area).ok()?,
+                            Region::plane(a.size_mm),
+                            look,
+                        ))
+                    }
+                    SurfaceGeometry::Cylinder(c) => {
+                        let cylinder = CylinderArea {
+                            base: arr(world(c.base)?),
+                            axis: arr(dir(c.axis)),
+                            zero: arr(dir(c.zero)),
+                            ..c
+                        };
+                        let wrap = placement.wrap.unwrap_or_default();
+                        let chart = cylinder.chart(&wrap)?;
+                        let region = Region::wrap(&cylinder, &chart);
+                        let mid = vec3(cylinder.base) + vec3(cylinder.axis) * chart.mid;
+                        let look = self.base_near(mid);
+                        Some((SurfaceMap::cylinder(cylinder, chart).ok()?, region, look))
+                    }
+                }
+            }
+        }
+    }
+
+    /// The decals of `layout` and its further decals on this model,
+    /// from `cache`; a decal whose surface is missing or that cannot be
+    /// drawn is left out, with why.
+    pub fn decals(
+        &self,
+        layout: &MarkingLayout,
+        item: Option<u64>,
+        cache: &mut DecalCache,
+        artwork: super::ArtworkSource<'_>,
+    ) -> (Vec<Geometry>, Vec<String>) {
+        let mut out = Vec::new();
+        let mut problems = Vec::new();
+        for (k, laid) in layout.all().enumerate() {
+            if laid.elements.is_empty() {
+                continue;
+            }
+            let Some((map, region, look)) = self.resolve(&laid.placement) else {
+                problems.push(format!("decal {k}: the model has no such surface to mark"));
+                continue;
+            };
+            let placed = cache
+                .flat_in(laid, &region, artwork)
+                .and_then(|flat| place_on(&flat, &map))
+                .and_then(|mesh| decal_geometry(&mesh, item, look));
+            match placed {
+                Ok(bodies) => out.extend(bodies),
+                Err(error) => problems.push(format!("decal {k}: {error}")),
+            }
+        }
+        (out, problems)
+    }
+}
+
+/// A placed decal as display geometry: one body per ink (the finish,
+/// band colours, artwork colours, an engraving's walls), each with the
+/// pick identity `item`. `base` is the look of the face it sits on.
+pub fn decal_geometry(
+    mesh: &DecalMesh,
+    item: Option<u64>,
+    base: Option<OpaqueSurface>,
+) -> Result<Vec<Geometry>> {
     let triangle = |k: usize| -> Option<[u32; 3]> {
         Some([
             *mesh.indices.get(3 * k)?,
@@ -118,33 +327,30 @@ pub fn decal_geometry(mesh: &DecalMesh, item: Option<u64>) -> Result<Vec<Geometr
         ])
     };
     let count = mesh.triangle_count();
-    let mut banded = vec![None::<u8>; count];
-    for run in &mesh.bands {
+    let mut inks = vec![Ink::Finish; count];
+    for run in &mesh.runs {
         let end = (run.indices.end / 3).min(count);
-        for slot in banded.iter_mut().take(end).skip(run.indices.start / 3) {
-            *slot = Some(run.colour);
+        for slot in inks.iter_mut().take(end).skip(run.indices.start / 3) {
+            *slot = run.ink;
         }
     }
-    let mut groups: BTreeMap<Option<u8>, Vec<[u32; 3]>> = BTreeMap::new();
-    for (k, colour) in banded.iter().enumerate() {
+    let mut groups: BTreeMap<Ink, Vec<[u32; 3]>> = BTreeMap::new();
+    for (k, ink) in inks.iter().enumerate() {
         if let Some(t) = triangle(k) {
-            groups.entry(*colour).or_default().push(t);
+            groups.entry(*ink).or_default().push(t);
         }
     }
-    let normal = Vec3::new(
-        f64::from(mesh.normal[0]),
-        f64::from(mesh.normal[1]),
-        f64::from(mesh.normal[2]),
-    );
     let mut out = Vec::with_capacity(groups.len());
-    for (colour, triangles) in groups {
-        let (surface, detail) = match colour {
-            None => (finish_surface(mesh.finish)?, finish_detail(mesh.finish)?),
-            Some(c) => (band_surface(c)?, Detail::NONE),
+    for (ink, triangles) in groups {
+        let surface = ink_surface(ink, mesh.finish, base)?;
+        let detail = match ink {
+            Ink::Finish | Ink::Srgb(_) => finish_detail(mesh.finish)?,
+            Ink::Band(_) | Ink::Wall => Detail::NONE,
         };
         // Each body keeps only the vertices its triangles use.
         let mut remap: BTreeMap<u32, u32> = BTreeMap::new();
         let mut positions: Vec<Vec3> = Vec::new();
+        let mut normals: Vec<Vec3> = Vec::new();
         let mut local = Vec::with_capacity(triangles.len());
         for t in triangles {
             let mut l = [0u32; 3];
@@ -154,14 +360,17 @@ pub fn decal_geometry(mesh: &DecalMesh, item: Option<u64>) -> Result<Vec<Geometr
                 *slot = match remap.get(&i) {
                     Some(j) => *j,
                     None => {
-                        let p = mesh.positions.get(i as usize).ok_or_else(|| {
+                        let bad = || {
                             Error::Invalid("marking decal: a triangle index is out of range".into())
-                        })?;
+                        };
+                        let p = mesh.positions.get(i as usize).ok_or_else(bad)?;
+                        let n = mesh.normals.get(i as usize).ok_or_else(bad)?;
                         positions.push(Vec3::new(
                             f64::from(p[0]),
                             f64::from(p[1]),
                             f64::from(p[2]),
                         ));
+                        normals.push(Vec3::new(f64::from(n[0]), f64::from(n[1]), f64::from(n[2])));
                         remap.insert(i, next);
                         next
                     }
@@ -170,7 +379,7 @@ pub fn decal_geometry(mesh: &DecalMesh, item: Option<u64>) -> Result<Vec<Geometr
             local.push(l);
         }
         let display = Mesh {
-            normals: vec![normal; positions.len()],
+            normals,
             tri_face: vec![0; local.len()],
             positions,
             triangles: local,
@@ -259,7 +468,7 @@ pub fn instance_layouts(project: &Project) -> InstanceLayouts {
     for placement in &project.placements {
         let instance = placement.instance;
         match pcbcraft_core::commands::instance_marking(project, instance) {
-            Ok(Some(layout)) if !layout.elements.is_empty() => {
+            Ok(Some(layout)) if !layout.is_blank() => {
                 out.layouts.insert(instance, layout);
             }
             Ok(_) => {}
@@ -269,10 +478,20 @@ pub fn instance_layouts(project: &Project) -> InstanceLayouts {
     out
 }
 
-/// The decals of a built board: one per placed instance with a layout in
-/// `layouts`, on its marked face, as display geometry carrying the
-/// instance's pick identity. An instance whose face or decal cannot be
-/// made shows no marking. Unused cache entries are swept.
+/// The package an instance is built with, if it resolves.
+fn package_of(project: &Project, instance: Id) -> Option<&PackageDefinition> {
+    let target = project.instance(instance)?;
+    let component = project.library.component(target.component)?;
+    let choice = target.physical?;
+    pcbcraft_core::instances::resolve_physical(&project.library, &component.definition, choice)
+        .ok()
+        .map(|view| &view.package.definition)
+}
+
+/// The decals of a built board: each placed instance with a layout in
+/// `layouts`, on its surfaces, as display geometry carrying the
+/// instance's pick identity. A decal whose surface or mesh cannot be made
+/// is left out and reported. Unused cache entries are swept.
 pub fn board_decals(
     project: &Project,
     geometry: &[Geometry],
@@ -280,65 +499,133 @@ pub fn board_decals(
     layouts: &BTreeMap<Id, MarkingLayout>,
     cache: &mut DecalCache,
 ) -> Vec<Geometry> {
+    board_decals_reporting(project, geometry, sources, layouts, cache).0
+}
+
+/// [`board_decals`] with the instances whose decals were left out, why.
+pub fn board_decals_reporting(
+    project: &Project,
+    geometry: &[Geometry],
+    sources: &[Source],
+    layouts: &BTreeMap<Id, MarkingLayout>,
+    cache: &mut DecalCache,
+) -> (Vec<Geometry>, Vec<(Id, String)>) {
     let artwork = project_artwork(project);
     let mut out = Vec::new();
+    let mut problems = Vec::new();
+    // Bodies by pick, so each instance finds its own without a scan.
+    let mut by_pick: BTreeMap<u64, Vec<&Geometry>> = BTreeMap::new();
+    for g in geometry.iter().filter(|g| printable(g.kind)) {
+        if let Some(item) = g.item {
+            by_pick.entry(item).or_default().push(g);
+        }
+    }
+    let mut picks: BTreeMap<Id, BTreeSet<u64>> = BTreeMap::new();
+    for s in sources {
+        if let Some(instance) = s.instance
+            && s.pad.is_none()
+            && s.track.is_none()
+            && s.via.is_none()
+        {
+            picks.entry(instance).or_default().insert(s.pick_id);
+        }
+    }
     for placement in &project.placements {
         let Some(layout) = layouts.get(&placement.instance) else {
             continue;
         };
         // The instance's body picks: its model or envelope, not its pads.
-        let picks: BTreeSet<u64> = sources
-            .iter()
-            .filter(|s| {
-                s.instance == Some(placement.instance)
-                    && s.pad.is_none()
-                    && s.track.is_none()
-                    && s.via.is_none()
-            })
-            .map(|s| s.pick_id)
+        let bodies: Vec<&Geometry> = picks
+            .get(&placement.instance)
+            .into_iter()
+            .flatten()
+            .filter_map(|p| by_pick.get(p))
+            .flatten()
+            .copied()
             .collect();
-        let bodies: Vec<&Geometry> = geometry
-            .iter()
-            .filter(|g| printable(g.kind) && g.item.is_some_and(|i| picks.contains(&i)))
-            .collect();
-        let (c, s) = cos_sin(placement.rotation_deg);
-        let Some(area) = face_area(&bodies, placement.layer == Layer::Top, [c, s]) else {
+        if bodies.is_empty() {
             continue;
-        };
-        let item = bodies.iter().find_map(|g| g.item);
-        let placed = cache
-            .flat(placement.instance, layout, area.size_mm, &artwork)
-            .and_then(|flat| place(&flat, &area))
-            .and_then(|mesh| decal_geometry(&mesh, item));
-        if let Ok(bodies) = placed {
-            out.extend(bodies);
         }
+        let (c, s) = cos_sin(placement.rotation_deg);
+        let marked = Marked {
+            frame: bodies.iter().find_map(|g| g.place),
+            bodies,
+            top: placement.layer == Layer::Top,
+            u: [c, s],
+            package: package_of(project, placement.instance),
+        };
+        let item = marked.bodies.iter().find_map(|g| g.item);
+        let (decals, why) = marked.decals(layout, item, cache, &artwork);
+        out.extend(decals);
+        problems.extend(why.into_iter().map(|w| (placement.instance, w)));
     }
     cache.sweep();
-    out
+    (out, problems)
 }
 
-/// The decal of `layout` on a package preview (Component 3D): on the top
-/// face of the preview's outermost package body, +x along the package.
+/// The decal of `layout` on a package preview (Component 3D): its
+/// surfaces on the preview's bodies in their model frame, +x along the
+/// package. Errors when nothing at all could be drawn.
 pub fn preview_decal(
     layout: &MarkingLayout,
     geometry: &[Geometry],
     artwork: super::ArtworkSource<'_>,
 ) -> Result<Vec<Geometry>> {
+    let mut cache = DecalCache::default();
+    let (out, problems) = preview_decals(layout, geometry, None, artwork, &mut cache);
+    if out.is_empty()
+        && let Some(problem) = problems.into_iter().next()
+    {
+        return Err(Error::Invalid(format!("marking decal: {problem}")));
+    }
+    Ok(out)
+}
+
+/// The decals of `layout` and its further decals on a package preview of
+/// `package` (Component 3D), from `cache`, and why any were left out. The
+/// preview is drawn in its model frame, so anchors need no placement.
+pub fn preview_decals(
+    layout: &MarkingLayout,
+    geometry: &[Geometry],
+    package: Option<&PackageDefinition>,
+    artwork: super::ArtworkSource<'_>,
+    cache: &mut DecalCache,
+) -> (Vec<Geometry>, Vec<String>) {
     let bodies: Vec<&Geometry> = geometry.iter().filter(|g| printable(g.kind)).collect();
-    let area = face_area(&bodies, true, [1.0, 0.0]).ok_or_else(|| {
-        Error::Invalid("marking decal: the model has no flat top face to mark".into())
-    })?;
     let item = bodies.iter().find_map(|g| g.item);
-    let mesh = super::decal_with(layout, &area, artwork)?;
-    decal_geometry(&mesh, item)
+    let marked = Marked {
+        frame: bodies.iter().find_map(|g| g.place),
+        bodies,
+        top: true,
+        u: [1.0, 0.0],
+        package,
+    };
+    let out = marked.decals(layout, item, cache, artwork);
+    cache.sweep();
+    out
+}
+
+/// The box face named by `face` exists on every model with bodies; this
+/// lists the faces and named anchors a package offers, for the UI and
+/// agents.
+pub fn surfaces(package: Option<&PackageDefinition>) -> Vec<SurfaceRef> {
+    let mut out = vec![SurfaceRef::Model];
+    out.extend(BoxFace::ALL.map(|face| SurfaceRef::Face { face }));
+    if let Some(package) = package {
+        out.extend(
+            surface::anchors(&package.form)
+                .into_iter()
+                .map(|a| SurfaceRef::Anchor { name: a.name }),
+        );
+    }
+    out
 }
 
 /// The marking decals of successive builds of one board, for the model
-/// worker: it keeps the per-instance [`DecalCache`] between builds, so a
-/// rebuild after a value change refills only the changed instance's decal.
-/// The decals are appended to the built display geometry; they never enter
-/// the native model or its saved file.
+/// worker: it keeps the [`DecalCache`] between builds, so a rebuild after
+/// a value change refills only the changed decal. The decals are appended
+/// to the built display geometry; they never enter the native model or
+/// its saved file.
 #[derive(Default)]
 pub struct BoardMarkings {
     cache: DecalCache,
@@ -360,11 +647,14 @@ impl BoardMarkings {
             self.cache.sweep();
             return Vec::new();
         }
-        board_decals(project, geometry, sources, &layouts, &mut self.cache)
+        let (out, problems) =
+            board_decals_reporting(project, geometry, sources, &layouts, &mut self.cache);
+        self.failures.extend(problems);
+        out
     }
 
-    /// The instances of the last build whose marking could not be laid
-    /// out, with why.
+    /// The instances of the last build whose marking (or one of its
+    /// decals) could not be drawn, with why.
     pub fn failures(&self) -> &[(Id, String)] {
         &self.failures
     }

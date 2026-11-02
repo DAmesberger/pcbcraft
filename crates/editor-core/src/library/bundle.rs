@@ -549,7 +549,9 @@ fn marking_refs(spec: &mut super::marking::MarkingSpec, map: &mut dyn RefMap) ->
                 capacitance,
                 voltage,
                 ..
-            } => std::iter::once(capacitance).chain(voltage.as_mut()).collect(),
+            } => std::iter::once(capacitance)
+                .chain(voltage.as_mut())
+                .collect(),
             MarkingItem::Text { .. }
             | MarkingItem::Code2d { .. }
             | MarkingItem::Artwork { .. }

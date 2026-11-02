@@ -604,7 +604,9 @@ pub fn surface_region(
             let package = package?;
             let envelope = package.form.envelope().unwrap_or(package.envelope);
             let size = face.of_box(envelope).size_mm;
-            size.iter().all(|s| positive(*s)).then_some((size, Chart::Flat))
+            size.iter()
+                .all(|s| positive(*s))
+                .then_some((size, Chart::Flat))
         }
         SurfaceRef::Anchor { name } => {
             let found = surface::anchor_of(&package?.form, name)?;
@@ -612,7 +614,6 @@ pub fn surface_region(
         }
     }
 }
-
 
 fn positive(value: f64) -> bool {
     value.is_finite() && value > 0.0 && value <= MAX_AREA_MM
@@ -623,7 +624,9 @@ fn positive(value: f64) -> bool {
 pub fn spec_findings(owner: DefinitionId, spec: &MarkingSpec) -> Vec<Finding> {
     let mut problems = Vec::new();
     if spec.decals.len() > MAX_DECALS {
-        problems.push(format!("a marking carries at most {MAX_DECALS} further decals"));
+        problems.push(format!(
+            "a marking carries at most {MAX_DECALS} further decals"
+        ));
     }
     if spec.decals.iter().any(|d| !d.decals.is_empty()) {
         problems.push("a marking's decals carry no decals of their own".into());

@@ -44,6 +44,10 @@ pub const SCALE: std::ops::RangeInclusive<f64> = 0.05..=20.0;
 /// Clear margin a module's can-top anchor keeps from the can's rounded
 /// edge, mm (its bend radius, est.).
 pub const CAN_EDGE_MM: f64 = 0.3;
+/// Thickness of a generated module's pads under its board, mm (est.:
+/// ENIG over 35 µm copper); the module model builder stands the board on
+/// them, so the board's top is this plus its thickness.
+pub const MODULE_PAD_MM: f64 = 0.035;
 /// The share of a round can top's diameter the `top` anchor's rectangle
 /// spans across and along (a rectangle inscribed in the disc).
 const DISC_RECT: [f64; 2] = [0.8, 0.6];
@@ -365,7 +369,8 @@ impl CylinderArea {
     /// within half a turn of the chart centre.
     pub fn surface_to_chart(&self, chart: &WrapChart, theta: f64, t: f64) -> [f64; 2] {
         let tau = std::f64::consts::TAU;
-        let d = (theta - chart.centre + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
+        let d =
+            (theta - chart.centre + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
         let arc = d * self.radius;
         if self.along_u {
             [t - chart.mid, -arc]
@@ -458,7 +463,8 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
     match form {
         PackageForm::Module(m) => {
             let top = m.height;
-            let pcb = m.pcb_thickness;
+            // The board stands on its pads; its top is the can's seat.
+            let pcb = MODULE_PAD_MM + m.pcb_thickness;
             let [cw, cl] = m.can_size;
             let [cx, cy] = m.can_centre;
             let inset = 2.0 * CAN_EDGE_MM;
@@ -729,7 +735,7 @@ mod tests {
         };
         // The can ends at y = −2.5 + 8.7 = 6.2; the board at 12.5.
         assert!((pcb.size_mm[1] - (12.5 - 6.2)).abs() < 1e-9);
-        assert!((pcb.origin[2] - m.pcb_thickness).abs() < 1e-12);
+        assert!((pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness)).abs() < 1e-12);
         assert!((pcb.origin[1] - (6.2 + 12.5) / 2.0).abs() < 1e-9);
         Ok(())
     }
