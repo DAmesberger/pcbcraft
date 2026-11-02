@@ -24,6 +24,7 @@ pub mod pinout;
 mod publish;
 pub mod samples;
 mod symbol;
+pub mod symbol_style;
 pub mod templates;
 
 pub use binding::{BindingDefinition, TerminalMap};

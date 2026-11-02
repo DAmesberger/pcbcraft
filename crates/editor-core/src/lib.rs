@@ -321,7 +321,7 @@ impl Engine {
         for part in samples::showcase_parts() {
             let lineages = engine.reserve_lineages()?;
             let mut part_edits =
-                samples::packaged_form(part.name, part.form, part.prefix, lineages);
+                samples::packaged_symbol(part.name, part.form, part.prefix, part.symbol, lineages);
             samples::trim_heels(&mut part_edits, part.heel_trim_mm);
             if part.pin_one {
                 samples::mark_pin_one(&mut part_edits);

@@ -2,6 +2,7 @@
 //! neither revalidates the project nor changes the board model. Only
 //! persistence bounds and finite geometry are enforced.
 use super::graphics::Grid;
+use super::symbol_style::SymbolConventions;
 use super::{Definition, DefinitionMeta, Library, check_bounds};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{DefinitionId, DefinitionKind, Revision};
@@ -20,6 +21,10 @@ pub struct Drafts {
     /// The authoring grid: saved and undoable with the drafts, never part of
     /// revision data.
     pub grid: Grid,
+    /// How generated symbols are drawn (the resistor style): an authoring
+    /// setting saved and undoable with the drafts, never revision data.
+    #[serde(default, skip_serializing_if = "SymbolConventions::is_default")]
+    pub symbols: SymbolConventions,
 }
 
 /// At most one draft per lineage. Its pending revision is `base + 1`, or 1.

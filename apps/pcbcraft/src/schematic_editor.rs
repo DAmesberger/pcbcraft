@@ -3010,9 +3010,11 @@ mod tests {
             .filter(|(_, p)| p.x < 800.0)
             .map(|(t, _)| t)
             .collect();
-        for text in ["R1", "R2", "Resistor", "10 kΩ", "1", "2"] {
+        for text in ["R1", "R2", "Resistor", "10 kΩ"] {
             assert!(canvas.iter().any(|t| t == text), "{text} in {canvas:?}");
         }
+        // Two-terminal passives hide their pin numbers.
+        assert!(!canvas.iter().any(|t| t == "1" || t == "2"), "{canvas:?}");
         // 12 px/mm about the canvas centre (400, 400): R1 sits at (−12, 0).
         let r1_body = pos2(400.0 - 12.0 * 12.0, 400.0);
         click_at(&mut editor, &engine, &ctx, r1_body);

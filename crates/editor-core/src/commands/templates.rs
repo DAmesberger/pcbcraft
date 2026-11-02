@@ -46,7 +46,13 @@ pub(crate) fn new_from_template(
         binding: BindingRef::new(binding, Revision::FIRST),
     };
     let rules = project.rules.effective();
-    let edits = catalog::new_from_template_with(&project.library, &request, refs, &rules)?;
+    let edits = catalog::new_from_template_with(
+        &project.library,
+        &request,
+        refs,
+        &rules,
+        document.drafts.symbols,
+    )?;
     let drafts = Arc::make_mut(&mut document.drafts);
     for edit in edits {
         drafts::create(

@@ -2823,11 +2823,13 @@ mod draft_tests {
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        // The designator placeholder reads prefix + "?"; numbers come from
-        // the working binding; the shown field reads its name (no default).
-        for text in ["R?", "Resistor", "1", "2", "Resistance"] {
+        // The designator placeholder reads prefix + "?"; the shown field
+        // reads its name (no default). A two-terminal passive hides its pin
+        // numbers.
+        for text in ["R?", "Resistor", "Resistance"] {
             assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
         }
+        assert!(!shown.iter().any(|t| t == "1" || t == "2"), "{shown:?}");
         // The view fits the drawn bounds about the origin (3 mm margin).
         let set = editor.draft.as_ref().ok_or("no draft")?;
         let bounds = schematic::definition_unit(
