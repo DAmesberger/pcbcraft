@@ -17,6 +17,12 @@ A package refers to one exact template revision and gives it parameter values. P
 
 Vocabulary: "template" already names package-row templates, footprint templates and the template gallery ([glossary](../GLOSSARY.md)). This note always says **part template**. In code the names are `PartTemplate…`, and in commands `part_template`.
 
+**Status (founder, 2 November 2026): paused.** The design and the spike are kept, and nothing further is built until the founder resumes the work. Push-and-shove and the ESP32 reference board come first. The founder decided:
+
+- the open questions on keeping typed forms as views, metadata over a format change, derived pads, generic authoring panels and vendor STEP with a recorded licence go as recommended;
+- release 1 varies instances by **render-time markings only**, with no per-instance geometry overrides (the `instance` binding of D5 is deferred);
+- upstream PRs are approved to *prepare* (§8), starting with the **photoreal look** rather than the performance work. Each PR still needs the founder's OK before it is opened.
+
 ## 1. Decisions
 
 | # | Decision | Why |
