@@ -113,6 +113,13 @@ fn unlocked(project: &mut Project, id: Id) -> Result<&mut Via> {
     Ok(via)
 }
 
+/// Move an unlocked via without checking it; the caller checks it once
+/// the rest of its edit is in place.
+pub(super) fn place(project: &mut Project, id: Id, position: Point) -> Result<()> {
+    unlocked(project, id)?.position = position;
+    Ok(())
+}
+
 pub(super) fn move_to(project: &mut Project, id: Id, position: Point) -> Result<()> {
     unlocked(project, id)?.position = position;
     check_clearance(project, id)

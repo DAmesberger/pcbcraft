@@ -434,6 +434,31 @@ pub fn step(request: &PairStepRequest) -> PairStep {
     }
 }
 
+/// A pair step along an explicit centre line `line` (from the head's
+/// centre, no layer change): the router's walkaround lays both halves
+/// along the path it found. `request.via` is ignored.
+pub fn step_along(request: &PairStepRequest, line: &[Point]) -> PairStep {
+    let mut b = Builder {
+        nets: request.nets,
+        edits: RouteEditSet::default(),
+    };
+    let head = run(
+        &mut b,
+        line,
+        request.layer,
+        request.style,
+        request.head,
+        request.last.as_ref(),
+        request.finish,
+        None,
+    );
+    PairStep {
+        edits: b.edits,
+        head,
+        layer: request.layer,
+    }
+}
+
 /// The pair `pair`'s style on `layer` from the rules
 /// (`impedance::pair_width_gap`), fanning out at `fan_width`.
 pub fn style(project: &Project, positive: Id, layer: CopperLayer) -> PairStyle {

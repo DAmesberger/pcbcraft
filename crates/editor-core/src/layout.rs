@@ -35,6 +35,7 @@ pub mod outline;
 pub mod pair;
 mod placed;
 pub mod posture;
+pub mod router;
 pub mod showcase;
 pub mod via;
 #[cfg(test)]
@@ -142,9 +143,18 @@ pub enum LayoutCommand {
     /// the track clearance apart; refused when no meander fits.
     #[serde(rename = "layout.tune_length")]
     TuneLength { request: meander::TuneRequest },
+    /// One interactive route step in a routing mode (`layout::router`):
+    /// `ignore` routes straight (refused on a clearance violation), `walkaround`
+    /// goes round other nets' copper at the clearance, `shove` (the
+    /// default) pushes their tracks and vias aside. One undo step with
+    /// every shoved track and via; the head stops at the last legal point
+    /// when no way exists, and a step that cannot move it at all is
+    /// refused. `layout.route_preview` returns the same plan unapplied.
+    #[serde(rename = "layout.route_step")]
+    RouteStep { request: router::RouteStepRequest },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RouteRequest {
     pub net: Id,
@@ -154,10 +164,10 @@ pub struct RouteRequest {
     pub layer: CopperLayer,
 }
 
-/// A speculative edit set. A future shove strategy may replace connected tracks
-/// in the same transaction. Nothing is committed until references, locks and
+/// A speculative edit set. A shove (`router`) replaces, adds and removes
+/// other nets' tracks and moves their vias in the same transaction. Nothing is committed until references, locks and
 /// obstacle checks pass for the entire candidate.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RouteEditSet {
     pub add: Vec<RouteRequest>,
@@ -171,6 +181,24 @@ pub struct RouteEditSet {
     /// via refuses the whole edit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_vias: Vec<Id>,
+    /// Tracks put back with their former identities (undoing a shove that
+    /// merged a chain's segments): each identity must be free and issued
+    /// before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restore: Vec<Track>,
+    /// Vias moved with the tracks (a shove); a locked via refuses the
+    /// whole edit. Each is checked against other nets' copper once the
+    /// tracks are in place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub move_vias: Vec<ViaMove>,
+}
+
+/// A via's new position in a routing edit.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViaMove {
+    pub id: Id,
+    pub position: Point,
 }
 
 pub trait RoutingStrategy {
@@ -559,6 +587,16 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             let edits = pair::route(project, &request)?;
             apply_routes(project, edits)?;
         }
+        LayoutCommand::RouteStep { request } => {
+            let index = router::RouteIndex::of(project);
+            let plan = router::plan(project, &index, &request);
+            if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
+                return Err(Error::Conflict(
+                    plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
+                ));
+            }
+            apply_routes(project, plan.edits)?;
+        }
         LayoutCommand::TuneLength { request } => {
             let obstacles = obstacles::Obstacles::of(project);
             let plan = meander::plan(project, &obstacles, &request)?;
@@ -584,6 +622,8 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         + edits.remove.len()
         + edits.vias.len()
         + edits.remove_vias.len()
+        + edits.restore.len()
+        + edits.move_vias.len()
         > MAX_TRACKS
     {
         return Err(Error::Limit("routing edit exceeds prototype limit".into()));
@@ -629,6 +669,29 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     for request in &edits.add {
         check_request_with_nets(project, request, &nets)?;
     }
+    for track in &edits.restore {
+        if !touched.insert(track.id) {
+            return invalid("track appears more than once in routing edit");
+        }
+        if track.id == 0
+            || track.id >= project.next_id
+            || project.tracks.iter().any(|t| t.id == track.id)
+            || project.vias.iter().any(|v| v.id == track.id)
+        {
+            return invalid("a restored track needs a free identity issued before");
+        }
+        check_request_with_nets(project, &request_from(track), &nets)?;
+    }
+    let mut moved_vias = BTreeSet::new();
+    for moved in &edits.move_vias {
+        if !moved_vias.insert(moved.id) || edits.remove_vias.contains(&moved.id) {
+            return invalid("via appears more than once in routing edit");
+        }
+        if !point_valid(moved.position) {
+            return invalid("via coordinates must be finite");
+        }
+        via::place(project, moved.id, moved.position)?;
+    }
     let mut removed_vias = BTreeSet::new();
     for id in edits.remove_vias.iter().copied() {
         if !removed_vias.insert(id) {
@@ -653,6 +716,10 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             .find(|t| t.id == track.id)
             .ok_or_else(|| Error::NotFound("missing replacement target".into()))?;
         *target = track;
+    }
+    for track in edits.restore {
+        changed.insert(track.id);
+        project.tracks.push(track);
     }
     for request in edits.add {
         let id = project.allocate()?;
@@ -779,7 +846,7 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
             }
         }
     }
-    for id in added_vias {
+    for id in added_vias.into_iter().chain(moved_vias) {
         via::check_clearance(project, id)?;
     }
     Ok(())

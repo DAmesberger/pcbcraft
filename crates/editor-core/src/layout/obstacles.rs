@@ -34,7 +34,7 @@ pub struct Obstacle {
 }
 
 impl Obstacle {
-    fn object(&self) -> CopperObject {
+    pub(crate) fn object(&self) -> CopperObject {
         match self.kind {
             ObstacleKind::Track(_) => CopperObject::Track,
             ObstacleKind::Via(_) => CopperObject::Via,
@@ -113,6 +113,17 @@ impl Obstacles {
 
     pub fn items(&self) -> &[Obstacle] {
         &self.items
+    }
+
+    /// Every obstacle whose bounds come within the index's reach (the
+    /// largest clearance) of `bounds`, ascending, into `out`.
+    pub(crate) fn near(&self, bounds: &crate::geometry::Bounds, out: &mut Vec<usize>) {
+        self.grid.near(bounds, self.reach, out);
+    }
+
+    /// The message label of obstacle `k` ("a via on GND", "R1 pad 2 (VCC)").
+    pub(crate) fn label(&self, k: usize) -> &str {
+        self.labels.get(k).map_or("copper", String::as_str)
     }
 
     /// Every other-net obstacle on `layer` closer to a track of `net`

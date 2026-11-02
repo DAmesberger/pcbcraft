@@ -264,6 +264,13 @@ pub enum Query {
     /// uncoupled length; every length group's window.
     #[serde(rename = "layout.length_report")]
     LengthReport {},
+    /// What `layout.route_step` would do, without applying it: the edit
+    /// set (the step's copper and every shoved track and via), where the
+    /// head ends and why it stopped short.
+    #[serde(rename = "layout.route_preview")]
+    RoutePreview {
+        request: layout::router::RouteStepRequest,
+    },
     /// What `layout.tune_length` would build, without applying it.
     #[serde(rename = "layout.tune_preview")]
     TunePreview {
@@ -317,6 +324,7 @@ pub enum QueryResult {
     PairSuggestions(Vec<rules::signal::PairSuggestion>),
     LengthReport(Box<layout::length::LengthReport>),
     TunePreview(Box<layout::meander::TunePreview>),
+    RoutePreview(Box<layout::router::RoutePlan>),
     Preflight(Box<fabrication::PreflightReport>),
 }
 
@@ -1110,6 +1118,13 @@ impl Engine {
             Query::LengthReport {} => Ok(QueryResult::LengthReport(Box::new(
                 layout::length::report(&self.document.project),
             ))),
+            Query::RoutePreview { request } => {
+                let project = &self.document.project;
+                let index = layout::router::RouteIndex::of(project);
+                Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(
+                    project, &index, &request,
+                ))))
+            }
             Query::TunePreview { request } => {
                 let project = &self.document.project;
                 let obstacles = layout::obstacles::Obstacles::of(project);
