@@ -50,12 +50,12 @@ fn typing_owns_undo_and_letters_instead_of_the_project() -> Result<(), String> {
     assert!(dispatchable(save, Chord::cmd(egui::Key::S), typing, false));
     assert!(!dispatchable(
         route,
-        Chord::key(egui::Key::X),
+        Chord::key(egui::Key::R),
         typing,
         false
     ));
     assert!(
-        !dispatchable(route, Chord::key(egui::Key::X), false, true),
+        !dispatchable(route, Chord::key(egui::Key::R), false, true),
         "menu open"
     );
     let unfocused = egui::Context::default();
@@ -66,7 +66,7 @@ fn typing_owns_undo_and_letters_instead_of_the_project() -> Result<(), String> {
     );
     assert_eq!(seen, (false, vec![z]));
     assert!(dispatchable(undo, z, false, false));
-    assert!(dispatchable(route, Chord::key(egui::Key::X), false, false));
+    assert!(dispatchable(route, Chord::key(egui::Key::R), false, false));
     Ok(())
 }
 
@@ -115,7 +115,7 @@ fn ribbon_commands_dispatch_to_the_editor_and_report_why_not()
     Ok(())
 }
 
-/// Ribbon tooltips name the shortcut: "Route (X)", with the key cap and
+/// Ribbon tooltips name the shortcut: "Route (R)", with the key cap and
 /// the help line; a tool without a key keeps its plain name.
 #[test]
 fn ribbon_tooltips_include_shortcuts() -> Result<(), Box<dyn std::error::Error>> {
@@ -133,8 +133,8 @@ fn ribbon_tooltips_include_shortcuts() -> Result<(), Box<dyn std::error::Error>>
             .map(|t| crate::shell::tool_tip(t))
     };
     let route = tip("route").ok_or("route")?;
-    assert_eq!(route.title, "Route (X)");
-    assert_eq!(route.key.as_deref(), Some("X"));
+    assert_eq!(route.title, "Route (R)");
+    assert_eq!(route.key.as_deref(), Some("R"));
     assert!(route.body.contains("Route copper"));
     assert_eq!(tip("via").ok_or("via")?.title, "Via (V)");
     assert_eq!(tip("fill").ok_or("fill")?.title, "Fill (P)");

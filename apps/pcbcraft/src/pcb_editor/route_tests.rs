@@ -571,6 +571,9 @@ fn finishing_keys_end_the_route_and_the_card_lists_the_keys() -> TestResult {
     for shape in &output.shapes {
         collect(&shape.shape, &mut shown);
     }
+    let previous = crate::commands::Chord::key(egui::Key::V)
+        .with_shift()
+        .shown();
     for label in [
         "Mode",
         "45°",
@@ -578,12 +581,63 @@ fn finishing_keys_end_the_route_and_the_card_lists_the_keys() -> TestResult {
         "Via pad",
         "KEYS",
         "Backspace",
-        "V, Shift+V",
+        "V",
+        previous.as_str(),
+        "1–9",
     ] {
         assert!(
             shown.iter().any(|t| t == label),
             "{label} missing: {shown:?}"
         );
     }
+    Ok(())
+}
+
+/// The Route tool reads its keys through the registry: with Next track
+/// width rebound from W to Q, W does nothing and Q steps the width, and
+/// the card lists Q.
+#[test]
+fn a_rebound_route_key_drives_the_tool() -> TestResult {
+    let mut engine = Engine::demo()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::AddNetClass {
+            class: NetClassSpec {
+                name: "Power".into(),
+                track_width: Some(0.8),
+                ..Default::default()
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut registry = crate::commands::Registry::standard();
+    registry.rebind(
+        "route.width-next",
+        Some(crate::commands::Chord::key(egui::Key::Q)),
+    )?;
+    crate::keys::publish(&canvas.ctx, &std::sync::Arc::new(registry));
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    let first = canvas.click(&mut editor, &engine, [11.0, 11.0]);
+    canvas.apply(&mut editor, &mut engine, first)?;
+    let at = [13.0, 11.0];
+    canvas.key(
+        &mut editor,
+        &engine,
+        at,
+        egui::Key::W,
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(editor.width, 0.3, "W is no longer the width key");
+    canvas.key(
+        &mut editor,
+        &engine,
+        at,
+        egui::Key::Q,
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(editor.width, 0.8);
+    let rows = crate::keys::rows(&canvas.ctx, super::route_tool::ROUTE_KEYS);
+    assert!(rows.contains(&("Q".to_owned(), "Next track width".to_owned())));
     Ok(())
 }

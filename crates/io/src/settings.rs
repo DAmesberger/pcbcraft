@@ -62,6 +62,9 @@ pub struct UserSettings {
     /// default. The app clamps it to what the window fits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_width: Option<f32>,
+    /// The user's keymap and the key-reveal overlays.
+    #[serde(default, skip_serializing_if = "KeyboardSettings::is_default")]
+    pub keyboard: KeyboardSettings,
 }
 
 impl Default for UserSettings {
@@ -72,8 +75,157 @@ impl Default for UserSettings {
             favourites: Vec::new(),
             recent: Vec::new(),
             browser_width: None,
+            keyboard: KeyboardSettings::default(),
         }
     }
+}
+
+/// The keymap's own format, inside the settings and in an exported keymap
+/// file; any other version is refused.
+pub const KEYMAP_FORMAT: u32 = 1;
+/// Changed keys kept.
+pub const MAX_BINDINGS: usize = 1024;
+/// Bytes of a command id or a chord name.
+pub const MAX_BINDING_TEXT: usize = 128;
+/// The hold-⌘ reveal's delay range, in milliseconds.
+pub const HOLD_MS_RANGE: std::ops::RangeInclusive<u32> = 150..=3000;
+/// The hold-⌘ reveal's default delay.
+pub const HOLD_MS_DEFAULT: u32 = 500;
+
+/// One changed key: the command's registry id and its chord as
+/// Solidcraft's keymap names it (`Ctrl+Shift+S`), or `None` for no key.
+/// Whether the id and chord mean something is the app's to say: an entry
+/// it cannot apply is reported and kept, never dropped.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KeyBinding {
+    pub command: String,
+    pub chord: Option<String>,
+}
+
+/// Hold ⌘ to show key badges; tap ⌥ for key tips.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RevealSettings {
+    pub hold_badges: bool,
+    pub hold_ms: u32,
+    pub key_tips: bool,
+}
+
+impl Default for RevealSettings {
+    fn default() -> Self {
+        Self {
+            hold_badges: true,
+            hold_ms: HOLD_MS_DEFAULT,
+            key_tips: true,
+        }
+    }
+}
+
+/// The keymap the user changed and the reveal overlays' settings.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KeyboardSettings {
+    pub format: u32,
+    /// Only the changed commands, in id order.
+    #[serde(default)]
+    pub bindings: Vec<KeyBinding>,
+    #[serde(default)]
+    pub reveal: RevealSettings,
+}
+
+impl Default for KeyboardSettings {
+    fn default() -> Self {
+        Self {
+            format: KEYMAP_FORMAT,
+            bindings: Vec::new(),
+            reveal: RevealSettings::default(),
+        }
+    }
+}
+
+impl KeyboardSettings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The format, bounds and shape of every entry: printable text of at
+    /// most [`MAX_BINDING_TEXT`] bytes, each command once.
+    pub fn check(&self) -> Result<()> {
+        if self.format != KEYMAP_FORMAT {
+            return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
+                "unsupported keymap format {}",
+                self.format
+            ))));
+        }
+        if self.bindings.len() > MAX_BINDINGS {
+            return Err(Error::TooLarge(format!(
+                "at most {MAX_BINDINGS} changed keys"
+            )));
+        }
+        if !HOLD_MS_RANGE.contains(&self.reveal.hold_ms) {
+            return Err(Error::Invalid(format!(
+                "the key reveal delay must be {} to {} ms",
+                HOLD_MS_RANGE.start(),
+                HOLD_MS_RANGE.end()
+            )));
+        }
+        let text = |t: &str| {
+            !t.is_empty() && t.len() <= MAX_BINDING_TEXT && !t.chars().any(char::is_control)
+        };
+        let mut seen = BTreeSet::new();
+        for binding in &self.bindings {
+            if !text(&binding.command) || binding.chord.as_deref().is_some_and(|c| !text(c)) {
+                return Err(Error::Invalid(format!(
+                    "a changed key has a blank, overlong or non-printable command or key: {}",
+                    binding.command.chars().take(40).collect::<String>()
+                )));
+            }
+            if !seen.insert(binding.command.as_str()) {
+                return Err(Error::Invalid(format!(
+                    "the key of {} is set twice",
+                    binding.command
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// An exported keymap file: the changed keys alone.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KeymapFile {
+    pub format: u32,
+    pub bindings: Vec<KeyBinding>,
+}
+
+/// Read an exported keymap; its format and bounds are checked as in the
+/// settings.
+pub fn read_keymap(path: &Path) -> Result<Vec<KeyBinding>> {
+    let file: KeymapFile = serde_json::from_slice(&read_bounded(path, MAX_SETTINGS_BYTES)?)?;
+    KeyboardSettings {
+        format: file.format,
+        bindings: file.bindings.clone(),
+        reveal: RevealSettings::default(),
+    }
+    .check()?;
+    Ok(file.bindings)
+}
+
+/// Check and atomically write an exported keymap.
+pub fn write_keymap(path: &Path, bindings: &[KeyBinding]) -> Result<()> {
+    let file = KeymapFile {
+        format: KEYMAP_FORMAT,
+        bindings: bindings.to_vec(),
+    };
+    KeyboardSettings {
+        format: file.format,
+        bindings: file.bindings.clone(),
+        reveal: RevealSettings::default(),
+    }
+    .check()?;
+    atomic_write(path, &pretty(&file)?)
 }
 
 /// Where per-user files live: `PCBCRAFT_CONFIG_DIR` / `PCBCRAFT_CACHE_DIR`
@@ -196,6 +348,7 @@ impl UserSettings {
                 "the Browser width must be a positive number of at most {MAX_PANEL_WIDTH} points"
             )));
         }
+        self.keyboard.check()?;
         let mut paths = BTreeSet::new();
         for source in &self.sources {
             if !source.path.is_absolute() || source.path.as_os_str().len() > MAX_PATH {
@@ -308,6 +461,70 @@ mod tests {
             settings,
             "the refused write changed nothing"
         );
+        Ok(())
+    }
+
+    /// The keymap round-trips with entries the app cannot apply (they are
+    /// its to report); a bad shape, a bad format or a duplicate is refused
+    /// and the file is left as it was. An exported keymap reads back.
+    #[test]
+    fn keyboard_settings_round_trip_and_refuse_bad_shapes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let binding = |command: &str, chord: Option<&str>| KeyBinding {
+            command: command.into(),
+            chord: chord.map(str::to_owned),
+        };
+        let settings = UserSettings {
+            keyboard: KeyboardSettings {
+                bindings: vec![
+                    binding("pcb.route", Some("R")),
+                    binding("route.width-next", None),
+                    binding("no.such.command", Some("Ctrl+Nope")),
+                ],
+                reveal: RevealSettings {
+                    hold_badges: false,
+                    hold_ms: 800,
+                    key_tips: true,
+                },
+                ..KeyboardSettings::default()
+            },
+            ..UserSettings::default()
+        };
+        write_settings(&path, &settings)?;
+        assert_eq!(read_settings(&path)?, settings);
+        for bad in [
+            binding("pcb.route", Some("")),
+            binding("", Some("R")),
+            binding("pcb.route", Some("R\u{7}")),
+            binding(&"x".repeat(MAX_BINDING_TEXT + 1), None),
+        ] {
+            let mut wrong = settings.clone();
+            wrong.keyboard.bindings.push(bad);
+            assert!(write_settings(&path, &wrong).is_err());
+        }
+        let mut twice = settings.clone();
+        twice
+            .keyboard
+            .bindings
+            .push(binding("pcb.route", Some("X")));
+        assert!(write_settings(&path, &twice).is_err(), "set twice");
+        let mut slow = settings.clone();
+        slow.keyboard.reveal.hold_ms = 10;
+        assert!(write_settings(&path, &slow).is_err(), "delay out of range");
+        let mut future = settings.clone();
+        future.keyboard.format = 2;
+        assert!(write_settings(&path, &future).is_err(), "keymap format");
+        assert_eq!(read_settings(&path)?, settings, "refusals changed nothing");
+        // Defaults are not written at all.
+        write_settings(&path, &UserSettings::default())?;
+        assert!(!std::fs::read_to_string(&path)?.contains("keyboard"));
+        // Export and import.
+        let file = dir.path().join("keys.json");
+        write_keymap(&file, &settings.keyboard.bindings)?;
+        assert_eq!(read_keymap(&file)?, settings.keyboard.bindings);
+        std::fs::write(&file, "{\"format\":9,\"bindings\":[]}")?;
+        assert!(read_keymap(&file).is_err());
         Ok(())
     }
 

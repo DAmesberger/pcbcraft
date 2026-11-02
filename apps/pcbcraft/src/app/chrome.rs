@@ -6,6 +6,7 @@ use crate::commands::AppCommand;
 use crate::file_ui::Action;
 use crate::issues;
 use crate::kit;
+use crate::reveal::{self, Target};
 use crate::shell::{self, Workspace};
 use egui::{Rect, pos2, vec2};
 use solidcraft_ui_egui::{
@@ -134,15 +135,21 @@ impl App {
                     ui.add_space(t.space_8);
                     self.file_menu(ui);
                     let save = self.with_shortcut("Save project", AppCommand::Save);
-                    if shell::icon_button(ui, "save", &save, !self.files.busy()).clicked() {
+                    let button = shell::icon_button(ui, "save", &save, !self.files.busy());
+                    reveal::register(&ctx, Target::App(AppCommand::Save), button.rect);
+                    if button.clicked() {
                         self.files.request(Action::Save);
                     }
                     let undo = self.with_shortcut("Undo", AppCommand::Undo);
-                    if shell::icon_button(ui, "undo", &undo, self.engine.can_undo()).clicked() {
+                    let button = shell::icon_button(ui, "undo", &undo, self.engine.can_undo());
+                    reveal::register(&ctx, Target::App(AppCommand::Undo), button.rect);
+                    if button.clicked() {
                         self.history(false);
                     }
                     let redo = self.with_shortcut("Redo", AppCommand::Redo);
-                    if shell::icon_button(ui, "redo", &redo, self.engine.can_redo()).clicked() {
+                    let button = shell::icon_button(ui, "redo", &redo, self.engine.can_redo());
+                    reveal::register(&ctx, Target::App(AppCommand::Redo), button.rect);
+                    if button.clicked() {
                         self.history(true);
                     }
                     let browser = self.with_shortcut(
@@ -153,11 +160,15 @@ impl App {
                         },
                         AppCommand::ToggleBrowser,
                     );
-                    if shell::icon_button(ui, "list", &browser, true).clicked() {
+                    let button = shell::icon_button(ui, "list", &browser, true);
+                    reveal::register(&ctx, Target::App(AppCommand::ToggleBrowser), button.rect);
+                    if button.clicked() {
                         self.toggle_browser();
                     }
                     let palette = self.with_shortcut("Command palette", AppCommand::Palette);
-                    if shell::icon_button(ui, "zoom", &palette, true).clicked() {
+                    let button = shell::icon_button(ui, "zoom", &palette, true);
+                    reveal::register(&ctx, Target::App(AppCommand::Palette), button.rect);
+                    if button.clicked() {
                         self.palette.toggle();
                     }
                     ui.add_space(t.space_8);
@@ -284,6 +295,14 @@ impl App {
                     {
                         self.shortcut_sheet.open();
                     }
+                    let key =
+                        self.with_shortcut("Change keys and the key reveal", AppCommand::Settings);
+                    if ui_kit::button(ui, "Settings…", Button::Normal)
+                        .on_hover_text(key)
+                        .clicked()
+                    {
+                        self.settings_window.open();
+                    }
                 });
             });
     }
@@ -295,6 +314,7 @@ impl App {
             Workspace::Pcb => self.pcb.ribbon(&self.engine),
         };
         self.annotate_ribbon(&mut ribbon);
+        self.refresh_tips(&ribbon);
         let issues = self.issues.ribbon_toggle(&self.engine, self.workspace);
         if let Some(event) = shell::ribbon(ui, self.workspace, &ribbon, &issues) {
             self.ribbon_event(&ui.ctx().clone(), event);
@@ -635,7 +655,9 @@ impl App {
             (false, workspace) => crate::navigation::help_2d(workspace == Workspace::Part),
         };
         let fit = self.with_shortcut("Fit view", AppCommand::FitView);
-        if shell::icon_button_help(&mut child, "fit", &fit, &help, true).clicked() {
+        let button = shell::icon_button_help(&mut child, "fit", &fit, &help, true);
+        reveal::register(ui.ctx(), Target::App(AppCommand::FitView), button.rect);
+        if button.clicked() {
             self.fit_view();
         }
         if pcb_view {

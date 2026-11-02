@@ -1266,7 +1266,7 @@ impl SchematicEditor {
             && !project.library.components.is_empty()
             && !ui.ctx().egui_wants_keyboard_input()
             && !ui.ctx().any_popup_open()
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P))
+            && crate::keys::pressed(ui.ctx(), "schematic.place")
         {
             self.select(None, None, project);
             self.tool = Tool::Place;
@@ -1281,23 +1281,23 @@ impl SchematicEditor {
             && let Some(item) = self.selected_item(project)
         {
             if let Some(op) = self.rotated_item(project)
-                && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R))
+                && crate::keys::pressed(ui.ctx(), "schematic.rotate")
             {
                 output = Some(op);
             }
-            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
+            if crate::keys::pressed(ui.ctx(), "schematic.delete") {
                 output = Some(sheet_ui::removed(item));
                 self.item = None;
             }
         }
         // Cmd/Ctrl+R and Shift+X as in the Component editor's symbol canvas.
         if !self.palette.is_open() && !ui.ctx().egui_wants_keyboard_input() {
-            for (modifiers, key, action) in [
-                (egui::Modifiers::COMMAND, egui::Key::R, Arrange::Rotate),
-                (egui::Modifiers::SHIFT, egui::Key::X, Arrange::Mirror),
+            for (id, action) in [
+                ("schematic.rotate", Arrange::Rotate),
+                ("schematic.mirror", Arrange::Mirror),
             ] {
                 if let Some(op) = self.arranged(project, action)
-                    && ui.input_mut(|i| i.consume_key(modifiers, key))
+                    && crate::keys::pressed(ui.ctx(), id)
                 {
                     output = Some(op);
                 }
@@ -1347,7 +1347,7 @@ impl SchematicEditor {
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if crate::keys::pressed(ui.ctx(), "schematic.cancel") {
             self.wire_from = None;
             self.tool = Tool::Select;
             self.drag = None;

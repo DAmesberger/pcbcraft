@@ -66,6 +66,15 @@ impl RouteMode {
         }
     }
 
+    /// The mode before this one, wrapping.
+    pub fn previous(self) -> Self {
+        match self {
+            RouteMode::Shove => RouteMode::Ignore,
+            RouteMode::Walkaround => RouteMode::Shove,
+            RouteMode::Ignore => RouteMode::Walkaround,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             RouteMode::Shove => "Shove",

@@ -1143,6 +1143,16 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "marking-wroom3-qr-closeup")?;
     aim(&mut v, Vec3::new(0.0, 12.0, 1.0), 16.0, 200.0, 40.0);
     save(&mut v, "marking-wroom3-antenna-silkscreen")?;
+    // From below with the footprint's lands, as the Component 3D tab draws
+    // them: the module's pads stand a solder bond line above the lands,
+    // never on their plane.
+    if let Some(Definition::Footprint(footprint)) = find(|d| matches!(d, Definition::Footprint(_)))
+    {
+        v.set_overlay(Some(crate::part_editor::land_overlay(&footprint, &package)));
+        aim(&mut v, Vec3::new(0.0, -3.0, 0.0), 20.0, 20.0, -40.0);
+        save(&mut v, "marking-wroom3-below-lands")?;
+        v.set_overlay(None);
+    }
 
     // An aluminium electrolytic: µF/V and stripe wrapped on its sleeve,
     // a vent cross engraved in its can top.
@@ -1253,5 +1263,71 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let b = v.bounds;
     aim(&mut v, b.center(), 1.8 * b.diagonal(), 25.0, 30.0);
     save(&mut v, "marking-axial-bands")?;
+    Ok(())
+}
+
+/// The WROOM-3 module placed on a board (`scene::fixtures::wroom_board`),
+/// as the PCB 3D view first shows it: over the demo board the app showed
+/// before the file was opened, from above, from below without the
+/// laminate and close to its pads. Run with `PCBCRAFT_PICTURES=<dir>
+/// cargo test -p pcbcraft write_wroom_board_pictures -- --ignored`.
+#[test]
+#[ignore = "writes WROOM-3 board pictures"]
+fn write_wroom_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let engine = crate::scene::fixtures::wroom_board()?;
+    let project = engine.project().clone();
+    let mut v = viewport(&crate::model_scene::tests::demo_project()?)?;
+    gpu.draw(&mut v, 320, 240, 1.0).ok_or("no picture")?;
+    let model = pcbcraft_solidcraft::project::build(&project)?;
+    let mut geometry = model.geometry.clone();
+    geometry.extend(
+        pcbcraft_solidcraft::marking::board::BoardMarkings::default().decals(
+            &project,
+            &model.geometry,
+            &model.sources,
+        ),
+    );
+    v.set_model(crate::model_scene::build(geometry)?);
+    v.fit_to(4.0 / 3.0);
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1280, 960);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    let b = v.bounds;
+    let c = Vec3::new(
+        project.board_size[0] / 2.0,
+        project.board_size[1] / 2.0,
+        1.0,
+    );
+    aim(&mut v, b.center(), 1.3 * b.diagonal(), 30.0, 40.0);
+    save(&mut v, "wroom-board")?;
+    aim(&mut v, c, 30.0, 20.0, -35.0);
+    save(&mut v, "wroom-board-below")?;
+    v.set_layer(ViewLayer::Substrate, false);
+    v.set_layer(ViewLayer::Mask(Layer::Bottom), false);
+    v.set_layer(ViewLayer::Mask(Layer::Top), false);
+    for _ in 0..500 {
+        if !v.receive_repack() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    aim(&mut v, c, 30.0, 20.0, -35.0);
+    save(&mut v, "wroom-board-below-no-laminate")?;
+    aim(&mut v, c - Vec3::new(0.0, 3.0, 0.0), 9.0, 10.0, -50.0);
+    save(&mut v, "wroom-board-pads-closeup")?;
     Ok(())
 }

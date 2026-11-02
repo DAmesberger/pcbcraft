@@ -428,6 +428,7 @@ fn card_texts(editor: &mut PcbEditor, engine: &Engine, ctx: &egui::Context) -> V
                 editor.subject_slot(ui, engine);
             },
         );
+        // No renderer applies the font atlas; egui rejects dropping it.
         output.textures_delta.clear();
         out.clear();
         for shape in &output.shapes {

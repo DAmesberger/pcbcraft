@@ -9,7 +9,9 @@ mod browser_catalog;
 mod chrome;
 mod command_dispatch;
 mod command_palette;
+mod key_reveal;
 mod open_timing;
+mod settings_window;
 mod shortcut_sheet;
 
 use crate::file_ui::{self, Effect, FileUi};
@@ -77,9 +79,15 @@ pub struct App {
     /// Time from opening the PCB 3D view to its first frame.
     open_timing: open_timing::OpenTiming,
     /// Every command, its context and its key (`crate::commands`).
-    registry: crate::commands::Registry,
+    /// Shared with every key reader through `crate::keys::publish`.
+    registry: Arc<crate::commands::Registry>,
+    /// Saved key changes that could not be applied (kept in the settings).
+    keymap_problems: Vec<crate::keymap::Unapplied>,
     palette: command_palette::CommandPalette,
     shortcut_sheet: shortcut_sheet::ShortcutSheet,
+    settings_window: settings_window::SettingsWindow,
+    /// Hold ⌘ for key badges, tap ⌥ for key tips.
+    reveal: key_reveal::KeyReveal,
 }
 
 impl App {
@@ -99,10 +107,24 @@ impl App {
         {
             files.request(file_ui::Action::OpenPath(path));
         }
-        let registry = crate::commands::Registry::standard();
+        let sources = LibrarySources::from_env(&cc.egui_ctx);
+        // The user's keymap over the defaults; what cannot apply is
+        // reported and kept.
+        let mut registry = crate::commands::Registry::standard();
+        let keymap_problems = crate::keymap::apply(&mut registry, &sources.keyboard().bindings);
         // A keymap conflict is a defect (the registry tests forbid one);
         // report it instead of failing silently.
         let mut messages = Messages::default();
+        for problem in &keymap_problems {
+            messages.push(
+                Level::Warning,
+                &format!(
+                    "Saved key for {} not applied: {}",
+                    problem.binding.command, problem.reason
+                ),
+                0.0,
+            );
+        }
         for conflict in registry.conflicts() {
             let title = |id: &str| {
                 registry
@@ -120,7 +142,8 @@ impl App {
                 0.0,
             );
         }
-        let sources = LibrarySources::from_env(&cc.egui_ctx);
+        let registry = Arc::new(registry);
+        crate::keys::publish(&cc.egui_ctx, &registry);
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         Ok(Self {
             scene: SceneController::new(
@@ -148,8 +171,11 @@ impl App {
             now: 0.0,
             open_timing: open_timing::OpenTiming::default(),
             registry,
+            keymap_problems,
             palette: Default::default(),
             shortcut_sheet: Default::default(),
+            settings_window: Default::default(),
+            reveal: Default::default(),
         })
     }
 
@@ -959,6 +985,11 @@ impl eframe::App for App {
         self.component_subject(&ctx);
         // A2: the Component workspace catalog's action and feed.
         self.catalog(&ctx);
+        // The key reveal watches ⌘ and ⌥ before anyone takes a key; key
+        // tips, while shown, take the keys themselves.
+        self.reveal_input(&ctx);
+        // A key being recorded in Settings reaches nothing else.
+        self.record_key(&ctx);
         // The palette's keys come before any canvas sees them.
         self.early_keys(&ctx);
         self.command_palette(&ctx);
@@ -978,6 +1009,8 @@ impl eframe::App for App {
         self.messages_window(&ctx);
         let active = self.active_contexts();
         self.shortcut_sheet.show(&ctx, &self.registry, &active);
+        self.settings(&ctx);
+        self.reveal_overlay(&ctx);
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);
         self.request_model(&ctx);
@@ -1023,6 +1056,20 @@ fn follow_system_theme(ctx: &egui::Context, force: bool) {
         theme::set_dark(dark);
         theme::apply(ctx);
     }
+}
+
+/// The shortcuts sheet's rows for `filter`, every group flattened (tests
+/// outside the app module check the sheet follows the keymap).
+#[cfg(test)]
+pub(crate) fn sheet_rows(
+    registry: &crate::commands::Registry,
+    filter: &str,
+    active: &[crate::commands::Context],
+) -> Vec<(String, String)> {
+    shortcut_sheet::groups(registry, filter, active)
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .collect()
 }
 
 #[cfg(test)]

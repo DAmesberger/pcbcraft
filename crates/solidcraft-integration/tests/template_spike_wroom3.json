@@ -1,0 +1,132 @@
+{
+ "family": "module",
+ "width": 22.0,
+ "length": 30.0,
+ "height": 3.5,
+ "pcb_thickness": 1.0,
+ "antenna_length": 6.0,
+ "can_size": [
+  21.0,
+  23.0
+ ],
+ "can_centre": [
+  0.0,
+  -3.0
+ ],
+ "pitch": 0.85,
+ "pad_size": [
+  0.8,
+  0.4
+ ],
+ "rows": [
+  {
+   "side": "left",
+   "count": 25,
+   "first": [
+    -10.3,
+    7.2
+   ]
+  },
+  {
+   "side": "bottom",
+   "count": 22,
+   "first": [
+    -8.925,
+    -14.3
+   ]
+  },
+  {
+   "side": "right",
+   "count": 25,
+   "first": [
+    10.3,
+    -13.2
+   ]
+  },
+  {
+   "side": "top",
+   "count": 22,
+   "first": [
+    8.925,
+    8.3
+   ]
+  }
+ ],
+ "castellation": 0.0,
+ "land_width": 0.4,
+ "land_extend": [
+  0.0,
+  0.0
+ ],
+ "ground": {
+  "rows": 3,
+  "cols": 3,
+  "pitch": [
+   2.35,
+   2.35
+  ],
+  "size": [
+   1.8,
+   1.8
+  ],
+  "centre": [
+   0.0,
+   -3.0
+  ],
+  "rotation_deg": 45.0,
+  "number": "95"
+ },
+ "singles": [
+  {
+   "number": "96",
+   "centre": [
+    -10.3,
+    -14.3
+   ],
+   "size": [
+    0.8,
+    0.8
+   ]
+  },
+  {
+   "number": "97",
+   "centre": [
+    10.3,
+    -14.3
+   ],
+   "size": [
+    0.8,
+    0.8
+   ]
+  },
+  {
+   "number": "98",
+   "centre": [
+    10.3,
+    8.3
+   ],
+   "size": [
+    0.8,
+    0.8
+   ]
+  },
+  {
+   "number": "99",
+   "centre": [
+    -10.3,
+    8.3
+   ],
+   "size": [
+    0.8,
+    0.8
+   ]
+  }
+ ],
+ "keepout": {
+  "beyond": [
+   0.0,
+   0.0,
+   0.0
+  ]
+ }
+}

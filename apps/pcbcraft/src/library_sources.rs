@@ -737,6 +737,22 @@ impl LibrarySources {
         }
     }
 
+    /// The user's keymap and key-reveal settings.
+    pub fn keyboard(&self) -> &settings::KeyboardSettings {
+        &self.settings.keyboard
+    }
+
+    /// Keep new keyboard settings per user; ones the settings would refuse
+    /// are not kept and the reason is returned.
+    pub fn set_keyboard(&mut self, keyboard: settings::KeyboardSettings) -> Result<(), String> {
+        keyboard.check().map_err(|e| e.to_string())?;
+        if keyboard != self.settings.keyboard {
+            self.settings.keyboard = keyboard;
+            self.persist();
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn is_favourite(&self, key: &EntryKey) -> bool {
         self.settings.favourites.contains(key)

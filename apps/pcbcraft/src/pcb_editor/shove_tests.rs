@@ -44,8 +44,8 @@ fn setup(
     Ok((engine, track))
 }
 
-/// M steps Shove → Walkaround → Ignore → Shove; Shove is the default and
-/// the key is listed with the Route keys.
+/// M steps Shove → Walkaround → Ignore → Shove and Shift+M back; Shove is
+/// the default and both are registry commands of the Route keys.
 #[test]
 fn m_cycles_the_router_mode() -> TestResult {
     let mut canvas = Canvas::new();
@@ -67,7 +67,24 @@ fn m_cycles_the_router_mode() -> TestResult {
         seen,
         [RouteMode::Walkaround, RouteMode::Ignore, RouteMode::Shove]
     );
-    assert!(ROUTE_KEYS.iter().any(|(key, _)| *key == "M"));
+    // Registry commands of the Route context, rebindable in Settings.
+    let registry = crate::commands::Registry::standard();
+    for (id, key) in [
+        ("route.router-mode-next", "M"),
+        ("route.router-mode-previous", "Shift+M"),
+    ] {
+        assert!(ROUTE_KEYS.iter().any(|k| k.id == id && k.keys == key));
+        assert!(registry.get(id).is_some(), "{id} is registered");
+    }
+    // Shift+M steps back.
+    canvas.key(
+        &mut editor,
+        &engine,
+        [12.0, 9.0],
+        egui::Key::M,
+        egui::Modifiers::SHIFT,
+    );
+    assert_eq!(editor.route.mode, RouteMode::Ignore);
     Ok(())
 }
 

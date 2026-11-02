@@ -2,6 +2,7 @@ mod clean_room;
 mod core_modules;
 mod layers;
 mod licences;
+mod raw_keys;
 mod ui_containers;
 mod ui_forms;
 
@@ -55,6 +56,7 @@ fn run() -> Result<()> {
             clean_room::check()?;
             ui_containers::check()?;
             ui_forms::check()?;
+            raw_keys::check()?;
             cargo(&[
                 "clippy",
                 "--locked",
@@ -81,9 +83,10 @@ fn run() -> Result<()> {
         "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
         "ui-forms" => ui_forms::check(),
+        "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules \
-             | licences --check | clean-room | ui-containers | ui-forms"
+             | licences --check | clean-room | ui-containers | ui-forms | raw-keys"
                 .into(),
         ),
     }

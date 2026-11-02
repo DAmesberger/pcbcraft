@@ -126,22 +126,23 @@ impl PcbEditor {
                 );
             } else if let Some(pair) = project.rules.pair_of(net) {
                 let state = if self.route.single {
-                    "off (P)"
+                    crate::keys::labelled(ui.ctx(), "off", "route.pair")
                 } else {
-                    "on: a pad starts both"
+                    "on: a pad starts both".to_owned()
                 };
                 kit::value_row(ui, "Pair", &format!("{} · {state}", pair.name));
             }
             super::impedance_view::route_rows(ui, project, class_id, self.layer, self.width, pair);
         }
+        let rows = crate::keys::rows(ui.ctx(), ROUTE_KEYS);
         kit::section(ui, "route-keys", "Keys", true, None, |ui| {
             let max = if self.route.keys_all {
-                ROUTE_KEYS.len()
+                rows.len()
             } else {
                 kit::LIST_MAX_ROWS
             };
-            let shown = kit::list_frame(ui, ROUTE_KEYS.len(), max, |ui, index| {
-                if let Some((key, action)) = ROUTE_KEYS.get(index) {
+            let shown = kit::list_frame(ui, rows.len(), max, |ui, index| {
+                if let Some((key, action)) = rows.get(index) {
                     kit::value_row(ui, key, action);
                 }
             });

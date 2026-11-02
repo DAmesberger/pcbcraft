@@ -1302,11 +1302,14 @@ impl PcbEditor {
             (None, false)
         };
         let mut operation = closed;
-        if response.hovered() && !fill_escaped && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.tool == Tool::Route && self.route_start.is_some() {
+        if response.hovered() && !fill_escaped {
+            let typing = ui.ctx().egui_wants_keyboard_input();
+            let end =
+                self.tool == Tool::Route && !typing && crate::keys::pressed(ui.ctx(), "route.end");
+            if end && self.route_start.is_some() {
                 // The first Esc ends the route; the next leaves Route.
                 self.finish_route();
-            } else {
+            } else if end || crate::keys::pressed(ui.ctx(), "pcb.cancel") {
                 self.end_route();
                 self.cancel_drag();
                 self.discard_staged();

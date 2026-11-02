@@ -10,19 +10,28 @@
 //! is planned only when the hovered segment, the revision or a setting
 //! changes; planning one segment takes well under a frame.
 use super::{BoardInk, BoardView, PcbEditor, Tool, capsule};
+use crate::commands::KeyDecl;
+use crate::keys;
 use crate::kit::{self, ToolCard};
 use egui::{Shape, Stroke, Ui};
 use pcbcraft_core::layout::meander::{self, MeanderStyle, Side, TuneAmount, TuneRequest};
 use pcbcraft_core::layout::{self, LayoutCommand, length, obstacles::Obstacles};
 use pcbcraft_core::{Id, Operation, Point, Project};
 
-/// The Tune tool's keys while the canvas is hovered: (key, what it does).
-pub const TUNE_KEYS: &[(&str, &str)] = &[
-    ("Click", "Tune the segment under the pointer"),
-    ("/", "Switch trombone and accordion"),
-    ("A, Shift+A", "Raise or lower the amplitude limit"),
-    ("S, Shift+S", "Widen or narrow the leg spacing"),
-    ("F", "Flip the trombone's side"),
+/// The Tune tool's keys while the canvas is hovered, as registry commands
+/// read through `crate::keys`.
+pub const TUNE_KEYS: &[KeyDecl] = &[
+    KeyDecl::new("tune.click", "Click", "Tune the segment under the pointer"),
+    KeyDecl::new("tune.style", "/", "Switch trombone and accordion"),
+    KeyDecl::new("tune.amplitude-up", "A", "Raise the amplitude limit"),
+    KeyDecl::new(
+        "tune.amplitude-down",
+        "Shift+A",
+        "Lower the amplitude limit",
+    ),
+    KeyDecl::new("tune.spacing-wider", "S", "Widen the leg spacing"),
+    KeyDecl::new("tune.spacing-narrower", "Shift+S", "Narrow the leg spacing"),
+    KeyDecl::new("tune.flip", "F", "Flip the trombone's side"),
 ];
 
 /// Amplitude limits the card accepts, mm.
@@ -158,24 +167,28 @@ impl PcbEditor {
 
     /// The Tune keys while the canvas is hovered.
     pub(super) fn tune_keys(&mut self, ui: &Ui, project: &Project) {
-        use egui::Key;
         if self.tool != Tool::Tune || ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let pressed = |key| ui.input(|i| i.key_pressed(key));
-        let shift = ui.input(|i| i.modifiers.shift);
-        if pressed(Key::Slash) {
+        let pressed = |id| keys::pressed(ui.ctx(), id);
+        if pressed("tune.style") {
             self.tune.style = match self.tune.style {
                 MeanderStyle::Trombone => MeanderStyle::Accordion,
                 MeanderStyle::Accordion => MeanderStyle::Trombone,
             };
         }
-        if pressed(Key::A) {
-            let factor = if shift { 1.0 / 1.25 } else { 1.25 };
-            self.tune.amplitude = (self.tune.amplitude * factor)
-                .clamp(*AMPLITUDE_RANGE.start(), *AMPLITUDE_RANGE.end());
+        for (id, factor) in [
+            ("tune.amplitude-up", 1.25),
+            ("tune.amplitude-down", 1.0 / 1.25),
+        ] {
+            if pressed(id) {
+                self.tune.amplitude = (self.tune.amplitude * factor)
+                    .clamp(*AMPLITUDE_RANGE.start(), *AMPLITUDE_RANGE.end());
+            }
         }
-        if pressed(Key::S) {
+        let wider = pressed("tune.spacing-wider");
+        let narrower = pressed("tune.spacing-narrower");
+        if wider || narrower {
             let width = project
                 .tracks
                 .iter()
@@ -186,10 +199,10 @@ impl PcbEditor {
                 .tune
                 .spacing
                 .unwrap_or_else(|| meander::default_spacing(project, width));
-            let step = if shift { -0.05 } else { 0.05 };
+            let step = if narrower { -0.05 } else { 0.05 };
             self.tune.spacing = Some((current + step).max(min));
         }
-        if pressed(Key::F) && !shift {
+        if pressed("tune.flip") {
             self.tune.side = Some(self.tune.side.unwrap_or(Side::Left).other());
         }
     }
@@ -352,14 +365,15 @@ impl PcbEditor {
                 Err(reason) => kit::value_row(ui, "Meander", &format!("None: {reason}")),
             }
         }
+        let rows = keys::rows(ui.ctx(), TUNE_KEYS);
         kit::section(ui, "tune-keys", "Keys", true, None, |ui| {
             let max = if self.tune.keys_all {
-                TUNE_KEYS.len()
+                rows.len()
             } else {
                 kit::LIST_MAX_ROWS
             };
-            let shown = kit::list_frame(ui, TUNE_KEYS.len(), max, |ui, index| {
-                if let Some((key, action)) = TUNE_KEYS.get(index) {
+            let shown = kit::list_frame(ui, rows.len(), max, |ui, index| {
+                if let Some((key, action)) = rows.get(index) {
                     kit::value_row(ui, key, action);
                 }
             });

@@ -13,7 +13,6 @@
 //! The Properties title stays the selection's, so the two never repeat.
 use super::PartEditor;
 use super::folder_preview::{self, Preview};
-use crate::commands::keys;
 use crate::kit::{self, severity::Level};
 use crate::library_sources::FolderPick;
 use egui::{RichText, Ui, vec2};
@@ -484,11 +483,11 @@ impl PartEditor {
                     if !recents.is_empty() {
                         kit::rule(ui);
                     }
-                    if ui.button("Open…").on_hover_text(keys::COMPONENT_OPEN.shown()).clicked() {
+                    if ui.button("Open…").on_hover_text(crate::keys::shown(ui.ctx(), "component.open").unwrap_or_default()).clicked() {
                         open = true;
                         ui.close();
                     }
-                    if ui.button("New…").on_hover_text(keys::COMPONENT_NEW.shown()).clicked() {
+                    if ui.button("New…").on_hover_text(crate::keys::shown(ui.ctx(), "component.new").unwrap_or_default()).clicked() {
                         new = true;
                         ui.close();
                     }
@@ -557,22 +556,17 @@ impl PartEditor {
     /// template, while the Component workspace is shown. The workspace
     /// draws before the app's file shortcuts, so ⇧⌘N never reaches ⌘N.
     fn history_keys(&mut self, ctx: &egui::Context, engine: &Engine) {
-        use egui::KeyboardShortcut;
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let pressed = |chord: crate::commands::Chord| {
-            ctx.input_mut(|i| {
-                i.consume_shortcut(&KeyboardShortcut::new(chord.modifiers(), chord.key))
-            })
-        };
-        if pressed(keys::COMPONENT_NEW) {
+        let pressed = |id| crate::keys::pressed(ctx, id);
+        if pressed("component.new") {
             self.open_template_gallery();
-        } else if pressed(keys::COMPONENT_OPEN) {
+        } else if pressed("component.open") {
             self.show_start();
-        } else if pressed(keys::COMPONENT_BACK) {
+        } else if pressed("component.back") {
             self.go_back(engine);
-        } else if pressed(keys::COMPONENT_FORWARD) {
+        } else if pressed("component.forward") {
             self.go_forward(engine);
         }
     }

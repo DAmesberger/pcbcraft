@@ -4,7 +4,7 @@ AGENTS.md asks for routing that is planned for push-and-shove from the first imp
 
 ## Modes
 
-The Route tool cycles the router with **M**. The Route card's *Router* row and the canvas pill ("Routing N2 · 0.3 mm · 45° · Shove") show the mode in use.
+The Route tool cycles the router with **M** (⇧M backwards). The Route card's *Router* row and the canvas pill ("Routing N2 · 0.3 mm · 45° · Shove") show the mode in use.
 
 | Mode | What a step does about other nets' copper |
 | --- | --- |
@@ -70,7 +70,7 @@ No branch returns copper that collides.
 
 ## Keys
 
-The Route tool's table (`ROUTE_KEYS`) gains one row: **M** cycles Shove → Walkaround → Ignore. M has no binding in the Layout or global contexts, so it shadows nothing. The keyboard abstraction work moves `ROUTE_KEYS` into registry commands and Route from X to R; the new row is declared in the same table style for that merge.
+The Route tool's keys (`ROUTE_KEYS`, registry commands in the Route context read through `crate::keys`) gain two: `route.router-mode-next` (**M**: Shove → Walkaround → Ignore) and `route.router-mode-previous` (**⇧M**), one command per cycle direction like the other Route cycles. Both are rebindable in Settings and listed in the ⌘/ sheet and the hold-⌘ panel. Neither M nor ⇧M is bound in the Layout or global contexts, so they shadow nothing. *Shove vias* has no key; it is a Route card check.
 
 ## Tests
 
