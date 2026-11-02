@@ -130,6 +130,22 @@ pub(crate) fn mask(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Falli
             true,
         );
     }
+    // Board mounting holes open the mask round their ring (plated) or
+    // drill.
+    for hole in &project.board().holes {
+        let size = if hole.plated {
+            hole.pad_diameter.unwrap_or(hole.drill)
+        } else {
+            hole.drill
+        };
+        bitmap.render(
+            &Shape::Disc {
+                c: hole.at,
+                r: size / 2.0 + expansion,
+            },
+            true,
+        );
+    }
     Ok(())
 }
 
@@ -137,7 +153,7 @@ pub(crate) fn mask(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Falli
 pub(crate) fn paste(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Fallible<()> {
     let reduction = project.rules.effective().paste.reduction;
     for pad in layout::placed_pads(project) {
-        if pad.layer != side || pad.pad.kind.through_hole() {
+        if pad.layer != side {
             continue;
         }
         let t = pad.pad_transform();

@@ -168,7 +168,7 @@ pub struct FabricationParams {
     #[serde(default)]
     pub zip: bool,
     /// The fabrication rule profile to check against, by id: a built-in
-    /// (`standard`, `fine`, `hdi`) or a user library profile. The
+    /// (`std-6-6`, `fine-4-4`, `hdi-3-3`, `pcbcraft-default`) or a user library profile. The
     /// project's own rules when omitted.
     #[serde(default)]
     pub profile: Option<String>,
@@ -834,6 +834,8 @@ mod pinout;
 mod preview;
 pub mod sources;
 
+#[cfg(test)]
+mod fabrication_tests;
 #[cfg(test)]
 mod firmware_tests;
 #[cfg(test)]

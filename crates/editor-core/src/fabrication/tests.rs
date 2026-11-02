@@ -14,6 +14,7 @@ mod excellon_reader;
 mod expected;
 mod raster;
 mod reader;
+mod compare;
 mod units;
 
 pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;

@@ -243,8 +243,8 @@ fn write_zip(output: &Path, files: &[FabFile]) -> Result<()> {
     })
 }
 
-/// A fabrication profile by id: a built-in profile (`standard`, `fine`,
-/// `hdi`, `pcbcraft-default`) or one of the user's library
+/// A fabrication profile by id: a built-in profile (`std-6-6`, `fine-4-4`,
+/// `hdi-3-3`, `pcbcraft-default`) or one of the user's library
 /// (`UserDirs::config/rule-profiles/`).
 pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
     if let Some(profile) = pcbcraft_core::rules::builtin::by_id(id) {

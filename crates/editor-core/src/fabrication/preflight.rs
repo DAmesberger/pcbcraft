@@ -250,7 +250,23 @@ fn item(
 /// changes of definitions in use, plated slots the drill file cannot route
 /// and legend ink over pad openings.
 fn production_findings(project: &Project, drafts: &Drafts, items: &mut Vec<PreflightItem>) {
-    let drafted: BTreeSet<DefinitionId> = drafts.items.iter().map(|d| d.id).collect();
+    // Drafts whose content differs from the revision they edit (an open
+    // draft identical to its base is no pending change).
+    let drafted: BTreeSet<DefinitionId> = drafts
+        .items
+        .iter()
+        .filter(|d| {
+            let base = d.base.and_then(|revision| {
+                project.library.definition(crate::ids::DefinitionRef {
+                    kind: d.definition.kind(),
+                    id: d.id,
+                    revision,
+                })
+            });
+            base.is_none_or(|(meta, definition)| meta != d.meta || definition != d.definition)
+        })
+        .map(|d| d.id)
+        .collect();
     for instance in &project.instances {
         let objects = vec![ObjectRef::Instance { id: instance.id }];
         let resolved = crate::instances::resolve(&project.library, instance).ok();

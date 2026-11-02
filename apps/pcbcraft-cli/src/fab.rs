@@ -34,7 +34,27 @@ pub fn run(args: &[String]) -> Result<()> {
         }
     }
     let mut session = open(Some(project))?;
-    let mut options = json!({});
+    // Files are named after the project file (`board.pcbcraft` gives
+    // `board-copper-l1-top.gbr`, …).
+    let stem: String = std::path::Path::new(project)
+        .file_stem()
+        .map(|s| s.to_string_lossy())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect();
+    let mut options = if stem.trim_matches('_').is_empty() {
+        json!({})
+    } else {
+        json!({ "base_name": stem })
+    };
     if let Some(date) = date {
         options["creation_date"] = json!(date);
     }
