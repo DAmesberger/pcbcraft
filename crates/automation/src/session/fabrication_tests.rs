@@ -65,7 +65,10 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
         "showcase-fabrication.pdf",
         "showcase-assembly.pdf",
     ] {
-        assert!(written.iter().any(|n| n == expected), "{expected} in {written:?}");
+        assert!(
+            written.iter().any(|n| n == expected),
+            "{expected} in {written:?}"
+        );
         assert!(folder.join(expected).is_file(), "{expected} on disk");
     }
     // The shipped board's milled slot and round cutout are in the profile
@@ -164,11 +167,18 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
     );
     // Each waiver was one undo step.
     for _ in 0..blocking.len() {
-        ok(&mut session, json!({"command": "project.undo", "params": {}}))?;
+        ok(
+            &mut session,
+            json!({"command": "project.undo", "params": {}}),
+        )?;
     }
     assert!(session.engine().project().production.waivers.is_empty());
     // An unknown profile is refused.
-    let unknown = session.dispatch(export(&dir.path().join("x"), false, Some("no-such-profile")));
+    let unknown = session.dispatch(export(
+        &dir.path().join("x"),
+        false,
+        Some("no-such-profile"),
+    ));
     assert_eq!(unknown["ok"], false);
     Ok(())
 }

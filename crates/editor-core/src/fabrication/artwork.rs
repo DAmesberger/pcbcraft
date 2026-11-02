@@ -31,9 +31,7 @@ use crate::geometry::{Point, Shape, Transform2, rounded_path, signed_area2};
 use crate::ids::Id;
 use crate::layout::{self, PlacedPad};
 use crate::layout::{BoardDrawing, PlacedItem};
-use crate::library::{
-    CHECK_CHORD_MM, MaskRule, Outline, PadKind, PadShape, PasteRule, Segment,
-};
+use crate::library::{CHECK_CHORD_MM, MaskRule, Outline, PadKind, PadShape, PasteRule, Segment};
 use crate::model::board::{CutoutKind, arc_geometry};
 use crate::model::{CopperLayer, Layer, Project};
 use std::collections::BTreeMap;
@@ -328,7 +326,13 @@ fn copper(board: &Board<'_>, layer: CopperLayer, attributes: &[(&str, String)]) 
             PadShape::Custom { outline } => Some(outline),
             _ => None,
         };
-        land(&mut w, &shape, exact, &pad.pad_transform(), Some(pad_function(pad)))?;
+        land(
+            &mut w,
+            &shape,
+            exact,
+            &pad.pad_transform(),
+            Some(pad_function(pad)),
+        )?;
     }
     w.object(&[]);
     w.finish()
@@ -415,7 +419,11 @@ fn paste(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Resul
     w.finish().map(Some)
 }
 
-fn legend(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Result<Option<Vec<u8>>> {
+fn legend(
+    board: &Board<'_>,
+    side: Layer,
+    attributes: &[(&str, String)],
+) -> Result<Option<Vec<u8>>> {
     let mut w = Writer::new(attributes);
     let mut any = false;
     for graphic in layout::placed_graphics(board.project) {
@@ -666,12 +674,8 @@ fn box_size(points: &[Point]) -> Option<Point> {
     };
     let (x, y) = (c[0], c[1]);
     let close = |p: &Point, q: [f64; 2]| (p[0] - q[0]).abs() < 1e-9 && (p[1] - q[1]).abs() < 1e-9;
-    (x > 0.0
-        && y > 0.0
-        && close(a, [-x, -y])
-        && close(b, [x, -y])
-        && close(d, [-x, y]))
-    .then_some([2.0 * x, 2.0 * y])
+    (x > 0.0 && y > 0.0 && close(a, [-x, -y]) && close(b, [x, -y]) && close(d, [-x, y]))
+        .then_some([2.0 * x, 2.0 * y])
 }
 
 /// A box `size` with corner radii `r` (lower left, lower right, upper
@@ -704,7 +708,11 @@ fn box_aperture(size: Point, r: [f64; 4], rotation_deg: f64, mirror: bool) -> Re
             let (a, b) = if q % 2 == 1 { (h, w) } else { (w, h) };
             return Ok(Aperture::Obround(units(a)?, units(b)?));
         }
-        let (long, short, turn) = if w >= h { (w, h, rot) } else { (h, w, rot + 90.0) };
+        let (long, short, turn) = if w >= h {
+            (w, h, rot)
+        } else {
+            (h, w, rot + 90.0)
+        };
         let turn = turn.rem_euclid(360.0);
         let c = (long - short) / 2.0;
         return Ok(Aperture::Macro(macro_body(&[

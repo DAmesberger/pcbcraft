@@ -183,9 +183,7 @@ fn check_output(output: &Path, zip: bool) -> Result<()> {
         }
         return Ok(());
     }
-    if output.try_exists()?
-        && (!output.is_dir() || std::fs::read_dir(output)?.next().is_some())
-    {
+    if output.try_exists()? && (!output.is_dir() || std::fs::read_dir(output)?.next().is_some()) {
         return Err(Error::Invalid(format!(
             "fabrication.output: {} exists and is not an empty folder; choose a new folder",
             output.display()

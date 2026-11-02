@@ -30,7 +30,9 @@ pub fn run(args: &[String]) -> Result<()> {
                     None => return Err("--date needs an ISO 8601 time or none".into()),
                 }
             }
-            other => return Err(format!("unknown option {other}; usage: pcbcraft-cli {USAGE}").into()),
+            other => {
+                return Err(format!("unknown option {other}; usage: pcbcraft-cli {USAGE}").into());
+            }
         }
     }
     let mut session = open(Some(project))?;

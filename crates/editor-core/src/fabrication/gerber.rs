@@ -100,7 +100,11 @@ pub enum Seg {
     Line(Point),
     /// A circular arc about `center`, counter-clockwise when `ccw`. An arc
     /// ending where it starts is a full circle.
-    Arc { to: Point, center: Point, ccw: bool },
+    Arc {
+        to: Point,
+        center: Point,
+        ccw: bool,
+    },
 }
 
 impl Seg {

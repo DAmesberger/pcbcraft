@@ -4,11 +4,11 @@
 //! for the showcase, a sketched board with arcs, a cutout, slots and
 //! mounting holes, and a 10,000-via plane. Format details are checked on
 //! the same files.
+use super::Fallible;
 use super::excellon_reader;
 use super::expected;
 use super::raster::{self, Bitmap, Comparison, Shape};
 use super::reader::{self, GerberFile, Kind};
-use super::Fallible;
 use crate::Engine;
 use crate::fabrication::{self, FabricationOptions, FabricationSet};
 use crate::ids::Id;
@@ -113,7 +113,11 @@ fn perimeter(b: &Bitmap) -> f64 {
 /// Compare every layer of `set` with the core geometry of `project`;
 /// returns (layer, comparison) rows after asserting each is within its
 /// limit.
-fn compare_all(project: &Project, set: &FabricationSet, label: &str) -> Fallible<Vec<(String, Comparison)>> {
+fn compare_all(
+    project: &Project,
+    set: &FabricationSet,
+    label: &str,
+) -> Fallible<Vec<(String, Comparison)>> {
     // The window is offset by an irrational-looking margin so no pixel
     // centre lies exactly on a grid-aligned edge: two holes of one fill
     // sharing an edge at a pixel centre are sampled differently by an
@@ -216,13 +220,25 @@ fn rounded(w: f64, h: f64, r: f64) -> Outline {
         start: [r, 0.0],
         segments: vec![
             Segment::Line { to: [w - r, 0.0] },
-            Segment::Arc { to: [w, r], bulge: b },
+            Segment::Arc {
+                to: [w, r],
+                bulge: b,
+            },
             Segment::Line { to: [w, h - r] },
-            Segment::Arc { to: [w - r, h], bulge: b },
+            Segment::Arc {
+                to: [w - r, h],
+                bulge: b,
+            },
             Segment::Line { to: [r, h] },
-            Segment::Arc { to: [0.0, h - r], bulge: b },
+            Segment::Arc {
+                to: [0.0, h - r],
+                bulge: b,
+            },
             Segment::Line { to: [0.0, r] },
-            Segment::Arc { to: [r, 0.0], bulge: b },
+            Segment::Arc {
+                to: [r, 0.0],
+                bulge: b,
+            },
         ],
     }
 }
@@ -249,12 +265,16 @@ fn slot(a: [f64; 2], b: [f64; 2], width: f64) -> Outline {
     Outline {
         start: [a[0], a[1] - h],
         segments: vec![
-            Segment::Line { to: [b[0], b[1] - h] },
+            Segment::Line {
+                to: [b[0], b[1] - h],
+            },
             Segment::Arc {
                 to: [b[0], b[1] + h],
                 bulge: 1.0,
             },
-            Segment::Line { to: [a[0], a[1] + h] },
+            Segment::Line {
+                to: [a[0], a[1] + h],
+            },
             Segment::Arc {
                 to: [a[0], a[1] - h],
                 bulge: 1.0,
@@ -431,18 +451,17 @@ fn layers_carry_their_file_aperture_and_object_attributes() -> Fallible<()> {
         assert_eq!(p.len(), 2, "{p:?}");
         assert!(pad.object_attributes.contains_key(".N"));
     }
-    let vias: Vec<_> = top
-        .flashes()
-        .filter(|o| function(o) == "ViaPad")
-        .collect();
+    let vias: Vec<_> = top.flashes().filter(|o| function(o) == "ViaPad").collect();
     assert_eq!(vias.len(), project.vias.len());
     for via in vias {
-        let net = via.object_attributes.get(".N").and_then(|v| v.first()).ok_or("via net")?;
+        let net = via
+            .object_attributes
+            .get(".N")
+            .and_then(|v| v.first())
+            .ok_or("via net")?;
         assert!(project.nets.iter().any(|n| &n.name == net), "{net}");
     }
-    assert!(top
-        .flashes()
-        .any(|o| function(o) == "WasherPad"));
+    assert!(top.flashes().any(|o| function(o) == "WasherPad"));
     // Tracks are round-aperture draws with their net; fills are regions,
     // their holes clear.
     let tracks = top
@@ -452,7 +471,11 @@ fn layers_carry_their_file_aperture_and_object_attributes() -> Fallible<()> {
         .count();
     assert_eq!(
         tracks,
-        project.tracks.iter().filter(|t| t.layer == CopperLayer::Top).count()
+        project
+            .tracks
+            .iter()
+            .filter(|t| t.layer == CopperLayer::Top)
+            .count()
     );
     let regions: Vec<_> = bottom.regions().collect();
     assert!(regions.iter().any(|r| r.dark && function(r) == "Conductor"));
@@ -498,7 +521,12 @@ fn layers_carry_their_file_aperture_and_object_attributes() -> Fallible<()> {
     let non = excellon_reader::parse(text(&set, "-non-plated.drl")?)?;
     assert_eq!(
         non.attribute(".FileFunction"),
-        Some(vec!["NonPlated".into(), "1".into(), "4".into(), "NPTH".into()])
+        Some(vec![
+            "NonPlated".into(),
+            "1".into(),
+            "4".into(),
+            "NPTH".into()
+        ])
     );
     // The job file lists every Gerber and drill file in stackup order.
     let job: serde_json::Value = serde_json::from_str(text(&set, ".gbrjob")?)?;
@@ -516,7 +544,9 @@ fn layers_carry_their_file_aperture_and_object_attributes() -> Fallible<()> {
         .count();
     assert_eq!(paths.len(), gerbers);
     assert!(paths[0].ends_with("copper-l1-top.gbr"));
-    let thickness = job["GeneralSpecs"]["BoardThickness"].as_f64().ok_or("thickness")?;
+    let thickness = job["GeneralSpecs"]["BoardThickness"]
+        .as_f64()
+        .ok_or("thickness")?;
     assert!((thickness - project.stackup.thickness_mm()).abs() < 1e-6);
     Ok(())
 }
@@ -630,11 +660,17 @@ fn a_ten_thousand_via_board_is_written_in_seconds() -> Fallible<()> {
         assert!(c.xor_share < 1e-4, "{suffix}: {c:?}");
     }
     let mut got = grid.blank();
-    raster::render_drill(&excellon_reader::parse(text(&set, "-plated.drl")?)?, &mut got)?;
+    raster::render_drill(
+        &excellon_reader::parse(text(&set, "-plated.drl")?)?,
+        &mut got,
+    )?;
     let mut want = grid.blank();
     expected::drills(&project, true, &mut want)?;
     let c = raster::compare(&got, &want)?;
-    eprintln!("10k vias plated drill: XOR {:.5} mm² ({:.2e})", c.xor_area, c.xor_share);
+    eprintln!(
+        "10k vias plated drill: XOR {:.5} mm² ({:.2e})",
+        c.xor_area, c.xor_share
+    );
     assert!(c.xor_share < 1e-4, "{c:?}");
     eprintln!("10k vias: read back and compared in {:?}", start.elapsed());
     Ok(())

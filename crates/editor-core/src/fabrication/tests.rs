@@ -10,11 +10,11 @@
 //! comparison checks the written files against an independent rendering.
 #![allow(dead_code)]
 
+mod compare;
 mod excellon_reader;
 mod expected;
 mod raster;
 mod reader;
-mod compare;
 mod units;
 
 pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;

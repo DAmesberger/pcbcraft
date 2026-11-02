@@ -20,7 +20,14 @@ use std::fmt::Write as _;
 
 /// The drill map's symbol for a tool, by its position in the table.
 pub const SYMBOLS: [&str; 8] = [
-    "circle", "cross", "square", "triangle", "x", "diamond", "circle-cross", "square-x",
+    "circle",
+    "cross",
+    "square",
+    "triangle",
+    "x",
+    "diamond",
+    "circle-cross",
+    "square-x",
 ];
 /// Size of a drill-map symbol, mm.
 pub const SYMBOL_MM: f64 = 1.0;

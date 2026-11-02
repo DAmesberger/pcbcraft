@@ -16,10 +16,10 @@ use crate::model::board::CutoutKind;
 use crate::model::production::{MAX_WAIVER_TEXT, MAX_WAIVERS, Production, Waiver};
 use crate::model::{Layer, Project};
 use crate::rules::{self, RuleProfile, RulesCommand};
-use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Waive or restore pre-flight findings. Each is one undo step; a command
 /// that changes nothing is not.
