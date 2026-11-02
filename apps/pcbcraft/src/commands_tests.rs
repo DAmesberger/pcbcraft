@@ -87,8 +87,8 @@ fn rebinding_refuses_a_taken_key_and_resets_to_the_default() -> Result<(), Strin
             .map(|c| c.id.as_str()),
         Some("pcb.route")
     );
-    assert!(registry.resolve(Chord::key(K::X), &active).is_none());
-    registry.rebind("pcb.route", Some(Chord::key(K::X)))?;
+    assert!(registry.resolve(Chord::key(K::R), &active).is_none());
+    registry.rebind("pcb.route", Some(Chord::key(K::R)))?;
     assert!(registry.custom.is_empty(), "the default is not stored");
     registry.rebind("pcb.route", None)?;
     assert_eq!(registry.shortcut(&route), None);
@@ -108,10 +108,11 @@ fn resolve_follows_the_active_contexts() {
             .map(|c| c.id.clone())
     };
     let s = |id: &str| Some(id.to_owned());
-    assert_eq!(id(Context::PcbLayout, Chord::key(K::X)), s("pcb.route"));
+    assert_eq!(id(Context::PcbLayout, Chord::key(K::R)), s("pcb.route"));
+    assert_eq!(id(Context::PcbLayout, Chord::key(K::X)), None);
     assert_eq!(id(Context::PcbLayout, Chord::key(K::V)), s("pcb.via"));
     // Routing: the Route tool's keys (`ROUTE_KEYS`) win over Layout's and
-    // the Everywhere ones while it is armed; X still names Route.
+    // the Everywhere ones while it is armed; R still names Route.
     let in_route = |chord| {
         registry
             .resolve(chord, &active_contexts(Context::PcbRoute))
@@ -136,7 +137,7 @@ fn resolve_follows_the_active_contexts() {
             "{chord:?}"
         );
     }
-    assert_eq!(id(Context::PcbRoute, Chord::key(K::X)), s("pcb.route"));
+    assert_eq!(id(Context::PcbRoute, Chord::key(K::R)), s("pcb.route"));
     assert_eq!(
         id(Context::PcbRoute, Chord::cmd(K::Num1)),
         s("workspace.component")
@@ -196,7 +197,7 @@ fn tool_tables_are_listed_with_their_keys() -> Result<(), String> {
     let hole = registry.for_tool(Workspace::Pcb, "bs-hole").ok_or("hole")?;
     assert_eq!(hole.context, Context::BoardShape);
     let route = registry.for_tool(Workspace::Pcb, "route").ok_or("route")?;
-    assert_eq!(registry.shortcut(route).as_deref(), Some("X"));
+    assert_eq!(registry.shortcut(route).as_deref(), Some("R"));
     assert_eq!(route.handler, Handler::Registry);
     assert!(registry.for_tool(Workspace::Schematic, "route").is_none());
     let save = registry.for_app(AppCommand::Save).ok_or("save")?;

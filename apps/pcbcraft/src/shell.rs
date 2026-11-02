@@ -277,7 +277,7 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
 }
 
 /// What a ribbon tool's tooltip says: the title with its shortcut
-/// ("Route (X)"), the key cap on its own, and the help line (or why a
+/// ("Route (R)"), the key cap on its own, and the help line (or why a
 /// disabled tool is unavailable).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolTip {

@@ -1241,7 +1241,7 @@ fn defaults() -> Vec<Command> {
         )
         .icon("move"),
         tool("pcb.route", "Route", C::PcbLayout, Workspace::Pcb, "route")
-            .chord(Chord::key(K::X))
+            .chord(Chord::key(K::R))
             .icon("trace")
             .keywords("track trace copper wire"),
         tool("pcb.via", "Via", C::PcbLayout, Workspace::Pcb, "via")
