@@ -34,6 +34,7 @@ impl PcbEditor {
             match self.tool {
                 Tool::Route => Context::PcbRoute,
                 Tool::Fill => Context::PcbFill,
+                Tool::Tune => Context::PcbTune,
                 Tool::Select | Tool::Via => Context::PcbLayout,
             }
         }

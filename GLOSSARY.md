@@ -326,6 +326,21 @@ A project's own value for one rule, kept above its profile. A profile switch may
 **Net class**:
 A named group of nets with their own track width, minimum width, clearance, via size and fill connection. A net is in a class by explicit assignment or by the first matching name pattern, never by any other inference.
 
+**Differential pair**:
+Two nets with an explicit positive and negative half, routed together at the pair gap. Its width, gap, impedance target and limits come from the positive net's class. A pair is never inferred from net names; names only suggest one.
+_Avoid_: Diff net
+
+**Length group**:
+Nets and pairs whose routed lengths must match: within a tolerance of a target, or of the longest member.
+_Avoid_: Match group
+
+**Routed length**:
+A net's track centre-line length plus the via barrels between the layers it uses at each via.
+
+**Meander**:
+Bumps added to one track segment to lengthen it by an exact amount: a trombone bumps to one side, an accordion swings to both.
+_Avoid_: Serpentine (as a term), squiggle
+
 **Copper fill**:
 A copper region of one net on one copper layer, drawn as an outline and computed by the core from the board around it: it keeps its clearances, joins its net's pads with solid or thermal connections and yields to higher-priority fills. Its computed copper is stored with the key of its inputs, and it is stale when they change.
 _Avoid_: Zone

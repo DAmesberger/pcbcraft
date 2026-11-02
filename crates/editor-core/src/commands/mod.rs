@@ -138,6 +138,14 @@ pub enum Outcome {
     EdgeConstraintAdded {
         constraint: Id,
     },
+    /// The pair `diff_pair.add` created.
+    DiffPairAdded {
+        pair: crate::rules::signal::DiffPairId,
+    },
+    /// The group `length_group.add` created.
+    LengthGroupAdded {
+        group: crate::rules::signal::LengthGroupId,
+    },
 }
 
 /// A symbol draft's pin, by its terminal, that lies off the authoring grid.

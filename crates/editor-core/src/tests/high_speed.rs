@@ -1,0 +1,671 @@
+//! High-speed routing through the public engine: differential pairs,
+//! pair routing, length tuning, the pair, length and impedance checks,
+//! the queries, undo and the file round trip.
+//!
+//! The fixture is the acceptance case in miniature: a USB 2.0 pair
+//! (USB_D+ / USB_D-, 90 Ω differential) between two parts on the
+//! 4-layer preset, routed on the outer layer over its plane.
+use super::support::*;
+use crate::layout::meander::{MeanderStyle, TuneAmount, TuneRequest};
+use crate::layout::pair::{PairLeg, PairRouteRequest};
+use crate::layout::{self, LayoutCommand};
+use crate::rules::signal::{DiffPairId, DiffPairSpec, LengthGroupSpec, SignalRules};
+use crate::rules::{NetClassSpec, RulesCommand};
+use crate::schematic::SchematicCommand;
+use crate::{
+    CopperLayer, Engine, Error, Id, InstanceCommand, Layer, Operation, Outcome, Point, Query,
+    QueryResult, Result, Stackup, UnitId,
+};
+
+struct Usb {
+    engine: Engine,
+    pair: DiffPairId,
+    /// `[positive, negative]` nets.
+    nets: [Id; 2],
+    /// Pad centres `[positive, negative]` at the start and the end.
+    start: [Point; 2],
+    end: [Point; 2],
+}
+
+fn pad_of(engine: &Engine, instance: Id, terminal: u32) -> Result<Point> {
+    layout::pads(engine.project())
+        .into_iter()
+        .find(|p| p.terminal == ep(instance, terminal))
+        .map(|p| p.position)
+        .ok_or_else(|| Error::NotFound("pad".into()))
+}
+
+fn usb(signal: SignalRules) -> Result<Usb> {
+    let mut engine = Engine::demo()?;
+    let r1 = by_designator(&engine, "R1")?;
+    let template = engine
+        .project()
+        .instance(r1)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("R1".into()))?;
+    let mut parts = Vec::new();
+    for (designator, x) in [("R3", 0.0), ("R4", 30.0)] {
+        apply(
+            &mut engine,
+            Operation::Instance(InstanceCommand::Place(crate::instances::NewInstance {
+                component: template.component,
+                designator: Some(designator.into()),
+                properties: vec![],
+                representation: template.representation,
+                unit: UnitId(1),
+                position: [x, 40.0],
+                physical: template.physical,
+            })),
+        )?;
+        parts.push(by_designator(&engine, designator)?);
+    }
+    let [r3, r4] = parts[..] else {
+        return Err(Error::Invalid("parts".into()));
+    };
+    let mut nets = Vec::new();
+    for (terminal, name) in [(1, "USB_D+"), (2, "USB_D-")] {
+        apply(
+            &mut engine,
+            Operation::Schematic(SchematicCommand::Connect {
+                from: ep(r3, terminal).into(),
+                to: ep(r4, terminal).into(),
+            }),
+        )?;
+        let net = net_of(&engine, ep(r3, terminal))?;
+        apply(
+            &mut engine,
+            Operation::Schematic(SchematicCommand::RenameNet {
+                net,
+                name: name.into(),
+            }),
+        )?;
+        nets.push(net);
+    }
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::SetBoardSize { size: [60.0, 40.0] }),
+    )?;
+    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    for (instance, x) in [(r3, 10.0), (r4, 40.0)] {
+        apply(
+            &mut engine,
+            Operation::Layout(LayoutCommand::Move {
+                instance,
+                position: [x, 25.0],
+                rotation_deg: 90.0,
+                layer: Layer::Top,
+            }),
+        )?;
+    }
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::SetStackup(Stackup::preset(4)?)),
+    )?;
+    let Outcome::NetClassAdded { class } = apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::AddNetClass {
+            class: NetClassSpec {
+                name: "USB".into(),
+                signal,
+                ..Default::default()
+            },
+        }),
+    )?
+    else {
+        return Err(Error::Invalid("class".into()));
+    };
+    apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::AssignNets {
+            nets: nets.clone(),
+            class: Some(class),
+        }),
+    )?;
+    let Outcome::DiffPairAdded { pair } = apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::AddDiffPair {
+            pair: DiffPairSpec {
+                name: "USB_D".into(),
+                positive: nets[0],
+                negative: nets[1],
+            },
+        }),
+    )?
+    else {
+        return Err(Error::Invalid("pair".into()));
+    };
+    let start = [pad_of(&engine, r3, 1)?, pad_of(&engine, r3, 2)?];
+    let end = [pad_of(&engine, r4, 1)?, pad_of(&engine, r4, 2)?];
+    Ok(Usb {
+        engine,
+        pair,
+        nets: [nets[0], nets[1]],
+        start,
+        end,
+    })
+}
+
+fn usb90() -> SignalRules {
+    SignalRules {
+        diff_impedance: Some(90.0),
+        pair_max_skew: Some(0.1),
+        pair_max_uncoupled: Some(5.0),
+        ..Default::default()
+    }
+}
+
+fn mid(a: Point, b: Point) -> Point {
+    [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])]
+}
+
+/// Route the pair pad to pad along `legs` with the rules' width and gap.
+fn routed(usb: &mut Usb, legs: Vec<PairLeg>) -> Result<Outcome> {
+    let operation = Operation::Layout(LayoutCommand::RoutePair {
+        request: PairRouteRequest {
+            pair: usb.pair,
+            start: usb.start,
+            legs,
+            end: Some(usb.end),
+            width: None,
+            gap: None,
+        },
+    });
+    apply(&mut usb.engine, operation)
+}
+
+fn straight(usb: &Usb) -> Vec<PairLeg> {
+    vec![PairLeg {
+        layer: CopperLayer::Top,
+        points: vec![mid(usb.start[0], usb.start[1]), mid(usb.end[0], usb.end[1])],
+    }]
+}
+
+fn board_codes(engine: &Engine) -> Vec<String> {
+    layout::checks(engine.project())
+        .into_iter()
+        .map(|f| f.code)
+        .collect()
+}
+
+fn report(engine: &Engine) -> Result<layout::length::LengthReport> {
+    match engine.query(Query::LengthReport {})? {
+        QueryResult::LengthReport(r) => Ok(*r),
+        _ => Err(Error::Invalid("report".into())),
+    }
+}
+
+/// The pads of each part sit side by side across the route.
+#[test]
+fn the_fixture_has_pads_across_the_route() -> Result<()> {
+    let usb = usb(usb90())?;
+    assert!((usb.start[0][0] - usb.start[1][0]).abs() < 1e-9);
+    assert!((usb.start[0][1] - usb.start[1][1]).abs() > 0.5);
+    Ok(())
+}
+
+#[test]
+fn a_routed_pair_runs_coupled_at_the_derived_gap() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let before = usb.engine.revision();
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    assert_eq!(usb.engine.revision(), before + 1, "one undo step");
+    let project = usb.engine.project();
+    let pair = project
+        .rules
+        .diff_pair(usb.pair)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("pair".into()))?;
+    let (width, gap) = layout::impedance::pair_width_gap(project, pair.positive, CopperLayer::Top);
+    let coupling = layout::length::coupling(project, &pair);
+    assert!(!coupling.coupled_runs.is_empty());
+    for (_, _, layer, w, edge) in &coupling.coupled_runs {
+        assert_eq!(*layer, CopperLayer::Top);
+        assert!(
+            (w - width).abs() < 1e-9 && (edge - gap).abs() < 1e-9,
+            "{w} {edge}"
+        );
+    }
+    // Coupled over the whole straight run but the fan-out and fan-in.
+    let span = (usb.end[0][0] - usb.start[0][0]).abs();
+    assert!(coupling.coupled[0] > span - 3.0, "{:?}", coupling);
+    // Both halves connect their pads: no unrouted, clearance, pair or
+    // impedance finding.
+    let codes = board_codes(&usb.engine);
+    for code in [
+        "board.unrouted",
+        "board.clearance",
+        "pair.gap",
+        "pair.skew",
+        "pair.uncoupled",
+        "impedance.mismatch",
+    ] {
+        let hits: Vec<_> = layout::checks(usb.engine.project())
+            .into_iter()
+            .filter(|f| {
+                f.code == code
+                    && f.objects
+                        .iter()
+                        .any(|o| matches!(o, crate::ObjectRef::Net { id } if usb.nets.contains(id)))
+            })
+            .collect();
+        assert!(hits.is_empty(), "{code}: {hits:?} ({codes:?})");
+    }
+    // Undo takes the whole pair away; redo brings it back.
+    let tracks = usb.engine.project().tracks.len();
+    usb.engine.undo()?;
+    assert!(usb.engine.project().tracks.len() < tracks);
+    usb.engine.redo()?;
+    assert_eq!(usb.engine.project().tracks.len(), tracks);
+    Ok(())
+}
+
+#[test]
+fn a_layer_change_adds_a_via_pair_and_its_barrel_length() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let a = mid(usb.start[0], usb.start[1]);
+    let b = mid(usb.end[0], usb.end[1]);
+    let turn = [0.5 * (a[0] + b[0]), a[1]];
+    routed(
+        &mut usb,
+        vec![
+            PairLeg {
+                layer: CopperLayer::Top,
+                points: vec![a, turn],
+            },
+            PairLeg {
+                layer: CopperLayer::Bottom,
+                points: vec![turn, b],
+            },
+        ],
+    )?;
+    let project = usb.engine.project();
+    assert_eq!(project.vias.len(), 2);
+    let r = report(&usb.engine)?;
+    let row = r
+        .nets
+        .iter()
+        .find(|n| n.net == usb.nets[0])
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    // Top mid-plane to bottom mid-plane of the preset: 1.6 + 0.035 mm.
+    assert!((row.length.vias - 1.635).abs() < 1e-9, "{:?}", row.length);
+    assert_eq!(row.length.via_count, 1);
+    assert!(
+        !board_codes(&usb.engine).contains(&"board.via_dangling".to_owned()),
+        "{:?}",
+        board_codes(&usb.engine)
+    );
+    Ok(())
+}
+
+/// The longest straight track of `net`.
+fn longest(engine: &Engine, net: Id) -> Result<Id> {
+    engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.net == net)
+        .max_by(|x, y| {
+            crate::geometry::distance(x.start, x.end)
+                .total_cmp(&crate::geometry::distance(y.start, y.end))
+        })
+        .map(|t| t.id)
+        .ok_or_else(|| Error::NotFound("track".into()))
+}
+
+/// Lengthening one half makes the halves unequal: the skew check fires,
+/// and tuning the other half to its partner's length clears it with a
+/// meander that keeps clear of the partner.
+#[test]
+fn skew_is_found_and_a_meander_removes_it() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let track = longest(&usb.engine, usb.nets[1])?;
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::TuneLength {
+            request: TuneRequest {
+                track,
+                amount: TuneAmount::Add { mm: 0.8 },
+                style: MeanderStyle::Trombone,
+                amplitude: Some(1.0),
+                spacing: None,
+                side: None,
+            },
+        }),
+    )?;
+    let r = report(&usb.engine)?;
+    let pair = r
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("pair".into()))?;
+    assert!(pair.skew > 0.1, "{pair:?}");
+    assert!(board_codes(&usb.engine).contains(&"pair.skew".to_owned()));
+    // The shorter half's longest straight segment.
+    let short = if pair.positive < pair.negative {
+        usb.nets[0]
+    } else {
+        usb.nets[1]
+    };
+    let target = pair.positive.max(pair.negative);
+    let track = usb
+        .engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.net == short)
+        .max_by(|x, y| {
+            crate::geometry::distance(x.start, x.end)
+                .total_cmp(&crate::geometry::distance(y.start, y.end))
+        })
+        .map(|t| t.id)
+        .ok_or_else(|| Error::NotFound("track".into()))?;
+    let request = TuneRequest {
+        track,
+        amount: TuneAmount::Target { mm: target },
+        style: MeanderStyle::Trombone,
+        amplitude: Some(1.0),
+        spacing: None,
+        side: None,
+    };
+    let QueryResult::TunePreview(preview) = usb.engine.query(Query::TunePreview {
+        request: request.clone(),
+    })?
+    else {
+        return Err(Error::Invalid("preview".into()));
+    };
+    let before = usb.engine.revision();
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::TuneLength { request }),
+    )?;
+    assert_eq!(usb.engine.revision(), before + 1);
+    let r = report(&usb.engine)?;
+    let pair = r
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("pair".into()))?;
+    assert!(pair.skew < 1e-5, "{pair:?} {preview:?}");
+    let codes = board_codes(&usb.engine);
+    assert!(!codes.contains(&"pair.skew".to_owned()), "{codes:?}");
+    assert!(!codes.contains(&"board.clearance".to_owned()), "{codes:?}");
+    Ok(())
+}
+
+#[test]
+fn a_meander_adds_the_exact_length_and_keeps_clearance() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let net = usb.nets[0];
+    let before = report(&usb.engine)?
+        .nets
+        .iter()
+        .find(|n| n.net == net)
+        .map(|n| n.length.total)
+        .unwrap_or_default();
+    let track = usb
+        .engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.net == net)
+        .max_by(|x, y| {
+            crate::geometry::distance(x.start, x.end)
+                .total_cmp(&crate::geometry::distance(y.start, y.end))
+        })
+        .map(|t| t.id)
+        .ok_or_else(|| Error::NotFound("track".into()))?;
+    for style in [MeanderStyle::Trombone, MeanderStyle::Accordion] {
+        let mut engine = Engine::from_file(usb.engine.to_file())?;
+        let request = TuneRequest {
+            track,
+            amount: TuneAmount::Add { mm: 2.5 },
+            style,
+            amplitude: Some(1.5),
+            spacing: None,
+            side: None,
+        };
+        let outcome = apply(
+            &mut engine,
+            Operation::Layout(LayoutCommand::TuneLength { request }),
+        );
+        if style == MeanderStyle::Accordion {
+            // Swinging to both sides runs into the partner half.
+            assert!(outcome.is_err(), "{outcome:?}");
+            continue;
+        }
+        outcome?;
+        let after = report(&engine)?
+            .nets
+            .iter()
+            .find(|n| n.net == net)
+            .map(|n| n.length.total)
+            .unwrap_or_default();
+        assert!((after - before - 2.5).abs() < 1e-5, "{before} {after}");
+        // Leg spacing: track width plus at least the track clearance.
+        let codes = board_codes(&engine);
+        assert!(!codes.contains(&"board.clearance".to_owned()), "{codes:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_refused_tuning_changes_nothing() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let track = usb
+        .engine
+        .project()
+        .tracks
+        .iter()
+        .find(|t| t.net == usb.nets[0])
+        .map(|t| t.id)
+        .ok_or_else(|| Error::NotFound("track".into()))?;
+    let kept = Snapshot::of(&usb.engine);
+    for amount in [
+        TuneAmount::Add { mm: 5000.0 },
+        TuneAmount::Add { mm: -1.0 },
+        TuneAmount::Add { mm: f64::NAN },
+    ] {
+        let refused = usb.engine.apply(
+            usb.engine.revision(),
+            Operation::Layout(LayoutCommand::TuneLength {
+                request: TuneRequest {
+                    track,
+                    amount,
+                    style: MeanderStyle::Trombone,
+                    amplitude: None,
+                    spacing: Some(0.01),
+                    side: None,
+                },
+            }),
+        );
+        assert!(refused.is_err());
+        kept.assert_kept(&usb.engine, "refused tuning");
+    }
+    Ok(())
+}
+
+#[test]
+fn length_groups_report_and_flag_mismatches() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let Outcome::LengthGroupAdded { group } = apply(
+        &mut usb.engine,
+        Operation::Rules(RulesCommand::AddLengthGroup {
+            group: LengthGroupSpec {
+                name: "USB".into(),
+                nets: vec![],
+                pairs: vec![usb.pair],
+                target: Some(50.0),
+                tolerance: 0.5,
+            },
+        }),
+    )?
+    else {
+        return Err(Error::Invalid("group".into()));
+    };
+    let r = report(&usb.engine)?;
+    let row = r
+        .groups
+        .iter()
+        .find(|g| g.group == group)
+        .ok_or_else(|| Error::NotFound("group".into()))?;
+    assert!(!row.ok && row.members.len() == 2);
+    let findings: Vec<_> = layout::checks(usb.engine.project())
+        .into_iter()
+        .filter(|f| f.code == "length.mismatch")
+        .collect();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for f in &findings {
+        let title = f.message.split("; ").next().unwrap_or_default();
+        assert!(crate::issues::style::check(title).is_empty(), "{title}");
+    }
+    // The Issues report classifies them.
+    let QueryResult::Issues(issues) = usb.engine.query(Query::Issues {
+        scope: crate::issues::IssueScope::All,
+    })?
+    else {
+        return Err(Error::Invalid("issues".into()));
+    };
+    assert!(
+        issues
+            .rows
+            .iter()
+            .any(|r| r.finding.code == "length.mismatch" && r.group.title == "Length mismatch")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_narrow_pair_gap_and_an_off_target_width_are_found() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    let (width, gap) =
+        layout::impedance::pair_width_gap(usb.engine.project(), usb.nets[0], CopperLayer::Top);
+    // Twice the width: the impedance drops well below 90 Ω, still at the
+    // gap.
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::RoutePair {
+            request: PairRouteRequest {
+                pair: usb.pair,
+                start: usb.start,
+                legs: legs.clone(),
+                end: Some(usb.end),
+                width: Some(2.0 * width),
+                gap: Some(gap),
+            },
+        }),
+    )?;
+    assert!(board_codes(&usb.engine).contains(&"impedance.mismatch".to_owned()));
+    usb.engine.undo()?;
+    // A wider class gap: routing at the clearance is closer than the
+    // pair gap.
+    let class = usb.engine.project().rules.net_classes.first().cloned();
+    let mut class = class.ok_or_else(|| Error::NotFound("class".into()))?;
+    class.diff_pair_gap = Some(gap + 0.15);
+    class.signal.diff_impedance = None;
+    apply(
+        &mut usb.engine,
+        Operation::Rules(RulesCommand::EditNetClass { class }),
+    )?;
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::RoutePair {
+            request: PairRouteRequest {
+                pair: usb.pair,
+                start: usb.start,
+                legs,
+                end: Some(usb.end),
+                width: Some(width),
+                gap: Some(gap),
+            },
+        }),
+    )?;
+    assert!(board_codes(&usb.engine).contains(&"pair.gap".to_owned()));
+    Ok(())
+}
+
+#[test]
+fn pairs_survive_the_file_round_trip_and_follow_undo() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let bytes = crate::format::encode(&usb.engine.to_file())?;
+    let reopened = Engine::from_file(crate::format::decode(&bytes)?)?;
+    assert_eq!(reopened.project().rules, usb.engine.project().rules);
+    assert_eq!(reopened.project().tracks, usb.engine.project().tracks);
+    assert_eq!(report(&reopened)?, report(&usb.engine)?);
+    // Deleting the pair is one undo step.
+    apply(
+        &mut usb.engine,
+        Operation::Rules(RulesCommand::DeleteDiffPair { pair: usb.pair }),
+    )?;
+    assert!(usb.engine.project().rules.diff_pairs.is_empty());
+    usb.engine.undo()?;
+    assert_eq!(usb.engine.project().rules.diff_pairs.len(), 1);
+    // A pair of a missing net is refused and changes nothing.
+    let kept = Snapshot::of(&usb.engine);
+    let refused = usb.engine.apply(
+        usb.engine.revision(),
+        Operation::Rules(RulesCommand::AddDiffPair {
+            pair: DiffPairSpec {
+                name: "Ghost".into(),
+                positive: 9_999,
+                negative: usb.nets[0],
+            },
+        }),
+    );
+    assert!(refused.is_err());
+    kept.assert_kept(&usb.engine, "pair of a missing net");
+    Ok(())
+}
+
+#[test]
+fn the_queries_reach_the_calculator_suggestions_and_table() -> Result<()> {
+    let usb = usb(usb90())?;
+    let QueryResult::PairSuggestions(suggested) = usb.engine.query(Query::SuggestPairs {})? else {
+        return Err(Error::Invalid("suggest".into()));
+    };
+    // USB_D+/USB_D- is already a pair.
+    assert!(suggested.iter().all(|s| s.positive != usb.nets[0]));
+    let QueryResult::ImpedanceTable(table) = usb.engine.query(Query::ImpedanceTable {})? else {
+        return Err(Error::Invalid("table".into()));
+    };
+    assert_eq!(table.layers.len(), 4);
+    let top = table
+        .classes
+        .first()
+        .and_then(|c| c.layers.first())
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    assert!(
+        (top.zdiff.unwrap_or_default() - 90.0).abs() < 0.01,
+        "{top:?}"
+    );
+    // The wire form CLI and MCP send.
+    let query: Query = serde_json::from_value(serde_json::json!({
+        "query": "impedance.calculate",
+        "params": {"request": {"on": "layer", "layer": "Top", "width": 0.2, "gap": 0.2}}
+    }))?;
+    let QueryResult::Impedance(z) = usb.engine.query(query)? else {
+        return Err(Error::Invalid("calculate".into()));
+    };
+    assert!(z.zdiff.is_some() && z.z0 > 30.0 && z.z0 < 80.0, "{z:?}");
+    let operation: Operation = serde_json::from_value(serde_json::json!({
+        "editor": "Rules",
+        "operation": {"command": "length_group.add", "params": {"group": {
+            "name": "Bus", "nets": [usb.nets[0]], "tolerance": 0.2
+        }}}
+    }))?;
+    let mut engine = usb.engine;
+    assert!(matches!(
+        engine.apply(engine.revision(), operation)?,
+        Outcome::LengthGroupAdded { .. }
+    ));
+    Ok(())
+}

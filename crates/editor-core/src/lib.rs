@@ -227,6 +227,31 @@ pub enum Query {
     /// Per fill: whether its computed copper is stale.
     #[serde(rename = "fill.status")]
     FillStatus {},
+    /// Z0 (and, with a gap, the edge-coupled Zdiff) of a trace on a
+    /// stackup layer or an explicit structure, with the model's accuracy.
+    #[serde(rename = "impedance.calculate")]
+    ImpedanceCalculate {
+        request: layout::impedance::ImpedanceRequest,
+    },
+    /// Every layer's line structure and, for each net class with an
+    /// impedance target, the width and pair gap it needs on each layer
+    /// and why a target cannot be met there.
+    #[serde(rename = "impedance.table")]
+    ImpedanceTable {},
+    /// Differential pairs proposed from net names (`USB_D+`/`USB_D-`,
+    /// `_P`/`_N`, `DP`/`DM`); `diff_pair.add` makes one.
+    #[serde(rename = "diff_pair.suggest")]
+    SuggestPairs {},
+    /// Every routed, paired or grouped net's length (tracks plus via
+    /// barrels), its target and deviation; every pair's skew and
+    /// uncoupled length; every length group's window.
+    #[serde(rename = "layout.length_report")]
+    LengthReport {},
+    /// What `layout.tune_length` would build, without applying it.
+    #[serde(rename = "layout.tune_preview")]
+    TunePreview {
+        request: layout::meander::TuneRequest,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -259,6 +284,11 @@ pub enum QueryResult {
     NetClassChanges(Vec<rules::netclass::ClassChange>),
     BoardShape(Box<model::SolvedBoard>),
     FillStatus(Vec<layout::fill::FillStatus>),
+    Impedance(Box<layout::impedance::ImpedanceResult>),
+    ImpedanceTable(Box<layout::impedance::ImpedanceTable>),
+    PairSuggestions(Vec<rules::signal::PairSuggestion>),
+    LengthReport(Box<layout::length::LengthReport>),
+    TunePreview(Box<layout::meander::TunePreview>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -757,16 +787,21 @@ impl Engine {
                         "net_class.net_missing: a chosen net no longer exists".into(),
                     ));
                 }
+                // A pair or group names nets that exist (checked before
+                // the nets follow-up, which would drop it).
+                layout::length::check_command_nets(&candidate.project, &command)?;
                 // A command that leaves the rules as they are (the same
                 // profile again, an override to its current value) is not
                 // an undo step.
                 let mut next = candidate.project.rules.clone();
-                let added = rules::apply(&mut next, command)?;
+                let added = rules::apply_added(&mut next, command)?;
                 if next != candidate.project.rules {
                     Arc::make_mut(&mut candidate.project).rules = next;
                 }
                 match added {
-                    Some(class) => Outcome::NetClassAdded { class },
+                    Some(rules::signal::Added::Class(class)) => Outcome::NetClassAdded { class },
+                    Some(rules::signal::Added::Pair(pair)) => Outcome::DiffPairAdded { pair },
+                    Some(rules::signal::Added::Group(group)) => Outcome::LengthGroupAdded { group },
                     None => Outcome::None,
                 }
             }
@@ -802,7 +837,12 @@ impl Engine {
             // Explicit net-class assignments follow their nets through
             // merges and splits; a net that no longer exists takes its
             // assignment with it.
-            if !project.rules.assignments.is_empty() {
+            // Pairs and length groups follow them too.
+            let rules_ = &project.rules;
+            if !rules_.assignments.is_empty()
+                || !rules_.diff_pairs.is_empty()
+                || !rules_.length_groups.is_empty()
+            {
                 let live: std::collections::BTreeSet<Id> =
                     project.nets.iter().map(|n| n.id).collect();
                 rules::netclass::follow_nets(
@@ -812,6 +852,7 @@ impl Engine {
                     &changes.created,
                     &live,
                 );
+                rules::signal::follow_nets(&mut project.rules, &changes.merged, &live);
             }
             // Constrained parts, fills and keepouts follow their board
             // edges (and a move away from one is refused).
@@ -985,6 +1026,29 @@ impl Engine {
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
             ))),
+            Query::ImpedanceCalculate { request } => Ok(QueryResult::Impedance(Box::new(
+                layout::impedance::calculate(&self.document.project, &request)?,
+            ))),
+            Query::ImpedanceTable {} => Ok(QueryResult::ImpedanceTable(Box::new(
+                layout::impedance::table(&self.document.project),
+            ))),
+            Query::SuggestPairs {} => {
+                let project = &self.document.project;
+                Ok(QueryResult::PairSuggestions(rules::signal::suggest(
+                    &project.rules,
+                    project.nets.iter().map(|n| (n.id, n.name.as_str())),
+                )))
+            }
+            Query::LengthReport {} => Ok(QueryResult::LengthReport(Box::new(
+                layout::length::report(&self.document.project),
+            ))),
+            Query::TunePreview { request } => {
+                let project = &self.document.project;
+                let obstacles = layout::obstacles::Obstacles::of(project);
+                Ok(QueryResult::TunePreview(Box::new(
+                    layout::meander::plan(project, &obstacles, &request)?.preview(),
+                )))
+            }
             Query::Issues { scope } => Ok(QueryResult::Issues(issues::report(
                 &self.document.project,
                 &self.document.drafts,

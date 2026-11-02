@@ -10,6 +10,7 @@ mod drawing;
 mod engine;
 mod fields;
 mod graphics;
+mod high_speed;
 mod junctions;
 mod library;
 mod library_folders;

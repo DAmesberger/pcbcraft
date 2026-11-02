@@ -2,6 +2,7 @@
 //! by net or by an explicit name pattern. A class never follows from a
 //! net's electrical behaviour or matching names elsewhere; only these
 //! entries assign one.
+use super::signal::SignalRules;
 use super::{
     ClearanceSide, CopperObject, MAX_PROFILE_TEXT, MAX_RULE_MM, PadConnection, ProjectRules,
     Resolved, RuleKey, RuleSource, RulesCommand,
@@ -49,15 +50,20 @@ pub struct NetClassSpec {
     pub via_drill: Option<f64>,
     #[serde(default)]
     pub via_diameter: Option<f64>,
-    /// Reserved for differential pairs (stored, not yet used).
+    /// Track width of this class's differential pairs (the derived
+    /// width when a differential impedance target is set and this is
+    /// unset).
     #[serde(default)]
     pub diff_pair_width: Option<f64>,
-    /// Reserved for differential pairs (stored, not yet used).
+    /// Edge-to-edge gap of this class's differential pairs.
     #[serde(default)]
     pub diff_pair_gap: Option<f64>,
     /// How fills of this class's nets join its pads.
     #[serde(default)]
     pub fill_connection: Option<PadConnection>,
+    /// Impedance targets and pair limits (`rules::signal`).
+    #[serde(default, skip_serializing_if = "SignalRules::is_empty")]
+    pub signal: SignalRules,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -81,6 +87,8 @@ pub struct NetClass {
     pub diff_pair_gap: Option<f64>,
     #[serde(default)]
     pub fill_connection: Option<PadConnection>,
+    #[serde(default, skip_serializing_if = "SignalRules::is_empty")]
+    pub signal: SignalRules,
 }
 
 impl NetClass {
@@ -96,6 +104,7 @@ impl NetClass {
             diff_pair_width: s.diff_pair_width,
             diff_pair_gap: s.diff_pair_gap,
             fill_connection: s.fill_connection,
+            signal: s.signal,
         }
     }
 }
@@ -201,7 +210,7 @@ fn class_problem(c: &NetClass) -> Option<String> {
             "net_class.via: net class {name} via pad must be wider than its drill"
         ));
     }
-    None
+    c.signal.problem(name)
 }
 
 pub(super) fn validate(rules: &ProjectRules) -> Result<()> {
@@ -330,7 +339,13 @@ pub(super) fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<O
         }
         RulesCommand::SetProfile { .. }
         | RulesCommand::SetOverride { .. }
-        | RulesCommand::ClearOverride { .. } => {
+        | RulesCommand::ClearOverride { .. }
+        | RulesCommand::AddDiffPair { .. }
+        | RulesCommand::EditDiffPair { .. }
+        | RulesCommand::DeleteDiffPair { .. }
+        | RulesCommand::AddLengthGroup { .. }
+        | RulesCommand::EditLengthGroup { .. }
+        | RulesCommand::DeleteLengthGroup { .. } => {
             return Err(Error::Invalid("not a net class command".into()));
         }
     }

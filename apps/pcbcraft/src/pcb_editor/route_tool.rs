@@ -34,6 +34,10 @@ pub const ROUTE_KEYS: &[(&str, &str)] = &[
     ("F", "Flip the elbow corner"),
     ("W, Shift+W", "Next or previous track width"),
     ("D, Shift+D", "Next or previous via size"),
+    (
+        "P",
+        "Pair routing on or off (a pad of a pair starts both halves)",
+    ),
 ];
 
 /// The route in progress besides its head (`PcbEditor::route_start`) and
@@ -46,7 +50,7 @@ pub(super) struct RouteState {
     /// The accepted steps of the route in progress, oldest first.
     pub(super) steps: Vec<Step>,
     /// A step or unwind sent to the engine, settled by the next sync.
-    commit: Option<Commit>,
+    pub(super) commit: Option<Commit>,
     /// The via size chosen for a net while routing; the net class's
     /// otherwise.
     pub(super) via_size: Option<(Id, (f64, f64))>,
@@ -55,6 +59,10 @@ pub(super) struct RouteState {
     pub(super) via_draft: Option<(f64, f64)>,
     /// Every key row in the card instead of the first eight.
     pub(super) keys_all: bool,
+    /// Pair routing switched off (P): a pad of a pair routes one net.
+    pub(super) single: bool,
+    /// The differential pair being routed (`pair_tool`).
+    pub(super) pair: Option<super::pair_tool::PairRoute>,
 }
 
 /// One accepted step: where it started and what it added.
@@ -64,9 +72,11 @@ pub(super) struct Step {
     pub(super) layer: CopperLayer,
     pub(super) tracks: Vec<Id>,
     pub(super) vias: Vec<Id>,
+    /// A pair step: the pair head before it and the tracks it extended.
+    pub(super) pair: Option<super::pair_tool::PairUndo>,
 }
 
-enum Commit {
+pub(super) enum Commit {
     Step {
         revision: u64,
         /// The first identity the step can allocate.
@@ -75,6 +85,8 @@ enum Commit {
         layer: CopperLayer,
         to: Point,
         finish: bool,
+        /// A pair step: the head before and after it.
+        pair: Option<Box<(super::pair_tool::PairUndo, layout::pair::PairHead)>>,
     },
     Unwind {
         revision: u64,
@@ -130,6 +142,7 @@ impl PcbEditor {
         self.pending_via = None;
         self.route.steps.clear();
         self.route.commit = None;
+        self.route.pair = None;
     }
 
     /// Finish the route where it is (Enter, double-click, Esc, right-click,
@@ -163,9 +176,10 @@ impl PcbEditor {
                 layer,
                 to,
                 finish,
+                pair,
                 ..
             } => {
-                let tracks = project
+                let tracks: Vec<Id> = project
                     .tracks
                     .iter()
                     .filter(|t| t.id >= next_id)
@@ -177,11 +191,17 @@ impl PcbEditor {
                     .filter(|v| v.id >= next_id)
                     .map(|v| v.id)
                     .collect();
+                let undo = pair.map(|boxed| {
+                    let (undo, after) = *boxed;
+                    self.settle_pair(project, &tracks, after);
+                    undo
+                });
                 self.route.steps.push(Step {
                     from,
                     layer,
                     tracks,
                     vias,
+                    pair: undo,
                 });
                 self.pending_via = None;
                 self.route_start = Some(to);
@@ -194,6 +214,10 @@ impl PcbEditor {
                     self.route_start = Some(step.from);
                     self.layer = step.layer;
                     self.pending_via = None;
+                    if let (Some(undo), Some(route)) = (step.pair, &mut self.route.pair) {
+                        route.head = undo.head;
+                        route.last = undo.last;
+                    }
                 }
             }
         }
@@ -210,16 +234,23 @@ impl PcbEditor {
         project: &Project,
         end: Point,
     ) {
-        let Some(request) = self.route_step(project, end) else {
-            return;
+        let edits = if self.route.pair.is_some() {
+            match self.pair_step(project, end) {
+                Some(request) => layout::pair::step(&request).edits,
+                None => return,
+            }
+        } else {
+            match self.route_step(project, end) {
+                Some(request) => posture::step(&request),
+                None => return,
+            }
         };
         let t = solidcraft_ui_egui::theme::Tokens::get();
         let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
-        let edits = posture::step(&request);
-        let width = (request.width as f32 * scale).max(1.0);
         for leg in &edits.add {
             // The copper the step will add: round caps, opaque.
+            let width = (leg.width as f32 * scale).max(1.0);
             let color =
                 BoardInk::get().on_board(crate::palette::board().copper_layer(leg.layer), 1.0);
             let (a, b) = (screen(leg.start), screen(leg.end));
@@ -228,6 +259,10 @@ impl PcbEditor {
                 color,
                 Stroke::NONE,
             ));
+            painter.line_segment([a, b], Stroke::new(1.0, t.body_selected));
+        }
+        for track in &edits.replace {
+            let (a, b) = (screen(track.start), screen(track.end));
             painter.line_segment([a, b], Stroke::new(1.0, t.body_selected));
         }
         for via in &edits.vias {
@@ -297,6 +332,13 @@ impl PcbEditor {
         if self.route.commit.is_some() {
             return None;
         }
+        // A pad of a differential pair starts both halves (`pair_tool`).
+        if self.route_start.is_none() && self.pair_start(project, at, scale) {
+            return None;
+        }
+        if self.route.pair.is_some() {
+            return self.pair_click(project, revision, at, scale);
+        }
         let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
         let destination = snapped
             .map(|(c, _)| c)
@@ -332,6 +374,7 @@ impl PcbEditor {
             layer: request.layer,
             to: destination,
             finish,
+            pair: None,
         });
         Some(Operation::Layout(LayoutCommand::ApplyRoute { edits }))
     }
@@ -372,9 +415,15 @@ impl PcbEditor {
             self.reset_route();
             return None;
         };
+        // A pair step also gives back the previous tracks it extended.
         let edits = RouteEditSet {
             remove: step.tracks.clone(),
             remove_vias: step.vias.clone(),
+            replace: step
+                .pair
+                .as_ref()
+                .map(|undo| undo.restore.clone())
+                .unwrap_or_default(),
             ..Default::default()
         };
         self.route.commit = Some(Commit::Unwind { revision });
@@ -456,6 +505,9 @@ impl PcbEditor {
         }
         if pressed(Key::D) {
             self.cycle_via_size(project, shift);
+        }
+        if pressed(Key::P) && !shift {
+            self.route.single = !self.route.single;
         }
         if pressed(Key::V) {
             self.next_layer(project, pointer, shift);
@@ -542,6 +594,6 @@ mod tests {
         assert_eq!(cycle(&widths, 0.25, false, by_value), Some(0.3));
         assert_eq!(cycle(&widths, 0.25, true, by_value), Some(0.2));
         assert_eq!(cycle::<f64>(&[], 0.25, true, by_value), None);
-        assert_eq!(ROUTE_KEYS.len(), 10);
+        assert_eq!(ROUTE_KEYS.len(), 11);
     }
 }

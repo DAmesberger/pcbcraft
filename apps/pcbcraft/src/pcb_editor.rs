@@ -39,13 +39,18 @@ mod board_shape_ui;
 mod commands;
 pub(crate) use commands::shape_tool_entries;
 pub(crate) use route_tool::ROUTE_KEYS;
+pub(crate) use tune_tool::TUNE_KEYS;
 mod edge_card;
 mod fill_card;
 mod fill_paint;
 #[cfg(test)]
 mod fill_tests;
 mod fill_tool;
+mod impedance_view;
 pub(crate) mod net_classes;
+#[cfg(test)]
+mod pair_tests;
+mod pair_tool;
 mod placement_card;
 #[cfg(test)]
 mod raster_tests;
@@ -54,6 +59,8 @@ mod route_card;
 mod route_tests;
 pub(crate) mod route_tool;
 mod rules_panel;
+mod signal_card;
+mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
 mod via_card;
@@ -72,6 +79,8 @@ enum Tool {
     Via,
     /// Draw a copper fill's outline.
     Fill,
+    /// Meander a track segment to its length target (`tune_tool`).
+    Tune,
 }
 
 /// Most inner copper layers a stackup has (six-layer boards).
@@ -396,6 +405,10 @@ pub struct PcbEditor {
     shape: board_shape_ui::ShapeMode,
     /// The Placement card's Board edge fields (`edge_card`).
     edge: edge_card::EdgeEdit,
+    /// The High speed card while it is open (`signal_card`).
+    signals: Option<signal_card::SignalCard>,
+    /// The Tune tool's settings and preview (`tune_tool`).
+    tune: tune_tool::TuneState,
 }
 
 impl Default for PcbEditor {
@@ -462,6 +475,8 @@ impl Default for PcbEditor {
             fill_card: None,
             shape: Default::default(),
             edge: Default::default(),
+            signals: None,
+            tune: Default::default(),
         }
     }
 }
@@ -854,6 +869,10 @@ impl PcbEditor {
                             .enabled(!self.view_3d)
                             .selected(self.tool == Tool::Via)
                             .tip("Place a through via on a net; switch to Layout to place"),
+                        Button::new("tune", "dimension", "Tune")
+                            .enabled(!self.view_3d && !engine.project().tracks.is_empty())
+                            .selected(self.tool == Tool::Tune)
+                            .tip("Meander a track to its length target; switch to Layout to tune"),
                         Button::new("board-shape", "sketch", "Shape")
                             .enabled(!self.view_3d)
                             .tip("Edit the board outline, cutouts and named edges as a sketch"),
@@ -902,6 +921,10 @@ impl PcbEditor {
             "via" => {
                 self.end_route();
                 self.tool = Tool::Via;
+            }
+            "tune" => {
+                self.end_route();
+                self.tool = Tool::Tune;
             }
             "fill" => {
                 self.end_route();
@@ -1020,9 +1043,10 @@ impl PcbEditor {
             Subject::Review
         } else if let Some(subject) = self.rules_subject() {
             subject
-        } else if self.setup.is_some() || self.net_classes.is_some() {
+        } else if self.setup.is_some() || self.net_classes.is_some() || self.signals.is_some() {
             Subject::Dialog
-        } else if (self.shape.active || matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill))
+        } else if (self.shape.active
+            || matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill | Tool::Tune))
             && !self.view_3d
         {
             Subject::Tool
@@ -1067,7 +1091,12 @@ impl PcbEditor {
             Subject::Tool if self.tool == Tool::Fill => {
                 CardResponse::output(self.fill_tool_card(ui, engine.project()))
             }
+            Subject::Tool if self.tool == Tool::Tune => {
+                self.tune_card(ui, engine.project(), engine.revision());
+                CardResponse::output(None)
+            }
             Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
+            Subject::Dialog if self.signals.is_some() => self.signals_card(ui, engine),
             Subject::Dialog if self.setup.is_none() => self.net_classes_card(ui, engine),
             Subject::Dialog => CardResponse::output(self.board_setup(ui, engine)),
             // The review docks with its own header and pinned footer
@@ -1268,6 +1297,13 @@ impl PcbEditor {
                 operation = Some(back);
             }
         }
+        // The Tune tool: the segment under the pointer and its keys.
+        if self.tool == Tool::Tune {
+            self.tune_hover(project, cursor.filter(|_| response.hovered()), tolerance);
+            if response.hovered() {
+                self.tune_keys(ui, project);
+            }
+        }
         if self.tool == Tool::Route && response.clicked_by(PointerButton::Secondary) {
             self.finish_route();
         }
@@ -1353,6 +1389,8 @@ impl PcbEditor {
                 operation = self.place_via(project, at, scale);
             } else if self.tool == Tool::Fill {
                 operation = self.fill_click(view, at);
+            } else if self.tool == Tool::Tune {
+                operation = self.tune_click(project, engine.revision());
             } else if self.tool == Tool::Route {
                 if !double {
                     operation = self.route_click(project, engine.revision(), at, scale);
@@ -1389,6 +1427,9 @@ impl PcbEditor {
                 .unwrap_or_else(|| self.route_point(at, scale));
             self.paint_route_preview(&painter, view, project, end);
         }
+        if self.tool == Tool::Tune {
+            self.paint_tune_preview(&painter, view, project, engine.revision(), pointer);
+        }
         if self.tool == Tool::Via
             && let Some(at) = cursor
             && response.hovered()
@@ -1410,6 +1451,7 @@ impl PcbEditor {
                     Tool::Route => "Route (keys in the Route card)",
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
+                    Tool::Tune => "Tune (keys in the Tune card)",
                     Tool::Select => "Select / move",
                 },
                 self.layer.name(),

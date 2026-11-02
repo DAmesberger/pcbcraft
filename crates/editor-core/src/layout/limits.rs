@@ -90,6 +90,14 @@ pub struct BoardRules<'a> {
     pairs: [[f64; 6]; 6],
     /// Each net's class; empty when the project has no classes.
     classes: BTreeMap<Id, NetClassId>,
+    /// The two halves of each differential pair, `(low, high)`: between
+    /// them only the object-pair value applies, not class clearances, so
+    /// a pair can run at its gap (`rules::signal`).
+    pair_halves: std::collections::BTreeSet<(Id, Id)>,
+}
+
+fn ordered(a: Id, b: Id) -> (Id, Id) {
+    if a <= b { (a, b) } else { (b, a) }
 }
 
 impl<'a> BoardRules<'a> {
@@ -111,11 +119,26 @@ impl<'a> BoardRules<'a> {
                 .filter_map(|n| Some((n.id, rules.class_of(n.id, &n.name)?)))
                 .collect()
         };
+        let pair_halves = rules
+            .diff_pairs
+            .iter()
+            .map(|p| ordered(p.positive, p.negative))
+            .collect();
         Self {
             project: rules,
             effective,
             pairs,
             classes,
+            pair_halves,
+        }
+    }
+
+    /// Whether nets `a` and `b` are the two halves of one differential
+    /// pair.
+    pub fn paired(&self, a: Option<Id>, b: Option<Id>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => self.pair_halves.contains(&ordered(a, b)),
+            _ => false,
         }
     }
 
@@ -171,7 +194,7 @@ impl<'a> BoardRules<'a> {
         bn: Option<Id>,
     ) -> f64 {
         let base = self.pairs[index(a)][index(b)];
-        if self.classes.is_empty() {
+        if self.classes.is_empty() || self.paired(an, bn) {
             return base;
         }
         let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
@@ -204,6 +227,9 @@ impl<'a> BoardRules<'a> {
         b: CopperObject,
         bn: Option<Id>,
     ) -> Need {
+        if self.paired(an, bn) {
+            return self.need(RuleKey::Clearance { a, b }.normalized());
+        }
         let resolved = self.project.clearance(self.side(a, an), self.side(b, bn));
         let rule = match &resolved.source {
             RuleSource::Profile { .. } | RuleSource::Override => {
@@ -245,6 +271,7 @@ mod tests {
             diff_pair_width: None,
             diff_pair_gap: None,
             fill_connection: None,
+            signal: Default::default(),
         }
     }
 

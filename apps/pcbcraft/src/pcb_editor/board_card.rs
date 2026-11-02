@@ -57,6 +57,7 @@ impl PcbEditor {
         let mut setup = false;
         let mut classes = false;
         let mut rules = false;
+        let mut signals = false;
         kit::section(ui, "pcb-board", "Board", true, None, |ui| {
             kit::value_row(
                 ui,
@@ -91,7 +92,22 @@ impl PcbEditor {
                 };
                 classes = kit::summary_row(ui, &summary, Some("Edit…"));
             });
+            kit::row(ui, "High speed", |ui| {
+                let rules = &project.rules;
+                let summary = match (rules.diff_pairs.len(), rules.length_groups.len()) {
+                    (0, 0) => "No pairs or groups".to_owned(),
+                    (p, g) => format!(
+                        "{p} pair{} · {g} group{}",
+                        if p == 1 { "" } else { "s" },
+                        if g == 1 { "" } else { "s" }
+                    ),
+                };
+                signals = kit::summary_row(ui, &summary, Some("Edit…"));
+            });
         });
+        if signals {
+            self.open_signals();
+        }
         if setup {
             self.open_board_setup(project);
         }
@@ -105,6 +121,7 @@ impl PcbEditor {
 
     pub(super) fn open_board_setup(&mut self, project: &Project) {
         self.net_classes = None;
+        self.signals = None;
         self.rules = None;
         self.setup = Some(BoardSetup::new(project.fabrication));
     }

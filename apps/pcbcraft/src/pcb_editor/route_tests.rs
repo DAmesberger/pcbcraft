@@ -7,25 +7,25 @@ use super::*;
 use pcbcraft_core::layout::{RouteEditSet, posture::Posture};
 use pcbcraft_core::rules::{NetClassSpec, RulesCommand};
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const SCREEN: [f32; 2] = [900.0, 700.0];
 
 /// One canvas with a clock that moves a second a frame, so separate clicks
 /// never make a double-click.
-struct Canvas {
+pub(super) struct Canvas {
     ctx: egui::Context,
     time: f64,
 }
 
 impl Canvas {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
         Self { ctx, time: 0.0 }
     }
 
-    fn frame(
+    pub(super) fn frame(
         &mut self,
         editor: &mut PcbEditor,
         engine: &Engine,
@@ -52,7 +52,12 @@ impl Canvas {
         command
     }
 
-    fn click(&mut self, editor: &mut PcbEditor, engine: &Engine, at: Point) -> Option<Operation> {
+    pub(super) fn click(
+        &mut self,
+        editor: &mut PcbEditor,
+        engine: &Engine,
+        at: Point,
+    ) -> Option<Operation> {
         let p = screen(editor, engine, at);
         let button = |pressed| egui::Event::PointerButton {
             pos: p,
@@ -74,7 +79,7 @@ impl Canvas {
         )
     }
 
-    fn key(
+    pub(super) fn key(
         &mut self,
         editor: &mut PcbEditor,
         engine: &Engine,
@@ -102,7 +107,7 @@ impl Canvas {
 
     /// Apply what the editor sent, as `App::apply` does, then let the
     /// editor see the result.
-    fn apply(
+    pub(super) fn apply(
         &mut self,
         editor: &mut PcbEditor,
         engine: &mut Engine,
@@ -148,14 +153,16 @@ fn shared_net(engine: &Engine) -> Result<Id, Box<dyn std::error::Error>> {
 const R1_2: Point = [8.8, 8.0];
 const R2_1: Point = [15.2, 8.0];
 
-fn edits(operation: &Option<Operation>) -> Result<&RouteEditSet, Box<dyn std::error::Error>> {
+pub(super) fn edits(
+    operation: &Option<Operation>,
+) -> Result<&RouteEditSet, Box<dyn std::error::Error>> {
     match operation {
         Some(Operation::Layout(LayoutCommand::ApplyRoute { edits })) => Ok(edits),
         other => Err(format!("expected layout.route_apply, got {other:?}").into()),
     }
 }
 
-fn close(a: Point, b: Point) -> bool {
+pub(super) fn close(a: Point, b: Point) -> bool {
     pcbcraft_core::geometry::distance(a, b) < 1e-6
 }
 

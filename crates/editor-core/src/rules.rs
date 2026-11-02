@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod builtin;
 pub mod netclass;
+pub mod signal;
 
 pub use netclass::{
     ClassClearance, MAX_NET_CLASSES, NetClass, NetClassAssignment, NetClassId, NetClassPattern,
@@ -933,6 +934,22 @@ pub struct ProjectRules {
     /// Next [`NetClassId`]; ids are never reused.
     #[serde(default = "netclass::first_id")]
     pub next_class: u32,
+    /// Differential pairs (`diff_pair.*`; [`signal`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diff_pairs: Vec<signal::DiffPair>,
+    /// Length-matching groups (`length_group.*`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub length_groups: Vec<signal::LengthGroup>,
+    /// Next [`signal::DiffPairId`]; ids are never reused.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub next_pair: u32,
+    /// Next [`signal::LengthGroupId`]; ids are never reused.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub next_group: u32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl ProjectRules {
@@ -1102,7 +1119,8 @@ impl ProjectRules {
             o.key.set(&mut probe, o.value)?;
         }
         self.effective().validate()?;
-        netclass::validate(self)
+        netclass::validate(self)?;
+        signal::validate(self)
     }
 }
 
@@ -1166,21 +1184,61 @@ pub enum RulesCommand {
         b: NetClassId,
         mm: Option<f64>,
     },
+    /// Make two nets a differential pair with an explicit polarity; the
+    /// outcome names it (`Outcome::DiffPairAdded`). A net is in at most
+    /// one pair. `diff_pair.suggest` proposes pairs from net names.
+    #[serde(rename = "diff_pair.add")]
+    AddDiffPair { pair: signal::DiffPairSpec },
+    /// Replace one pair's name or nets (its id stays).
+    #[serde(rename = "diff_pair.edit")]
+    EditDiffPair { pair: signal::DiffPair },
+    /// Delete a pair; length groups drop it (and a group left empty goes).
+    #[serde(rename = "diff_pair.delete")]
+    DeleteDiffPair { pair: signal::DiffPairId },
+    /// Add a length-matching group; the outcome names it
+    /// (`Outcome::LengthGroupAdded`).
+    #[serde(rename = "length_group.add")]
+    AddLengthGroup { group: signal::LengthGroupSpec },
+    /// Replace one group's values (its id stays).
+    #[serde(rename = "length_group.edit")]
+    EditLengthGroup { group: signal::LengthGroup },
+    #[serde(rename = "length_group.delete")]
+    DeleteLengthGroup { group: signal::LengthGroupId },
 }
 
 /// Apply one rules command. On failure `rules` is unchanged. Net
 /// existence of `AssignNets` is the caller's check (the engine's, which
-/// sees nets). Returns the class `AddNetClass` created.
+/// sees nets). Returns the class `AddNetClass` created; see
+/// [`apply_added`] for what the pair and group commands create.
 pub fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<NetClassId>> {
+    Ok(match apply_added(rules, command)? {
+        Some(signal::Added::Class(class)) => Some(class),
+        _ => None,
+    })
+}
+
+/// [`apply`], returning whatever the command created: a class, a pair or
+/// a length group. Whether a pair's or group's nets exist is the layout
+/// validation's check.
+pub fn apply_added(
+    rules: &mut ProjectRules,
+    command: RulesCommand,
+) -> Result<Option<signal::Added>> {
     let mut next = rules.clone();
     let added = apply_to(&mut next, command)?;
     *rules = next;
     Ok(added)
 }
 
-fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<NetClassId>> {
+fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<signal::Added>> {
     let mut added = None;
     match command {
+        command @ (RulesCommand::AddDiffPair { .. }
+        | RulesCommand::EditDiffPair { .. }
+        | RulesCommand::DeleteDiffPair { .. }
+        | RulesCommand::AddLengthGroup { .. }
+        | RulesCommand::EditLengthGroup { .. }
+        | RulesCommand::DeleteLengthGroup { .. }) => added = signal::apply(rules, command)?,
         RulesCommand::SetProfile {
             profile,
             keep_overrides,
@@ -1208,7 +1266,7 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<Ne
                 )));
             }
         }
-        other => added = netclass::apply(rules, other)?,
+        other => added = netclass::apply(rules, other)?.map(signal::Added::Class),
     }
     rules.validate()?;
     Ok(added)

@@ -31,7 +31,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 ## Net classes
 
 - **Core** (`rules/netclass.rs`):
-  - Each class has a track width, a minimum width, a clearance, a via drill and diameter, and a fill connection. The diff-pair fields are reserved.
+  - Each class has a track width, a minimum width, a clearance, a via drill and diameter, and a fill connection. Its pair width and gap, impedance targets and pair limits are in [high-speed routing](high-speed-routing.md).
   - A class's values are checked against each other.
   - An explicit assignment beats the first matching name pattern (`*`/`?`). Nothing else assigns a class.
   - Assignments follow nets through `nets::reconcile`:
@@ -97,7 +97,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 
 ## Limits
 
-- Push-and-shove is not part of this work; routing respects class widths and the rule minimums.
+- Push-and-shove is not part of this work; routing respects class widths and the rule minimums. The seam it will use is described in [high-speed routing](high-speed-routing.md#the-push-and-shove-seam).
 - Document validation still bounds vias by the board's bounding box (`board_size`). A via outside a sketched outline but inside its bounding box is a board-edge finding, not an invalid document.
 - The Board shape mode, the Fill tool and card, the Net classes card and the Design rules panel are covered by engine and egui-frame tests (`the_host_evaluator_solves_a_cutout_gesture_on_the_engine` drives a Cutout gesture through the linked sketch engine).
 - The shipped showcase's cutout and slot are drawn at coordinates, not dimensioned, so its sketch solves under-constrained; its outline is fully driven by `width`, `height` and `corner_r`.
