@@ -71,8 +71,10 @@
 //! labels and sources ([`CompiledRules`]). The solver
 //! (`functions::suggest`) calls [`evaluate`] as a bounded predicate with
 //! a total [`RuleBudget`] and explains the first failing rule.
+mod samples;
 mod sandbox;
 mod scan;
+pub use samples::{MAX_RULE_SAMPLES, RuleCheck, check_samples};
 #[cfg(test)]
 mod tests;
 
@@ -111,6 +113,43 @@ pub const MAX_RULE_ARRAY: usize = 1024;
 pub const MAX_RULE_MAP: usize = 256;
 /// Bytes of a verdict message.
 pub const MAX_VERDICT_MESSAGE: usize = 512;
+
+/// The helper and verdict functions a rule may call, for messages.
+pub const HELPER_NAMES: &str = "ok, forbid, require, warn, active, active_count, function, used, role, kind, option, excludes and requires.";
+
+/// The script contract for authors and agents (`library.pinout_schema`
+/// returns it as `rule_api`): the same contract as this module's
+/// documentation, as plain text.
+pub const RULE_API: &str = r#"A pin rule is a short sandboxed Rhai script (at most 4 KiB). Its last expression must be one verdict; every branch must end in one (write `if … { warn(…) } else { ok() }`, never an `if` without `else`).
+
+Verdicts:
+- ok()
+- forbid(message) or forbid(message, ["PIN", …]): the assignment is rejected (a conflict).
+- require(message) or require(message, ["PIN", …]): reported as unmet until it holds.
+- warn(message) or warn(message, ["PIN", …]): a note for the designer; never blocks.
+Messages are 1–512 bytes.
+
+Reading the assignment (the only functions besides the verdicts; anything else is a runtime error):
+- active("PIN", "function") or active("PIN.function"): whether that function of that pin is the active one.
+- active_count(["PIN.function", …]): how many of them are active.
+- function("PIN"): the active function's label, or "" when none.
+- used("PERIPHERAL"): whether any role of the peripheral is taken.
+- role("PERIPHERAL", "ROLE"): whether that role is taken.
+- kind("PERIPHERAL"): the peripheral's kind, or "".
+- option("PIN", "pull" | "speed" | "initial" | "schmitt" | "name"): the instance's setting as text ("none"/"up"/"down", "low"/"high", "true"/"false"), or "" when unset.
+- excludes("A.f", "B.g"): forbid with a generated message when both are active, else ok().
+- requires("A.f", "B.g"): require with a generated message when A.f is active and B.g is not, else ok().
+
+Names: a pin is named by its exact name (the row's `name`, e.g. "IO36"); a name several rows share (GND) cannot be named in a rule. Function, peripheral and role labels match without case and must be declared in the same document. Naming anything undeclared is an error. Without explicit selections each pin has its default function (the row's `default`, or its only function).
+
+Every rule is evaluated at preview: without selections, with each function, peripheral or role it names literally made active, and with all of them active together. A rule that fails in any of these is a blocking finding (rule.runtime, rule.reference, rule.budget); fix it before applying.
+
+Examples:
+if function("IO0") != "gpio_in" { warn("IO0 is a strapping pin: it selects the boot mode at reset; keep it high during reset.", ["IO0"]) } else { ok() }
+excludes("PA9.usart1_tx", "PA9.tim1_ch2")
+if used("LP_I2C") && (role("LP_UART", "rtsn") || role("LP_UART", "ctsn")) { forbid("LP UART flow control and LP I2C cannot be used together.", ["IO4", "IO5", "IO6", "IO7"]) } else { ok() }
+if !active("IO54", "mtdo") { warn("IO54 is a JTAG pin by default; other use leaves only USB debugging.", ["IO54"]) } else { ok() }
+"#;
 
 /// The Rhai source of one rule.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -761,9 +800,10 @@ fn publish_issue(code: &str, message: String, objects: Vec<ObjectRef>) -> Findin
 }
 
 /// Publication findings of a component's rules without its declarations:
-/// bounds, unique printable labels and compilation. This is what the
-/// component publish calls at C0; [`publish_findings`] adds the reference
-/// and default-resolution checks that need the terminals and peripherals.
+/// bounds, unique printable labels and compilation. A component's check
+/// calls [`publish_findings`] with its declarations, which adds the
+/// reference checks and the evaluation without selections and over each
+/// rule's samples.
 pub fn declaration_findings(component: DefinitionId, rules: &[PinRule]) -> Vec<Finding> {
     publish_findings(component, None, rules)
 }
@@ -771,8 +811,10 @@ pub fn declaration_findings(component: DefinitionId, rules: &[PinRule]) -> Vec<F
 /// Publication findings of a component's rules: bounds (`rule.bounds`),
 /// unique printable labels and known references (`rule.reference`),
 /// compilation (`rule.script`), and, with the declarations, a default
-/// resolution every rule evaluates without error (`rule.runtime`,
-/// `rule.budget`) and no rule forbids (`rule.default_conflict`).
+/// resolution and the samples of each rule ([`check_samples`]) every rule
+/// evaluates without error (`rule.runtime`, `rule.budget`, or
+/// `rule.reference` for an undeclared name), and no rule forbids the
+/// default (`rule.default_conflict`).
 pub fn publish_findings(
     component: DefinitionId,
     declarations: Option<(&[TerminalDeclaration<'_>], &[Resource])>,
@@ -823,16 +865,9 @@ pub fn publish_findings(
     let Some((terminals, resources)) = declarations else {
         return out;
     };
-    let Ok(resolution) = super::resolve(
-        terminals,
-        resources,
-        &[],
-        None,
-        &super::FunctionSelections::new(),
-    ) else {
+    let Some(view) = default_view(terminals, resources) else {
         return out;
     };
-    let view = view(terminals, resources, &resolution, &PinConfigs::new());
     let index = ViewIndex::new(view.clone());
     let mut referenced = BTreeSet::new();
     for rule in rules {
@@ -855,6 +890,12 @@ pub fn publish_findings(
     let Ok(detailed) = evaluate_detailed(&compiled, &view, RuleBudget::default()) else {
         return out;
     };
+    let failed: BTreeSet<RuleId> = detailed
+        .evaluation
+        .failures
+        .iter()
+        .map(|f| f.rule)
+        .collect();
     for failure in &detailed.evaluation.failures {
         let code = match failure.kind {
             RuleFailureKind::Compile => continue,
@@ -877,6 +918,42 @@ pub fn publish_findings(
             at(failure.rule),
         ));
     }
+    // Branches the default assignment never takes: each function,
+    // peripheral and role a rule names, alone and together.
+    let mut evaluator = Evaluator::new();
+    for rule in rules {
+        if failed.contains(&rule.id) || referenced.contains(&rule.id) {
+            continue;
+        }
+        let Some((_, _, _, failures)) = samples::run(
+            &mut evaluator,
+            &compiled,
+            rule.id,
+            &rule.script.source,
+            &view,
+            terminals,
+            resources,
+        ) else {
+            continue;
+        };
+        if let Some(failure) = failures.first() {
+            let code = match failure.kind {
+                RuleFailureKind::Budget => "rule.budget",
+                _ if failure.reference => "rule.reference",
+                _ => "rule.runtime",
+            };
+            out.push(publish_issue(
+                code,
+                bounded(format!(
+                    "{} fails {}: {}",
+                    rule_name(&compiled, rule.id),
+                    failure.sample,
+                    failure.message
+                )),
+                at(rule.id),
+            ));
+        }
+    }
     for outcome in &detailed.evaluation.outcomes {
         if let RuleVerdict::Forbid { message, .. } = &outcome.verdict {
             out.push(publish_issue(
@@ -890,6 +967,21 @@ pub fn publish_findings(
         }
     }
     out
+}
+
+/// The view of the assignment without explicit selections (each pin on
+/// its fixed function or design default); `None` when the declarations
+/// do not resolve.
+fn default_view(terminals: &[TerminalDeclaration<'_>], resources: &[Resource]) -> Option<RuleView> {
+    let resolution = super::resolve(
+        terminals,
+        resources,
+        &[],
+        None,
+        &super::FunctionSelections::new(),
+    )
+    .ok()?;
+    Some(view(terminals, resources, &resolution, &PinConfigs::new()))
 }
 
 /// Check one literal helper call against the default view's names.

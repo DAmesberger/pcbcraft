@@ -153,6 +153,85 @@ fn the_exl48_fixture_previews_as_a_new_component_without_changing_anything() -> 
 }
 
 #[test]
+fn the_preview_evaluates_each_rule_over_the_samples_it_names() -> Fallible<()> {
+    let engine = Engine::default();
+    let mut document = exl48()?;
+    let plan = preview(&engine, &new_target(), &document)?;
+    assert_eq!(plan.rules.len(), 4);
+    let pin_set = plan
+        .rules
+        .iter()
+        .find(|r| r.label == "uart0_pin_set")
+        .ok_or("uart0_pin_set")?;
+    // Without selections, each of the four named functions alone, and all
+    // four together (two pin sets at once: forbidden).
+    assert_eq!(pin_set.default, "ok");
+    assert_eq!(pin_set.samples, 1 + 4 + 1);
+    assert_eq!(pin_set.verdicts, vec!["forbid", "ok"]);
+    assert!(pin_set.failures.is_empty());
+    assert!(!plan.findings.iter().any(|f| f.code.starts_with("rule.")));
+
+    // A guessed helper on a branch the default never takes.
+    document.rules.push(crate::library::pinout::PinoutRule {
+        label: "guessed".into(),
+        script: r#"if active("P0_2", "uart0_tx") { pin_used("P0_2") } else { ok() }"#.into(),
+        source: None,
+    });
+    let plan = preview(&engine, &new_target(), &document)?;
+    let guessed = plan
+        .rules
+        .iter()
+        .find(|r| r.label == "guessed")
+        .ok_or("guessed")?;
+    assert_eq!(guessed.default, "ok");
+    assert_eq!(guessed.failures.len(), 1, "{guessed:?}");
+    assert!(
+        guessed.failures[0].starts_with("with P0_2.uart0_tx active: ")
+            && guessed.failures[0].contains("pin_used")
+            && guessed.failures[0].contains("is not a rule helper"),
+        "{guessed:?}"
+    );
+    let runtime = plan
+        .findings
+        .iter()
+        .find(|f| f.code == "rule.runtime")
+        .ok_or("rule.runtime finding")?;
+    assert!(runtime.blocks_stage(Stage::Publish));
+    Ok(())
+}
+
+#[test]
+fn mux_tables_travel_with_their_codes() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let mut document = exl48()?;
+    let pin = document
+        .pins
+        .iter_mut()
+        .find(|p| p.name == "P0_2")
+        .ok_or("P0_2")?;
+    let function = pin
+        .functions
+        .iter_mut()
+        .find(|f| f.mux.is_some())
+        .ok_or("a muxed function")?;
+    function.mux_table = Some("LP IO MUX".into());
+    let label = function.label.clone();
+    let code = function.mux.clone().ok_or("a code")?;
+    let applied = import_new(&mut engine, &document)?;
+    let c = component(&engine, *applied.drafts.first().ok_or("drafts")?)?;
+    let declared = c
+        .terminals
+        .iter()
+        .find(|t| t.name == "P0_2")
+        .and_then(|t| t.functions())
+        .and_then(|f| f.functions.iter().find(|f| f.label == label))
+        .ok_or("the function")?;
+    assert_eq!(declared.mux_table.as_deref(), Some("LP IO MUX"));
+    assert_eq!(declared.mux_text(), Some(format!("LP IO MUX {code}")));
+    Ok(())
+}
+
+#[test]
 fn apply_writes_the_drafts_as_one_undo_step_with_every_row_unreviewed() -> Fallible<()> {
     let mut engine = Engine::default();
     let start = engine.document().clone();

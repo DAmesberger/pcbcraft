@@ -62,6 +62,7 @@ fn function(
             role: RoleId(role),
         }),
         mux: None,
+        mux_table: None,
         source: None,
     }
 }

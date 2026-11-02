@@ -430,6 +430,7 @@ impl Builder<'_> {
                         drive: f.drive,
                         resource_role,
                         mux: f.mux.clone().map(MuxCode),
+                        mux_table: f.mux_table.clone(),
                         source: pin.source.clone(),
                     });
                 }

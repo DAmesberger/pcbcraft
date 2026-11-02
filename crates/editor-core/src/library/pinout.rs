@@ -99,8 +99,16 @@ pub struct PinoutFunction {
     pub peripheral: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
+    /// The mux code exactly as the datasheet's table names it ("AF7",
+    /// "F2", "ALT5").
     #[serde(default)]
     pub mux: Option<String>,
+    /// The table the code belongs to when the datasheet numbers several
+    /// tables from the same codes, e.g. "IO MUX", "LP IO MUX" or "analog"
+    /// (each such table has its own F0). Leave it out for a part with one
+    /// table.
+    #[serde(default)]
+    pub mux_table: Option<String>,
 }
 
 fn no_drive() -> Drive {
@@ -162,6 +170,11 @@ pub struct PinoutPin {
 #[serde(deny_unknown_fields)]
 pub struct PinoutRule {
     pub label: String,
+    /// A Rhai script ending in one verdict: ok(), forbid(msg, [pins]),
+    /// require(msg, [pins]) or warn(msg, [pins]); it reads the assignment
+    /// only through active, active_count, function, used, role, kind,
+    /// option, excludes and requires (`rule_api` of
+    /// `library.pinout_schema` lists them with examples).
     pub script: String,
     #[serde(default)]
     pub source: Option<SourceSpan>,
@@ -262,6 +275,11 @@ pub struct PinoutPlan {
     /// Every publish finding the result would have.
     pub findings: Vec<Finding>,
     pub review: Vec<ReviewItem>,
+    /// Each pin rule evaluated without selections and over the samples it
+    /// names ([`crate::functions::rules::check_samples`]): what it says
+    /// and where it fails. Failures are also blocking findings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<crate::functions::rules::RuleCheck>,
 }
 
 /// Which rows `pinout_apply` takes. `Except` lists pin row keys and

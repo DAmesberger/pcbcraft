@@ -66,6 +66,7 @@ fn f(id: u32, label: &str, direction: Direction, role: Option<(u32, u32)>, mux: 
             role: RoleId(role),
         }),
         mux: (!mux.is_empty()).then(|| MuxCode(mux.into())),
+        mux_table: None,
         source: None,
     }
 }

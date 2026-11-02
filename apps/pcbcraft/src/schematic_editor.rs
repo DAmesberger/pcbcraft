@@ -2465,6 +2465,7 @@ mod tests {
                     drive: Drive::None,
                     resource_role: None,
                     mux: None,
+                    mux_table: None,
                     source: None,
                 },
                 Function {
@@ -2475,6 +2476,7 @@ mod tests {
                     drive: Drive::None,
                     resource_role: None,
                     mux: None,
+                    mux_table: None,
                     source: None,
                 },
             ],

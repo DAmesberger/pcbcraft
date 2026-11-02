@@ -136,6 +136,34 @@ pub struct RunFacts {
     pub findings: Vec<(u64, Vec<String>)>,
     /// Operations applied, in order (tool and outcome).
     pub steps: Vec<String>,
+    /// Each request: why it stopped, its tokens, cost and tool calls.
+    #[serde(default)]
+    pub request_log: Vec<RequestFacts>,
+    /// The component draft's pins, one row per package pin.
+    #[serde(default)]
+    pub pins: Vec<crate::pins::PinRow>,
+    /// The component draft's pin rules over their samples.
+    #[serde(default)]
+    pub rules: Vec<pcbcraft_core::functions::rules::RuleCheck>,
+}
+
+/// One request of a run.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct RequestFacts {
+    pub n: u32,
+    pub stop_reason: String,
+    pub input_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+    /// The tools it called, in order (`name!` when the call failed or was
+    /// not run).
+    pub tools: Vec<String>,
+}
+
+fn cell(t: &str) -> String {
+    t.replace('|', "\\|").replace('\n', " ")
 }
 
 /// The report as Markdown for people.
@@ -182,7 +210,6 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
         // Least confident first: they need the reviewer most.
         values.sort_by_key(|v| std::cmp::Reverse(v.confidence));
         for v in values {
-            let cell = |t: &str| t.replace('|', "\\|").replace('\n', " ");
             let _ = writeln!(
                 s,
                 "| {} | {} | {} p.{} {} | {:?} | {} |",
@@ -193,6 +220,28 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
                 cell(&v.source.location),
                 v.confidence,
                 cell(&v.note)
+            );
+        }
+    }
+    if !facts.rules.is_empty() {
+        let _ = writeln!(
+            s,
+            "\n## Pin rules\n\nEach rule evaluated without selections, with each function, peripheral or role it names made active, and with all of them together.\n"
+        );
+        let _ = writeln!(
+            s,
+            "| Rule | Without selections | Samples | Verdicts | Failures |"
+        );
+        let _ = writeln!(s, "|---|---|---|---|---|");
+        for r in &facts.rules {
+            let _ = writeln!(
+                s,
+                "| {} | {} | {} | {} | {} |",
+                cell(&r.label),
+                cell(&r.default),
+                r.samples,
+                r.verdicts.join(", "),
+                cell(&r.failures.join("; "))
             );
         }
     }
@@ -209,6 +258,34 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     let _ = writeln!(s, "\n## Steps\n");
     for step in &facts.steps {
         let _ = writeln!(s, "1. {step}");
+    }
+    if !facts.pins.is_empty() {
+        let _ = writeln!(
+            s,
+            "\n## Pins\n\nOne row per package pin as imported; check each against the datasheet in the Pins tab. `pcbcraft-cli review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.\n"
+        );
+        s.push_str(&crate::pins::markdown(&facts.pins));
+    }
+    if !facts.request_log.is_empty() {
+        let _ = writeln!(s, "\n## Requests\n");
+        let _ = writeln!(
+            s,
+            "| # | Stop | Cache write | Cache read | Input | Output | USD | Tools |\n|---|---|---|---|---|---|---|---|"
+        );
+        for r in &facts.request_log {
+            let _ = writeln!(
+                s,
+                "| {} | {} | {} | {} | {} | {} | {:.3} | {} |",
+                r.n,
+                r.stop_reason,
+                r.cache_write_tokens,
+                r.cache_read_tokens,
+                r.input_tokens,
+                r.output_tokens,
+                r.cost_usd,
+                r.tools.join(", ")
+            );
+        }
     }
     s
 }

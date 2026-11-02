@@ -18,6 +18,7 @@ fn function(id: u32, resource: u32, role: u32) -> Function {
             role: RoleId(role),
         }),
         mux: None,
+        mux_table: None,
         source: None,
     }
 }
