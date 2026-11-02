@@ -137,7 +137,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "library_package_from_template",
-            "MCP project_apply library.package_from_template: apply the previewed request as one undo step (add \"replace\": true to rebuild a footprint that already has pads).",
+            "MCP project_apply library.package_from_template: apply the previewed request as one undo step (add \"replace\": true to rebuild a footprint that already has pads). The package's terminals, and so the binding's mappings, carry over by number: a terminal keeps its identity when the new form gives its number; the plan's terminals.summary says what was kept, and package.terminals_unmatched names any number left unmatched. When the datasheet gives a pad another number than the form (an exposed pad numbered 95 where a form says EP), add \"renumber\": [{\"from\": \"95\", \"to\": \"EP\"}]; otherwise map those explicitly.",
             json!({"request": object}),
             &["request"],
         ),
@@ -582,10 +582,20 @@ fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
     ToolOutcome::Reply { text, error, step }
 }
 
-/// A short description of an outcome for the run log.
+/// A short description of an outcome for the run log: its keys, and how
+/// a package replacement matched the terminals.
 fn summary(outcome: &Value) -> String {
     match outcome {
-        Value::Object(map) => map.keys().take(4).cloned().collect::<Vec<_>>().join(", "),
+        Value::Object(map) => {
+            let keys = map.keys().take(4).cloned().collect::<Vec<_>>().join(", ");
+            match map
+                .get("plan")
+                .and_then(|p| p["terminals"]["summary"].as_str())
+            {
+                Some(terminals) => format!("{keys}; {terminals}"),
+                None => keys,
+            }
+        }
         Value::String(s) => s.clone(),
         other => other.to_string().chars().take(80).collect(),
     }

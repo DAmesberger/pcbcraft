@@ -551,6 +551,70 @@ pub struct PackageFromTemplate {
     /// Replace a non-empty footprint instead of refusing it.
     #[serde(default)]
     pub replace: bool,
+    /// How the package's current terminals carry over to the new form's
+    /// (and with them the binding's mappings): by number unless the
+    /// request chooses position.
+    #[serde(default)]
+    pub terminals: TerminalMatch,
+    /// With [`TerminalMatch::ByNumber`]: current terminals that are the
+    /// new form's terminal under another number (a datasheet's "49" for
+    /// the form's `EP`), stated explicitly; each keeps its identity and
+    /// takes the new number. Never inferred.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renumber: Vec<Renumber>,
+}
+
+/// One explicit renumbering of `library.package_from_template`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Renumber {
+    /// The current terminal's number.
+    pub from: String,
+    /// The new form's number it becomes.
+    pub to: String,
+}
+
+/// How `library.package_from_template` matches the package's current
+/// terminals to the terminals of the new form.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalMatch {
+    /// A current terminal is kept (identity, and so its mappings) when the
+    /// new form gives a terminal its number (designation); every other
+    /// new terminal is fresh and unmapped, every other current terminal is
+    /// removed, and both are reported. Nothing is matched by list order.
+    #[default]
+    ByNumber,
+    /// The explicit choice to reuse the current terminals in list order
+    /// whatever their numbers, renumbered from the new form; reported as
+    /// `binding.mapping_retained` for review.
+    ByPosition,
+}
+
+impl TerminalMatch {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ByNumber => "by number",
+            Self::ByPosition => "by position",
+        }
+    }
+}
+
+/// How the package's terminals were matched (`PackagePlan::terminals`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalMatchReport {
+    pub strategy: TerminalMatch,
+    /// Current terminals kept with their identity.
+    pub kept: u32,
+    /// New terminals with fresh identities (unmapped).
+    pub added: u32,
+    /// Current terminals the new package removes.
+    pub removed: u32,
+    /// Kept terminals whose number changes (only by position).
+    pub renumbered: u32,
+    /// One line saying the strategy and the counts.
+    pub summary: String,
 }
 
 /// What `library.package_from_template` changes, previewed before Apply.
@@ -574,6 +638,9 @@ pub struct PackagePlan {
     /// there are none or several to choose from.
     #[serde(default)]
     pub footprint_bound: Option<DefinitionId>,
+    /// How the current terminals carried over to the new form.
+    #[serde(default)]
+    pub terminals: TerminalMatchReport,
     pub findings: Vec<Finding>,
 }
 

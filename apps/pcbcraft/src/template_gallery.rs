@@ -53,7 +53,7 @@ use pcbcraft_core::library::samples;
 use pcbcraft_core::library::symbol_style::SymbolKind;
 use pcbcraft_core::library::templates::catalog::{
     self, FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
-    RowFrom, RowSource, SavePackageRow, SkeletonHint,
+    RowFrom, RowSource, SavePackageRow, SkeletonHint, TerminalMatch,
 };
 use pcbcraft_core::library::{
     Bundle, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
@@ -352,6 +352,10 @@ pub fn package_request(
         row,
         values: request_values(hit, edited),
         replace,
+        // The gallery always matches terminals by number; position is an
+        // explicit request option for MCP and CLI callers.
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
     }
 }
 
@@ -1415,6 +1419,16 @@ fn preview(
                         &format!("{} → {}", plan.terminals_before, plan.terminals_after),
                     );
                     kit::value_row(ui, "Pads after", &plan.pads_after.to_string());
+                    kit::value_row(
+                        ui,
+                        "Matched",
+                        &format!(
+                            "{}: {} kept, {} new",
+                            plan.terminals.strategy.label(),
+                            plan.terminals.kept,
+                            plan.terminals.added
+                        ),
+                    );
                     if plan.footprint_created {
                         kit::note(
                             ui,

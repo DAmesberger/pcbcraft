@@ -1,13 +1,11 @@
 {
   "project": {
     "revision": 3,
-    "saved_path": "wroom3/run/esp32-s31-wroom-3.pcbcraft"
+    "saved_path": "/private/tmp/claude-501/-Users-amd-dev-pcbcraft/17b68a65-4f80-4764-aec6-ceb135ce7274/scratchpad/bindfix/regen/esp32-s31-wroom-3.pcbcraft"
   },
   "report": {
     "open_questions": [
-      "Board thickness 1.0 mm is read from an unlabelled side-view dimension; confirm with Espressif or a measured sample.",
-      "The EPAD centre is taken on the 22 × 24 pad body centre lines (y = -3); confirm against the land pattern (Figure 11-1).",
-      "One EPAD square towards the antenna is chamfered (\"1.3\" dimensions); the footprint uses a full square.",
+      "The antenna-side EPAD pad has a 0.5 × 0.5 mm chamfer on its corner towards the antenna (the land pattern's two \"1.3\" dimensions are its shortened edges, 1.8 - 0.5; Espressif's STEP agrees, its footprint draws 0.45 mm); the module form draws the pad square, 0.125 mm² more copper.",
       "The antenna keep-out covers only the 22 × 6 mm antenna area; the hardware guidelines want the antenna at the board edge or a 15 mm clearance cut-out, which the board layout must provide.",
       "Peripherals reachable only through the GPIO matrix (UART1+, I2C, LEDC, TWAI, RMT, I2S, ...) are not listed per pin: the TRM chapter is not published yet and the datasheet tables place none of them.",
       "Pin directions of IO MUX functions follow the Type columns where readable; LCD, CAM and GMAC directions were inferred from signal names where the type was not extracted.",
@@ -31,9 +29,19 @@
         "name": "HWDG",
         "revision": "v0.3, 2026-10-09",
         "title": "ESP32-S31 Hardware Design Guidelines"
+      },
+      {
+        "name": "ESPFP",
+        "revision": "espressif/kicad-libraries commit cfb91e9, 2026-07-24; CC-BY-SA 4.0; dimensions only, not redistributed",
+        "title": "Espressif ESP32-S31-WROOM-3 footprint, KiCad format (https://github.com/espressif/kicad-libraries/blob/cfb91e91cc6d6dfa96e0ac3264382b747229e8e7/footprints/Espressif.pretty/ESP32-S31-WROOM-3.kicad_mod)"
+      },
+      {
+        "name": "ESPSTEP",
+        "revision": "espressif/kicad-libraries commit cfb91e9, 2026-07-24 (exported 2026-06-10); CC-BY-SA 4.0; dimensions only, not redistributed",
+        "title": "Espressif ESP32-S31-WROOM-3 3D model ESP32-S31-WROOM-3_V1_1.STEP (https://github.com/espressif/kicad-libraries/blob/cfb91e91cc6d6dfa96e0ac3264382b747229e8e7/3dmodels/espressif.3dshapes/ESP32-S31-WROOM-3_V1_1.STEP)"
       }
     ],
-    "summary": "Component with 99 pins (94 signal pads, the 3 × 3 EPAD as pin 95 and four corner GND pads), IO MUX, LP IO MUX and analog functions per GPIO, 8 pin rules (4 strapping, JTAG, USB Serial/JTAG, UART0, LP UART vs LP I2C), the LGA module package with the antenna keep-out, and the generated 3D model. Check the open questions first, then each pin row in the Pins tab.",
+    "summary": "Component with 99 pins (94 signal pads, the 3 × 3 EPAD as pin 95 and four corner GND pads), IO MUX, LP IO MUX and analog functions per GPIO, 8 pin rules (4 strapping, JTAG, USB Serial/JTAG, UART0, LP UART vs LP I2C), the LGA module package with the antenna keep-out, and the generated 3D model. The footprint and 3D geometry were cross-checked against Espressif's own published footprint and STEP model (kicad-libraries, CC-BY-SA 4.0, used as a dimension source only and not redistributed). Check the open questions first, then each pin row in the Pins tab.",
     "values": [
       {
         "confidence": "high",
@@ -49,7 +57,7 @@
       {
         "confidence": "high",
         "item": "seated height",
-        "note": "",
+        "note": "Espressif's STEP: 3.538 mm overall, inside the tolerance.",
         "source": {
           "document": "WROOM3",
           "location": "Figure 10-1 side view",
@@ -58,13 +66,13 @@
         "value": "3.5 ± 0.15 mm"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "module board thickness",
-        "note": "The side view dimension \"1\" is not labelled; read as the board.",
+        "note": "Confirmed: the board solid spans z 0.034-1.038 (1.004 mm over the 0.035 mm pad copper); the datasheet side view's unlabelled \"1\" is the board.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 10-1 side view",
-          "page": 64
+          "document": "ESPSTEP",
+          "location": "module board solid",
+          "page": 1
         },
         "value": "1.0 mm"
       },
@@ -82,7 +90,7 @@
       {
         "confidence": "high",
         "item": "shield can",
-        "note": "Centred across (22 - 21 = 1 mm, 0.5 a side); can height 3.5 - 1.0 board = 2.5 mm derived.",
+        "note": "Centred across (22 - 21 = 1 mm, 0.5 a side); can height 3.5 - 1.0 board = 2.5 mm derived. Espressif's STEP: can 21 × 23 mm centred at (0, -3), z 1.038-3.538 (2.5 mm, 0.2 mm lid).",
         "source": {
           "document": "WROOM3",
           "location": "Figure 10-1 top view",
@@ -104,7 +112,7 @@
       {
         "confidence": "high",
         "item": "signal pad size",
-        "note": "",
+        "note": "Espressif's footprint: every row pad 0.8 × 0.4 mm, turned 90° on the top and bottom rows.",
         "source": {
           "document": "WROOM3",
           "location": "Figure 10-1 bottom view (\"94 x 0.4\", \"94 x 0.8\")",
@@ -115,7 +123,7 @@
       {
         "confidence": "high",
         "item": "pad pitch",
-        "note": "",
+        "note": "Espressif's footprint and STEP: 0.85 mm on every row.",
         "source": {
           "document": "WROOM3",
           "location": "Figure 10-1 bottom view",
@@ -157,35 +165,35 @@
         "value": "4 × 0.8 × 0.8 mm at 20.6 × 22.6 mm centres"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "corner pad inset",
-        "note": "Consistent with (22 - 20.6)/2 = 0.7; the 22.6 span sits in the 24 mm pad body, top edge at the antenna boundary.",
+        "note": "Espressif's footprint: pads 96-99 0.8 × 0.8 at (±10.3, -14.3) and (±10.3, 8.3) in the module frame.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 10-1 bottom view",
-          "page": 64
+          "document": "ESPFP",
+          "location": "pads 96-99",
+          "page": 1
         },
         "value": "0.7 mm from the body edges"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "pad body centre",
-        "note": "Derived: 30/2 - 6 - 24/2 = -3.",
+        "note": "Espressif's footprint origin is the pad-body centre, with the outline at y -18…12 (y down): 3 mm below the module centre. The STEP agrees.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 10-1",
-          "page": 64
+          "document": "ESPFP",
+          "location": "footprint origin and outline",
+          "page": 1
         },
         "value": "y = -3 mm (the 24 mm pad body below the 6 mm antenna area)"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "pin 1 position",
-        "note": "Derived from the 20.4 span centred on the pad body.",
+        "note": "Espressif's footprint: pad 1 at (-10.3, -10.2), y down from the pad-body centre: (-10.3, 7.2) here; 1.1 mm below corner pad 99, pad 94 1.375 mm from it.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 3-1",
-          "page": 12
+          "document": "ESPFP",
+          "location": "pad 1",
+          "page": 1
         },
         "value": "left column, first pad below corner pad 99: (-10.3, 7.2)"
       },
@@ -201,15 +209,37 @@
         "value": "1-25 left top to bottom, 26-47 bottom left to right, 48-72 right bottom to top, 73-94 top right to left; corners 96 BL, 97 BR, 98 TR, 99 TL"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "EPAD",
-        "note": "Centre on the dashed centre lines of the 22 × 24 body; one antenna-side pad is chamfered (\"1.3\"), drawn square here.",
+        "note": "Espressif's footprint: nine 1.8 mm pads turned 45° at (0, 0), (±1.6617, ±1.6617), (±3.3234, 0) and (0, ±3.3234) about the pad-body centre (2.35 mm pitch along the turned axes, 0.55 mm gaps); the STEP agrees. The pad nearest the antenna is chamfered (see the open question); drawn square here.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 10-1 bottom view",
-          "page": 64
+          "document": "ESPFP",
+          "location": "pad 95 (nine pads)",
+          "page": 1
         },
         "value": "9 × 1.8 mm squares, 0.55 mm gaps (2.35 mm pitch), 3 × 3 turned 45°, 6.5 mm across, centred on the pad body"
+      },
+      {
+        "confidence": "medium",
+        "item": "EPAD chamfer",
+        "note": "The two \"1.3\" dimensions run along the chamfered pad's edges: 1.8 - 1.3 = 0.5. Espressif's STEP cuts 0.5 mm; its footprint uses 0.45 (chamfer ratio 0.25). Not drawn: the module form has no chamfered pads.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 11-1 (\"1.3\" twice)",
+          "page": 67
+        },
+        "value": "0.5 × 0.5 mm on the antenna-side pad's corner towards +y"
+      },
+      {
+        "confidence": "high",
+        "item": "can mark",
+        "note": "Matches the Ø0.5 in the datasheet's top view (Figure 10-1). It is not a pin-1 mark (pin 1 is at the +y end of the left row), so the can carries no polarity mark here; Espressif's footprint has no pin-1 silkscreen mark either (Pcbcraft's footprint adds its own at pad 1).",
+        "source": {
+          "document": "ESPSTEP",
+          "location": "shield can lid",
+          "page": 1
+        },
+        "value": "Ø0.5 mm hole in the can lid at (-9.5, -13.5), the -x/-y corner by pins 25/26"
       },
       {
         "confidence": "high",
@@ -223,13 +253,13 @@
         "value": "equal to the module pads (no extension given)"
       },
       {
-        "confidence": "medium",
+        "confidence": "high",
         "item": "antenna keep-out",
-        "note": "The guidelines also ask for the antenna at the board edge or a cut-out with at least 15 mm clearance; not modelled.",
+        "note": "Espressif's footprint: a keep-out over the 22 × 6 mm antenna area on the outer and first inner copper layers (no tracks, vias, pads, pours or parts). The guidelines also ask for the antenna at the board edge or a cut-out with at least 15 mm clearance; not modelled.",
         "source": {
-          "document": "WROOM3",
-          "location": "Figure 3-1 \"Keepout Zone\"",
-          "page": 12
+          "document": "ESPFP",
+          "location": "zone \"antenna keepout\"",
+          "page": 1
         },
         "value": "the 22 × 6 mm antenna area on every copper layer"
       },
@@ -436,14 +466,1591 @@
     "input_tokens": 0,
     "model": "claude-opus-5-5",
     "output_tokens": 0,
+    "pins": [
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "1",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "2",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "vdd",
+        "functions": [
+          "vdd power_input"
+        ],
+        "name": "3V3",
+        "number": "3",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "vdd",
+        "functions": [
+          "vdd power_input"
+        ],
+        "name": "3V3",
+        "number": "4",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "en",
+        "functions": [
+          "en input"
+        ],
+        "name": "EN",
+        "number": "5",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data19_out [F3] LCD.data19_out output",
+          "lp_uart_dtrn [LP_F0] LP_UART.dtrn output",
+          "lp_spi_ck [LP_F2] LP_SPI.ck output",
+          "lp_probe_out2 [LP_F3] LP_PROBE.out2 output",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO2",
+        "number": "6",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data20_out [F3] LCD.data20_out output",
+          "lp_uart_dsrn [LP_F0] LP_UART.dsrn input",
+          "lp_spi_cs [LP_F2] LP_SPI.cs output",
+          "lp_probe_out3 [LP_F3] LP_PROBE.out3 output",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO3",
+        "number": "7",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lp_probe_out0 [LP_F3] LP_PROBE.out0 output",
+          "xtal_32k_n [ANALOG] XTAL_32K.n passive",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO0",
+        "number": "8",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lp_probe_out1 [LP_F3] LP_PROBE.out1 output",
+          "xtal_32k_p [ANALOG] XTAL_32K.p passive",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO1",
+        "number": "9",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data21_out [F3] LCD.data21_out output",
+          "lp_uart_rtsn [LP_F0] LP_UART.rtsn output",
+          "lp_spi_d [LP_F2] LP_SPI.d output",
+          "lp_probe_out4 [LP_F3] LP_PROBE.out4 output",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO4",
+        "number": "10",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data22_out [F3] LCD.data22_out output",
+          "lp_uart_ctsn [LP_F0] LP_UART.ctsn input",
+          "lp_spi_q [LP_F2] LP_SPI.q input",
+          "lp_probe_out5 [LP_F3] LP_PROBE.out5 output",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO5",
+        "number": "11",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lp_uart_txd [LP_F0] LP_UART.txd output",
+          "lp_i2c_scl [LP_F2] LP_I2C.scl bidirectional",
+          "lp_probe_out6 [LP_F3] LP_PROBE.out6 output",
+          "touch_ch0 [ANALOG] TOUCH.ch0 input",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO6",
+        "number": "12",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data23_out [F3] LCD.data23_out output",
+          "lp_uart_rxd [LP_F0] LP_UART.rxd input",
+          "lp_i2c_sda [LP_F2] LP_I2C.sda bidirectional",
+          "lp_probe_out7 [LP_F3] LP_PROBE.out7 output",
+          "touch_ch1 [ANALOG] TOUCH.ch1 input",
+          "lp_gpio [LP_F1] bidirectional"
+        ],
+        "name": "IO7",
+        "number": "13",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "gmac_phy_txd0 [F2] GMAC.phy_txd0 output",
+          "lcd_data0_out [F3] LCD.data0_out output",
+          "touch_ch2 [ANALOG] TOUCH.ch2 input"
+        ],
+        "name": "IO8",
+        "number": "14",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_hold",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_hold [F0] SPI2.hold bidirectional",
+          "gmac_phy_txd1 [F2] GMAC.phy_txd1 output",
+          "lcd_data1_out [F3] LCD.data1_out output",
+          "touch_ch3 [ANALOG] TOUCH.ch3 input"
+        ],
+        "name": "IO9",
+        "number": "15",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_cs",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_cs [F0] SPI2.cs bidirectional",
+          "gmac_phy_txd2 [F2] GMAC.phy_txd2 output",
+          "lcd_data2_out [F3] LCD.data2_out output",
+          "touch_ch4 [ANALOG] TOUCH.ch4 input"
+        ],
+        "name": "IO10",
+        "number": "16",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_d",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_d [F0] SPI2.d bidirectional",
+          "gmac_phy_txd3 [F2] GMAC.phy_txd3 output",
+          "lcd_data3_out [F3] LCD.data3_out output",
+          "touch_ch5 [ANALOG] TOUCH.ch5 input"
+        ],
+        "name": "IO11",
+        "number": "17",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_ck",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_ck [F0] SPI2.ck bidirectional",
+          "gmac_phy_txen [F2] GMAC.phy_txen output",
+          "lcd_data4_out [F3] LCD.data4_out output",
+          "touch_ch6 [ANALOG] TOUCH.ch6 input"
+        ],
+        "name": "IO12",
+        "number": "18",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_q",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_q [F0] SPI2.q bidirectional",
+          "gmac_rmii_clk [F2] GMAC.rmii_clk bidirectional",
+          "lcd_data5_out [F3] LCD.data5_out output",
+          "touch_ch7 [ANALOG] TOUCH.ch7 input"
+        ],
+        "name": "IO13",
+        "number": "19",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_wp",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_wp [F0] SPI2.wp bidirectional",
+          "gmac_rx_clk [F2] GMAC.rx_clk input",
+          "lcd_data6_out [F3] LCD.data6_out output",
+          "touch_ch8 [ANALOG] TOUCH.ch8 input"
+        ],
+        "name": "IO14",
+        "number": "20",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_io4",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_io4 [F0] SPI2.io4 bidirectional",
+          "gmac_phy_rxdv [F2] GMAC.phy_rxdv input",
+          "lcd_data7_out [F3] LCD.data7_out output",
+          "touch_ch9 [ANALOG] TOUCH.ch9 input"
+        ],
+        "name": "IO15",
+        "number": "21",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_io5",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_io5 [F0] SPI2.io5 bidirectional",
+          "gmac_phy_rxd3 [F2] GMAC.phy_rxd3 input",
+          "lcd_data8_out [F3] LCD.data8_out output",
+          "touch_ch10 [ANALOG] TOUCH.ch10 input"
+        ],
+        "name": "IO16",
+        "number": "22",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_io6",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_io6 [F0] SPI2.io6 bidirectional",
+          "gmac_phy_rxd2 [F2] GMAC.phy_rxd2 input",
+          "lcd_data9_out [F3] LCD.data9_out output",
+          "touch_ch11 [ANALOG] TOUCH.ch11 input"
+        ],
+        "name": "IO17",
+        "number": "23",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_io7",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_io7 [F0] SPI2.io7 bidirectional",
+          "gmac_phy_rxd1 [F2] GMAC.phy_rxd1 input",
+          "lcd_data10_out [F3] LCD.data10_out output",
+          "touch_ch12 [ANALOG] TOUCH.ch12 input"
+        ],
+        "name": "IO18",
+        "number": "24",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "spi2_dqs",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_dqs [F0] SPI2.dqs output",
+          "gmac_phy_rxd0 [F2] GMAC.phy_rxd0 input",
+          "lcd_data11_out [F3] LCD.data11_out output",
+          "touch_ch13 [ANALOG] TOUCH.ch13 input"
+        ],
+        "name": "IO19",
+        "number": "25",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "26",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_data0 [F0] SDIO.data0 bidirectional",
+          "spi2_ck [F2] SPI2.ck bidirectional"
+        ],
+        "name": "SD_D0",
+        "number": "27",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_data1 [F0] SDIO.data1 bidirectional",
+          "spi2_d [F2] SPI2.d bidirectional"
+        ],
+        "name": "SD_D1",
+        "number": "28",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_data2 [F0] SDIO.data2 bidirectional",
+          "spi2_q [F2] SPI2.q bidirectional"
+        ],
+        "name": "SD_D2",
+        "number": "29",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_data3 [F0] SDIO.data3 bidirectional",
+          "spi2_cs [F2] SPI2.cs bidirectional"
+        ],
+        "name": "SD_D3",
+        "number": "30",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_clk [F0] SDIO.clk output",
+          "spi2_hold [F2] SPI2.hold bidirectional"
+        ],
+        "name": "SD_CLK",
+        "number": "31",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "sdio_cmd [F0] SDIO.cmd bidirectional",
+          "spi2_wp [F2] SPI2.wp bidirectional"
+        ],
+        "name": "SD_CMD",
+        "number": "32",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "33",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "34",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "35",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "36",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "37",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "38",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "39",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "usb_otg_hs_dp",
+        "functions": [
+          "usb_otg_hs_dp USB_OTG_HS.dp bidirectional"
+        ],
+        "name": "USB_DP",
+        "number": "40",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "usb_otg_hs_dm",
+        "functions": [
+          "usb_otg_hs_dm USB_OTG_HS.dm bidirectional"
+        ],
+        "name": "USB_DM",
+        "number": "41",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "usb_serial_jtag_dm",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data12_out [F3] LCD.data12_out output",
+          "usb_serial_jtag_dm [ANALOG] USB_SERIAL_JTAG.dm bidirectional"
+        ],
+        "name": "IO33",
+        "number": "42",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "usb_serial_jtag_dp",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data13_out [F3] LCD.data13_out output",
+          "usb_serial_jtag_dp [ANALOG] USB_SERIAL_JTAG.dp bidirectional"
+        ],
+        "name": "IO34",
+        "number": "43",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "gmac_ref_clk [F2] GMAC.ref_clk bidirectional",
+          "lcd_data14_out [F3] LCD.data14_out output",
+          "sd2_cdata0 [F4] SD2.cdata0 bidirectional"
+        ],
+        "name": "IO35",
+        "number": "44",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data15_out [F3] LCD.data15_out output",
+          "sd2_cdata1 [F4] SD2.cdata1 bidirectional"
+        ],
+        "name": "IO36",
+        "number": "45",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data16_out [F3] LCD.data16_out output",
+          "sd2_cdata2 [F4] SD2.cdata2 bidirectional",
+          "pad_comp_comp0 [ANALOG] PAD_COMP.comp0 input"
+        ],
+        "name": "IO37",
+        "number": "46",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "47",
+        "source": "p.14 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "48",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data17_out [F3] LCD.data17_out output",
+          "sd2_cdata3 [F4] SD2.cdata3 bidirectional",
+          "pad_comp_comp1 [ANALOG] PAD_COMP.comp1 input"
+        ],
+        "name": "IO38",
+        "number": "49",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_data18_out [F3] LCD.data18_out output",
+          "sd2_cclk [F4] SD2.cclk output",
+          "pad_comp_comp2 [ANALOG] PAD_COMP.comp2 input"
+        ],
+        "name": "IO39",
+        "number": "50",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_pclk [F3] LCD.pclk output",
+          "sd2_ccmd [F4] SD2.ccmd bidirectional",
+          "pad_comp_comp3 [ANALOG] PAD_COMP.comp3 input"
+        ],
+        "name": "IO40",
+        "number": "51",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "adc1_ch0_n [ANALOG] ADC1.ch0_n input"
+        ],
+        "name": "IO42",
+        "number": "52",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_h_enable [F3] LCD.h_enable output",
+          "adc1_ch0_p [ANALOG] ADC1.ch0_p input"
+        ],
+        "name": "IO43",
+        "number": "53",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_h_sync [F3] LCD.h_sync output",
+          "adc1_ch1_n [ANALOG] ADC1.ch1_n input"
+        ],
+        "name": "IO44",
+        "number": "54",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "lcd_v_sync [F3] LCD.v_sync output",
+          "adc1_ch1_p [ANALOG] ADC1.ch1_p input"
+        ],
+        "name": "IO45",
+        "number": "55",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data0_in [F3] CAM.data0_in input",
+          "adc1_ch2_n [ANALOG] ADC1.ch2_n input"
+        ],
+        "name": "IO46",
+        "number": "56",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data1_in [F3] CAM.data1_in input",
+          "adc1_ch2_p [ANALOG] ADC1.ch2_p input"
+        ],
+        "name": "IO47",
+        "number": "57",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data2_in [F3] CAM.data2_in input",
+          "adc1_ch3_n [ANALOG] ADC1.ch3_n input"
+        ],
+        "name": "IO48",
+        "number": "58",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data3_in [F3] CAM.data3_in input",
+          "adc1_ch3_p [ANALOG] ADC1.ch3_p input"
+        ],
+        "name": "IO49",
+        "number": "59",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data4_in [F3] CAM.data4_in input",
+          "adc2_ch0_n [ANALOG] ADC2.ch0_n input"
+        ],
+        "name": "IO50",
+        "number": "60",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "cam_data5_in [F3] CAM.data5_in input",
+          "adc2_ch0_p [ANALOG] ADC2.ch0_p input"
+        ],
+        "name": "IO51",
+        "number": "61",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_cs [F2] SPI2.cs bidirectional",
+          "cam_data6_in [F3] CAM.data6_in input",
+          "adc2_ch1_n [ANALOG] ADC2.ch1_n input"
+        ],
+        "name": "IO52",
+        "number": "62",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "spi2_ck [F2] SPI2.ck bidirectional",
+          "cam_data7_in [F3] CAM.data7_in input",
+          "adc2_ch1_p [ANALOG] ADC2.ch1_p input"
+        ],
+        "name": "IO53",
+        "number": "63",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "jtag_mtdo",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "jtag_mtdo [F0] JTAG.mtdo output",
+          "spi2_d [F2] SPI2.d bidirectional",
+          "cam_pclk [F3] CAM.pclk input",
+          "adc2_ch2_n [ANALOG] ADC2.ch2_n input"
+        ],
+        "name": "IO54",
+        "number": "64",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "jtag_mtck",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "jtag_mtck [F0] JTAG.mtck input",
+          "spi2_q [F2] SPI2.q bidirectional",
+          "cam_xclk [F3] CAM.xclk output",
+          "adc2_ch2_p [ANALOG] ADC2.ch2_p input"
+        ],
+        "name": "IO55",
+        "number": "65",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "jtag_mtdi",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "jtag_mtdi [F0] JTAG.mtdi input",
+          "spi2_hold [F2] SPI2.hold bidirectional",
+          "cam_v_sync [F3] CAM.v_sync input",
+          "adc2_ch3_n [ANALOG] ADC2.ch3_n input"
+        ],
+        "name": "IO56",
+        "number": "66",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "jtag_mtms",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "jtag_mtms [F0] JTAG.mtms input",
+          "spi2_wp [F2] SPI2.wp bidirectional",
+          "cam_h_sync [F3] CAM.h_sync input",
+          "adc2_ch3_p [ANALOG] ADC2.ch3_p input"
+        ],
+        "name": "IO57",
+        "number": "67",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "uart0_txd",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "uart0_txd [F0] UART0.txd output"
+        ],
+        "name": "TX0",
+        "number": "68",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "uart0_rxd",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output",
+          "uart0_rxd [F0] UART0.rxd input"
+        ],
+        "name": "RX0",
+        "number": "69",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output"
+        ],
+        "name": "IO60",
+        "number": "70",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gpio_in",
+        "functions": [
+          "gpio_in [F1] input",
+          "gpio_out [F1] output"
+        ],
+        "name": "IO61",
+        "number": "71",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "72",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "73",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "74",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "75",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "76",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "77",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "78",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "79",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "80",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "81",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "82",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "83",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "84",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "85",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "86",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "87",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "88",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "89",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "90",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "device_nc",
+        "default": "",
+        "functions": [],
+        "name": "NC",
+        "number": "91",
+        "source": "",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "92",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "93",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "94",
+        "source": "p.16 Table 3-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "95",
+        "source": "p.64 Figure 10-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "96",
+        "source": "p.64 Figure 10-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "97",
+        "source": "p.64 Figure 10-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "98",
+        "source": "p.64 Figure 10-1",
+        "uncertain": false,
+        "unreviewed": true
+      },
+      {
+        "class": "electrical",
+        "default": "gnd",
+        "functions": [
+          "gnd power_input"
+        ],
+        "name": "GND",
+        "number": "99",
+        "source": "p.64 Figure 10-1",
+        "uncertain": false,
+        "unreviewed": true
+      }
+    ],
+    "request_log": [
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 1,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_pinout_schema"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 2,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_pinout_preview"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 3,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_pinout_apply"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 4,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_package_schema"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 5,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_package_plan"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 6,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_package_from_template"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 7,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "library_set_marking"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 8,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "component_check_drafts"
+        ]
+      },
+      {
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "input_tokens": 0,
+        "n": 9,
+        "output_tokens": 0,
+        "stop_reason": "tool_use",
+        "tools": [
+          "submit_review"
+        ]
+      }
+    ],
     "requests": 9,
+    "rules": [
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "strap_io61",
+        "samples": 2,
+        "verdicts": [
+          "ok",
+          "warn"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "strap_io60",
+        "samples": 2,
+        "verdicts": [
+          "ok",
+          "warn"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "strap_io36",
+        "samples": 6,
+        "verdicts": [
+          "ok",
+          "warn"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "strap_io37",
+        "samples": 7,
+        "verdicts": [
+          "ok",
+          "warn"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "jtag_pins",
+        "samples": 6,
+        "verdicts": [
+          "ok"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "usb_serial_jtag_pins",
+        "samples": 4,
+        "verdicts": [
+          "ok"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "uart0_pins",
+        "samples": 4,
+        "verdicts": [
+          "ok"
+        ]
+      },
+      {
+        "default": "ok",
+        "failures": [],
+        "label": "lp_uart_flow_excludes_lp_i2c",
+        "samples": 7,
+        "verdicts": [
+          "forbid",
+          "ok"
+        ]
+      }
+    ],
     "spent_usd": 0.0,
     "steps": [
       "library_pinout_apply: revision 1 (outcome, report)",
-      "library_package_from_template: revision 2 (outcome, plan)",
+      "library_package_from_template: revision 2 (outcome, plan; Terminals matched by number: 99 kept, 0 added, 0 removed.)",
       "library_set_marking: revision 3 (outcome)"
     ],
     "stop": "review report submitted",
-    "transport": "a replay of wroom3/wroom3.replay.jsonl (no API calls; spend not real)"
+    "transport": "a replay of examples/esp32-s31-wroom-3/wroom3.replay.jsonl (no API calls; spend not real)"
   }
 }
