@@ -93,6 +93,7 @@ fn layout(elements: Vec<LaidElement>, finish: Finish) -> MarkingLayout {
     MarkingLayout {
         elements,
         finish,
+
         ..MarkingLayout::default()
     }
 }

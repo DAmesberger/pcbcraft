@@ -47,6 +47,7 @@
 pub mod board;
 mod fill;
 pub mod map;
+pub mod paint;
 mod shapes;
 #[cfg(test)]
 mod surface_tests;
@@ -56,7 +57,7 @@ mod tests;
 use crate::material::{Detail, Pattern, srgb8_to_linear};
 use crate::models::look;
 use crate::{Error, Result};
-use fill::Flat;
+use fill::{FillRule, Flat};
 use map::SurfaceMap;
 use pcbcraft_core::Point;
 use pcbcraft_core::ids::{ContentHash, Id};
@@ -162,6 +163,8 @@ pub struct FlatDecal {
     /// Per point: the chart direction an engraved wall's normal tilts to,
     /// scaled by the sine of the tilt; zero on flat parts.
     tilts: Vec<[f64; 2]>,
+    /// Per point: the paint layer it is lifted to (overpainted artwork).
+    layers: Vec<u8>,
     triangles: Vec<[u32; 3]>,
     finish: Finish,
     /// Triangle ranges in inks other than the finish.
@@ -365,10 +368,73 @@ fn invalid(message: impl Into<String>) -> Error {
     Error::Invalid(format!("marking decal: {}", message.into()))
 }
 
-/// One fill group: loops filled together in one ink.
+/// One fill group: loops filled together in one ink by one rule, painted
+/// over the groups before it (`layer` lifts it clear of them).
 struct Group {
     ink: Ink,
     loops: Vec<Vec<Point>>,
+    rule: FillRule,
+    layer: u8,
+}
+
+impl Group {
+    fn plain(ink: Ink, loops: Vec<Vec<Point>>) -> Self {
+        Self {
+            ink,
+            loops,
+            rule: FillRule::NonZero,
+            layer: 0,
+        }
+    }
+}
+
+/// Paint layers one artwork may stack, each lifted [`PAINT_LIFT_MM`] over
+/// the last.
+const MAX_PAINT_LAYERS: u8 = 16;
+/// The lift of one paint layer over the one under it, mm: far below the
+/// ink's own thickness, enough for the depth buffer at preview range.
+const PAINT_LIFT_MM: f64 = 0.0005;
+
+/// Whether an sRGB colour reads as the light ground of monochrome artwork
+/// (a white background box), which a single-colour finish leaves bare.
+fn light_ground(c: [u8; 3]) -> bool {
+    c.iter().all(|v| *v >= 240)
+}
+
+/// The groups of one SVG artwork: each painted region in paint order. A
+/// colour finish (ink, pad print) prints each region in its own colour
+/// (unpainted-colour regions in the finish's); a single-colour finish
+/// (an etch or engraving) marks every region but light grounds.
+fn artwork_groups(
+    text: &str,
+    origin: [f64; 2],
+    size: [f64; 2],
+    finish: Finish,
+) -> Result<Vec<Group>> {
+    let coloured = matches!(
+        finish,
+        Finish::InkWhite | Finish::Ink { .. } | Finish::PadPrint { .. }
+    );
+    let mut out = Vec::new();
+    let mut layer: u8 = 0;
+    for painted in paint::artwork(text, origin, size)? {
+        let ink = match painted.colour {
+            Some(c) if coloured => Ink::Srgb(c),
+            Some(c) if light_ground(c) => continue,
+            _ => Ink::Finish,
+        };
+        // Overpainted regions of other colours stand a layer higher.
+        if out.last().is_some_and(|g: &Group| g.ink != ink) {
+            layer = (layer + 1).min(MAX_PAINT_LAYERS);
+        }
+        out.push(Group {
+            ink,
+            loops: painted.loops,
+            rule: painted.rule,
+            layer,
+        });
+    }
+    Ok(out)
 }
 
 /// The fill groups of `layout`'s elements in its layout frame.
@@ -379,19 +445,13 @@ fn groups(layout: &MarkingLayout, fit: [f64; 2], artwork: ArtworkSource<'_>) -> 
         match element {
             LaidElement::Text(line) => {
                 // Each line on its own: overlapping lines must not cancel.
-                out.push(Group {
-                    ink: Ink::Finish,
-                    loops: shapes::text(line, fit)?,
-                });
+                out.push(Group::plain(Ink::Finish, shapes::text(line, fit)?));
             }
             LaidElement::Polarity {
                 mark: PolarityMark::Stripe,
                 origin,
                 size_mm,
-            } => out.push(Group {
-                ink: Ink::Finish,
-                loops: stripe(*origin, *size_mm)?,
-            }),
+            } => out.push(Group::plain(Ink::Finish, stripe(*origin, *size_mm)?)),
             LaidElement::Polarity {
                 mark,
                 origin,
@@ -403,10 +463,7 @@ fn groups(layout: &MarkingLayout, fit: [f64; 2], artwork: ArtworkSource<'_>) -> 
                 size_mm,
             } => {
                 if let Some(text) = artwork(svg) {
-                    out.push(Group {
-                        ink: Ink::Finish,
-                        loops: shapes::artwork(&text, *origin, *size_mm)?,
-                    });
+                    out.extend(artwork_groups(&text, *origin, *size_mm, layout.finish)?);
                 }
             }
             LaidElement::Bands { colours, pitch_mm } => {
@@ -417,10 +474,7 @@ fn groups(layout: &MarkingLayout, fit: [f64; 2], artwork: ArtworkSource<'_>) -> 
                 {
                     band_colour(*colour)?;
                     if let Some(band) = band {
-                        out.push(Group {
-                            ink: Ink::Band(*colour),
-                            loops: vec![band],
-                        });
+                        out.push(Group::plain(Ink::Band(*colour), vec![band]));
                     }
                 }
             }
@@ -428,19 +482,17 @@ fn groups(layout: &MarkingLayout, fit: [f64; 2], artwork: ArtworkSource<'_>) -> 
                 symbol,
                 origin,
                 module_mm,
-            } => out.push(Group {
-                ink: Ink::Finish,
-                loops: modules(symbol, *origin, *module_mm)?,
-            }),
+            } => out.push(Group::plain(
+                Ink::Finish,
+                modules(symbol, *origin, *module_mm)?,
+            )),
         }
     }
     // Polarity marks are counter-clockwise; one fill merges them.
     if !finish_loops.is_empty() {
-        out.push(Group {
-            ink: Ink::Finish,
-            loops: finish_loops,
-        });
+        out.push(Group::plain(Ink::Finish, finish_loops));
     }
+
     Ok(out)
 }
 
@@ -600,7 +652,7 @@ struct Builder {
 
 impl Builder {
     /// Add one chart triangle, clipped to the region.
-    fn triangle(&mut self, tri: [Point; 3], tilts: [[f64; 2]; 3]) -> Result<()> {
+    fn triangle(&mut self, tri: [Point; 3], tilts: [[f64; 2]; 3], layer: u8) -> Result<()> {
         let poly = map::clip(tri, self.bounds);
         if poly.len() < 3 {
             return Ok(());
@@ -618,6 +670,7 @@ impl Builder {
         for p in &poly {
             self.out.points.push(*p);
             self.out.tilts.push(tilt);
+            self.out.layers.push(layer);
         }
         for k in 1..poly.len() as u32 - 1 {
             self.out.triangles.push([base, base + k, base + k + 1]);
@@ -681,7 +734,7 @@ pub fn flatten(
         for cluster in clusters(&group.loops) {
             let left =
                 MAX_DECAL_TRIANGLES.saturating_sub(b.out.triangles.len() + flat.triangles.len());
-            fill::fill(&cluster, &mut flat, left)?;
+            fill::fill_with(&cluster, group.rule, &mut flat, left)?;
         }
         let start = b.out.triangles.len();
         for copy in &region.copies {
@@ -697,7 +750,7 @@ pub fn flatten(
                 };
                 // A mirror turns the winding; keep every triangle facing out.
                 let tri = if mirror { [p0, p2, p1] } else { [p0, p1, p2] };
-                b.triangle(tri, [[0.0; 2]; 3])?;
+                b.triangle(tri, [[0.0; 2]; 3], group.layer)?;
             }
         }
         let end = b.out.triangles.len();
@@ -720,8 +773,8 @@ pub fn flatten(
                     } else {
                         ([q[0], q[1], q[2]], [q[0], q[2], q[3]])
                     };
-                    b.triangle(t0, [tilt; 3])?;
-                    b.triangle(t1, [tilt; 3])?;
+                    b.triangle(t0, [tilt; 3], group.layer)?;
+                    b.triangle(t1, [tilt; 3], group.layer)?;
                 }
             }
             let end = b.out.triangles.len();
@@ -743,9 +796,9 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
         finish: flat.finish,
         ..DecalMesh::default()
     };
-    let vertex = |out: &mut DecalMesh, p: Point, tilt: [f64; 2]| -> Result<u32> {
+    let vertex = |out: &mut DecalMesh, p: Point, tilt: [f64; 2], layer: u8| -> Result<u32> {
         let tilted = tilt[0] != 0.0 || tilt[1] != 0.0;
-        let raise = if tilted { WALL_LIFT_MM } else { 0.0 };
+        let raise = if tilted { WALL_LIFT_MM } else { 0.0 } + f64::from(layer) * PAINT_LIFT_MM;
         let (at, n, u, v) = map.frame(p, lift + raise);
         let k = (1.0 - tilt[0] * tilt[0] - tilt[1] * tilt[1])
             .max(0.0)
@@ -770,13 +823,14 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
         if run_at.last().is_none_or(|(i, _)| *i != ink) {
             run_at.push((ink, out.indices.len()));
         }
-        let corner = |i: u32| -> Result<(Point, [f64; 2])> {
+        let corner = |i: u32| -> Result<(Point, [f64; 2], u8)> {
             let p = flat
                 .points
                 .get(i as usize)
                 .ok_or_else(|| invalid("a bad index"))?;
             let t = flat.tilts.get(i as usize).copied().unwrap_or([0.0; 2]);
-            Ok((*p, t))
+            let l = flat.layers.get(i as usize).copied().unwrap_or(0);
+            Ok((*p, t, l))
         };
         let corners = [corner(t[0])?, corner(t[1])?, corner(t[2])?];
         let n = map.splits(corners.map(|c| c.0));
@@ -785,7 +839,9 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
                 let index = match mapped.get(*i as usize).copied().flatten() {
                     Some(index) => index,
                     None => {
-                        let index = vertex(&mut out, corners[slot].0, corners[slot].1)?;
+                        let (p, tilt, layer) = corners[slot];
+                        let index = vertex(&mut out, p, tilt, layer)?;
+
                         if let Some(m) = mapped.get_mut(*i as usize) {
                             *m = Some(index);
                         }
@@ -810,7 +866,7 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
                     };
                     let p = mix(&|s| corners[s].0);
                     let tilt = mix(&|s| corners[s].1);
-                    grid.push(vertex(&mut out, p, tilt)?);
+                    grid.push(vertex(&mut out, p, tilt, corners[0].2)?);
                 }
             }
             // Row j starts after rows 0..j of n + 1 − r points each.

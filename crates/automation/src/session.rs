@@ -577,7 +577,6 @@ impl Session {
             Request::InspectModelFile(params) => return self.inspect_model_file(params),
             Request::SetMarking(params) => return self.set_marking(params),
             Request::MarkingSurfaces(params) => return self.marking_surfaces(params),
-
         }
         Ok(self.snapshot())
     }

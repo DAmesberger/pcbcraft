@@ -92,7 +92,8 @@ fn a_module_marking_goes_on_its_can_and_board_in_one_step() -> TestResult {
     let undone = session.dispatch(json!({"command": "project.undo", "params": {}}));
     assert_eq!(undone["ok"], true, "{undone}");
     let marked = session.engine().drafts().items.iter().any(|d| {
-        d.id.0 == component && matches!(&d.definition, Definition::Component(c) if c.marking.is_some())
+        d.id.0 == component
+            && matches!(&d.definition, Definition::Component(c) if c.marking.is_some())
     });
     assert!(!marked, "undo takes the marking back");
     Ok(())
@@ -122,9 +123,8 @@ fn bad_marking_placements_are_refused_whole() -> TestResult {
 #[test]
 fn marking_surfaces_list_a_module_s_anchors() -> TestResult {
     let (mut session, component, package) = example()?;
-    let reply = session.dispatch(
-        json!({"command": "library.marking_surfaces", "params": {"package": package}}),
-    );
+    let reply = session
+        .dispatch(json!({"command": "library.marking_surfaces", "params": {"package": package}}));
     assert_eq!(reply["ok"], true, "{reply}");
     let surfaces = reply["result"]["surfaces"].as_array().ok_or("surfaces")?;
     let names: Vec<&str> = surfaces
@@ -142,9 +142,8 @@ fn marking_surfaces_list_a_module_s_anchors() -> TestResult {
         .ok_or("can")?;
     assert_eq!(can["size"], json!([20.4, 22.4]));
     // A component is not a package.
-    let reply = session.dispatch(
-        json!({"command": "library.marking_surfaces", "params": {"package": component}}),
-    );
+    let reply = session
+        .dispatch(json!({"command": "library.marking_surfaces", "params": {"package": component}}));
     assert_eq!(reply["ok"], false, "{reply}");
     // The request is in the catalog, with its schema.
     assert!(

@@ -1,13 +1,10 @@
 //! Outlines of laid-out marking elements in the area's 2D frame (mm,
 //! origin at the area centre, +x along the area's u axis): text from
 //! Solidcraft's glyph outlines (`solidcraft_sketch::text`, the built-in
-//! Liberation Sans, SIL OFL 1.1), artwork from the SVG converter
-//! ([`crate::svg`], over Solidcraft's SVG reader), polarity marks and
-//! colour bands as plain shapes.
-use crate::svg;
+//! Liberation Sans, SIL OFL 1.1), polarity marks and colour bands as plain
+//! shapes. SVG artwork is read by [`super::paint`].
 use crate::{Error, Result};
 use pcbcraft_core::Point;
-use pcbcraft_core::library::graphics::{Fill, Item};
 use pcbcraft_core::library::marking::{LaidText, PolarityMark};
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{LinkGeom, TextAlign, TextStyle, text_geometry_styled};
@@ -22,8 +19,6 @@ pub const TEXT_HEIGHT_MM: std::ops::RangeInclusive<f64> = 0.05..=50.0;
 pub const MAX_ELEMENT_MM: f64 = 200.0;
 /// Segments of a polarity dot.
 const DOT_SEGMENTS: usize = 32;
-/// Segments of a stroke's round end.
-const CAP_STEPS: usize = 6;
 /// Segments one flattened curve gives at most.
 const MAX_CURVE_SEGMENTS: usize = 64;
 /// Points closer than this continue one loop, mm.
@@ -109,7 +104,7 @@ pub fn text(line: &LaidText, fit: [f64; 2]) -> Result<Vec<Vec<Point>>> {
 
 /// Glyph curves → closed loops: a curve that starts where the last one
 /// ended continues its loop.
-fn chain(geometry: &[LinkGeom]) -> Vec<Vec<Point>> {
+pub(super) fn chain(geometry: &[LinkGeom]) -> Vec<Vec<Point>> {
     let mut loops: Vec<Vec<Point>> = Vec::new();
     let mut current: Vec<Point> = Vec::new();
     let close = |current: &mut Vec<Point>, loops: &mut Vec<Vec<Point>>| {
@@ -332,99 +327,4 @@ pub fn bands(count: usize, pitch: f64, area: [f64; 2]) -> Result<Vec<Option<Vec<
             (x1 - x0 > 1e-6).then(|| rect([(x0 + x1) / 2.0, 0.0], [x1 - x0, area[1]]))
         })
         .collect())
-}
-
-/// SVG artwork scaled to fit `size` (aspect kept), centred on `origin`:
-/// filled closed shapes and stroked outlines as counter-clockwise loops,
-/// so overlapping pieces merge. Text and other skipped elements draw
-/// nothing (the converter reports them).
-pub fn artwork(text: &str, origin: [f64; 2], size: [f64; 2]) -> Result<Vec<Vec<Point>>> {
-    checked_box(origin, size)?;
-    let first = svg::convert(text, &svg::Options::new(0.0))?;
-    let fit = |art: &svg::Artwork| {
-        let [w, h] = art.size;
-        let k = [size[0] / w, size[1] / h]
-            .into_iter()
-            .filter(|k| k.is_finite() && *k > 0.0)
-            .fold(f64::INFINITY, f64::min);
-        k.is_finite().then_some(k)
-    };
-    let Some(k) = fit(&first) else {
-        return Ok(Vec::new());
-    };
-    // Convert again at the final size, so the chord tolerance is in
-    // decal millimetres.
-    let options = svg::Options {
-        scale: k.clamp(*svg::SCALE.start(), *svg::SCALE.end()),
-        tolerance_mm: CHORD_MM.max(*svg::TOLERANCE_MM.start()),
-        fallback_stroke_mm: 0.0,
-    };
-    let art = svg::convert(text, &options)?;
-    let mut loops = Vec::new();
-    for item in &art.items {
-        let Item::Shape { shape, width, fill } = item else {
-            continue;
-        };
-        let points: Vec<Point> = shape
-            .flatten(CHORD_MM)
-            .into_iter()
-            .map(|p| [origin[0] + p[0], origin[1] + p[1]])
-            .collect();
-        if points.is_empty() {
-            continue;
-        }
-        if *fill != Fill::None && shape.is_closed() && points.len() >= 3 {
-            loops.push(counter_clockwise(points.clone()));
-        }
-        if *width > 0.0 {
-            stroke(&mut loops, &points, shape.is_closed(), *width);
-        }
-    }
-    Ok(loops)
-}
-
-fn signed_area(points: &[Point]) -> f64 {
-    let n = points.len();
-    (0..n)
-        .map(|i| {
-            let (a, b) = (points[i], points[(i + 1) % n]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum::<f64>()
-        / 2.0
-}
-
-fn counter_clockwise(mut points: Vec<Point>) -> Vec<Point> {
-    if signed_area(&points) < 0.0 {
-        points.reverse();
-    }
-    points
-}
-
-/// A polyline stroked `width` wide, as counter-clockwise stadiums.
-fn stroke(out: &mut Vec<Vec<Point>>, points: &[Point], closed: bool, width: f64) {
-    let half = width / 2.0;
-    let n = points.len();
-    if n == 1 {
-        out.push(circle(points[0], half, DOT_SEGMENTS));
-        return;
-    }
-    let count = if closed { n } else { n - 1 };
-    for i in 0..count {
-        out.push(stadium(points[i], points[(i + 1) % n], half));
-    }
-}
-
-fn stadium(a: Point, b: Point, half: f64) -> Vec<Point> {
-    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-    let len = dx.hypot(dy);
-    let base = if len > 1e-12 { dy.atan2(dx) } else { 0.0 };
-    let mut out = Vec::with_capacity(2 * CAP_STEPS + 2);
-    for (c, from) in [(b, -0.5), (a, 0.5)] {
-        for k in 0..=CAP_STEPS {
-            let t = base + std::f64::consts::PI * (from + k as f64 / CAP_STEPS as f64);
-            out.push([c[0] + half * t.cos(), c[1] + half * t.sin()]);
-        }
-    }
-    out
 }

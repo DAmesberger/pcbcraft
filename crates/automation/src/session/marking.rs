@@ -326,9 +326,10 @@ impl Session {
                     placement: input.placement,
                     decals,
                 };
-                if let Some(finding) = pcbcraft_core::library::marking::spec_findings(params.draft, &spec)
-                    .into_iter()
-                    .next()
+                if let Some(finding) =
+                    pcbcraft_core::library::marking::spec_findings(params.draft, &spec)
+                        .into_iter()
+                        .next()
                 {
                     return Err(invalid(format!("marking.template: {}", finding.message)));
                 }
@@ -356,10 +357,14 @@ impl Session {
     }
 
     pub(super) fn marking_surfaces(&self, params: MarkingSurfacesParams) -> Result<Value> {
-        let drafted = self.engine.drafts().get(params.package).and_then(|d| match &d.definition {
-            Definition::Package(p) => Some(p.clone()),
-            _ => None,
-        });
+        let drafted = self
+            .engine
+            .drafts()
+            .get(params.package)
+            .and_then(|d| match &d.definition {
+                Definition::Package(p) => Some(p.clone()),
+                _ => None,
+            });
         let package = match drafted {
             Some(p) => p,
             None => self
