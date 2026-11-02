@@ -71,14 +71,15 @@ The reference was made before any live run: the tool calls were authored from th
 
 The first live run (`examples/esp32-s31-wroom-3/run1/`) built the same geometry and a pinout that adds the DAC channels and corrects the LP SPI directions, but with broken pin rules and ambiguous mux codes; [the comparison](datasheet-assistant-run1.md) gives every difference with its datasheet page.
 
-The open questions in the review stand: board thickness read from an unlabelled dimension, the EPAD centre and its chamfered antenna-side pad (drawn square), the 15 mm clearance the guidelines ask of the host board, directions inferred where the table's type column was not read, and the -3U variant not built.
+Espressif's own published CAD data for the module (footprint and STEP model in `espressif/kicad-libraries`, commit cfb91e9 of 2026-07-24, CC-BY-SA 4.0) was used afterwards like a datasheet, as a dimension source only (not redistributed; [example README](../examples/esp32-s31-wroom-3/README.md#cad-cross-check)). It confirms every footprint value above, the 1.0 mm board (1.004 in the STEP), the 21 × 23 mm can and the EPAD centre at y = −3; it settles the land pattern's "1.3" as the edges of a 0.5 mm chamfer on the antenna-side EPAD pad, and shows the can's only mark is a Ø0.5 hole at its −x/−y corner by pins 25/26, not a pin-1 mark. The remaining open questions: the chamfered pad (drawn square), the 15 mm clearance the guidelines ask of the host board, directions inferred where the table's type column was not read, and the -3U variant not built.
 
 ## Known limits
 
 - **GPIO matrix.** Peripherals that reach pins only through the ESP32 GPIO matrix are not listed per pin; a terminal has at most 32 functions. A "routable peripheral" (roles assignable to any pin of a set) would model it without enumeration; not built.
 - **Module footprints are form lands**, not a parametric sketch template: they are edited through the form (3D tab rows) or numerically. Pad rows, the ground array and single pads are listed read-only in the desktop form.
 - **Keep-out display.** Footprint keep-outs act on fills and checks but are not yet drawn in the footprint editor or the PCB 2D view.
-- **Chamfered pads** (the WROOM-3 EPAD's antenna-side pad) are drawn square.
+- **Chamfered pads** (the WROOM-3 EPAD's antenna-side pad, 0.5 mm chamfer) are drawn square: the module form has no per-pad chamfer, although footprints can hold custom pad outlines.
+- **Terminal matching.** `library.package_from_template` carries the package's terminals, and so the binding's mappings, over by number (`terminals: by_number`, the default). The second live run, made before this, got its terminals reused by list order after importing the pinout rows out of pin order, and had to re-key all 99 mappings with `library.edit`; the replay test `wroom3_binding` reproduces that case.
 - **No streaming.** Requests are non-streaming with a 15-minute timeout, so Cancel takes effect after the current request.
 - **One live run.** The HTTP transport has made one live run ([run 1](datasheet-assistant-run1.md)); its recording replays in the tests. The chunked pinout flow, the rule evaluation in the loop and the 64 000-token retry after a cut-off are tested only by replay so far.
 - **Marking anchors.** A marking item sits at the centre, the pin-1 corner or an end; the WROOM-3 can's Ø0.5 mark at its −x/−y corner cannot be placed yet.

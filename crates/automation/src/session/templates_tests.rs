@@ -115,7 +115,38 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
     // 8b. Preview, then build package, a footprint draft for the imported
     // package (the import made none) with its lands, and its listing in
     // the one binding draft from the row: one request, one undo step.
-    let request = json!({"draft": package, "row": row});
+    // The datasheet numbers the exposed pad 49; the QFN form calls it EP.
+    // Matched by number, that is reported, not guessed: 48 kept, 49
+    // removed, EP new and unmapped. (This step used to rely on terminals
+    // being reused by list order, which renamed 49 to EP silently.)
+    let unstated = s.query(
+        "package plan by number",
+        "library.package_plan",
+        json!({"request": {"draft": package, "row": row}}),
+    )?;
+    assert_eq!(unstated["terminals"]["strategy"], "by_number", "{unstated}");
+    assert_eq!(
+        (
+            &unstated["terminals"]["kept"],
+            &unstated["terminals"]["added"],
+            &unstated["terminals"]["removed"]
+        ),
+        (&json!(48), &json!(1), &json!(1)),
+        "{unstated}"
+    );
+    let unmatched = unstated["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|f| f["code"] == "package.terminals_unmatched")
+        .ok_or_else(|| format!("the mismatch is reported: {unstated}"))?;
+    let message = unmatched["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("new terminal(s) EP") && message.contains("current terminal(s) 49"),
+        "{message}"
+    );
+    // The person states that 49 is the exposed pad.
+    let request = json!({"draft": package, "row": row, "renumber": [{"from": "49", "to": "EP"}]});
     let plan = s.query(
         "package plan",
         "library.package_plan",
@@ -127,6 +158,11 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
     assert!(plan["model_family_rev"].is_u64(), "{plan}");
     assert_eq!(plan["footprint_created"], true, "{plan}");
     assert_eq!(plan["footprint_bound"], binding, "{plan}");
+    assert_eq!(
+        plan["terminals"]["summary"],
+        "Terminals matched by number: 49 kept, 0 added, 0 removed, 1 renumbered as requested (49 → EP).",
+        "{plan}"
+    );
     let applied = s.apply(
         "package from template",
         library_op("library.package_from_template", request),

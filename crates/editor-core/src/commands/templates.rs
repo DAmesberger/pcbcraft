@@ -13,7 +13,8 @@ use crate::ids::{
 use crate::library::package_fit;
 use crate::library::samples::{self, SampleRefs};
 use crate::library::templates::catalog::{
-    self, FamilyKind, NewFromTemplate, PackageFromTemplate, PackagePlan, RowFrom, SavePackageRow,
+    self, FamilyKind, NewFromTemplate, PackageFromTemplate, PackagePlan, Renumber, RowFrom,
+    SavePackageRow, TerminalMatch, TerminalMatchReport,
 };
 use crate::library::templates::footprint;
 use crate::library::templates::footprint_family;
@@ -202,7 +203,15 @@ fn candidate(
         )));
     }
     let floor = package_floor(document, current, package);
-    let mut next = replaced_package(package, form, floor)?;
+    let replaced = replaced_package(package, form, floor, request.terminals, &request.renumber)?;
+    // A package without terminals has nothing to match.
+    let unmatched = if package.terminals.is_empty() {
+        None
+    } else {
+        unmatched_finding(request.draft, &replaced)
+    };
+    let terminals = replaced.report;
+    let mut next = replaced.package;
     if let Some(rev) = family_rev {
         // The generated model of the new family; a family without a
         // builder keeps its model.
@@ -228,6 +237,8 @@ fn candidate(
             resolved: &resolved,
             family_rev,
             fresh,
+            terminals,
+            unmatched,
         },
     )
 }
@@ -241,6 +252,8 @@ struct Replacement<'a> {
     resolved: &'a catalog::ResolvedRow,
     family_rev: Option<u16>,
     fresh: DefinitionId,
+    terminals: TerminalMatchReport,
+    unmatched: Option<Finding>,
 }
 
 fn finish(
@@ -257,6 +270,8 @@ fn finish(
         resolved,
         family_rev,
         fresh,
+        terminals,
+        unmatched,
     } = replacement;
     let mut findings = Vec::new();
     let mut edits = Vec::new();
@@ -329,8 +344,17 @@ fn finish(
         edits.push(footprint_edit);
         None
     };
+    findings.extend(unmatched);
     findings.extend(mapping_findings(document, request.draft, &next));
-    findings.extend(retained_findings(document, request.draft, before, &next));
+    if terminals.strategy == TerminalMatch::ByPosition {
+        findings.extend(retained_findings(
+            document,
+            request.draft,
+            before,
+            &next,
+            terminals.renumbered,
+        ));
+    }
     let plan = PackagePlan {
         terminals_before: u32::try_from(before.terminals.len()).unwrap_or(u32::MAX),
         terminals_after: u32::try_from(next.terminals.len()).unwrap_or(u32::MAX),
@@ -339,6 +363,7 @@ fn finish(
         footprint: Some(footprint_id),
         footprint_created: created.is_some(),
         footprint_bound: bound,
+        terminals,
         findings,
     };
     edits.insert(
@@ -475,43 +500,247 @@ fn floor(counter: u32, base: u32, used: impl Iterator<Item = u32>) -> u32 {
         .fold(counter.max(base).max(1), u32::max)
 }
 
+/// The package's terminals after a form change, and how they matched.
+struct Replaced {
+    package: PackageDefinition,
+    report: TerminalMatchReport,
+    /// Numbers of the new form no current terminal carried (fresh
+    /// terminals), in lead order.
+    added: Vec<String>,
+    /// Numbers of current terminals the new package removes.
+    removed: Vec<String>,
+}
+
 /// `package` with `form`: its envelope, and its terminals for the form's
-/// count. Terminals the new count keeps keep their identities, in order;
-/// terminals beyond it are removed; new ones get fresh identities. Every
-/// terminal is designated from the new form ([`samples::form_designations`]:
-/// lead numbers then `EP`, or a grid's ball names), so designations never
-/// repeat. Mappings change only through `library.assign_terminals` and
-/// binding edits.
+/// count, each designated from the new form
+/// ([`samples::form_designations`]: lead numbers then `EP`, or a grid's
+/// ball names) and listed in lead order. `strategy` says which current
+/// terminals carry over (their identities, and so the binding mappings
+/// that name them): [`TerminalMatch::ByNumber`] keeps a terminal whose
+/// designation the new form gives and nothing else;
+/// [`TerminalMatch::ByPosition`] (only when asked) keeps the first
+/// terminals in list order and renumbers them. Other new terminals get
+/// fresh identities. Mappings change only through
+/// `library.assign_terminals` and binding edits.
 fn replaced_package(
     package: &PackageDefinition,
     form: crate::library::PackageForm,
     floor: u32,
-) -> Result<PackageDefinition> {
-    let count = samples::form_terminal_count(&form);
+    strategy: TerminalMatch,
+    renumber: &[Renumber],
+) -> Result<Replaced> {
+    let count = usize::try_from(samples::form_terminal_count(&form)).unwrap_or(0);
+    let designations = samples::form_designations(&form, count);
+    check_renumber(package, &designations, strategy, renumber)?;
+    // The current number a new number takes its terminal from: itself,
+    // unless the request renumbers another one to it.
+    let source = |designation: &str| -> String {
+        renumber
+            .iter()
+            .find(|r| r.to.trim() == designation)
+            .map_or_else(|| designation.to_owned(), |r| r.from.trim().to_owned())
+    };
+    let renamed = |current: &str| renumber.iter().any(|r| r.from.trim() == current);
     let mut next = package.clone();
-    next.next_local = floor;
-    let keep = usize::try_from(count)
-        .unwrap_or(usize::MAX)
-        .min(next.terminals.len());
-    next.terminals.truncate(keep);
-    while next.terminals.len() < usize::try_from(count).unwrap_or(0) {
-        let id = PackageTerminalId(next.next_local);
-        next.next_local = next
-            .next_local
+    let mut local = floor;
+    let mut fresh = || -> Result<PackageTerminalId> {
+        let id = PackageTerminalId(local);
+        local = local
             .checked_add(1)
             .ok_or_else(|| Error::Limit("package local identities exhausted".into()))?;
-        next.terminals.push(PackageTerminal {
+        Ok(id)
+    };
+    let mut terminals = Vec::with_capacity(count);
+    let mut added = Vec::new();
+    let mut renumbered = 0u32;
+    let mut used = vec![false; package.terminals.len()];
+    for (k, designation) in designations.iter().enumerate() {
+        let found = match strategy {
+            TerminalMatch::ByNumber => {
+                let wanted = source(designation);
+                package.terminals.iter().enumerate().position(|(j, t)| {
+                    let current = t.designation.trim();
+                    !used[j]
+                        && !wanted.is_empty()
+                        && current == wanted
+                        // A renumbered terminal matches only its new number.
+                        && (wanted != *designation || !renamed(current))
+                })
+            }
+            TerminalMatch::ByPosition => (k < package.terminals.len()).then_some(k),
+        };
+        let id = match found.and_then(|j| package.terminals.get(j).map(|t| (j, t))) {
+            Some((j, t)) => {
+                used[j] = true;
+                if t.designation.trim() != designation {
+                    renumbered = renumbered.saturating_add(1);
+                }
+                t.id
+            }
+            None => {
+                added.push(designation.clone());
+                fresh()?
+            }
+        };
+        terminals.push(PackageTerminal {
             id,
-            designation: String::new(),
+            designation: designation.clone(),
         });
     }
-    let designations = samples::form_designations(&form, next.terminals.len());
-    for (terminal, designation) in next.terminals.iter_mut().zip(designations) {
-        terminal.designation = designation;
+    next.next_local = local;
+    let removed: Vec<String> = package
+        .terminals
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|(t, _)| t.designation.clone())
+        .collect();
+    let to_u32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let kept = to_u32(used.iter().filter(|u| **u).count());
+    let mut summary = format!(
+        "Terminals matched {}: {kept} kept, {} added, {} removed",
+        strategy.label(),
+        added.len(),
+        removed.len()
+    );
+    match strategy {
+        TerminalMatch::ByPosition => summary.push_str(&format!(", {renumbered} renumbered")),
+        TerminalMatch::ByNumber if renumbered > 0 => {
+            let pairs: Vec<String> = renumber
+                .iter()
+                .map(|r| format!("{} → {}", r.from.trim(), r.to.trim()))
+                .collect();
+            summary.push_str(&format!(
+                ", {renumbered} renumbered as requested ({})",
+                pairs.join(", ")
+            ));
+        }
+        TerminalMatch::ByNumber => {}
     }
+    summary.push('.');
+    let report = TerminalMatchReport {
+        strategy,
+        kept,
+        added: to_u32(added.len()),
+        removed: to_u32(removed.len()),
+        renumbered,
+        summary,
+    };
+    next.terminals = terminals;
     next.envelope = form.envelope().unwrap_or(next.envelope);
     next.form = form;
-    Ok(next)
+    Ok(Replaced {
+        package: next,
+        report,
+        added,
+        removed,
+    })
+}
+
+/// Refuses a `renumber` list that is not an explicit one-to-one map from
+/// current numbers to numbers of the new form, or that comes with
+/// matching by position.
+fn check_renumber(
+    package: &PackageDefinition,
+    designations: &[String],
+    strategy: TerminalMatch,
+    renumber: &[Renumber],
+) -> Result<()> {
+    if renumber.is_empty() {
+        return Ok(());
+    }
+    if strategy == TerminalMatch::ByPosition {
+        return Err(Error::Invalid(
+            "template.renumber: renumber goes with terminals by_number".into(),
+        ));
+    }
+    if renumber.len() > package.terminals.len() {
+        return Err(Error::Invalid(
+            "template.renumber: more entries than the package has terminals".into(),
+        ));
+    }
+    for (k, r) in renumber.iter().enumerate() {
+        let (from, to) = (r.from.trim(), r.to.trim());
+        let current = package
+            .terminals
+            .iter()
+            .filter(|t| t.designation.trim() == from)
+            .count();
+        if from.is_empty() || current != 1 {
+            return Err(Error::Invalid(format!(
+                "template.renumber: the package has no single terminal numbered ‘{from}’"
+            )));
+        }
+        if !designations.iter().any(|d| d == to) {
+            return Err(Error::Invalid(format!(
+                "template.renumber: the new form has no terminal numbered ‘{to}’"
+            )));
+        }
+        let repeated = renumber[..k]
+            .iter()
+            .any(|o| o.from.trim() == from || o.to.trim() == to);
+        if repeated {
+            return Err(Error::Invalid(format!(
+                "template.renumber: ‘{from}’ or ‘{to}’ is named twice"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// At most this many numbers are listed in one finding.
+const LISTED_NUMBERS: usize = 16;
+
+/// `numbers` as a short list: the first [`LISTED_NUMBERS`], then a count.
+fn number_list(numbers: &[String]) -> String {
+    let shown: Vec<&str> = numbers
+        .iter()
+        .take(LISTED_NUMBERS)
+        .map(|n| {
+            if n.is_empty() {
+                "(unnumbered)"
+            } else {
+                n.as_str()
+            }
+        })
+        .collect();
+    let mut out = shown.join(", ");
+    if numbers.len() > LISTED_NUMBERS {
+        out.push_str(&format!(" and {} more", numbers.len() - LISTED_NUMBERS));
+    }
+    out
+}
+
+/// The advisory finding naming the terminals a replacement left
+/// unmatched: new numbers no current terminal carried (fresh and
+/// unmapped) and current terminals the new package removes. `None` when
+/// every terminal matched.
+fn unmatched_finding(package: DefinitionId, replaced: &Replaced) -> Option<Finding> {
+    if replaced.added.is_empty() && replaced.removed.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if !replaced.added.is_empty() {
+        parts.push(format!(
+            "new terminal(s) {} match no current terminal and are unmapped",
+            number_list(&replaced.added)
+        ));
+    }
+    if !replaced.removed.is_empty() {
+        parts.push(format!(
+            "current terminal(s) {} are not in the new form and are removed",
+            number_list(&replaced.removed)
+        ));
+    }
+    Some(Finding::new(
+        "package.terminals_unmatched",
+        format!(
+            "Terminals matched {}: {}. Nothing is filled by position: if a removed and a new number are the same pad (an exposed pad the datasheet numbers), pass renumber [{{from, to}}]; else map them explicitly.",
+            replaced.report.strategy.label(),
+            parts.join("; ")
+        ),
+        vec![ObjectRef::Definition { id: package }],
+    ))
 }
 
 /// `footprint` with its template content replaced: form-derived lands for
@@ -554,18 +783,23 @@ fn rebuilt_footprint(
     Ok(next)
 }
 
-/// Advice when the package changes family or lead count but a binding
-/// draft keeps mapping retained terminals: those terminals are reused by
-/// position (`binding.mapping_retained`), so each mapping should be
+/// Advice when the request chose [`TerminalMatch::ByPosition`] and the
+/// package renumbers a kept terminal or changes family or lead count
+/// while a binding draft maps kept terminals: those terminals are reused
+/// by position (`binding.mapping_retained`), so each mapping should be
 /// checked against the new pinout before publishing.
 fn retained_findings(
     document: &Document,
     package: DefinitionId,
     before: &PackageDefinition,
     next: &PackageDefinition,
+    renumbered: u32,
 ) -> Vec<Finding> {
     let family = |p: &PackageDefinition| catalog::FamilyKind::of(&p.form);
-    if family(before) == family(next) && before.terminals.len() == next.terminals.len() {
+    if renumbered == 0
+        && family(before) == family(next)
+        && before.terminals.len() == next.terminals.len()
+    {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -585,7 +819,7 @@ fn retained_findings(
             out.push(Finding::new(
                 "binding.mapping_retained",
                 format!(
-                    "{kept} mapping(s) of ‘{}’ keep package terminals by position while the package changes from {} terminal(s) ({}) to {} ({}); check each against the new pinout.",
+                    "{kept} mapping(s) of ‘{}’ keep package terminals by position, as requested, while the package changes from {} terminal(s) ({}) to {} ({}); check each against the new pinout.",
                     draft.meta.name,
                     before.terminals.len(),
                     before.form.label(),

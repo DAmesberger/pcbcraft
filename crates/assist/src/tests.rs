@@ -444,3 +444,4 @@ fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
 
 mod board;
 mod run1;
+mod wroom3_binding;
