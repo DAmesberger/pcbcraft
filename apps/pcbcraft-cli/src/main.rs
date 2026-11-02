@@ -1,6 +1,7 @@
 //! Command-line access to Pcbcraft's command engine. Every subcommand is a
 //! thin transport over `pcbcraft_automation::Session`.
 mod design_part;
+mod fab;
 mod firmware;
 mod pinout;
 mod rules_profile;
@@ -44,6 +45,7 @@ fn usage() -> String {
         firmware::USAGE,
         rules_profile::USAGE,
         design_part::USAGE,
+        fab::USAGE,
     ]
     .into_iter()
     .filter(|u| !u.is_empty())
@@ -135,6 +137,7 @@ fn run() -> Result<()> {
                 json!({"command": "project.export_native", "params": {"path": target}}),
             )?)
         }
+        [command, rest @ ..] if command == "fab" => fab::run(rest),
         [command, rest @ ..] if command == "pinout" => pinout::run(rest),
         [command, rest @ ..] if command == "sample-packages" => sample_packages::run(rest),
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),

@@ -24,7 +24,7 @@
 //! - **Profile** (`Profile,NP`). The outer outline, cutouts and non-plated
 //!   slots, with exact arcs. Plated straight slots are routed in the plated
 //!   drill file instead.
-use super::gerber::{self, Aperture, Seg, Writer, escape, macro_body, units};
+use super::gerber::{Aperture, Seg, Writer, escape, macro_body, units};
 use super::{FabFile, FabricationOptions, FileGroup};
 use crate::diagnostics::Result;
 use crate::geometry::{Point, Shape, Transform2, rounded_path, signed_area2};
@@ -244,7 +244,7 @@ pub fn layers(project: &Project, options: &FabricationOptions, stem: &str) -> Re
     attributes.push(("FileFunction", "Profile,NP".into()));
     attributes.push(("FilePolarity", "Positive".into()));
     files.push(FabFile {
-        name: format!("{stem}-profile.gbr", ),
+        name: format!("{stem}-profile.gbr"),
         group: FileGroup::Gerber,
         description: "Board profile (outline, cutouts and slots)".into(),
         bytes: profile(project, &attributes)?,

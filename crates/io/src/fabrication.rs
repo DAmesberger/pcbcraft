@@ -183,13 +183,13 @@ fn check_output(output: &Path, zip: bool) -> Result<()> {
         }
         return Ok(());
     }
-    if output.try_exists()? {
-        if !output.is_dir() || std::fs::read_dir(output)?.next().is_some() {
-            return Err(Error::Invalid(format!(
-                "fabrication.output: {} exists and is not an empty folder; choose a new folder",
-                output.display()
-            )));
-        }
+    if output.try_exists()?
+        && (!output.is_dir() || std::fs::read_dir(output)?.next().is_some())
+    {
+        return Err(Error::Invalid(format!(
+            "fabrication.output: {} exists and is not an empty folder; choose a new folder",
+            output.display()
+        )));
     }
     Ok(())
 }
@@ -241,4 +241,15 @@ fn write_zip(output: &Path, files: &[FabFile]) -> Result<()> {
             .map_err(|e| Error::Invalid(format!("fabrication.zip: {e}")))?;
         Ok(())
     })
+}
+
+/// A fabrication profile by id: a built-in profile (`standard`, `fine`,
+/// `hdi`, `pcbcraft-default`) or one of the user's library
+/// (`UserDirs::config/rule-profiles/`).
+pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
+    if let Some(profile) = pcbcraft_core::rules::builtin::by_id(id) {
+        return Ok(profile);
+    }
+    let dirs = crate::settings::UserDirs::from_env()?;
+    crate::rule_profiles::ProfileLibrary::from_dirs(&dirs).get(id)
 }
