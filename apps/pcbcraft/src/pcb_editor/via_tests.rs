@@ -168,7 +168,8 @@ fn the_showcase_draws_vias_and_inner_tracks_under_their_toggles() -> TestResult 
 
 /// V during a route places a via at the pointer and moves the route to
 /// the next stackup layer; the next click routes to the via, places it and
-/// routes on, as one `layout.route_layer_change` the engine takes.
+/// routes on, as one `layout.route_apply` the engine takes, and the route
+/// continues from there on the new layer.
 #[test]
 fn v_routes_through_a_via_onto_the_next_layer() -> TestResult {
     let mut engine = Engine::demo()?;
@@ -187,7 +188,7 @@ fn v_routes_through_a_via_onto_the_next_layer() -> TestResult {
     editor.on_tool("route", &engine);
     editor.net = Some(net);
     editor.route_start = Some([9.2, 8.0]);
-    // Without a route V only changes the layer; here a route is under way.
+    editor.route.posture = pcbcraft_core::layout::posture::Posture::Free;
     let via_at = [9.0, 11.0];
     let at = screen(&editor, &engine, via_at);
     frame(
@@ -203,12 +204,21 @@ fn v_routes_through_a_via_onto_the_next_layer() -> TestResult {
     let (_, operation) = frame(&mut editor, &engine, &ctx, click(end));
     let operation = operation.ok_or("no layer change requested")?;
     match &operation {
-        Operation::Layout(LayoutCommand::RouteLayerChange { request }) => {
-            assert_eq!(request.request.layer, CopperLayer::Top);
-            assert_eq!(request.request.end, via_at);
-            assert_eq!(request.via.position, via_at);
-            assert_eq!(request.to_layer, CopperLayer::Bottom);
-            assert_eq!(request.end, [14.0, 11.0]);
+        Operation::Layout(LayoutCommand::ApplyRoute { edits }) => {
+            let legs: Vec<_> = edits
+                .add
+                .iter()
+                .map(|r| (r.layer, r.start, r.end))
+                .collect();
+            assert_eq!(
+                legs,
+                [
+                    (CopperLayer::Top, [9.2, 8.0], via_at),
+                    (CopperLayer::Bottom, via_at, [14.0, 11.0])
+                ]
+            );
+            assert_eq!(edits.vias.len(), 1);
+            assert_eq!(edits.vias[0].position, via_at);
         }
         other => return Err(format!("unexpected {other:?}").into()),
     }
@@ -217,17 +227,14 @@ fn v_routes_through_a_via_onto_the_next_layer() -> TestResult {
     let project = engine.project();
     assert_eq!(project.vias.len(), 1);
     assert_eq!(project.tracks.len(), tracks + 2);
-    assert!(
-        project
-            .tracks
-            .iter()
-            .any(|t| t.layer == CopperLayer::Bottom)
-    );
-    // The new revision ends the route and its pending via.
+    // The step continues the route from its end on the new layer.
     frame(&mut editor, &engine, &ctx, vec![]);
-    assert_eq!(editor.route_start, None);
+    assert_eq!(editor.route_start, Some([14.0, 11.0]));
+    assert_eq!(editor.layer, CopperLayer::Bottom);
     assert_eq!(editor.pending_via, None);
-    // V with no route in progress only cycles the layer.
+    // With no route in progress V only cycles the layer.
+    frame(&mut editor, &engine, &ctx, key(at, egui::Key::Escape));
+    assert_eq!(editor.route_start, None);
     let (_, none) = frame(&mut editor, &engine, &ctx, key(at, egui::Key::V));
     assert!(none.is_none());
     assert_eq!(editor.layer, CopperLayer::Top);

@@ -41,7 +41,7 @@ Four founder requests are built here: configurable manufacturing parameters with
   - `net_class.list` reports every class with its resolved values and every net with its class and basis.
 - **Routing.** `layout.route`, `route_apply`, `track_set` and `route_layer_change` refuse widths below the net's class minimum or the rule minimum. `layout::route_width` and `layout::class_via` give the class defaults. Clearance checks use the class and class-pair values, and so does a library update's impact preview (`layout::track_pad_clearance_conflict` and `via_pad_clearance_conflict` take `limits::BoardRules`; `the_impact_plan_reads_net_class_clearances`).
 - **Desktop.**
-  - The Route tool starts at the routed net's class width; a typed width stays for that net. The Via tool and layer changes place the class's via.
+  - The Route tool starts at the routed net's class width; a typed width stays for that net. The Via tool and layer changes place the class's via. While routing, W and D step through the presets of the rules: the net's own values, the defaults and every class's values, never below the minimums (`layout::route_widths`, `layout::via_sizes`, `layout::via_size_fits`).
   - The Track, Via and schematic Net cards have a Class row.
   - The Net classes card (`pcb_editor/net_classes.rs`) shows classes, values, class-to-class clearances, members and name patterns. It opens from the Board card's Net classes row; it and the Design rules panel replace each other in the subject slot.
 

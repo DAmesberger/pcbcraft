@@ -279,12 +279,37 @@ pub mod keys {
     pub const COMPONENT_FORWARD: Chord = Chord::cmd(Key::CloseBracket);
 }
 
-/// The Route tool's keys, handled by the PCB canvas. The Route tool's own
-/// table replaces this one when it has one (`Registry::with_key_table`).
-pub const ROUTE_KEYS: &[(&str, &str)] = &[
-    ("V", "Next copper layer; places a via while routing"),
-    ("Shift+V", "Previous copper layer"),
-    ("Esc", "End the route"),
+/// Keys a tool mode deliberately takes from the contexts around it while
+/// the tool is armed: (mode, key, the command it shadows). Any other key a
+/// mode shares with its surroundings is a conflict
+/// (`the_default_keymap_has_no_conflicts`), and every entry must shadow a
+/// command that exists (`every_shadow_is_used`).
+pub const SHADOWS: &[(Context, Chord, &str)] = &[
+    // Routing: V places a via instead of arming the Via tool, F flips the
+    // elbow instead of fitting the view, D cycles the via size instead of
+    // switching to 3D, and Esc ends the route before it cancels the tool.
+    (Context::PcbRoute, Chord::key(egui::Key::V), "pcb.via"),
+    (Context::PcbRoute, Chord::key(egui::Key::F), "view.fit"),
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::F).with_shift(),
+        "pcb.from-bottom",
+    ),
+    (Context::PcbRoute, Chord::key(egui::Key::D), "pcb.toggle-3d"),
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::Escape),
+        "pcb.cancel",
+    ),
+    // The Fill tool's Esc drops its outline first.
+    (
+        Context::PcbFill,
+        Chord::key(egui::Key::Escape),
+        "pcb.cancel",
+    ),
+    // The board shape sketch hides the Layout keys; of the Everywhere
+    // keys, F is its Fillet.
+    (Context::BoardShape, Chord::key(egui::Key::F), "view.fit"),
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).
@@ -362,8 +387,11 @@ pub struct Command {
     pub context: Context,
     /// The default chord; [`Registry::chord`] gives the effective one.
     pub chord: Option<Chord>,
-    /// A key that is not one chord ("Space", "Drag + Space"), shown as is.
+    /// A key that is not one chord ("Click", "V, ⇧V", "1–9"), shown as is.
     pub key_text: Option<String>,
+    /// Further chords of a key-table row ("V, Shift+V", "1 to 9"); they
+    /// count for lookup and conflicts like `chord`.
+    pub also: Vec<Chord>,
     pub handler: Handler,
     pub action: Action,
     pub icon: &'static str,
@@ -384,6 +412,7 @@ impl Command {
             context,
             chord: None,
             key_text: None,
+            also: Vec::new(),
             handler: Handler::Registry,
             action,
             icon: "params",
@@ -471,13 +500,14 @@ impl Registry {
             commands,
             custom: BTreeMap::new(),
         }
-        .with_key_table(Context::PcbRoute, ROUTE_KEYS)
+        .with_key_table(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
         .with_key_table(Context::PcbFill, FILL_KEYS)
     }
 
     /// Add a gesture's key table (key, what it does) for display, e.g. a
-    /// tool's `ROUTE_KEYS`. Keys are named as [`Chord::parse`] reads them;
-    /// one it cannot read is shown as written.
+    /// tool's `ROUTE_KEYS`. A key cell names one or more keys as
+    /// [`key_cell`] reads them; a cell it cannot read ("Click") is shown
+    /// as written and takes no key.
     pub fn with_key_table(mut self, context: Context, table: &[(&str, &str)]) -> Self {
         let prefix = format!("keys.{context:?}").to_lowercase();
         for (index, (key, what)) in table.iter().enumerate() {
@@ -485,9 +515,17 @@ impl Registry {
                 Command::new(format!("{prefix}.{index}"), *what, context, Action::Key)
                     .in_place()
                     .icon("params");
-            command.chord = Chord::parse(key);
-            if command.chord.is_none() {
-                command.key_text = Some((*key).to_owned());
+            match key_cell(key) {
+                Some((chords, shown)) => {
+                    let mut chords = chords.into_iter();
+                    command.chord = chords.next();
+                    command.also = chords.collect();
+                    // One chord shows as a chord; several as their cell.
+                    if !command.also.is_empty() {
+                        command.key_text = Some(shown);
+                    }
+                }
+                None => command.key_text = Some((*key).to_owned()),
             }
             self.commands.push(command);
         }
@@ -510,8 +548,21 @@ impl Registry {
         }
     }
 
-    /// The shortcut as shown, chord or key text.
+    /// Every chord the command takes: its effective one and a key-table
+    /// row's others.
+    pub fn chords(&self, command: &Command) -> Vec<Chord> {
+        self.chord(command)
+            .into_iter()
+            .chain(command.also.iter().copied())
+            .collect()
+    }
+
+    /// The shortcut as shown: a several-key cell as its text, else the
+    /// chord, else the text.
     pub fn shortcut(&self, command: &Command) -> Option<String> {
+        if !command.also.is_empty() {
+            return command.key_text.clone();
+        }
         self.chord(command)
             .map(Chord::shown)
             .or_else(|| command.key_text.clone())
@@ -536,11 +587,11 @@ impl Registry {
         let Some(command) = self.get(id) else {
             return Err(format!("No command {id}"));
         };
-        let context = command.context;
         if let Some(chord) = chord
-            && let Some(other) = self.commands.iter().find(|c| {
-                c.id != id && self.chord(c) == Some(chord) && overlaps(c.context, context)
-            })
+            && let Some(other) = self
+                .commands
+                .iter()
+                .find(|c| c.id != id && self.chords(c).contains(&chord) && clash(command, c, chord))
         {
             return Err(format!("{} already uses {}", other.title, chord.shown()));
         }
@@ -567,26 +618,25 @@ impl Registry {
             .find_map(|context| {
                 self.commands
                     .iter()
-                    .find(|c| c.context == *context && self.chord(c) == Some(chord))
+                    .find(|c| c.context == *context && self.chords(c).contains(&chord))
             })
     }
 
     /// Every pair of commands sharing a chord where both could apply: the
-    /// same context, or one inside the other unless the inner one is a
-    /// tool's mode (which overrides by design).
+    /// same context, or one inside the other, unless an exclusive mode
+    /// hides the outer one or [`SHADOWS`] lists the pair.
     pub fn conflicts(&self) -> Vec<Conflict> {
         let mut out = Vec::new();
         for (i, a) in self.commands.iter().enumerate() {
-            let Some(chord) = self.chord(a) else {
-                continue;
-            };
-            for b in self.commands.iter().skip(i + 1) {
-                if self.chord(b) == Some(chord) && overlaps(a.context, b.context) {
-                    out.push(Conflict {
-                        chord,
-                        first: a.id.clone(),
-                        second: b.id.clone(),
-                    });
+            for chord in self.chords(a) {
+                for b in self.commands.iter().skip(i + 1) {
+                    if self.chords(b).contains(&chord) && clash(a, b, chord) {
+                        out.push(Conflict {
+                            chord,
+                            first: a.id.clone(),
+                            second: b.id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -655,34 +705,72 @@ pub fn match_score(q: &str, command: &Command) -> u32 {
     title.max(other).max(id)
 }
 
-/// Whether commands in `a` and `b` could both see a key.
-fn overlaps(a: Context, b: Context) -> bool {
-    if a == b {
+/// Whether `a` and `b` sharing `chord` is a conflict: both could see the
+/// key and no [`SHADOWS`] entry says the inner one takes it on purpose.
+fn clash(a: &Command, b: &Command, chord: Chord) -> bool {
+    let (inner, outer) = if a.context.within(b.context) {
+        (a, b)
+    } else if b.context.within(a.context) {
+        (b, a)
+    } else {
+        return false;
+    };
+    if inner.context == outer.context {
         return true;
     }
-    if a.within(b) {
-        return !inside_mode(a, b);
+    match mode_between(inner.context, outer.context) {
+        None => true,
+        // An exclusive mode hides everything around it but Everywhere.
+        Some(mode) if mode.exclusive() && outer.context != Context::Global => false,
+        Some(mode) => !SHADOWS
+            .iter()
+            .any(|(m, c, id)| *m == mode && *c == chord && *id == outer.id),
     }
-    if b.within(a) {
-        return !inside_mode(b, a);
-    }
-    false
 }
 
-/// Whether a tool mode lies between `inner` (inclusive) and `outer`: its
-/// keys then override the outer context's by design.
-fn inside_mode(inner: Context, outer: Context) -> bool {
+/// The tool mode between `inner` (inclusive) and `outer` (exclusive).
+fn mode_between(inner: Context, outer: Context) -> Option<Context> {
     let mut at = Some(inner);
     while let Some(context) = at {
         if context == outer {
-            return false;
+            return None;
         }
         if context.modal() {
-            return true;
+            return Some(context);
         }
         at = context.parent();
     }
-    false
+    None
+}
+
+/// The keys of a key-table cell and how the cell is shown: chords joined by
+/// commas or "or" (`V, Shift+V`), or a digit range (`1 to 9`, `1–9`).
+/// `None` when a part is not a key ("Click").
+pub fn key_cell(cell: &str) -> Option<(Vec<Chord>, String)> {
+    let mut chords = Vec::new();
+    let mut shown = Vec::new();
+    for part in cell.split(',').flat_map(|p| p.split(" or ")) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((from, to)) = part.split_once(" to ").or_else(|| part.split_once('–')) {
+            let digit = |s: &str| s.trim().parse::<u8>().ok().filter(|d| *d <= 9);
+            let (from, to) = (digit(from)?, digit(to)?);
+            if from > to {
+                return None;
+            }
+            for d in from..=to {
+                chords.push(Chord::key(egui::Key::from_name(&d.to_string())?));
+            }
+            shown.push(format!("{from}–{to}"));
+        } else {
+            let chord = Chord::parse(part)?;
+            shown.push(chord.shown());
+            chords.push(chord);
+        }
+    }
+    (!chords.is_empty()).then(|| (chords, shown.join(", ")))
 }
 
 /// The context stack for `innermost` (most specific first, Everywhere last).
@@ -1086,6 +1174,14 @@ fn defaults() -> Vec<Command> {
             PcbView::Airwires,
         )
         .keywords("ratsnest unrouted connections"),
+        // The Route tool reads F with any Shift, so ⇧F flips the elbow too
+        // while routing (and must not also flip the board view).
+        key(
+            "route.flip-shift",
+            "Flip the elbow corner",
+            C::PcbRoute,
+            Chord::key(K::F).with_shift(),
+        ),
         // Board shape keys besides its tools.
         key(
             "shape.construction",

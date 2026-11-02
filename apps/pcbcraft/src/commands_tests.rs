@@ -29,8 +29,9 @@ fn ids_are_unique_and_titles_and_icons_are_set() {
     }
 }
 
-/// A conflict in overlapping contexts is found; separate workspaces and a
-/// tool mode overriding its view are not conflicts.
+/// A conflict in overlapping contexts is found; separate workspaces and an
+/// exclusive mode hiding its view are not conflicts (an ordinary mode needs
+/// a SHADOWS entry: `an_undeclared_mode_override_is_a_conflict`).
 #[test]
 fn conflicts_are_detected_by_context_overlap() {
     let command = |id: &str, context, chord| {
@@ -42,7 +43,7 @@ fn conflicts_are_detected_by_context_overlap() {
         commands: vec![
             command("a", Context::PcbLayout, Chord::key(K::Q)),
             command("b", Context::Schematic, Chord::key(K::Q)),
-            command("c", Context::PcbRoute, Chord::key(K::Q)),
+            command("c", Context::BoardShape, Chord::key(K::Q)),
         ],
         custom: BTreeMap::new(),
     };
@@ -109,12 +110,41 @@ fn resolve_follows_the_active_contexts() {
     let s = |id: &str| Some(id.to_owned());
     assert_eq!(id(Context::PcbLayout, Chord::key(K::X)), s("pcb.route"));
     assert_eq!(id(Context::PcbLayout, Chord::key(K::V)), s("pcb.via"));
-    // Routing: V changes the layer in place, X still names Route.
-    assert_eq!(
-        id(Context::PcbRoute, Chord::key(K::V)),
-        s("keys.pcbroute.0")
-    );
+    // Routing: the Route tool's keys (`ROUTE_KEYS`) win over Layout's and
+    // the Everywhere ones while it is armed; X still names Route.
+    let in_route = |chord| {
+        registry
+            .resolve(chord, &active_contexts(Context::PcbRoute))
+            .map(|c| (c.context, c.handler))
+    };
+    for chord in [
+        Chord::key(K::V),
+        Chord::key(K::V).with_shift(),
+        Chord::key(K::F),
+        Chord::key(K::D),
+        Chord::key(K::D).with_shift(),
+        Chord::key(K::W),
+        Chord::key(K::Slash),
+        Chord::key(K::Backspace),
+        Chord::key(K::Escape),
+        Chord::key(K::Num1),
+        Chord::key(K::Num9),
+    ] {
+        assert_eq!(
+            in_route(chord),
+            Some((Context::PcbRoute, Handler::InPlace)),
+            "{chord:?}"
+        );
+    }
     assert_eq!(id(Context::PcbRoute, Chord::key(K::X)), s("pcb.route"));
+    assert_eq!(
+        id(Context::PcbRoute, Chord::cmd(K::Num1)),
+        s("workspace.component")
+    );
+    // Outside Route the same keys keep their meaning.
+    assert_eq!(id(Context::PcbLayout, Chord::key(K::D)), s("pcb.toggle-3d"));
+    assert_eq!(id(Context::PcbLayout, Chord::key(K::Num1)), None);
+    assert_eq!(id(Context::PcbFill, Chord::key(K::F)), s("view.fit"));
     // The board shape sketch: X is construction, V nothing, ⌘S still saves.
     assert_eq!(
         id(Context::BoardShape, Chord::key(K::X)),
@@ -199,6 +229,117 @@ fn key_tables_add_display_only_entries() {
     );
     // Display-only entries never reach the palette.
     assert!(registry.search("width", &[], &[]).is_empty());
+}
+
+/// The Route tool's real table: compound cells become several chords,
+/// shown as one cell; "Click" is text.
+#[test]
+fn the_route_tool_table_is_listed_with_every_key() -> Result<(), String> {
+    let registry = Registry::standard();
+    let rows: Vec<&Command> = registry
+        .commands()
+        .iter()
+        .filter(|c| c.id.starts_with("keys.pcbroute."))
+        .collect();
+    assert_eq!(rows.len(), crate::pcb_editor::ROUTE_KEYS.len());
+    let row = |key: egui::Key| {
+        rows.iter()
+            .find(|c| registry.chords(c).contains(&Chord::key(key)))
+            .copied()
+    };
+    let layers = row(K::Num5).ok_or("1 to 9")?;
+    assert_eq!(registry.chords(layers).len(), 9);
+    assert_eq!(registry.shortcut(layers).as_deref(), Some("1–9"));
+    let via = row(K::V).ok_or("V")?;
+    assert!(
+        registry
+            .chords(via)
+            .contains(&Chord::key(K::V).with_shift())
+    );
+    assert_eq!(
+        registry.shortcut(via),
+        Some(format!("V, {}", Chord::key(K::V).with_shift().shown()))
+    );
+    assert!(
+        rows.iter()
+            .any(|c| c.chord.is_none() && registry.shortcut(c).as_deref() == Some("Click"))
+    );
+    Ok(())
+}
+
+#[test]
+fn key_cells_read_lists_and_ranges() {
+    let (chords, shown) = key_cell("W, Shift+W").unwrap_or_default();
+    assert_eq!(
+        chords,
+        vec![Chord::key(K::W), Chord::key(K::W).with_shift()]
+    );
+    assert_eq!(
+        shown,
+        format!("W, {}", Chord::key(K::W).with_shift().shown())
+    );
+    let (chords, shown) = key_cell("1 to 3").unwrap_or_default();
+    assert_eq!(
+        chords,
+        vec![
+            Chord::key(K::Num1),
+            Chord::key(K::Num2),
+            Chord::key(K::Num3)
+        ]
+    );
+    assert_eq!(shown, "1–3");
+    assert_eq!(key_cell("Enter or Esc").map(|c| c.0.len()), Some(2));
+    assert_eq!(key_cell("/").map(|c| c.0), Some(vec![Chord::key(K::Slash)]));
+    assert_eq!(key_cell("Click"), None);
+    assert_eq!(key_cell("9 to 1"), None);
+    assert_eq!(key_cell(""), None);
+}
+
+/// Every shadow names a key its mode really takes from a command that
+/// really has it there; otherwise it is stale.
+#[test]
+fn every_shadow_is_used() {
+    let registry = Registry::standard();
+    for (mode, chord, id) in SHADOWS {
+        assert!(mode.modal(), "{mode:?}");
+        let outer = registry.get(id);
+        assert!(
+            outer.is_some_and(|c| mode.within(c.context)
+                && c.context != *mode
+                && registry.chords(c).contains(chord)),
+            "{mode:?} {chord:?} {id}"
+        );
+        assert!(
+            registry
+                .commands()
+                .iter()
+                .any(|c| c.context == *mode && registry.chords(c).contains(chord)),
+            "{mode:?} takes no {chord:?}"
+        );
+    }
+}
+
+/// A tool mode taking a key from around it without a shadow entry is a
+/// conflict, as is one taking a different key than the entry names.
+#[test]
+fn an_undeclared_mode_override_is_a_conflict() {
+    let mut registry = Registry::standard();
+    // B (Board shape) is not shadowed for the Route tool.
+    registry.commands.push(
+        Command::new("test.route-b", "B in Route", Context::PcbRoute, Action::Key)
+            .chord(Chord::key(K::B))
+            .in_place(),
+    );
+    let found: Vec<String> = registry.conflicts().into_iter().map(|c| c.first).collect();
+    assert_eq!(found, vec!["pcb.board-shape".to_owned()]);
+    // The board shape sketch's own keys never clash with Layout's.
+    let shape = Registry::standard();
+    assert!(
+        shape
+            .conflicts()
+            .iter()
+            .all(|c| !c.first.starts_with("shape.") && !c.second.starts_with("shape."))
+    );
 }
 
 #[test]

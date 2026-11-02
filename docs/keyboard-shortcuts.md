@@ -7,9 +7,18 @@ Every command the desktop app runs by name lives in one registry (`apps/pcbcraft
 - **Tooltips.** Ribbon buttons show their key, as in "Route (X)", in the same layout as Solidcraft's ribbon tooltip: the name, a key cap and the help line. App bar buttons show their key too.
 - **The key dispatcher.** Each key runs the command it names in the active contexts.
 
-A command runs the same event as its ribbon button. Document changes therefore still go through the editor's typed operation and the one engine. Keys used within a gesture, such as Enter closing a fill outline or V changing the routing layer, stay with the canvas that owns the gesture. The registry lists them as `InPlace`, so they appear in the sheet and are checked for conflicts. `Registry::with_key_table` adds a tool's `(key, description)` table, such as the Route tool's, for display.
+A command runs the same event as its ribbon button. Document changes therefore still go through the editor's typed operation and the one engine. Keys used within a gesture, such as Enter closing a fill outline or V changing the routing layer, stay with the canvas that owns the gesture. The registry lists them as `InPlace`, so they appear in the sheet and are checked for conflicts. `Registry::with_key_table` adds a tool's `(key, description)` table for display and conflict checks. The Route tool's `ROUTE_KEYS` (`pcb_editor/route_tool.rs`) is added this way. A cell may name several keys: `V, Shift+V`, `Enter or Esc`, or the range `1 to 9`. A cell that names no key (`Click`) is shown as written.
 
-A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and ⌘B. An open menu also keeps plain keys. A tool mode overrides its view's keys while the tool is active. The board shape sketch replaces the Layout keys and keeps the global ones. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. Chords are named the same way as in Solidcraft's keymap (`Ctrl+Shift+S`). `Registry::rebind` stores the user's changes over the defaults, ready for a preferences page; user keymaps are not offered yet.
+A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and ⌘B. An open menu also keeps plain keys. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. A tool mode (Route, Fill, Board shape) may take a key from the contexts around it only when `commands::SHADOWS` lists it. Each entry names the mode, the key and the command it shadows, and a second test (`every_shadow_is_used`) rejects stale entries. The board shape sketch replaces the Layout keys entirely and keeps the global ones.
+
+While the Route tool is armed, its keys shadow these:
+
+- V shadows the Via tool: it places a via instead.
+- F shadows Fit view: it flips the elbow instead. The tool reads F with any Shift, so ⇧F also flips the elbow rather than switching to the bottom view.
+- D shadows the Layout ↔ 3D switch: it cycles the via size instead.
+- Esc shadows the Layout's Esc: it ends the route.
+
+With the tool disarmed, these keys work as before. The keys 1–9 have no other binding, and ⌘1–⌘3 still switch workspaces while routing. The Fill tool's Esc drops its outline first, and the board shape's F is Fillet. Chords are named the same way as in Solidcraft's keymap (`Ctrl+Shift+S`). `Registry::rebind` stores the user's changes over the defaults, ready for a preferences page; user keymaps are not offered yet.
 
 macOS shows ⌃⌥⇧⌘ glyphs. Other platforms show `Ctrl+Alt+Shift+K`. ⌘ below means Ctrl on Windows and Linux.
 
@@ -26,7 +35,7 @@ The keymap is original. Letters are mnemonic where they can be (X route, V via, 
 | Schematic | P place · W wire · ⌘R rotate · ⇧X mirror · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
 | PCB Layout | X route · V via · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
-| Route tool | V next layer (places a via while routing) · ⇧V previous layer · Esc end the route |
+| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size |
 | Fill tool | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
 | Board shape | L line · A arc · C circle · R rectangle · F fillet · D dimension · U cutout · H hole · ⇧H slot · E name edge · X construction · Delete · Esc |
 
