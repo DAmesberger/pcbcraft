@@ -175,7 +175,7 @@ fn native_export_writes_a_new_solidcraft_file_only() -> TestResult {
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();
-    assert_eq!(catalog.len(), 28);
+    assert_eq!(catalog.len(), 29);
     let schema = serde_json::to_string(&schemas())?;
     for command in &catalog {
         assert!(
@@ -826,5 +826,17 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
     session.dispatch(json!({"command": "project.undo", "params": {}}));
     assert_eq!(session.engine().project(), &before);
     assert!(schemas().to_string().contains("layout.track_set"));
+    Ok(())
+}
+
+#[test]
+fn set_marking_refuses_a_missing_draft_and_changes_nothing() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let before = session.engine().revision();
+    let reply = session.dispatch(json!({"command": "library.set_marking", "params": {
+        "expected_revision": before, "draft": 9999,
+        "marking": {"items": [{"item": "text", "template": "X"}]}}}));
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(session.engine().revision(), before);
     Ok(())
 }
