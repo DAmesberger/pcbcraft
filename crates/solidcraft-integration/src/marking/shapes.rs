@@ -5,7 +5,7 @@
 //! shapes. SVG artwork is read by [`super::paint`].
 use crate::{Error, Result};
 use pcbcraft_core::Point;
-use pcbcraft_core::library::marking::{LaidText, PolarityMark};
+use pcbcraft_core::library::marking::{LaidText, PolarityMark, TEXT_ADVANCE};
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{LinkGeom, TextAlign, TextStyle, text_geometry_styled};
 
@@ -33,9 +33,13 @@ fn finite(values: &[f64]) -> bool {
 }
 
 /// The glyph loops of one text line, wound as the font draws them (the
-/// counters against their outlines). The line is centred on `origin`, its
-/// capitals spanning `height_mm` about it, and shrunk about `origin` when
-/// the font's real width or height is more than `fit` allows.
+/// counters against their outlines). `origin` is the bottom-left corner
+/// of the line's box as the core lays it out (`chars × TEXT_ADVANCE ×
+/// height_mm` wide, `height_mm` tall): the line is centred in the box, its
+/// capitals spanning its height, and shrunk about the box's centre when the
+/// font sets it wider or taller than `fit` (the area) allows. The core's
+/// box assumes [`TEXT_ADVANCE`]; the font's capitals run wider, so a long
+/// line may reach past its box (never past the area).
 pub fn text(line: &LaidText, fit: [f64; 2]) -> Result<Vec<Vec<Point>>> {
     let h = line.height_mm;
     if !TEXT_HEIGHT_MM.contains(&h) {
@@ -50,10 +54,12 @@ pub fn text(line: &LaidText, fit: [f64; 2]) -> Result<Vec<Vec<Point>>> {
             "a text line has more than {MAX_TEXT_CHARS} characters"
         )));
     }
-    let [ox, oy] = line.origin;
-    if !(finite(&line.origin) && ox.abs() <= MAX_ELEMENT_MM && oy.abs() <= MAX_ELEMENT_MM) {
+    let [x0, y0] = line.origin;
+    if !(finite(&line.origin) && x0.abs() <= MAX_ELEMENT_MM && y0.abs() <= MAX_ELEMENT_MM) {
         return Err(invalid("a text origin is out of range"));
     }
+    let box_w = line.text.chars().count() as f64 * TEXT_ADVANCE * h;
+    let (ox, oy) = (x0 + box_w / 2.0, y0 + h / 2.0);
     if line.text.trim().is_empty() {
         return Ok(Vec::new());
     }

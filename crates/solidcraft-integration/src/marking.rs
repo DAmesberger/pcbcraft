@@ -109,9 +109,9 @@ const ENGRAVE_TILT: f64 = 0.766;
 const WALL_LIFT_MM: f64 = 0.001;
 /// An electrolytic stripe's minus signs: width and stroke as shares of the
 /// stripe's width, and their pitch along it.
-const MINUS_WIDTH: f64 = 0.5;
-const MINUS_STROKE: f64 = 0.14;
-const MINUS_PITCH: f64 = 1.6;
+const MINUS_WIDTH: f64 = 0.45;
+const MINUS_STROKE: f64 = 0.12;
+const MINUS_PITCH: f64 = 0.8;
 /// Minus signs one stripe draws at most.
 const MAX_MINUS_SIGNS: usize = 64;
 
@@ -851,37 +851,33 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
                 out.indices.push(index);
             }
         } else {
-            // A barycentric grid of n² triangles, row j from corner 0.
-            let mut grid: Vec<u32> = Vec::with_capacity((n + 1) * (n + 2) / 2);
-            for j in 0..=n {
-                for i in 0..=n - j {
-                    let (a, bb) = (i as f64 / n as f64, j as f64 / n as f64);
-                    let w = 1.0 - a - bb;
-                    let mix = |f: &dyn Fn(usize) -> [f64; 2]| {
-                        let (p, q, r) = (f(0), f(1), f(2));
-                        [
-                            w * p[0] + a * q[0] + bb * r[0],
-                            w * p[1] + a * q[1] + bb * r[1],
-                        ]
-                    };
-                    let p = mix(&|s| corners[s].0);
-                    let tilt = mix(&|s| corners[s].1);
-                    grid.push(vertex(&mut out, p, tilt, corners[0].2)?);
+            // Slabs across the round direction, each at most a split step
+            // wide, so every chord follows the curve; a long strip costs
+            // a few triangles per slab, not n².
+            let tri = corners.map(|c| c.0);
+            let k = map.round_axis();
+            let lo = tri.iter().map(|p| p[k]).fold(f64::INFINITY, f64::min);
+            let hi = tri.iter().map(|p| p[k]).fold(f64::NEG_INFINITY, f64::max);
+            let step = (hi - lo) / n as f64;
+            for slab in 0..n {
+                let mut bounds = [None; 4];
+                bounds[2 * k] = Some(lo + step * slab as f64);
+                bounds[2 * k + 1] = Some(lo + step * (slab + 1) as f64);
+                let poly = map::clip(tri, bounds);
+                if poly.len() < 3 {
+                    continue;
                 }
-            }
-            // Row j starts after rows 0..j of n + 1 − r points each.
-            let index = |i: usize, j: usize| -> u32 {
-                let row: usize = (0..j).map(|r| n + 1 - r).sum();
-                grid.get(row + i).copied().unwrap_or(0)
-            };
-            for j in 0..n {
-                for i in 0..n - j {
-                    out.indices
-                        .extend([index(i, j), index(i + 1, j), index(i, j + 1)]);
-                    if i + 1 < n - j {
-                        out.indices
-                            .extend([index(i + 1, j), index(i + 1, j + 1), index(i, j + 1)]);
-                    }
+                let mut ids = Vec::with_capacity(poly.len());
+                for p in &poly {
+                    let w = barycentric(tri, *p);
+                    let tilt = [
+                        w[0] * corners[0].1[0] + w[1] * corners[1].1[0] + w[2] * corners[2].1[0],
+                        w[0] * corners[0].1[1] + w[1] * corners[1].1[1] + w[2] * corners[2].1[1],
+                    ];
+                    ids.push(vertex(&mut out, *p, tilt, corners[0].2)?);
+                }
+                for j in 1..ids.len() - 1 {
+                    out.indices.extend([ids[0], ids[j], ids[j + 1]]);
                 }
             }
         }
@@ -902,6 +898,19 @@ pub fn place_on(flat: &FlatDecal, map: &SurfaceMap) -> Result<DecalMesh> {
         }
     }
     Ok(out)
+}
+
+/// The barycentric weights of `p` in `tri` (equal thirds for a
+/// degenerate triangle).
+fn barycentric(tri: [Point; 3], p: Point) -> [f64; 3] {
+    let [a, b, c] = tri;
+    let d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if d.abs() < 1e-18 {
+        return [1.0 / 3.0; 3];
+    }
+    let u = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / d;
+    let v = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / d;
+    [u, v, 1.0 - u - v]
 }
 
 /// The product look of a finish: its cited material's surface, with the

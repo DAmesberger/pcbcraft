@@ -85,7 +85,12 @@ fn text(text: &str, height: f64) -> LaidElement {
     LaidElement::Text(LaidText {
         text: text.into(),
         height_mm: height,
-        origin: [0.0, 0.0],
+        // Centred on the area: the core gives the box's bottom-left corner.
+        origin: [
+            -(text.chars().count() as f64) * pcbcraft_core::library::marking::TEXT_ADVANCE * height
+                / 2.0,
+            -height / 2.0,
+        ],
     })
 }
 

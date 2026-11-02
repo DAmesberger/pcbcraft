@@ -12,8 +12,8 @@ use solidcraft_engine::geom::Vec3;
 
 /// Largest gap between a wrapped decal's chords and its cylinder, mm.
 pub const WRAP_CHORD_MM: f64 = 0.002;
-/// Most pieces one triangle edge is cut into round a cylinder.
-pub const MAX_SPLIT: usize = 24;
+/// Most slabs one triangle is cut into round a cylinder.
+pub const MAX_SPLIT: usize = 4096;
 
 /// A chart taken onto the model.
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +110,14 @@ impl SurfaceMap {
                 };
                 (vec(at), n, u, v)
             }
+        }
+    }
+
+    /// The chart axis that runs round a cylinder (0 on a plane).
+    pub fn round_axis(&self) -> usize {
+        match self {
+            Self::Plane { .. } => 0,
+            Self::Cylinder { cylinder, .. } => usize::from(cylinder.along_u),
         }
     }
 

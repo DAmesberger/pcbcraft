@@ -18,11 +18,13 @@ use std::f64::consts::{PI, TAU};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-fn text_line(text: &str, height: f64, origin: [f64; 2]) -> LaidElement {
+/// A line centred on `centre` (the core gives its box's bottom-left).
+fn text_line(text: &str, height: f64, centre: [f64; 2]) -> LaidElement {
+    let w = text.chars().count() as f64 * pcbcraft_core::library::marking::TEXT_ADVANCE * height;
     LaidElement::Text(LaidText {
         text: text.into(),
         height_mm: height,
-        origin,
+        origin: [centre[0] - w / 2.0, centre[1] - height / 2.0],
     })
 }
 
@@ -183,11 +185,10 @@ fn the_stripe_wraps_the_seam_on_the_negative_lead_side() -> TestResult {
     let flat = flatten(&stripe, &region, &no_artwork)?;
     // Nothing is clipped round the turn: the whole stripe less its minus
     // signs is drawn, once.
-    let minus = {
-        let pitch = 1.6 * stripe_w;
-        let count = (height / pitch).floor();
-        count * (0.5 * stripe_w) * (0.14 * stripe_w)
-    };
+    let pitch = super::MINUS_PITCH * stripe_w;
+    let count = (height / pitch).floor();
+    assert!(count >= 2.0, "several minus signs down the stripe");
+    let minus = count * (super::MINUS_WIDTH * stripe_w) * (super::MINUS_STROKE * stripe_w);
     assert!(
         (flat.area_mm2() - (stripe_w * height - minus)).abs() < 1e-6,
         "{} vs {}",
@@ -206,7 +207,10 @@ fn the_stripe_wraps_the_seam_on_the_negative_lead_side() -> TestResult {
     // Both sides of the seam are covered right up to it: points just
     // past either chart edge (the same place on the can) are drawn, at
     // the stripe's mid-height between minus signs.
-    let v = (0.14 * stripe_w).max(0.01) + 1.6 * stripe_w / 2.0 - height / 2.0 + 0.8 * stripe_w;
+    // Minus sign k is centred at (k + ½)·pitch − count·pitch/2; halfway
+    // between the first two the stripe is solid.
+    let first = 0.5 * pitch - count * pitch / 2.0;
+    let v = first + pitch / 2.0;
     let inside = |u: f64| flat.covers([u, v]) || flat.covers([u - w, v]) || flat.covers([u + w, v]);
     for du in [0.01, 0.2, stripe_w / 2.0 - 0.01] {
         assert!(inside(w / 2.0 - du), "before the seam at {du}");
@@ -237,8 +241,10 @@ fn the_stripe_wraps_the_seam_on_the_negative_lead_side() -> TestResult {
     );
     // A minus sign is open: the stripe's centre column between dashes is
     // drawn, a dash's centre is not.
-    let first = 0.5 * 1.6 * stripe_w - (height / (1.6 * stripe_w)).floor() * 1.6 * stripe_w / 2.0;
-    assert!(!inside(w / 2.0 + 0.001) || !flat.covers([w / 2.0, first]));
+    let open = |u: f64| {
+        !(flat.covers([u, first]) || flat.covers([u - w, first]) || flat.covers([u + w, first]))
+    };
+    assert!(open(w / 2.0 - 0.01) && open(w / 2.0 + 0.01));
     Ok(())
 }
 
@@ -879,6 +885,45 @@ fn box_faces_resolve_in_the_model_frame() -> TestResult {
             ..Placement::default()
         });
         assert!(resolved.is_some(), "{face:?}");
+    }
+    Ok(())
+}
+
+/// A band round a thin axial body: every triangle stays within the chord
+/// tolerance of its lifted cylinder, so none sinks into the body.
+#[test]
+fn a_band_round_a_thin_body_never_sinks_into_it() -> TestResult {
+    let cylinder = CylinderArea {
+        base: [-3.0, 0.0, 1.25],
+        axis: [1.0, 0.0, 0.0],
+        zero: [0.0, 0.0, -1.0],
+        radius: 1.25,
+        length: 6.0,
+        along_u: true,
+    };
+    let chart = cylinder.chart(&Wrap::default()).ok_or("chart")?;
+    let region = Region::wrap(&cylinder, &chart);
+    let band = laid(
+        vec![LaidElement::Polarity {
+            mark: PolarityMark::Band,
+            origin: [0.0, 0.0],
+            size_mm: [0.6, region.size[1]],
+        }],
+        Finish::LaserEtch,
+        on("body"),
+    );
+    let flat = flatten(&band, &region, &no_artwork)?;
+    let mesh = place_on(&flat, &SurfaceMap::cylinder(cylinder, chart)?)?;
+    let lift = Finish::LaserEtch.lift_mm();
+    for t in mesh.indices.chunks_exact(3) {
+        let c = t
+            .iter()
+            .map(|i| mesh.positions[*i as usize].map(f64::from))
+            .fold([0.0; 3], |a, p| {
+                [a[0] + p[0] / 3.0, a[1] + p[1] / 3.0, a[2] + p[2] / 3.0]
+            });
+        let r = c[1].hypot(c[2] - 1.25);
+        assert!(r > 1.25 + lift - super::map::WRAP_CHORD_MM - 1e-6, "{r}");
     }
     Ok(())
 }

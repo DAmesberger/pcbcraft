@@ -1193,7 +1193,7 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
         decals: vec![MarkingSpec {
             items: vec![MarkingItem::Artwork {
                 svg: vent_hash,
-                size_mm: [3.6, 3.6],
+                size_mm: [2.6, 2.6],
                 anchor: Default::default(),
                 licence: Some("CC0-1.0".into()),
             }],
@@ -1211,9 +1211,9 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
     inputs.fields.insert(volt, ("25".into(), Some(25.0)));
     let mut v = marked_preview(&radial, &library, &electrolytic, &inputs)?;
     let b = v.bounds;
-    aim(&mut v, b.center(), 2.4 * b.diagonal(), 180.0, 20.0);
+    aim(&mut v, b.center(), 2.4 * b.diagonal(), 90.0, 20.0);
     save(&mut v, "marking-electrolytic-text-side")?;
-    aim(&mut v, b.center(), 2.4 * b.diagonal(), 0.0, 20.0);
+    aim(&mut v, b.center(), 2.4 * b.diagonal(), 270.0, 20.0);
     save(&mut v, "marking-electrolytic-stripe-side")?;
     aim(&mut v, b.center(), 2.2 * b.diagonal(), 300.0, 60.0);
     save(&mut v, "marking-electrolytic-top")?;
