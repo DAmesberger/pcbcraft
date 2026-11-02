@@ -23,6 +23,7 @@
 //! Placement on a board is in [`board`].
 pub mod board;
 mod fill;
+pub mod paint;
 mod shapes;
 #[cfg(test)]
 mod tests;
@@ -178,6 +179,7 @@ pub fn flatten(
     let mut finish_loops: Vec<Vec<Point>> = Vec::new();
     for element in &layout.elements {
         match element {
+            LaidElement::Matrix { .. } => {}
             LaidElement::Text(line) => {
                 // Each line on its own: overlapping lines must not cancel.
                 let loops = shapes::text(line, area_mm)?;

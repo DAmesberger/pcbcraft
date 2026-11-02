@@ -3100,8 +3100,10 @@ dependencies = [
 name = "pcbcraft-solidcraft"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "js-sys",
  "pcbcraft-core",
+ "png",
  "quick-xml",
  "schemars",
  "serde",

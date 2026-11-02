@@ -109,7 +109,7 @@ pub fn text(line: &LaidText, fit: [f64; 2]) -> Result<Vec<Vec<Point>>> {
 
 /// Glyph curves → closed loops: a curve that starts where the last one
 /// ended continues its loop.
-fn chain(geometry: &[LinkGeom]) -> Vec<Vec<Point>> {
+pub(super) fn chain(geometry: &[LinkGeom]) -> Vec<Vec<Point>> {
     let mut loops: Vec<Vec<Point>> = Vec::new();
     let mut current: Vec<Point> = Vec::new();
     let close = |current: &mut Vec<Point>, loops: &mut Vec<Vec<Point>>| {
@@ -306,7 +306,7 @@ pub fn polarity(mark: PolarityMark, origin: [f64; 2], size: [f64; 2]) -> Result<
     checked_box(origin, size)?;
     Ok(match mark {
         PolarityMark::Dot => circle(origin, size[0].min(size[1]) / 2.0, DOT_SEGMENTS),
-        PolarityMark::Bar | PolarityMark::Band => rect(origin, size),
+        PolarityMark::Bar | PolarityMark::Band | PolarityMark::Stripe => rect(origin, size),
     })
 }
 

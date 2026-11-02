@@ -58,6 +58,32 @@ fn area2(a: Point, b: Point, c: Point) -> f64 {
 /// Fill `loops` (each implicitly closed) into `out`, adding at most
 /// `budget` triangles; more is a refusal and leaves `out` as it was.
 pub fn fill(loops: &[Vec<Point>], out: &mut Flat, budget: usize) -> Result<()> {
+    fill_with(loops, FillRule::NonZero, out, budget)
+}
+
+/// How a fill decides what is inside: SVG's `fill-rule`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FillRule {
+    /// Inside where the winding number is not zero.
+    #[default]
+    NonZero,
+    /// Inside where the winding number is odd.
+    EvenOdd,
+}
+
+/// Fill `loops` by `rule` into `out`, adding at most `budget` triangles;
+/// more is a refusal and leaves `out` as it was. Triangles are
+/// counter-clockwise whatever the loops' winding.
+pub fn fill_with(
+    loops: &[Vec<Point>],
+    rule: FillRule,
+    out: &mut Flat,
+    budget: usize,
+) -> Result<()> {
+    let inside = |w: i32| match rule {
+        FillRule::NonZero => w != 0,
+        FillRule::EvenOdd => w % 2 != 0,
+    };
     let mut edges: Vec<Edge> = Vec::new();
     for points in loops {
         let n = points.len();
@@ -156,10 +182,10 @@ pub fn fill(loops: &[Vec<Point>], out: &mut Flat, budget: usize) -> Result<()> {
             for (_, e) in order {
                 let before = winding;
                 winding += e.wind;
-                if before == 0 && winding != 0 {
+                if !inside(before) && inside(winding) {
                     left = Some(e);
-                } else if before != 0
-                    && winding == 0
+                } else if inside(before)
+                    && !inside(winding)
                     && let Some(l) = left.take()
                 {
                     added += trapezoid(out, l, e, a, b)?;

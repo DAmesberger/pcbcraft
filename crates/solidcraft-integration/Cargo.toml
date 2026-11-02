@@ -17,6 +17,8 @@ schemars.workspace = true
 thiserror.workspace = true
 # Element structure of SVG artwork (MIT); the same version Solidcraft's reader uses.
 quick-xml = "0.41"
+png = "0.18"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
