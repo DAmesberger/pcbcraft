@@ -585,7 +585,7 @@ fn body(
         |ui| {
             let options = dialog.options_list(engine);
             let mut pick = dialog.pick.clone();
-            if kit::choice_row(ui, "Check against", &mut pick, &options) && pick != dialog.pick {
+            if kit::choice_row(ui, "Profile", &mut pick, &options) && pick != dialog.pick {
                 dialog.pick = pick;
                 dialog.waiving = None;
             }
@@ -625,10 +625,10 @@ fn body(
     });
     kit::section(ui, "pcb-production-files", "Files", false, None, |ui| {
         let o = &mut dialog.options.outputs;
-        kit::check_row(ui, "Gerber layers and job file", &mut o.gerber);
-        kit::check_row(ui, "Drill files and drill map", &mut o.drill);
-        kit::check_row(ui, "Pick and place and BOM", &mut o.assembly);
-        kit::check_row(ui, "Fabrication and assembly drawings", &mut o.drawings);
+        kit::check_row(ui, "Gerber and job file", &mut o.gerber);
+        kit::check_row(ui, "Drill and drill map", &mut o.drill);
+        kit::check_row(ui, "Placement and BOM", &mut o.assembly);
+        kit::check_row(ui, "PDF drawings", &mut o.drawings);
     });
     kit::section(
         ui,
@@ -656,20 +656,16 @@ fn body(
             let rotations = [
                 (
                     BottomRotation::ViewedFromTop,
-                    "As seen from the top".to_owned(),
+                    "Seen from the top".to_owned(),
                 ),
                 (
                     BottomRotation::ViewedFromBottom,
-                    "As seen from below".to_owned(),
+                    "Seen from below".to_owned(),
                 ),
             ];
-            kit::choice_row(ui, "Bottom angles", &mut p.bottom, &rotations);
+            kit::choice_row(ui, "Bottom", &mut p.bottom, &rotations);
             kit::check_row(ui, "Mirror bottom X", &mut p.mirror_bottom_x);
-            kit::hint(
-                ui,
-                "Angles count counter-clockwise; 0° is the footprint as drawn",
-                "",
-            );
+            kit::hint(ui, "Angles turn counter-clockwise from 0° as drawn", "");
         },
     );
     if let Some(written) = &dialog.written {
