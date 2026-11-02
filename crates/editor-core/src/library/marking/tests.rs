@@ -791,3 +791,267 @@ fn unnamed_artwork_leaves_with_its_draft() -> Fallible<()> {
     assert!(packed(&b.engine));
     Ok(())
 }
+
+const CAPACITANCE: DefinitionId = DefinitionId(72);
+const VOLTAGE: DefinitionId = DefinitionId(73);
+
+fn electrolytic_spec() -> MarkingSpec {
+    MarkingSpec {
+        items: vec![MarkingItem::Electrolytic {
+            capacitance: field_ref(CAPACITANCE),
+            voltage: Some(field_ref(VOLTAGE)),
+            stripe: true,
+        }],
+        finish: Finish::Ink {
+            colour: [230, 230, 225],
+        },
+        ..Default::default()
+    }
+}
+
+fn electrolytic_inputs(chart: Chart, area: [f64; 2]) -> MarkingInputs {
+    let mut inputs = MarkingInputs {
+        designator: "C1".into(),
+        area_mm: area,
+        chart,
+        ..Default::default()
+    };
+    inputs.fields.insert(CAPACITANCE, ("100u".into(), Some(100e-6)));
+    inputs.fields.insert(VOLTAGE, ("25".into(), Some(25.0)));
+    inputs
+}
+
+fn stripe(layout: &MarkingLayout) -> Option<([f64; 2], [f64; 2])> {
+    layout.elements.iter().find_map(|e| match e {
+        LaidElement::Polarity {
+            mark: PolarityMark::Stripe,
+            origin,
+            size_mm,
+        } => Some((*origin, *size_mm)),
+        _ => None,
+    })
+}
+
+/// A radial electrolytic's sleeve, wrapped a full turn from the default
+/// seam (the chart centre opposite angle 0): the stripe sits at angle 0,
+/// the negative lead's side, which is the chart's ±edge, and the µF and V
+/// lines centre opposite it.
+#[test]
+fn an_electrolytic_marking_follows_its_values_with_the_stripe_on_the_negative_side()
+-> Fallible<()> {
+    let r = 2.5;
+    let w = std::f64::consts::TAU * r;
+    let chart = Chart::Wrap {
+        radius_mm: r,
+        centre: std::f64::consts::PI,
+        span: std::f64::consts::TAU,
+        along_u: false,
+    };
+    let laid = layout(&electrolytic_spec(), &electrolytic_inputs(chart, [w, 6.0]))?;
+    assert_eq!(texts(&laid), ["100µF", "25V"]);
+    let (origin, size) = stripe(&laid).ok_or("stripe")?;
+    // Angle 0 is half a turn from the centre: u = πr, the chart's edge.
+    assert!((origin[0].abs() - std::f64::consts::PI * r).abs() < 1e-9);
+    assert!((size[0] - super::layout::STRIPE_TURN_SHARE * w).abs() < 1e-9);
+    assert!((size[1] - 6.0).abs() < 1e-12);
+    // The text keeps clear of the stripe round the turn.
+    for e in &laid.elements {
+        if let LaidElement::Text(t) = e {
+            let width = t.text.chars().count() as f64 * TEXT_ADVANCE * t.height_mm;
+            let (lo, hi) = (t.origin[0], t.origin[0] + width);
+            assert!(hi < w / 2.0 - size[0] / 2.0 && lo > -w / 2.0 + size[0] / 2.0);
+        }
+    }
+    // A new value is a new marking.
+    let mut inputs = electrolytic_inputs(chart, [w, 6.0]);
+    inputs.fields.insert(CAPACITANCE, ("4.7u".into(), Some(4.7e-6)));
+    inputs.fields.insert(VOLTAGE, ("63".into(), Some(63.0)));
+    assert_eq!(texts(&layout(&electrolytic_spec(), &inputs)?), ["4.7µF", "63V"]);
+    // A seam turned a quarter round moves the stripe with angle 0.
+    let turned = Chart::Wrap {
+        radius_mm: r,
+        centre: std::f64::consts::FRAC_PI_2,
+        span: std::f64::consts::TAU,
+        along_u: false,
+    };
+    let laid = layout(&electrolytic_spec(), &electrolytic_inputs(turned, [w, 6.0]))?;
+    let (origin, _) = stripe(&laid).ok_or("stripe")?;
+    assert!((origin[0] + std::f64::consts::FRAC_PI_2 * r).abs() < 1e-9);
+    // A half wrap facing away from angle 0 cannot show the stripe.
+    let away = Chart::Wrap {
+        radius_mm: r,
+        centre: std::f64::consts::PI,
+        span: std::f64::consts::PI,
+        along_u: false,
+    };
+
+    let laid = layout(&electrolytic_spec(), &electrolytic_inputs(away, [w / 2.0, 6.0]))?;
+    assert!(stripe(&laid).is_none());
+    assert!(finding_codes(&laid).contains(&"marking.unrepresentable"));
+    // Flat (an SMD can's top): a band at the +x end.
+    let laid = layout(
+        &electrolytic_spec(),
+        &electrolytic_inputs(Chart::Flat, [6.0, 6.0]),
+    )?;
+    let (origin, _) = stripe(&laid).ok_or("flat stripe")?;
+    assert!(origin[0] > 2.0);
+    // No capacitance: nothing drawn, said why.
+    let mut missing = electrolytic_inputs(chart, [w, 6.0]);
+    missing.fields.remove(&CAPACITANCE);
+    let laid = layout(&electrolytic_spec(), &missing)?;
+    assert!(laid.elements.is_empty());
+    assert_eq!(finding_codes(&laid), ["marking.unrepresentable"]);
+    Ok(())
+}
+
+#[test]
+fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fallible<()> {
+    let spec = MarkingSpec {
+        items: vec![
+            MarkingItem::Text {
+                template: Template("MODEL-3".into()),
+                height_mm: None,
+                align: Align::Centre,
+            },
+            MarkingItem::Code2d {
+                symbology: Symbology::Qr,
+                payload: Template("{designator}:{var:lot}".into()),
+                size_mm: 4.0,
+                anchor: Anchor::End,
+                ecc: Ecc::Medium,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut inputs = inputs([16.0, 8.0], None);
+    inputs.vars.insert("lot".into(), "A7".into());
+    let laid = layout(&spec, &inputs)?;
+    let (symbol, origin, module) = laid
+        .elements
+        .iter()
+        .find_map(|e| match e {
+            LaidElement::Matrix {
+                symbol,
+                origin,
+                module_mm,
+            } => Some((symbol.clone(), *origin, *module_mm)),
+            _ => None,
+        })
+        .ok_or("code")?;
+    assert_eq!(symbol, super::matrix::encode(Symbology::Qr, "R1:A7", Ecc::Medium)?);
+    assert!((module * f64::from(symbol.size) - 4.0).abs() < 1e-12);
+    // At the +x end with its quiet zone inside the area.
+    let quiet = 4.0 * module;
+    assert!((origin[0] + 2.0 + quiet - 8.0).abs() < 1e-9);
+    // The text stays left of the zone.
+    for e in &laid.elements {
+        if let LaidElement::Text(t) = e {
+            let width = t.text.chars().count() as f64 * TEXT_ADVANCE * t.height_mm;
+            assert!(t.origin[0] + width < origin[0] - 2.0 - quiet + 1e-9);
+        }
+    }
+    // Too big for the area: nothing drawn, said so.
+    let mut big = spec.clone();
+    if let Some(MarkingItem::Code2d { size_mm, .. }) = big.items.get_mut(1) {
+        *size_mm = 7.9;
+    }
+    let laid = layout(&big, &inputs)?;
+    assert!(finding_codes(&laid).contains(&"marking.does_not_fit"));
+    // Modules below the smallest drawn: unrepresentable.
+    if let Some(MarkingItem::Code2d { size_mm, .. }) = big.items.get_mut(1) {
+        *size_mm = 1.0;
+    }
+    let laid = layout(&big, &inputs)?;
+    assert!(finding_codes(&laid).contains(&"marking.unrepresentable"));
+    // Publish findings check the payload template and the size.
+    let mut bad = spec.clone();
+    bad.items[1] = MarkingItem::Code2d {
+        symbology: Symbology::Qr,
+        payload: Template("{nope}".into()),
+        size_mm: 0.0,
+        anchor: Anchor::Centre,
+        ecc: Ecc::Low,
+    };
+    assert_eq!(spec_findings(VALUE, &bad).len(), 2);
+    assert!(spec_findings(VALUE, &spec).is_empty());
+    Ok(())
+}
+
+/// Each decal lays out in its own surface's region seen through its
+/// placement, and their findings gather on the marking.
+#[test]
+fn decals_lay_out_on_their_own_surfaces() -> Fallible<()> {
+    let text = |t: &str| MarkingItem::Text {
+        template: Template(t.into()),
+        height_mm: None,
+        align: Align::Centre,
+    };
+    let spec = MarkingSpec {
+        items: vec![text("CAN")],
+        placement: Placement {
+            on: SurfaceRef::Anchor {
+                name: "can_top".into(),
+            },
+            ..Placement::default()
+        },
+        finish: Finish::LaserEtchMetal,
+        decals: vec![MarkingSpec {
+            items: vec![text("PCB")],
+            placement: Placement {
+                on: SurfaceRef::Anchor {
+                    name: "pcb_top".into(),
+                },
+                rotation_deg: 90.0,
+                ..Placement::default()
+            },
+            finish: Finish::InkWhite,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let region = |s: &MarkingSpec| match &s.placement.on {
+        SurfaceRef::Anchor { name } if name == "can_top" => Some(([20.0, 20.0], Chart::Flat)),
+        SurfaceRef::Anchor { name } if name == "pcb_top" => Some(([22.0, 4.0], Chart::Flat)),
+        _ => None,
+    };
+    let laid = layout_with(&spec, &inputs([0.0, 0.0], None), &region)?;
+    assert_eq!(texts(&laid), ["CAN"]);
+    assert_eq!(laid.finish, Finish::LaserEtchMetal);
+    assert_eq!(laid.decals.len(), 1);
+    let pcb = &laid.decals[0];
+    assert_eq!(texts(pcb), ["PCB"]);
+    assert_eq!(pcb.finish, Finish::InkWhite);
+    assert_eq!(pcb.placement.rotation_deg, 90.0);
+    // Turned a quarter, the 22 × 4 strip lays out 4 wide and 22 tall:
+    // three letters fit only small.
+    assert!(inside(pcb, [4.0, 22.0]));
+    // An unknown anchor lays out in no area, with a finding.
+    let lost = MarkingSpec {
+        decals: vec![MarkingSpec {
+            items: vec![text("X")],
+            placement: Placement {
+                on: SurfaceRef::Anchor {
+                    name: "nowhere".into(),
+                },
+                ..Placement::default()
+            },
+            ..Default::default()
+        }],
+        ..spec.clone()
+    };
+    let laid = layout_with(&lost, &inputs([0.0, 0.0], None), &region)?;
+    assert!(laid.decals[0].elements.is_empty());
+    assert_eq!(finding_codes(&laid), ["marking.unrepresentable"]);
+    // Bounds: decals do not nest, and there are at most MAX_DECALS.
+    let mut nested = spec.clone();
+    nested.decals[0].decals.push(MarkingSpec::default());
+    assert!(!nested.within_bounds());
+    assert!(!spec_findings(VALUE, &nested).is_empty());
+    let mut many = spec.clone();
+    many.decals = vec![MarkingSpec::default(); MAX_DECALS + 1];
+    assert!(!many.within_bounds());
+    // The spec round-trips through JSON with its placement and decals.
+    let back: MarkingSpec = serde_json::from_str(&serde_json::to_string(&spec)?)?;
+    assert_eq!(back, spec);
+    Ok(())
+}

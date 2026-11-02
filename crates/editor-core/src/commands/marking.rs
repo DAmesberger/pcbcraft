@@ -6,7 +6,8 @@ use crate::diagnostics::{Error, ObjectRef, Result};
 use crate::fields::{FieldValue, ToleranceBasis, ValueType};
 use crate::ids::Id;
 use crate::instances;
-use crate::library::marking::{self, AreaChoice, InstanceMarking, MarkingInputs, MarkingLayout};
+use crate::library::marking::{self, InstanceMarking, MarkingInputs, MarkingLayout};
+
 use crate::model::Project;
 use std::collections::BTreeMap;
 
@@ -105,15 +106,14 @@ pub fn layout(project: &Project, instance: Id) -> Result<Option<MarkingLayout>> 
     ) else {
         return Ok(None);
     };
-    let area = match spec.area {
-        AreaChoice::Explicit { size_mm, .. } => Some(size_mm),
-        AreaChoice::FromModel => match target.physical {
-            Some(choice) => {
-                let view = instances::resolve_physical(library, &component.definition, choice)?;
-                marking::package_area(library, &view.package.definition)
-            }
-            None => None,
-        },
+    let package = match target.physical {
+        Some(choice) => Some(
+            instances::resolve_physical(library, &component.definition, choice)?
+                .package
+                .definition
+                .clone(),
+        ),
+        None => None,
     };
     let mut fields = BTreeMap::new();
     for field in instances::effective_fields(library, target)? {
@@ -133,9 +133,13 @@ pub fn layout(project: &Project, instance: Id) -> Result<Option<MarkingLayout>> 
             .filter(|s| !s.is_empty()),
         fields,
         vars: target.marking.vars.clone(),
-        area_mm: area.unwrap_or([0.0, 0.0]),
+        area_mm: [0.0, 0.0],
+        chart: marking::Chart::Flat,
     };
-    let mut laid = marking::layout(spec, &inputs)?;
+    let region = |s: &marking::MarkingSpec| {
+        marking::surface_region(library, package.as_ref(), s.area, &s.placement)
+    };
+    let mut laid = marking::layout_with(spec, &inputs, &region)?;
     for finding in &mut laid.findings {
         finding.objects.push(ObjectRef::Instance { id: instance });
     }

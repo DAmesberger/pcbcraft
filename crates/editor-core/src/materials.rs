@@ -28,6 +28,10 @@ pub enum MaterialId {
     EpoxyLaserMarked,
     /// White pad-print marking ink.
     MarkingInkWhite,
+    /// Metal (a nickel-silver shield can) where a laser has marked it.
+    MetalLaserMarked,
+    /// Pad-printed marking ink (white; a chosen colour replaces it).
+    PadPrintInk,
     /// Black thick-film resistor overcoat.
     ResistorOvercoat,
     /// 96 % alumina substrate.
@@ -66,10 +70,12 @@ pub enum MaterialId {
 }
 
 impl MaterialId {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 29] = [
         Self::EpoxyMould,
         Self::EpoxyLaserMarked,
         Self::MarkingInkWhite,
+        Self::MetalLaserMarked,
+        Self::PadPrintInk,
         Self::ResistorOvercoat,
         Self::Alumina96,
         Self::BariumTitanate,
@@ -100,10 +106,10 @@ impl MaterialId {
         use MaterialId::*;
         match self {
             TinMatte | TinBright | SolderSac | Gold | Nickel | CopperAlloy | PhosphorBronze
-            | Brass | Aluminium | NickelSilver => MaterialCategory::Metal,
+            | Brass | Aluminium | NickelSilver | MetalLaserMarked => MaterialCategory::Metal,
             Alumina96 | BariumTitanate | Ferrite => MaterialCategory::Ceramic,
             BorosilicateGlass => MaterialCategory::Glass,
-            EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | ResistorOvercoat | PvcSleeve
+            EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | PadPrintInk | ResistorOvercoat | PvcSleeve
             | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide | SolderMaskGreen
             | SolderMaskOverCopper => MaterialCategory::Polymer,
         }
@@ -298,6 +304,12 @@ fn values(id: MaterialId) -> Values {
             .cite("est", "laser ablation exposes lighter silica filler and roughens the surface"),
         MarkingInkWhite => dielectric("White marking ink", [0.80, 0.80, 0.78], 0.60, 1.50)
             .cite("est", "TiO2-pigmented epoxy ink, as silkscreen legend ink"),
+        MetalLaserMarked => metal("Laser-marked nickel silver", [0.30, 0.29, 0.27], 0.55)
+            .density(8700.0)
+            .cite("est", "laser marking on a nickel-silver can anneals a thin oxide that darkens the metal to a dull grey and roughens it; still a metal, so it reflects the studio as the can does, only duller (F0 about 0.3, roughness 0.55)"),
+        PadPrintInk => dielectric("Pad-print ink", [0.82, 0.82, 0.80], 0.40, 1.50)
+            .cite("est", "TiO2-pigmented two-part epoxy pad-print ink: a thinner, smoother film than screen-printed legend ink, so glossier"),
+
         ResistorOvercoat => dielectric("Resistor overcoat", [0.025, 0.025, 0.027], 0.30, EPOXY_IOR)
             .cite("est", "glass or epoxy overcoat with a black marking layer (docs/materials.md)"),
         Alumina96 => dielectric("96 % alumina", [0.78, 0.77, 0.73], 0.55, 1.77)

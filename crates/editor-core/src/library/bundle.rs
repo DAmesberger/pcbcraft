@@ -536,16 +536,26 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
 /// hash, not a lineage.
 fn marking_refs(spec: &mut super::marking::MarkingSpec, map: &mut dyn RefMap) -> Result<()> {
     use super::marking::MarkingItem;
+    for decal in &mut spec.decals {
+        marking_refs(decal, map)?;
+    }
     for item in &mut spec.items {
         let fields: Vec<&mut FieldRef> = match item {
             MarkingItem::Code { field, .. } => vec![field],
             MarkingItem::Bands { value, tolerance } => {
                 std::iter::once(value).chain(tolerance.as_mut()).collect()
             }
+            MarkingItem::Electrolytic {
+                capacitance,
+                voltage,
+                ..
+            } => std::iter::once(capacitance).chain(voltage.as_mut()).collect(),
             MarkingItem::Text { .. }
+            | MarkingItem::Code2d { .. }
             | MarkingItem::Artwork { .. }
             | MarkingItem::Polarity { .. } => Vec::new(),
         };
+
         for field in fields {
             let (id, revision) = exact(map, DefinitionKind::Field, field.id, field.revision)?;
             *field = FieldRef::new(id, revision);
