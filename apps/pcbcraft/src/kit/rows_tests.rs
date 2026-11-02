@@ -19,6 +19,8 @@ pub(in crate::kit) struct Painted {
     pub clip: Rect,
     /// The rows it was laid out as (1 when cut to one line).
     pub rows: usize,
+    /// Cut short with an ellipsis.
+    pub elided: bool,
 }
 
 impl Harness {
@@ -62,6 +64,7 @@ impl Harness {
                         .map_or(t.fallback_color, |s| s.format.color),
                     clip,
                     rows: t.galley.rows.len(),
+                    elided: t.galley.elided,
                 }),
                 egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
                 _ => {}
