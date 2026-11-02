@@ -258,6 +258,9 @@ pub enum Request {
     /// D2: inspect a STEP, GLB or .solidcraft model file.
     #[serde(rename = "library.inspect_model_file")]
     InspectModelFile(models::ModelFileParams),
+    /// Set a component draft's marking with SVG artwork as text.
+    #[serde(rename = "library.set_marking")]
+    SetMarking(marking::SetMarkingParams),
 }
 
 impl Request {
@@ -370,6 +373,10 @@ impl Request {
             info::<firmware::FirmwareParams>(
                 "firmware.export",
                 "Write firmware.export_preview's text atomically to a new file at path. Not a document change.",
+            ),
+            info::<marking::SetMarkingParams>(
+                "library.set_marking",
+                "Set or clear a component draft's generic marking (display-only decals on the package's top face; a module's shield can): text items from templates such as {mpn}, SVG artwork given as text with its licence (the session packs it by SHA-256), and polarity marks, in the model's marking area or an explicit one, laser-etched or white ink. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -561,6 +568,7 @@ impl Session {
             Request::FirmwarePreview(params) => return self.firmware(params, false),
             Request::FirmwareExport(params) => return self.firmware(params, true),
             Request::InspectModelFile(params) => return self.inspect_model_file(params),
+            Request::SetMarking(params) => return self.set_marking(params),
         }
         Ok(self.snapshot())
     }
@@ -774,6 +782,7 @@ pub fn schemas() -> Value {
 }
 
 mod firmware;
+mod marking;
 mod models;
 mod pinout;
 mod preview;

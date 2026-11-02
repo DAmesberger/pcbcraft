@@ -34,6 +34,10 @@ const PERMITTED: &[&str] = &[
     "BSD-3-Clause",
     "BSL-1.0",
     "CC0-1.0",
+    // Data licence of the CA root certificates (webpki-roots, used by the
+    // assistant's HTTPS client). Permissive; sharing the data needs the
+    // agreement text alongside: licenses/webpki-roots-CDLA-Permissive-2.0.txt.
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     // File-level copyleft: unmodified library use is fine. Modified MPL files must stay MPL.

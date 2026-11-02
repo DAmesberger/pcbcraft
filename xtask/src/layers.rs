@@ -5,7 +5,9 @@
 //! - 1 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
 //!   `pcbcraft-firmware`: firmware pin-configuration emitters over the core IR (slice C4).
 //! - 2 `pcbcraft-automation`: headless session, JSON-lines and MCP transports.
-//! - 3 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
+//! - 3 `pcbcraft-assist`: AI-assisted part design over the automation session
+//!   (the only crate with an HTTP client).
+//! - 4 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
 use crate::{Result, root};
 use std::process::Command;
 
@@ -15,8 +17,9 @@ const LAYERS: &[(&str, u8)] = &[
     ("pcbcraft-solidcraft", 1),
     ("pcbcraft-firmware", 1),
     ("pcbcraft-automation", 2),
-    ("pcbcraft-cli", 3),
-    ("pcbcraft", 3),
+    ("pcbcraft-assist", 3),
+    ("pcbcraft-cli", 4),
+    ("pcbcraft", 4),
 ];
 
 /// Window, GPU, dialog and executor crates belong to the desktop app only.

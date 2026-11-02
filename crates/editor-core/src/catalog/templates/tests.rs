@@ -1024,13 +1024,28 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
             }
         }
         let pads = &footprint.pads;
-        assert_eq!(pads.len(), package.terminals.len(), "{name}");
+        // A module's ground array lands one terminal with several pads.
+        let ground = match &package.form {
+            PackageForm::Module(m) => usize::try_from(m.ground_pads()).unwrap_or(0),
+            _ => 0,
+        };
+        assert_eq!(
+            pads.len(),
+            package.terminals.len() + ground.saturating_sub(1),
+            "{name}"
+        );
         let mut landed = std::collections::BTreeSet::new();
         for pad in pads {
             let terminal = pad.terminal.and_then(|t| package.terminal(t));
             let terminal =
                 terminal.ok_or(format!("{name}: pad {} lands no terminal", pad.number))?;
-            assert!(landed.insert(terminal.id), "{name}: {} twice", pad.number);
+            let shared = ground > 0
+                && pads.iter().filter(|p| p.terminal == pad.terminal).count() == ground;
+            assert!(
+                landed.insert(terminal.id) || shared,
+                "{name}: {} twice",
+                pad.number
+            );
             assert_eq!(pad.number, terminal.designation, "{name}");
             let through = matches!(package.form, PackageForm::Tht(_) | PackageForm::Header(_));
             if through {

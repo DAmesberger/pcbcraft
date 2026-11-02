@@ -162,6 +162,7 @@ fn filters_select_by_every_facet() -> Fallible<()> {
             "Generated · BGA / LGA",
             "Generated · chip",
             "Generated · gull-wing",
+            "Generated · module",
             "Generated · pin header",
             "Generated · QFN / DFN",
             "Generated · SOD / SMA / MELF",
@@ -169,7 +170,7 @@ fn filters_select_by_every_facet() -> Fallible<()> {
             "Generated · through-hole"
         ]
     );
-    assert_eq!(search(&engine, "missing:leads")?.hits.len(), 2 + 8);
+    assert_eq!(search(&engine, "missing:leads")?.hits.len(), 2 + 9);
     Ok(())
 }
 
@@ -200,20 +201,20 @@ fn facets_count_every_match_and_the_limit_reports_more() -> Fallible<()> {
     let mut engine = Engine::default();
     three(&mut engine)?;
     let all = search(&engine, "")?;
-    assert_eq!(all.hits.len(), 3 + 8);
+    assert_eq!(all.hits.len(), 3 + 9);
     let f = &all.facets;
     let value = |values: &[ModelFacetValue], v: &str| {
         values.iter().find(|x| x.value == v).map_or(0, |x| x.count)
     };
     assert_eq!(value(&f.format, "step"), 2);
     assert_eq!(value(&f.format, "gltf"), 1);
-    assert_eq!(value(&f.mount, "smd"), 2 + 6);
+    assert_eq!(value(&f.mount, "smd"), 2 + 7);
     assert_eq!(value(&f.mount, "tht"), 1 + 2);
     assert_eq!(value(&f.pins, "8"), 2);
     assert_eq!(value(&f.licence, "unknown"), 1);
     assert_eq!(
         (f.has_leads, f.has_marking, f.has_textures, f.generated),
-        (1, 1, 1, 8)
+        (1, 1, 1, 9)
     );
     let limited = super::search(
         engine.project(),
@@ -223,7 +224,7 @@ fn facets_count_every_match_and_the_limit_reports_more() -> Fallible<()> {
         None,
         2,
     )?;
-    assert_eq!((limited.hits.len(), limited.more), (2, 9));
+    assert_eq!((limited.hits.len(), limited.more), (2, 10));
     assert_eq!(limited.facets, all.facets, "facets cover the whole match");
     // Text tiers: an exact name first.
     assert_eq!(

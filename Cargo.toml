@@ -6,6 +6,7 @@ members = [
     "crates/solidcraft-integration",
     "crates/automation",
     "crates/firmware",
+    "crates/assist",
     "apps/pcbcraft-cli",
     "apps/pcbcraft",
     "xtask",
@@ -23,6 +24,7 @@ pcbcraft-io = { path = "crates/io" }
 pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
 pcbcraft-automation = { path = "crates/automation" }
 pcbcraft-firmware = { path = "crates/firmware" }
+pcbcraft-assist = { path = "crates/assist" }
 tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.3"

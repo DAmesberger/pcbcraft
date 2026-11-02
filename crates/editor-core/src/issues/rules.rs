@@ -459,6 +459,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "footprint.hole_kind",
     "footprint.hole_outside_land",
     "footprint.hole_shape",
+    "footprint.keepout_open",
     "footprint.mask_web",
     "footprint.over_constrained",
     "footprint.override_orphaned",

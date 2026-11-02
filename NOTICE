@@ -24,6 +24,11 @@ built renderer.
 Expression scripting embeds Rhai 1.27.0 (https://github.com/rhaiscript/rhai), MIT OR Apache-2.0,
 used as a library.
 
+The datasheet assistant (crates/assist) reaches the Claude API over HTTPS with ureq and rustls
+(MIT OR Apache-2.0; ring: Apache-2.0 AND ISC). Its trusted root certificates come from
+webpki-roots, whose certificate data is licensed under the Community Data License Agreement –
+Permissive 2.0; the agreement text is in licenses/webpki-roots-CDLA-Permissive-2.0.txt.
+
 IBM Plex Sans and IBM Plex Mono are bundled by the Solidcraft UI package and licensed under the
 SIL Open Font License 1.1; the notices are in licenses/ibm-plex-sans-OFL.txt and
 licenses/ibm-plex-mono-OFL.txt. Copyright (c) 2017 IBM Corp., Reserved Font Name "Plex".

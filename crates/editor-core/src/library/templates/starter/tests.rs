@@ -39,7 +39,12 @@ fn the_tables_parse_into_rows_over_every_family() -> Fallible<()> {
             row.name
         );
     }
-    for family in FamilyKind::ALL {
+    // A module has no generic outline: each one is its own datasheet, so
+    // the starter tables carry no module rows (its custom entry remains).
+    for family in FamilyKind::ALL
+        .into_iter()
+        .filter(|f| *f != FamilyKind::Module)
+    {
         assert!(
             per_family.get(&Some(family)).copied().unwrap_or(0) >= 5,
             "{family:?}: {per_family:?}"

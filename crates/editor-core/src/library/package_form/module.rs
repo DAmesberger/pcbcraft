@@ -210,7 +210,7 @@ impl ModuleForm {
                 rows: 3,
                 cols: 3,
                 pitch: [1.6, 1.6],
-                size: [1.0, 1.0],
+                size: [1.1, 1.1],
                 centre: [0.0, -2.0],
                 rotation_deg: 0.0,
                 number: "39".into(),
