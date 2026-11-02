@@ -23,6 +23,7 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 pub mod board_edge;
 mod copper;
 pub mod courtyard;
+pub mod legend;
 pub mod fill;
 mod grid;
 pub mod limits;
