@@ -116,5 +116,7 @@ fn progress_and_the_result_arrive_from_the_thread() {
     assert!(assist.job.is_none(), "the run is over");
     assert_eq!(assist.log, ["Request 1"]);
     assert!((assist.spent - 0.42).abs() < 1e-12);
-    assert!(matches!(&assist.result, Some(Ok(f)) if f.review.as_path() == std::path::Path::new("x.review.md")));
+    assert!(
+        matches!(&assist.result, Some(Ok(f)) if f.review.as_path() == std::path::Path::new("x.review.md"))
+    );
 }
