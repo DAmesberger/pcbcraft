@@ -32,7 +32,7 @@ The keymap is original. Letters are mnemonic where they can be (X route, V via, 
 | Component | ⇧⌘N new component · ⇧⌘O open component · ⌘[ / ⌘] previous / next component |
 | Symbol tab | L line · ⇧L polyline · R rectangle · C circle · A arc · ⇧P polygon · ⇧T text · ⇧F field · N pin · ⌘R rotate · ⇧X mirror · ⌘D duplicate · Delete · ⇧R repeat tool · Enter finish · Esc cancel |
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete · Esc |
-| Schematic | P place · W wire · ⌘R rotate · ⇧X mirror · Esc cancel |
+| Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
 | PCB Layout | X route · V via · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
 | Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size |

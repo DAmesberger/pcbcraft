@@ -2760,6 +2760,7 @@ mod tests {
             engine.revision(),
             Operation::Instance(pcbcraft_core::InstanceCommand::Place(
                 pcbcraft_core::instances::NewInstance {
+                    sheet: None,
                     component: first.component,
                     designator: Some("R3".into()),
                     properties: vec![],
@@ -2812,6 +2813,7 @@ mod tests {
             engine.revision(),
             Operation::Instance(pcbcraft_core::InstanceCommand::Place(
                 pcbcraft_core::instances::NewInstance {
+                    sheet: None,
                     component: first.component,
                     designator: Some("R3".into()),
                     properties: vec![],

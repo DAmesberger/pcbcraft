@@ -41,6 +41,8 @@ enum Kind {
     Save,
     Open,
     Export,
+    /// Print every schematic sheet to a PDF.
+    SchematicPdf,
     Restore,
     Close,
 }
@@ -195,6 +197,7 @@ pub enum Action {
     Save,
     SaveAs,
     Export,
+    ExportSchematicPdf,
     Close,
 }
 pub enum Effect {
@@ -210,6 +213,7 @@ enum Job {
     Read(Ticket, PathBuf),
     Write(Ticket, PathBuf, Document),
     Export(Ticket, PathBuf, Arc<Project>),
+    SchematicPdf(Ticket, PathBuf, Arc<Project>),
     Recover(Ticket, Document, Option<PathBuf>),
     ClearRecovery(Ticket, bool),
     Restore(Ticket, PathBuf),
@@ -221,6 +225,7 @@ enum Event {
     Read(Ticket, PathBuf, Outcome<EditorFile>),
     Written(Ticket, PathBuf, Outcome<()>),
     Exported(Ticket, PathBuf, Outcome<()>),
+    PdfExported(Ticket, PathBuf, Outcome<usize>),
     Recovered(Ticket, bool, bool, Outcome<()>),
     Restored(Ticket, PathBuf, Outcome<EditorFile>),
     Discarded(PathBuf, Outcome<()>),
@@ -258,6 +263,12 @@ fn worker(ctx: egui::Context, directory: PathBuf, events: Sender<Event>) -> Send
                         .ok_or_else(|| "Native export path must be UTF-8".to_owned())
                         .and_then(|path| export_project(&project, path));
                     Event::Exported(ticket, path, result)
+                }
+                Job::SchematicPdf(ticket, path, project) => {
+                    let result =
+                        pcbcraft_io::schematic_pdf::export_schematic_pdf(&project, &[], &path)
+                            .map_err(|e| e.to_string());
+                    Event::PdfExported(ticket, path, result)
                 }
                 Job::Recover(ticket, document, origin) => {
                     let file = EditorFile::from_document(&document);
@@ -418,6 +429,11 @@ impl FileUi {
                     self.pick(ticket, Kind::Export);
                 }
             }
+            Action::ExportSchematicPdf => {
+                if let Some(ticket) = self.begin(Kind::SchematicPdf, None) {
+                    self.pick(ticket, Kind::SchematicPdf);
+                }
+            }
             action => {
                 let transition = match action {
                     Action::New => Transition::New,
@@ -473,6 +489,11 @@ impl FileUi {
                 .set_title("Export PCB to Solidcraft")
                 .set_file_name("board.solidcraft")
                 .add_filter("Solidcraft model", &["solidcraft"])
+        } else if kind == Kind::SchematicPdf {
+            dialog
+                .set_title("Export schematic PDF")
+                .set_file_name("schematic.pdf")
+                .add_filter("PDF document", &["pdf"])
         } else {
             let filename = self
                 .controller
@@ -610,6 +631,12 @@ impl FileUi {
                             self.send(Job::Export(ticket, path, project));
                         }
                     }
+                    Kind::SchematicPdf if ticket.stamp == self.controller.current => {
+                        if let Some(document) = self.captured.as_ref() {
+                            let project = Arc::clone(&document.project);
+                            self.send(Job::SchematicPdf(ticket, path, project));
+                        }
+                    }
                     _ => {
                         self.controller.cancel(&ticket, kind);
                         self.status = Some((
@@ -667,6 +694,23 @@ impl FileUi {
                         self.status = Some((Level::Error, format!("Open failed: {error}")))
                     }
                 }
+            }
+            Event::PdfExported(ticket, path, result) => {
+                let current = self.controller.accept(&ticket, Kind::SchematicPdf);
+                self.status = Some(match result {
+                    Ok(pages) if current => (
+                        Level::Ok,
+                        format!("Printed {pages} sheets to {}", path.display()),
+                    ),
+                    Ok(pages) => (
+                        Level::Warning,
+                        format!(
+                            "Printed {pages} captured sheets to {}; the document has changed",
+                            path.display()
+                        ),
+                    ),
+                    Err(error) => (Level::Error, format!("PDF export failed: {error}")),
+                });
             }
             Event::Exported(ticket, path, result) => {
                 let current = self.controller.accept(&ticket, Kind::Export);

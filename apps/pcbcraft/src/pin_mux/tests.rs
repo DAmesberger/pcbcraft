@@ -220,6 +220,7 @@ fn fixture(engine: &mut Engine) -> Result<Ids, Box<dyn std::error::Error>> {
     let outcome = engine.apply(
         engine.revision(),
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: r2,
             designator: Some("U1".into()),
             properties: Vec::new(),

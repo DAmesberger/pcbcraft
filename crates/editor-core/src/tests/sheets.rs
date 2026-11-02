@@ -849,8 +849,15 @@ fn the_title_block_shows_properties_and_the_page() -> Result<()> {
     let bounds = frame
         .bounds(crate::library::TextMetric::default())
         .ok_or(Error::Invalid("empty frame".into()))?;
-    assert!(bounds.min[0] >= 0.0 && bounds.max[0] <= 297.0);
-    assert!(bounds.min[1] >= -210.0 && bounds.max[1] <= 0.0);
+    // The page's top-left corner is at (-30, 30) on the sheet.
+    assert!(
+        bounds.min[0] >= -30.0 && bounds.max[0] <= 267.0,
+        "{bounds:?}"
+    );
+    assert!(
+        bounds.min[1] >= -180.0 && bounds.max[1] <= 30.0,
+        "{bounds:?}"
+    );
     Ok(())
 }
 

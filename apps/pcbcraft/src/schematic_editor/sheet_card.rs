@@ -45,31 +45,6 @@ impl SchematicEditor {
             self.palette.open();
         }
     }
-
-    /// Nothing selected: what the sheet holds and how many instances still
-    /// need a manufacturer part, with Resolve parts….
-    pub(super) fn sheet_section(&mut self, ui: &mut egui::Ui, project: &Project) {
-        let mut resolve = false;
-        kit::section(ui, "sheet", "Sheet", true, None, |ui| {
-            kit::value_row(ui, "Instances", &project.instances.len().to_string());
-            kit::value_row(ui, "Wires", &project.wires.len().to_string());
-            let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
-            ui.scope(|ui| kit::value_row(ui, "Nets", &connected.to_string()))
-                .response
-                .on_hover_text("Nets that join two or more terminals");
-            let unresolved = unresolved_parts(project);
-            if unresolved == 0 {
-                kit::value_row(ui, "Parts", "All resolved");
-            } else {
-                kit::value_row(ui, "Parts", &format!("{unresolved} unresolved"));
-                resolve = kit::summary_row(ui, "", Some("Resolve parts…"));
-            }
-        });
-        if resolve {
-            self.palette.close();
-            self.resolve.open();
-        }
-    }
 }
 
 /// Instances whose purchasing is not resolved: no Part chosen yet, or a

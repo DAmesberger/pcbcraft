@@ -1,4 +1,5 @@
-//! Single-sheet content for the shared shell. Control metrics and input ownership
+//! Schematic content for the shared shell: one active sheet at a time
+//! (labels, power ports, sheet symbols and furniture in [`sheet_ui`]). Control metrics and input ownership
 //! follow Solidcraft ui_kit/{layout,fields}.rs and tools.rs; public kit controls,
 //! fonts and palette are used directly. Electrical connectivity lives in core.
 //!
@@ -32,9 +33,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod instance_card;
+mod items_card;
 mod marking_row;
 mod net_card;
 mod sheet_card;
+mod sheet_ui;
+use sheet_ui::{DrawTool, Item, LabelTool};
 
 /// An edit buffer for one field shown on the symbol: its lineage, label,
 /// the effective text when loaded and the text being typed.
@@ -121,6 +125,14 @@ enum Subject {
     Wire(Id),
     /// The Wire tool with nothing picked.
     Wiring,
+    /// A picked label, sheet symbol, sheet pin or drawing.
+    Item(Item),
+    /// A label or power-port tool.
+    LabelTool(LabelTool),
+    /// The sheet-symbol tool.
+    SheetTool,
+    /// A note, line or rectangle tool.
+    DrawTool(DrawTool),
     /// Nothing selected: the sheet.
     Sheet,
 }
@@ -131,12 +143,50 @@ enum Tool {
     Select,
     Place,
     Wire,
+    Label(LabelTool),
+    SheetSymbol,
+    Draw(DrawTool),
 }
 
 pub struct SchematicEditor {
     /// Two-finger scrolling across frames.
     trackpad: crate::navigation::Trackpad,
     tool: Tool,
+    /// The sheet the canvas shows.
+    sheet: pcbcraft_core::SheetId,
+    /// What the active sheet draws besides symbols and wires.
+    scene: Option<sheet_ui::SceneCache>,
+    /// The selected label, sheet symbol, sheet pin or drawing.
+    item: Option<Item>,
+    /// A dragged item and the pointer's offset from its anchor.
+    item_drag: Option<(Item, Point)>,
+    /// A dragged item and where its anchor would land.
+    item_preview: Option<(Item, Point)>,
+    /// A line or rectangle tool's first corner.
+    draw_from: Option<Point>,
+    /// A sheet symbol being dragged out: its first corner.
+    rect_from: Option<Point>,
+    /// What the label, sheet and drawing tools put down next.
+    drafts: sheet_ui::Drafts,
+    /// Edit buffers of the item and sheet cards: (key, loaded, text).
+    item_text: Vec<(String, String, String)>,
+    /// A number pair being edited in a card (key, values), committed when
+    /// focus leaves the row.
+    pair_buf: Option<(String, [f64; 2])>,
+    /// A message for a toast on the next canvas frame.
+    notice: Option<String>,
+    /// Annotate options of the sheet card.
+    annotate: (
+        pcbcraft_core::schematic::AnnotateOrder,
+        pcbcraft_core::schematic::AnnotateMode,
+        pcbcraft_core::schematic::Numbering,
+    ),
+    /// An annotation sent at this revision and the changes it previews:
+    /// the toast follows once it applied.
+    annotate_watch: Option<(u64, usize, Option<u64>)>,
+    /// The sheet of every wire and junction dot, once per revision.
+    wire_sheets: BTreeMap<Id, pcbcraft_core::SheetId>,
+    dot_sheets: BTreeMap<WireEnd, pcbcraft_core::SheetId>,
     component: Option<ComponentRef>,
     /// The selected instance and the occurrence that was picked.
     selected: Option<Id>,
@@ -165,6 +215,8 @@ pub struct SchematicEditor {
     nets: Vec<Net>,
     /// Each wire's net, by wire ID, once per revision.
     wire_nets: BTreeMap<Id, Id>,
+    /// The net of each junction, label and sheet pin, once per revision.
+    point_nets: BTreeMap<WireEnd, Id>,
     /// Junction dots core derives from connectivity, once per revision.
     dots: Vec<(WireEnd, Point)>,
     /// How each pin end is marked, once per revision.
@@ -212,6 +264,21 @@ impl Default for SchematicEditor {
         Self {
             trackpad: Default::default(),
             tool: Tool::Select,
+            sheet: pcbcraft_core::SheetId::FIRST,
+            scene: None,
+            item: None,
+            item_drag: None,
+            item_preview: None,
+            draw_from: None,
+            rect_from: None,
+            drafts: Default::default(),
+            item_text: Vec::new(),
+            pair_buf: None,
+            notice: None,
+            annotate: Default::default(),
+            annotate_watch: None,
+            wire_sheets: BTreeMap::new(),
+            dot_sheets: BTreeMap::new(),
             component: None,
             selected: None,
             selected_occurrence: None,
@@ -234,6 +301,7 @@ impl Default for SchematicEditor {
             nets_revision: None,
             nets: Vec::new(),
             wire_nets: BTreeMap::new(),
+            point_nets: BTreeMap::new(),
             dots: Vec::new(),
             pin_marks: BTreeMap::new(),
             refused: None,
@@ -312,6 +380,7 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
     });
     Some((
         NewInstance {
+            sheet: None,
             component,
             designator: None,
             properties: Vec::new(),
@@ -515,7 +584,19 @@ impl SchematicEditor {
         if self.nets_revision != Some(engine.revision()) {
             self.nets = schematic::nets(engine.project()).to_vec();
             self.wire_nets = pcbcraft_core::nets::wire_nets(engine.project());
+            self.point_nets = pcbcraft_core::nets::point_nets(engine.project());
             self.dots = schematic::junction_dots(engine.project());
+            self.dot_sheets = self
+                .dots
+                .iter()
+                .filter_map(|(end, _)| Some((*end, schematic::end_sheet(engine.project(), *end)?)))
+                .collect();
+            self.wire_sheets = engine
+                .project()
+                .wires
+                .iter()
+                .filter_map(|w| Some((w.id, schematic::wire_sheet(engine.project(), w)?)))
+                .collect();
             self.pin_marks = pin_marks(engine.project());
             self.placed = Arc::new(
                 engine
@@ -537,6 +618,7 @@ impl SchematicEditor {
                 .collect();
             self.nets_revision = Some(engine.revision());
         }
+        self.refresh_scene(engine);
     }
 
     pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
@@ -570,6 +652,62 @@ impl SchematicEditor {
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Wire)
                             .tip("Connect two terminals"),
+                        Button::family(
+                            Button::new("label", "point", "Label")
+                                .enabled(!reviewing)
+                                .selected(self.tool == Tool::Label(LabelTool::Local))
+                                .tip("Name a net with a label"),
+                            vec![
+                                Button::new("label", "point", "Net label")
+                                    .enabled(!reviewing)
+                                    .selected(self.tool == Tool::Label(LabelTool::Local))
+                                    .tip("Join same-named labels on this sheet"),
+                                Button::new("global-label", "point", "Global label")
+                                    .enabled(!reviewing)
+                                    .selected(self.tool == Tool::Label(LabelTool::Global))
+                                    .tip("Join same-named labels on every sheet"),
+                                Button::new("hierarchical-label", "point", "Hierarchical label")
+                                    .enabled(!reviewing)
+                                    .selected(self.tool == Tool::Label(LabelTool::Hierarchical))
+                                    .tip("Join the sheet pin of this name on the parent sheet"),
+                            ],
+                        ),
+                        Button::new("power", "point", "Power")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Label(LabelTool::Power))
+                            .tip("Place a power or ground port: GND, +3V3, VBUS"),
+                    ],
+                },
+                Group {
+                    label: "Sheets",
+                    tools: vec![
+                        Button::new("sheet-symbol", "folder", "Sheet")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::SheetSymbol)
+                            .tip("Draw a sheet symbol for a new child sheet"),
+                        Button::new("add-sheet", "new", "Add sheet")
+                            .enabled(!reviewing)
+                            .tip("Add a page to the schematic"),
+                        Button::new("annotate", "list", "Annotate")
+                            .enabled(!reviewing && !engine.project().instances.is_empty())
+                            .tip("Number designators across sheets; existing ones stay"),
+                    ],
+                },
+                Group {
+                    label: "Draw",
+                    tools: vec![
+                        Button::new("note", "list", "Note")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Draw(DrawTool::Note))
+                            .tip("Add a text note"),
+                        Button::new("draw-line", "line", "Line")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Draw(DrawTool::Line))
+                            .tip("Draw a line: click its two ends"),
+                        Button::new("draw-rect", "rect", "Rectangle")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Draw(DrawTool::Rect))
+                            .tip("Draw a rectangle: click two corners"),
                     ],
                 },
                 Group {
@@ -602,6 +740,27 @@ impl SchematicEditor {
             "select" => Tool::Select,
             "place" => Tool::Place,
             "wire" => Tool::Wire,
+            "label" => Tool::Label(LabelTool::Local),
+            "global-label" => Tool::Label(LabelTool::Global),
+            "hierarchical-label" => Tool::Label(LabelTool::Hierarchical),
+            "power" => Tool::Label(LabelTool::Power),
+            "sheet-symbol" => Tool::SheetSymbol,
+            "note" => Tool::Draw(DrawTool::Note),
+            "draw-line" => Tool::Draw(DrawTool::Line),
+            "draw-rect" => Tool::Draw(DrawTool::Rect),
+            "add-sheet" => {
+                return Some(Operation::Schematic(SchematicCommand::AddSheet {
+                    name: None,
+                    paper: None,
+                    orientation: None,
+                }));
+            }
+            "annotate" => {
+                self.select(None, None, engine.project());
+                self.tool = Tool::Select;
+                return self.annotation(engine);
+            }
+            "rotate" if self.item.is_some() => return self.rotated_item(engine.project()),
             "rotate" => return self.arranged(engine.project(), Arrange::Rotate),
             "mirror" => return self.arranged(engine.project(), Arrange::Mirror),
             "resolve" => {
@@ -630,6 +789,8 @@ impl SchematicEditor {
         }
         self.tool = next;
         self.wire_from = None;
+        self.draw_from = None;
+        self.rect_from = None;
         None
     }
 
@@ -652,9 +813,15 @@ impl SchematicEditor {
         {
             return Subject::Wire(id);
         }
+        if let Some(item) = self.selected_item(project) {
+            return Subject::Item(item);
+        }
         match self.tool {
             Tool::Place => Subject::Place,
             Tool::Wire => Subject::Wiring,
+            Tool::Label(tool) => Subject::LabelTool(tool),
+            Tool::SheetSymbol => Subject::SheetTool,
+            Tool::Draw(tool) => Subject::DrawTool(tool),
             Tool::Select => Subject::Sheet,
         }
     }
@@ -688,6 +855,12 @@ impl SchematicEditor {
                 Header::new("line", name, "Net")
             }
             Subject::Wiring => Header::new("line", "Wire", "Tool"),
+            Subject::Item(item) => items_card::header(project, item),
+            Subject::LabelTool(tool) => Header::new("point", tool.title(), "Tool"),
+            Subject::SheetTool => Header::new("folder", "Sheet symbol", "Tool"),
+            Subject::DrawTool(DrawTool::Note) => Header::new("list", "Note", "Tool"),
+            Subject::DrawTool(DrawTool::Line) => Header::new("line", "Line", "Tool"),
+            Subject::DrawTool(DrawTool::Rect) => Header::new("rect", "Rectangle", "Tool"),
             Subject::Sheet => Header::new("sketch", "Sheet", "Schematic"),
         }
     }
@@ -700,7 +873,10 @@ impl SchematicEditor {
         Inspector {
             header: self.header(engine),
             subject: egui::Id::new(("schematic-card", subject)),
-            footer: matches!(subject, Subject::Instance(_) | Subject::Wire(_)),
+            footer: matches!(
+                subject,
+                Subject::Instance(_) | Subject::Wire(_) | Subject::Item(_)
+            ),
             issues: self.issue_slot(engine, subject),
         }
     }
@@ -799,15 +975,21 @@ impl SchematicEditor {
         self.selected
     }
 
-    /// The net of the selected wire.
+    /// The net of the selected wire, label or sheet pin.
     pub fn selected_net(&self, engine: &Engine) -> Option<Id> {
         let project = engine.project();
+        if let Some(Item::Label(_) | Item::SheetPin(_)) = self.item {
+            return self.highlighted_net();
+        }
         let wire = self.selected_wire.and_then(|id| project.wire(id))?;
         schematic::wire_net(project, wire).map(|n| n.id)
     }
 
-    /// Select an instance from outside the canvas (the Browser).
+    /// Select an instance from outside the canvas (the Browser), showing
+    /// the sheet of its first unit.
     pub fn select_instance(&mut self, id: Option<Id>, project: &Project) {
+        let sheet = id.and_then(|id| project.occurrences_of(id).next().map(|o| o.sheet));
+        self.switch_sheet(sheet, project);
         self.select(id, None, project);
         self.tool = Tool::Select;
     }
@@ -818,6 +1000,8 @@ impl SchematicEditor {
             .wires
             .iter()
             .find(|w| schematic::wire_net(project, w).is_some_and(|n| n.id == net));
+        let sheet = wire.and_then(|w| schematic::wire_sheet(project, w));
+        self.switch_sheet(sheet, project);
         self.select(None, None, project);
         self.selected_wire = wire.map(|w| w.id);
         self.tool = Tool::Select;
@@ -833,6 +1017,9 @@ impl SchematicEditor {
         self.selected_occurrence = occurrence
             .or_else(|| id.and_then(|id| project.occurrences_of(id).next().map(|o| o.id)));
         self.selected_wire = None;
+        self.item = None;
+        self.item_drag = None;
+        self.item_preview = None;
         if self.draft_id != id {
             if let Some(instance) = id.and_then(|id| project.instance(id)) {
                 self.draft_reference = instance.designator.clone();
@@ -955,10 +1142,20 @@ impl SchematicEditor {
                 self.wiring_section(ui, project);
                 None
             }
-            Subject::Sheet => {
-                self.sheet_section(ui, project);
+            Subject::Item(item) => self.item_section(ui, engine, item),
+            Subject::LabelTool(tool) => {
+                self.label_tool_section(ui, tool);
                 None
             }
+            Subject::SheetTool => {
+                self.sheet_tool_section(ui);
+                None
+            }
+            Subject::DrawTool(tool) => {
+                self.draw_tool_section(ui, tool);
+                None
+            }
+            Subject::Sheet => self.sheet_section(ui, engine),
         }
     }
 
@@ -980,6 +1177,12 @@ impl SchematicEditor {
                 .then_some(Change::Schematic {
                     command: SchematicCommand::Disconnect { wire },
                 }),
+            Subject::Item(item) => {
+                return ui_kit::button(ui, "Remove", Button::Normal)
+                    .on_hover_text("Remove it; wires through it stay joined")
+                    .clicked()
+                    .then(|| sheet_ui::removed(item));
+            }
             _ => None,
         }?;
         self.stage_update(engine, change)
@@ -1009,6 +1212,7 @@ impl SchematicEditor {
 
     pub fn canvas(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         self.refresh_connectivity(engine);
+        self.say_notices(ui.ctx(), engine);
         self.resolve_window(ui.ctx(), engine);
         let project = engine.project();
         let t = Tokens::get();
@@ -1019,14 +1223,13 @@ impl SchematicEditor {
         self.view = rect.size();
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;
-            for placed in self.placed.values() {
-                if let Some(extent) = placed.bounds(TextMetric::default()) {
-                    // Sheet extent with y flipped to screen orientation.
-                    bounds = bounds.union(Rect::from_min_max(
-                        pos2(extent.min[0] as f32, -extent.max[1] as f32),
-                        pos2(extent.max[0] as f32, -extent.min[1] as f32),
-                    ));
-                }
+            // The page and everything on the active sheet, with sheet y
+            // flipped to screen orientation.
+            if let Some(extent) = self.sheet_extent(project) {
+                bounds = Rect::from_min_max(
+                    pos2(extent.min[0] as f32, -extent.max[1] as f32),
+                    pos2(extent.max[0] as f32, -extent.min[1] as f32),
+                );
             }
             if bounds.is_finite() {
                 bounds = bounds.expand(5.0);
@@ -1070,6 +1273,23 @@ impl SchematicEditor {
             self.wire_from = None;
             self.palette.open();
         }
+        // A selected label turns with Cmd/Ctrl+R; Delete removes the
+        // selected label, sheet symbol, pin or drawing.
+        if !self.palette.is_open()
+            && !self.update.is_open()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && let Some(item) = self.selected_item(project)
+        {
+            if let Some(op) = self.rotated_item(project)
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::R))
+            {
+                output = Some(op);
+            }
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
+                output = Some(sheet_ui::removed(item));
+                self.item = None;
+            }
+        }
         // Cmd/Ctrl+R and Shift+X as in the Component editor's symbol canvas.
         if !self.palette.is_open() && !ui.ctx().egui_wants_keyboard_input() {
             for (modifiers, key, action) in [
@@ -1092,6 +1312,7 @@ impl SchematicEditor {
             }) => {
                 if let Some((request, unit)) = first_choices(project, component) {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
+                        sheet: Some(self.sheet),
                         position: self.drop_point(
                             project,
                             unit,
@@ -1131,6 +1352,10 @@ impl SchematicEditor {
             self.tool = Tool::Select;
             self.drag = None;
             self.preview = None;
+            self.draw_from = None;
+            self.rect_from = None;
+            self.item_drag = None;
+            self.item_preview = None;
         }
         let origin = rect.center() + self.pan;
         let scale = self.scale;
@@ -1156,6 +1381,8 @@ impl SchematicEditor {
             }
             x += step;
         }
+        // The page frame, labels, ports, sheet symbols and furniture.
+        self.paint_scene(&painter, view, project);
 
         let mut pin_hits = Vec::new();
         let mut body_hits = Vec::new();
@@ -1171,10 +1398,10 @@ impl SchematicEditor {
             Some(WireTarget::Junction(j)) => project
                 .wires_at(WireEnd::Junction(j))
                 .find_map(|w| self.wire_nets.get(&w.id).copied()),
+            Some(WireTarget::Label(l)) => self.point_nets.get(&WireEnd::Label(l)).copied(),
+            Some(WireTarget::SheetPin(p)) => self.point_nets.get(&WireEnd::SheetPin(p)).copied(),
             Some(WireTarget::OnWire(p)) => self.wire_nets.get(&p.wire).copied(),
-            None => self
-                .selected_wire
-                .and_then(|id| self.wire_nets.get(&id).copied()),
+            None => self.highlighted_net(),
         };
         let wire_active = |id: Id| {
             self.selected_wire == Some(id)
@@ -1183,6 +1410,9 @@ impl SchematicEditor {
         // Each drawn wire's screen path, for picking a wire or a point on it.
         let mut wire_paths: Vec<(Id, [Pos2; 3])> = Vec::with_capacity(project.wires.len());
         for wire in &project.wires {
+            if self.wire_sheets.get(&wire.id) != Some(&self.sheet) {
+                continue;
+            }
             if let Some((a, b)) = schematic::wire_ends(project, wire) {
                 let a = self.preview_end(project, wire.from, a);
                 let b = self.preview_end(project, wire.to, b);
@@ -1211,13 +1441,21 @@ impl SchematicEditor {
         let radius = dot_radius(scale);
         let mut junction_hits = Vec::new();
         for (end, at) in &self.dots {
+            if self.dot_sheets.get(end) != Some(&self.sheet) {
+                continue;
+            }
             let p = screen(self.preview_end(project, *end, *at));
             let active = project.wires_at(*end).any(|w| wire_active(w.id));
             painter.circle_filled(p, radius, if active { t.accent } else { t.form_success });
         }
-        for junction in &project.junctions {
+        for junction in project.junctions.iter().filter(|j| j.sheet == self.sheet) {
             junction_hits.push((WireEnd::junction(junction.id), screen(junction.position)));
         }
+        let point_hits: Vec<(WireTarget, Pos2)> = self
+            .point_targets(project)
+            .into_iter()
+            .map(|(target, p)| (target, screen(p)))
+            .collect();
         if self.tool == Tool::Place
             && let Some(component) = self.component
             && self
@@ -1235,7 +1473,7 @@ impl SchematicEditor {
         let visible = Bounds::point(view.world(rect.left_bottom()))
             .including(view.world(rect.right_top()))
             .inflated(f64::from(12.0 / scale.max(f32::EPSILON)));
-        for occurrence in &project.occurrences {
+        for occurrence in project.occurrences.iter().filter(|o| o.sheet == self.sheet) {
             let Some(placed) = placed_units.get(&occurrence.id) else {
                 continue;
             };
@@ -1314,7 +1552,7 @@ impl SchematicEditor {
                 })
                 .map(|(id, occurrence, _, _)| (*id, *occurrence))
         };
-        let wiring = self.tool == Tool::Wire && !self.palette.is_open();
+        let wiring = matches!(self.tool, Tool::Wire | Tool::Label(_)) && !self.palette.is_open();
         // Where a Wire tool click at `pointer` lands: a pin end, then a
         // junction, then a point on a wire's path (snapped to the grid when
         // that stays on the wire), with its screen position.
@@ -1333,29 +1571,32 @@ impl SchematicEditor {
                 .iter()
                 .map(|(e, p)| (WireTarget::from(*e), *p))
                 .collect();
-            nearest(&pins).or_else(|| nearest(&junctions)).or_else(|| {
-                let (wire, _) = wire_paths
-                    .iter()
-                    .map(|(id, path)| {
-                        let d = path
-                            .windows(2)
-                            .map(|s| segment_distance(pointer, s[0], s[1]))
-                            .fold(f32::INFINITY, f32::min);
-                        (*id, d)
-                    })
-                    .filter(|(_, d)| *d < WIRE_HIT_PX)
-                    .min_by(|a, b| a.1.total_cmp(&b.1))?;
-                let here = view.world(pointer);
-                let on = schematic::nearest_on_wire(project, wire, here)?;
-                let snapped = snap(on, grid);
-                let at = schematic::nearest_on_wire(project, wire, snapped)
-                    .filter(|p| {
-                        (p[0] - snapped[0]).hypot(p[1] - snapped[1])
-                            <= schematic::JUNCTION_TOLERANCE_MM
-                    })
-                    .map_or(on, |_| snapped);
-                Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
-            })
+            nearest(&pins)
+                .or_else(|| nearest(&junctions))
+                .or_else(|| nearest(&point_hits))
+                .or_else(|| {
+                    let (wire, _) = wire_paths
+                        .iter()
+                        .map(|(id, path)| {
+                            let d = path
+                                .windows(2)
+                                .map(|s| segment_distance(pointer, s[0], s[1]))
+                                .fold(f32::INFINITY, f32::min);
+                            (*id, d)
+                        })
+                        .filter(|(_, d)| *d < WIRE_HIT_PX)
+                        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+                    let here = view.world(pointer);
+                    let on = schematic::nearest_on_wire(project, wire, here)?;
+                    let snapped = snap(on, grid);
+                    let at = schematic::nearest_on_wire(project, wire, snapped)
+                        .filter(|p| {
+                            (p[0] - snapped[0]).hypot(p[1] - snapped[1])
+                                <= schematic::JUNCTION_TOLERANCE_MM
+                        })
+                        .map_or(on, |_| snapped);
+                    Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
+                })
         };
         if let Some(pointer) = response.hover_pos() {
             let hit = pin_hits
@@ -1421,10 +1662,19 @@ impl SchematicEditor {
                         self.component.and_then(|c| first_choices(project, c))
                     {
                         output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
+                            sheet: Some(self.sheet),
                             position: world(pointer),
                             ..request
                         })));
                     }
+                }
+                Tool::Label(_) => {
+                    let landing = target_at(pointer)
+                        .and_then(|(target, _)| Some((target, target_position(project, target)?)));
+                    output = self.tool_click(world(pointer), landing);
+                }
+                Tool::SheetSymbol | Tool::Draw(_) => {
+                    output = self.tool_click(world(pointer), None);
                 }
                 Tool::Wire => {
                     if let Some((to, _)) = target_at(pointer) {
@@ -1445,8 +1695,13 @@ impl SchematicEditor {
                 Tool::Select => {
                     let body = body_at(pointer);
                     let id = pin.map(|p| p.instance).or(body.map(|b| b.0));
+                    let item = self.item_at(project, view.world(pointer), tolerance);
                     if id.is_some() {
                         self.select(id, body.map(|b| b.1), project);
+                    } else if hit_wire.is_none()
+                        && let Some(item) = item
+                    {
+                        self.select_item(Some(item), project);
                     } else {
                         self.select(None, None, project);
                         self.selected_wire = hit_wire;
@@ -1467,6 +1722,78 @@ impl SchematicEditor {
                 [p[0] - occurrence.position[0], p[1] - occurrence.position[1]],
             ));
             self.select(Some(id), Some(occurrence_id), project);
+        }
+        if self.tool == Tool::Select
+            && !self.update.is_open()
+            && self.drag.is_none()
+            && response.drag_started_by(egui::PointerButton::Primary)
+            && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
+            && body_at(pointer).is_none()
+            && let Some(item) = self.item_at(project, view.world(pointer), tolerance)
+            && let Some(at) = sheet_ui::anchor(project, item)
+            && !matches!(item, Item::SheetPin(_))
+        {
+            let p = view.world(pointer);
+            self.select_item(Some(item), project);
+            self.item_drag = Some((item, [p[0] - at[0], p[1] - at[1]]));
+        }
+        if let Some((item, offset)) = self.item_drag
+            && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
+        {
+            let p = view.world(pointer);
+            self.item_preview = Some((item, snap([p[0] - offset[0], p[1] - offset[1]], grid)));
+        }
+        if response.drag_stopped_by(egui::PointerButton::Primary)
+            && let Some((item, to)) = self.item_preview.take()
+        {
+            self.item_drag = None;
+            if sheet_ui::anchor(project, item) != Some(to) {
+                output = sheet_ui::moved(project, item, to);
+            }
+        }
+        if self.tool == Tool::SheetSymbol
+            && response.drag_started_by(egui::PointerButton::Primary)
+            && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
+        {
+            self.rect_from = Some(world(pointer));
+        }
+        if self.tool == Tool::SheetSymbol
+            && let Some(from) = self.rect_from
+            && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
+        {
+            let b = Rect::from_two_pos(screen(from), screen(world(pointer)));
+            painter.rect_stroke(b, 0.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Middle);
+            if response.drag_stopped_by(egui::PointerButton::Primary) {
+                self.rect_from = None;
+                output = self.sheet_symbol_rect(from, world(pointer));
+            }
+        }
+        // A line or rectangle being drawn follows the pointer.
+        if let (Tool::Draw(kind), Some(from)) = (self.tool, self.draw_from)
+            && let Some(pointer) = response.hover_pos()
+        {
+            let (a, b) = (screen(from), screen(world(pointer)));
+            let stroke = Stroke::new(1.5, t.accent);
+            if kind == DrawTool::Rect {
+                painter.rect_stroke(
+                    Rect::from_two_pos(a, b),
+                    0.0,
+                    stroke,
+                    egui::StrokeKind::Middle,
+                );
+            } else {
+                painter.line_segment([a, b], stroke);
+            }
+        }
+        // Double-clicking a sheet symbol opens its sheet.
+        if self.tool == Tool::Select
+            && response.double_clicked()
+            && let Some(pointer) = response.interact_pointer_pos()
+            && let Some(Item::SheetSymbol(id)) =
+                self.item_at(project, view.world(pointer), tolerance)
+            && let Some(child) = project.sheet_symbol(id).map(|s| s.child)
+        {
+            self.show_sheet(child, project);
         }
         if let Some((id, offset)) = self.drag
             && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
@@ -1575,7 +1902,7 @@ impl SchematicEditor {
     fn preview_end(&self, project: &Project, end: WireEnd, original: Point) -> Point {
         match end {
             WireEnd::Terminal(endpoint) => self.preview_endpoint(project, endpoint, original),
-            WireEnd::Junction(_) => original,
+            WireEnd::Junction(_) | WireEnd::Label(_) | WireEnd::SheetPin(_) => original,
         }
     }
 
@@ -1674,6 +2001,14 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
             Some(component) => format!("Click to place {} · Esc ends", component.meta.name),
             None => "Publish a component to place it".to_owned(),
         },
+        Tool::Label(_) => "Click a wire or pin to attach a label · Esc ends".to_owned(),
+        Tool::SheetSymbol => "Click or drag a rectangle for a new sheet · Esc ends".to_owned(),
+        Tool::Draw(DrawTool::Note) => "Click to add the note · Esc ends".to_owned(),
+        Tool::Draw(_) if editor.draw_from.is_some() => {
+            "Click the other end · Esc cancels".to_owned()
+        }
+        Tool::Draw(_) => "Click to start · Esc ends".to_owned(),
+        Tool::Select if editor.item.is_some() => "Drag to move · Delete removes".to_owned(),
         Tool::Select if editor.selected.is_some() => {
             "Drag to move · Cmd+R rotates · Shift+X mirrors".to_owned()
         }
@@ -1696,6 +2031,35 @@ impl crate::issues::Locate for SchematicEditor {
     fn locate(&mut self, engine: &Engine, refs: &[ObjectRef]) -> bool {
         self.refresh_connectivity(engine);
         let project = engine.project();
+        // A label, sheet symbol, sheet pin or sheet: show its sheet and
+        // select it there.
+        for object in refs {
+            let item = match *object {
+                ObjectRef::Label { id } => Item::Label(id),
+                ObjectRef::SheetSymbol { id } => Item::SheetSymbol(id),
+                ObjectRef::SheetPin { id } => Item::SheetPin(id),
+                ObjectRef::Sheet { sheet } if project.sheet(sheet).is_some() => {
+                    self.palette.close();
+                    self.resolve.close();
+                    self.show_sheet(sheet, project);
+                    self.tool = Tool::Select;
+                    return true;
+                }
+                _ => continue,
+            };
+            let Some(at) = sheet_ui::anchor(project, item) else {
+                continue;
+            };
+            self.palette.close();
+            self.resolve.close();
+            self.switch_sheet(sheet_ui::item_sheet(project, item), project);
+            self.select_item(Some(item), project);
+            self.tool = Tool::Select;
+            self.frame_request = Some(Bounds::point(at).inflated(15.0));
+            // The view moves to the sheet: rebuild what it draws.
+            self.refresh_scene(engine);
+            return true;
+        }
         let mut first: Option<(Id, Option<Id>)> = None;
         let mut net = None;
         let mut occurrences: Vec<Id> = Vec::new();
@@ -1753,6 +2117,10 @@ impl crate::issues::Locate for SchematicEditor {
         self.wire_from = None;
         match (first, net) {
             (Some((id, occurrence)), _) => {
+                let sheet = occurrence
+                    .and_then(|o| project.occurrence(o))
+                    .map(|o| o.sheet);
+                self.switch_sheet(sheet, project);
                 self.select(Some(id), occurrence, project);
                 self.tool = Tool::Select;
             }
@@ -1902,6 +2270,8 @@ fn target_position(project: &Project, target: WireTarget) -> Option<Point> {
     match target {
         WireTarget::Terminal(e) => schematic::pin_position(project, e),
         WireTarget::Junction(j) => project.junction(j.junction).map(|j| j.position),
+        WireTarget::Label(l) => schematic::end_position(project, WireEnd::Label(l)),
+        WireTarget::SheetPin(p) => schematic::end_position(project, WireEnd::SheetPin(p)),
         WireTarget::OnWire(p) => Some(p.at),
     }
 }
@@ -1911,6 +2281,12 @@ fn end_label(project: &Project, end: WireEnd) -> String {
     match end {
         WireEnd::Terminal(e) => endpoint_label(project, e),
         WireEnd::Junction(_) => "Junction".to_owned(),
+        WireEnd::Label(l) => project
+            .label(l.label)
+            .map_or_else(|| "Label".to_owned(), |l| l.name.clone()),
+        WireEnd::SheetPin(p) => project
+            .sheet_pin(p.sheet_pin)
+            .map_or_else(|| "Sheet pin".to_owned(), |(_, p)| p.name.clone()),
     }
 }
 
@@ -1919,6 +2295,8 @@ fn target_label(project: &Project, target: WireTarget) -> String {
     match target {
         WireTarget::Terminal(e) => endpoint_label(project, e),
         WireTarget::Junction(_) => "Junction".to_owned(),
+        WireTarget::Label(l) => end_label(project, WireEnd::Label(l)),
+        WireTarget::SheetPin(p) => end_label(project, WireEnd::SheetPin(p)),
         WireTarget::OnWire(p) => {
             let net = project
                 .wire(p.wire)
@@ -1950,6 +2328,8 @@ fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
 mod junction_tests;
 #[cfg(test)]
 mod part_tests;
+#[cfg(test)]
+mod sheet_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2084,6 +2464,7 @@ mod tests {
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(
                 pcbcraft_core::instances::NewInstance {
+                    sheet: None,
                     component: first.component,
                     designator: Some("R3".into()),
                     properties: vec![],
@@ -2406,6 +2787,7 @@ mod tests {
         engine.apply(
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
                 position: [30.0, 0.0],
                 ..request
             })),
@@ -2501,6 +2883,7 @@ mod tests {
         match engine.apply(
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
                 designator: Some("U1".into()),
                 position: [0.0, 20.0],
                 ..request
@@ -3005,9 +3388,27 @@ mod tests {
         let mut editor = SchematicEditor::default();
         let r1 = engine.project().instances[0].id;
         let (output, _) = workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        // The page frame's zone references ("1", "A") are not pin
+        // numbers: text drawn where a frame text is anchored is left out.
+        let view = symbol_view::View {
+            origin: pos2(400.0, 400.0) + editor.pan,
+            scale: editor.scale,
+        };
+        let frame: Vec<(String, Pos2)> = editor
+            .scene
+            .as_ref()
+            .map(|s| {
+                s.frame
+                    .texts
+                    .iter()
+                    .map(|t| (t.text.clone(), view.screen(t.at)))
+                    .collect()
+            })
+            .unwrap_or_default();
         let canvas: Vec<String> = shown(&output)
             .into_iter()
             .filter(|(_, p)| p.x < 800.0)
+            .filter(|(t, p)| !frame.iter().any(|(f, q)| f == t && q.distance(*p) < 3.0))
             .map(|(t, _)| t)
             .collect();
         for text in ["R1", "R2", "Resistor", "10 kΩ"] {

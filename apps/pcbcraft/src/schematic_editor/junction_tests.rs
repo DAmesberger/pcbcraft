@@ -82,6 +82,7 @@ fn engine() -> Result<(Engine, [Id; 4], Id), Box<dyn std::error::Error>> {
         engine.apply(
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
                 component: first.component,
                 designator: Some(name.into()),
                 properties: vec![],

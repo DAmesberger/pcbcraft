@@ -223,6 +223,11 @@ impl App {
                         ("Save", Action::Save, AppCommand::Save),
                         ("Save as…", Action::SaveAs, AppCommand::SaveAs),
                         ("Export to Solidcraft…", Action::Export, AppCommand::Export),
+                        (
+                            "Export schematic PDF…",
+                            Action::ExportSchematicPdf,
+                            AppCommand::ExportSchematicPdf,
+                        ),
                     ] {
                         let key = self.with_shortcut(label, command);
                         if ui_kit::button(ui, label, Button::Enabled(enabled))
@@ -526,6 +531,7 @@ impl App {
             Workspace::Schematic => browser::Lit {
                 instance: self.schematic.selected_instance(),
                 net: self.schematic.selected_net(&self.engine),
+                sheet: Some(self.schematic.active_sheet()),
                 ..Default::default()
             },
             Workspace::Pcb => browser::Lit {
@@ -578,6 +584,10 @@ impl App {
             Pick::Board => {
                 self.workspace = Workspace::Pcb;
                 self.pcb.set_selection(None, None, None);
+            }
+            Pick::Sheet(sheet) => {
+                self.workspace = Workspace::Schematic;
+                self.schematic.show_sheet(sheet, self.engine.project());
             }
         }
     }

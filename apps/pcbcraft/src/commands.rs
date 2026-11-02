@@ -339,6 +339,8 @@ pub enum AppCommand {
     Save,
     SaveAs,
     Export,
+    /// Print the schematic's sheets to a PDF.
+    ExportSchematicPdf,
     Undo,
     Redo,
     ToggleBrowser,
@@ -871,6 +873,13 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::E).with_shift())
             .icon("save")
             .keywords("solidcraft 3d model native parametric"),
+        app(
+            "file.export-schematic-pdf",
+            "Export schematic PDF…",
+            A::ExportSchematicPdf,
+        )
+        .icon("save")
+        .keywords("print pdf sheets schematic title block"),
         app("edit.undo", "Undo", A::Undo)
             .chord(Chord::cmd(K::Z))
             .icon("undo"),
@@ -1066,6 +1075,110 @@ fn defaults() -> Vec<Command> {
         )
         .icon("component")
         .keywords("manufacturer part bom"),
+        // Labels, ports, hierarchy and sheet furniture
+        // (docs/schematic-capture.md).
+        tool(
+            "schematic.label",
+            "Net label",
+            C::Schematic,
+            Workspace::Schematic,
+            "label",
+        )
+        .chord(Chord::key(K::L))
+        .icon("point")
+        .keywords("net name local"),
+        tool(
+            "schematic.global-label",
+            "Global label",
+            C::Schematic,
+            Workspace::Schematic,
+            "global-label",
+        )
+        .chord(Chord::key(K::L).with_shift())
+        .icon("point")
+        .keywords("off-sheet connector port net"),
+        tool(
+            "schematic.hierarchical-label",
+            "Hierarchical label",
+            C::Schematic,
+            Workspace::Schematic,
+            "hierarchical-label",
+        )
+        .chord(Chord::key(K::H))
+        .icon("point")
+        .keywords("sheet port net"),
+        tool(
+            "schematic.power",
+            "Power port",
+            C::Schematic,
+            Workspace::Schematic,
+            "power",
+        )
+        .chord(Chord::key(K::P).with_shift())
+        .icon("point")
+        .keywords("ground gnd supply vcc rail"),
+        tool(
+            "schematic.sheet-symbol",
+            "Sheet symbol",
+            C::Schematic,
+            Workspace::Schematic,
+            "sheet-symbol",
+        )
+        .chord(Chord::key(K::S).with_shift())
+        .icon("folder")
+        .keywords("hierarchy child sheet"),
+        tool(
+            "schematic.note",
+            "Note",
+            C::Schematic,
+            Workspace::Schematic,
+            "note",
+        )
+        .chord(Chord::key(K::T))
+        .icon("list")
+        .keywords("text comment"),
+        tool(
+            "schematic.line",
+            "Line",
+            C::Schematic,
+            Workspace::Schematic,
+            "draw-line",
+        )
+        .icon("line")
+        .keywords("graphic drawing"),
+        tool(
+            "schematic.rect",
+            "Rectangle",
+            C::Schematic,
+            Workspace::Schematic,
+            "draw-rect",
+        )
+        .icon("rect")
+        .keywords("graphic drawing box"),
+        tool(
+            "schematic.add-sheet",
+            "Add sheet",
+            C::Schematic,
+            Workspace::Schematic,
+            "add-sheet",
+        )
+        .icon("new")
+        .keywords("page new"),
+        tool(
+            "schematic.annotate",
+            "Annotate designators",
+            C::Schematic,
+            Workspace::Schematic,
+            "annotate",
+        )
+        .icon("list")
+        .keywords("renumber reference designator"),
+        key(
+            "schematic.delete",
+            "Delete the selected label, sheet symbol or drawing",
+            C::Schematic,
+            Chord::key(K::Delete),
+        ),
         key(
             "schematic.cancel",
             "Cancel the tool",

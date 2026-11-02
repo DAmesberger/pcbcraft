@@ -470,6 +470,19 @@ pub fn frame(project: &Project, sheet: SheetId) -> Drawing {
             d.text(text, [x + 1.5, bottom + 0.8], value, base_left);
         }
     }
+    // Drawn with the page's top-left corner at the origin, then moved to
+    // where the page lies on the sheet.
+    let t = Transform2 {
+        translate: page.top_left(),
+        rotation_deg: 0.0,
+        mirror: false,
+    };
+    for stroke in &mut d.strokes {
+        stroke.shape = stroke.shape.transformed(&t);
+    }
+    for text in &mut d.texts {
+        text.at = t.apply(text.at);
+    }
     d
 }
 
@@ -477,8 +490,11 @@ pub fn frame(project: &Project, sheet: SheetId) -> Drawing {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct SheetScene {
     pub sheet: SheetId,
-    /// Page width and height, mm; the page spans x ∈ [0, w], y ∈ [−h, 0].
+    /// Page width and height, mm.
     pub size: Point,
+    /// The page's top-left corner on the sheet; the page spans
+    /// x ∈ [x, x + w], y ∈ [y − h, y].
+    pub top_left: Point,
     pub frame: Drawing,
     /// Labels, power ports, sheet symbols and furniture.
     pub items: Drawing,
@@ -537,6 +553,9 @@ pub fn sheet_scene(project: &Project, sheet: SheetId) -> SheetScene {
     SheetScene {
         sheet,
         size: project.sheet(sheet).map_or([0.0, 0.0], |s| s.size_mm()),
+        top_left: project
+            .sheet(sheet)
+            .map_or(crate::model::sheet::PAGE_TOP_LEFT, |s| s.top_left()),
         frame: frame(project, sheet),
         items,
         wires,

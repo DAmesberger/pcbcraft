@@ -124,6 +124,7 @@ impl App {
                 | AppCommand::Save
                 | AppCommand::SaveAs
                 | AppCommand::Export
+                | AppCommand::ExportSchematicPdf
                     if self.files.busy() =>
                 {
                     Err("Wait for the file operation to finish".into())
@@ -203,6 +204,9 @@ impl App {
             AppCommand::Save => self.files.request(file_ui::Action::Save),
             AppCommand::SaveAs => self.files.request(file_ui::Action::SaveAs),
             AppCommand::Export => self.files.request(file_ui::Action::Export),
+            AppCommand::ExportSchematicPdf => {
+                self.files.request(file_ui::Action::ExportSchematicPdf)
+            }
             AppCommand::Undo => self.history(false),
             AppCommand::Redo => self.history(true),
             AppCommand::ToggleBrowser => self.toggle_browser(),

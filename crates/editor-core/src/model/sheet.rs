@@ -5,8 +5,9 @@
 //! live in `nets`, capture rules in `schematic`.
 //!
 //! Sheet coordinates are millimetres with y up, as for symbols and wires.
-//! A sheet's page frame spans x ∈ [0, width] and y ∈ [−height, 0]: its
-//! top-left corner is the origin.
+//! A sheet's page has its top-left corner at [`PAGE_TOP_LEFT`], so content
+//! drawn near the origin (as single-sheet designs were) lies inside the
+//! frame: the page spans x ∈ [−30, width − 30], y ∈ [30 − height, 30].
 use crate::geometry::Point;
 use crate::ids::{Id, SheetId};
 use crate::library::Rotation;
@@ -80,6 +81,9 @@ pub enum PaperOrientation {
     Portrait,
 }
 
+/// Where every page's top-left corner lies on its sheet, mm.
+pub const PAGE_TOP_LEFT: Point = [-30.0, 30.0];
+
 /// One schematic sheet: a page with its own name, paper and frame.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +106,11 @@ impl Sheet {
             paper: Paper::A4,
             orientation: PaperOrientation::Landscape,
         }
+    }
+
+    /// The page's top-left corner on the sheet ([`PAGE_TOP_LEFT`]).
+    pub fn top_left(&self) -> Point {
+        PAGE_TOP_LEFT
     }
 
     /// Page width and height in millimetres.

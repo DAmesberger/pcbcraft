@@ -80,16 +80,18 @@ fn width(bytes: &[u8], size: f64) -> f64 {
     f64::from(units) / 1000.0 * size
 }
 
-/// Maps sheet millimetres (y up, page y ∈ [−h, 0]) to page points.
+/// Maps sheet millimetres (y up, the page's top-left corner at
+/// `top_left`) to page points (y up from the bottom-left corner).
 struct Page {
     height_mm: f64,
+    top_left: Point,
 }
 
 impl Page {
     fn pt(&self, p: Point) -> (f32, f32) {
         (
-            (p[0] * PT_PER_MM) as f32,
-            ((p[1] + self.height_mm) * PT_PER_MM) as f32,
+            ((p[0] - self.top_left[0]) * PT_PER_MM) as f32,
+            ((p[1] - self.top_left[1] + self.height_mm) * PT_PER_MM) as f32,
         )
     }
 }
@@ -184,6 +186,7 @@ fn drawing(c: &mut Content, page: &Page, d: &Drawing) {
 fn content(scene: &SheetScene) -> Vec<u8> {
     let page = Page {
         height_mm: scene.size[1],
+        top_left: scene.top_left,
     };
     let mut c = Content::new();
     c.set_line_cap(LineCapStyle::RoundCap);
@@ -322,7 +325,10 @@ pub fn schematic_pdf(project: &Project, sheets: &[SheetId]) -> Result<Vec<u8>> {
         let scene = scene::sheet_scene(project, *sheet);
         let [w, h] = scene.size;
         let k = PT_PER_MM;
-        let geometry = Page { height_mm: h };
+        let geometry = Page {
+            height_mm: h,
+            top_left: scene.top_left,
+        };
         // A link over each sheet symbol whose child page is printed.
         let mut links = Vec::new();
         for symbol in project.sheet_symbols.iter().filter(|s| s.sheet == *sheet) {

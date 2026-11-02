@@ -6,7 +6,8 @@ use crate::issues::{Badge, Badges};
 use crate::kit::{self, Row};
 use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS, UpdateAvailable};
 use pcbcraft_core::library::Definition;
-use pcbcraft_core::{DefinitionId, Engine, Id, Query, QueryResult};
+use pcbcraft_core::schematic::SheetRow;
+use pcbcraft_core::{DefinitionId, Engine, Id, Query, QueryResult, SheetId};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the Browser highlights: the active workspace's selection.
@@ -18,6 +19,8 @@ pub struct Lit {
     pub net: Option<Id>,
     pub track: Option<Id>,
     pub board: bool,
+    /// The schematic's active sheet.
+    pub sheet: Option<SheetId>,
 }
 
 /// A row the user picked.
@@ -29,6 +32,8 @@ pub enum Pick {
     Placement(Id),
     Track(Id),
     Board,
+    /// A schematic sheet: show it.
+    Sheet(SheetId),
 }
 
 /// One component lineage as the Browser lists it.
@@ -398,6 +403,9 @@ pub fn show(
 
     let schematic_lit = lit.instance.is_some() || lit.net.is_some();
     if folder(ui, "schematic", 1, "Schematic", None, schematic_lit, true) {
+        if let Some(sheet) = sheets(ui, engine, lit) {
+            pick = Some(Pick::Sheet(sheet));
+        }
         if folder(
             ui,
             "instances",
@@ -673,6 +681,56 @@ pub fn show_sources(
         pick = Some(SourcePick::Manage);
     }
     pick
+}
+
+/// The Sheets folder: every sheet in page order, nested under the sheet
+/// whose sheet symbol uses it (`schematic.sheets`). Returns the picked one.
+fn sheets(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<SheetId> {
+    let Ok(QueryResult::Sheets(rows)) = engine.query(Query::Sheets {}) else {
+        return None;
+    };
+    if !folder(ui, "sheets", 2, "Sheets", Some(rows.len()), false, true) {
+        return None;
+    }
+    let mut pick = None;
+    for row in hierarchy(&rows) {
+        let secondary = format!("page {}", row.page);
+        let response = kit::tree_row(
+            ui,
+            egui::Id::new(("browser-sheet", row.id.0)),
+            &Row {
+                depth: 3 + row.depth.min(8),
+                icon: "sketch",
+                label: &row.name,
+                secondary: &secondary,
+                selected: lit.sheet == Some(row.id),
+                tip: "Show this sheet",
+                ..Default::default()
+            },
+        );
+        if response.clicked {
+            pick = Some(row.id);
+        }
+    }
+    pick
+}
+
+/// Sheets depth-first under each top-level sheet, siblings in page order.
+fn hierarchy(rows: &[SheetRow]) -> Vec<&SheetRow> {
+    let mut out: Vec<&SheetRow> = Vec::with_capacity(rows.len());
+    let mut stack: Vec<&SheetRow> = rows.iter().filter(|r| r.parent.is_none()).rev().collect();
+    while let Some(row) = stack.pop() {
+        if out.iter().any(|r| r.id == row.id) {
+            continue;
+        }
+        out.push(row);
+        stack.extend(
+            rows.iter()
+                .filter(|r| r.parent.as_ref().map(|p| p.sheet) == Some(row.id))
+                .rev(),
+        );
+    }
+    out
 }
 
 #[cfg(test)]

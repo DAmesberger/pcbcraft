@@ -13,7 +13,7 @@ As built on 2 November 2026. This extends the single-sheet capture described in 
 | Notes, lines, rectangles | `Project.drawings` (`SheetDrawing { id, sheet, item }`) | object `Id` |
 | Sheet of a symbol occurrence or junction | `SymbolOccurrence.sheet`, `Junction.sheet` | — |
 
-File format (still version 1, no migrations): every new field has a default and is omitted when it holds it (`sheets` when it is the single default sheet, `sheet` when it is sheet 1, empty lists), so a single-sheet design without labels writes exactly what it wrote before. Wire ends gain `{"label": id}` and `{"sheet_pin": id}`; a wire's sheet is that of its ends, and both ends must lie on one sheet. Sheet coordinates are millimetres with y up; a page spans x ∈ [0, width], y ∈ [−height, 0].
+File format (still version 1, no migrations): every new field has a default and is omitted when it holds it (`sheets` when it is the single default sheet, `sheet` when it is sheet 1, empty lists), so a single-sheet design without labels writes exactly what it wrote before. Wire ends gain `{"label": id}` and `{"sheet_pin": id}`; a wire's sheet is that of its ends, and both ends must lie on one sheet. Sheet coordinates are millimetres with y up; every page has its top-left corner at (−30, 30) mm (`model::sheet::PAGE_TOP_LEFT`), so content near the origin, as single-sheet designs placed it, lies inside the frame.
 
 ## Labels
 
