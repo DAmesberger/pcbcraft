@@ -1186,14 +1186,14 @@ enum CardAction {
 }
 
 /// The file manager's name for revealing a folder.
-const REVEAL: &str = if cfg!(target_os = "macos") {
+pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
     "Show in Finder"
 } else {
     "Show folder"
 };
 
 /// Show a folder in the system file manager, without waiting for it.
-fn reveal(path: &Path) {
+pub(crate) fn reveal(path: &Path) {
     let mut command = if cfg!(target_os = "macos") {
         let mut command = std::process::Command::new("open");
         command.arg("-R");

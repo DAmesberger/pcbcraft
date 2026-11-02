@@ -33,6 +33,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 schemars = "1.2"
 thiserror = "2"
 i_overlay = { version = "9.1", default-features = false }
+pdf-writer = "0.15"
 rhai = { version = "=1.27.0", default-features = false, features = ["std", "sync", "no_module", "no_time"] }
 egui = "0.36"
 egui-wgpu = "0.36"

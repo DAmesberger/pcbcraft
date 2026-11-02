@@ -25,6 +25,7 @@ mod copper;
 pub mod courtyard;
 pub mod fill;
 mod grid;
+pub mod legend;
 pub mod limits;
 pub mod outline;
 mod placed;

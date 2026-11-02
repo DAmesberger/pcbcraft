@@ -58,6 +58,12 @@ fn project_except_library(p: &Project) -> Result<()> {
         return Err(Error::Invalid("too many component instances".into()));
     }
     p.rules.validate()?;
+    if !p.production.within_bounds() {
+        return Err(Error::Invalid(
+            "fabrication.waiver_bounds: waivers need unique keys and bounded, printable text"
+                .into(),
+        ));
+    }
     instances::check_all(p)?;
     instances::check_designators(p)?;
     schematic::validate(p)?;

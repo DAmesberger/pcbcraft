@@ -8,6 +8,7 @@ pub mod commands;
 pub mod completeness;
 pub mod diagnostics;
 pub mod erc;
+pub mod fabrication;
 pub mod fields;
 pub mod firmware;
 pub mod format;
@@ -58,6 +59,8 @@ pub enum Operation {
     Fill(layout::fill::FillCommand),
     /// Board shape and edge constraints (`board.*`).
     Board(layout::outline::BoardCommand),
+    /// Pre-flight waivers for fabrication output (`fabrication.*`).
+    Fabrication(fabrication::FabricationCommand),
     Update(Box<updates::ApplyUpdate>),
 }
 
@@ -227,6 +230,14 @@ pub enum Query {
     /// Per fill: whether its computed copper is stale.
     #[serde(rename = "fill.status")]
     FillStatus {},
+    /// The production check before fabrication export: the design checked
+    /// under `profile` (the project's rules when omitted) plus production
+    /// findings, each with its waiver key and saved waiver.
+    #[serde(rename = "fabrication.preflight")]
+    Preflight {
+        #[serde(default)]
+        profile: Option<Box<rules::RuleProfile>>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -259,6 +270,7 @@ pub enum QueryResult {
     NetClassChanges(Vec<rules::netclass::ClassChange>),
     BoardShape(Box<model::SolvedBoard>),
     FillStatus(Vec<layout::fill::FillStatus>),
+    Preflight(Box<fabrication::PreflightReport>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -786,6 +798,14 @@ impl Engine {
                     None => Outcome::None,
                 }
             }
+            Operation::Fabrication(command) => {
+                let mut next = candidate.project.production.clone();
+                fabrication::preflight::apply(&mut next, command)?;
+                if next != candidate.project.production {
+                    Arc::make_mut(&mut candidate.project).production = next;
+                }
+                Outcome::None
+            }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
@@ -981,6 +1001,13 @@ impl Engine {
             }
             Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
                 self.document.project.board().into_owned(),
+            ))),
+            Query::Preflight { profile } => Ok(QueryResult::Preflight(Box::new(
+                fabrication::preflight::report(
+                    &self.document.project,
+                    &self.document.drafts,
+                    profile.as_deref(),
+                )?,
             ))),
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
