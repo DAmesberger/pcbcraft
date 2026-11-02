@@ -97,7 +97,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 
 ## Limits
 
-- Push-and-shove is not part of this work; routing respects class widths and the rule minimums. The seam it will use is described in [high-speed routing](high-speed-routing.md#the-push-and-shove-seam).
+- Push-and-shove was not part of this work; routing respects class widths and the rule minimums. It was built later on the seam described in [high-speed routing](high-speed-routing.md#the-push-and-shove-seam); see [push-and-shove](push-and-shove.md).
 - Document validation still bounds vias by the board's bounding box (`board_size`). A via outside a sketched outline but inside its bounding box is a board-edge finding, not an invalid document.
 - The Board shape mode, the Fill tool and card, the Net classes card and the Design rules panel are covered by engine and egui-frame tests (`the_host_evaluator_solves_a_cutout_gesture_on_the_engine` drives a Cutout gesture through the linked sketch engine).
 - The shipped showcase's cutout and slot are drawn at coordinates, not dimensioned, so its sketch solves under-constrained; its outline is fully driven by `width`, `height` and `corner_r`.

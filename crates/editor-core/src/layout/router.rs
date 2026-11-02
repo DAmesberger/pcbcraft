@@ -324,7 +324,8 @@ fn walk_head(
     };
     match request.via.zip(request.via_layer) {
         None => {
-            let w = walker(request.layer).walk(ctx, state, request.head, request.to, request.flipped);
+            let w =
+                walker(request.layer).walk(ctx, state, request.head, request.to, request.flipped);
             (
                 Head {
                     first: w.points,
@@ -335,13 +336,8 @@ fn walk_head(
             )
         }
         Some((via, layer)) => {
-            let w1 = walker(request.layer).walk(
-                ctx,
-                state,
-                request.head,
-                via.position,
-                request.flipped,
-            );
+            let w1 =
+                walker(request.layer).walk(ctx, state, request.head, via.position, request.flipped);
             let mut head = Head {
                 first: w1.points,
                 ..Default::default()
@@ -410,7 +406,15 @@ fn shove_plan(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
     let straight = Head::straight(request);
     let first_try = match attempt(ctx, request, &straight) {
         Ok(state) => {
-            return finish(ctx, request, &straight, &state, RouteMode::Shove, true, None);
+            return finish(
+                ctx,
+                request,
+                &straight,
+                &state,
+                RouteMode::Shove,
+                true,
+                None,
+            );
         }
         Err(hit) => hit,
     };
@@ -429,7 +433,15 @@ fn shove_plan(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
     let empty = State::default();
     let (walked, reached, blocker) = walk_head(ctx, &empty, request, &|_| true);
     if reached {
-        return finish(ctx, request, &walked, &empty, RouteMode::Walkaround, true, None);
+        return finish(
+            ctx,
+            request,
+            &walked,
+            &empty,
+            RouteMode::Walkaround,
+            true,
+            None,
+        );
     }
     // Shove as far along the straight step as room allows.
     let total = clean::length(&straight.first);
@@ -449,7 +461,15 @@ fn shove_plan(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
             if distance(head.end(request).0, request.to)
                 <= distance(walked_end, request.to) + 1e-9 =>
         {
-            finish(ctx, request, &head, &state, RouteMode::Shove, false, Some(first_try))
+            finish(
+                ctx,
+                request,
+                &head,
+                &state,
+                RouteMode::Shove,
+                false,
+                Some(first_try),
+            )
         }
         _ => finish(
             ctx,
@@ -673,7 +693,12 @@ pub fn pair_plan(
                 return done(walked, &empty, RouteMode::Walkaround, true, None);
             }
             // Shove as far along the centre line as room allows.
-            let line = posture::path(request.head.center, request.to, request.posture, request.flipped);
+            let line = posture::path(
+                request.head.center,
+                request.to,
+                request.posture,
+                request.flipped,
+            );
             let pushed = bisect(clean::length(&line), |along| {
                 let to = *clean::prefix(&line, along).last()?;
                 let step = pair::step(&PairStepRequest {
@@ -715,7 +740,12 @@ fn pair_walk(ctx: &Ctx<'_>, request: &PairStepRequest) -> (PairStep, bool, Optio
         let Some(hit) = pair_conflict(ctx, request, &plain) else {
             return (plain, true, None);
         };
-        let line = posture::path(request.head.center, request.to, request.posture, request.flipped);
+        let line = posture::path(
+            request.head.center,
+            request.to,
+            request.posture,
+            request.flipped,
+        );
         return cut_back(ctx, request, &line, hit);
     }
     let envelope = 2.0 * request.style.width + request.style.gap;
@@ -733,7 +763,12 @@ fn pair_walk(ctx: &Ctx<'_>, request: &PairStepRequest) -> (PairStep, bool, Optio
     // pads or vias fan out before the first bend.
     let center = request.head.center;
     let pitch = request.style.width + request.style.gap;
-    let lead = lead_direction(request).map(|d| [center[0] + d[0] * 2.0 * pitch, center[1] + d[1] * 2.0 * pitch]);
+    let lead = lead_direction(request).map(|d| {
+        [
+            center[0] + d[0] * 2.0 * pitch,
+            center[1] + d[1] * 2.0 * pitch,
+        ]
+    });
     let empty = State::default();
     let mut walks = Vec::new();
     for flip in [request.flipped, !request.flipped] {

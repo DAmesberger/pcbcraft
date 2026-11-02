@@ -7,10 +7,13 @@
 //! and a fan-in when the click lands on a pad of the pair. Width and gap
 //! follow the class on each layer (derived from its impedance target).
 //!
-//! A step is one `layout.route_apply`; a step that continues a coupled
+//! A step is one `layout.route_apply` of the router's pair plan
+//! (`router::pair_plan`: in Shove and Walkaround the halves push other
+//! copper and walk round it as one unit); a step that continues a coupled
 //! run extends the previous step's last tracks to the new mitre, and
-//! Backspace gives them back. P switches pair routing off for single nets.
-use super::route_tool::Commit;
+//! Backspace gives them back with anything the step shoved. P switches
+//! pair routing off for single nets.
+use super::route_tool::{Commit, Planned};
 use super::{PcbEditor, PlacedPad};
 use pcbcraft_core::layout::pair::{self, PairHead, PairStepRequest, PairVias};
 use pcbcraft_core::layout::{LayoutCommand, impedance};
@@ -184,15 +187,22 @@ impl PcbEditor {
             .unwrap_or_else(|| self.route_point(at, scale));
         let (to, finish) = self.pair_target(end);
         let request = self.pair_request(project, to, finish)?;
-        let step = pair::step(&request);
+        let planned = self.route_plan(project, revision, end)?;
+        let Planned::Pair(plan) = planned.as_ref() else {
+            return None;
+        };
+        let step = &plan.step;
         if step.edits.add.is_empty() && step.edits.vias.is_empty() {
             return None;
         }
         let route = self.route.pair.as_ref()?;
+        // The pair's own tracks it extends; shoved tracks go back through
+        // the plan's undo.
         let restore = step
             .edits
             .replace
             .iter()
+            .filter(|r| route.nets.contains(&r.net))
             .filter_map(|r| project.tracks.iter().find(|t| t.id == r.id).cloned())
             .collect();
         self.route.commit = Some(Commit::Step {
@@ -201,7 +211,9 @@ impl PcbEditor {
             from: route.head.center,
             layer: request.layer,
             to: step.head.center,
-            finish: finish.is_some(),
+            finish: finish.is_some() && plan.reached,
+            via_placed: !step.edits.vias.is_empty(),
+            unshove: Box::new(plan.undo.clone()),
             pair: Some(Box::new((
                 PairUndo {
                     head: route.head,
@@ -212,7 +224,7 @@ impl PcbEditor {
             ))),
         });
         Some(Operation::Layout(LayoutCommand::ApplyRoute {
-            edits: step.edits,
+            edits: step.edits.clone(),
         }))
     }
 

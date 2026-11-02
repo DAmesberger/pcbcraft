@@ -192,7 +192,10 @@ fn chain(p: &Project, plan: &RoutePlan, net: Id) -> Vec<Point> {
 fn walkaround_goes_round_a_via() -> Fallible {
     let mut p = board()?;
     via(&mut p, A, [30.0, 20.0])?;
-    let plan = run(&p, &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround),
+    );
     assert!(plan.reached, "{:?}", plan.blocked);
     assert_eq!(plan.used, RouteMode::Walkaround);
     let points = head_points(&plan, B);
@@ -210,7 +213,10 @@ fn walkaround_goes_round_a_via() -> Fallible {
 fn walkaround_goes_round_a_track() -> Fallible {
     let mut p = board()?;
     track(&mut p, A, [30.0, 17.0], [30.0, 25.0])?;
-    let plan = run(&p, &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround),
+    );
     assert!(plan.reached, "{:?}", plan.blocked);
     let points = head_points(&plan, B);
     assert!(angles_ok(&points));
@@ -225,7 +231,10 @@ fn walkaround_goes_round_a_track() -> Fallible {
 #[test]
 fn walkaround_goes_round_pads() -> Fallible {
     let mut p = board()?;
-    let plan = run(&p, &request(C, [3.0, 8.0], [16.8, 8.0], RouteMode::Walkaround));
+    let plan = run(
+        &p,
+        &request(C, [3.0, 8.0], [16.8, 8.0], RouteMode::Walkaround),
+    );
     assert!(plan.reached, "{:?}", plan.blocked);
     let points = head_points(&plan, C);
     assert!(angles_ok(&points));
@@ -274,11 +283,17 @@ fn walkaround_respects_keepouts_and_the_board_edge() -> Fallible {
             }),
         },
     )?;
-    let plan = run(&p, &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround),
+    );
     assert!(plan.reached, "{:?}", plan.blocked);
     commit(&mut p, &plan)?;
     // Off the board: stop inside, never outside.
-    let plan = run(&p, &request(B, [50.0, 30.0], [70.0, 30.0], RouteMode::Walkaround));
+    let plan = run(
+        &p,
+        &request(B, [50.0, 30.0], [70.0, 30.0], RouteMode::Walkaround),
+    );
     assert!(!plan.reached);
     assert!(plan.end[0] <= 60.0 - WIDTH / 2.0 + 1e-6 && plan.end[0] > 59.0);
     assert!(plan.blocked.is_some());
@@ -292,7 +307,10 @@ fn walkaround_respects_keepouts_and_the_board_edge() -> Fallible {
 fn shove_pushes_one_track() -> Fallible {
     let mut p = board()?;
     let id = track(&mut p, A, [20.0, 20.0], [40.0, 20.0])?;
-    let plan = run(&p, &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove),
+    );
     assert!(plan.reached && plan.used == RouteMode::Shove, "{plan:?}");
     assert_eq!(plan.shoved, vec![id]);
     assert_eq!(head_points(&plan, B), vec![[25.0, 19.6], [35.0, 19.6]]);
@@ -316,10 +334,17 @@ fn shove_pushes_a_chain_of_three_tracks() -> Fallible {
         track(&mut p, C, [20.0, 20.5], [40.0, 20.5])?,
         track(&mut p, A, [20.0, 21.0], [40.0, 21.0])?,
     ];
-    let plan = run(&p, &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove),
+    );
     assert!(plan.reached && plan.used == RouteMode::Shove, "{plan:?}");
     for id in ids {
-        assert!(plan.shoved.contains(&id), "{id} not shoved: {:?}", plan.shoved);
+        assert!(
+            plan.shoved.contains(&id),
+            "{id} not shoved: {:?}",
+            plan.shoved
+        );
     }
     commit(&mut p, &plan)?;
     for t in &p.tracks {
@@ -335,12 +360,18 @@ fn shove_moves_a_via_and_its_track_follows() -> Fallible {
     let mut p = board()?;
     let v = via(&mut p, A, [30.0, 20.2])?;
     let t = track(&mut p, A, [30.0, 20.2], [30.0, 26.0])?;
-    let plan = run(&p, &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 19.6], [35.0, 19.6], RouteMode::Shove),
+    );
     assert!(plan.reached && plan.used == RouteMode::Shove, "{plan:?}");
     assert_eq!(plan.moved_vias, vec![v]);
     assert!(plan.shoved.contains(&t));
     let moved = plan.edits.move_vias.first().ok_or("no move")?;
-    assert!((moved.position[0] - 30.0).abs() < 1e-9, "straight up: {moved:?}");
+    assert!(
+        (moved.position[0] - 30.0).abs() < 1e-9,
+        "straight up: {moved:?}"
+    );
     assert!(moved.position[1] >= 19.6 + 0.15 + CLEARANCE + 0.3 - 1e-6);
     commit(&mut p, &plan)?;
     let at = p.via(v).ok_or("via")?.position;
@@ -372,7 +403,10 @@ fn immovable_copper_makes_the_shove_fall_back() -> Fallible {
     let mut p = board()?;
     let id = track(&mut p, A, [30.0, 17.0], [30.0, 23.0])?;
     apply(&mut p, LayoutCommand::SetTrackLock { id, locked: true })?;
-    let plan = run(&p, &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Shove));
+    let plan = run(
+        &p,
+        &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Shove),
+    );
     assert!(plan.shoved.is_empty() && plan.reached, "{plan:?}");
     // Round the locked track's lower end.
     let low = head_points(&plan, B)
@@ -384,11 +418,23 @@ fn immovable_copper_makes_the_shove_fall_back() -> Fallible {
     // A locked wall across the whole board.
     let mut q = board()?;
     let wall = track(&mut q, A, [30.0, 0.2], [30.0, 39.8])?;
-    apply(&mut q, LayoutCommand::SetTrackLock { id: wall, locked: true })?;
-    let plan = run(&q, &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Shove));
+    apply(
+        &mut q,
+        LayoutCommand::SetTrackLock {
+            id: wall,
+            locked: true,
+        },
+    )?;
+    let plan = run(
+        &q,
+        &request(B, [25.0, 20.0], [35.0, 20.0], RouteMode::Shove),
+    );
     assert!(!plan.reached && plan.shoved.is_empty());
     let stop = 30.0 - WIDTH - CLEARANCE;
-    assert!(plan.end[0] <= stop + 1e-6 && plan.end[0] > stop - 0.05, "{plan:?}");
+    assert!(
+        plan.end[0] <= stop + 1e-6 && plan.end[0] > stop - 0.05,
+        "{plan:?}"
+    );
     assert!(plan.blocked.is_some());
     commit(&mut q, &plan)?;
     // A pad: the head going through R2 is walked round it.
@@ -405,12 +451,21 @@ fn shoved_copper_springs_back() -> Fallible {
     let mut p = board()?;
     let id = track(&mut p, A, [20.0, 20.0], [40.0, 20.0])?;
     let before = p.tracks.clone();
-    let near = run(&p, &request(B, [25.0, 17.0], [30.0, 19.7], RouteMode::Shove));
+    let near = run(
+        &p,
+        &request(B, [25.0, 17.0], [30.0, 19.7], RouteMode::Shove),
+    );
     assert_eq!(near.shoved, vec![id]);
-    let away = run(&p, &request(B, [25.0, 17.0], [30.0, 18.0], RouteMode::Shove));
+    let away = run(
+        &p,
+        &request(B, [25.0, 17.0], [30.0, 18.0], RouteMode::Shove),
+    );
     assert!(away.shoved.is_empty() && away.edits.replace.is_empty());
     assert_eq!(p.tracks, before, "previews never touch the board");
-    let back = run(&p, &request(B, [25.0, 17.0], [30.0, 19.7], RouteMode::Shove));
+    let back = run(
+        &p,
+        &request(B, [25.0, 17.0], [30.0, 19.7], RouteMode::Shove),
+    );
     assert_eq!(back.edits, near.edits, "the same pointer, the same push");
     commit(&mut p, &away)
 }
@@ -425,7 +480,10 @@ fn shoved_chains_are_cleaned_up_in_their_posture() -> Fallible {
     track(&mut p, A, [20.0, 20.0], [28.0, 20.0])?;
     track(&mut p, A, [28.0, 20.0], [28.0, 24.0])?;
     track(&mut p, A, [28.0, 24.0], [40.0, 24.0])?;
-    let plan = run(&p, &request(B, [22.0, 19.6], [26.0, 19.6], RouteMode::Shove));
+    let plan = run(
+        &p,
+        &request(B, [22.0, 19.6], [26.0, 19.6], RouteMode::Shove),
+    );
     assert!(plan.reached && !plan.shoved.is_empty(), "{plan:?}");
     let moved = chain(&p, &plan, A);
     assert_eq!(clean::posture_of(&moved), Posture::Orthogonal, "{moved:?}");
@@ -440,7 +498,10 @@ fn shoved_chains_are_cleaned_up_in_their_posture() -> Fallible {
     let mut q = board()?;
     track(&mut q, A, [20.0, 20.0], [25.0, 25.0])?;
     track(&mut q, A, [25.0, 25.0], [35.0, 25.0])?;
-    let plan = run(&q, &request(B, [30.0, 20.0], [30.0, 24.8], RouteMode::Shove));
+    let plan = run(
+        &q,
+        &request(B, [30.0, 20.0], [30.0, 24.8], RouteMode::Shove),
+    );
     assert!(plan.reached && !plan.shoved.is_empty(), "{plan:?}");
     let moved = chain(&q, &plan, A);
     assert!(angles_ok(&moved) && !clean::has_acute(&moved), "{moved:?}");
@@ -498,10 +559,13 @@ fn clearance_is_always_honoured_over_random_obstacle_fields() -> Fallible {
             for _ in 0..4 {
                 let (head, to) = (rng.point(), rng.point());
                 let r = request(B, head, to, mode);
-                if !run(&p, &RouteStepRequest {
-                    to: head,
-                    ..r.clone()
-                })
+                if !run(
+                    &p,
+                    &RouteStepRequest {
+                        to: head,
+                        ..r.clone()
+                    },
+                )
                 .edits
                 .add
                 .is_empty()
@@ -552,8 +616,18 @@ fn a_pair_shoves_and_walks_as_one_unit() -> Fallible {
     let mut p = board()?;
     let id = track(&mut p, C, [20.0, 20.6], [40.0, 20.6])?;
     let index = RouteIndex::of(&p);
-    let plan = pair_plan(&p, &index, &pair_request([35.0, 20.0]), RouteMode::Shove, true);
-    assert!(plan.reached && plan.used == RouteMode::Shove, "{:?}", plan.blocked);
+    let plan = pair_plan(
+        &p,
+        &index,
+        &pair_request([35.0, 20.0]),
+        RouteMode::Shove,
+        true,
+    );
+    assert!(
+        plan.reached && plan.used == RouteMode::Shove,
+        "{:?}",
+        plan.blocked
+    );
     assert_eq!(plan.shoved, vec![id]);
     assert!(plan.step.edits.add.iter().any(|r| r.net == A));
     assert!(plan.step.edits.add.iter().any(|r| r.net == B));
@@ -568,7 +642,13 @@ fn a_pair_shoves_and_walks_as_one_unit() -> Fallible {
     let mut q = board()?;
     via(&mut q, C, [30.0, 20.0])?;
     let index = RouteIndex::of(&q);
-    let plan = pair_plan(&q, &index, &pair_request([35.0, 20.0]), RouteMode::Walkaround, true);
+    let plan = pair_plan(
+        &q,
+        &index,
+        &pair_request([35.0, 20.0]),
+        RouteMode::Walkaround,
+        true,
+    );
     assert!(plan.reached, "{:?}", plan.blocked);
     apply(
         &mut q,
@@ -618,7 +698,10 @@ fn a_route_step_is_one_atomic_undoable_transaction() -> Fallible {
     else {
         return Err("no preview".into());
     };
-    assert!(preview.shoved.len() >= 2 && !preview.moved_vias.is_empty(), "{preview:?}");
+    assert!(
+        preview.shoved.len() >= 2 && !preview.moved_vias.is_empty(),
+        "{preview:?}"
+    );
     let revision = engine.revision();
     engine.apply(revision, layout(LayoutCommand::RouteStep { request: r }))?;
     assert_eq!(engine.revision(), revision + 1);
@@ -654,7 +737,10 @@ fn a_route_step_is_one_atomic_undoable_transaction() -> Fallible {
     let revision = engine.revision();
     assert!(
         engine
-            .apply(revision, layout(LayoutCommand::RouteStep { request: stuck }))
+            .apply(
+                revision,
+                layout(LayoutCommand::RouteStep { request: stuck })
+            )
             .is_err()
     );
     assert_eq!(engine.revision(), revision);
@@ -681,4 +767,3 @@ fn ignore_proposes_the_plain_step() -> Fallible {
     );
     Ok(())
 }
-

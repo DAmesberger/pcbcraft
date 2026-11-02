@@ -68,8 +68,9 @@ fn piece(ctx: &Ctx<'_>, state: &State, pusher: Pusher, k: usize) -> Option<Piece
 /// Push everything the fixed copper of `state` collides with out of its
 /// way. `Err` names what could not move.
 pub(super) fn shove(ctx: &Ctx<'_>, state: &mut State) -> Result<(), Hit> {
-    let mut queue: VecDeque<(Pusher, usize)> =
-        (0..state.fixed.len()).map(|f| (Pusher::Fixed(f), 0)).collect();
+    let mut queue: VecDeque<(Pusher, usize)> = (0..state.fixed.len())
+        .map(|f| (Pusher::Fixed(f), 0))
+        .collect();
     let mut budget = MAX_SHOVES;
     let stop = ctx.probes.get().saturating_add(MAX_PROBES);
     while let Some((pusher, depth)) = queue.pop_front() {
@@ -215,7 +216,12 @@ fn adopt_line(ctx: &Ctx<'_>, state: &mut State, k: usize) -> Option<usize> {
         width,
         ids,
         base,
-        posture: posture_of(&points),
+        // One straight track takes 45° jogs; a chain with 90° corners
+        // keeps to the axes.
+        posture: match posture_of(&points) {
+            Posture::Orthogonal if points.len() <= 2 => Posture::Diagonal,
+            posture => posture,
+        },
         original: points.clone(),
         points,
     });
@@ -260,7 +266,12 @@ fn push_line(ctx: &Ctx<'_>, state: &mut State, l: usize, pusher: &Piece) -> Opti
         Facets::Eight
     };
     let grow = line.width / 2.0;
-    let need = ctx.clearance(CopperObject::Track, line.net, pusher.object, Some(pusher.net));
+    let need = ctx.clearance(
+        CopperObject::Track,
+        line.net,
+        pusher.object,
+        Some(pusher.net),
+    );
     let mut hull = Hull::of_segment(
         pusher.core.a,
         pusher.core.b,
@@ -311,7 +322,14 @@ fn push_line(ctx: &Ctx<'_>, state: &mut State, l: usize, pusher: &Piece) -> Opti
             return Some(());
         }
         let (_, hit) = blocking?;
-        let grown = ctx.hull(state, hit.target, line.net, CopperObject::Track, grow, facets)?;
+        let grown = ctx.hull(
+            state,
+            hit.target,
+            line.net,
+            CopperObject::Track,
+            grow,
+            facets,
+        )?;
         hull.merge(&grown);
     }
     None
@@ -330,7 +348,13 @@ fn touches(hit: &Hit, pusher: &Piece, state: &State) -> bool {
 
 /// Shortcut runs of a shoved chain's corners with posture paths that
 /// touch nothing, then clean up.
-fn tidy(ctx: &Ctx<'_>, state: &State, line: &Line, points: &[Point], own: &[crate::ids::Id]) -> Vec<Point> {
+fn tidy(
+    ctx: &Ctx<'_>,
+    state: &State,
+    line: &Line,
+    points: &[Point],
+    own: &[crate::ids::Id],
+) -> Vec<Point> {
     let n = points.len();
     if n < 3 {
         return points.to_vec();
@@ -454,8 +478,14 @@ fn follow(
         if line.net != via.net {
             continue;
         }
-        let at_end = line.points.last().is_some_and(|p| distance(*p, from) < 1e-6);
-        let at_start = line.points.first().is_some_and(|p| distance(*p, from) < 1e-6);
+        let at_end = line
+            .points
+            .last()
+            .is_some_and(|p| distance(*p, from) < 1e-6);
+        let at_start = line
+            .points
+            .first()
+            .is_some_and(|p| distance(*p, from) < 1e-6);
         if !(at_end || at_start) {
             continue;
         }

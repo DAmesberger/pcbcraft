@@ -60,6 +60,8 @@ mod route_card;
 mod route_tests;
 pub(crate) mod route_tool;
 mod rules_panel;
+#[cfg(test)]
+mod shove_tests;
 mod signal_card;
 mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
@@ -332,6 +334,9 @@ pub struct PcbEditor {
     /// The route in progress besides its head, and the routing settings
     /// (`route_tool`).
     route: route_tool::RouteState,
+    /// The tracks and vias the previewed route step shoves: drawn at their
+    /// new places by the preview, not at their old ones.
+    shoved: (Vec<Id>, Vec<Id>),
     /// Whether vias the Via tool and layer changes place are tented.
     via_tented: bool,
     property_key: Option<(u64, Option<Id>)>,
@@ -434,6 +439,7 @@ impl Default for PcbEditor {
             route_start: None,
             pending_via: None,
             route: Default::default(),
+            shoved: Default::default(),
             via_tented: true,
             property_key: None,
             position: [0.0; 2],
@@ -1420,6 +1426,20 @@ impl PcbEditor {
             }
         }
         self.refresh_drag_airwires(engine);
+        // The route step under the pointer, planned before the board is
+        // drawn so the copper it shoves is drawn at its new place only.
+        let route_end = match (self.route_start, cursor) {
+            (Some(_), Some(at)) => Some(
+                self.route_snap(at, scale)
+                    .map(PlacedPad::center)
+                    .unwrap_or_else(|| self.route_point(at, scale)),
+            ),
+            _ => None,
+        };
+        if let Some(end) = route_end {
+            let _ = self.route_plan(project, engine.revision(), end);
+        }
+        self.shoved = self.route_moved(engine.revision());
         self.paint_board(&painter, view, project);
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
@@ -1438,11 +1458,7 @@ impl PcbEditor {
                 |placement| body_polygon(project, placement),
             );
         }
-        if let (Some(_), Some(at)) = (self.route_start, cursor) {
-            let end = self
-                .route_snap(at, scale)
-                .map(PlacedPad::center)
-                .unwrap_or_else(|| self.route_point(at, scale));
+        if let Some(end) = route_end {
             self.paint_route_preview(&painter, view, project, end);
         }
         if self.tool == Tool::Tune {
@@ -1491,10 +1507,11 @@ impl PcbEditor {
         let t = Tokens::get();
         let text = match (self.route_start, self.net, self.highlighted) {
             (Some(_), Some(net), _) => format!(
-                "Routing {} · {} mm · {}",
+                "Routing {} · {} mm · {} · {}",
                 project.net_name(net),
                 kit::number_text(self.width),
-                self.route.posture.label()
+                self.route.posture.label(),
+                self.route.mode.label()
             ),
             (None, _, Some(net)) if project.net(net).is_some() => {
                 format!("{} highlighted", project.net_name(net))
@@ -1963,7 +1980,11 @@ impl PcbEditor {
         let ink = BoardInk::get();
         let plain = ink.on_board(colors.copper_layer(layer), shade);
         let selected = ink.on_board(colors.selected, shade);
-        for track in project.tracks.iter().filter(|t| t.layer == layer) {
+        for track in project
+            .tracks
+            .iter()
+            .filter(|t| t.layer == layer && !self.shoved.0.contains(&t.id))
+        {
             let chosen = self.track == Some(track.id) || self.highlighted == Some(track.net);
             painter.add(Shape::convex_polygon(
                 capsule(
@@ -1985,7 +2006,7 @@ impl PcbEditor {
         let ink = BoardInk::get();
         let scale = view.view.scale;
         for via in &project.vias {
-            if !self.layers.via(via, &self.stack) {
+            if !self.layers.via(via, &self.stack) || self.shoved.1.contains(&via.id) {
                 continue;
             }
             let selected = self.via == Some(via.id) || self.highlighted == Some(via.net);
@@ -3801,8 +3822,14 @@ mod tests {
         editor.on_tool("route", &engine);
         editor.net = Some(net);
         editor.route_start = Some([9.2, 8.0]);
+        // Ignore: the plain step, which the engine refuses (Shove and
+        // Walkaround stop at the board edge instead).
+        editor.route.mode = pcbcraft_core::layout::router::RouteMode::Ignore;
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        let pill = format!("Routing {} · 0.3 mm · 45°", engine.project().net_name(net));
+        let pill = format!(
+            "Routing {} · 0.3 mm · 45° · Ignore",
+            engine.project().net_name(net)
+        );
         assert!(texts(&output).contains(&pill));
         // A click far outside the board is refused by the engine.
         let operation = {

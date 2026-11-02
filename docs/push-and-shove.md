@@ -1,0 +1,128 @@
+# Push-and-shove and walkaround routing (as built)
+
+AGENTS.md asks for routing that is planned for push-and-shove from the first implementation and delivered by release 2. This note records what was built: the three routing modes, the algorithms, the transaction, the measured timings and the limits. The implementation is original. No GPL router (KiCad's or any other) was read.
+
+## Modes
+
+The Route tool cycles the router with **M**. The Route card's *Router* row and the canvas pill ("Routing N2 · 0.3 mm · 45° · Shove") show the mode in use.
+
+| Mode | What a step does about other nets' copper |
+| --- | --- |
+| **Shove** (default) | Pushes other nets' tracks and vias aside, recursively. Walks round what cannot move. Stops at the last legal point when no way exists. |
+| **Walkaround** | Goes round tracks, vias, pads, keepouts and cutouts at the rule clearance, hugging them at 45° (or 90°). Stops at the last legal point at the board edge or when no way round exists. |
+| **Ignore** | Today's behaviour: the plain posture step, which the engine refuses on a clearance violation. |
+
+**Why Shove is the default.** Shove includes walkaround: when nothing can be pushed, it walks round the immovable copper and pushes the rest along that path, and when that fails it walks round everything. On an empty stretch it is exactly the plain step. It is therefore the more useful default, and it never commits a violation. *Shove vias* in the card, on by default, lets a shove move vias. Locked vias never move.
+
+## One pure function, one transaction
+
+`layout::router::plan(project, index, request) -> RoutePlan` is pure. `RouteIndex` is the board's obstacle index plus keepouts, cutouts and the board edge, built once per document revision. The plan holds:
+
+- the edit set: the step's tracks and via, then the shoved tracks' replacements, extra or dropped segments and moved vias;
+- where the head ends, and whether it reached the target;
+- the mode that produced it;
+- the shoved track and via identities;
+- the undo edits that put the shoved copper back;
+- the reason the head stopped short, if it did.
+
+- **Desktop.** The preview recomputes the plan from the committed board on each pointer move; it is cached per revision and input, so a still pointer costs nothing. The click sends the same plan's edit set as one `layout.route_apply`. That is one engine transaction and one undo step, and it includes every shoved item. The board draws shoved tracks and vias at their new places only. The preview outlines shoved copper in the accent colour. A head that stops short gets a warning ring and a line to the pointer.
+- **Spring-back.** The preview always starts from the committed board, so shoved copper returns as soon as the head moves away within the gesture (`shoved_copper_springs_back`).
+- **CLI and MCP.** `layout.route_step { request }` runs the same `plan` inside the engine and applies it as one undo step. A step that cannot move the head is refused with the blocking reason, and nothing changes. `layout.route_preview { request }` returns the `RoutePlan` without applying it. The request has the net, width, layer, head, target, posture, flip, optional via and via layer, `mode` (default `shove`) and `move_vias` (default true).
+- **Backspace** unwinds a step with one `layout.route_apply`. It removes the step's new tracks and via, puts shoved tracks back with their identities (`replace`, and `restore` for segments a shove merged away) and moves vias back (`move_vias`). `RouteEditSet` gained `restore` and `move_vias` for this. The engine checks both: a restored identity must be free and issued before, a locked via refuses the edit, and moved vias are clearance-checked once the tracks are in place.
+
+The engine's `layout.route_apply` checks remain the authority. The router's collision queries use the same copper rings (`CopperRing`) and the same rules (`limits::BoardRules`, net-class and class-pair clearances, the pair-halves exception), so whatever the router finds clear, the engine accepts. The router is stricter than the engine in two places: it also keeps out of track keepouts and keeps the board-edge clearance from the outline and cutouts.
+
+## Algorithms
+
+**Hulls** (`router/hull.rs`). An obstacle's hull is the intersection of half-planes in eight directions (every 45°), or in four (axes only) for 90° routing. Each half-plane supports the obstacle's core grown by the clearance, the probe's half-width and a 2.1 µm margin. Any point outside the hull is therefore farther than that from the obstacle. A centre line on the hull boundary hugs the obstacle at the clearance, in the posture of the hull's edges. Two hulls merge by taking the larger support in every direction. Hulls only guide the router: every leg it keeps is checked against the exact copper.
+
+**Walkaround** (`router/walk.rs`):
+
+1. The head follows the posture path toward the target. When the next leg collides, the walk takes the obstacle whose hull that leg enters first.
+2. It follows that hull's boundary both ways from the entry point, until the posture path to the target (either elbow) no longer enters the hull.
+3. When a boundary leg collides with another obstacle, that obstacle merges into the hull and the walk retries, up to six merges.
+4. Of the two senses, the shorter total path wins.
+5. Each step repeats for up to 24 obstacles.
+6. A final pass replaces runs of up to ten corners with clear posture paths, so the path hugs instead of following the octagons.
+7. The board edge, a target inside a hull, or an exhausted budget stops the head at the farthest legal point of the blocked leg, found by bisection.
+
+**Shove** (`router/shove.rs`):
+
+1. The step's copper is fixed. Each collision with movable copper pushes it, and each piece that moved pushes in turn, breadth first.
+2. Limits: depth 8, 96 single pushes, and 1,500 collision queries per shove.
+3. A pushed track moves as its chain: tracks of one net, layer and width, joined end to end where no via, pad or third track meets. The chain's ends stay put.
+4. The part of the chain inside the pusher's hull is replaced by the hull's boundary on one side or the other. The chain uses octagons for 45° and free chains and rectangles for 90° chains, so it keeps its posture.
+5. The side whose result is clear of immovable copper wins, the shorter if both are. Immovable copper that a side would touch merges into the hull, and the choice is made again, up to four times.
+6. Cleanup: the pushed span (and only that span) is tidied. Short legs are dropped, collinear legs merged and loops cut, and corners are replaced by posture paths that touch nothing. A result with an acute corner is refused.
+7. A pushed via moves the least distance, in a 45° multiple, that clears the pusher. The chains ending on it follow with a 45° elbow that keeps their last leg's direction.
+8. Never moved: pads, keepouts, the board edge, locked tracks and vias, the routed net's own copper, and vias when *Shove vias* is off. A push into any of these fails the whole shove.
+
+**Shove fallbacks** (`router::shove_plan`), in order:
+
+1. Shove the straight step.
+2. Walk round only the immovable copper, then shove along that path.
+3. Walk round everything.
+4. Shove along the straight step as far as room allows: the longest legal prefix, by bisection to 1/256 of the step. If the walkaround got nearer the target, its legal prefix wins instead.
+
+No branch returns copper that collides.
+
+**Differential pairs** (`router::pair_plan`). In Shove, both halves' tracks and vias are the fixed copper of one shove, and both nets are frozen. The fallbacks are a pair walkaround, then the longest pushable prefix. Pair walkaround walks the centre line as one envelope of 2 × width + gap and lays both halves along it with `pair::step_along`. It tries both elbow senses, plus a lead straight out of the head for two pitches so halves leaving pads fan out before the first bend. The halves are checked as the engine checks them, the gap between them at the pair rule. A layer change keeps its straight legs and is cut back short of the vias when it collides.
+
+## Keys
+
+The Route tool's table (`ROUTE_KEYS`) gains one row: **M** cycles Shove → Walkaround → Ignore. M has no binding in the Layout or global contexts, so it shadows nothing. The keyboard abstraction work moves `ROUTE_KEYS` into registry commands and Route from X to R; the new row is declared in the same table style for that merge.
+
+## Tests
+
+Core (`layout/router/tests.rs`, `hull.rs`, `clean.rs`). Every proposal goes through `layout.route_apply`, and the board checks must find nothing new:
+
+- walkaround round a via (hugging at 0.20–0.25 mm), round a track's nearer end, past R1's and R2's pads at exactly pad + clearance + half-width, and round a keepout; it stops inside the board edge;
+- shove of one track: centre lines 0.5 mm apart over the head, ends and identity kept, 45° jogs;
+- shove of a chain of three tracks of two nets;
+- via shove: straight up, and the attached track follows; with via shoving off the via stays and the head walks round;
+- locked tracks and pads make the shove fall back; a locked wall stops the head at 0.5 mm before it;
+- spring-back, and previews never touching the board;
+- posture cleanup: a 90° chain stays on the axes with no collinear neighbours; a 45° chain keeps 45° multiples with no acute corner;
+- clearance always honoured over 30 random fields of vias and 45° tracks, in both modes (at least 100 steps; at least half arrive);
+- a coupled pair shoving a track and walking round a via;
+- `layout.route_step` as one transaction: one revision, undo and redo restore every shoved track and via exactly, the preview query agrees, the plan's undo edits restore the board, and a step that cannot move is refused without change;
+- Ignore proposes exactly `posture::step`.
+
+Desktop (`pcb_editor/shove_tests.rs`), headless through the canvas:
+
+- M cycles the mode, which the card and the pill show;
+- a click in Shove sends the shoving `layout.route_apply` and the preview hides the shoved track's old place;
+- Backspace puts the shoved track back;
+- Walkaround goes round, and Ignore is refused by the engine.
+
+## Performance
+
+Measured on Apple silicon (this checkout, release build), with `cargo test -p pcbcraft-core --release route_plan_timings -- --ignored --nocapture`:
+
+| Board | Index build | Walkaround per move (median / p95 / max) | Shove per move (median / p95 / max) |
+| --- | --- | --- | --- |
+| Showcase (10 connections × 20 pointer positions) | 0.12 ms | 0.012 / 0.048 / 0.10 ms | 0.012 / 0.27 / 0.73 ms |
+| Dense: 10,000 vias at 1.27 mm and 1,500 tracks, 140 × 160 mm (400 positions sweeping across channels) | 4.4 ms | 0.049 / 0.12 / 0.15 ms | 0.29 / 3.2 / 11.6 ms |
+
+The target is 16 ms per pointer move, one frame at 60 Hz. Both boards meet it with room: the worst dense-board shove is 11.6 ms. The budgets are counted (collision queries), not timed, so a preview and its commit always agree. The index is built once per revision. `a_dense_board_routes_legally_within_bounds` runs on every build: it applies every dense-board proposal through the engine and bounds each plan at 2 s, a runaway guard that also holds in debug builds.
+
+## Track drag with shove (planned)
+
+Dragging an existing segment or corner in Select is not delivered. The plan:
+
+1. A drag adopts the segment's chain as a `Line`.
+2. It replaces the dragged segment with one offset along its normal (or the corner with a moved vertex), keeping the neighbours' directions with 45° joins, as the via-follow elbow does.
+3. It runs the same `shove::shove` with the new segments as the fixed copper and the chain's net frozen.
+4. The preview and release commit share a pure `router::drag_plan`, and release sends one `layout.route_apply`.
+
+The seam (`Line`, `State`, `shove`, the undo edits) is in place.
+
+## Limits and follow-ups
+
+- **Convex hulls.** Merged obstacles become one convex hull, so walkaround does not thread between close obstacles whose merged hull swallows the gap. On the dense via grid, walking across the track-filled channels mostly stops short: 6 of 400 positions arrive, against 90 for Shove. A visibility search over hull corners would route through such gaps.
+- **Board outline.** A concave outer outline is not hugged; the head stops at it. Cutouts and keepouts are hulled convexly.
+- **Fills.** Fills are not obstacles and never move; a refill flows round the new copper, as before.
+- **Shove scope.** A chain's ends never move, so a pusher reaching a chain's end at a pad or via fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
+- **Stateless preview.** Each move plans from the committed board. A head swept along a long track re-decides the push side each frame from geometry; the shorter clear side wins, which is stable in practice but not hysteretic.
+- **Pairs.** The pair router commits through `layout.route_apply` with the plan's edits. There is no serialisable `layout.route_pair_step` for CLI and MCP yet; `layout.route_pair` routes a whole pair without shove. The fan-out limits of [high-speed routing](high-speed-routing.md#limits-and-follow-ups) remain.
+- **Track drag** is planned, above.

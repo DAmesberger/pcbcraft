@@ -261,12 +261,7 @@ impl<'a> Ctx<'a> {
     /// The board edge or a cutout, when `probe` leaves the board or comes
     /// closer to an edge than the rules allow.
     fn edge_hit(&self, probe: &Piece) -> Option<Hit> {
-        let edge = |target| {
-            Some(Hit {
-                target,
-                net: None,
-            })
-        };
+        let edge = |target| Some(Hit { target, net: None });
         if !probe.ring.inside(self.project.board_size) {
             return edge(Target::Edge);
         }
@@ -534,9 +529,9 @@ impl<'a> Ctx<'a> {
                 o.net == net
                     && o.layers.contains(&layer)
                     && match o.kind {
-                        ObstacleKind::Via(_) => {
-                            self.base_via(k).is_some_and(|v| distance(v.position, p) < 1e-6)
-                        }
+                        ObstacleKind::Via(_) => self
+                            .base_via(k)
+                            .is_some_and(|v| distance(v.position, p) < 1e-6),
                         ObstacleKind::Pad(..) => crate::geometry::polygon_contains(&o.ring.ring, p),
                         ObstacleKind::Track(_) => false,
                     }

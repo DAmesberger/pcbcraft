@@ -88,7 +88,7 @@ Solidcraft and its required patches are pinned to `d53b131e3d1cf0b9489e9c048c60a
 - [Copper performance research](docs/copper-performance-research.md)
 - [Roadmap](ROADMAP.md) and [agent instructions](AGENTS.md)
 
-Push-and-shove remains a release-2 requirement if absent from release 1. Manual routing already passes through an atomic route edit set and strategy interface. Large-board performance, incremental native rebuilds, arbitrary Solidcraft model composition and manufacturing outputs remain future work.
+The Route tool shoves other nets' tracks and vias aside, walks round obstacles or ignores them (M cycles the mode); each click is one atomic transaction and undo step, also as `layout.route_step` for the CLI and MCP ([push-and-shove](docs/push-and-shove.md)). Dragging existing tracks with shove is planned. Large-board performance, incremental native rebuilds, arbitrary Solidcraft model composition and manufacturing outputs remain future work.
 
 ## License
 

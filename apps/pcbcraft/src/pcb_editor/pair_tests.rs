@@ -419,7 +419,7 @@ fn card_texts(editor: &mut PcbEditor, engine: &Engine, ctx: &egui::Context) -> V
     let mut out = Vec::new();
     // Two frames: sections lay out on the first.
     for _ in 0..2 {
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 2400.0))),
                 ..Default::default()
@@ -428,6 +428,7 @@ fn card_texts(editor: &mut PcbEditor, engine: &Engine, ctx: &egui::Context) -> V
                 editor.subject_slot(ui, engine);
             },
         );
+        output.textures_delta.clear();
         out.clear();
         for shape in &output.shapes {
             walk(&shape.shape, &mut out);

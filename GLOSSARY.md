@@ -399,7 +399,10 @@ How the model worker makes the native model of an edited board from the last one
 The one mesh a shared native definition (a via size, a package revision) is drawn from, with each placement's rigid move. The 3D view draws it instanced, once per placement with that placement's identity; the saved model and its geometry stay those of every placement.
 
 **Push-and-shove routing**:
-Interactive routing that moves existing tracks to make room while preserving their connections and obeying the board rules and locked-object constraints.
+Interactive routing that moves existing tracks to make room while preserving their connections and obeying the board rules and locked-object constraints. The Route tool's Shove mode; see [push-and-shove](docs/push-and-shove.md).
+
+**Walkaround**:
+The routing mode in which the route head goes round other nets' copper, keepouts and cutouts at the rule clearance, hugging them in its posture, and stops at the last legal point when no way round exists. Shove falls back to it.
 
 **Library source**:
 Where catalog entries come from: the project library snapshot, and the library folders listed in the user's settings. A folder source is read-only or writable, and one that cannot be read stays listed with its reason (path missing, unsupported format, unknown required feature). A source is authoritative only for new imports, never for a project that already holds a revision.

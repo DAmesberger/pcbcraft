@@ -76,9 +76,9 @@ pub(super) fn posture_of(points: &[Point]) -> Posture {
 
 /// Whether any corner turns back by more than 90° (an acute corner).
 pub(super) fn has_acute(points: &[Point]) -> bool {
-    points.windows(3).any(|w| {
-        matches!((unit(w[0], w[1]), unit(w[1], w[2])), (Some(a), Some(b)) if dot(a, b) < -1e-6)
-    })
+    points.windows(3).any(
+        |w| matches!((unit(w[0], w[1]), unit(w[1], w[2])), (Some(a), Some(b)) if dot(a, b) < -1e-6),
+    )
 }
 
 /// Drop legs shorter than [`MIN_SEGMENT_MM`], merge collinear legs and
@@ -158,7 +158,8 @@ fn cut_loops(points: &[Point]) -> Vec<Point> {
                 if segments_cross(*a, *b, *c, *d)
                     && let Some(x) = crossing(*a, *b, *c, *d)
                 {
-                    let mut cut: Vec<Point> = pts.get(..=i).map(<[Point]>::to_vec).unwrap_or_default();
+                    let mut cut: Vec<Point> =
+                        pts.get(..=i).map(<[Point]>::to_vec).unwrap_or_default();
                     cut.push(x);
                     cut.extend(pts.get(j + 1..).unwrap_or(&[]));
                     pts = cut;
@@ -183,13 +184,28 @@ mod tests {
         assert_eq!(p.last(), Some(&[3.0, 1.0]));
         assert!(!p.contains(&[1.0, 0.0]));
         // A loop is cut at its crossing.
-        let looped = [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0], [2.0, 2.0], [2.0, -2.0], [6.0, -2.0]];
+        let looped = [
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 2.0],
+            [2.0, 2.0],
+            [2.0, -2.0],
+            [6.0, -2.0],
+        ];
         let cut = simplify(&looped);
         assert_eq!(cut, vec![[0.0, 0.0], [2.0, 0.0], [2.0, -2.0], [6.0, -2.0]]);
         assert!(has_acute(&[[0.0, 0.0], [2.0, 0.0], [1.0, 0.5]]));
-        assert!(!has_acute(&[[0.0, 0.0], [2.0, 0.0], [3.0, 1.0], [3.0, 3.0]]));
+        assert!(!has_acute(&[
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [3.0, 1.0],
+            [3.0, 3.0]
+        ]));
         assert_eq!(posture_of(&cut), Posture::Orthogonal);
-        assert_eq!(posture_of(&[[0.0, 0.0], [1.0, 1.0], [2.0, 1.0]]), Posture::Diagonal);
+        assert_eq!(
+            posture_of(&[[0.0, 0.0], [1.0, 1.0], [2.0, 1.0]]),
+            Posture::Diagonal
+        );
         assert_eq!(posture_of(&[[0.0, 0.0], [2.0, 1.0]]), Posture::Free);
         let half = prefix(&[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0]], 3.0);
         assert_eq!(half, vec![[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]);

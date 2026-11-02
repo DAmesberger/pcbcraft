@@ -38,7 +38,7 @@ The keymap is original. Letters are mnemonic where they can be (X route, V via, 
 | Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
 | PCB Layout | X route · V via · T tune length · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
-| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size · P pair routing on or off |
+| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size · P pair routing on or off · M router: shove, walkaround, ignore ([push-and-shove](push-and-shove.md)) |
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
 | Board shape | L line · A arc · C circle · R rectangle · F fillet · D dimension · U cutout · H hole · ⇧H slot · E name edge · X construction · Delete · Esc |

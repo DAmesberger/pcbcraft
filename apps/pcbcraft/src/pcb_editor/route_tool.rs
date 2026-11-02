@@ -2,24 +2,31 @@
 //! follows each accepted step, postures, widths and via sizes from the
 //! rules, layer changes through a via, and Backspace unwinding.
 //!
-//! Each click is one gesture and one undo step: the step's elbow (and via,
-//! after a layer change) goes to the engine as one `layout.route_apply`.
-//! The route continues from the step's end once the engine has taken it
-//! (the next revision is exactly that step); a refusal leaves the route as
-//! it was. Backspace sends one `layout.route_apply` removing exactly the
-//! last step's tracks and via, and moves the head back. Any other document
-//! change ends the route. The elbow geometry comes from
-//! [`layout::posture`], which the preview and the commit share.
+//! Each click is one gesture and one undo step: the router's plan of the
+//! step ([`router::plan`] in the mode M chooses: shove, walkaround or
+//! ignore) goes to the engine as one `layout.route_apply`, with every
+//! track and via it shoves. The preview draws the same plan, computed
+//! once per revision and pointer position from the committed board, so
+//! shoved copper springs back as the pointer moves away. The route
+//! continues from where the plan ends (short of the pointer when no way
+//! exists) once the engine has taken it (the next revision is exactly
+//! that step); a refusal leaves the route as it was. Backspace sends one
+//! `layout.route_apply` removing exactly the last step's tracks and via
+//! and putting back what it shoved, and moves the head back. Any other
+//! document change ends the route.
 use super::{BoardInk, BoardView, PcbEditor, Tool, capsule, pad_on};
 use egui::{Shape, Stroke};
 use pcbcraft_core::{
     CopperLayer, Id, Operation, Point, Project,
     layout::{
         self, LayoutCommand, RouteEditSet, ViaRequest,
-        posture::{self, Posture, StepRequest},
+        pair::PairStepRequest,
+        posture::{Posture, StepRequest},
+        router::{self, PairPlan, RouteIndex, RouteMode, RoutePlan, RouteStepRequest},
     },
 };
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 /// The Route tool's keys while the canvas is hovered: (key, what it does).
 /// The Route card lists them; a command palette can list them too.
@@ -38,6 +45,7 @@ pub const ROUTE_KEYS: &[(&str, &str)] = &[
         "P",
         "Pair routing on or off (a pad of a pair starts both halves)",
     ),
+    ("M", "Router: shove, walkaround or ignore"),
 ];
 
 /// The route in progress besides its head (`PcbEditor::route_start`) and
@@ -63,6 +71,60 @@ pub(super) struct RouteState {
     pub(super) single: bool,
     /// The differential pair being routed (`pair_tool`).
     pub(super) pair: Option<super::pair_tool::PairRoute>,
+    /// What a step does about other nets' copper (M).
+    pub(super) mode: RouteMode,
+    /// Shoving leaves vias where they are.
+    pub(super) vias_stay: bool,
+    /// The router's index of the board, for one revision.
+    pub(super) index: Option<(u64, Rc<RouteIndex>)>,
+    /// The last step planned (the preview), with its inputs.
+    pub(super) planned: Option<(PlanKey, Rc<Planned>)>,
+}
+
+/// What a planned step was planned from.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum PlanKey {
+    Single(u64, RouteStepRequest),
+    Pair(u64, Box<PairStepRequest>, RouteMode, bool),
+}
+
+/// A planned step: one net's, or a pair's.
+#[derive(Clone, Debug)]
+pub(super) enum Planned {
+    Single(RoutePlan),
+    Pair(Box<PairPlan>),
+}
+
+impl Planned {
+    pub(super) fn edits(&self) -> &RouteEditSet {
+        match self {
+            Planned::Single(plan) => &plan.edits,
+            Planned::Pair(plan) => &plan.step.edits,
+        }
+    }
+
+    /// Tracks and vias the step moves (drawn at their new places only).
+    pub(super) fn moved(&self) -> (&[Id], &[Id]) {
+        match self {
+            Planned::Single(plan) => (&plan.shoved, &plan.moved_vias),
+            Planned::Pair(plan) => (&plan.shoved, &plan.moved_vias),
+        }
+    }
+
+    pub(super) fn reached(&self) -> bool {
+        match self {
+            Planned::Single(plan) => plan.reached,
+            Planned::Pair(plan) => plan.reached,
+        }
+    }
+
+    /// Where the head stops.
+    pub(super) fn end(&self) -> Point {
+        match self {
+            Planned::Single(plan) => plan.end,
+            Planned::Pair(plan) => plan.step.head.center,
+        }
+    }
 }
 
 /// One accepted step: where it started and what it added.
@@ -74,6 +136,8 @@ pub(super) struct Step {
     pub(super) vias: Vec<Id>,
     /// A pair step: the pair head before it and the tracks it extended.
     pub(super) pair: Option<super::pair_tool::PairUndo>,
+    /// Puts back what the step shoved (`RoutePlan::undo`).
+    pub(super) unshove: RouteEditSet,
 }
 
 pub(super) enum Commit {
@@ -85,6 +149,11 @@ pub(super) enum Commit {
         layer: CopperLayer,
         to: Point,
         finish: bool,
+        /// Whether the step placed the pending via (a step stopped short
+        /// of it keeps it pending).
+        via_placed: bool,
+        /// Puts back what the step shoved.
+        unshove: Box<RouteEditSet>,
         /// A pair step: the head before and after it.
         pair: Option<Box<(super::pair_tool::PairUndo, layout::pair::PairHead)>>,
     },
@@ -143,6 +212,7 @@ impl PcbEditor {
         self.route.steps.clear();
         self.route.commit = None;
         self.route.pair = None;
+        self.route.planned = None;
     }
 
     /// Finish the route where it is (Enter, double-click, Esc, right-click,
@@ -176,6 +246,8 @@ impl PcbEditor {
                 layer,
                 to,
                 finish,
+                via_placed,
+                unshove,
                 pair,
                 ..
             } => {
@@ -202,8 +274,11 @@ impl PcbEditor {
                     tracks,
                     vias,
                     pair: undo,
+                    unshove: *unshove,
                 });
-                self.pending_via = None;
+                if via_placed {
+                    self.pending_via = None;
+                }
                 self.route_start = Some(to);
                 if finish {
                     self.reset_route();
@@ -224,9 +299,71 @@ impl PcbEditor {
         true
     }
 
-    /// The live preview of the step to `end`: the elbow's copper at the
-    /// step's width on each layer, the pending via and the target ring.
-    /// The same [`posture::step`] the click sends.
+    /// The router's index of the board at `revision`, built once.
+    fn route_index(&mut self, project: &Project, revision: u64) -> Rc<RouteIndex> {
+        match &self.route.index {
+            Some((at, index)) if *at == revision => Rc::clone(index),
+            _ => {
+                let index = Rc::new(RouteIndex::of(project));
+                self.route.index = Some((revision, Rc::clone(&index)));
+                index
+            }
+        }
+    }
+
+    /// The step to `end` as the router plans it in the current mode: the
+    /// preview draws it and a click commits exactly it. Planned once per
+    /// revision and input, so a still pointer costs nothing.
+    pub(super) fn route_plan(
+        &mut self,
+        project: &Project,
+        revision: u64,
+        end: Point,
+    ) -> Option<Rc<Planned>> {
+        let mode = self.route.mode;
+        let move_vias = !self.route.vias_stay;
+        let key = if self.route.pair.is_some() {
+            let request = self.pair_step(project, end)?;
+            PlanKey::Pair(revision, Box::new(request), mode, move_vias)
+        } else {
+            let step = self.route_step(project, end)?;
+            PlanKey::Single(revision, RouteStepRequest::of(&step, mode, move_vias))
+        };
+        if let Some((planned, plan)) = &self.route.planned
+            && *planned == key
+        {
+            return Some(Rc::clone(plan));
+        }
+        let index = self.route_index(project, revision);
+        let plan = Rc::new(match &key {
+            PlanKey::Single(_, request) => Planned::Single(router::plan(project, &index, request)),
+            PlanKey::Pair(_, request, mode, move_vias) => Planned::Pair(Box::new(
+                router::pair_plan(project, &index, request, *mode, *move_vias),
+            )),
+        });
+        self.route.planned = Some((key, Rc::clone(&plan)));
+        Some(plan)
+    }
+
+    /// The tracks and vias the previewed step moves: the board draws them
+    /// at their new places only.
+    pub(super) fn route_moved(&self, revision: u64) -> (Vec<Id>, Vec<Id>) {
+        match &self.route.planned {
+            Some((PlanKey::Single(at, _) | PlanKey::Pair(at, ..), plan))
+                if *at == revision && self.route_start.is_some() =>
+            {
+                let (tracks, vias) = plan.moved();
+                (tracks.to_vec(), vias.to_vec())
+            }
+            _ => (Vec::new(), Vec::new()),
+        }
+    }
+
+    /// The live preview of the planned step to `end`: the copper it adds
+    /// at its width on each layer, the copper it shoves where it goes
+    /// (outlined in the accent), its vias, and where the head will be: the
+    /// target ring when it arrives, a warning ring and line where it stops
+    /// short. The same plan the click sends.
     pub(super) fn paint_route_preview(
         &self,
         painter: &egui::Painter,
@@ -234,52 +371,73 @@ impl PcbEditor {
         project: &Project,
         end: Point,
     ) {
-        let edits = if self.route.pair.is_some() {
-            match self.pair_step(project, end) {
-                Some(request) => layout::pair::step(&request).edits,
-                None => return,
-            }
-        } else {
-            match self.route_step(project, end) {
-                Some(request) => posture::step(&request),
-                None => return,
-            }
+        let Some((_, plan)) = &self.route.planned else {
+            return;
         };
+        let edits = plan.edits();
         let t = solidcraft_ui_egui::theme::Tokens::get();
         let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
-        for leg in &edits.add {
-            // The copper the step will add: round caps, opaque.
-            let width = (leg.width as f32 * scale).max(1.0);
-            let color =
-                BoardInk::get().on_board(crate::palette::board().copper_layer(leg.layer), 1.0);
-            let (a, b) = (screen(leg.start), screen(leg.end));
+        let ink = BoardInk::get();
+        let colors = crate::palette::board();
+        let own = |n: Id| {
+            Some(n) == self.net
+                || self
+                    .route
+                    .pair
+                    .as_ref()
+                    .is_some_and(|p| p.nets.contains(&n))
+        };
+        let leg = |start: Point, end: Point, width: f64, layer: CopperLayer, net: Id| {
+            let width = (width as f32 * scale).max(1.0);
+            let color = ink.on_board(colors.copper_layer(layer), 1.0);
+            let (a, b) = (screen(start), screen(end));
             painter.add(Shape::convex_polygon(
                 capsule(a, b, width / 2.0),
                 color,
                 Stroke::NONE,
             ));
-            painter.line_segment([a, b], Stroke::new(1.0, t.body_selected));
+            let outline = if own(net) { t.body_selected } else { t.accent };
+            painter.line_segment([a, b], Stroke::new(1.0, outline));
+        };
+        for r in &edits.add {
+            leg(r.start, r.end, r.width, r.layer, r.net);
         }
         for track in &edits.replace {
-            let (a, b) = (screen(track.start), screen(track.end));
-            painter.line_segment([a, b], Stroke::new(1.0, t.body_selected));
+            leg(track.start, track.end, track.width, track.layer, track.net);
         }
-        for via in &edits.vias {
-            let at = screen(via.position);
+        let via_ring = |at: Point, diameter: f64, drill: f64, fill, outline| {
+            let at = screen(at);
             painter.circle(
                 at,
-                (via.diameter as f32 * scale / 2.0).max(4.0),
-                t.body_selected,
-                Stroke::new(1.0, t.on_accent),
+                (diameter as f32 * scale / 2.0).max(4.0),
+                fill,
+                Stroke::new(1.0, outline),
             );
-            painter.circle_filled(
-                at,
-                (via.drill as f32 * scale / 2.0).max(2.0),
-                BoardInk::get().drill,
+            painter.circle_filled(at, (drill as f32 * scale / 2.0).max(2.0), ink.drill);
+        };
+        for via in &edits.vias {
+            via_ring(
+                via.position,
+                via.diameter,
+                via.drill,
+                t.body_selected,
+                t.on_accent,
             );
         }
-        painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+        for moved in &edits.move_vias {
+            if let Some(via) = project.via(moved.id) {
+                let fill = ink.on_board(colors.copper_layer(self.layer), 1.0);
+                via_ring(moved.position, via.diameter, via.drill, fill, t.accent);
+            }
+        }
+        if plan.reached() {
+            painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+        } else {
+            let stop = screen(plan.end());
+            painter.circle_stroke(stop, 5.0, Stroke::new(1.5, t.warning));
+            painter.line_segment([stop, screen(end)], Stroke::new(1.0, t.warning));
+        }
     }
 
     /// The via size a layer change places on the routed net: the size
@@ -360,9 +518,12 @@ impl PcbEditor {
         let finish = snapped.is_some_and(|(_, n)| n == Some(net))
             || self.joins_net_copper(project, net, destination);
         let request = self.route_step(project, destination)?;
-        let edits = posture::step(&request);
-        if edits.add.is_empty() && edits.vias.is_empty() {
-            if finish {
+        let planned = self.route_plan(project, revision, destination)?;
+        let Planned::Single(plan) = planned.as_ref() else {
+            return None;
+        };
+        if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
+            if finish && plan.reached {
                 self.finish_route();
             }
             return None;
@@ -372,11 +533,15 @@ impl PcbEditor {
             next_id: project.next_id,
             from: request.head,
             layer: request.layer,
-            to: destination,
-            finish,
+            to: plan.end,
+            finish: finish && plan.reached,
+            via_placed: plan.via_placed,
+            unshove: Box::new(plan.undo.clone()),
             pair: None,
         });
-        Some(Operation::Layout(LayoutCommand::ApplyRoute { edits }))
+        Some(Operation::Layout(LayoutCommand::ApplyRoute {
+            edits: plan.edits.clone(),
+        }))
     }
 
     /// Whether `at` is on copper of `net` on the routing layer that this
@@ -415,15 +580,20 @@ impl PcbEditor {
             self.reset_route();
             return None;
         };
-        // A pair step also gives back the previous tracks it extended.
+        // A pair step also gives back the previous tracks it extended;
+        // a shoving step puts back what it shoved.
+        let mut replace: Vec<_> = step
+            .pair
+            .as_ref()
+            .map(|undo| undo.restore.clone())
+            .unwrap_or_default();
+        replace.extend(step.unshove.replace.iter().cloned());
         let edits = RouteEditSet {
             remove: step.tracks.clone(),
             remove_vias: step.vias.clone(),
-            replace: step
-                .pair
-                .as_ref()
-                .map(|undo| undo.restore.clone())
-                .unwrap_or_default(),
+            replace,
+            restore: step.unshove.restore.clone(),
+            move_vias: step.unshove.move_vias.clone(),
             ..Default::default()
         };
         self.route.commit = Some(Commit::Unwind { revision });
@@ -508,6 +678,9 @@ impl PcbEditor {
         }
         if pressed(Key::P) && !shift {
             self.route.single = !self.route.single;
+        }
+        if pressed(Key::M) && !shift {
+            self.route.mode = self.route.mode.next();
         }
         if pressed(Key::V) {
             self.next_layer(project, pointer, shift);
@@ -594,6 +767,6 @@ mod tests {
         assert_eq!(cycle(&widths, 0.25, false, by_value), Some(0.3));
         assert_eq!(cycle(&widths, 0.25, true, by_value), Some(0.2));
         assert_eq!(cycle::<f64>(&[], 0.25, true, by_value), None);
-        assert_eq!(ROUTE_KEYS.len(), 11);
+        assert_eq!(ROUTE_KEYS.len(), 12);
     }
 }

@@ -1,6 +1,6 @@
 # High-speed routing: controlled impedance, differential pairs and length tuning (as built)
 
-The founder asked for controlled impedance from the stackup, differential pairs and length tuning. The acceptance case is the first real board: an ESP32-S31 module board with a USB 2.0 pair at 90 Ω differential. This note records what was built, the models and their accuracy, and the seam the push-and-shove router will reuse.
+The founder asked for controlled impedance from the stackup, differential pairs and length tuning. The acceptance case is the first real board: an ESP32-S31 module board with a USB 2.0 pair at 90 Ω differential. This note records what was built, the models and their accuracy, and the seam the push-and-shove router reuses ([push-and-shove](push-and-shove.md)).
 
 ## Invariants
 
@@ -94,7 +94,7 @@ The obstacle index for the Tune tool is built once per document revision, a mean
 
 ## The push-and-shove seam
 
-The modules are built so the push-and-shove router reuses them instead of duplicating them:
+The modules are built so the push-and-shove router ([as built](push-and-shove.md)) reuses them instead of duplicating them:
 
 - `RouteEditSet` is the transactional proposal: `add`, `replace`, `remove`, `vias` and `remove_vias` commit together or not at all. Pair continuation and meanders already use `replace`.
 - `posture::step` and `pair::step` turn a gesture into a proposal; a shove strategy takes that proposal and adds the displaced copper's `replace` entries before the commit.
@@ -105,7 +105,7 @@ The modules are built so the push-and-shove router reuses them instead of duplic
 
 - Impedance is quasi-static and ignores solder mask, etch and roughness; offset stripline and the coupled forms are approximations (see the table). A 2D field solver would be the accurate follow-up.
 - A stackup editor in the desktop is not part of this work: Dk and plane flags enter through `layout.set_stackup` (CLI and MCP).
-- Pair routing does not push other copper, does not route around obstacles and does not keep the pair coupled through a bend tighter than its pitch. A pad-to-pad pair whose pads lie along the route direction fans out across the partner pad and is refused by the clearance check.
+- Pair routing pushes other copper and walks round obstacles as one unit ([push-and-shove](push-and-shove.md)); it does not keep the pair coupled through a bend tighter than its pitch. A pad-to-pad pair whose pads lie along the route direction fans out across the partner pad and is refused by the clearance check.
 - Tuning meanders one straight segment per click; it does not spread a meander over several segments or tune a whole pair at once, and the accordion needs room on both sides (it is refused next to the partner half).
 - Length counts via barrels between the layers used, not stubs; pad-internal and package (die) lengths are not included.
 - Checks and the length report run on the UI thread with the other board checks; neither is measured at 10,000 vias yet.

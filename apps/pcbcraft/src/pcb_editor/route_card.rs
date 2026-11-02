@@ -7,7 +7,8 @@ use super::route_tool::ROUTE_KEYS;
 use super::{PcbEditor, copper_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
-use pcbcraft_core::{Operation, Project, layout, layout::posture::Posture, schematic};
+use pcbcraft_core::layout::{posture::Posture, router::RouteMode};
+use pcbcraft_core::{Operation, Project, layout, schematic};
 
 /// Route widths the engine accepts (mm).
 const WIDTH_RANGE: std::ops::RangeInclusive<f64> = 0.05..=5.0;
@@ -38,8 +39,12 @@ impl PcbEditor {
                   removes the last step. V, Shift+V or a layer's number continues on that \
                   layer through a via at the pointer, which the next click places. Width \
                   and via size start at the net class's (else the design rules' defaults); \
-                  W and D step through the rules' presets. A step the rules refuse is not \
-                  added and the route stays where it was.",
+                  W and D step through the rules' presets. M switches the router: Shove \
+                  pushes other nets' tracks and vias aside (locked copper and pads stay) \
+                  and walks round what cannot move; Walkaround goes round everything; \
+                  Ignore routes straight. Where no way exists the head stops at the last \
+                  legal point, marked in the warning colour. A step the rules refuse is \
+                  not added and the route stays where it was.",
             finish: None,
         };
         let t = solidcraft_ui_egui::theme::Tokens::get();
@@ -63,6 +68,17 @@ impl PcbEditor {
             .iter()
             .map(|p| (*p, p.label().to_owned()))
             .collect();
+        let routers: Vec<(RouteMode, String)> = RouteMode::ALL
+            .iter()
+            .map(|m| (*m, m.label().to_owned()))
+            .collect();
+        kit::choice_row(ui, "Router", &mut self.route.mode, &routers);
+        if self.route.mode == RouteMode::Shove {
+            let mut move_vias = !self.route.vias_stay;
+            if kit::check_row(ui, "Shove vias", &mut move_vias) {
+                self.route.vias_stay = !move_vias;
+            }
+        }
         kit::choice_row(ui, "Mode", &mut self.route.posture, &modes);
         kit::check_row(ui, "Flip elbow", &mut self.route.flipped);
         kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);

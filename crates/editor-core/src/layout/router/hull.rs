@@ -143,13 +143,11 @@ impl Hull {
     /// point inside the hull's corner overreach (but legal against the
     /// exact copper) lies on the boundary.
     pub(super) fn exclude(&mut self, p: Point) {
-        let best = (0..8)
-            .filter(|k| self.facets.uses(*k))
-            .max_by(|a, b| {
-                let ga = dot(DIRS[*a], p) - self.support[*a];
-                let gb = dot(DIRS[*b], p) - self.support[*b];
-                ga.total_cmp(&gb)
-            });
+        let best = (0..8).filter(|k| self.facets.uses(*k)).max_by(|a, b| {
+            let ga = dot(DIRS[*a], p) - self.support[*a];
+            let gb = dot(DIRS[*b], p) - self.support[*b];
+            ga.total_cmp(&gb)
+        });
         if let Some(k) = best {
             self.support[k] = dot(DIRS[k], p);
             self.rebuild();

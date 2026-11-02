@@ -6,9 +6,9 @@
 //! --ignored --nocapture`); the other test runs in every build and
 //! guards against runaway work and illegal proposals on the dense board.
 use super::*;
+use crate::layout::LayoutCommand;
 use crate::model::CopperLayer::Top;
 use crate::model::ViaSpan;
-use crate::layout::LayoutCommand;
 use crate::{Engine, layout};
 use std::time::{Duration, Instant};
 
@@ -40,10 +40,7 @@ fn dense() -> Fallible<Project> {
     let mut vias = 0usize;
     for i in 0..GRID {
         for j in 0..GRID {
-            let at = [
-                ORIGIN + i as f64 * PITCH,
-                ORIGIN + 20.0 + j as f64 * PITCH,
-            ];
+            let at = [ORIGIN + i as f64 * PITCH, ORIGIN + 20.0 + j as f64 * PITCH];
             if near_part(at) {
                 continue;
             }
@@ -84,7 +81,10 @@ fn dense() -> Fallible<Project> {
             tracks += 1;
         }
     }
-    assert!(vias >= 9_900 && tracks == 1_500, "{vias} vias, {tracks} tracks");
+    assert!(
+        vias >= 9_900 && tracks == 1_500,
+        "{vias} vias, {tracks} tracks"
+    );
     layout::validate(&p)?;
     Ok(p)
 }
@@ -130,7 +130,13 @@ struct Stats {
     shoved: usize,
 }
 
-fn measure(p: &Project, index: &RouteIndex, head: Point, targets: &[Point], mode: RouteMode) -> Stats {
+fn measure(
+    p: &Project,
+    index: &RouteIndex,
+    head: Point,
+    targets: &[Point],
+    mode: RouteMode,
+) -> Stats {
     let mut times = Vec::with_capacity(targets.len());
     let (mut reached, mut shoved) = (0, 0);
     for to in targets {
@@ -265,7 +271,10 @@ fn a_dense_board_routes_legally_within_bounds() -> Fallible {
             let start = Instant::now();
             let plan = plan(&p, &index, &request(head, *to, mode));
             let took = start.elapsed();
-            assert!(took < Duration::from_secs(2), "{mode:?} to {to:?} took {took:?}");
+            assert!(
+                took < Duration::from_secs(2),
+                "{mode:?} to {to:?} took {took:?}"
+            );
             shoved += usize::from(!plan.shoved.is_empty());
             if plan.edits.add.is_empty() {
                 continue;
