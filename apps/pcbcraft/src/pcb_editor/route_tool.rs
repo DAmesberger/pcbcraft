@@ -91,7 +91,7 @@ pub(super) enum PlanKey {
 /// A planned step: one net's, or a pair's.
 #[derive(Clone, Debug)]
 pub(super) enum Planned {
-    Single(RoutePlan),
+    Single(Box<RoutePlan>),
     Pair(Box<PairPlan>),
 }
 
@@ -336,7 +336,9 @@ impl PcbEditor {
         }
         let index = self.route_index(project, revision);
         let plan = Rc::new(match &key {
-            PlanKey::Single(_, request) => Planned::Single(router::plan(project, &index, request)),
+            PlanKey::Single(_, request) => {
+                Planned::Single(Box::new(router::plan(project, &index, request)))
+            }
             PlanKey::Pair(_, request, mode, move_vias) => Planned::Pair(Box::new(
                 router::pair_plan(project, &index, request, *mode, *move_vias),
             )),

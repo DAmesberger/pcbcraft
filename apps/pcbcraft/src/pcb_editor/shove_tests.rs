@@ -110,7 +110,7 @@ fn a_shove_click_moves_the_track_and_backspace_restores_it() -> TestResult {
         egui::Key::Backspace,
         egui::Modifiers::NONE,
     );
-    assert!(edits(&unwind)?.replace.iter().any(|t| *t == track));
+    assert!(edits(&unwind)?.replace.contains(&track));
     canvas.apply(&mut editor, &mut engine, unwind)?;
     let mut now = engine.project().tracks.clone();
     let mut was = before.clone();

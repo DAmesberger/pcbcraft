@@ -10,6 +10,8 @@ use crate::layout::{self, LayoutCommand, apply};
 use crate::model::CopperLayer::Top;
 use crate::{Engine, Operation, Query, QueryResult};
 
+mod perf;
+
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Demo nets.

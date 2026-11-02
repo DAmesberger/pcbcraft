@@ -35,7 +35,7 @@ pub(super) enum Facets {
 
 impl Facets {
     fn uses(self, k: usize) -> bool {
-        matches!(self, Facets::Eight) || k % 2 == 0
+        matches!(self, Facets::Eight) || k.is_multiple_of(2)
     }
 }
 
@@ -294,9 +294,9 @@ mod tests {
     /// A grown segment's octagon keeps every outside point farther than
     /// the growth from the segment, and its edges are at 45° multiples.
     #[test]
-    fn an_octagon_contains_the_grown_segment() {
+    fn an_octagon_contains_the_grown_segment() -> Result<(), &'static str> {
         let Some(h) = Hull::of_segment([0.0, 0.0], [4.0, 0.0], 1.0, Facets::Eight) else {
-            panic!("no hull");
+            return Err("no hull");
         };
         assert_eq!(h.points().len(), 8);
         for w in h.points().windows(2) {
@@ -315,14 +315,15 @@ mod tests {
         assert!(h.inside_interval([-3.0, 1.5], [7.0, 1.5], 0.0).is_none());
         let r = Hull::of_segment([0.0, 0.0], [4.0, 0.0], 1.0, Facets::Four);
         assert_eq!(r.map(|h| h.points().len()), Some(4));
+        Ok(())
     }
 
     /// The arc between two boundary points runs over the corners between
     /// them in the chosen sense.
     #[test]
-    fn arcs_walk_the_boundary_both_ways() {
+    fn arcs_walk_the_boundary_both_ways() -> Result<(), &'static str> {
         let Some(h) = Hull::of_segment([0.0, 0.0], [0.0, 0.0], 1.0, Facets::Four) else {
-            panic!("no hull");
+            return Err("no hull");
         };
         // A unit square around the origin; from the bottom edge to the top.
         let ccw = h.arc([0.0, -1.0], [0.0, 1.0], true);
@@ -331,5 +332,6 @@ mod tests {
         assert_eq!(cw, vec![[0.0, -1.0], [-1.0, -1.0], [-1.0, 1.0], [0.0, 1.0]]);
         let straight = h.arc([-0.5, -1.0], [0.5, -1.0], true);
         assert_eq!(straight, vec![[-0.5, -1.0], [0.5, -1.0]]);
+        Ok(())
     }
 }

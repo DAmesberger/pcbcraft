@@ -5,7 +5,7 @@
 //! (`cargo test -p pcbcraft-core --release route_plan_timings --
 //! --ignored --nocapture`); the other test runs in every build and
 //! guards against runaway work and illegal proposals on the dense board.
-use super::*;
+use super::super::*;
 use crate::layout::LayoutCommand;
 use crate::model::CopperLayer::Top;
 use crate::model::ViaSpan;

@@ -304,17 +304,13 @@ fn push_line(ctx: &Ctx<'_>, state: &mut State, l: usize, pusher: &Piece) -> Opti
                     .find(|h| !ctx.movable(state, h.target) || touches(h, pusher, state))
             });
             match block {
-                None if !has_acute(&pts) => {
-                    if best.as_ref().is_none_or(|(b, _)| total < *b) {
-                        best = Some((total, pts));
-                    }
+                None if !has_acute(&pts) && best.as_ref().is_none_or(|(b, _)| total < *b) => {
+                    best = Some((total, pts));
                 }
-                None => {}
-                Some(hit) => {
-                    if blocking.as_ref().is_none_or(|(b, _)| total < *b) {
-                        blocking = Some((total, hit));
-                    }
+                Some(hit) if blocking.as_ref().is_none_or(|(b, _)| total < *b) => {
+                    blocking = Some((total, hit));
                 }
+                _ => {}
             }
         }
         if let Some((_, pts)) = best {

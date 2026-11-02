@@ -27,8 +27,6 @@ mod walk;
 mod world;
 
 #[cfg(test)]
-mod perf_tests;
-#[cfg(test)]
 mod tests;
 
 use self::walk::Walker;
