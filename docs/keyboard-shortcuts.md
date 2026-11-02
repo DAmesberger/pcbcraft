@@ -87,6 +87,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
 | PCB Layout | R route · V via · T tune length · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
+| PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
 | Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off |
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool (`FILL_KEYS`) | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
@@ -109,3 +110,16 @@ These single keys are not mnemonic. Each proposal stays free of conflicts under 
 - **Symbol R: rectangle.** It does not clash with Route, which is in another workspace, and is mnemonic. Keep it.
 
 Changing any of these keys would also change a key tip, because a tip equals a command's single-letter key.
+
+## 3D navigation
+
+The PCB 3D view has a navigation cube in its top-right corner. It follows Solidcraft's cube: click a face for that side's view, click a corner square for that corner's isometric view, or drag the cube to orbit. The house button above the cube goes home (isometric, fitted). The same views are the PCB 3D commands above (registry commands, rebindable in Settings and shown by the key reveal; 1–7 belong to PCB 3D and the Route tool's 1–9 to Layout, sibling contexts that never see each other's keys), and the canvas hint at the bottom left names the trackpad gestures. The Keyboard shortcuts sheet lists every gesture under PCB › 3D (`navigation::NAVIGATION_3D`):
+
+| Input | Trackpad | Mouse |
+| --- | --- | --- |
+| Orbit | Shift + two fingers | Right-drag, Shift + middle-drag, or ⌘-drag on empty space |
+| Pan | Two fingers | Middle-drag, or Space + drag |
+| Zoom toward the pointer | Pinch | Wheel |
+| Fit | F | Middle double-click |
+
+A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Pcbcraft follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.

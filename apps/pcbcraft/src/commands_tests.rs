@@ -491,3 +491,64 @@ fn contexts_nest() {
         assert!(!context.label().is_empty());
     }
 }
+
+/// Digits mean a standard view in PCB 3D and a via layer while routing in
+/// Layout: sibling contexts, so neither sees the other's keys. ⇧F frames
+/// the selection in 3D and views from the bottom in Layout. A rebound view
+/// key moves; the 3D gestures are listed but take no key.
+#[test]
+fn view_keys_and_route_digits_resolve_by_context() -> Result<(), String> {
+    let registry = Registry::standard();
+    let id = |context, chord| {
+        registry
+            .resolve(chord, &active_contexts(context))
+            .map(|c| c.id.clone())
+    };
+    assert_eq!(
+        id(Context::Pcb3d, Chord::key(K::Num1)).as_deref(),
+        Some("view.front")
+    );
+    assert_eq!(
+        id(Context::Pcb3d, Chord::key(K::Num7)).as_deref(),
+        Some("view.iso")
+    );
+    assert_eq!(
+        id(Context::PcbRoute, Chord::key(K::Num1)).as_deref(),
+        Some("route.layer-1")
+    );
+    assert_eq!(id(Context::PcbLayout, Chord::key(K::Num1)), None);
+    assert_eq!(id(Context::Pcb3d, Chord::key(K::Num9)), None);
+    let shift_f = Chord::key(K::F).with_shift();
+    assert_eq!(
+        id(Context::Pcb3d, shift_f).as_deref(),
+        Some("view.selection")
+    );
+    assert_eq!(
+        id(Context::PcbLayout, shift_f).as_deref(),
+        Some("pcb.from-bottom")
+    );
+    assert_eq!(
+        id(Context::PcbRoute, shift_f).as_deref(),
+        Some("route.flip")
+    );
+    let mut rebound = registry.clone();
+    rebound.rebind("view.top", Some(Chord::key(K::T)))?;
+    assert_eq!(
+        rebound
+            .resolve(Chord::key(K::T), &active_contexts(Context::Pcb3d))
+            .map(|c| c.id.as_str()),
+        Some("view.top")
+    );
+    let gestures: Vec<&Command> = registry
+        .commands()
+        .iter()
+        .filter(|c| c.id.starts_with("gesture.pcb3d."))
+        .collect();
+    assert_eq!(gestures.len(), crate::navigation::NAVIGATION_3D.len());
+    assert!(
+        gestures
+            .iter()
+            .all(|c| !Registry::bindable(c) && registry.chords(c).is_empty())
+    );
+    Ok(())
+}

@@ -221,7 +221,39 @@ impl App {
                 let three_d = self.pcb.is_3d();
                 self.pcb.set_3d(!three_d);
             }
+            AppCommand::View3d(view) => self.view_3d(view),
         }
+    }
+
+    /// Turn the PCB 3D view to a standard view, opening it if needed.
+    pub(super) fn view_3d(&mut self, view: crate::commands::View3d) {
+        use crate::commands::View3d as V;
+        use pcbcraft_solidcraft::render::StandardView as S;
+        self.enter(Workspace::Pcb);
+        if !self.pcb.is_3d() {
+            self.pcb.set_3d(true);
+        }
+        let standard = match view {
+            V::Top => S::Top,
+            V::Bottom => S::Bottom,
+            V::Front => S::Front,
+            V::Back => S::Back,
+            V::Left => S::Left,
+            V::Right => S::Right,
+            V::Iso => S::Iso,
+            V::Selection => {
+                let items = self.scene.selected_items(
+                    self.pcb.selected_instance(),
+                    self.pcb.selected_track(),
+                    self.pcb.selected_via(),
+                );
+                if !self.scene.viewport.fit_items(&items) {
+                    self.say(Level::Info, "Select something to frame");
+                }
+                return;
+            }
+        };
+        self.scene.viewport.standard_view(standard);
     }
 
     /// Keys that work everywhere, even over a focused field or an open

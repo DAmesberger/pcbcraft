@@ -146,6 +146,12 @@ pub struct Viewport {
     decals: decals::Decals,
     /// Where the view was last drawn.
     rect: Option<egui::Rect>,
+    /// The left button went down on the navigation cube ([`nav_cube`]):
+    /// where, and whether it has dragged (an orbit) since. The press point
+    /// is kept, as egui forgets it on the release frame.
+    cube_press: Option<(egui::Pos2, bool)>,
+    /// Whether this view shows the navigation cube (PCB 3D).
+    cube: bool,
 }
 
 impl Viewport {
@@ -228,6 +234,8 @@ impl Viewport {
             pv_slot: Arc::new(Mutex::new(None)),
             decals: Default::default(),
             rect: None,
+            cube_press: None,
+            cube: false,
         };
         result.fit();
         result
@@ -349,6 +357,13 @@ impl Viewport {
         self.layers = layers;
         self.publish_shadows();
         self.publish_highlight();
+        self.start_repack();
+    }
+
+    /// Pack the shown layers of the model again from its cached meshes on a
+    /// background thread; [`Self::receive_repack`] publishes the result with
+    /// the instanced meshes. The last published vertices stay up until then.
+    pub(super) fn start_repack(&mut self) {
         let Some(model) = &self.model else {
             return;
         };
@@ -706,11 +721,15 @@ impl Viewport {
             self.fit_pending = false;
             self.fit_to(self.aspect);
         }
-        if self.receive_repack() | self.receive_decals() {
+        // Received decals may start a repack (`publish_instanced`): look
+        // again until it lands.
+        if self.receive_repack() | self.receive_decals() || self.repack.is_some() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(16));
         }
         let local = |p: egui::Pos2| (f64::from(p.x - rect.left()), f64::from(p.y - rect.top()));
+        self.cube = caps.cube;
+        let cube_owns = caps.cube && self.cube_input(ui, rect);
         self.navigate(ui, rect, &response, caps);
         if self.shadow_view != Some(self.current_shadow_view()) {
             self.publish_shadows();
@@ -726,7 +745,11 @@ impl Viewport {
         let cb = ViewportCallback(self.frame(view_proj, size_px, ssaa));
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
+        if caps.cube {
+            self.paint_cube(ui, rect);
+        }
         if response.clicked()
+            && !cube_owns
             && self.primary_nav != Some(NavMode::Pan)
             && let Some(p) = response.interact_pointer_pos()
         {
@@ -754,6 +777,8 @@ pub struct NavCaps {
     /// The arrows turn the view and Cmd/Ctrl+arrows pan it. Off where the
     /// arrows nudge something.
     pub keys: bool,
+    /// The navigation cube shows in the top-right corner ([`nav_cube`]).
+    pub cube: bool,
 }
 
 impl NavCaps {
@@ -761,11 +786,13 @@ impl NavCaps {
     pub const BOARD: NavCaps = NavCaps {
         primary: true,
         keys: true,
+        cube: true,
     };
     /// Component 3D: the left button and the arrows place the model.
     pub const PLACEMENT: NavCaps = NavCaps {
         primary: false,
         keys: false,
+        cube: false,
     };
 }
 
@@ -840,7 +867,9 @@ impl Viewport {
         let inside = ui.is_enabled()
             && response.contains_pointer()
             && hover.is_some_and(|p| rect.contains(p));
+        let on_cube = |p: egui::Pos2| caps.cube && nav_cube::owns(rect, p);
         let pressed_here = press.is_some_and(|p| rect.contains(p));
+        let primary_here = press.is_some_and(|p| rect.contains(p) && !on_cube(p));
         self.middle_double_click(ui, inside);
         let mut orbiting = false;
         // Pinch and the wheel zoom toward the point under the pointer; two
@@ -870,7 +899,7 @@ impl Viewport {
         // that does not move still selects.
         let typing = ui.ctx().egui_wants_keyboard_input();
         let space = caps.primary && !typing && ui.input(|i| i.key_down(egui::Key::Space));
-        if primary_pressed && inside {
+        if primary_pressed && inside && primary_here {
             let command = (mods.command || mods.ctrl) && !mods.shift && !mods.alt;
             let empty = |viewport: &Self| {
                 press.is_some_and(|p| {
@@ -909,7 +938,7 @@ impl Viewport {
             Some(if shift { NavMode::Orbit } else { NavMode::Pan })
         } else if right_drag {
             Some(NavMode::Orbit)
-        } else if primary_down && pressed_here {
+        } else if primary_down && primary_here {
             if space {
                 Some(NavMode::Pan)
             } else {
@@ -1031,6 +1060,121 @@ impl Viewport {
     }
 }
 
+/// Standard views and the navigation cube.
+impl Viewport {
+    /// Look at the model from a standard view, keeping the target and
+    /// distance; the isometric (home) view also fits.
+    pub fn standard_view(&mut self, view: pcbcraft_solidcraft::render::StandardView) {
+        self.camera.set_view(view);
+        if view == pcbcraft_solidcraft::render::StandardView::Iso {
+            self.fit();
+        }
+    }
+
+    /// Look at the model from `direction` (toward the eye).
+    pub fn view_from(&mut self, direction: Vec3) {
+        if direction.is_finite() && direction.dot(direction) > 0.0 {
+            self.camera = self.camera.looking_from(direction);
+        }
+    }
+
+    /// Frame the bodies with pick identities `items` (the selection), so
+    /// orbiting turns about them; `false` when none of them is drawn.
+    pub fn fit_items(&mut self, items: &[u64]) -> bool {
+        let Some(model) = &self.model else {
+            return false;
+        };
+        let mut bounds = Aabb3::EMPTY;
+        for g in model
+            .geometry
+            .iter()
+            .filter(|g| g.item.is_some_and(|i| items.contains(&i)))
+        {
+            bounds.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+            bounds.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+        }
+        if bounds.is_empty() {
+            return false;
+        }
+        let whole = self.bounds;
+        self.bounds = bounds;
+        self.fit_to(self.aspect);
+        self.bounds = whole;
+        self.fit_pending = false;
+        true
+    }
+
+    /// One frame of the left button on the navigation cube: a click looks
+    /// along the face or corner under it (or goes home), a drag orbits.
+    /// Whether the button's press belongs to the cube this frame.
+    fn cube_input(&mut self, ui: &egui::Ui, rect: egui::Rect) -> bool {
+        let (pressed, down, released, press, delta, could_click) = ui.input(|i| {
+            (
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.primary_released(),
+                i.pointer.press_origin().or(i.pointer.interact_pos()),
+                i.pointer.delta(),
+                i.pointer.could_any_button_be_click(),
+            )
+        });
+        if pressed
+            && ui.is_enabled()
+            && let Some(at) = press.filter(|p| nav_cube::owns(rect, *p))
+        {
+            self.cube_press = Some((at, false));
+        }
+        let Some((at, dragged)) = self.cube_press else {
+            return false;
+        };
+        if down && !could_click && delta.is_finite() && delta != egui::Vec2::ZERO {
+            self.camera.orbit(f64::from(delta.x), f64::from(delta.y));
+            self.cube_press = Some((at, true));
+        }
+        if released || !down {
+            if !dragged
+                && released
+                && let Some(target) = nav_cube::target(&self.camera, rect, at)
+            {
+                match target {
+                    nav_cube::Target::Home => {
+                        self.standard_view(pcbcraft_solidcraft::render::StandardView::Iso)
+                    }
+                    nav_cube::Target::View(direction) => self.view_from(direction),
+                }
+            }
+            self.cube_press = None;
+        }
+        true
+    }
+
+    /// Draw the navigation cube over the view at `rect`, with the hovered
+    /// target's tooltip.
+    fn paint_cube(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let hover = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| ui.is_enabled() && rect.contains(*p));
+        let over = hover.filter(|p| nav_cube::owns(rect, *p));
+        let dragging = self.cube_press.is_some_and(|(_, dragged)| dragged);
+        nav_cube::paint(
+            &ui.painter_at(rect),
+            &self.camera,
+            rect,
+            over.filter(|_| !dragging),
+            over.is_some() || self.cube_press.is_some(),
+        );
+        if let Some(target) = over
+            .filter(|_| !dragging)
+            .and_then(|p| nav_cube::target(&self.camera, rect, p))
+        {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            let (cube, _) = nav_cube::layout(rect);
+            ui.interact(cube, ui.id().with("pcb-3d-cube"), egui::Sense::hover())
+                .on_hover_text_at_pointer(nav_cube::tooltip(target));
+        }
+    }
+}
+
 /// Whether the ray meets a body's bounding box ahead of its origin: a cheap
 /// test before the triangles.
 fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
@@ -1056,6 +1200,7 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 
 mod decals;
 mod display;
+pub mod nav_cube;
 pub use decals::DecalRequest;
 
 #[cfg(test)]

@@ -745,3 +745,52 @@ fn the_preview_shows_marking_decals_and_edits_rebuild_only_them() -> TestResult 
     assert!(h.viewport.decal_geometry().is_empty());
     Ok(())
 }
+
+/// The renderer takes each published model scene at its next frame. The
+/// Component 3D view's marking decals are made on a worker and land a few
+/// frames after the model, when the renderer has already taken the
+/// model's vertex stream: the scene published with them must still carry
+/// the model. It once carried the decals alone, so the view opened with
+/// the marking floating over no model until the model was moved.
+#[test]
+fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResult {
+    use pcbcraft_core::library::marking::{Finish, MarkingItem, MarkingSpec, Template};
+    let mut h = Harness::new()?;
+    // The renderer drew the model: its vertex stream is on the GPU now.
+    let model = h
+        .viewport
+        .take_published()
+        .ok_or("the model was published")?;
+    assert!(!model.pbr_detailed.is_empty());
+    h.set_marking(MarkingSpec {
+        items: vec![MarkingItem::Text {
+            template: Template("{designator}".into()),
+            height_mm: None,
+            align: Default::default(),
+        }],
+        finish: Finish::InkWhite,
+        ..MarkingSpec::default()
+    })?;
+    // Frames as the window runs them: the renderer takes whatever was
+    // published since the last one, until the decals are drawn.
+    let mut last = None;
+    for _ in 0..500 {
+        h.frame(vec![]);
+        if let Some(scene) = h.viewport.take_published() {
+            last = Some(scene);
+        }
+        let drawn = last.as_ref().is_some_and(|s| !s.instanced.is_empty());
+        if drawn && !h.viewport.decals_building() && !h.viewport.repacking() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let last = last.ok_or("nothing was published with the decals")?;
+    assert!(!last.instanced.is_empty(), "the decals are drawn");
+    assert_eq!(
+        last.pbr_detailed.len(),
+        model.pbr_detailed.len(),
+        "the scene with the decals still draws the whole model"
+    );
+    Ok(())
+}

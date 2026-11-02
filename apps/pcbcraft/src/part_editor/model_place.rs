@@ -16,8 +16,14 @@ use solidcraft_ui_egui::gizmo::Change;
 use solidcraft_ui_egui::gpu::GpuScene;
 
 /// Copper thickness the overlay lands are drawn with (display only; the
-/// board model uses the stack-up). The land top is the seating plane.
+/// board model uses the stack-up).
 const LAND_MM: f64 = 0.035;
+/// How far the overlay lands' tops lie below the seating plane: the solder
+/// joint's bond line under a seated part (est.: a 100 to 125 µm stencil
+/// print reflows to about half). A land top on the seating plane shared
+/// that plane with every lead and pad bottom standing on it, and the two
+/// flickered in black streaks (z-fighting).
+pub const LAND_GAP_MM: f64 = 0.05;
 /// How far the drawn seating plane reaches past the lands and body: a
 /// share of their diagonal within these bounds, so Fit view frames the
 /// part and its lands rather than a wide plane.
@@ -297,8 +303,9 @@ fn v3(p: [f64; 3]) -> [f32; 3] {
     p.map(|v| v as f32)
 }
 
-/// Lands (top at the seating plane, `LAND_MM` thick) and a translucent
-/// board surface under them, display only: never saved, never picked.
+/// Lands ([`LAND_GAP_MM`] under the seating plane, `LAND_MM` thick) and a
+/// translucent board surface under them, display only: never saved, never
+/// picked.
 pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> (GpuScene, Aabb3) {
     let mut scene = GpuScene::default();
     let metal = scene.color([214, 178, 96, 255]);
@@ -306,6 +313,7 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
     let board = scene.color([28, 92, 58, 150]);
     let rim = scene.color([18, 64, 40, 255]);
     let mut bounds = Aabb3::EMPTY;
+    let (top, low) = (-LAND_GAP_MM, -LAND_GAP_MM - LAND_MM);
     for pad in footprint.pads.iter().filter(|p| copper(p.kind)) {
         let ring = land(footprint, pad);
         if ring.len() < 3 {
@@ -326,17 +334,17 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
             let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
             let (a, b) = if ccw { (a, b) } else { (b, a) };
             for p in [[c[0], c[1]], a, b] {
-                scene.tri(v3([p[0], p[1], 0.0]), [0.0, 0.0, 1.0], metal);
+                scene.tri(v3([p[0], p[1], top]), [0.0, 0.0, 1.0], metal);
             }
             let d = [b[0] - a[0], b[1] - a[1]];
             let len = d[0].hypot(d[1]).max(1e-12);
             let normal = [(d[1] / len) as f32, (-d[0] / len) as f32, 0.0];
-            let (top_a, top_b) = ([a[0], a[1], 0.0], [b[0], b[1], 0.0]);
-            let (low_a, low_b) = ([a[0], a[1], -LAND_MM], [b[0], b[1], -LAND_MM]);
+            let (top_a, top_b) = ([a[0], a[1], top], [b[0], b[1], top]);
+            let (low_a, low_b) = ([a[0], a[1], low], [b[0], b[1], low]);
             for p in [top_a, low_a, low_b, top_a, low_b, top_b] {
                 scene.tri(v3(p), normal, edge);
             }
-            bounds.add(Vec3::new(a[0], a[1], 0.0));
+            bounds.add(Vec3::new(a[0], a[1], top));
         }
     }
     for corner in package_fit::body_corners(package, &package.placement) {
@@ -345,7 +353,7 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
     if bounds.is_empty() {
         bounds.add(Vec3::new(0.0, 0.0, 0.0));
     }
-    let z = -LAND_MM;
+    let z = low;
     let margin = plane_margin(&bounds);
     let (x0, y0) = (bounds.min.x - margin, bounds.min.y - margin);
     let (x1, y1) = (bounds.max.x + margin, bounds.max.y + margin);
@@ -505,7 +513,9 @@ mod tests {
             "{past}"
         );
         assert!(past < 1.0, "a SOIC's plane stays near its lands: {past}");
-        assert!((bounds.min.z + LAND_MM).abs() < 1e-9);
+        // The lands lie a bond line under the seating plane the leads
+        // stand on, never on it.
+        assert!((bounds.min.z + LAND_GAP_MM + LAND_MM).abs() < 1e-9);
     }
 
     #[test]

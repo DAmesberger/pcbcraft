@@ -285,8 +285,27 @@ pub fn command_key() -> &'static str {
 /// The 3D view's one-line canvas hint (the full list is the Fit view
 /// button's hover help, [`help_3d`]).
 pub fn hint_3d() -> &'static str {
-    "Two fingers pan · Shift+two fingers or right-drag orbits · pinch zooms"
+    "Shift + two fingers to orbit · two fingers to pan · pinch to zoom"
 }
+
+/// The 3D view's gestures, listed in the Keyboard shortcuts sheet under
+/// PCB › 3D (none is a key, so none takes one): trackpad, mouse and the
+/// navigation cube.
+pub const NAVIGATION_3D: &[(&str, &str)] = &[
+    ("Shift + two fingers", "Orbit (trackpad)"),
+    ("Two fingers", "Pan (trackpad)"),
+    ("Pinch", "Zoom toward the pointer (trackpad)"),
+    ("Right-drag", "Orbit (mouse)"),
+    ("Shift + middle-drag", "Orbit (mouse)"),
+    ("Middle-drag", "Pan (mouse)"),
+    ("Wheel", "Zoom toward the pointer (mouse)"),
+    ("Cmd/Ctrl + drag on empty space", "Orbit"),
+    ("Space + drag", "Pan"),
+    ("Drag the cube", "Orbit"),
+    ("Click a cube face or corner", "Look from that side"),
+    ("Arrow keys", "Turn the view 15° (with Shift: 90°)"),
+    ("Middle double-click", "Fit the board"),
+];
 
 /// Hover help for the 3D view: every way to move it.
 pub fn help_3d() -> String {
@@ -294,6 +313,7 @@ pub fn help_3d() -> String {
     [
         "Trackpad: two fingers pan · Shift+two fingers orbit · pinch zooms".to_owned(),
         "Mouse: middle-drag pans · right-drag or Shift+middle orbits · wheel zooms".to_owned(),
+        "Cube: click a face or corner for that view · drag it to orbit".to_owned(),
         format!("Space+drag pans · {cmd}+drag on empty space orbits"),
         format!("Arrows turn the view (Shift: 90°) · {cmd}+arrows pan"),
         "Middle double-click fits".to_owned(),

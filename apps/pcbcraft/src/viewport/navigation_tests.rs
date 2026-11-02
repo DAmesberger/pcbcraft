@@ -492,3 +492,61 @@ fn the_fixture_has_a_part_and_empty_space() -> Result<()> {
     nav.empty()?;
     Ok(())
 }
+
+/// The navigation cube: a click on its face looks along that face, a
+/// click on the house goes home, a drag on it orbits, and none of them
+/// selects what lies under the cube.
+#[test]
+fn the_cube_turns_the_view_to_a_face_and_drags_orbit() -> Result<()> {
+    use pcbcraft_solidcraft::render::StandardView;
+    let mut nav = Nav::new(NavCaps::BOARD)?;
+    let rect = nav.rect()?;
+    let (cube, home) = nav_cube::layout(rect);
+    // The iso view shows TOP above the centre: click there.
+    let top = cube.center() - vec2(0.0, 20.0);
+    assert_eq!(
+        nav_cube::target(&nav.viewport.camera, rect, top),
+        Some(nav_cube::Target::View(Vec3::Z))
+    );
+    let picks = nav.click(PointerButton::Primary, top, Modifiers::NONE);
+    assert!(picks.is_empty(), "a click on the cube selects nothing");
+    let mut want = nav.viewport.camera;
+    want.set_view(StandardView::Top);
+    assert!((nav.viewport.camera.back() - want.back()).len() < 1e-4);
+    // Press and release in one frame (a fast click) works the same.
+    nav.frame(vec![Event::PointerMoved(home.center())], Modifiers::NONE);
+    nav.frame(
+        vec![
+            Nav::button(home.center(), PointerButton::Primary, true, Modifiers::NONE),
+            Nav::button(
+                home.center(),
+                PointerButton::Primary,
+                false,
+                Modifiers::NONE,
+            ),
+        ],
+        Modifiers::NONE,
+    );
+    let mut iso = nav.viewport.camera;
+    iso.set_view(StandardView::Iso);
+    assert!(
+        (nav.viewport.camera.back() - iso.back()).len() < 1e-4,
+        "home"
+    );
+    // A drag that starts on the cube orbits, and selects nothing.
+    let before = nav.viewport.camera;
+    let picks = nav.drag(
+        PointerButton::Primary,
+        cube.center(),
+        cube.center() + vec2(60.0, 0.0),
+        Modifiers::NONE,
+        6,
+    );
+    assert!(picks.is_empty());
+    assert!(turned(&before, &nav.viewport.camera));
+    assert!(
+        !moved(&before, &nav.viewport.camera),
+        "it turns about the target"
+    );
+    Ok(())
+}
