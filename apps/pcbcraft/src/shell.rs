@@ -79,6 +79,9 @@ pub struct Tool {
     /// The family's variants, shown variant included; empty for a plain
     /// button.
     pub menu: Vec<Tool>,
+    /// The key that runs it, as shown; the app fills it from the command
+    /// registry (`crate::commands`) before the ribbon is drawn.
+    pub shortcut: Option<String>,
 }
 
 impl Tool {
@@ -91,6 +94,7 @@ impl Tool {
             selected: false,
             tip: "",
             menu: Vec::new(),
+            shortcut: None,
         }
     }
     /// A split button showing `shown` with the variants `menu`; selected
@@ -269,12 +273,89 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
             tool.label,
         )
     });
-    match (tool.enabled, tool.tip.is_empty()) {
-        (true, true) => response.on_hover_text(tool.label),
-        (true, false) => response.on_hover_text(format!("{}\n{}", tool.label, tool.tip)),
-        (false, true) => response.on_hover_text(format!("{} is unavailable now", tool.label)),
-        (false, false) => response.on_hover_text(format!("{}\n{}", tool.label, tool.tip)),
+    tool_tooltip(response, tool)
+}
+
+/// What a ribbon tool's tooltip says: the title with its shortcut
+/// ("Route (X)"), the key cap on its own, and the help line (or why a
+/// disabled tool is unavailable).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolTip {
+    pub title: String,
+    pub key: Option<String>,
+    pub body: String,
+}
+
+pub fn tool_tip(tool: &Tool) -> ToolTip {
+    let title = match &tool.shortcut {
+        Some(key) => format!("{} ({key})", tool.label),
+        None => tool.label.to_owned(),
+    };
+    let body = if tool.tip.is_empty() && !tool.enabled {
+        format!("{} is unavailable now", tool.label)
+    } else {
+        tool.tip.to_owned()
+    };
+    ToolTip {
+        title,
+        key: tool.shortcut.clone(),
+        body,
     }
+}
+
+/// Solidcraft's ribbon tooltip (toolbar.rs `ribbon_tooltip`): the name in
+/// the heading font with its key cap at the right, the help below.
+pub fn tool_tooltip(response: Response, tool: &Tool) -> Response {
+    let tip = tool_tip(tool);
+    let label = tool.label;
+    response.on_hover_ui(move |ui| shortcut_tooltip(ui, label, tip.key.as_deref(), &tip.body))
+}
+
+/// The body of a tooltip naming a command and its key.
+pub fn shortcut_tooltip(ui: &mut Ui, name: &str, key: Option<&str>, body: &str) {
+    let t = Tokens::get();
+    let name_width = ui
+        .painter()
+        .layout_no_wrap(name.to_owned(), fonts::semibold(t.font_heading), t.text)
+        .size()
+        .x;
+    let key_width = key.map_or(0.0, |key| {
+        ui.painter()
+            .layout_no_wrap(key.to_owned(), FontId::monospace(t.font_body), t.text_dim)
+            .size()
+            .x
+            + t.space_24
+    });
+    ui.set_width(f32::max(240.0, name_width + key_width + t.space_12));
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(name)
+                .font(fonts::semibold(t.font_heading))
+                .color(t.text),
+        );
+        if let Some(key) = key {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                key_cap(ui, key);
+            });
+        }
+    });
+    if !body.is_empty() {
+        ui.label(egui::RichText::new(body).color(t.text_dim));
+    }
+}
+
+/// A shortcut key cap (Solidcraft's ribbon tooltip cap).
+pub fn key_cap(ui: &mut Ui, key: &str) -> Response {
+    let t = Tokens::get();
+    egui::Frame::NONE
+        .fill(t.panel_header)
+        .stroke(t.tertiary_border(t.border))
+        .corner_radius(t.radius_sm.saturating_sub(1))
+        .inner_margin(egui::Margin::symmetric(5, 1))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(key).monospace().color(t.text_dim));
+        })
+        .response
 }
 
 /// A split ribbon button, adapted from Solidcraft's sketch families
@@ -358,11 +439,7 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
         )
     });
     let mut clicked = None;
-    let run = if tool.tip.is_empty() {
-        run.on_hover_text(label)
-    } else {
-        run.on_hover_text(format!("{label}\n{}", tool.tip))
-    };
+    let run = tool_tooltip(run, tool);
     if run.clicked() && tool.enabled {
         clicked = Some(tool.id);
     }
@@ -866,7 +943,7 @@ fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
             tool.label,
         )
     });
-    response.on_hover_text(tool.tip)
+    tool_tooltip(response, tool)
 }
 
 pub fn icon_button(ui: &mut Ui, icon: &str, label: &str, enabled: bool) -> Response {

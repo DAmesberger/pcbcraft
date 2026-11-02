@@ -565,7 +565,7 @@ impl SchematicEditor {
                         Button::new("place", "component", "Place")
                             .enabled(has_parts && !reviewing)
                             .selected(self.tool == Tool::Place)
-                            .tip("Find a component and place it (P)"),
+                            .tip("Find a component and place it"),
                         Button::new("wire", "line", "Wire")
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Wire)
@@ -577,10 +577,10 @@ impl SchematicEditor {
                     tools: vec![
                         Button::new("rotate", "spin", "Rotate")
                             .enabled(arrangeable)
-                            .tip("Turn the selected symbol 90° counter-clockwise (Cmd/Ctrl+R)"),
+                            .tip("Turn the selected symbol 90° counter-clockwise"),
                         Button::new("mirror", "mirror", "Mirror")
                             .enabled(arrangeable)
-                            .tip("Mirror the selected symbol left to right (Shift+X)"),
+                            .tip("Mirror the selected symbol left to right"),
                     ],
                 },
                 Group {

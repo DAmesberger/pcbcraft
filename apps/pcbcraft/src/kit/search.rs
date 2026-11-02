@@ -654,6 +654,123 @@ pub fn search_row_marked(
     response
 }
 
+/// One command palette row (upstream `MenuItem::search_row` with a
+/// shortcut): icon tile, highlighted name, its context or why it is
+/// unavailable on the second line, and its key cap at the right.
+pub struct CommandRow<'a> {
+    pub icon: &'a str,
+    pub label: &'a str,
+    pub query: &'a str,
+    pub detail: &'a str,
+    pub shortcut: Option<&'a str>,
+    pub enabled: bool,
+    pub highlighted: bool,
+}
+
+/// Draw a [`CommandRow`]. A disabled row is dimmed and only hovers; its
+/// reason is its detail line and its hover text.
+pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response {
+    let t = Tokens::get();
+    let (r, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), search_row_height()),
+        Sense::hover(),
+    );
+    let sense = if row.enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(r, id, sense);
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(r));
+    if row.highlighted {
+        painter.rect_filled(r, inner_radius(), t.accent_soft);
+    } else if response.hovered() && row.enabled {
+        painter.rect_filled(r, inner_radius(), t.dialog_footer);
+    }
+    let opacity = if row.enabled { 1.0 } else { 0.4 };
+    let tile_size = t.space_24 + t.space_2;
+    let tile = Rect::from_center_size(
+        pos2(r.left() + t.space_8 + tile_size / 2.0, r.center().y),
+        vec2(tile_size, tile_size),
+    );
+    painter.rect_filled(
+        tile,
+        inner_radius(),
+        if row.highlighted {
+            t.accent_soft
+        } else {
+            t.dialog_footer
+        },
+    );
+    super::icon(
+        &painter,
+        tile.center(),
+        tile_size - t.space_12,
+        row.icon,
+        opacity,
+    );
+    let right = match row.shortcut {
+        Some(key) => {
+            let width = key_cap(ui, r.right_center() - vec2(t.space_8, 0.0), key);
+            r.right() - t.space_8 - width - t.space_8
+        }
+        None => r.right() - t.space_8,
+    };
+    let left = tile.right() + t.space_10;
+    let width = (right - left).max(0.0);
+    let (ink, dim) = if row.enabled {
+        (t.form_ink, t.form_dim)
+    } else {
+        (
+            t.form_dim.gamma_multiply(0.8),
+            t.form_dim.gamma_multiply(0.7),
+        )
+    };
+    let normal = egui::TextFormat::simple(FontId::proportional(t.font_label), ink);
+    let mut job = egui::text::LayoutJob::default();
+    match highlight(row.label, row.query) {
+        Some((start, end)) if row.enabled => {
+            job.append(
+                row.label.get(..start).unwrap_or_default(),
+                0.0,
+                normal.clone(),
+            );
+            job.append(
+                row.label.get(start..end).unwrap_or_default(),
+                0.0,
+                egui::TextFormat::simple(fonts::bold(t.font_label), t.selected_ink),
+            );
+            job.append(row.label.get(end..).unwrap_or_default(), 0.0, normal);
+        }
+        _ => job.append(row.label, 0.0, normal),
+    }
+    job.wrap.max_width = width;
+    job.wrap.max_rows = 1;
+    let galley = painter.layout_job(job);
+    painter.galley(pos2(left, r.top() + t.space_3), galley, ink);
+    let mut detail = egui::text::LayoutJob::simple_singleline(
+        row.detail.to_owned(),
+        FontId::proportional(t.font_small),
+        dim,
+    );
+    detail.wrap.max_width = width;
+    detail.wrap.max_rows = 1;
+    let detail = painter.layout_job(detail);
+    painter.galley(
+        pos2(left, r.bottom() - t.space_3 - detail.size().y),
+        detail,
+        dim,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, row.enabled, row.label)
+    });
+    if row.enabled {
+        response
+    } else {
+        response.on_hover_text(row.detail)
+    }
+}
+
 /// The first free-text term of `query` that occurs in `label`,
 /// case-insensitively and by character boundaries (case mappings may change
 /// UTF-8 lengths). Predicates and filters (`key>=…`, `pkg:…`) are skipped;

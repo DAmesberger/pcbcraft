@@ -225,7 +225,7 @@ impl FootprintTool {
         match self {
             Self::Select => "Select, drag to move, Delete removes (Esc)",
             Self::Pad(PadTemplate::Rect) => {
-                "Rectangular pad: click to place; Space turns it a quarter (N)"
+                "Rectangular pad: click to place; Space turns it a quarter"
             }
             Self::Pad(PadTemplate::RoundRect) => "Rounded-rectangle pad: click to place",
             Self::Pad(PadTemplate::Circle) => "Round pad: click to place",
@@ -233,7 +233,7 @@ impl FootprintTool {
             Self::CustomPad => {
                 "Custom pad: click a template pad to free its outline, or click to start one"
             }
-            Self::Array(ArrayTool::Linear) => "Pad row: pad 1, then the row direction (Shift+N)",
+            Self::Array(ArrayTool::Linear) => "Pad row: pad 1, then the row direction",
             Self::Array(ArrayTool::DualRow) => {
                 "Dual row (SOIC): pad 1, then the row direction; the second row faces it"
             }
@@ -241,15 +241,13 @@ impl FootprintTool {
                 "Quad (QFN): click the centre; per-side counts in Properties"
             }
             Self::Array(ArrayTool::Grid) => "Grid (BGA, header): click pad A1; skips in Properties",
-            Self::Drill => {
-                "Drill: click a pad for a plated hole, or empty board for an NPTH hole (H)"
-            }
-            Self::Slot => "Slot: click both slot ends on a pad, or on empty board (Shift+H)",
-            Self::Line => "Line on the active layer: two clicks; chains from its end (L)",
-            Self::Arc => "Arc on the active layer: centre, start, end (A)",
-            Self::Circle => "Circle on the active layer: centre, then radius (C)",
-            Self::Rect => "Rectangle on the active layer from two corners (R)",
-            Self::Dimension => "Driving dimension (D)",
+            Self::Drill => "Drill: click a pad for a plated hole, or empty board for an NPTH hole",
+            Self::Slot => "Slot: click both slot ends on a pad, or on empty board",
+            Self::Line => "Line on the active layer: two clicks; chains from its end",
+            Self::Arc => "Arc on the active layer: centre, start, end",
+            Self::Circle => "Circle on the active layer: centre, then radius",
+            Self::Rect => "Rectangle on the active layer from two corners",
+            Self::Dimension => "Driving dimension",
             Self::Constrain(_) => "Geometric constraint",
         }
     }

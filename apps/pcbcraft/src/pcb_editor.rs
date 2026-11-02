@@ -36,6 +36,8 @@ use std::collections::BTreeSet;
 mod board_card;
 pub(crate) mod board_shape;
 mod board_shape_ui;
+mod commands;
+pub(crate) use commands::shape_tool_entries;
 mod edge_card;
 mod fill_card;
 mod fill_paint;

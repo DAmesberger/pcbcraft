@@ -2,10 +2,11 @@
 //! cards, the canvas navigation bar and the toast stack. Geometry comes from
 //! Solidcraft tokens and constants; content comes from the editors.
 use super::{App, browser};
+use crate::commands::AppCommand;
 use crate::file_ui::Action;
 use crate::issues;
 use crate::kit;
-use crate::shell::{self, RibbonEvent, Workspace};
+use crate::shell::{self, Workspace};
 use egui::{Rect, pos2, vec2};
 use solidcraft_ui_egui::{
     fonts,
@@ -111,30 +112,32 @@ impl App {
                     );
                     ui.add_space(t.space_8);
                     self.file_menu(ui);
-                    if shell::icon_button(ui, "save", "Save project", !self.files.busy()).clicked()
-                    {
+                    let save = self.with_shortcut("Save project", AppCommand::Save);
+                    if shell::icon_button(ui, "save", &save, !self.files.busy()).clicked() {
                         self.files.request(Action::Save);
                     }
-                    if shell::icon_button(ui, "undo", "Undo", self.engine.can_undo()).clicked() {
+                    let undo = self.with_shortcut("Undo", AppCommand::Undo);
+                    if shell::icon_button(ui, "undo", &undo, self.engine.can_undo()).clicked() {
                         self.history(false);
                     }
-                    if shell::icon_button(ui, "redo", "Redo", self.engine.can_redo()).clicked() {
+                    let redo = self.with_shortcut("Redo", AppCommand::Redo);
+                    if shell::icon_button(ui, "redo", &redo, self.engine.can_redo()).clicked() {
                         self.history(true);
                     }
-                    let visible = self.browser_visible;
-                    if shell::icon_button(
-                        ui,
-                        "list",
-                        if visible {
-                            "Hide Browser (⌘B)"
+                    let browser = self.with_shortcut(
+                        if self.browser_visible {
+                            "Hide Browser"
                         } else {
-                            "Show Browser (⌘B)"
+                            "Show Browser"
                         },
-                        true,
-                    )
-                    .clicked()
-                    {
+                        AppCommand::ToggleBrowser,
+                    );
+                    if shell::icon_button(ui, "list", &browser, true).clicked() {
                         self.toggle_browser();
+                    }
+                    let palette = self.with_shortcut("Command palette", AppCommand::Palette);
+                    if shell::icon_button(ui, "zoom", &palette, true).clicked() {
+                        self.palette.toggle();
                     }
                     ui.add_space(t.space_8);
                     self.document_tab(ui);
@@ -193,14 +196,18 @@ impl App {
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
                 kit::form(ui, |ui| {
-                    for (label, action) in [
-                        ("New project", Action::New),
-                        ("Open…", Action::Open),
-                        ("Save", Action::Save),
-                        ("Save as…", Action::SaveAs),
-                        ("Export to Solidcraft…", Action::Export),
+                    for (label, action, command) in [
+                        ("New project", Action::New, AppCommand::New),
+                        ("Open…", Action::Open, AppCommand::Open),
+                        ("Save", Action::Save, AppCommand::Save),
+                        ("Save as…", Action::SaveAs, AppCommand::SaveAs),
+                        ("Export to Solidcraft…", Action::Export, AppCommand::Export),
                     ] {
-                        if ui_kit::button(ui, label, Button::Enabled(enabled)).clicked() {
+                        let key = self.with_shortcut(label, command);
+                        if ui_kit::button(ui, label, Button::Enabled(enabled))
+                            .on_hover_text(key)
+                            .clicked()
+                        {
                             self.files.request(action);
                         }
                     }
@@ -220,8 +227,9 @@ impl App {
                     } else {
                         "Show Browser"
                     };
+                    let key = self.with_shortcut(label, AppCommand::ToggleBrowser);
                     if ui_kit::button(ui, label, Button::Normal)
-                        .on_hover_text("⌘B")
+                        .on_hover_text(key)
                         .clicked()
                     {
                         self.toggle_browser();
@@ -232,48 +240,38 @@ impl App {
                     {
                         self.messages_open = true;
                     }
+                    kit::rule(ui);
+                    let key = self.with_shortcut("Find and run any command", AppCommand::Palette);
+                    if ui_kit::button(ui, "Command palette…", Button::Normal)
+                        .on_hover_text(key)
+                        .clicked()
+                    {
+                        self.palette.open();
+                    }
+                    let key = self.with_shortcut(
+                        "Every shortcut, grouped by where it applies",
+                        AppCommand::Shortcuts,
+                    );
+                    if ui_kit::button(ui, "Keyboard shortcuts…", Button::Normal)
+                        .on_hover_text(key)
+                        .clicked()
+                    {
+                        self.shortcut_sheet.open();
+                    }
                 });
             });
     }
 
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {
-        let ribbon = match self.workspace {
+        let mut ribbon = match self.workspace {
             Workspace::Part => self.part.ribbon(&self.engine),
             Workspace::Schematic => self.schematic.ribbon(&self.engine),
             Workspace::Pcb => self.pcb.ribbon(&self.engine),
         };
+        self.annotate_ribbon(&mut ribbon);
         let issues = self.issues.ribbon_toggle(&self.engine, self.workspace);
-        match shell::ribbon(ui, self.workspace, &ribbon, &issues) {
-            Some(RibbonEvent::Workspace(workspace)) => {
-                if workspace != self.workspace {
-                    self.clear_error();
-                }
-                self.workspace = workspace;
-            }
-            Some(RibbonEvent::Tab(tab)) => match self.workspace {
-                Workspace::Part => self.part.on_tab(tab),
-                Workspace::Schematic => {}
-                Workspace::Pcb => self.pcb.on_tab(tab),
-            },
-            Some(RibbonEvent::Tool(tool)) => {
-                let operation = match self.workspace {
-                    // The file service owns the native picker.
-                    Workspace::Part if tool == crate::part_editor::IMPORT_SVG => {
-                        self.part.import_svg(self.files.pick_svg());
-                        None
-                    }
-                    Workspace::Part => self.part.on_tool(tool, &self.engine),
-                    Workspace::Schematic => self.schematic.on_tool(tool, &self.engine),
-                    Workspace::Pcb => self.pcb.on_tool(tool, &self.engine),
-                };
-                self.apply(
-                    &ui.ctx().clone(),
-                    crate::refusal::Origin::Command,
-                    operation,
-                );
-            }
-            Some(RibbonEvent::Issues) => self.issues.toggle(),
-            None => {}
+        if let Some(event) = shell::ribbon(ui, self.workspace, &ribbon, &issues) {
+            self.ribbon_event(&ui.ctx().clone(), event);
         }
     }
 
@@ -592,16 +590,9 @@ impl App {
             (true, _) => crate::navigation::help_3d_placement(),
             (false, workspace) => crate::navigation::help_2d(workspace == Workspace::Part),
         };
-        if shell::icon_button_help(&mut child, "fit", "Fit view", &help, true).clicked() {
-            if three_d {
-                self.scene.viewport.fit();
-            } else {
-                match self.workspace {
-                    Workspace::Part => self.part.fit(),
-                    Workspace::Schematic => self.schematic.fit(),
-                    Workspace::Pcb => self.pcb.fit(),
-                }
-            }
+        let fit = self.with_shortcut("Fit view", AppCommand::FitView);
+        if shell::icon_button_help(&mut child, "fit", &fit, &help, true).clicked() {
+            self.fit_view();
         }
         if pcb_view {
             // Layers and view toggles (W3): a popover above the bar.

@@ -142,20 +142,18 @@ impl Tool {
     pub fn tip(self) -> &'static str {
         match self {
             Self::Select => "Select, box-select and drag (Esc)",
-            Self::Line => "Line: two clicks; chains from its end (L)",
+            Self::Line => "Line: two clicks; chains from its end",
             Self::Polyline => {
-                "Polyline: one multi-segment line; Enter, double-click or Finish ends it (Shift+L)"
+                "Polyline: one multi-segment line; Enter, double-click or Finish ends it"
             }
-            Self::Rect => "Rectangle from two corners (R)",
+            Self::Rect => "Rectangle from two corners",
             Self::RoundedRect => "Rectangle with rounded corners; set the radius in Properties",
-            Self::Circle => "Circle: centre, then radius (C)",
-            Self::Arc => "Arc: centre, start, end; runs the way the pointer turns (A)",
-            Self::Polygon => {
-                "Closed polygon: click the first point, press Enter or double-click (Shift+P)"
-            }
-            Self::Text => "Text: click to place, then type in Properties (Shift+T)",
-            Self::Pin => "Pin: place an unplaced terminal's connection end, or a new one (N)",
-            Self::Field => "Field: place designator, name or a field value (Shift+F)",
+            Self::Circle => "Circle: centre, then radius",
+            Self::Arc => "Arc: centre, start, end; runs the way the pointer turns",
+            Self::Polygon => "Closed polygon: click the first point, press Enter or double-click",
+            Self::Text => "Text: click to place, then type in Properties",
+            Self::Pin => "Pin: place an unplaced terminal's connection end, or a new one",
+            Self::Field => "Field: place designator, name or a field value",
         }
     }
     /// Whether the tool collects points until finished explicitly.
