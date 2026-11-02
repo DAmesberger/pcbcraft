@@ -57,10 +57,16 @@ pub enum MaterialId {
     SiliconeClear,
     SiliconeDiffuse,
     Polyimide,
+    /// Nickel silver (CuNiZn) shield can of a radio module.
+    NickelSilver,
+    /// Green soldermask over FR-4: a module board's face.
+    SolderMaskGreen,
+    /// Green soldermask over copper: a module's printed antenna trace.
+    SolderMaskOverCopper,
 }
 
 impl MaterialId {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 27] = [
         Self::EpoxyMould,
         Self::EpoxyLaserMarked,
         Self::MarkingInkWhite,
@@ -85,17 +91,21 @@ impl MaterialId {
         Self::SiliconeClear,
         Self::SiliconeDiffuse,
         Self::Polyimide,
+        Self::NickelSilver,
+        Self::SolderMaskGreen,
+        Self::SolderMaskOverCopper,
     ];
 
     pub fn category(self) -> MaterialCategory {
         use MaterialId::*;
         match self {
             TinMatte | TinBright | SolderSac | Gold | Nickel | CopperAlloy | PhosphorBronze
-            | Brass | Aluminium => MaterialCategory::Metal,
+            | Brass | Aluminium | NickelSilver => MaterialCategory::Metal,
             Alumina96 | BariumTitanate | Ferrite => MaterialCategory::Ceramic,
             BorosilicateGlass => MaterialCategory::Glass,
             EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | ResistorOvercoat | PvcSleeve
-            | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide => {
+            | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide | SolderMaskGreen
+            | SolderMaskOverCopper => {
                 MaterialCategory::Polymer
             }
         }
@@ -365,6 +375,15 @@ fn values(id: MaterialId) -> Values {
             .density(1100.0)
             .cite("palik-crc", "n of PDMS ≈ 1.41")
             .cite("est", "scattering filler: a white, partly transmitting body"),
+        NickelSilver => metal("Nickel silver", [0.80, 0.77, 0.70], 0.22)
+            .density(8700.0)
+            .cite("est", "CuNiZn (about 18 % Ni) reads silver-white: F0 between the Ni and Cu-alloy F0 with the copper tint mostly bleached; density of C75200; satin roughness of stamped strip"),
+        SolderMaskGreen => dielectric("Green soldermask over FR-4", [0.0118, 0.116, 0.032], 0.20, 1.52)
+            .density(1850.0)
+            .cite("est", "the board mask composite of docs/materials.md (mask_over(green, FR-4, 20 µm)) and its gloss roughness; density of the FR-4 board under it"),
+        SolderMaskOverCopper => dielectric("Green soldermask over copper", [0.064, 0.237, 0.069], 0.20, 1.52)
+            .density(8960.0)
+            .cite("est", "the mask-over-copper composite of docs/materials.md (mask_over(green, Cu, 12 µm)); density of the copper it covers"),
         Polyimide => dielectric("Polyimide", [0.40, 0.15, 0.02], 0.25, 1.70)
             .density(1420.0)
             .cite("palik-crc", "n ≈ 1.70 and density of polyimide film")

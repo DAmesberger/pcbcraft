@@ -30,6 +30,7 @@ pub mod imported;
 pub mod inspect;
 pub mod look;
 mod molded;
+mod module;
 mod no_lead;
 mod profile;
 mod tabbed;
@@ -75,6 +76,7 @@ pub fn family_rev(form: &PackageForm) -> Option<u16> {
         PackageForm::Molded(_) => molded::FAMILY_REV,
         PackageForm::Grid(_) => grid::FAMILY_REV,
         PackageForm::Tht(_) => tht::FAMILY_REV,
+        PackageForm::Module(_) => module::FAMILY_REV,
     }
 }
 
@@ -180,6 +182,7 @@ pub fn build_definition(
         PackageForm::Molded(f) => molded::check(f)?,
         PackageForm::Grid(f) => grid::check(f)?,
         PackageForm::Tht(f) => tht::check(f)?,
+        PackageForm::Module(f) => module::check(f)?,
         PackageForm::Generic => {}
     }
     native.component(component, false)?;
@@ -199,6 +202,7 @@ pub fn build_definition(
         PackageForm::Molded(f) => molded::build(&mut b, f)?,
         PackageForm::Grid(f) => grid::build(&mut b, f)?,
         PackageForm::Tht(f) => tht::build(&mut b, f)?,
+        PackageForm::Module(f) => module::build(&mut b, f)?,
         PackageForm::Generic => {
             return Err(Error::Invalid(
                 "model.unsupported: a generic package has no generated model".into(),
@@ -364,10 +368,16 @@ impl Build<'_> {
     }
 
     /// Bind lead numbers to the package's terminals in their listed
-    /// order, when the package lists exactly one terminal per numbered
-    /// body; otherwise the bodies keep no terminal (never guessed).
+    /// order, when the package lists exactly one terminal per lead number
+    /// (several bodies may share one: a module's ground pads); otherwise
+    /// the bodies keep no terminal (never guessed).
     fn assign_terminals(&mut self, package: &PackageDefinition) {
-        let numbered = self.bodies.iter().filter(|b| b.terminal.is_some()).count();
+        let numbered = self
+            .bodies
+            .iter()
+            .filter_map(|b| b.terminal)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         let exact = numbered == package.terminals.len();
         for b in &mut self.bodies {
             b.terminal = match (exact, b.terminal) {

@@ -53,6 +53,61 @@ pub struct FootprintDefinition {
     pub datum: Datum,
     /// Footprint-wide mask and paste rules pads inherit.
     pub defaults: PadDefaults,
+    /// Copper keep-out regions the part needs on the host board (an
+    /// antenna's clearance), in the footprint frame. Never inferred.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keepouts: Vec<FootprintKeepout>,
+}
+
+/// Most keep-out regions of one footprint.
+pub const MAX_FOOTPRINT_KEEPOUTS: usize = 16;
+
+/// Which copper layers a footprint keep-out covers.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeepoutScope {
+    /// Every copper layer of the board.
+    #[default]
+    AllCopper,
+    /// The outer layer the part is placed on.
+    ComponentSide,
+}
+
+/// A copper keep-out a footprint carries: its closed outline in the
+/// footprint frame. Placed, it forbids fill copper, tracks and vias (and,
+/// with `forbid_pads`, other parts' pads) inside the outline on its
+/// layers, exactly like a board keepout.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FootprintKeepout {
+    /// Display name, e.g. "antenna".
+    #[serde(default)]
+    pub name: String,
+    pub outline: Outline,
+    #[serde(default)]
+    pub scope: KeepoutScope,
+    #[serde(default)]
+    pub forbid_pads: bool,
+}
+
+impl FootprintKeepout {
+    /// An axis-aligned rectangle keep-out on every copper layer.
+    pub fn rect(name: &str, min: Point, max: Point) -> Self {
+        Self {
+            name: name.to_owned(),
+            outline: Outline {
+                start: min,
+                segments: vec![
+                    Segment::Line { to: [max[0], min[1]] },
+                    Segment::Line { to: max },
+                    Segment::Line { to: [min[0], max[1]] },
+                    Segment::Line { to: min },
+                ],
+            },
+            scope: KeepoutScope::AllCopper,
+            forbid_pads: false,
+        }
+    }
 }
 
 /// The package datum (the placement origin) in the footprint frame: the
@@ -557,6 +612,11 @@ impl FootprintDefinition {
                 .as_ref()
                 .is_none_or(|p| p.markers.len() <= super::graphics::MAX_POLARITY_MARKERS)
             && self.source.as_ref().is_none_or(|s| s.within_bounds())
+            && self.keepouts.len() <= MAX_FOOTPRINT_KEEPOUTS
+            && self.keepouts.iter().all(|k| {
+                k.outline.segments.len() <= MAX_OUTLINE_SEGMENTS
+                    && k.name.len() <= crate::ids::MAX_LABEL
+            })
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
@@ -568,6 +628,7 @@ impl FootprintDefinition {
             ])
             && self.pads.iter().all(Pad::finite)
             && self.graphics.iter().all(|g| g.item.finite())
+            && self.keepouts.iter().all(|k| k.outline.finite())
     }
 
     pub(super) fn local_ids(&self) -> Vec<u32> {
@@ -589,6 +650,18 @@ impl FootprintDefinition {
             ));
         }
         self.local_findings(id, out);
+        for (k, keepout) in self.keepouts.iter().enumerate() {
+            if !keepout.outline.closed() || keepout.outline.segments.len() < 2 {
+                out.push(issue(
+                    "footprint.keepout_open",
+                    format!(
+                        "Keep-out {} needs a closed outline of at least two segments.",
+                        if keepout.name.is_empty() { (k + 1).to_string() } else { keepout.name.clone() }
+                    ),
+                    vec![this],
+                ));
+            }
+        }
         let Some(package) = library.package(self.package) else {
             out.push(issue(
                 "reference.missing",

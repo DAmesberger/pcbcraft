@@ -145,10 +145,27 @@ fn shape(layer: DrawingLayer, shape: Shape, width: f64) -> (DrawingLayer, Item) 
     )
 }
 
+/// The copper keep-outs a typed form asks of the host board: a module's
+/// antenna region ([`ModuleForm::antenna_keepout`]) on every copper layer.
+///
+/// [`ModuleForm::antenna_keepout`]: crate::library::package_form::ModuleForm::antenna_keepout
+pub fn form_keepouts(form: &crate::library::package_form::PackageForm) -> Vec<crate::library::FootprintKeepout> {
+    match form {
+        crate::library::package_form::PackageForm::Module(m) => m
+            .antenna_keepout()
+            .map(|[min, max]| crate::library::FootprintKeepout::rect("antenna", min, max))
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Append the standard drawings to `footprint`, allocating graphic IDs from
 /// its `next_local`: the assembly outline and designator, the silkscreen
 /// outline and designator, and the courtyard, all on the component side.
-/// Polarity is never added (it needs explicit data). Returns the new IDs in
+/// Polarity is never added (it needs explicit data). The package form's
+/// copper keep-outs (a module's antenna clearance) replace the footprint's
+/// keep-outs: they are form-derived like the lands. Returns the new IDs in
 /// order; on error the footprint is unchanged.
 pub fn add_standard_graphics(
     footprint: &mut FootprintDefinition,
@@ -182,6 +199,7 @@ pub fn add_standard_graphics(
         ));
     }
     let mut next = footprint.clone();
+    next.keepouts = form_keepouts(&package.form);
     let mut added = Vec::with_capacity(items.len() + 2);
     let mut allocate = |next: &mut FootprintDefinition| -> Result<GraphicId> {
         let id = GraphicId(next.next_local);

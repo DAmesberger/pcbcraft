@@ -370,6 +370,7 @@ fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Molded => "SOD / SMA / MELF",
         FamilyKind::Grid => "BGA / LGA",
         FamilyKind::Tht => "through-hole",
+        FamilyKind::Module => "module",
     }
 }
 

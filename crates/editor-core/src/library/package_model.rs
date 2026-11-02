@@ -139,6 +139,14 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
             ChipKind::Capacitor => MaterialId::BariumTitanate,
             ChipKind::Inductor => MaterialId::Ferrite,
         },
+        // A module: green board, nickel-silver can (role `Other`), gold
+        // (ENIG) pads and castellations.
+        (PackageForm::Module(_), BodyRole::Body) => MaterialId::SolderMaskGreen,
+        (PackageForm::Module(_), BodyRole::Other) => MaterialId::NickelSilver,
+        (
+            PackageForm::Module(_),
+            BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad,
+        ) => MaterialId::Gold,
         (PackageForm::Header(_), BodyRole::Body) => MaterialId::Pbt,
         (PackageForm::Header(_), BodyRole::Lead) => MaterialId::Gold,
         // Formed leads are bright (satin) tin; chip terminations matte.

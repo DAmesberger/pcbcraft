@@ -493,6 +493,7 @@ pub fn package_area(
         (_, PackageForm::Chip(c)) => [c.length - 2.0 * c.termination, c.width],
         (_, PackageForm::GullWing(g)) => [g.body_length, g.body_width],
         (_, PackageForm::NoLead(n)) => [n.body_length, n.body_width],
+        (_, PackageForm::Module(m)) => m.can_size,
         (_, form) => {
             let [l, w, _] = form.envelope().unwrap_or(package.envelope);
             [l, w]

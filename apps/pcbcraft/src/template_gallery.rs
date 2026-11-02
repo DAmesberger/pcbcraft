@@ -149,6 +149,7 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Molded => "SOD/SMA",
         FamilyKind::Grid => "BGA",
         FamilyKind::Tht => "THT",
+        FamilyKind::Module => "Modules",
     }
 }
 

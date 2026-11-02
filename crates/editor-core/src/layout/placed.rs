@@ -203,6 +203,86 @@ pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
     result
 }
 
+/// A footprint's copper keep-out placed on the board, as a board keepout
+/// in board coordinates, with the instance that carries it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedKeepout {
+    pub instance: Id,
+    /// `id` is the instance's: a placed keep-out has no identity of its
+    /// own and is edited only through its footprint.
+    pub keepout: crate::model::Keepout,
+}
+
+/// Every footprint keep-out of every placed part (an antenna clearance):
+/// its outline through the placement transform (arcs reverse on the
+/// bottom), on every copper layer or the placement's outer layer, forbidding
+/// fill copper, tracks and vias, and pads when the footprint says so.
+pub fn placed_keepouts(project: &Project) -> Vec<PlacedKeepout> {
+    use crate::library::{KeepoutScope, Outline, Segment};
+    use crate::model::fill::{KeepoutLayers, KeepoutRules};
+    let mut result = Vec::new();
+    for placement in &project.placements {
+        let Some(instance) = project.instance(placement.instance) else {
+            continue;
+        };
+        let Some(physical) = instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+        else {
+            continue;
+        };
+        let footprint = &physical.footprint.definition;
+        if footprint.keepouts.is_empty() {
+            continue;
+        }
+        let t = placement_transform(placement, &footprint.datum);
+        for k in &footprint.keepouts {
+            let flip = if t.mirror { -1.0 } else { 1.0 };
+            let outline = Outline {
+                start: t.apply(k.outline.start),
+                segments: k
+                    .outline
+                    .segments
+                    .iter()
+                    .map(|s| match *s {
+                        Segment::Line { to } => Segment::Line { to: t.apply(to) },
+                        Segment::Arc { to, bulge } => Segment::Arc {
+                            to: t.apply(to),
+                            bulge: flip * bulge,
+                        },
+                    })
+                    .collect(),
+            };
+            let layers = match k.scope {
+                KeepoutScope::AllCopper => KeepoutLayers::All,
+                KeepoutScope::ComponentSide => {
+                    KeepoutLayers::Only(vec![crate::model::CopperLayer::from(placement.layer)])
+                }
+            };
+            result.push(PlacedKeepout {
+                instance: instance.id,
+                keepout: crate::model::Keepout {
+                    id: instance.id,
+                    name: if k.name.is_empty() {
+                        instance.designator.clone()
+                    } else {
+                        format!("{} {}", instance.designator, k.name)
+                    },
+                    outline,
+                    layers,
+                    forbid: KeepoutRules {
+                        fills: true,
+                        tracks: true,
+                        vias: true,
+                        pads: k.forbid_pads,
+                    },
+                },
+            });
+        }
+    }
+    result
+}
+
 pub(crate) fn opposite(layer: Layer) -> Layer {
     match layer {
         Layer::Top => Layer::Bottom,

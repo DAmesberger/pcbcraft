@@ -37,8 +37,9 @@ pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub(crate) use courtyard::limit_finding as courtyard_limit_finding;
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
-    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem, PlacedPad,
-    pick_graphic, pick_pad, placed_graphics, placed_pads, placement_transform,
+    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem,
+    PlacedKeepout, PlacedPad, pick_graphic, pick_pad, placed_graphics, placed_keepouts,
+    placed_pads, placement_transform,
 };
 pub use via::{
     DEFAULT_VIA_DIAMETER_MM, DEFAULT_VIA_DRILL_MM, DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM,

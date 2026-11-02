@@ -128,6 +128,7 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Molded => "molded",
         FamilyKind::Grid => "grid array",
         FamilyKind::Tht => "through-hole",
+        FamilyKind::Module => "module",
     }
 }
 

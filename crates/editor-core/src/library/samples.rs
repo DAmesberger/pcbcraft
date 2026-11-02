@@ -456,6 +456,9 @@ impl Preset {
 /// numbers from 1 and `EP` for an exposed pad. The footprint's pad numbers
 /// ([`form_lands`]) are the same text.
 pub fn form_designations(form: &PackageForm, count: usize) -> Vec<String> {
+    if let PackageForm::Module(m) = form {
+        return m.designations_for(count);
+    }
     let leads = usize::try_from(form.lead_count()).unwrap_or(0);
     let balls = match form {
         PackageForm::Grid(g) => g.ball_names(),
@@ -509,6 +512,9 @@ pub fn form_lands_with(
     terminals: &[PackageTerminalId],
     rules: &DesignRules,
 ) -> Option<Vec<Pad>> {
+    if let PackageForm::Module(m) = form {
+        return m.lands(terminals);
+    }
     let no_lead_gap = no_lead_copper_gap(rules);
     let points = form.lead_points();
     let leads = usize::try_from(form.lead_count()).ok()?;
@@ -575,7 +581,7 @@ pub fn form_lands_with(
                 let (_, land) = t.estimated_drill_and_land();
                 [land, land]
             }
-            PackageForm::Generic => [1.0, 1.0],
+            PackageForm::Generic | PackageForm::Module(_) => [1.0, 1.0],
         }
     };
     let tab_index = match form {

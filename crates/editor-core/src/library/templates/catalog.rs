@@ -11,7 +11,7 @@ use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{DefinitionId, MAX_LABEL, PackageRowRef, printable};
 use crate::library::bundle::Bundle;
 use crate::library::package_form::{
-    ChipKind, GridForm, MoldedForm, PackageForm, TabbedForm, ThtForm,
+    ChipKind, GridForm, ModuleForm, MoldedForm, PackageForm, TabbedForm, ThtForm,
 };
 use crate::library::part::{Basis, Provenance};
 use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
@@ -58,10 +58,13 @@ pub enum FamilyKind {
     Grid,
     /// B2d: axial, radial, DIP, TO.
     Tht,
+    /// Radio and processor modules: a board with a shield can, edge pad
+    /// rows, a ground array and an antenna end.
+    Module,
 }
 
 impl FamilyKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Chip,
         Self::GullWing,
         Self::NoLead,
@@ -70,11 +73,14 @@ impl FamilyKind {
         Self::Molded,
         Self::Grid,
         Self::Tht,
+        Self::Module,
     ];
 
-    /// The footprint template kind that builds this family's lands.
-    pub fn template_kind(self) -> TemplateKind {
-        match self {
+    /// The parametric footprint template kind that builds this family's
+    /// lands; `None` for a module, whose lands come only from its form
+    /// (`library.package_from_template`).
+    pub fn template_kind(self) -> Option<TemplateKind> {
+        Some(match self {
             Self::Chip => TemplateKind::Chip,
             Self::GullWing => TemplateKind::GullWing,
             Self::NoLead => TemplateKind::Qfn,
@@ -83,7 +89,14 @@ impl FamilyKind {
             Self::Molded => TemplateKind::Molded,
             Self::Grid => TemplateKind::Grid,
             Self::Tht => TemplateKind::Tht,
-        }
+            Self::Module => return None,
+        })
+    }
+
+    /// The gallery's outline names of the family.
+    pub fn outline_label(self) -> &'static str {
+        self.template_kind()
+            .map_or("Radio / MCU module", TemplateKind::label)
     }
 
     /// The family revision rows are checked against now.
@@ -102,6 +115,7 @@ impl FamilyKind {
             Self::Molded => "Molded 2-terminal",
             Self::Grid => "Grid array",
             Self::Tht => "Through-hole",
+            Self::Module => "Module",
         }
     }
 
@@ -117,6 +131,7 @@ impl FamilyKind {
             Self::Molded => PackageForm::Molded(Box::new(MoldedForm::typical())),
             Self::Grid => PackageForm::Grid(Box::new(GridForm::typical())),
             Self::Tht => PackageForm::Tht(Box::new(ThtForm::typical())),
+            Self::Module => PackageForm::Module(Box::new(ModuleForm::typical())),
         }
     }
 
@@ -145,6 +160,7 @@ impl FamilyKind {
             PackageForm::Molded(_) => Self::Molded,
             PackageForm::Grid(_) => Self::Grid,
             PackageForm::Tht(_) => Self::Tht,
+            PackageForm::Module(_) => Self::Module,
         })
     }
 }

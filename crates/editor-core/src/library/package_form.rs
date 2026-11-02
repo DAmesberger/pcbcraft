@@ -15,11 +15,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod grid;
+pub mod module;
 pub mod molded;
 pub mod tabbed;
 pub mod tht;
 
 pub use grid::GridForm;
+pub use module::ModuleForm;
 pub use molded::MoldedForm;
 pub use tabbed::TabbedForm;
 pub use tht::ThtForm;
@@ -76,6 +78,9 @@ pub enum PackageForm {
     Grid(Box<GridForm>),
     /// B2d: through-hole axial, radial, DIP and TO.
     Tht(Box<ThtForm>),
+    /// A small board with a shield can, edge pad rows, a ground-pad array
+    /// and an optional antenna end (radio modules).
+    Module(Box<ModuleForm>),
 }
 
 /// Which chip construction the body is: sets default materials.
@@ -210,6 +215,7 @@ impl PackageForm {
             Self::Molded(f) => Some(f.as_ref()),
             Self::Grid(f) => Some(f.as_ref()),
             Self::Tht(f) => Some(f.as_ref()),
+            Self::Module(f) => Some(f.as_ref()),
             Self::Generic
             | Self::Chip(_)
             | Self::GullWing(_)
@@ -225,7 +231,7 @@ impl PackageForm {
             Self::GullWing(_) => "Gull-wing",
             Self::NoLead(_) => "No-lead",
             Self::Header(_) => "Pin header",
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 self.family_form().map_or("", |f| f.label())
             }
         }
@@ -268,7 +274,7 @@ impl PackageForm {
                 h.pin_above,
                 h.pin_below,
             ],
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 self.family_form().map(|f| f.lengths()).unwrap_or_default()
             }
         }
@@ -297,7 +303,7 @@ impl PackageForm {
                 h.row_pitch * f64::from(h.rows),
                 h.body_height + h.pin_above,
             ]),
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 self.family_form().and_then(|f| f.envelope())
             }
         }
@@ -316,7 +322,7 @@ impl PackageForm {
             Self::GullWing(g) => rows(g.sides, g.leads_per_side),
             Self::NoLead(n) => rows(n.sides, n.terminals_per_side),
             Self::Header(h) => u64::from(h.rows) * u64::from(h.pins_per_row),
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 self.family_form().map_or(0, |f| f.lead_count())
             }
         }
@@ -330,7 +336,7 @@ impl PackageForm {
         match self {
             Self::Generic => Vec::new(),
             Self::NoLead(n) if n.exposed_pad.is_some() => vec![leads, leads + 1],
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => self
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => self
                 .family_form()
                 .map(|f| f.terminal_counts())
                 .unwrap_or_default(),
@@ -379,7 +385,7 @@ impl PackageForm {
                     ]
                 })
                 .collect(),
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => self
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => self
                 .family_form()
                 .map(|f| f.lead_points())
                 .unwrap_or_default(),
@@ -451,7 +457,7 @@ impl PackageForm {
                 length("pin_above", h.pin_above),
                 length("pin_below", h.pin_below),
             ],
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 self.family_form().map(|f| f.values()).unwrap_or_default()
             }
         }
@@ -515,7 +521,7 @@ impl PackageForm {
                 positive("Pin length above", h.pin_above);
                 positive("Pin length below", h.pin_below);
             }
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
                 if let Some(f) = self.family_form() {
                     out.extend(f.range_problems());
                 }
@@ -663,7 +669,7 @@ impl PackageForm {
                 );
             }
             // Later families report consistency in `FamilyForm::range_problems`.
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) => {}
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {}
         }
         out
     }

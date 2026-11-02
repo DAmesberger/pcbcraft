@@ -53,6 +53,9 @@ pub(crate) struct Ctx<'a> {
     pub(crate) rules: DesignRules,
     pub(crate) layers: Vec<CopperLayer>,
     pub(crate) pads: Vec<PlacedPad>,
+    /// Board keepouts, then placed footprint keep-outs with the instance
+    /// that carries them.
+    pub(crate) keepouts: Vec<(crate::model::Keepout, Option<Id>)>,
     /// Each pad's board bounds, by index into `pads`.
     pad_bounds: Vec<Option<[Point; 2]>>,
     classes: BTreeMap<Id, Option<NetClassId>>,
@@ -106,6 +109,18 @@ pub(crate) fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
     }
 }
 
+/// The board's keepouts and every placed footprint keep-out
+/// ([`super::super::placed_keepouts`]), the latter with their instance.
+pub(crate) fn effective_keepouts(project: &Project) -> Vec<(crate::model::Keepout, Option<Id>)> {
+    let mut out: Vec<_> = project.keepouts.iter().map(|k| (k.clone(), None)).collect();
+    out.extend(
+        super::super::placed_keepouts(project)
+            .into_iter()
+            .map(|p| (p.keepout, Some(p.instance))),
+    );
+    out
+}
+
 impl<'a> Ctx<'a> {
     pub(crate) fn new(project: &'a Project) -> Self {
         let pads = placed_pads(project);
@@ -124,6 +139,7 @@ impl<'a> Ctx<'a> {
             layers: project.stackup.layers(),
             pads,
             pad_bounds,
+            keepouts: effective_keepouts(project),
             classes,
             keys: BTreeMap::new(),
             copper: BTreeMap::new(),
@@ -235,7 +251,7 @@ impl<'a> Ctx<'a> {
                 out.tracks.push(i);
             }
         }
-        for (i, k) in p.keepouts.iter().enumerate() {
+        for (i, (k, _)) in self.keepouts.iter().enumerate() {
             if k.on(layer) && k.forbid.fills && near(bounds_of(&k.outline.flatten(FILL_CHORD_MM))) {
                 out.keepouts.push(i);
             }
@@ -317,7 +333,7 @@ impl<'a> Ctx<'a> {
             keepouts: rel
                 .keepouts
                 .iter()
-                .filter_map(|i| p.keepouts.get(*i))
+                .filter_map(|i| self.keepouts.get(*i).map(|(k, _)| k))
                 .collect(),
             higher,
         };
@@ -395,7 +411,7 @@ impl<'a> Ctx<'a> {
                 rings.push(geom::circle(h.at, d / 2.0 + gap, tol));
             }
         }
-        for k in rel.keepouts.iter().filter_map(|i| p.keepouts.get(*i)) {
+        for (k, _) in rel.keepouts.iter().filter_map(|i| self.keepouts.get(*i)) {
             if let Some(ring) = geom::ccw(k.outline.flatten(tol)) {
                 if arcs(&k.outline) {
                     regions.extend(geom::offset(&[vec![ring]], tol, tol));

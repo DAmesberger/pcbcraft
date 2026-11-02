@@ -55,7 +55,8 @@ pub fn family(form: &PackageForm) -> Family {
         PackageForm::Tabbed(_)
         | PackageForm::Molded(_)
         | PackageForm::Grid(_)
-        | PackageForm::Tht(_) => Family::Later,
+        | PackageForm::Tht(_)
+        | PackageForm::Module(_) => Family::Later,
     }
 }
 
@@ -222,7 +223,8 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
         PackageForm::Tabbed(_)
         | PackageForm::Molded(_)
         | PackageForm::Grid(_)
-        | PackageForm::Tht(_) => changed |= super::family_rows::rows(ui, form),
+        | PackageForm::Tht(_)
+        | PackageForm::Module(_) => changed |= super::family_rows::rows(ui, form),
     }
     changed
 }

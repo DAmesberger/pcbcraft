@@ -390,7 +390,8 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 | PackageForm::Tabbed(_)
                 | PackageForm::Molded(_)
                 | PackageForm::Grid(_)
-                | PackageForm::Tht(_) => {}
+                | PackageForm::Tht(_)
+                | PackageForm::Module(_) => {}
             }
             match model {
                 PackageModel::Envelope { material: _ } => {}
@@ -427,6 +428,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 polarity: _,
                 datum: _,
                 defaults: _,
+                keepouts: _,
             } = footprint;
             let (id, revision) = exact(map, DefinitionKind::Package, package.id, package.revision)?;
             *package = PackageRef::new(id, revision);

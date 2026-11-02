@@ -78,7 +78,10 @@ pub(crate) fn links(project: &Project) -> Vec<Vec<ObjectRef>> {
 /// Fill and keepout findings.
 pub fn findings(project: &Project) -> Vec<Finding> {
     let mut out = Vec::new();
-    if project.fills.is_empty() && project.keepouts.is_empty() {
+    if project.fills.is_empty()
+        && project.keepouts.is_empty()
+        && super::super::placed_keepouts(project).is_empty()
+    {
         return out;
     }
     let mut ctx = Ctx::new(project);
@@ -293,14 +296,18 @@ fn describe(project: &Project, object: &ObjectRef) -> String {
 /// Tracks, vias and pads inside keepouts that forbid them on their layer.
 fn keepouts(ctx: &Ctx<'_>, out: &mut Vec<Finding>) {
     let project = ctx.project;
-    for k in &project.keepouts {
+    for (k, owner) in &ctx.keepouts {
         let Some(ring) = geom::ccw(k.outline.flatten(FILL_CHORD_MM)) else {
             continue;
         };
         let Some(kb) = geom::bounds([&ring]) else {
             continue;
         };
-        let me = ObjectRef::Keepout { id: k.id };
+        // A footprint keep-out is reported against its part.
+        let me = match owner {
+            Some(instance) => ObjectRef::Instance { id: *instance },
+            None => ObjectRef::Keepout { id: k.id },
+        };
         let name = if k.name.is_empty() {
             "a keepout".to_owned()
         } else {
@@ -335,7 +342,7 @@ fn keepouts(ctx: &Ctx<'_>, out: &mut Vec<Finding>) {
             }
         }
         if k.forbid.pads {
-            for pad in &ctx.pads {
+            for pad in ctx.pads.iter().filter(|p| Some(p.instance) != *owner) {
                 let on = ctx.layers.iter().any(|l| k.on(*l) && pad_on(pad, *l));
                 if on && inside(&pad.outline().flatten(FILL_CHORD_MM)) {
                     out.push(Finding::new(

@@ -5,6 +5,7 @@ use egui::Ui;
 use pcbcraft_core::library::PackageForm;
 
 mod grid;
+mod module;
 mod molded;
 mod tabbed;
 mod tht;
@@ -16,6 +17,7 @@ pub fn rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
         PackageForm::Molded(f) => molded::rows(ui, f),
         PackageForm::Grid(f) => grid::rows(ui, f),
         PackageForm::Tht(f) => tht::rows(ui, f),
+        PackageForm::Module(f) => module::rows(ui, f),
         PackageForm::Generic
         | PackageForm::Chip(_)
         | PackageForm::GullWing(_)

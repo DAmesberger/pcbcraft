@@ -132,7 +132,8 @@ impl PackageShape {
             PackageForm::Tabbed(_)
             | PackageForm::Molded(_)
             | PackageForm::Grid(_)
-            | PackageForm::Tht(_) => {
+            | PackageForm::Tht(_)
+            | PackageForm::Module(_) => {
                 let pitch = form.values().into_iter().find_map(|v| match v.value {
                     ParamValue::Length(mm) if v.name.0.ends_with("_e") => Some(mm),
                     _ => None,
@@ -422,6 +423,7 @@ fn custom_aliases(family: FamilyKind) -> &'static [&'static str] {
         FamilyKind::Molded => &["SOD", "SMA", "SMB", "SMC", "MELF", "tantalum", "diode"],
         FamilyKind::Grid => &["BGA", "FBGA", "LGA", "WLCSP", "CSP"],
         FamilyKind::Tht => &["DIP", "PDIP", "TO-220", "TO-92", "axial", "radial", "THT"],
+        FamilyKind::Module => &["module", "Wi-Fi module", "BLE module", "radio module", "castellated", "shield can"],
     }
 }
 
@@ -501,7 +503,7 @@ fn candidates(project: &Project, context: &CatalogContext) -> Vec<Candidate> {
             // the custom entry findable by them.
             let description = format!(
                 "{}: edit the values of a new package of this family",
-                family.template_kind().label()
+                family.outline_label()
             );
             out.push(Candidate::new(hit, &description));
         }
