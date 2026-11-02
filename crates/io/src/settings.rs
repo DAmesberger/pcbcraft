@@ -25,6 +25,8 @@ pub const MAX_FAVOURITES: usize = 256;
 pub const MAX_RECENT: usize = 32;
 /// Bytes of the settings file.
 pub const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
+/// The widest panel width kept, in points.
+pub const MAX_PANEL_WIDTH: f32 = 4096.0;
 /// Bytes of one configured path.
 pub const MAX_PATH: usize = 4096;
 /// Overrides the config directory (tests, sandboxes).
@@ -56,6 +58,10 @@ pub struct UserSettings {
     pub favourites: Vec<EntryKey>,
     /// Most recent first.
     pub recent: Vec<EntryKey>,
+    /// The Browser's width in points, as last dragged; `None` for the
+    /// default. The app clamps it to what the window fits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_width: Option<f32>,
 }
 
 impl Default for UserSettings {
@@ -65,6 +71,7 @@ impl Default for UserSettings {
             sources: Vec::new(),
             favourites: Vec::new(),
             recent: Vec::new(),
+            browser_width: None,
         }
     }
 }
@@ -181,6 +188,14 @@ impl UserSettings {
                 "too many sources, favourites or recents".into(),
             ));
         }
+        if self
+            .browser_width
+            .is_some_and(|w| !w.is_finite() || w <= 0.0 || w > MAX_PANEL_WIDTH)
+        {
+            return Err(Error::Invalid(format!(
+                "the Browser width must be a positive number of at most {MAX_PANEL_WIDTH} points"
+            )));
+        }
         let mut paths = BTreeSet::new();
         for source in &self.sources {
             if !source.path.is_absolute() || source.path.as_os_str().len() > MAX_PATH {
@@ -271,10 +286,17 @@ mod tests {
                 library: LibraryId(1),
                 lineage: SourceLineageId(3),
             }],
+            browser_width: Some(312.5),
             ..UserSettings::default()
         };
         write_settings(&path, &settings)?;
         assert_eq!(read_settings(&path)?, settings);
+        // A width that is not a positive, bounded number is refused.
+        for width in [f32::NAN, f32::INFINITY, 0.0, -1.0, MAX_PANEL_WIDTH + 1.0] {
+            let mut wide = settings.clone();
+            wide.browser_width = Some(width);
+            assert!(write_settings(&path, &wide).is_err(), "{width}");
+        }
         // Project lineage ids are per project: never kept per user.
         let mut project = settings.clone();
         project.recent.push(EntryKey::Project {

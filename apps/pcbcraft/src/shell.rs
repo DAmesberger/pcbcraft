@@ -910,23 +910,62 @@ pub fn icon_button_help(
     }
 }
 
+/// How wide a grip a resizable card's right edge offers, counted inwards
+/// (upstream `browser::BROWSER_RAIL`).
+pub const RESIZE_RAIL: f32 = 6.0;
+
+/// A card's right-edge resize: the remembered width, changed while the
+/// edge is dragged and kept inside `range`.
+pub struct Resize<'a> {
+    pub width: &'a mut f32,
+    pub range: std::ops::RangeInclusive<f32>,
+}
+
+/// What a resizable card's edge did this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Resized {
+    /// The width changed.
+    pub changed: bool,
+    /// A drag of the edge ended: the time to remember the width.
+    pub stopped: bool,
+}
+
+/// `width + delta` inside `range`; a non-finite delta keeps the width, and
+/// a non-finite width becomes the range's start.
+pub fn resized_width(width: f32, delta: f32, range: &std::ops::RangeInclusive<f32>) -> f32 {
+    let (min, max) = (*range.start(), range.end().max(*range.start()));
+    let width = if width.is_finite() { width } else { min };
+    let next = if delta.is_finite() {
+        width + delta
+    } else {
+        width
+    };
+    next.clamp(min, max)
+}
+
 /// A floating card at `rect`: `header` draws its title band, `add` its
-/// scrolling body. The card hugs its content up to `rect`'s height.
+/// scrolling body. The card hugs its content up to `rect`'s height. With
+/// `resize`, its right edge is a rail that drags the card's width, as
+/// upstream's `browser::resize_column`; the caller lays `rect` out from
+/// that width.
 pub fn card(
     ctx: &egui::Context,
     id: &str,
     rect: Rect,
+    resize: Option<Resize<'_>>,
     header: impl FnOnce(&mut Ui),
     add: impl FnOnce(&mut Ui),
-) {
+) -> Resized {
     let t = Tokens::get();
     let host = Container::new(ctx, Surface::Panel);
+    let mut out = Resized::default();
     host.area(egui::Id::new(id))
         .fixed_pos(rect.min)
         .movable(false)
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
-            host.frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
+            let card = host
+                .frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
                 .inner_margin(egui::Margin::same(4))
                 .show(ui, |ui| {
                     let inner = rect.width() - 8.0;
@@ -945,8 +984,28 @@ pub fn card(
                                 .show(ui, |ui| crate::kit::form(ui, add));
                             ui.add_space(t.space_8);
                         });
-                });
+                })
+                .response
+                .rect;
+            let Some(resize) = resize else {
+                return;
+            };
+            let rail =
+                Rect::from_x_y_ranges(card.right() - RESIZE_RAIL..=card.right(), card.y_range());
+            let response = ui
+                .interact(rail, egui::Id::new((id, "resize")), Sense::drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Resize"));
+            if response.dragged() {
+                let delta = ui.input(|i| i.pointer.delta().x);
+                let next = resized_width(*resize.width, delta, &resize.range);
+                out.changed = next != *resize.width;
+                *resize.width = next;
+            }
+            out.stopped = response.drag_stopped();
         });
+    out
 }
 
 /// The inset of a column card's frame, in points.

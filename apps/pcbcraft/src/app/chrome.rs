@@ -21,14 +21,21 @@ const SHELL_GAP: f32 = 7.0;
 /// The browser shows when the viewport fits it beside the canvas and the
 /// properties card.
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
-/// Upstream Browser card width.
-const BROWSER_WIDTH: f32 = 260.0;
+/// Upstream Browser card width: the width before the user drags one.
+pub(super) const BROWSER_WIDTH: f32 = 260.0;
+/// How narrow the Browser may be dragged, and how wide (upstream
+/// `browser::MIN_BROWSER_WIDTH` / `MAX_BROWSER_WIDTH`). A docked Browser
+/// also leaves the canvas at least half the room beside Properties.
+pub(super) const MIN_BROWSER_WIDTH: f32 = 170.0;
+pub(super) const MAX_BROWSER_WIDTH: f32 = 620.0;
 
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
     pub canvas: Rect,
     pub inspector: Rect,
     pub browser: Option<Rect>,
+    /// The widths the Browser may be dragged to in this window.
+    pub browser_range: std::ops::RangeInclusive<f32>,
     /// The Browser floats over the canvas (shown on request in a window too
     /// narrow to dock it beside the canvas).
     pub overlay: bool,
@@ -55,7 +62,18 @@ fn docks(width: f32, card: f32) -> bool {
     width > card * BROWSER_MIN_VIEWPORT_CARDS
 }
 
-pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
+/// The widths a Browser may take in `room` (the width left of
+/// Properties): docked it leaves the canvas at least half of it, as an
+/// overlay it may cover it.
+pub(super) fn browser_range(room: f32, overlay: bool) -> std::ops::RangeInclusive<f32> {
+    let room = if room.is_finite() { room.max(0.0) } else { 0.0 };
+    let max = if overlay { room } else { room / 2.0 }.min(MAX_BROWSER_WIDTH);
+    MIN_BROWSER_WIDTH.min(max)..=max
+}
+
+/// The cards and canvas for a Browser of the remembered `width` (clamped to
+/// what the window fits; a non-finite width is the default).
+pub(super) fn layout(area: Rect, mode: BrowserMode, width: f32) -> Layout {
     let t = Tokens::get();
     let area = area.shrink(SHELL_GAP);
     let card = t.form_card_width.min(area.width() * 0.4).max(0.0);
@@ -69,11 +87,13 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
     let overlay = shown && !docked;
     // Docked, it takes the canvas's left edge; as an overlay it floats over
     // the canvas at the same place, as wide as fits beside Properties.
-    let width = if overlay {
-        BROWSER_WIDTH.min((inspector.left() - SHELL_GAP - area.left()).max(0.0))
+    let browser_range = browser_range(inspector.left() - SHELL_GAP - area.left(), overlay);
+    let width = if width.is_finite() {
+        width
     } else {
-        BROWSER_WIDTH.min(card)
-    };
+        BROWSER_WIDTH
+    }
+    .clamp(*browser_range.start(), *browser_range.end());
     let browser = shown.then(|| Rect::from_min_size(area.min, vec2(width, area.height())));
     let left = match browser {
         Some(b) if !overlay => b.right() + SHELL_GAP,
@@ -87,6 +107,7 @@ pub(super) fn layout(area: Rect, mode: BrowserMode) -> Layout {
         canvas,
         inspector,
         browser,
+        browser_range,
         overlay,
     }
 }
@@ -284,7 +305,7 @@ impl App {
             .central()
             .frame(egui::Frame::NONE.fill(t.viewport_bottom))
             .show(ui, |ui| {
-                let layout = layout(ui.max_rect(), self.browser);
+                let layout = layout(ui.max_rect(), self.browser, self.browser_width);
                 self.browser_visible = layout.browser.is_some();
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
@@ -310,16 +331,29 @@ impl App {
                     let mut source_pick = None;
                     let updates = self.sources.updates(&self.engine);
                     let badges = self.issues.badges(&self.engine);
-                    shell::card(
+                    // The remembered width is what the user dragged; this
+                    // window may show it narrower.
+                    let mut width = rect.width();
+                    let resized = shell::card(
                         &ctx,
                         "project-browser",
                         rect,
+                        Some(shell::Resize {
+                            width: &mut width,
+                            range: layout.browser_range.clone(),
+                        }),
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
                             pick = browser::show(ui, &self.engine, lit, &updates, &badges);
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
+                    if resized.changed {
+                        self.browser_width = width;
+                    }
+                    if resized.stopped {
+                        self.sources.set_browser_width(self.browser_width);
+                    }
                     if let Some(pick) = pick {
                         self.pick(pick);
                         // An overlay Browser gives the canvas back once used.
@@ -665,6 +699,7 @@ mod tests {
         let wide = layout(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0)),
             BrowserMode::Auto,
+            BROWSER_WIDTH,
         );
         assert!(wide.browser.is_some());
         assert!(wide.canvas.left() >= wide.browser.map_or(0.0, |b| b.right()));
@@ -672,12 +707,14 @@ mod tests {
         let narrow = layout(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 500.0)),
             BrowserMode::Auto,
+            BROWSER_WIDTH,
         );
         assert!(narrow.browser.is_none());
         assert!(narrow.canvas.width() > 0.0);
         let tiny = layout(
             Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0)),
             BrowserMode::Auto,
+            BROWSER_WIDTH,
         );
         assert!(tiny.canvas.width() >= 0.0);
     }
@@ -688,18 +725,135 @@ mod tests {
     #[test]
     fn the_browser_toggle_overlays_it_when_narrow() {
         let half = Rect::from_min_size(pos2(0.0, 0.0), vec2(860.0, 900.0));
-        assert!(layout(half, BrowserMode::Auto).browser.is_none());
-        let shown = layout(half, BrowserMode::Shown);
+        assert!(
+            layout(half, BrowserMode::Auto, BROWSER_WIDTH)
+                .browser
+                .is_none()
+        );
+        let shown = layout(half, BrowserMode::Shown, BROWSER_WIDTH);
         let browser = shown.browser.unwrap_or(Rect::NOTHING);
         assert!(shown.overlay);
         assert!(browser.width() > 100.0);
         assert!(browser.right() <= shown.inspector.left());
         assert!(shown.canvas.width() > 0.0, "the canvas keeps its width");
         let wide = Rect::from_min_size(pos2(0.0, 0.0), vec2(1600.0, 900.0));
-        assert!(layout(wide, BrowserMode::Hidden).browser.is_none());
-        assert!(!layout(wide, BrowserMode::Shown).overlay);
+        assert!(
+            layout(wide, BrowserMode::Hidden, BROWSER_WIDTH)
+                .browser
+                .is_none()
+        );
+        assert!(!layout(wide, BrowserMode::Shown, BROWSER_WIDTH).overlay);
         assert_eq!(BrowserMode::Auto.toggled(false), BrowserMode::Shown);
         assert_eq!(BrowserMode::Shown.toggled(true), BrowserMode::Hidden);
+    }
+
+    /// The remembered Browser width is shown inside its range: at least
+    /// the upstream minimum, at most the upstream maximum and, docked, half
+    /// the room beside Properties so the canvas keeps the rest.
+    #[test]
+    fn the_browser_width_stays_inside_its_range() {
+        let huge = Rect::from_min_size(pos2(0.0, 0.0), vec2(2600.0, 900.0));
+        let width = |area, w| {
+            layout(area, BrowserMode::Auto, w)
+                .browser
+                .map_or(0.0, |b| b.width())
+        };
+        assert_eq!(width(huge, 50.0), MIN_BROWSER_WIDTH);
+        assert_eq!(width(huge, 333.0), 333.0);
+        assert_eq!(width(huge, 5000.0), MAX_BROWSER_WIDTH);
+        assert_eq!(width(huge, f32::NAN), BROWSER_WIDTH);
+        let laptop = Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 800.0));
+        let l = layout(laptop, BrowserMode::Auto, 5000.0);
+        let browser = l.browser.unwrap_or(Rect::NOTHING);
+        assert!(browser.width() < MAX_BROWSER_WIDTH);
+        assert_eq!(browser.width(), *l.browser_range.end());
+        assert!(l.canvas.width() >= browser.width() - SHELL_GAP);
+        // As an overlay it may cover the canvas, never Properties.
+        let half = Rect::from_min_size(pos2(0.0, 0.0), vec2(860.0, 900.0));
+        let shown = layout(half, BrowserMode::Shown, 5000.0);
+        let browser = shown.browser.unwrap_or(Rect::NOTHING);
+        assert!(browser.right() <= shown.inspector.left());
+        let range = browser_range(0.0, false);
+        assert!(range.start() <= range.end());
+        assert_eq!(shell::resized_width(300.0, 1e9, &(170.0..=620.0)), 620.0);
+    }
+
+    /// Dragging the Browser's right edge changes its width, clamped to the
+    /// range, and reports the end of the drag (when the width is saved).
+    #[test]
+    fn dragging_the_browser_edge_resizes_it_within_its_range() {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let range = MIN_BROWSER_WIDTH..=400.0;
+        let mut width = BROWSER_WIDTH;
+        let mut time = 0.0;
+        let mut frame = |width: &mut f32, events: Vec<egui::Event>| {
+            time += 0.05;
+            let mut resized = shell::Resized::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 800.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let rect = Rect::from_min_size(pos2(7.0, 7.0), vec2(*width, 600.0));
+                    resized = shell::card(
+                        ui.ctx(),
+                        "drag-test",
+                        rect,
+                        Some(shell::Resize {
+                            width,
+                            range: range.clone(),
+                        }),
+                        |ui| kit::card_title(ui, "Browser", ""),
+                        |ui| {
+                            ui.label("Body");
+                        },
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            resized
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Drag the edge right by 60, then far past the maximum.
+        let mut x = 7.0 + width - 2.0;
+        let y = 20.0;
+        // The card's area is sized on its first frames.
+        frame(&mut width, Vec::new());
+        frame(&mut width, Vec::new());
+        frame(&mut width, vec![egui::Event::PointerMoved(pos2(x, y))]);
+        frame(&mut width, vec![button(pos2(x, y), true)]);
+        let start = width;
+        for _ in 0..6 {
+            x += 10.0;
+            frame(&mut width, vec![egui::Event::PointerMoved(pos2(x, y))]);
+        }
+        assert!(width > start + 40.0 && width <= start + 60.0, "{width}");
+        for _ in 0..10 {
+            x += 100.0;
+            frame(&mut width, vec![egui::Event::PointerMoved(pos2(x, y))]);
+        }
+        assert_eq!(width, 400.0, "the maximum holds");
+        let end = frame(&mut width, vec![button(pos2(x, y), false)]);
+        assert!(end.stopped, "the end of the drag is reported");
+        // And far to the left: the minimum holds.
+        let mut x = 7.0 + width - 2.0;
+        frame(&mut width, vec![egui::Event::PointerMoved(pos2(x, y))]);
+        frame(&mut width, vec![button(pos2(x, y), true)]);
+        for _ in 0..10 {
+            x -= 100.0;
+            frame(&mut width, vec![egui::Event::PointerMoved(pos2(x, y))]);
+        }
+        frame(&mut width, vec![button(pos2(x, y), false)]);
+        assert_eq!(width, MIN_BROWSER_WIDTH, "the minimum holds");
     }
 
     /// The Issues bar sits under Properties, inside the column, at every
@@ -715,6 +869,7 @@ mod tests {
             let l = layout(
                 Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h)),
                 BrowserMode::Auto,
+                BROWSER_WIDTH,
             );
             for expanded in [false, true] {
                 let c = kit::card::column(l.inspector, expanded, Default::default());
