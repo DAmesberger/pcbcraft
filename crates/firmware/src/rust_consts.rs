@@ -57,6 +57,8 @@ pub struct Pin {
     pub peripheral: Option<&'static str>,
     pub role: Option<&'static str>,
     pub mux: Option<&'static str>,
+    /// The mux table `mux` belongs to when the part has several.
+    pub mux_table: Option<&'static str>,
     pub pull: Option<Pull>,
     pub speed: Option<&'static str>,
     pub initial: Option<Level>,
@@ -108,6 +110,7 @@ pub const {}: Pin = Pin {{
     peripheral: {},
     role: {},
     mux: {},
+    mux_table: {},
     pull: {pull},
     speed: {},
     initial: {initial},
@@ -122,6 +125,7 @@ pub const {}: Pin = Pin {{
             optional(pin.peripheral.as_ref()),
             optional(pin.role.as_ref()),
             optional(pin.mux.as_ref()),
+            optional(pin.mux_table.as_ref()),
             optional(pin.speed.as_ref()),
         );
     }

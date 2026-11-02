@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 
 /// Bytes of a [`MuxCode`].
 pub const MAX_MUX_CODE: usize = 16;
+/// Bytes of a function's mux table name (`Function::mux_table`).
+pub const MAX_MUX_TABLE: usize = 32;
 /// Bytes of a GPIO port name.
 pub const MAX_GPIO_PORT: usize = 8;
 /// Options one terminal declares.
@@ -130,8 +132,13 @@ pub fn terminal_within_bounds(gpio: Option<&GpioRef>, options: &[PinOption]) -> 
 
 /// Persistence bounds of a function's C2/C3 data (called by
 /// `TerminalFunctions::within_bounds`).
-pub fn function_within_bounds(mux: Option<&MuxCode>, source: Option<&SourceSpan>) -> bool {
+pub fn function_within_bounds(
+    mux: Option<&MuxCode>,
+    table: Option<&str>,
+    source: Option<&SourceSpan>,
+) -> bool {
     mux.is_none_or(|m| m.0.len() <= MAX_MUX_CODE)
+        && table.is_none_or(|t| t.len() <= MAX_MUX_TABLE)
         && source.is_none_or(|s| {
             s.table
                 .as_ref()
@@ -298,6 +305,18 @@ pub fn declaration_problems(
                     local: function.id.0,
                     message: format!(
                         "Function ‘{}’ of terminal ‘{name}’ needs a mux code of 1–{MAX_MUX_CODE} bytes without spaces.",
+                        function.label
+                    ),
+                });
+            }
+            if let Some(table) = &function.mux_table
+                && !text_ok(table, MAX_MUX_TABLE)
+            {
+                out.push(PinDataProblem {
+                    code: "function.mux_table",
+                    local: function.id.0,
+                    message: format!(
+                        "Function ‘{}’ of terminal ‘{name}’ needs a mux table name of 1–{MAX_MUX_TABLE} bytes.",
                         function.label
                     ),
                 });

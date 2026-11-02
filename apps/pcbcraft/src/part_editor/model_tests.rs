@@ -658,3 +658,90 @@ fn package_templates_start_a_generated_model_on_fitted_lands() -> TestResult {
     }
     Ok(())
 }
+
+impl Harness {
+    /// Frames until the view's decals are made (a worker builds them).
+    fn settle_decals(&mut self) -> TestResult {
+        for _ in 0..500 {
+            self.frame(vec![]);
+            if !self.viewport.decals_building() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Err("the decals were never made".into())
+    }
+
+    fn set_marking(&mut self, spec: pcbcraft_core::library::marking::MarkingSpec) -> TestResult {
+        let set = self.editor.draft.as_mut().ok_or("draft")?;
+        set.component.marking = Some(Box::new(spec));
+        Ok(())
+    }
+}
+
+/// D7: the Component 3D preview shows the edited marking as decals on
+/// the model, made off the UI thread; editing the marking rebuilds only
+/// the decals (the model's generation and build key stay), and the
+/// decals follow the display transform like the model does.
+#[test]
+fn the_preview_shows_marking_decals_and_edits_rebuild_only_them() -> TestResult {
+    use pcbcraft_core::library::marking::{Finish, MarkingItem, MarkingSpec, Template};
+    use pcbcraft_solidcraft::marking::board::DECAL_KIND;
+    let mut h = Harness::new()?;
+    let generation = h.viewport.generation();
+    let key = h
+        .editor
+        .preview_package()
+        .and_then(|p| ModelKey::package(&p));
+    let text = |t: &str| MarkingSpec {
+        items: vec![MarkingItem::Text {
+            template: Template(t.into()),
+            height_mm: None,
+            align: Default::default(),
+        }],
+        finish: Finish::InkWhite,
+        ..MarkingSpec::default()
+    };
+    assert!(h.viewport.decal_geometry().is_empty());
+    h.set_marking(text("{designator}"))?;
+    h.settle_decals()?;
+    let first: Vec<_> = h.viewport.decal_geometry().to_vec();
+    assert!(!first.is_empty(), "{:?}", h.viewport.decal_problems());
+    assert!(first.iter().all(|g| g.kind == DECAL_KIND));
+    // On the chip's top (0.55 mm), white ink's lift above it.
+    let lift = Finish::InkWhite.lift_mm();
+    for g in &first {
+        assert!((g.min[2] - (0.55 + lift)).abs() < 1e-4, "{}", g.min[2]);
+    }
+    let builds = h.viewport.decal_builds();
+    // Frames without a change make nothing again.
+    h.frame(vec![]);
+    h.frame(vec![]);
+    assert_eq!(h.viewport.decal_builds(), builds);
+    // An edit of the marking: new decals, the same model.
+    h.set_marking(text("R1 103"))?;
+    h.settle_decals()?;
+    assert_eq!(h.viewport.decal_builds(), builds + 1);
+    assert_ne!(
+        h.viewport.decal_geometry().len() + h.viewport.decal_geometry()[0].mesh.triangles.len(),
+        first.len() + first[0].mesh.triangles.len()
+    );
+    assert_eq!(
+        h.viewport.generation(),
+        generation,
+        "the model was not rebuilt"
+    );
+    assert_eq!(
+        h.editor
+            .preview_package()
+            .and_then(|p| ModelKey::package(&p)),
+        key,
+        "the preview's build key is unchanged"
+    );
+    // Clearing the marking clears the decals.
+    let set = h.editor.draft.as_mut().ok_or("draft")?;
+    set.component.marking = None;
+    h.frame(vec![]);
+    assert!(h.viewport.decal_geometry().is_empty());
+    Ok(())
+}

@@ -594,6 +594,7 @@ impl PcbEditor {
     ) {
         self.setup = None;
         self.net_classes = None;
+        self.signals = None;
         match &mut self.rules {
             Some(panel) => {
                 if topic.is_some() {
@@ -901,6 +902,7 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
         }
     }
     panel.reveal = false;
+    super::impedance_view::impedance_section(ui, engine.project());
     let mut library_op = None;
     kit::section(
         ui,

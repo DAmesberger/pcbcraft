@@ -72,6 +72,12 @@ impl PartialEq<Layer> for CopperLayer {
 pub struct CopperFoil {
     /// Finished copper thickness in µm (35 µm is 1 oz).
     pub thickness_um: f64,
+    /// A reference plane (ground or power) for controlled impedance. When
+    /// no foil of a stackup is marked, the impedance model takes the
+    /// copper layers next to a signal layer as its references
+    /// (`layout::impedance`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plane: bool,
 }
 
 impl CopperFoil {
@@ -79,6 +85,7 @@ impl CopperFoil {
     pub fn ounces(ounces: f64) -> Self {
         Self {
             thickness_um: ounces * OUNCE_UM,
+            plane: false,
         }
     }
 }
@@ -109,6 +116,34 @@ pub struct Dielectric {
     pub kind: DielectricKind,
     pub thickness_mm: f64,
     pub glass: GlassStyle,
+    /// Relative permittivity (Dk) the fabricator quotes for this layer.
+    /// When absent, [`Dielectric::permittivity`] estimates it from the
+    /// glass style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dk: Option<f64>,
+}
+
+/// The Dk values [`Dielectric::dk`] accepts.
+pub const DK_RANGE: std::ops::RangeInclusive<f64> = 1.0..=20.0;
+
+impl Dielectric {
+    /// The relative permittivity the impedance model uses: the entered
+    /// [`Dielectric::dk`], else a generic FR-4 estimate by glass style
+    /// (resin-rich thin styles lower, glass-heavy 7628 higher; typical
+    /// published values near 1 GHz, not a fabricator's data).
+    pub fn permittivity(&self) -> f64 {
+        self.dk.unwrap_or(match self.glass {
+            GlassStyle::Style106 => 3.8,
+            GlassStyle::Style1080 => 4.0,
+            GlassStyle::Style2116 => 4.3,
+            GlassStyle::Style7628 => 4.6,
+        })
+    }
+
+    /// Whether [`Dielectric::permittivity`] is an estimate.
+    pub fn permittivity_estimated(&self) -> bool {
+        self.dk.is_none()
+    }
 }
 
 /// The board's stackup. `copper` lists foils top to bottom; `dielectrics[i]`
@@ -134,6 +169,7 @@ impl Default for Stackup {
                 kind: DielectricKind::Core,
                 thickness_mm: 1.6,
                 glass: GlassStyle::Style7628,
+                dk: None,
             }],
             mask_top: true,
             mask_bottom: true,
@@ -151,6 +187,7 @@ impl Stackup {
             kind: DielectricKind::Prepreg,
             thickness_mm: 0.2,
             glass: GlassStyle::Style2116,
+            dk: None,
         };
         let dielectrics = match count {
             2 => return Ok(Self::default()),
@@ -160,6 +197,7 @@ impl Stackup {
                     kind: DielectricKind::Core,
                     thickness_mm: 1.2,
                     glass: GlassStyle::Style7628,
+                    dk: None,
                 },
                 prepreg,
             ],
@@ -168,6 +206,7 @@ impl Stackup {
                     kind: DielectricKind::Core,
                     thickness_mm: 0.4,
                     glass: GlassStyle::Style7628,
+                    dk: None,
                 };
                 vec![prepreg, core, prepreg, core, prepreg]
             }
@@ -292,6 +331,14 @@ impl Stackup {
             return Err(Error::Invalid(
                 "dielectric thickness must be 0.025–3.2 mm".into(),
             ));
+        }
+        if !self
+            .dielectrics
+            .iter()
+            .filter_map(|d| d.dk)
+            .all(|dk| dk.is_finite() && DK_RANGE.contains(&dk))
+        {
+            return Err(Error::Invalid("dielectric Dk must be 1–20".into()));
         }
         Ok(())
     }

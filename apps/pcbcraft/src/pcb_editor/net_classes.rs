@@ -134,6 +134,27 @@ fn optional_mm(
     value: Option<f64>,
     inherited: f64,
 ) -> Option<Option<f64>> {
+    optional_value(
+        ui,
+        card,
+        label,
+        value,
+        "mm",
+        &mm(inherited),
+        "Enter a length in mm, or leave it empty for the rules",
+    )
+}
+
+/// One optional number in `unit` with `hint` shown while empty.
+fn optional_value(
+    ui: &mut Ui,
+    card: &mut NetClassesCard,
+    label: &str,
+    value: Option<f64>,
+    unit: &str,
+    hint: &str,
+    error: &'static str,
+) -> Option<Option<f64>> {
     let current = value.map(kit::number_text).unwrap_or_default();
     let id = ui.id().with(("net-class-mm", label));
     let mut text = card
@@ -145,13 +166,13 @@ fn optional_mm(
         if text.trim().is_empty() {
             return Ok(None);
         }
-        match kit::parse_number(text, "mm") {
+        match kit::parse_number(text, unit) {
             Some(v) if v.is_finite() && v >= 0.0 => Ok(Some(v)),
-            _ => Err("Enter a length in mm, or leave it empty for the rules"),
+            _ => Err(error),
         }
     };
     let invalid = parsed(&text).err();
-    let hint = mm(inherited);
+    let hint = hint.to_owned();
     let response = kit::row(ui, label, |ui| {
         kit::text_field(ui, label, &mut text, &hint, invalid.is_some())
     });
@@ -207,6 +228,7 @@ impl PcbEditor {
     pub fn open_net_classes(&mut self, class: Option<NetClassId>) {
         self.setup = None;
         self.rules = None;
+        self.signals = None;
         self.end_route();
         self.net_classes = Some(NetClassesCard {
             selected: class,
@@ -227,7 +249,8 @@ impl PcbEditor {
         let Some(net) = self.net.filter(|n| project.net(*n).is_some()) else {
             return;
         };
-        let width = layout::route_width(project, net).value;
+        // A class impedance target sets the width per layer.
+        let width = layout::impedance::route_width_on(project, net, self.layer);
         let key = (net, width.to_bits());
         if self.width_from != Some(key) {
             self.width = width;
@@ -351,6 +374,7 @@ fn net_classes_body(
         .cloned()
     {
         operation = class_section(ui, project, card, &class).or(operation);
+        operation = signal_section(ui, project, card, &class).or(operation);
         operation = clearance_section(ui, project, card, &class).or(operation);
         lit = members_section(ui, card, &report, &class);
     }
@@ -445,6 +469,122 @@ fn class_section(
             });
         }
     });
+    let class = edited?;
+    Some(Operation::Rules(RulesCommand::EditNetClass { class }))
+}
+
+/// The selected class's high-speed rules: impedance targets, pair width,
+/// gap and limits, then the width and gap the targets need on each
+/// layer of the stackup (`layout::impedance::derive`).
+fn signal_section(
+    ui: &mut Ui,
+    project: &Project,
+    card: &mut NetClassesCard,
+    class: &NetClass,
+) -> Option<Operation> {
+    let mut edited: Option<NetClass> = None;
+    let s = &class.signal;
+    let summary = match (s.impedance, s.diff_impedance) {
+        (Some(z), Some(d)) => format!("{} Ω · {} Ω pair", kit::number_text(z), kit::number_text(d)),
+        (Some(z), None) => format!("{} Ω", kit::number_text(z)),
+        (None, Some(d)) => format!("{} Ω pair", kit::number_text(d)),
+        (None, None) => "No impedance target".to_owned(),
+    };
+    kit::summary_section(
+        ui,
+        ("net-class-signal", class.id),
+        "High speed",
+        s.impedance.is_some() || s.diff_impedance.is_some(),
+        &summary,
+        |ui| {
+            type Set = fn(&mut NetClass, Option<f64>);
+            // (label, value, unit, hint while empty, error, setter)
+            type Field = (
+                &'static str,
+                Option<f64>,
+                &'static str,
+                &'static str,
+                &'static str,
+                Set,
+            );
+            let rows: [Field; 4] = [
+                (
+                    "Impedance",
+                    s.impedance,
+                    "Ω",
+                    "No target",
+                    "Enter ohms (10–200), or leave it empty",
+                    |c, v| c.signal.impedance = v,
+                ),
+                (
+                    "Pair impedance",
+                    s.diff_impedance,
+                    "Ω",
+                    "No target",
+                    "Enter ohms (20–300), or leave it empty",
+                    |c, v| c.signal.diff_impedance = v,
+                ),
+                (
+                    "Tolerance",
+                    s.impedance_tolerance,
+                    "%",
+                    "10 %",
+                    "Enter a percentage, or leave it empty for 10 %",
+                    |c, v| c.signal.impedance_tolerance = v,
+                ),
+                (
+                    "Max skew",
+                    s.pair_max_skew,
+                    "mm",
+                    "Not checked",
+                    "Enter a length in mm, or leave it empty",
+                    |c, v| c.signal.pair_max_skew = v,
+                ),
+            ];
+            for (label, value, unit, hint, error, set) in rows {
+                if let Some(value) = optional_value(ui, card, label, value, unit, hint, error) {
+                    let mut next = class.clone();
+                    set(&mut next, value);
+                    edited = Some(next);
+                }
+            }
+            let rows: [(&str, Option<f64>, &str, Set); 3] = [
+                (
+                    "Pair width",
+                    class.diff_pair_width,
+                    "From target",
+                    |c, v| c.diff_pair_width = v,
+                ),
+                ("Pair gap", class.diff_pair_gap, "From target", |c, v| {
+                    c.diff_pair_gap = v
+                }),
+                (
+                    "Max uncoupled",
+                    s.pair_max_uncoupled,
+                    "Not checked",
+                    |c, v| c.signal.pair_max_uncoupled = v,
+                ),
+            ];
+            for (label, value, hint, set) in rows {
+                if let Some(value) = optional_value(
+                    ui,
+                    card,
+                    label,
+                    value,
+                    "mm",
+                    hint,
+                    "Enter a length in mm, or leave it empty",
+                ) {
+                    let mut next = class.clone();
+                    set(&mut next, value);
+                    edited = Some(next);
+                }
+            }
+            if s.impedance.is_some() || s.diff_impedance.is_some() {
+                super::impedance_view::class_layers(ui, project, class.id);
+            }
+        },
+    );
     let class = edited?;
     Some(Operation::Rules(RulesCommand::EditNetClass { class }))
 }

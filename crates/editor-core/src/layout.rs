@@ -25,8 +25,14 @@ mod copper;
 pub mod courtyard;
 pub mod fill;
 mod grid;
+pub mod impedance;
+pub mod legend;
+pub mod length;
 pub mod limits;
+pub mod meander;
+pub mod obstacles;
 pub mod outline;
+pub mod pair;
 mod placed;
 pub mod posture;
 pub mod showcase;
@@ -122,6 +128,20 @@ pub enum LayoutCommand {
     /// corner). Placements, tracks and vias must stay inside it.
     #[serde(rename = "layout.set_board_size")]
     SetBoardSize { size: Point },
+    /// Route both halves of a differential pair along a centre line, as
+    /// one undo step: 45° fan-out from the start pads, both halves
+    /// coupled at the pair gap with mitred corners, a via pair where
+    /// consecutive legs change layer, fan-in to the end pads. Width and
+    /// gap come from the pair's class (derived from its impedance target
+    /// per layer) unless given. Checked like `layout.route_apply`.
+    #[serde(rename = "layout.route_pair")]
+    RoutePair { request: pair::PairRouteRequest },
+    /// Meander one straight track segment to add an exact length (or to
+    /// bring its net to a target length), as one undo step: the fewest
+    /// bumps within the amplitude, on the side with room, legs at least
+    /// the track clearance apart; refused when no meander fits.
+    #[serde(rename = "layout.tune_length")]
+    TuneLength { request: meander::TuneRequest },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -534,6 +554,15 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::SetViaLock { id, locked } => via::set_lock(project, id, locked)?,
         LayoutCommand::RouteLayerChange { request } => {
             return via::route_layer_change(project, request).map(Some);
+        }
+        LayoutCommand::RoutePair { request } => {
+            let edits = pair::route(project, &request)?;
+            apply_routes(project, edits)?;
+        }
+        LayoutCommand::TuneLength { request } => {
+            let obstacles = obstacles::Obstacles::of(project);
+            let plan = meander::plan(project, &obstacles, &request)?;
+            apply_routes(project, plan.edits)?;
         }
         LayoutCommand::SetBoardSize { size } => {
             if !point_valid(size) || !size.iter().all(|v| (5.0..=1000.0).contains(v)) {
@@ -973,6 +1002,7 @@ pub fn validate(project: &Project) -> Result<()> {
     outline::validate(project)?;
     let ids = project.nets.iter().map(|n| n.id).collect::<BTreeSet<_>>();
     via::validate(project, &ids)?;
+    length::validate(project)?;
     let mut track_ids = BTreeSet::new();
     for track in &project.tracks {
         if track.id == 0 || track.id >= project.next_id || !track_ids.insert(track.id) {
@@ -1111,6 +1141,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     let mut findings = BoardCopper::of(project).checks(project);
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
+    findings.extend(length::checks(project));
     findings
 }
 

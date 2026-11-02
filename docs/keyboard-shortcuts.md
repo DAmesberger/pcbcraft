@@ -17,6 +17,9 @@ While the Route tool is armed, its keys shadow these:
 - F shadows Fit view: it flips the elbow instead. The tool reads F with any Shift, so ⇧F also flips the elbow rather than switching to the bottom view.
 - D shadows the Layout ↔ 3D switch: it cycles the via size instead.
 - Esc shadows the Layout's Esc: it ends the route.
+- P shadows the Fill tool: it switches pair routing off and on instead ([high-speed routing](high-speed-routing.md#differential-pair-routing)).
+
+While the Tune tool is armed (`TUNE_KEYS`, `pcb_editor/tune_tool.rs`), F flips the meander's side instead of fitting the view.
 
 With the tool disarmed, these keys work as before. The keys 1–9 have no other binding, and ⌘1–⌘3 still switch workspaces while routing. The Fill tool's Esc drops its outline first, and the board shape's F is Fillet. Chords are named the same way as in Solidcraft's keymap (`Ctrl+Shift+S`). `Registry::rebind` stores the user's changes over the defaults, ready for a preferences page; user keymaps are not offered yet.
 
@@ -34,8 +37,9 @@ The keymap is original. Letters are mnemonic where they can be (X route, V via, 
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete · Esc |
 | Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
-| PCB Layout | X route · V via · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
-| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size |
+| PCB Layout | X route · V via · T tune length · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
+| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W track width · D / ⇧D via size · P pair routing on or off |
+| Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
 | Board shape | L line · A arc · C circle · R rectangle · F fillet · D dimension · U cutout · H hole · ⇧H slot · E name edge · X construction · Delete · Esc |
 

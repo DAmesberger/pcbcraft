@@ -1010,3 +1010,248 @@ fn opening_3d_timings() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Vias drawn instanced: the look, uploads and timings.
 mod instanced;
+
+/// A generated package with `terminals` numbered terminals, for pictures.
+fn picture_package(
+    form: pcbcraft_core::library::PackageForm,
+    terminals: u32,
+) -> pcbcraft_core::library::PackageDefinition {
+    use pcbcraft_core::library::{
+        GeneratedMaterials, PackageDefinition, PackageModel, PackageTerminal,
+    };
+    PackageDefinition {
+        next_local: terminals + 1,
+        terminals: (1..=terminals)
+            .map(|i| PackageTerminal {
+                id: pcbcraft_core::PackageTerminalId(i),
+                designation: i.to_string(),
+            })
+            .collect(),
+        model: PackageModel::Generated {
+            family_rev: 1,
+            materials: GeneratedMaterials::default(),
+        },
+        form,
+        ..PackageDefinition::default()
+    }
+}
+
+/// A package preview with `spec` laid out for `inputs` and drawn as its
+/// decals, in a detached viewport.
+fn marked_preview(
+    package: &pcbcraft_core::library::PackageDefinition,
+    library: &pcbcraft_core::library::Library,
+    spec: &pcbcraft_core::library::marking::MarkingSpec,
+    inputs: &pcbcraft_core::library::marking::MarkingInputs,
+) -> Result<Viewport, Box<dyn std::error::Error>> {
+    use pcbcraft_core::library::marking;
+    let model = pcbcraft_solidcraft::project::preview(package)?;
+    let region = |s: &marking::MarkingSpec| {
+        marking::surface_region(library, Some(package), s.area, &s.placement)
+    };
+    let layout = marking::layout_with(spec, inputs, &region)?;
+    for f in &layout.findings {
+        eprintln!("marking finding: {}", f.message);
+    }
+    let artwork = pcbcraft_solidcraft::marking::board::project_artwork_of(library);
+    let mut cache = pcbcraft_solidcraft::marking::DecalCache::default();
+    let (decals, problems) = pcbcraft_solidcraft::marking::board::preview_decals(
+        &layout,
+        &model.geometry,
+        Some(package),
+        &artwork,
+        &mut cache,
+    );
+    if !problems.is_empty() {
+        return Err(problems.join("; ").into());
+    }
+    let mut geometry = model.geometry;
+    geometry.extend(decals);
+    let mut v = Viewport::detached();
+    v.set_model(crate::model_scene::build(geometry)?);
+    v.fit_to(4.0 / 3.0);
+    Ok(v)
+}
+
+/// D7 evidence: the ESP32-S31-WROOM-3 example's can and board markings,
+/// an aluminium electrolytic's wrapped sleeve with its stripe and vent
+/// score, and an axial part's wrapped colour bands, in the product look.
+/// `PCBCRAFT_PICTURES=dir cargo test -p pcbcraft write_marking_pictures
+/// -- --ignored`.
+#[test]
+#[ignore = "writes marking pictures"]
+fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    use pcbcraft_core::FieldRef;
+    use pcbcraft_core::ids::{DefinitionId, Revision};
+    use pcbcraft_core::library::Definition;
+    use pcbcraft_core::library::marking::{
+        Finish, MarkingInputs, MarkingItem, MarkingSpec, Placement, SurfaceRef, Wrap,
+    };
+    use pcbcraft_core::library::package_form::PackageForm;
+    use pcbcraft_core::library::package_form::tht::{ThtForm, ThtKind};
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1280, 960);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    // The ESP32-S31-WROOM-3 example as a Component 3D preview.
+    let file = pcbcraft_io::persistence::read_project(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft"
+    )))?;
+    let find = |pick: fn(&Definition) -> bool| {
+        file.drafts
+            .items
+            .iter()
+            .find(|d| pick(&d.definition))
+            .map(|d| d.definition.clone())
+    };
+    let Some(Definition::Package(package)) = find(|d| matches!(d, Definition::Package(_))) else {
+        return Err("no package draft".into());
+    };
+    let Some(Definition::Component(component)) = find(|d| matches!(d, Definition::Component(_)))
+    else {
+        return Err("no component draft".into());
+    };
+    let spec = component
+        .marking
+        .as_deref()
+        .ok_or("the example is not marked")?;
+    let inputs = MarkingInputs {
+        designator: "U1".into(),
+        ..Default::default()
+    };
+    let mut v = marked_preview(&package, &file.project.library, spec, &inputs)?;
+    let b = v.bounds;
+    aim(&mut v, b.center(), 1.6 * b.diagonal(), 30.0, 38.0);
+    save(&mut v, "marking-wroom3")?;
+    aim(&mut v, b.center(), 1.25 * b.diagonal(), 0.0, 89.0);
+    save(&mut v, "marking-wroom3-top")?;
+    aim(&mut v, Vec3::new(5.0, -8.0, 3.5), 14.0, 20.0, 50.0);
+    save(&mut v, "marking-wroom3-qr-closeup")?;
+    aim(&mut v, Vec3::new(0.0, 12.0, 1.0), 16.0, 200.0, 40.0);
+    save(&mut v, "marking-wroom3-antenna-silkscreen")?;
+
+    // An aluminium electrolytic: µF/V and stripe wrapped on its sleeve,
+    // a vent cross engraved in its can top.
+    let (cap, volt) = (DefinitionId(1), DefinitionId(2));
+    let field = |id| FieldRef::new(id, Revision::FIRST);
+    let radial = picture_package(
+        PackageForm::Tht(Box::new(ThtForm::new(
+            ThtKind::Radial {
+                body_diameter: 6.3,
+                body_height: 11.0,
+            },
+            2.5,
+            0.5,
+            3.0,
+        ))),
+        2,
+    );
+    let on = |name: &str| Placement {
+        on: SurfaceRef::Anchor { name: name.into() },
+        ..Placement::default()
+    };
+    let vent_svg = "<svg xmlns='http://www.w3.org/2000/svg' width='10mm' height='10mm' viewBox='0 0 10 10'><path d='M1 1 L9 9 M9 1 L1 9' stroke='black' stroke-width='0.7' fill='none'/></svg>";
+    let mut library = file.project.library.clone();
+    let vent = pcbcraft_core::library::bundle::AssetBytes::new(vent_svg.as_bytes().to_vec());
+    let vent_hash = vent.hash();
+    library.assets.push(pcbcraft_core::library::PackedAsset {
+        hash: vent_hash,
+        media_type: pcbcraft_core::library::marking::ARTWORK_MEDIA_TYPE.into(),
+        data: vent,
+    });
+    let electrolytic = MarkingSpec {
+        items: vec![
+            MarkingItem::Electrolytic {
+                capacitance: field(cap),
+                voltage: Some(field(volt)),
+                stripe: true,
+            },
+            MarkingItem::Text {
+                template: pcbcraft_core::library::marking::Template("LOW ESR".into()),
+                height_mm: Some(0.9),
+                align: Default::default(),
+            },
+        ],
+        finish: Finish::Ink {
+            colour: [228, 230, 232],
+        },
+        placement: on("sleeve"),
+        decals: vec![MarkingSpec {
+            items: vec![MarkingItem::Artwork {
+                svg: vent_hash,
+                size_mm: [2.6, 2.6],
+                anchor: Default::default(),
+                licence: Some("CC0-1.0".into()),
+            }],
+            finish: Finish::Engraved,
+            placement: on("top"),
+            ..MarkingSpec::default()
+        }],
+        ..MarkingSpec::default()
+    };
+    let mut inputs = MarkingInputs {
+        designator: "C1".into(),
+        ..Default::default()
+    };
+    inputs.fields.insert(cap, ("220u".into(), Some(220e-6)));
+    inputs.fields.insert(volt, ("25".into(), Some(25.0)));
+    let mut v = marked_preview(&radial, &library, &electrolytic, &inputs)?;
+    let b = v.bounds;
+    aim(&mut v, b.center(), 2.4 * b.diagonal(), 90.0, 20.0);
+    save(&mut v, "marking-electrolytic-text-side")?;
+    aim(&mut v, b.center(), 2.4 * b.diagonal(), 270.0, 20.0);
+    save(&mut v, "marking-electrolytic-stripe-side")?;
+    aim(&mut v, b.center(), 2.2 * b.diagonal(), 300.0, 60.0);
+    save(&mut v, "marking-electrolytic-top")?;
+
+    // An axial part: its value's colour bands wrapped round the body.
+    let axial = picture_package(
+        PackageForm::Tht(Box::new(ThtForm::new(
+            ThtKind::Axial {
+                body_diameter: 2.5,
+                body_length: 6.5,
+            },
+            10.16,
+            0.6,
+            3.0,
+        ))),
+        2,
+    );
+    let value = DefinitionId(3);
+    let bands = MarkingSpec {
+        items: vec![MarkingItem::Bands {
+            value: field(value),
+            tolerance: None,
+        }],
+        finish: Finish::LaserEtch,
+        placement: Placement {
+            wrap: Some(Wrap::default()),
+            ..on("body")
+        },
+        ..MarkingSpec::default()
+    };
+    let mut inputs = MarkingInputs {
+        designator: "R1".into(),
+        ..Default::default()
+    };
+    inputs.fields.insert(value, ("4k7".into(), Some(4700.0)));
+    let mut v = marked_preview(&axial, &library, &bands, &inputs)?;
+    let b = v.bounds;
+    aim(&mut v, b.center(), 1.8 * b.diagonal(), 25.0, 30.0);
+    save(&mut v, "marking-axial-bands")?;
+    Ok(())
+}

@@ -304,6 +304,7 @@ pub(super) fn add_function(
         drive: Drive::None,
         resource_role: None,
         mux: None,
+        mux_table: None,
         source: None,
     });
     Ok(function)

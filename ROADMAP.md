@@ -27,6 +27,7 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.
 - [x] Atomic `.pcbcraft` save, offline reopen, shared command engine and undo/redo.
 - [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned definition drafts; file dialogs, background saves and crash recovery.
+- [x] Manufacturing output: Gerber X2, Excellon, job file, pick-and-place, BOM, fabrication and assembly drawings, a production check with saved waivers, and one export command for UI, CLI and MCP ([as built](docs/fabrication-output.md)).
 - [ ] Complete first-release editors, library updates and manufacturing workflow.
 
 ## Component-editor acceptance

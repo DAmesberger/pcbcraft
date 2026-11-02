@@ -10,7 +10,7 @@ use crate::library::samples::Preset;
 use crate::library::symbol_style::{self, ResistorStyle, SymbolConventions, SymbolKind};
 use crate::library::templates::catalog::{
     BUILT_FAMILY_REV, FamilyRef, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan,
-    RowFrom, RowSource, SavePackageRow,
+    Renumber, RowFrom, RowSource, SavePackageRow, TerminalMatch,
 };
 use crate::library::{Definition, DefinitionMeta, DraftEdit, PadShape};
 use crate::{Engine, LibraryCommand, Operation, Outcome, Query, QueryResult};
@@ -656,6 +656,8 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
         row: RowSource::Project { row: qfn },
         values: None,
         replace: false,
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
     };
     let before = engine.to_file();
     let revision = engine.revision();
@@ -684,11 +686,29 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
         (8, 17, 17)
     );
     assert_eq!(previewed.model_family_rev, Some(BUILT_FAMILY_REV));
-    // SOIC-8 to QFN-16 + EP: nine new terminals are unmapped, and the
-    // eight kept mappings are flagged as reused by position.
+    // SOIC-8 to QFN-16 + EP, matched by number: terminals 1–8 keep their
+    // identities (and mappings); 9–16 and EP are new, named and unmapped.
+    // Nothing is reused by position, so `binding.mapping_retained` (which
+    // this test expected while terminals were kept by list order) is gone.
     assert_eq!(
         codes(&previewed.findings),
-        ["binding.mapping_missing", "binding.mapping_retained"]
+        ["package.terminals_unmatched", "binding.mapping_missing"]
+    );
+    assert_eq!(
+        (
+            previewed.terminals.strategy,
+            previewed.terminals.kept,
+            previewed.terminals.added,
+            previewed.terminals.removed
+        ),
+        (TerminalMatch::ByNumber, 8, 9, 0)
+    );
+    assert!(
+        previewed.findings[0]
+            .message
+            .contains("9, 10, 11, 12, 13, 14, 15, 16, EP"),
+        "{}",
+        previewed.findings[0].message
     );
     assert_eq!(engine.to_file(), before, "a plan changes nothing");
     let Outcome::PackageReplaced { plan: applied } = apply(
@@ -1198,6 +1218,8 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
         },
         values: Some(qfn32()),
         replace: true,
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
     };
     apply(
         &mut engine,
@@ -1218,6 +1240,184 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
         .chain(["EP".to_owned()])
         .collect();
     assert_eq!(designations, expected);
+    Ok(())
+}
+
+/// A replacement keeps a terminal (and the binding's mapping of it) only
+/// where the new form gives its number, whatever the list order; a
+/// number left over on either side is reported and stays unmapped,
+/// never filled by position.
+#[test]
+fn terminals_carry_over_by_number_and_a_mismatch_is_reported() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let ids = bridge(&mut engine)?;
+    // The SOIC-8's terminals numbered in reverse list order (as an import
+    // whose rows are not in pin order leaves them), and its first terminal
+    // given a number the no-lead form does not have.
+    let draft = engine.drafts().get(ids[2]).ok_or("package")?.clone();
+    let Definition::Package(mut package) = draft.definition else {
+        return Err("package".into());
+    };
+    let numbers = ["X", "7", "6", "5", "4", "3", "2", "1"];
+    for (terminal, number) in package.terminals.iter_mut().zip(numbers) {
+        terminal.designation = number.into();
+    }
+    let ids_by_number: Vec<(String, u32)> = package
+        .terminals
+        .iter()
+        .map(|t| (t.designation.clone(), t.id.0))
+        .collect();
+    apply(
+        &mut engine,
+        LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id: ids[2],
+                meta: draft.meta,
+                definition: Definition::Package(package),
+            }],
+        },
+    )?;
+    let request = PackageFromTemplate {
+        draft: ids[2],
+        row: RowSource::Custom {
+            family: FamilyKind::NoLead,
+        },
+        values: Some(qfn32()),
+        replace: true,
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
+    };
+    let before = engine.to_file();
+    let previewed = plan(&engine, &request)?;
+    assert_eq!(engine.to_file(), before, "a plan changes nothing");
+    // A renumbering must name one current and one new number; else it is
+    // refused and nothing changes.
+    for (from, to) in [("Z", "8"), ("X", "Z"), ("", "8")] {
+        let mut bad = request.clone();
+        bad.renumber = vec![Renumber {
+            from: from.into(),
+            to: to.into(),
+        }];
+        let refused = apply(
+            &mut engine,
+            LibraryCommand::PackageFromTemplate(Box::new(bad)),
+        );
+        assert!(
+            matches!(&refused, Err(Error::Invalid(m)) if m.starts_with("template.renumber")),
+            "{refused:?}"
+        );
+        assert_eq!(engine.to_file(), before);
+    }
+    assert_eq!(
+        (
+            previewed.terminals.kept,
+            previewed.terminals.added,
+            previewed.terminals.removed,
+            previewed.terminals.renumbered
+        ),
+        (7, 26, 1, 0)
+    );
+    assert_eq!(
+        previewed.terminals.summary,
+        "Terminals matched by number: 7 kept, 26 added, 1 removed."
+    );
+    assert_eq!(
+        codes(&previewed.findings),
+        [
+            "package.terminals_unmatched",
+            "binding.mapping_missing",
+            "binding.mapping_unknown"
+        ]
+    );
+    let unmatched = &previewed.findings[0].message;
+    assert!(
+        unmatched.contains("new terminal(s) 8, 9, 10,")
+            && unmatched.contains("and 10 more")
+            && unmatched.contains("current terminal(s) X are not in the new form"),
+        "{unmatched}"
+    );
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(request)),
+    )?;
+    let Some(Definition::Package(next)) = engine.drafts().get(ids[2]).map(|d| d.definition.clone())
+    else {
+        return Err("package".into());
+    };
+    // Numbers 1–7 keep the identities they had, now in lead order; the
+    // terminal numbered X is gone and 8 is new (not X's identity).
+    for (number, id) in &ids_by_number {
+        let kept = next.terminals.iter().find(|t| t.id.0 == *id);
+        if number == "X" {
+            assert!(kept.is_none(), "X is removed");
+        } else {
+            assert_eq!(kept.map(|t| t.designation.as_str()), Some(number.as_str()));
+        }
+    }
+    let eight = next
+        .terminals
+        .iter()
+        .find(|t| t.designation == "8")
+        .ok_or("8")?;
+    assert!(ids_by_number.iter().all(|(_, id)| *id != eight.id.0));
+    assert_eq!(
+        next.terminals.first().map(|t| t.designation.as_str()),
+        Some("1"),
+        "lead order"
+    );
+    Ok(())
+}
+
+/// Position is an explicit request option: it keeps the terminals in list
+/// order, renumbers them from the new form and says so.
+#[test]
+fn matching_by_position_is_explicit_and_flagged() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let ids = bridge(&mut engine)?;
+    let draft = engine.drafts().get(ids[2]).ok_or("package")?.clone();
+    let Definition::Package(mut package) = draft.definition else {
+        return Err("package".into());
+    };
+    package.terminals.reverse();
+    let first = package.terminals.first().map(|t| t.id).ok_or("terminal")?;
+    apply(
+        &mut engine,
+        LibraryCommand::Edit {
+            edits: vec![DraftEdit {
+                id: ids[2],
+                meta: draft.meta,
+                definition: Definition::Package(package),
+            }],
+        },
+    )?;
+    let request = PackageFromTemplate {
+        draft: ids[2],
+        row: RowSource::Custom {
+            family: FamilyKind::GullWing,
+        },
+        values: None,
+        replace: true,
+        terminals: TerminalMatch::ByPosition,
+        renumber: Vec::new(),
+    };
+    let previewed = plan(&engine, &request)?;
+    assert_eq!(previewed.terminals.strategy, TerminalMatch::ByPosition);
+    // Eight kept in list order, every one with a new number.
+    assert_eq!(
+        previewed.terminals.summary,
+        "Terminals matched by position: 8 kept, 0 added, 0 removed, 8 renumbered."
+    );
+    assert_eq!(codes(&previewed.findings), ["binding.mapping_retained"]);
+    apply(
+        &mut engine,
+        LibraryCommand::PackageFromTemplate(Box::new(request)),
+    )?;
+    let Some(Definition::Package(next)) = engine.drafts().get(ids[2]).map(|d| d.definition.clone())
+    else {
+        return Err("package".into());
+    };
+    let one = next.terminals.first().ok_or("terminal")?;
+    assert_eq!((one.id, one.designation.as_str()), (first, "1"));
     Ok(())
 }
 
@@ -1250,6 +1450,8 @@ fn without_footprint(engine: &mut Engine) -> Fallible<(Vec<DefinitionId>, Packag
         },
         values: None,
         replace: false,
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
     };
     Ok((ids, request))
 }
@@ -1438,6 +1640,8 @@ fn package_from_template_allocates_valid_ids_from_any_counter() -> Fallible<()> 
         },
         values: None,
         replace: true,
+        terminals: TerminalMatch::ByNumber,
+        renumber: Vec::new(),
     };
     apply(
         &mut engine,

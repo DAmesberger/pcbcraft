@@ -62,6 +62,7 @@ fn function(
         drive,
         resource_role: role.map(|(resource, role)| ResourceRole { resource, role }),
         mux: mux.map(|m| pcbcraft_core::functions::MuxCode(m.into())),
+        mux_table: None,
         source: None,
     }
 }

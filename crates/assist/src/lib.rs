@@ -20,6 +20,7 @@
 //! (`cargo xtask layers`); the HTTP client stays out of the core.
 pub mod api;
 pub mod cost;
+pub mod pins;
 mod prompt;
 pub mod report;
 pub mod tools;
@@ -97,6 +98,9 @@ pub struct Settings {
     pub max_output_tokens: u64,
     /// `max_tokens` of each request.
     pub max_tokens: u32,
+    /// `max_tokens` of the request after one that was cut off at its
+    /// limit (the model retries the cut-off step with room to finish).
+    pub max_tokens_after_cut: u32,
     pub prices: PriceTable,
 }
 
@@ -109,6 +113,7 @@ impl Default for Settings {
             max_requests: 60,
             max_output_tokens: 400_000,
             max_tokens: 32_000,
+            max_tokens_after_cut: 64_000,
             prices: PriceTable::default(),
         }
     }
@@ -277,11 +282,11 @@ fn takes_fallback(model: &str) -> bool {
     )
 }
 
-/// The Messages request body of one turn.
-pub fn request_body(settings: &Settings, messages: &[Value]) -> Value {
+/// The Messages request body of one turn with `max_tokens` output.
+pub fn request_body(settings: &Settings, messages: &[Value], max_tokens: u32) -> Value {
     let mut body = json!({
         "model": settings.model,
-        "max_tokens": settings.max_tokens,
+        "max_tokens": max_tokens,
         "system": [{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         "tools": tools::definitions(),
         "messages": messages,
@@ -327,6 +332,8 @@ pub fn run(
         ..RunFacts::default()
     };
     let mut report = None;
+    let mut workspace = tools::Workspace::default();
+    let mut max_tokens = settings.max_tokens;
     let mut nudges = 0;
     let mut last_prompt = 0u64;
     let mut appended = 0u64;
@@ -340,10 +347,10 @@ pub fn run(
         let output_left = settings
             .max_output_tokens
             .saturating_sub(ledger.usage.output_tokens);
-        if output_left < u64::from(settings.max_tokens) {
+        if output_left < u64::from(max_tokens) {
             break Stop::Budget(format!("{} output tokens", settings.max_output_tokens));
         }
-        let body = request_body(settings, &messages);
+        let body = request_body(settings, &messages, max_tokens);
         let prompt_tokens = if ledger.requests == 0 {
             // Count exactly when the transport can; otherwise a generous
             // estimate (PDF pages cost text plus an image each).
@@ -357,7 +364,7 @@ pub fn run(
         if !ledger.affords(
             &price,
             prompt_tokens,
-            u64::from(settings.max_tokens),
+            u64::from(max_tokens),
             settings.max_usd,
         ) {
             break Stop::Budget(format!(
@@ -379,10 +386,27 @@ pub fn run(
             Ok(p) if p.output > price.output => p,
             _ => price,
         };
-        ledger.book(&usage, &rate);
+        let cost = ledger.book(&usage, &rate);
         last_prompt = usage.prompt();
         appended = 0;
         let stop_reason = response["stop_reason"].as_str().unwrap_or("").to_owned();
+        // One retry with room to finish after a cut-off, then back to the
+        // normal limit.
+        max_tokens = if stop_reason == "max_tokens" {
+            settings.max_tokens_after_cut.max(settings.max_tokens)
+        } else {
+            settings.max_tokens
+        };
+        facts.request_log.push(report::RequestFacts {
+            n,
+            stop_reason: stop_reason.clone(),
+            input_tokens: usage.input_tokens,
+            cache_write_tokens: usage.cache_creation_input_tokens,
+            cache_read_tokens: usage.cache_read_input_tokens,
+            output_tokens: usage.output_tokens,
+            cost_usd: cost,
+            tools: Vec::new(),
+        });
         events(Event::Response {
             n,
             stop_reason: stop_reason.clone(),
@@ -414,7 +438,7 @@ pub fn run(
             if stop_reason == "max_tokens" || nudges < MAX_NUDGES {
                 nudges += 1;
                 let text = if stop_reason == "max_tokens" {
-                    "Your reply was cut off at max_tokens. Continue with smaller steps."
+                    "Your reply was cut off at max_tokens. Continue with smaller steps (pin rows in chunks of at most 40 with library_pinout_edit)."
                 } else {
                     "Continue with the tools; finish with submit_review."
                 };
@@ -427,13 +451,26 @@ pub fn run(
         for call in calls {
             let id = call["id"].clone();
             let name = call["name"].as_str().unwrap_or("").to_owned();
+            let logged = facts.request_log.last_mut();
             if stop_reason == "max_tokens" {
                 // The call's input may be incomplete: never run it.
+                if let Some(r) = logged {
+                    r.tools.push(format!("{name}!"));
+                }
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "is_error": true,
-                    "content": "Cut off at max_tokens before this call was complete; send it again in smaller pieces."}));
+                    "content": "Cut off at max_tokens before this call was complete; send it again in smaller pieces (pin rows in chunks of at most 40 with library_pinout_edit; preview and apply take no document)."}));
                 continue;
             }
-            match tools::execute(session, &name, &call["input"]) {
+            let outcome = tools::execute(session, &mut workspace, &name, &call["input"]);
+            if let Some(r) = logged {
+                let failed = matches!(outcome, tools::ToolOutcome::Reply { error: true, .. });
+                r.tools.push(if failed {
+                    format!("{name}!")
+                } else {
+                    name.clone()
+                });
+            }
+            match outcome {
                 tools::ToolOutcome::Report(r) => {
                     events(Event::Tool {
                         name: name.clone(),
@@ -470,6 +507,23 @@ pub fn run(
     facts.cache_read_tokens = ledger.usage.cache_read_input_tokens;
     facts.stop = stop.to_string();
     let snapshot = session.snapshot();
+    facts.pins = pins::rows(&snapshot);
+    facts.rules = session
+        .engine()
+        .drafts()
+        .items
+        .iter()
+        .find_map(|d| match &d.definition {
+            pcbcraft_core::library::Definition::Component(c) => {
+                Some(pcbcraft_core::functions::rules::check_samples(
+                    &c.declarations(),
+                    &c.resources,
+                    &c.pin_rules,
+                ))
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     for d in tools::drafts(&snapshot) {
         let id = d["id"].as_u64().unwrap_or(0);
         facts.drafts.push((

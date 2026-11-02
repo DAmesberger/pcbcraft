@@ -5,20 +5,36 @@
 //! the MCP command it runs. The runner fills `expected_revision` from the
 //! session, so the model never handles revisions, and compacts replies:
 //! a mutation answers with its outcome and each draft's findings instead
-//! of the whole document snapshot.
+//! of the whole document snapshot, and a pinout preview with change
+//! counts, findings, review items and rule checks instead of every change.
+//!
+//! The pinout document is built in a [`Workspace`] the runner keeps:
+//! `library_pinout_edit` adds header fields, peripherals, pin rows and
+//! rules in chunks (no single tool call has to carry a 100-row document),
+//! preview checks the working document and apply imports exactly what was
+//! previewed, by its base, without the model sending the document again.
 //!
 //! What is deliberately absent: `library.publish`, publishing to folders,
 //! saving, opening, file exports and library sources. A run only ever
 //! creates drafts; publishing stays with a person (the import review gate).
 use crate::report::ReviewReport;
 use pcbcraft_automation::Session;
-use serde_json::{Value, json};
+use pcbcraft_core::library::pinout::{
+    MAX_PINOUT_PERIPHERALS, MAX_PINOUT_PINS, MAX_PINOUT_RULES, MAX_PINOUT_VARIANTS,
+};
+use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 /// Characters of one tool result sent back; longer results are cut with a
 /// note (the model can ask for a narrower view).
 pub const MAX_RESULT_CHARS: usize = 120_000;
 /// Findings listed per draft in a compact reply.
 const MAX_FINDINGS: usize = 40;
+/// Findings, review items and changes a compact preview lists.
+const MAX_PLAN_ITEMS: usize = 60;
+/// Pin rows one `library_pinout_edit` call may carry: about 8 000 output
+/// tokens of JSON, so a call never approaches a request's output limit.
+pub const MAX_EDIT_PINS: usize = 40;
 
 /// What a tool call produced.
 #[derive(Debug)]
@@ -32,6 +48,19 @@ pub enum ToolOutcome {
     },
     /// The model submitted its review report: the run is complete.
     Report(Box<ReviewReport>),
+}
+
+/// The runner's state across tool calls: the working pinout document and
+/// what was last previewed from it.
+#[derive(Clone, Debug, Default)]
+pub struct Workspace {
+    /// The pinout document being built, as JSON (it may be incomplete
+    /// until previewed).
+    pub pinout: Map<String, Value>,
+    /// The target, base and document of the last successful preview.
+    previewed: Option<(Value, Value, Value)>,
+    /// The document of the last successful apply.
+    pub applied: Option<Value>,
 }
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
@@ -50,25 +79,43 @@ fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> 
 /// The tool definitions, in a fixed order so the prompt prefix caches.
 pub fn definitions() -> Vec<Value> {
     let object = json!({"type": "object"});
+    let objects = json!({"type": "array", "items": {"type": "object"}});
+    let strings = json!({"type": "array", "items": {"type": "string"}});
     let report = serde_json::to_value(schemars::schema_for!(ReviewReport)).unwrap_or(json!({}));
     vec![
         tool(
             "library_pinout_schema",
-            "MCP library_pinout_schema: the JSON schema of the pinout document (format 1) you fill from the datasheet: device and reference, one variant per package with its terminal count (every pad that is a terminal, the ground array counted once), peripherals with roles, one row per pin with its number per variant, functions with explicit peripheral, role and mux code, source page and table, uncertain flags, and Rhai pin rules. Call it once before writing the document.",
+            "MCP library_pinout_schema: the JSON schema of the pinout document (format 1) you fill from the datasheet: device and reference, one variant per package with its terminal count (every pad that is a terminal, the ground array counted once), peripherals with roles, one row per pin with its number per variant, functions with explicit peripheral, role, mux code and mux table, source page and table, uncertain flags, and pin rules; and rule_api, the complete pin-rule script contract with examples (the only functions a rule may call). Call it once before writing the document.",
             json!({}),
             &[],
         ),
         tool(
+            "library_pinout_edit",
+            "Build the working pinout document in chunks (the runner keeps it; nothing in the project changes). Each call may set the header fields (format, device, variants), upsert peripherals by label, upsert pin rows by their row key (at most 40 rows a call: send a large pinout over several calls), upsert rules by label, and remove rows or rules; clear: true starts over. Returns the document's counts and, per variant, the pin numbers still missing. Then call library_pinout_preview without a document.",
+            json!({
+                "clear": {"type": "boolean"},
+                "format": {"type": "integer"},
+                "device": object,
+                "variants": objects,
+                "peripherals": objects,
+                "pins": objects,
+                "remove_pins": strings,
+                "rules": objects,
+                "remove_rules": strings,
+            }),
+            &[],
+        ),
+        tool(
             "library_pinout_preview",
-            "MCP project_query library.pinout_preview: check a pinout document and plan its import without changing anything. target is {\"target\": \"new\", \"name\": ...} for a new part or {\"target\": \"draft\", \"id\": ...} to re-import onto the component draft. Returns the plan (changes, review items, findings) and its base token for library_pinout_apply. Fix every refusal and blocking finding before applying.",
+            "MCP project_query library.pinout_preview: check the working pinout document (or `document`, which then replaces it) and plan its import without changing the project. target is {\"target\": \"new\", \"name\": ...} for a new part or {\"target\": \"draft\", \"id\": ...} to re-import onto the component draft. Returns the base for library_pinout_apply, change counts, findings, review items and each rule's evaluation (default verdict, samples, failures). Fix every refusal, blocking finding and rule failure with library_pinout_edit and preview again.",
             json!({"target": object, "document": object}),
-            &["target", "document"],
+            &["target"],
         ),
         tool(
             "library_pinout_apply",
-            "MCP project_apply library.pinout_apply: import the previewed document with the plan's base (accept {\"accept\": \"all\"}). Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
-            json!({"target": object, "document": object, "base": {"type": "integer"}, "accept": object}),
-            &["target", "document", "base"],
+            "MCP project_apply library.pinout_apply: import exactly the document last previewed, with that plan's base (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
+            json!({"base": {"type": "integer"}, "accept": object, "target": object, "document": object}),
+            &["base"],
         ),
         tool(
             "library_package_schema",
@@ -90,13 +137,13 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "library_package_from_template",
-            "MCP project_apply library.package_from_template: apply the previewed request as one undo step (add \"replace\": true to rebuild a footprint that already has pads).",
+            "MCP project_apply library.package_from_template: apply the previewed request as one undo step (add \"replace\": true to rebuild a footprint that already has pads). The package's terminals, and so the binding's mappings, carry over by number: a terminal keeps its identity when the new form gives its number; the plan's terminals.summary says what was kept, and package.terminals_unmatched names any number left unmatched. When the datasheet gives a pad another number than the form (an exposed pad numbered 95 where a form says EP), add \"renumber\": [{\"from\": \"95\", \"to\": \"EP\"}]; otherwise map those explicitly.",
             json!({"request": object}),
             &["request"],
         ),
         tool(
             "library_set_marking",
-            "MCP library_set_marking: the component draft's display-only top marking on the can: {draft, marking: {items: [{item: text, template: \"...\"} | {item: artwork, svg: \"<svg ...>\", size_mm: [w, h], licence: \"...\"} | {item: polarity, mark: dot}], finish: laser_etch}}. Never copy vendor logos; text items are the safe choice.",
+            "MCP library_set_marking: the component draft's display-only top marking on the can: {draft, marking: {items: [{item: text, template: \"...\"} | {item: artwork, svg: \"<svg ...>\", size_mm: [w, h], licence: \"...\"} | {item: polarity, mark: dot}], finish: laser_etch}}. Never copy vendor logos; text items are the safe choice. Add a polarity mark only where the part itself carries one.",
             json!({"draft": {"type": "integer"}, "marking": object}),
             &["draft", "marking"],
         ),
@@ -128,7 +175,12 @@ pub fn definitions() -> Vec<Value> {
 }
 
 /// Run one tool call against `session`.
-pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome {
+pub fn execute(
+    session: &mut Session,
+    workspace: &mut Workspace,
+    name: &str,
+    input: &Value,
+) -> ToolOutcome {
     let revision = session.engine().revision();
     let library = |command: &str, params: Value| {
         json!({"command": "project.apply", "params": {
@@ -139,19 +191,24 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
     let query = |name: &str, params: Value| json!({"command": "project.query", "params": {"query": name, "params": params}});
     let request = match name {
         "library_pinout_schema" => json!({"command": "library.pinout_schema", "params": {}}),
-        "library_pinout_preview" => query(
-            "library.pinout_preview",
-            json!({"target": input["target"], "document": input["document"]}),
-        ),
-        "library_pinout_apply" => library(
-            "library.pinout_apply",
-            json!({
-                "target": input["target"],
-                "document": input["document"],
-                "base": input["base"],
-                "accept": if input["accept"].is_object() { input["accept"].clone() } else { json!({"accept": "all"}) },
-            }),
-        ),
+        "library_pinout_edit" => return edit(workspace, input),
+        "library_pinout_preview" => return preview(session, workspace, input),
+        "library_pinout_apply" => {
+            let (target, document) = match apply_inputs(workspace, input) {
+                Ok(inputs) => inputs,
+                Err(why) => return reply(json!({"refused": why}), true, None),
+            };
+            let accept = if input["accept"].is_object() {
+                input["accept"].clone()
+            } else {
+                json!({"accept": "all"})
+            };
+            workspace.applied = Some(document.clone());
+            library(
+                "library.pinout_apply",
+                json!({"target": target, "document": document, "base": input["base"], "accept": accept}),
+            )
+        }
         "library_package_schema" => return reply(package_schema(), false, None),
         "library_templates" => {
             let mut p = json!({"query": input["query"]});
@@ -204,6 +261,9 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
         request["command"] != "project.query" && request["command"] != "library.pinout_schema";
     let response = session.dispatch(request);
     if response["ok"] != true {
+        if name == "library_pinout_apply" {
+            workspace.applied = None;
+        }
         return reply(response["error"].clone(), true, None);
     }
     let result = &response["result"];
@@ -228,6 +288,287 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
     }
 }
 
+/// Upsert `items` into the array `key` of `doc`, matching on `field`.
+fn upsert(
+    doc: &mut Map<String, Value>,
+    key: &str,
+    field: &str,
+    items: &[Value],
+    limit: usize,
+) -> Result<(usize, usize), String> {
+    let list = doc
+        .entry(key.to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Value::Array(list) = list else {
+        return Err(format!("{key} is not a list"));
+    };
+    let (mut added, mut replaced) = (0, 0);
+    for item in items {
+        let Some(id) = item[field].as_str() else {
+            return Err(format!("each of {key} needs a text {field}"));
+        };
+        match list.iter_mut().find(|x| x[field].as_str() == Some(id)) {
+            Some(slot) => {
+                *slot = item.clone();
+                replaced += 1;
+            }
+            None => {
+                list.push(item.clone());
+                added += 1;
+            }
+        }
+    }
+    if list.len() > limit {
+        return Err(format!("a pinout lists at most {limit} {key}"));
+    }
+    Ok((added, replaced))
+}
+
+fn remove(doc: &mut Map<String, Value>, key: &str, field: &str, ids: &[Value]) -> usize {
+    let Some(Value::Array(list)) = doc.get_mut(key) else {
+        return 0;
+    };
+    let before = list.len();
+    list.retain(|x| !ids.iter().any(|id| x[field] == *id));
+    before - list.len()
+}
+
+/// `library_pinout_edit`: change the working document, all or nothing.
+fn edit(workspace: &mut Workspace, input: &Value) -> ToolOutcome {
+    let mut doc = if input["clear"] == true {
+        Map::new()
+    } else {
+        workspace.pinout.clone()
+    };
+    let list = |key: &str| input[key].as_array().cloned().unwrap_or_default();
+    let pins = list("pins");
+    if pins.len() > MAX_EDIT_PINS {
+        return reply(
+            json!({"refused": format!("send at most {MAX_EDIT_PINS} pin rows a call; split the rows over several calls")}),
+            true,
+            None,
+        );
+    }
+    let mut changes = BTreeMap::new();
+    let outcome = (|| -> Result<(), String> {
+        for key in ["format", "device"] {
+            if !input[key].is_null() {
+                doc.insert(key.to_owned(), input[key].clone());
+            }
+        }
+        if let Some(variants) = input["variants"].as_array() {
+            if variants.len() > MAX_PINOUT_VARIANTS {
+                return Err(format!("at most {MAX_PINOUT_VARIANTS} variants"));
+            }
+            doc.insert("variants".into(), Value::Array(variants.clone()));
+        }
+        let peripherals = list("peripherals");
+        let (a, r) = upsert(
+            &mut doc,
+            "peripherals",
+            "label",
+            &peripherals,
+            MAX_PINOUT_PERIPHERALS,
+        )?;
+        changes.insert("peripherals added", a);
+        changes.insert("peripherals replaced", r);
+        let (a, r) = upsert(&mut doc, "pins", "row", &pins, MAX_PINOUT_PINS)?;
+        changes.insert("pins added", a);
+        changes.insert("pins replaced", r);
+        let (a, r) = upsert(&mut doc, "rules", "label", &list("rules"), MAX_PINOUT_RULES)?;
+        changes.insert("rules added", a);
+        changes.insert("rules replaced", r);
+        changes.insert(
+            "pins removed",
+            remove(&mut doc, "pins", "row", &list("remove_pins")),
+        );
+        changes.insert(
+            "rules removed",
+            remove(&mut doc, "rules", "label", &list("remove_rules")),
+        );
+        Ok(())
+    })();
+    if let Err(why) = outcome {
+        return reply(
+            json!({"refused": why, "note": "the working document is unchanged"}),
+            true,
+            None,
+        );
+    }
+    changes.retain(|_, n| *n > 0);
+    workspace.pinout = doc;
+    reply(
+        json!({"changed": changes, "document": document_summary(&workspace.pinout)}),
+        false,
+        None,
+    )
+}
+
+/// Counts of the working document and, per variant, the pin numbers it
+/// does not yet list (when the variant numbers its terminals 1…N).
+fn document_summary(doc: &Map<String, Value>) -> Value {
+    let count = |key: &str| doc.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+    let pins = doc
+        .get("pins")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut variants = Map::new();
+    for v in doc
+        .get("variants")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = v["name"].as_str() else {
+            continue;
+        };
+        let total = v["terminal_count"].as_u64().unwrap_or(0);
+        let mut listed: BTreeMap<String, usize> = BTreeMap::new();
+        for p in &pins {
+            if let Some(n) = p["number"][name].as_str() {
+                *listed.entry(n.to_owned()).or_default() += 1;
+            }
+        }
+        let missing: Vec<u64> = (1..=total.min(MAX_PINOUT_PINS as u64))
+            .filter(|n| !listed.contains_key(&n.to_string()))
+            .collect();
+        let repeated: Vec<&String> = listed
+            .iter()
+            .filter(|(_, c)| **c > 1)
+            .map(|(n, _)| n)
+            .collect();
+        variants.insert(
+            name.to_owned(),
+            json!({"terminal_count": total, "numbered": listed.len(), "missing": ranges(&missing), "repeated": repeated}),
+        );
+    }
+    json!({
+        "has_header": doc.contains_key("format") && doc.contains_key("device") && doc.contains_key("variants"),
+        "pins": pins.len(),
+        "peripherals": count("peripherals"),
+        "rules": count("rules"),
+        "variants": variants,
+    })
+}
+
+/// "1-5, 9, 12-14".
+fn ranges(numbers: &[u64]) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut it = numbers.iter().copied().peekable();
+    while let Some(start) = it.next() {
+        let mut end = start;
+        while it.peek() == Some(&(end + 1)) {
+            end += 1;
+            it.next();
+        }
+        out.push(if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        });
+    }
+    out.join(", ")
+}
+
+/// `library_pinout_preview`: the working document (or the given one,
+/// which replaces it) through `library.pinout_preview`, compacted.
+fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> ToolOutcome {
+    if let Some(document) = input["document"].as_object() {
+        workspace.pinout = document.clone();
+    }
+    if workspace.pinout.is_empty() {
+        return reply(
+            json!({"refused": "the working pinout document is empty: build it with library_pinout_edit first"}),
+            true,
+            None,
+        );
+    }
+    let document = Value::Object(workspace.pinout.clone());
+    let response = session.dispatch(json!({"command": "project.query", "params": {
+        "query": "library.pinout_preview",
+        "params": {"target": input["target"], "document": document},
+    }}));
+    if response["ok"] != true {
+        workspace.previewed = None;
+        return reply(response["error"].clone(), true, None);
+    }
+    let result = &response["result"];
+    let plan = result.get("result").unwrap_or(result);
+    workspace.previewed = Some((input["target"].clone(), plan["base"].clone(), document));
+    reply(compact_plan(plan), false, None)
+}
+
+/// The target and document `library_pinout_apply` imports: the given
+/// ones, or the last preview's, refusing a working document changed since.
+fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), String> {
+    if input["document"].is_object() {
+        return Ok((input["target"].clone(), input["document"].clone()));
+    }
+    let Some((target, base, document)) = &workspace.previewed else {
+        return Err("preview the pinout first (library_pinout_preview)".into());
+    };
+    if *document != Value::Object(workspace.pinout.clone()) {
+        return Err("the working document changed since the last preview; preview it again".into());
+    }
+    if input["base"] != *base {
+        return Err(format!(
+            "base {} is not the last preview's base {base}",
+            input["base"]
+        ));
+    }
+    let target = if input["target"].is_object() {
+        input["target"].clone()
+    } else {
+        target.clone()
+    };
+    Ok((target, document.clone()))
+}
+
+/// A pinout plan without per-object detail: change counts (the changes
+/// themselves when few), findings and review items without object lists,
+/// and the rule checks.
+pub fn compact_plan(plan: &Value) -> Value {
+    let changes = plan["changes"].as_array().cloned().unwrap_or_default();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for c in &changes {
+        let key = format!(
+            "{} {}",
+            c["object"].as_str().unwrap_or("?"),
+            c["kind"].as_str().unwrap_or("?")
+        );
+        *counts.entry(key).or_default() += 1;
+    }
+    let findings: Vec<Value> = plan["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| json!({"code": f["code"], "message": f["message"], "blocks": f["blocks"]}))
+        .collect();
+    let review = plan["review"].as_array().cloned().unwrap_or_default();
+    let mut out = json!({
+        "base": plan["base"],
+        "change_counts": counts,
+        "findings": findings.iter().take(MAX_PLAN_ITEMS).collect::<Vec<_>>(),
+        "review": review.iter().take(MAX_PLAN_ITEMS).collect::<Vec<_>>(),
+        "rules": plan["rules"].as_array().cloned().unwrap_or_default(),
+    });
+    if changes.len() <= MAX_PLAN_ITEMS {
+        out["changes"] = Value::Array(
+            changes
+                .iter()
+                .map(|c| json!({"kind": c["kind"], "object": c["object"], "row": c["row"], "summary": c["summary"]}))
+                .collect(),
+        );
+    }
+    for (key, n) in [("findings", findings.len()), ("review", review.len())] {
+        if n > MAX_PLAN_ITEMS {
+            out[format!("{key}_not_listed")] = json!(n - MAX_PLAN_ITEMS);
+        }
+    }
+    out
+}
+
 fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
     let mut text = value.to_string();
     if text.len() > MAX_RESULT_CHARS {
@@ -241,10 +582,20 @@ fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
     ToolOutcome::Reply { text, error, step }
 }
 
-/// A short description of an outcome for the run log.
+/// A short description of an outcome for the run log: its keys, and how
+/// a package replacement matched the terminals.
 fn summary(outcome: &Value) -> String {
     match outcome {
-        Value::Object(map) => map.keys().take(4).cloned().collect::<Vec<_>>().join(", "),
+        Value::Object(map) => {
+            let keys = map.keys().take(4).cloned().collect::<Vec<_>>().join(", ");
+            match map
+                .get("plan")
+                .and_then(|p| p["terminals"]["summary"].as_str())
+            {
+                Some(terminals) => format!("{keys}; {terminals}"),
+                None => keys,
+            }
+        }
         Value::String(s) => s.clone(),
         other => other.to_string().chars().take(80).collect(),
     }
@@ -324,17 +675,25 @@ mod tests {
     #[test]
     fn unknown_tools_and_bad_reports_are_errors() {
         let mut session = Session::default();
+        let mut workspace = Workspace::default();
         assert!(matches!(
-            execute(&mut session, "library_publish", &json!({})),
+            execute(&mut session, &mut workspace, "library_publish", &json!({})),
             ToolOutcome::Reply { error: true, .. }
         ));
         assert!(matches!(
             execute(
                 &mut session,
+                &mut workspace,
                 "submit_review",
                 &json!({"report": {"part": "x"}})
             ),
             ToolOutcome::Reply { error: true, .. }
         ));
+    }
+
+    #[test]
+    fn missing_numbers_are_listed_as_ranges() {
+        assert_eq!(ranges(&[1, 2, 3, 5, 7, 8]), "1-3, 5, 7-8");
+        assert_eq!(ranges(&[]), "");
     }
 }

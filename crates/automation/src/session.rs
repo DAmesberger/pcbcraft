@@ -169,6 +169,23 @@ pub struct PublishParams {
     pub library: LibraryId,
 }
 
+/// Write the production files of the open project.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FabricationParams {
+    /// A new or empty folder, or with `zip` a new `.zip` file.
+    pub output: String,
+    #[serde(default)]
+    pub zip: bool,
+    /// The fabrication rule profile to check against, by id: a built-in
+    /// (`std-6-6`, `fine-4-4`, `hdi-3-3`, `pcbcraft-default`) or a user library profile. The
+    /// project's own rules when omitted.
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub options: pcbcraft_core::fabrication::FabricationOptions,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewParams {
@@ -215,6 +232,10 @@ pub enum Request {
     /// Refuses existing files.
     #[serde(rename = "project.export_native")]
     ExportNative(PathParams),
+    /// Check the design and write its production files (Gerber X2,
+    /// Excellon, job file, pick-and-place, BOM, PDF drawings).
+    #[serde(rename = "project.export_fabrication")]
+    ExportFabrication(FabricationParams),
     /// List the configured library sources with their state.
     #[serde(rename = "library.sources")]
     Sources(NoParams),
@@ -274,6 +295,9 @@ pub enum Request {
     /// Print the schematic as a vector PDF.
     #[serde(rename = "schematic.export_pdf")]
     SchematicPdf(SchematicPdfParams),
+    /// Where a package can be marked: model area, box faces, anchors.
+    #[serde(rename = "library.marking_surfaces")]
+    MarkingSurfaces(marking::MarkingSurfacesParams),
 }
 
 impl Request {
@@ -322,6 +346,10 @@ impl Request {
             info::<PathParams>(
                 "project.export_native",
                 "Export the board as a native parametric .solidcraft model to a new file.",
+            ),
+            info::<FabricationParams>(
+                "project.export_fabrication",
+                "Run the production check (fabrication.preflight) under the chosen rule profile, then write the production files to a new or empty folder, or one new .zip: Gerber X2 copper, solder mask, paste, legend and profile layers with file, aperture and object attributes; plated and non-plated Excellon drill files with routed slots, a drill map and table; a Gerber job file; pick-and-place and BOM CSVs; fabrication and assembly drawings (PDF). Refused, writing nothing, while unwaived errors remain (waive with project.apply fabrication.waive). Returns the preflight report, the files with sizes and step timings. Not a document change.",
             ),
             info::<NoParams>(
                 "library.sources",
@@ -389,7 +417,11 @@ impl Request {
             ),
             info::<marking::SetMarkingParams>(
                 "library.set_marking",
-                "Set or clear a component draft's generic marking (display-only decals on the package's top face; a module's shield can): text items from templates such as {mpn}, SVG artwork given as text with its licence (the session packs it by SHA-256), and polarity marks, in the model's marking area or an explicit one, laser-etched or white ink. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
+                "Set or clear a component draft's generic marking: display-only decals on the 3D model, never saved to .solidcraft or fabrication output. Items: text from templates ({mpn}, {designator}, {field:<id>}, {var:lot}), SVG artwork given as text with its licence (packed by SHA-256; never supply a logo you have no right to: a placeholder box marks where the user's own goes), polarity marks, a generated QR code (code2d: payload template, size_mm, anchor) and an electrolytic's µF/V text with its negative stripe. placement.on picks the surface: model (top marking area), a box face (top, bottom, pos_x, neg_x, pos_y, neg_y) or a named anchor from library.marking_surfaces (module: can_top, can_pos_x…, pcb_top, antenna_area; radial: top, sleeve; axial or MELF: body); then offset_mm, rotation_deg, scale, mirror, clip and, on a cylinder, wrap {seam_deg, wrap_deg, along_mm, repeat} with arc length kept. finish: laser_etch, laser_etch_metal (shield cans), ink_white (silkscreen), {ink: {colour}}, {pad_print: {colour}} or engraved. decals: up to four further decals, each with its own items, finish and placement. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
+            ),
+            info::<marking::MarkingSurfacesParams>(
+                "library.marking_surfaces",
+                "List where a package draft or published package can be marked, for library.set_marking's placement.on: the model area, the six box faces and its family's named anchors (each with a description, plane or cylinder, and size; a cylinder's circumference and whether its u runs along the axis). Not a document change.",
             ),
             info::<SchematicPdfParams>(
                 "schematic.export_pdf",
@@ -514,6 +546,27 @@ impl Session {
                     "exported_path": params.path
                 }));
             }
+            Request::ExportFabrication(params) => {
+                let profile = params
+                    .profile
+                    .as_deref()
+                    .map(pcbcraft_io::fabrication::resolve_profile)
+                    .transpose()?;
+                let report = pcbcraft_io::fabrication::export(
+                    self.engine.project(),
+                    self.engine.drafts(),
+                    &pcbcraft_io::fabrication::ExportRequest {
+                        output: PathBuf::from(&params.output),
+                        zip: params.zip,
+                        profile,
+                        options: params.options,
+                    },
+                    &mut |_| {},
+                )?;
+                let mut value = serde_json::to_value(report)?;
+                value["revision"] = json!(self.engine.revision());
+                return Ok(value);
+            }
             Request::Sources(_) => return self.list_sources(),
             Request::SourceAdd(params) => {
                 let added = self.sources.add(Path::new(&params.path), params.writable)?;
@@ -598,6 +651,7 @@ impl Session {
                     "pages": pages
                 }));
             }
+            Request::MarkingSurfaces(params) => return self.marking_surfaces(params),
         }
         Ok(self.snapshot())
     }
@@ -818,9 +872,13 @@ mod preview;
 pub mod sources;
 
 #[cfg(test)]
+mod fabrication_tests;
+#[cfg(test)]
 mod firmware_tests;
 #[cfg(test)]
 mod folder_tests;
+#[cfg(test)]
+mod high_speed_tests;
 #[cfg(test)]
 mod issues_tests;
 #[cfg(test)]

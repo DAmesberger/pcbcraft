@@ -153,9 +153,7 @@ fn export_writes_the_file_atomically_and_counts_pages() -> TestResult {
 }
 
 #[test]
-fn text_is_win_ansi_with_ohm_spelled_out() {
-    assert_eq!(win_ansi("10 kΩ ±5%"), b"10 kOhm \xb15%".to_vec());
-    assert_eq!(win_ansi("a–b"), b"a\x96b".to_vec());
-    assert_eq!(win_ansi("π"), b"?".to_vec());
-    assert!((width(b"A", 10.0) - 6.67).abs() < 1e-9);
+fn ohm_is_spelled_out_for_the_winansi_font() {
+    assert_eq!(printable("10 kΩ ±5%"), "10 kOhm ±5%");
+    assert_eq!(printable("a–b"), "a–b");
 }

@@ -87,10 +87,36 @@ impl PcbEditor {
             self.route_highlight(self.net);
         }
         if let Some(net) = self.net.filter(|n| project.net(*n).is_some()) {
-            let class = layout::net_class(project, net)
+            let class_id = layout::net_class(project, net);
+            let class = class_id
                 .and_then(|c| project.rules.class(c))
                 .map_or_else(|| "None".to_owned(), |c| c.name.clone());
             kit::value_row(ui, "Class", &class);
+            let pair = self.pair_width_gap(project);
+            if let Some((w, g)) = pair {
+                kit::value_row(
+                    ui,
+                    "Pair",
+                    &format!(
+                        "{} · width {} · gap {}",
+                        self.route
+                            .pair
+                            .as_ref()
+                            .and_then(|p| project.rules.diff_pair(p.pair))
+                            .map_or("", |p| p.name.as_str()),
+                        super::impedance_view::mm(w),
+                        super::impedance_view::mm(g)
+                    ),
+                );
+            } else if let Some(pair) = project.rules.pair_of(net) {
+                let state = if self.route.single {
+                    "off (P)"
+                } else {
+                    "on: a pad starts both"
+                };
+                kit::value_row(ui, "Pair", &format!("{} · {state}", pair.name));
+            }
+            super::impedance_view::route_rows(ui, project, class_id, self.layer, self.width, pair);
         }
         kit::section(ui, "route-keys", "Keys", true, None, |ui| {
             let max = if self.route.keys_all {

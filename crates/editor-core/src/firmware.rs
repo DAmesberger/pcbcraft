@@ -67,6 +67,9 @@ pub struct FirmwarePin {
     pub signal: Option<String>,
     #[serde(default)]
     pub mux: Option<String>,
+    /// The mux table the code belongs to, when the part has several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux_table: Option<String>,
     #[serde(default)]
     pub pull: Option<Pull>,
     #[serde(default)]
@@ -184,6 +187,7 @@ pub fn from_pin_report(project: &Project, report: &PinReport) -> Result<PinConfi
             role: function.role_label.clone(),
             signal: function.signal.clone(),
             mux: function.mux.clone(),
+            mux_table: function.mux_table.clone(),
             pull: config.and_then(|c| c.pull),
             speed: config.and_then(|c| c.speed.clone()),
             initial: config.and_then(|c| c.initial),
@@ -308,6 +312,7 @@ mod tests {
             role_label: None,
             signal: None,
             mux: None,
+            mux_table: None,
             selected: false,
         }
     }

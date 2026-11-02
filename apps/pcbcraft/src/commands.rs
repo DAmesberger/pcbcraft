@@ -36,6 +36,8 @@ pub enum Context {
     PcbRoute,
     /// The Layout view while the Fill tool is armed.
     PcbFill,
+    /// The Layout view while the Tune tool is armed.
+    PcbTune,
     /// The Layout view while the board shape sketch is open.
     BoardShape,
     Pcb3d,
@@ -43,7 +45,7 @@ pub enum Context {
 
 impl Context {
     /// Every context, in sheet order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Global,
         Self::Component,
         Self::Symbol,
@@ -53,6 +55,7 @@ impl Context {
         Self::PcbLayout,
         Self::PcbRoute,
         Self::PcbFill,
+        Self::PcbTune,
         Self::BoardShape,
         Self::Pcb3d,
     ];
@@ -68,6 +71,7 @@ impl Context {
             Self::PcbLayout => "PCB › Layout",
             Self::PcbRoute => "PCB › Route tool",
             Self::PcbFill => "PCB › Fill tool",
+            Self::PcbTune => "PCB › Tune tool",
             Self::BoardShape => "PCB › Board shape",
             Self::Pcb3d => "PCB › 3D",
         }
@@ -79,14 +83,19 @@ impl Context {
             Self::Component | Self::Schematic | Self::Pcb => Some(Self::Global),
             Self::Symbol | Self::Footprint => Some(Self::Component),
             Self::PcbLayout | Self::Pcb3d => Some(Self::Pcb),
-            Self::PcbRoute | Self::PcbFill | Self::BoardShape => Some(Self::PcbLayout),
+            Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape => {
+                Some(Self::PcbLayout)
+            }
         }
     }
 
     /// A tool's own mode: its keys override the same keys of the contexts
     /// around it while it is active, by design.
     pub fn modal(self) -> bool {
-        matches!(self, Self::PcbRoute | Self::PcbFill | Self::BoardShape)
+        matches!(
+            self,
+            Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
+        )
     }
 
     /// A mode that replaces its workspace's keys: while it is active only
@@ -296,6 +305,10 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         "pcb.from-bottom",
     ),
     (Context::PcbRoute, Chord::key(egui::Key::D), "pcb.toggle-3d"),
+    // P switches pair routing instead of arming the Fill tool.
+    (Context::PcbRoute, Chord::key(egui::Key::P), "pcb.fill"),
+    // Tuning: F flips the meander's side instead of fitting the view.
+    (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
     (
         Context::PcbRoute,
         Chord::key(egui::Key::Escape),
@@ -504,6 +517,7 @@ impl Registry {
         }
         .with_key_table(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
         .with_key_table(Context::PcbFill, FILL_KEYS)
+        .with_key_table(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
     }
 
     /// Add a gesture's key table (key, what it does) for display, e.g. a
@@ -1234,6 +1248,16 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::key(K::V))
             .icon("circle")
             .keywords("hole through"),
+        tool(
+            "pcb.tune",
+            "Tune length",
+            C::PcbLayout,
+            Workspace::Pcb,
+            "tune",
+        )
+        .chord(Chord::key(K::T))
+        .icon("dimension")
+        .keywords("meander length match skew serpentine trombone accordion"),
         tool("pcb.fill", "Fill", C::PcbLayout, Workspace::Pcb, "fill")
             .chord(Chord::key(K::P))
             .icon("polygon")
@@ -1248,6 +1272,15 @@ fn defaults() -> Vec<Command> {
         .chord(Chord::key(K::P).with_shift())
         .icon("update")
         .keywords("pour zone recompute"),
+        tool(
+            "pcb.production",
+            "Production files…",
+            C::Pcb,
+            Workspace::Pcb,
+            "production",
+        )
+        .icon("export")
+        .keywords("gerber drill excellon fabrication manufacturing bom pick place zip"),
         tool(
             "pcb.board-shape",
             "Board shape",

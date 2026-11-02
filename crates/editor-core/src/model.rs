@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub mod board;
 pub mod fill;
+pub mod production;
 pub mod sheet;
 mod stackup;
 mod via;
@@ -378,6 +379,9 @@ pub struct Project {
     /// Sheet furniture: notes, lines and rectangles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drawings: Vec<SheetDrawing>,
+    /// Waived pre-flight findings for fabrication output.
+    #[serde(default, skip_serializing_if = "production::Production::is_default")]
+    pub production: production::Production,
 }
 
 impl Default for Project {
@@ -409,6 +413,7 @@ impl Default for Project {
             labels: vec![],
             sheet_symbols: vec![],
             drawings: vec![],
+            production: production::Production::default(),
         }
     }
 }

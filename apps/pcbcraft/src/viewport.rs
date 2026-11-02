@@ -142,6 +142,8 @@ pub struct Viewport {
     display_limited: bool,
     pv_key: u64,
     pv_slot: SceneSlot,
+    /// Component 3D marking decals ([`decals`]).
+    decals: decals::Decals,
     /// Where the view was last drawn.
     rect: Option<egui::Rect>,
 }
@@ -224,6 +226,7 @@ impl Viewport {
             display_limited: false,
             pv_key: 0,
             pv_slot: Arc::new(Mutex::new(None)),
+            decals: Default::default(),
             rect: None,
         };
         result.fit();
@@ -316,6 +319,7 @@ impl Viewport {
         self.refresh_bounds();
         self.publish_shadows();
         self.publish_highlight();
+        self.model_changed_decals();
     }
 
     #[cfg(test)]
@@ -434,21 +438,29 @@ impl Viewport {
             return Vec::new();
         };
         let display = self.display_place();
+        let place = |i: &model_scene::Instanced, geometry: &[Geometry]| match display {
+            // Unmoved: the placements as built, without a pass over them.
+            None => i.mesh.clone(),
+            Some(_) => i.placed(
+                geometry,
+                display.as_ref(),
+                i.mesh.look,
+                gpu::PaletteIndex(0),
+                |_| true,
+            ),
+        };
         model
             .instanced
             .iter()
             .filter(|i| self.layers.visible(i.layer))
-            .map(|i| match display {
-                // Unmoved: the placements as built, without a pass over them.
-                None => i.mesh.clone(),
-                Some(_) => i.placed(
-                    &model.geometry,
-                    display.as_ref(),
-                    i.mesh.look,
-                    gpu::PaletteIndex(0),
-                    |_| true,
-                ),
-            })
+            .map(|i| place(i, &model.geometry))
+            .chain(
+                self.decals
+                    .meshes
+                    .iter()
+                    .filter(|i| self.layers.visible(i.layer))
+                    .map(|i| place(i, &self.decals.geometry)),
+            )
             .collect()
     }
 
@@ -694,7 +706,7 @@ impl Viewport {
             self.fit_pending = false;
             self.fit_to(self.aspect);
         }
-        if self.receive_repack() {
+        if self.receive_repack() | self.receive_decals() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(16));
         }
@@ -1042,7 +1054,10 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
     enter <= leave + 1e-9
 }
 
+mod decals;
 mod display;
+pub use decals::DecalRequest;
+
 #[cfg(test)]
 mod navigation_tests;
 #[cfg(test)]

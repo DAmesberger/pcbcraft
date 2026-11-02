@@ -42,6 +42,8 @@ Materials, heights and looks are in [materials](materials.md).
   `dielectric_span`).
 - `layout.set_stackup` refuses a stackup that drops a copper layer still carrying tracks or
   vias, and names that layer.
+- A dielectric may carry the fabricator's Dk and a foil may be marked as a reference plane;
+  the impedance model reads both ([high-speed routing](high-speed-routing.md#impedance-model)).
 
 **Tracks**
 

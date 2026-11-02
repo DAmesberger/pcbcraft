@@ -27,6 +27,7 @@ pub type Staged = BTreeMap<TerminalId, Option<FunctionId>>;
 pub struct FunctionView {
     pub id: FunctionId,
     pub label: String,
+    /// The mux table and code as people read them ("LP IO MUX F0").
     pub mux: Option<String>,
     pub role: Option<ResourceRole>,
 }
@@ -142,7 +143,7 @@ pub fn build(project: &Project, instance: &ComponentInstance) -> Result<Model> {
                     .map(|f| FunctionView {
                         id: f.id,
                         label: f.label.clone(),
-                        mux: f.mux.as_ref().map(|m| m.0.clone()),
+                        mux: f.mux_text(),
                         role: f.resource_role,
                     })
                     .collect(),
