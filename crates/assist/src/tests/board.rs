@@ -1,7 +1,7 @@
 //! The assisted run's drafts, published by a person (here the test) and
-//! placed on a board: the antenna keep-out keeps fill copper out on every
-//! layer, and the board exports to a native model with the module's
-//! generated body.
+//! placed on the demo board: the antenna keep-out keeps fill copper out on
+//! every layer, flags a via placed in it against the part, and the board
+//! exports to a native model with the module's generated body.
 use super::*;
 
 fn send(s: &mut Session, request: Value) -> Fallible<Value> {
@@ -44,9 +44,11 @@ fn covered(copper: &pcbcraft_core::model::fill::FilledCopper, q: [f64; 2]) -> bo
 #[test]
 fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut transport = ReplayTransport::new(script()?);
+    let mut transport = ReplayTransport::new(script_on(Session::new(
+        pcbcraft_core::Engine::demo()?,
+    ))?);
     transport.prompt_tokens = Some(60_000);
-    let mut s = Session::default();
+    let mut s = Session::new(pcbcraft_core::Engine::demo()?);
     let outcome = run(
         &goal(datasheet(&dir)?),
         &Settings::default(),
@@ -56,7 +58,15 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         &AtomicBool::new(false),
     )?;
     assert_eq!(outcome.stop, Stop::Submitted);
-    let ids: Vec<u64> = s.engine().drafts().items.iter().map(|d| d.id.0).collect();
+    // The run's drafts, not the demo's own.
+    let ids: Vec<u64> = s
+        .engine()
+        .drafts()
+        .items
+        .iter()
+        .filter(|d| d.meta.name.starts_with("EXR-22"))
+        .map(|d| d.id.0)
+        .collect();
     let published = apply(&mut s, "Library", "library.publish", json!({"drafts": ids}))?;
     let revision = |kind: &str| -> Fallible<Value> {
         published["outcome"]["revisions"]
@@ -116,6 +126,26 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         "but not the antenna area, even on the bottom layer"
     );
     assert!(covered(copper, [30.0, 26.0]), "copper resumes past the keep-out");
+    // A via of a demo net in the antenna area is a keepout finding naming
+    // the module.
+    let net = project.nets.first().map(|n| n.id).ok_or("a demo net")?;
+    apply(
+        &mut s,
+        "Layout",
+        "layout.add_via",
+        json!({"via": {"net": net, "position": [30.0, 22.5], "drill": 0.3, "diameter": 0.6,
+            "span": "through", "tented": true}}),
+    )?;
+    let checks = pcbcraft_core::layout::checks(s.engine().project());
+    let via = checks
+        .iter()
+        .find(|f| f.code == "keepout.via")
+        .ok_or_else(|| format!("a keepout.via finding: {checks:?}"))?;
+    assert!(
+        via.objects.iter().any(|o| matches!(o,
+            pcbcraft_core::diagnostics::ObjectRef::Instance { id } if Some(*id) == instance.as_u64())),
+        "reported against U: {via:?}"
+    );
     // The board exports with the module's generated model.
     let path = dir.path().join("board.solidcraft");
     send(

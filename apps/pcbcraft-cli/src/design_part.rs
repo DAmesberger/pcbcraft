@@ -107,7 +107,7 @@ pub fn run(args: &[String]) -> Result<()> {
     };
     let mut session = user_session(Engine::default());
     let cancel = AtomicBool::new(false);
-    let outcome = pcbcraft_assist::run(
+    let mut outcome = pcbcraft_assist::run(
         &goal,
         &args.settings,
         transport.as_mut(),
@@ -130,6 +130,11 @@ pub fn run(args: &[String]) -> Result<()> {
         },
         &cancel,
     )?;
+    outcome.facts.transport = match (&args.replay, &args.record) {
+        (Some(path), _) => format!("a replay of {} (no API calls; spend not real)", path.display()),
+        (None, Some(path)) => format!("the Claude API, recorded to {}", path.display()),
+        (None, None) => "the Claude API".into(),
+    };
     let [_, review] = pcbcraft_assist::write_outputs(&mut session, &args.out, &outcome)?;
     let facts = &outcome.facts;
     eprintln!(

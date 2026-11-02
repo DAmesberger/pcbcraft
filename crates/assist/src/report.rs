@@ -115,6 +115,10 @@ impl ReviewReport {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct RunFacts {
     pub model: String,
+    /// Where the responses came from: the Claude API, or a replay file
+    /// (whose spend is not real).
+    #[serde(default)]
+    pub transport: String,
     pub spent_usd: f64,
     pub cap_usd: f64,
     pub requests: u32,
@@ -141,9 +145,14 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
         s,
         "Status: **draft, not published**. Nothing enters a library until a person reviews the rows below and publishes.\n"
     );
+    let via = if facts.transport.is_empty() {
+        String::new()
+    } else {
+        format!(" via {}", facts.transport)
+    };
     let _ = writeln!(
         s,
-        "Run: model `{}`, {} requests, spend ${:.2} of the ${:.2} cap; stopped: {}.\n",
+        "Run: model `{}`{via}, {} requests, spend ${:.2} of the ${:.2} cap; stopped: {}.\n",
         facts.model, facts.requests, facts.spent_usd, facts.cap_usd, facts.stop
     );
     let _ = writeln!(

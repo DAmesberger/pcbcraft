@@ -1,0 +1,449 @@
+{
+  "project": {
+    "revision": 3,
+    "saved_path": "wroom3/run/esp32-s31-wroom-3.pcbcraft"
+  },
+  "report": {
+    "open_questions": [
+      "Board thickness 1.0 mm is read from an unlabelled side-view dimension; confirm with Espressif or a measured sample.",
+      "The EPAD centre is taken on the 22 × 24 pad body centre lines (y = -3); confirm against the land pattern (Figure 11-1).",
+      "One EPAD square towards the antenna is chamfered (\"1.3\" dimensions); the footprint uses a full square.",
+      "The antenna keep-out covers only the 22 × 6 mm antenna area; the hardware guidelines want the antenna at the board edge or a 15 mm clearance cut-out, which the board layout must provide.",
+      "Peripherals reachable only through the GPIO matrix (UART1+, I2C, LEDC, TWAI, RMT, I2S, ...) are not listed per pin: the TRM chapter is not published yet and the datasheet tables place none of them.",
+      "Pin directions of IO MUX functions follow the Type columns where readable; LCD, CAM and GMAC directions were inferred from signal names where the type was not extracted.",
+      "NC pins 33-39: the datasheet does not say what they connect to; they are marked device NC.",
+      "All three documents are pre-release/preliminary; re-check against the final revision.",
+      "The -3U variant (24 mm long, U.FL connector, pin 91 ANT2) is not built; only the -3 with PCB antenna."
+    ],
+    "part": "ESP32-S31-WROOM-3",
+    "sources": [
+      {
+        "name": "WROOM3",
+        "revision": "v0.7 pre-release, 2026-09-03",
+        "title": "ESP32-S31-WROOM-3 & ESP32-S31-WROOM-3U Datasheet"
+      },
+      {
+        "name": "S31DS",
+        "revision": "v0.5 pre-release, 2026-07-13",
+        "title": "ESP32-S31 Series Datasheet"
+      },
+      {
+        "name": "HWDG",
+        "revision": "v0.3, 2026-10-09",
+        "title": "ESP32-S31 Hardware Design Guidelines"
+      }
+    ],
+    "summary": "Component with 99 pins (94 signal pads, the 3 × 3 EPAD as pin 95 and four corner GND pads), IO MUX, LP IO MUX and analog functions per GPIO, 8 pin rules (4 strapping, JTAG, USB Serial/JTAG, UART0, LP UART vs LP I2C), the LGA module package with the antenna keep-out, and the generated 3D model. Check the open questions first, then each pin row in the Pins tab.",
+    "values": [
+      {
+        "confidence": "high",
+        "item": "module outline (-3)",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1",
+          "page": 64
+        },
+        "value": "22 ± 0.2 × 30 ± 0.2 mm"
+      },
+      {
+        "confidence": "high",
+        "item": "seated height",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 side view",
+          "page": 64
+        },
+        "value": "3.5 ± 0.15 mm"
+      },
+      {
+        "confidence": "medium",
+        "item": "module board thickness",
+        "note": "The side view dimension \"1\" is not labelled; read as the board.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 side view",
+          "page": 64
+        },
+        "value": "1.0 mm"
+      },
+      {
+        "confidence": "high",
+        "item": "antenna area",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 top view",
+          "page": 64
+        },
+        "value": "6 mm at the +y end, full width"
+      },
+      {
+        "confidence": "high",
+        "item": "shield can",
+        "note": "Centred across (22 - 21 = 1 mm, 0.5 a side); can height 3.5 - 1.0 board = 2.5 mm derived.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 top view",
+          "page": 64
+        },
+        "value": "21 × 23 mm, 0.5 mm from the right and bottom edges"
+      },
+      {
+        "confidence": "high",
+        "item": "pad count",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Table 3-1",
+          "page": 14
+        },
+        "value": "94 signal pads, 4 corner pads, EPAD (pin 95): 99 pins"
+      },
+      {
+        "confidence": "high",
+        "item": "signal pad size",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view (\"94 x 0.4\", \"94 x 0.8\")",
+          "page": 64
+        },
+        "value": "0.4 × 0.8 mm (0.8 across the edge)"
+      },
+      {
+        "confidence": "high",
+        "item": "pad pitch",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "0.85 mm"
+      },
+      {
+        "confidence": "high",
+        "item": "side column span",
+        "note": "24 × 0.85 = 20.4 checks.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "20.4 mm (25 pads)"
+      },
+      {
+        "confidence": "high",
+        "item": "top/bottom row span",
+        "note": "21 × 0.85 = 17.85 checks.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "17.85 mm (22 pads)"
+      },
+      {
+        "confidence": "high",
+        "item": "corner pads",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "4 × 0.8 × 0.8 mm at 20.6 × 22.6 mm centres"
+      },
+      {
+        "confidence": "medium",
+        "item": "corner pad inset",
+        "note": "Consistent with (22 - 20.6)/2 = 0.7; the 22.6 span sits in the 24 mm pad body, top edge at the antenna boundary.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "0.7 mm from the body edges"
+      },
+      {
+        "confidence": "medium",
+        "item": "pad body centre",
+        "note": "Derived: 30/2 - 6 - 24/2 = -3.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1",
+          "page": 64
+        },
+        "value": "y = -3 mm (the 24 mm pad body below the 6 mm antenna area)"
+      },
+      {
+        "confidence": "medium",
+        "item": "pin 1 position",
+        "note": "Derived from the 20.4 span centred on the pad body.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 3-1",
+          "page": 12
+        },
+        "value": "left column, first pad below corner pad 99: (-10.3, 7.2)"
+      },
+      {
+        "confidence": "high",
+        "item": "numbering",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 3-1 (top view)",
+          "page": 12
+        },
+        "value": "1-25 left top to bottom, 26-47 bottom left to right, 48-72 right bottom to top, 73-94 top right to left; corners 96 BL, 97 BR, 98 TR, 99 TL"
+      },
+      {
+        "confidence": "medium",
+        "item": "EPAD",
+        "note": "Centre on the dashed centre lines of the 22 × 24 body; one antenna-side pad is chamfered (\"1.3\"), drawn square here.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 10-1 bottom view",
+          "page": 64
+        },
+        "value": "9 × 1.8 mm squares, 0.55 mm gaps (2.35 mm pitch), 3 × 3 turned 45°, 6.5 mm across, centred on the pad body"
+      },
+      {
+        "confidence": "high",
+        "item": "land pattern",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 11-1",
+          "page": 67
+        },
+        "value": "equal to the module pads (no extension given)"
+      },
+      {
+        "confidence": "medium",
+        "item": "antenna keep-out",
+        "note": "The guidelines also ask for the antenna at the board edge or a cut-out with at least 15 mm clearance; not modelled.",
+        "source": {
+          "document": "WROOM3",
+          "location": "Figure 3-1 \"Keepout Zone\"",
+          "page": 12
+        },
+        "value": "the 22 × 6 mm antenna area on every copper layer"
+      },
+      {
+        "confidence": "high",
+        "item": "antenna placement",
+        "note": "",
+        "source": {
+          "document": "HWDG",
+          "location": "Figure 23",
+          "page": 28
+        },
+        "value": "antenna outside the base board or board cut-out, min 15 mm clearance"
+      },
+      {
+        "confidence": "high",
+        "item": "IO MUX functions",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 2-3",
+          "page": 23
+        },
+        "value": "F0-F4 per GPIO"
+      },
+      {
+        "confidence": "high",
+        "item": "LP IO MUX functions",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 2-5",
+          "page": 26
+        },
+        "value": "GPIO0-7 LP_F0-LP_F3"
+      },
+      {
+        "confidence": "high",
+        "item": "analog functions",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 2-7",
+          "page": 27
+        },
+        "value": "XTAL_32K, TOUCH_CH0-13, USB1P1, PAD_COMP0-3, ADC1/ADC2 channels"
+      },
+      {
+        "confidence": "medium",
+        "item": "default functions",
+        "note": "Read from bold cells.",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 2-3 (bold), Table 2-7",
+          "page": 23
+        },
+        "value": "F0 everywhere except F1 on GPIO20-25; GPIO33/34 USB Serial/JTAG"
+      },
+      {
+        "confidence": "high",
+        "item": "strapping IO61",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Tables 3-1, 3-3",
+          "page": 36
+        },
+        "value": "weak pull-up, default 1; 1 SPI boot, 0 (IO60 = 1) joint download, both 0 invalid"
+      },
+      {
+        "confidence": "high",
+        "item": "strapping IO60",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Tables 3-1, 3-3, 3-5",
+          "page": 36
+        },
+        "value": "weak pull-up, default 1; boot mode and UART0 ROM print"
+      },
+      {
+        "confidence": "high",
+        "item": "strapping IO36",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 3-4",
+          "page": 38
+        },
+        "value": "floating on the chip, pulled up in the module; VDD_SPI 1 = 3.3 V, 0 = 1.8 V (EFUSE_PMU_FLASH_POWER_SEL = 0)"
+      },
+      {
+        "confidence": "high",
+        "item": "strapping IO37",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 3-7",
+          "page": 40
+        },
+        "value": "no pull; JTAG source when EFUSE_JTAG_SEL_ENABLE = 1"
+      },
+      {
+        "confidence": "high",
+        "item": "module strapping pins",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Table 4-1",
+          "page": 18
+        },
+        "value": "IO36 (45), IO37 (46), IO60 (70), IO61 (71)"
+      },
+      {
+        "confidence": "high",
+        "item": "restricted pins",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Section 2.3.4",
+          "page": 29
+        },
+        "value": "flash GPIO26-32 not on the module; JTAG GPIO54-57; USB Serial/JTAG GPIO33/34; UART0 GPIO58/59"
+      },
+      {
+        "confidence": "high",
+        "item": "LP UART flow control vs LP I2C",
+        "note": "",
+        "source": {
+          "document": "S31DS",
+          "location": "Table 2-5 note",
+          "page": 26
+        },
+        "value": "cannot be used together"
+      },
+      {
+        "confidence": "high",
+        "item": "EN",
+        "note": "",
+        "source": {
+          "document": "WROOM3",
+          "location": "Section 9",
+          "page": 63
+        },
+        "value": "do not leave floating; RC 10 kOhm / 1 uF"
+      }
+    ]
+  },
+  "run": {
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "cap_usd": 15.0,
+    "drafts": [
+      [
+        1,
+        "component",
+        "ESP32-S31-WROOM-3"
+      ],
+      [
+        2,
+        "symbol",
+        "ESP32-S31-WROOM-3 symbol"
+      ],
+      [
+        3,
+        "package",
+        "ESP32-S31-WROOM-3 WROOM-3"
+      ],
+      [
+        4,
+        "binding",
+        "ESP32-S31-WROOM-3 WROOM-3 binding"
+      ],
+      [
+        5,
+        "footprint",
+        "ESP32-S31-WROOM-3 WROOM-3 footprint"
+      ]
+    ],
+    "findings": [
+      [
+        1,
+        [
+          "pinout.unreviewed"
+        ]
+      ],
+      [
+        2,
+        []
+      ],
+      [
+        3,
+        []
+      ],
+      [
+        4,
+        []
+      ],
+      [
+        5,
+        []
+      ]
+    ],
+    "input_tokens": 0,
+    "model": "claude-opus-5-5",
+    "output_tokens": 0,
+    "requests": 9,
+    "spent_usd": 0.0,
+    "steps": [
+      "library_pinout_apply: revision 1 (outcome, report)",
+      "library_package_from_template: revision 2 (outcome, plan)",
+      "library_set_marking: revision 3 (outcome)"
+    ],
+    "stop": "review report submitted",
+    "transport": "a replay of wroom3/wroom3.replay.jsonl (no API calls; spend not real)"
+  }
+}

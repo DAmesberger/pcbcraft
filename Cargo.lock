@@ -2964,6 +2964,8 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
+ "pcbcraft-assist",
+ "pcbcraft-automation",
  "pcbcraft-core",
  "pcbcraft-io",
  "pcbcraft-solidcraft",

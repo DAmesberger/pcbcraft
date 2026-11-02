@@ -28,6 +28,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
+| `pcbcraft-assist` | The datasheet assistant: a Claude tool-use loop over the automation session that drafts a part from its datasheets, with a hard cost cap ([as built](docs/datasheet-assistant.md)). |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
 `cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
@@ -43,6 +44,8 @@ cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft examp
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
 cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
+ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
+  --datasheet PART.pdf --name PART --out part.pcbcraft --max-usd 15   # drafts + PART.review.md; publishes nothing
 ```
 
 `stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.

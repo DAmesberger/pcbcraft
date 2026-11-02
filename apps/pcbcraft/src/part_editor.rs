@@ -8,6 +8,7 @@
 mod arrange;
 #[cfg(test)]
 mod card_tests;
+mod datasheet_assist;
 mod details_card;
 mod drawing;
 #[cfg(test)]
@@ -237,6 +238,8 @@ pub struct PartEditor {
     identity: identity::Identity,
     /// A1: the start page's search.
     start: start::StartPage,
+    /// Create from datasheet… (the datasheet assistant).
+    assist: datasheet_assist::DatasheetAssist,
     /// C5: the Pins tab.
     pins: pins_tab::PinsTab,
     /// B4: the New-from-template gallery sheet.
@@ -298,6 +301,7 @@ impl Default for PartEditor {
             svg: Default::default(),
             identity: Default::default(),
             start: Default::default(),
+            assist: Default::default(),
             pins: Default::default(),
             gallery: Default::default(),
             model_chooser: Default::default(),

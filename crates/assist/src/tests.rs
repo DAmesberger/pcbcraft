@@ -81,10 +81,15 @@ fn reply_json(outcome: ToolOutcome) -> Fallible<Value> {
     }
 }
 
-/// The recorded responses of a complete run, made against a shadow
-/// session so the inputs carry the real plan base and draft IDs.
+/// The recorded responses of a complete run on an empty project.
 fn script() -> Fallible<Vec<Value>> {
-    let mut shadow = Session::default();
+    script_on(Session::default())
+}
+
+/// The recorded responses of a complete run, made against a shadow
+/// session (a copy of the project the run will work on) so the inputs
+/// carry the real plan base and draft IDs.
+fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     let target = json!({"target": "new", "name": "EXR-22"});
     let doc = pinout();
     let mut out = vec![tool_turn("t1", "library_pinout_schema", json!({}))];
@@ -99,7 +104,7 @@ fn script() -> Fallible<Vec<Value>> {
             .as_array()
             .into_iter()
             .flatten()
-            .find(|d| d["kind"] == kind)
+            .find(|d| d["kind"] == kind && d["name"].as_str().is_some_and(|n| n.starts_with("EXR-22")))
             .map(|d| d["id"].clone())
             .ok_or_else(|| format!("no {kind} draft: {applied}"))
     };

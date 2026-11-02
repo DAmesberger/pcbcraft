@@ -1,7 +1,7 @@
 //! Slice A1: the Component workspace start page, shown whenever the
 //! workspace has no subject: a catalog search (the same `library.search`
 //! as the Place palette, project and every ready library source), Recent,
-//! New from a template, and Import pinout….
+//! New from a template, Create from datasheet… and Import pinout….
 use super::PartEditor;
 use super::identity::Subject;
 #[cfg(test)]
@@ -68,7 +68,9 @@ impl PartEditor {
                         let found = self.start_search(ui, engine);
                         let recent = self.start_recents(ui, engine);
                         ui.add_space(t.space_16);
-                        (found.or(recent), start_new(ui))
+                        let new = start_new(ui, &mut self.assist);
+                        self.assist.ui(ui);
+                        (found.or(recent), new)
                     })
                     .inner
                 })
@@ -199,14 +201,21 @@ impl PartEditor {
 }
 
 /// New from template… (the one searchable gallery of package rows and
-/// family entries), and Import pinout….
-fn start_new(ui: &mut Ui) -> bool {
+/// family entries), Create from datasheet… (opens the assistant's form
+/// below), and Import pinout….
+fn start_new(ui: &mut Ui, assist: &mut super::datasheet_assist::DatasheetAssist) -> bool {
     kit::search_heading(ui, "New", 1);
     let mut chosen = false;
     ui.horizontal_wrapped(|ui| {
         chosen = ui_kit::button(ui, "New from template…", Button::Normal)
             .on_hover_text("Search package rows by name, size code, pins, pitch or body")
             .clicked();
+        if ui_kit::button(ui, "Create from datasheet…", Button::Normal)
+            .on_hover_text("Draft a part from its datasheets with Claude (needs ANTHROPIC_API_KEY)")
+            .clicked()
+        {
+            assist.open = true;
+        }
         ui.add_enabled_ui(false, |ui| {
             ui_kit::button(ui, "Import pinout…", Button::Normal)
         })
@@ -214,6 +223,15 @@ fn start_new(ui: &mut Ui) -> bool {
         .on_disabled_hover_text("Pinout import runs from the CLI or an agent for now");
     });
     chosen
+}
+
+/// [`start_new`] for the assistant's start-page test.
+#[cfg(test)]
+pub(super) fn start_new_for_tests(
+    ui: &mut Ui,
+    assist: &mut super::datasheet_assist::DatasheetAssist,
+) -> bool {
+    start_new(ui, assist)
 }
 
 /// What opening a catalog entry shows: a project lineage (a Part opens its
