@@ -438,6 +438,89 @@ mod tests {
         assert_eq!(view.width(0.5), 2.0);
     }
 
+    /// Every generated symbol kind resolves and paints: its arcs, solid
+    /// arrow heads and body-filled outlines become egui shapes with finite
+    /// positions, and its designator and name are drawn.
+    #[test]
+    fn every_generated_symbol_kind_paints() -> pcbcraft_core::Result<()> {
+        use pcbcraft_core::functions::{Direction, TerminalFunctions};
+        use pcbcraft_core::library::symbol_style::{self, SymbolConventions, SymbolKind};
+        use pcbcraft_core::library::{ComponentDefinition, Library, Terminal, TerminalClass};
+        use pcbcraft_core::schematic::{DefinitionUnit, definition_unit};
+        use pcbcraft_core::{DefinitionId, FunctionId, TerminalId, UnitId};
+
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let view = View {
+            origin: pos2(200.0, 200.0),
+            scale: 12.0,
+        };
+        let ink = Ink {
+            stroke: Color32::BLACK,
+            body: Color32::LIGHT_YELLOW,
+            text: Color32::DARK_GRAY,
+            pin: Color32::BLACK,
+            pin_text: Color32::GRAY,
+        };
+        let library = Library::default();
+        for kind in SymbolKind::ALL {
+            let Some(count) = kind.terminal_count() else {
+                continue;
+            };
+            let terminals: Vec<TerminalId> = (1..=count as u32).map(TerminalId).collect();
+            let symbol = symbol_style::generate(
+                kind,
+                SymbolConventions::default(),
+                DefinitionId(1),
+                &terminals,
+            )?;
+            let component = ComponentDefinition {
+                designator_prefix: kind.prefix().to_owned(),
+                terminals: terminals
+                    .iter()
+                    .map(|id| Terminal {
+                        id: *id,
+                        name: id.to_string(),
+                        class: TerminalClass::Electrical(TerminalFunctions::fixed(
+                            FunctionId(id.0 + 10),
+                            Direction::Passive,
+                        )),
+                    })
+                    .collect(),
+                ..ComponentDefinition::default()
+            };
+            let placed = definition_unit(
+                &library,
+                DefinitionUnit {
+                    symbol: &symbol,
+                    unit: UnitId(1),
+                    component: &component,
+                    component_name: kind.label(),
+                    physical: None,
+                },
+            )?;
+            assert_eq!(placed.pins.len(), count, "{kind:?}");
+            assert!(!placed.texts.is_empty(), "{kind:?} texts");
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint(ui.painter(), view, &placed, ink);
+            });
+            output.textures_delta.clear();
+            let painted = output.shapes.len();
+            assert!(
+                painted >= placed.shapes.len() + placed.pins.len(),
+                "{kind:?}: {painted} shapes painted"
+            );
+            for clipped in &output.shapes {
+                let rect = clipped.shape.visual_bounding_rect();
+                assert!(
+                    !rect.is_positive() || (rect.min.x.is_finite() && rect.max.y.is_finite()),
+                    "{kind:?}: {rect:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// A concave comb at the core's point limit, every corner rounded: the
     /// worst outline to flatten and ear-clip.
     fn comb() -> Shape {

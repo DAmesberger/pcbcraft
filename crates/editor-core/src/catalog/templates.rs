@@ -56,6 +56,9 @@ pub struct TemplateHit {
     /// The skeleton the row suggests; the request chooses.
     #[serde(default)]
     pub skeleton: SkeletonHint,
+    /// The schematic symbol the row suggests, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<crate::library::symbol_style::SymbolKind>,
     /// The outline drawing a cited row was typed from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citation: Option<RowCitation>,
@@ -397,6 +400,7 @@ fn hit_of(
         lands_cited: row.lands_cited(),
         source_row,
         skeleton: row.skeleton,
+        symbol: row.symbol,
         citation: row.citation.clone(),
         shape: PackageShape::of(&row.values),
         starter: None,

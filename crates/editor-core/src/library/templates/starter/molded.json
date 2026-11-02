@@ -31,6 +31,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": null,
    "values": {
     "family": "molded",
@@ -56,6 +57,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": null,
    "values": {
     "family": "molded",
@@ -81,6 +83,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": null,
    "values": {
     "family": "molded",
@@ -106,6 +109,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-214",
    "values": {
     "family": "molded",
@@ -130,6 +134,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-214",
    "values": {
     "family": "molded",
@@ -154,6 +159,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-214",
    "values": {
     "family": "molded",
@@ -179,6 +185,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-213",
    "values": {
     "family": "molded",
@@ -203,6 +210,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "diode",
    "cite": "do-213",
    "values": {
     "family": "molded",
@@ -228,6 +236,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": "eia-535",
    "values": {
     "family": "molded",
@@ -254,6 +263,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": "eia-535",
    "values": {
     "family": "molded",
@@ -280,6 +290,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": "eia-535",
    "values": {
     "family": "molded",
@@ -306,6 +317,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": "eia-535",
    "values": {
     "family": "molded",
@@ -332,6 +344,7 @@
     "skeleton": "two_terminal",
     "polarised": true
    },
+   "symbol": "polarised_capacitor",
    "cite": "eia-535",
    "values": {
     "family": "molded",

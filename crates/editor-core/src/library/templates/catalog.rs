@@ -15,6 +15,7 @@ use crate::library::package_form::{
 };
 use crate::library::part::{Basis, Provenance};
 use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
+use crate::library::symbol_style::{SymbolConventions, SymbolKind};
 use crate::library::templates::footprint_family::TemplateKind;
 use crate::library::{Definition, DefinitionMeta, DraftEdit, Library};
 use schemars::JsonSchema;
@@ -229,6 +230,11 @@ pub struct PackageRowDefinition {
     pub lands: Option<LandValues>,
     #[serde(default)]
     pub skeleton: SkeletonHint,
+    /// The schematic symbol the row suggests for its skeleton (a tantalum
+    /// row's polarised capacitor, a ferrite chip's bead); `None` leaves it
+    /// to the skeleton, form and prefix (`samples::choose_symbol`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<SymbolKind>,
     /// Origin and licence of the row.
     #[serde(default)]
     pub provenance: Provenance,
@@ -510,6 +516,11 @@ pub struct NewFromTemplate {
     pub name: String,
     #[serde(default)]
     pub designator_prefix: Option<String>,
+    /// The schematic symbol to draw; `None` takes the prefix's kind, the
+    /// row's suggestion or the form's (`samples::choose_symbol`). Its
+    /// terminal count must match the package's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<SymbolKind>,
 }
 
 /// The `library.package_from_template` request.
@@ -699,6 +710,22 @@ pub fn checked_values(
 /// chip of that construction, D for another polarised two-terminal part,
 /// J for a connector, U otherwise. A starting value the user edits.
 pub fn default_prefix(skeleton: SkeletonHint, form: &PackageForm) -> &'static str {
+    default_prefix_for(skeleton, form, None)
+}
+
+/// [`default_prefix`] for a row that suggests `symbol`: a two-terminal
+/// skeleton takes the symbol's customary prefix (C for a tantalum row's
+/// polarised capacitor, FB for a ferrite bead).
+pub fn default_prefix_for(
+    skeleton: SkeletonHint,
+    form: &PackageForm,
+    symbol: Option<SymbolKind>,
+) -> &'static str {
+    if let (SkeletonHint::TwoTerminal { .. }, Some(kind)) = (skeleton, symbol)
+        && kind.terminal_count() == Some(2)
+    {
+        return kind.prefix();
+    }
     match (skeleton, form) {
         (SkeletonHint::TwoTerminal { polarised: true }, _) => "D",
         (SkeletonHint::TwoTerminal { .. }, PackageForm::Chip(c)) => match c.kind {
@@ -727,16 +754,19 @@ pub fn new_from_template(
         request,
         refs,
         &crate::rules::DesignRules::default(),
+        SymbolConventions::default(),
     )
 }
 
 /// [`new_from_template`] with estimated lands following `rules` (the
-/// project's effective design rules).
+/// project's effective design rules) and generated symbols following
+/// `conventions` (the project's).
 pub fn new_from_template_with(
     library: &Library,
     request: &NewFromTemplate,
     refs: SampleRefs,
     rules: &crate::rules::DesignRules,
+    conventions: SymbolConventions,
 ) -> Result<Vec<DraftEdit>> {
     if !printable(&request.name) {
         return Err(Error::Invalid(
@@ -758,7 +788,7 @@ pub fn new_from_template_with(
             }
             p.to_owned()
         }
-        None => default_prefix(request.skeleton, &form).to_owned(),
+        None => default_prefix_for(request.skeleton, &form, resolved.row.symbol).to_owned(),
     };
     let provenance = provenance(&resolved, as_row);
     let lands = resolved.row.lands.as_ref().filter(|_| as_row);
@@ -767,6 +797,9 @@ pub fn new_from_template_with(
             name: request.name.trim(),
             form,
             skeleton: request.skeleton,
+            symbol: request.symbol,
+            row_symbol: resolved.row.symbol,
+            conventions,
             prefix: &prefix,
             lands,
             provenance: &provenance,
@@ -852,6 +885,7 @@ pub fn row_draft(
         lands: None,
         provenance: request.provenance.clone(),
         citation: None,
+        symbol: None,
     };
     let meta = DefinitionMeta {
         name: request.name.trim().to_owned(),

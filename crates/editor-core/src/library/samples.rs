@@ -4,6 +4,7 @@
 //! ordinary definition data a user then edits.
 use super::footprint::{Hole, HoleShape, PadKind, PadShape};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::symbol_style::{self, SymbolConventions, SymbolKind};
 use super::templates;
 use super::templates::catalog::{LandValues, SkeletonHint};
 use super::{
@@ -68,6 +69,29 @@ impl Kind<'static> {
     };
 }
 
+impl Kind<'_> {
+    /// The drawn symbol of a two-terminal sample: its chip construction's
+    /// (resistor, capacitor, inductor), else the one its prefix names;
+    /// `None` keeps the plain body rectangle (a connector).
+    pub fn symbol(&self) -> Option<SymbolKind> {
+        match self.chip {
+            Some(chip) => Some(chip_symbol(chip, false)),
+            None => SymbolKind::for_prefix(self.prefix, false),
+        }
+    }
+}
+
+/// The symbol a chip construction draws: a resistor, a capacitor
+/// (polarised when the package marks pin 1) or an inductor.
+pub fn chip_symbol(chip: ChipKind, polarised: bool) -> SymbolKind {
+    match chip {
+        ChipKind::Resistor => SymbolKind::Resistor,
+        ChipKind::Capacitor if polarised => SymbolKind::PolarisedCapacitor,
+        ChipKind::Capacitor => SymbolKind::Capacitor,
+        ChipKind::Inductor => SymbolKind::Inductor,
+    }
+}
+
 /// The builder revision a sample's generated model is authored against
 /// (`models::family_rev` in the integration crate).
 const SAMPLE_FAMILY_REV: u16 = 1;
@@ -81,6 +105,8 @@ struct Layout {
     offset: [f64; 3],
     pads: [Point; 2],
     land: Point,
+    /// A kind-specific drawing in place of the body rectangle.
+    drawn: Option<SymbolKind>,
 }
 
 fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
@@ -149,7 +175,20 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         DraftEdit {
             id: refs.symbol.id,
             meta: meta(&format!("{name} symbol")),
-            definition: Definition::Symbol(symbol(refs.component, &terminals, &layout)),
+            definition: Definition::Symbol(
+                layout
+                    .drawn
+                    .and_then(|kind| {
+                        symbol_style::generate(
+                            kind,
+                            SymbolConventions::default(),
+                            refs.component,
+                            &terminals,
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_else(|| symbol(refs.component, &terminals, &layout)),
+            ),
         },
         DraftEdit {
             id: refs.package.id,
@@ -268,7 +307,8 @@ fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) ->
     }
 }
 
-/// A two-terminal component with an axial symbol, a small two-land footprint
+/// A two-terminal component with an axial symbol (the kind-specific drawing
+/// of [`Kind::symbol`], else a body rectangle), a small two-land footprint
 /// and a straight terminal mapping.
 pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     sample(
@@ -287,6 +327,7 @@ pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEd
             // termination / 2 = 0.8 mm), so the leads fit their pads.
             pads: [[-0.8, 0.0], [0.8, 0.0]],
             land: [1.0, 1.4],
+            drawn: kind.symbol(),
         },
     )
 }
@@ -308,6 +349,7 @@ pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<
             offset: [0.0, 0.0, 0.05],
             pads: [[-1.27, 0.0], [1.27, 0.0]],
             land: [1.5, 2.0],
+            drawn: None,
         },
     )
 }
@@ -697,6 +739,33 @@ pub fn packaged_form(
             form,
             prefix,
             symbol: SymbolStyle::Block,
+            conventions: SymbolConventions::default(),
+            lands: None,
+            provenance: PROVENANCE,
+            template: false,
+            rules: &DesignRules::default(),
+        },
+        refs,
+    )
+}
+
+/// [`packaged_form`] drawing the symbol of `kind` (the box kinds lay out
+/// any count; a drawn kind whose terminal count differs from the form's
+/// keeps the box).
+pub fn packaged_symbol(
+    name: &str,
+    form: PackageForm,
+    prefix: &str,
+    kind: SymbolKind,
+    refs: SampleRefs,
+) -> Vec<DraftEdit> {
+    build_packaged(
+        &Packaged {
+            name,
+            form,
+            prefix,
+            symbol: SymbolStyle::of(kind),
+            conventions: SymbolConventions::default(),
             lands: None,
             provenance: PROVENANCE,
             template: false,
@@ -711,12 +780,22 @@ pub fn packaged_form(
 enum SymbolStyle {
     /// Pins down the left, then up the right, in package order.
     Block,
-    /// Two pins, left and right of a small body (2-terminal passives).
-    Axial,
+    /// A kind-specific drawing (`symbol_style`).
+    Drawn(SymbolKind),
     /// Pins down the left side only, in package order.
     Column,
     /// The body and its texts; pins are drawn by the user.
     Empty,
+}
+
+impl SymbolStyle {
+    fn of(kind: SymbolKind) -> Self {
+        match kind {
+            SymbolKind::IcBox => Self::Block,
+            SymbolKind::Connector => Self::Column,
+            kind => Self::Drawn(kind),
+        }
+    }
 }
 
 struct Packaged<'a> {
@@ -724,6 +803,8 @@ struct Packaged<'a> {
     form: PackageForm,
     prefix: &'a str,
     symbol: SymbolStyle,
+    /// How drawn kinds are styled (the project's conventions).
+    conventions: SymbolConventions,
     lands: Option<&'a LandValues>,
     provenance: &'a str,
     /// Lands from [`template_lands`] (a template build) rather than the
@@ -740,6 +821,13 @@ pub struct TemplateSpec<'a> {
     pub name: &'a str,
     pub form: PackageForm,
     pub skeleton: SkeletonHint,
+    /// The symbol the request names; `None` chooses one with
+    /// [`choose_symbol`].
+    pub symbol: Option<SymbolKind>,
+    /// The symbol the row suggests.
+    pub row_symbol: Option<SymbolKind>,
+    /// The project's drawing conventions.
+    pub conventions: SymbolConventions,
     pub prefix: &'a str,
     pub lands: Option<&'a LandValues>,
     pub provenance: &'a str,
@@ -776,25 +864,40 @@ pub fn from_template_with(
             spec.form.label()
         )));
     }
-    let (symbol, polarised) = match spec.skeleton {
-        SkeletonHint::TwoTerminal { polarised } => {
-            if count != 2 {
-                return Err(Error::Invalid(format!(
-                    "template.skeleton: a two-terminal skeleton needs a package of 2 terminals; this one has {count}"
-                )));
-            }
-            (SymbolStyle::Axial, polarised)
-        }
-        SkeletonHint::IcBox => (SymbolStyle::Block, false),
-        SkeletonHint::Connector => (SymbolStyle::Column, false),
-        SkeletonHint::Blank => (SymbolStyle::Empty, false),
-    };
+    if spec.symbol.is_none()
+        && matches!(spec.skeleton, SkeletonHint::TwoTerminal { .. })
+        && count != 2
+    {
+        return Err(Error::Invalid(format!(
+            "template.skeleton: a two-terminal skeleton needs a package of 2 terminals; this one has {count}"
+        )));
+    }
+    let kind = choose_symbol(
+        spec.skeleton,
+        &spec.form,
+        spec.prefix,
+        spec.symbol,
+        spec.row_symbol,
+    );
+    if let Some(needed) = kind.and_then(SymbolKind::terminal_count)
+        && usize::try_from(count).ok() != Some(needed)
+    {
+        return Err(Error::Invalid(format!(
+            "template.symbol: a {} symbol needs {needed} terminal{}; this package has {count}",
+            kind.map_or("", SymbolKind::label).to_lowercase(),
+            if needed == 1 { "" } else { "s" },
+        )));
+    }
+    let polarised = matches!(spec.skeleton, SkeletonHint::TwoTerminal { polarised: true })
+        || kind.is_some_and(SymbolKind::polarised);
+    let symbol = kind.map_or(SymbolStyle::Empty, SymbolStyle::of);
     let mut edits = build_packaged(
         &Packaged {
             name: spec.name,
             form: spec.form.clone(),
             prefix: spec.prefix,
             symbol,
+            conventions: spec.conventions,
             lands: spec.lands,
             provenance: spec.provenance,
             template: true,
@@ -806,6 +909,37 @@ pub fn from_template_with(
         mark_pin_one(&mut edits);
     }
     Ok(edits)
+}
+
+/// The symbol a template build draws; `None` for a blank skeleton
+/// without an explicit choice. An `explicit` request wins. A two-terminal
+/// skeleton takes the kind its designator `prefix` customarily names (so
+/// a user's `D` on a tantalum row draws a diode), else the row's
+/// suggestion, else its form's: a chip's construction, or a diode when
+/// polarised and a resistor when not. The other skeletons keep their box.
+/// A presentation default the author edits, never an electrical claim.
+pub fn choose_symbol(
+    skeleton: SkeletonHint,
+    form: &PackageForm,
+    prefix: &str,
+    explicit: Option<SymbolKind>,
+    row: Option<SymbolKind>,
+) -> Option<SymbolKind> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    Some(match skeleton {
+        SkeletonHint::TwoTerminal { polarised } => SymbolKind::for_prefix(prefix, polarised)
+            .or(row.filter(|k| k.terminal_count() == Some(2)))
+            .unwrap_or(match form {
+                PackageForm::Chip(chip) => chip_symbol(chip.kind, polarised),
+                _ if polarised => SymbolKind::Diode,
+                _ => SymbolKind::Resistor,
+            }),
+        SkeletonHint::IcBox => SymbolKind::IcBox,
+        SkeletonHint::Connector => SymbolKind::Connector,
+        SkeletonHint::Blank => return None,
+    })
 }
 
 /// The terminal count a typed form gives a new package: its largest
@@ -1107,7 +1241,10 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     }
     let symbol = match spec.symbol {
         SymbolStyle::Block => block_symbol(refs.component, &terminals),
-        SymbolStyle::Axial => axial_symbol(refs.component, &terminals),
+        SymbolStyle::Drawn(kind) => {
+            symbol_style::generate(kind, spec.conventions, refs.component, &terminals)
+                .unwrap_or_else(|_| block_symbol(refs.component, &terminals))
+        }
         SymbolStyle::Column => column_symbol(refs.component, &terminals),
         SymbolStyle::Empty => block_symbol(refs.component, &[]),
     };
@@ -1327,26 +1464,6 @@ fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefi
     }
 }
 
-/// The two-terminal sample symbol: a small body with pin 1 on the left
-/// and pin 2 on the right, numbers hidden.
-fn axial_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
-    symbol(
-        component,
-        terminals,
-        &Layout {
-            body: Bounds {
-                min: [-2.5, -1.0],
-                max: [2.5, 1.0],
-            },
-            pins: [[-5.0, 0.0], [5.0, 0.0]],
-            envelope: [0.0; 3],
-            offset: [0.0; 3],
-            pads: [[0.0; 2]; 2],
-            land: [0.0; 2],
-        },
-    )
-}
-
 /// A narrow body with every terminal down its left side in package order,
 /// on the default symbol grid (a connector's starting point).
 fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
@@ -1434,6 +1551,9 @@ pub struct ShowcasePart {
     pub name: &'static str,
     pub form: PackageForm,
     pub prefix: &'static str,
+    /// The schematic symbol: a box for the ICs and the header, the
+    /// kind's drawing for the passives.
+    pub symbol: SymbolKind,
     pub pin_one: bool,
     /// How much of each perimeter land's inner end to trim, in mm (see
     /// [`trim_heels`]).
@@ -1449,6 +1569,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Interface bridge (SOIC-8)",
             form: Preset::Soic8.form(),
             prefix: "U",
+            symbol: SymbolKind::IcBox,
             pin_one: true,
             heel_trim_mm: 0.0,
         },
@@ -1456,6 +1577,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Controller (QFN-16)",
             form: Preset::Qfn16.form(),
             prefix: "U",
+            symbol: SymbolKind::IcBox,
             pin_one: true,
             // The preset's lands reach 0.05 mm from the exposed pad and
             // meet at the corners; trimming their heels keeps 0.2 mm.
@@ -1465,6 +1587,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Header 2×5",
             form: Preset::Header2x5.form(),
             prefix: "J",
+            symbol: SymbolKind::IcBox,
             pin_one: true,
             heel_trim_mm: 0.0,
         },
@@ -1472,6 +1595,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Resistor 0603",
             form: Preset::Chip0603.form(),
             prefix: "R",
+            symbol: SymbolKind::Resistor,
             pin_one: false,
             heel_trim_mm: 0.0,
         },
@@ -1482,6 +1606,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
                 [2.0, 1.25, 0.85],
             ))),
             prefix: "C",
+            symbol: SymbolKind::Capacitor,
             pin_one: false,
             heel_trim_mm: 0.0,
         },
@@ -1492,6 +1617,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
                 [3.2, 1.6, 1.6],
             ))),
             prefix: "C",
+            symbol: SymbolKind::PolarisedCapacitor,
             pin_one: true,
             heel_trim_mm: 0.0,
         },
@@ -1556,6 +1682,74 @@ mod tests {
     use crate::diagnostics::{Error, Result};
     use crate::library::package_fit::{self, FitRotation};
     use crate::{Engine, LibraryCommand, Operation, Outcome};
+
+    /// The founder's check: the showcase's capacitors draw capacitor
+    /// symbols (C3, the tantalum, polarised with pin 1 the + plate), its
+    /// resistors resistor symbols and its ICs and header boxes.
+    #[test]
+    fn showcase_instances_draw_their_kinds_symbols() -> Result<()> {
+        let engine = Engine::showcase()?;
+        let project = engine.project();
+        let expect = [
+            ("C1", SymbolKind::Capacitor),
+            ("C2", SymbolKind::Capacitor),
+            ("C3", SymbolKind::PolarisedCapacitor),
+            ("R1", SymbolKind::Resistor),
+            ("R2", SymbolKind::Resistor),
+            ("R3", SymbolKind::Resistor),
+        ];
+        for (designator, kind) in expect {
+            let instance = project
+                .instances
+                .iter()
+                .find(|i| i.designator == designator)
+                .ok_or_else(|| Error::NotFound(designator.into()))?;
+            let symbol = &crate::instances::resolve(&project.library, instance)?
+                .symbol
+                .definition;
+            let drawn = symbol_style::generate(
+                kind,
+                SymbolConventions::default(),
+                symbol.component,
+                &[TerminalId(1), TerminalId(2)],
+            )?;
+            assert_eq!(symbol, &drawn, "{designator}");
+            // Wires still meet the pins on the sheet: every terminal's
+            // schematic position is a pin connection end.
+            for terminal in [1, 2] {
+                let end = crate::schematic::pin_position(
+                    project,
+                    crate::ids::Endpoint {
+                        instance: instance.id,
+                        terminal: TerminalId(terminal),
+                    },
+                );
+                assert!(end.is_some(), "{designator}.{terminal}");
+            }
+        }
+        for designator in ["U1", "U2", "J1"] {
+            let instance = project
+                .instances
+                .iter()
+                .find(|i| i.designator == designator)
+                .ok_or_else(|| Error::NotFound(designator.into()))?;
+            let symbol = &crate::instances::resolve(&project.library, instance)?
+                .symbol
+                .definition;
+            let body = symbol.units[0].graphic(GraphicId(2)).map(|g| &g.item);
+            assert!(
+                matches!(
+                    body,
+                    Some(graphics::Item::Shape {
+                        shape: crate::geometry::Shape::Rect { .. },
+                        ..
+                    })
+                ),
+                "{designator}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn every_preset_sample_fits_its_lands_and_publishes() -> Result<()> {

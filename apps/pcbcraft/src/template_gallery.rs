@@ -50,12 +50,13 @@ use pcbcraft_core::catalog::templates::{TemplateHit, TemplateReport};
 use pcbcraft_core::catalog::{CatalogContext, MAX_QUERY, Source};
 use pcbcraft_core::library::footprint_source::ParamValue;
 use pcbcraft_core::library::samples;
+use pcbcraft_core::library::symbol_style::SymbolKind;
 use pcbcraft_core::library::templates::catalog::{
-    FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
+    self, FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
     RowFrom, RowSource, SavePackageRow, SkeletonHint,
 };
 use pcbcraft_core::library::{
-    Bundle, ChipKind, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
+    Bundle, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
     PackageTerminal, Pad, PadKind, Provenance,
 };
 use pcbcraft_core::{
@@ -152,22 +153,16 @@ pub fn family_label(family: FamilyKind) -> &'static str {
     }
 }
 
-/// The designator prefix a skeleton starts with: a chip's kind names its
-/// letter, a polarised 2-terminal is a diode, a connector `J`, else `U`.
-pub fn default_prefix(form: &PackageForm, skeleton: SkeletonHint) -> &'static str {
-    match skeleton {
-        SkeletonHint::TwoTerminal { polarised: true } => "D",
-        SkeletonHint::TwoTerminal { polarised: false } => match form {
-            PackageForm::Chip(c) => match c.kind {
-                ChipKind::Resistor => "R",
-                ChipKind::Capacitor => "C",
-                ChipKind::Inductor => "L",
-            },
-            _ => "R",
-        },
-        SkeletonHint::Connector => "J",
-        SkeletonHint::IcBox | SkeletonHint::Blank => "U",
-    }
+/// The designator prefix a skeleton starts with: the row's suggested
+/// symbol's (C for a tantalum row), else a chip's kind names its letter, a
+/// polarised 2-terminal is a diode, a connector `J`, else `U` (the core's
+/// `catalog::default_prefix_for`, which `library.new_from_template` uses).
+pub fn default_prefix(
+    form: &PackageForm,
+    skeleton: SkeletonHint,
+    symbol: Option<SymbolKind>,
+) -> &'static str {
+    catalog::default_prefix_for(skeleton, form, symbol)
 }
 
 /// The Start as choices.
@@ -188,7 +183,7 @@ fn skeletons() -> Vec<(SkeletonHint, String)> {
 }
 
 /// The prefixes a 2-terminal part offers.
-const TWO_TERMINAL_PREFIXES: [&str; 6] = ["R", "C", "L", "D", "F", "FB"];
+const TWO_TERMINAL_PREFIXES: [&str; 9] = ["R", "C", "L", "D", "LED", "F", "FB", "Y", "SW"];
 
 /// A length in the preview's wording ("1.27", "0.5").
 fn mm(v: f64) -> String {
@@ -339,6 +334,7 @@ pub fn new_request(
         skeleton,
         name: name.trim().to_owned(),
         designator_prefix: (!prefix.is_empty()).then(|| prefix.to_owned()),
+        symbol: None,
     })))
 }
 
@@ -898,10 +894,9 @@ impl TemplateGallery {
         match open.scope.clone() {
             Scope::NewComponent => {
                 let skeleton = open.skeleton.unwrap_or(hit.skeleton);
-                let prefix = open
-                    .prefix
-                    .clone()
-                    .unwrap_or_else(|| default_prefix(&hit.values, skeleton).to_owned());
+                let prefix = open.prefix.clone().unwrap_or_else(|| {
+                    default_prefix(&hit.values, skeleton, hit.symbol).to_owned()
+                });
                 let name = open.name.trim().to_owned();
                 let operation =
                     new_request(source, &hit, edited.as_ref(), skeleton, &name, &prefix);
@@ -1387,7 +1382,7 @@ fn preview(
             let mut prefix = open
                 .prefix
                 .clone()
-                .unwrap_or_else(|| default_prefix(&hit.values, skeleton).to_owned());
+                .unwrap_or_else(|| default_prefix(&hit.values, skeleton, hit.symbol).to_owned());
             let changed = if matches!(skeleton, SkeletonHint::TwoTerminal { .. }) {
                 let options: Vec<(String, String)> = TWO_TERMINAL_PREFIXES
                     .iter()
@@ -1397,6 +1392,12 @@ fn preview(
             } else {
                 bounded_row(ui, "Designator", &mut prefix, MAX_DESIGNATOR_PREFIX).changed()
             };
+            // The symbol the build draws, as the core chooses it.
+            if let Some(kind) =
+                samples::choose_symbol(skeleton, &hit.values, &prefix, None, hit.symbol)
+            {
+                kit::value_row(ui, "Symbol", kind.label());
+            }
             if changed {
                 open.prefix = Some(prefix);
             }
@@ -1622,6 +1623,8 @@ mod tests {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+    use pcbcraft_core::library::ChipKind;
+
     fn chip(kind: ChipKind) -> PackageForm {
         PackageForm::Chip(Box::new(ChipForm::new(kind, [1.6, 0.8, 0.45])))
     }
@@ -1654,6 +1657,7 @@ mod tests {
             lands_cited: false,
             source_row: None,
             skeleton,
+            symbol: None,
             citation: None,
             shape: None,
             starter: None,
@@ -1876,11 +1880,14 @@ mod tests {
         let resistor = chip(ChipKind::Resistor);
         let skeleton = FamilyKind::default_skeleton(&resistor);
         assert_eq!(skeleton, SkeletonHint::TwoTerminal { polarised: false });
-        assert_eq!(default_prefix(&resistor, skeleton), "R");
-        assert_eq!(default_prefix(&chip(ChipKind::Capacitor), skeleton), "C");
+        assert_eq!(default_prefix(&resistor, skeleton, None), "R");
+        assert_eq!(
+            default_prefix(&chip(ChipKind::Capacitor), skeleton, None),
+            "C"
+        );
         assert_eq!(FamilyKind::default_skeleton(&qfn16()), SkeletonHint::IcBox);
-        assert_eq!(default_prefix(&qfn16(), SkeletonHint::IcBox), "U");
-        assert_eq!(default_prefix(&qfn16(), SkeletonHint::Connector), "J");
+        assert_eq!(default_prefix(&qfn16(), SkeletonHint::IcBox, None), "U");
+        assert_eq!(default_prefix(&qfn16(), SkeletonHint::Connector, None), "J");
         let summary = summary(&hit(FamilyKind::NoLead, "QFN", qfn16()), &qfn16());
         let terminals = summary
             .iter()

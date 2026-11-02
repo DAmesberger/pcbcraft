@@ -800,3 +800,30 @@ pub fn text(field: crate::FieldRef, text: &str) -> crate::fields::PropertyEdit {
         input: crate::fields::PropertyInput::Text(text.into()),
     }
 }
+
+/// Show the demo resistor's pin numbers (the two-terminal sample hides
+/// them) and update R1 to that revision, so tests can measure where
+/// numbers are placed.
+pub fn show_demo_pin_numbers(engine: &mut Engine) -> Result<()> {
+    let f = demo_fixture(engine)?;
+    let r1 = by_designator(engine, "R1")?;
+    let target = cascade(engine, &f, |e| {
+        with(e, f.symbol, symbol_body, |s| {
+            for unit in &mut s.units {
+                for pin in &mut unit.pins {
+                    pin.number.visible = true;
+                }
+            }
+        })
+    })?;
+    engine.apply_update(
+        engine.revision(),
+        crate::updates::Change::ComponentRevision {
+            instances: vec![r1],
+            target,
+            resolutions: Default::default(),
+        },
+        false,
+    )?;
+    Ok(())
+}

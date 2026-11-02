@@ -234,6 +234,7 @@ fn assert_upright(placed: &PlacedText, expected: Bounds, what: &str) {
 #[test]
 fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> {
     let mut engine = Engine::demo()?;
+    show_demo_pin_numbers(&mut engine)?;
     let r1 = by_designator(&engine, "R1")?;
     let o = first_occurrence(&engine, r1)?;
     let instance = engine
