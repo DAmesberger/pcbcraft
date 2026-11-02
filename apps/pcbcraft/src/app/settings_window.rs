@@ -387,7 +387,7 @@ fn reveal_rows(ui: &mut egui::Ui, reveal: &mut RevealSettings) -> bool {
         "Ctrl"
     };
     let alt = if cfg!(target_os = "macos") {
-        "⌥"
+        "Option"
     } else {
         "Alt"
     };

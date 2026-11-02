@@ -9,6 +9,7 @@ mod browser_catalog;
 mod chrome;
 mod command_dispatch;
 mod command_palette;
+mod key_reveal;
 mod open_timing;
 mod settings_window;
 mod shortcut_sheet;
@@ -85,6 +86,8 @@ pub struct App {
     palette: command_palette::CommandPalette,
     shortcut_sheet: shortcut_sheet::ShortcutSheet,
     settings_window: settings_window::SettingsWindow,
+    /// Hold ⌘ for key badges, tap ⌥ for key tips.
+    reveal: key_reveal::KeyReveal,
 }
 
 impl App {
@@ -172,6 +175,7 @@ impl App {
             palette: Default::default(),
             shortcut_sheet: Default::default(),
             settings_window: Default::default(),
+            reveal: Default::default(),
         })
     }
 
@@ -981,6 +985,9 @@ impl eframe::App for App {
         self.component_subject(&ctx);
         // A2: the Component workspace catalog's action and feed.
         self.catalog(&ctx);
+        // The key reveal watches ⌘ and ⌥ before anyone takes a key; key
+        // tips, while shown, take the keys themselves.
+        self.reveal_input(&ctx);
         // A key being recorded in Settings reaches nothing else.
         self.record_key(&ctx);
         // The palette's keys come before any canvas sees them.
@@ -1003,6 +1010,7 @@ impl eframe::App for App {
         let active = self.active_contexts();
         self.shortcut_sheet.show(&ctx, &self.registry, &active);
         self.settings(&ctx);
+        self.reveal_overlay(&ctx);
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);
         self.request_model(&ctx);

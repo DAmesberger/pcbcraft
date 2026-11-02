@@ -226,6 +226,7 @@ fn group_width(ui: &Ui, group: &Group) -> f32 {
 /// One ribbon button: icon over label, Solidcraft's 60 pt action height.
 fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
     let t = Tokens::get();
+    crate::reveal::register(ui.ctx(), crate::reveal::Target::Tool(tool.id), rect);
     let response = ui.interact(
         rect,
         ui.id().with(("tool", tool.id)),
@@ -368,6 +369,7 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
     } else {
         Sense::hover()
     };
+    crate::reveal::register(ui.ctx(), crate::reveal::Target::Tool(tool.id), rect);
     let upper = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + SPLIT_TOP));
     let lower = Rect::from_min_max(pos2(rect.left(), rect.top() + SPLIT_TOP - 2.0), rect.max);
     let run = ui.interact(upper, ui.id().with(("tool", tool.id)), sense);
@@ -721,6 +723,7 @@ fn tab_row(ui: &mut Ui, row: Rect, ribbon: &Ribbon) -> Option<&'static str> {
         if rect.right() > row.right() {
             break;
         }
+        crate::reveal::register(ui.ctx(), crate::reveal::Target::Tab(tab.id), rect);
         let response = ui.interact(rect, ui.id().with(("tab", tab.id)), Sense::click());
         let (fill, ink) = if tab.active {
             (t.accent_soft, t.selected_ink)

@@ -20,6 +20,7 @@ mod pin_mux;
 mod place_palette;
 mod refusal;
 mod resolve_parts;
+mod reveal;
 mod scene;
 mod schematic_editor;
 mod shell;
