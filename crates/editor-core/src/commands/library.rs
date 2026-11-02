@@ -409,6 +409,7 @@ fn place_request(
     });
     Ok((
         NewInstance {
+            sheet: None,
             component,
             designator,
             properties: Vec::new(),

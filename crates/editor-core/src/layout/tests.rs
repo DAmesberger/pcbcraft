@@ -87,6 +87,7 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
     let (expected, _) = instances::place(
         &mut project,
         instances::NewInstance {
+            sheet: None,
             component: f.r1(),
             designator: Some("R3".into()),
             properties: vec![],

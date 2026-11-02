@@ -1,5 +1,6 @@
-//! Persistent net identity. Wires define connectivity; nets record which
-//! connected terminal group carries which stable ID and name.
+//! Persistent net identity. Wires and label names define connectivity; nets
+//! record which connected terminal group carries which stable ID and name.
+//! Labels name their nets ([`names`]).
 //!
 //! After any schematic change, [`reconcile`] keeps every existing net ID with
 //! the connected group holding most of its former terminals. Merged groups keep
@@ -7,8 +8,8 @@
 //! IDs. Tracks are never retagged here: callers decide whether a change to
 //! routed nets is acceptable.
 use crate::diagnostics::{Error, Result};
-use crate::ids::{Endpoint, Id};
-use crate::model::{Net, Project, WireEnd};
+use crate::ids::{Endpoint, Id, SheetId};
+use crate::model::{Label, LabelKind, Net, Project, WireEnd};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_NETS: usize = 262_144;
@@ -61,12 +62,29 @@ pub fn accounted_for(project: &Project, terminal: Endpoint) -> bool {
             .is_some_and(|net| net.terminals.len() >= 2)
 }
 
-/// Union-find over terminals and junctions: terminals take indices
-/// `0..terminals.len()`, junctions the indices after them, so a group's
-/// root is its smallest terminal whenever it has one.
+/// Union-find over terminals and the other connection points (junctions,
+/// labels and sheet pins): terminals take indices `0..terminals.len()`, the
+/// others the indices after them, so a group's root is its smallest
+/// terminal whenever it has one.
+///
+/// Wires join their two ends. Names join labels by scope, never by drawn
+/// position: local and hierarchical labels of one name on one sheet, global
+/// labels and power ports of one name everywhere, and a sheet pin with the
+/// hierarchical labels of its name on the child sheet. Names compare
+/// ASCII-case-insensitively, as net names do.
 struct Nodes {
     index: BTreeMap<WireEnd, usize>,
     parent: Vec<usize>,
+}
+
+/// Where a label's name joins: one sheet, or every sheet.
+fn scope_key(label: &Label) -> (Option<SheetId>, String) {
+    let name = label.name.to_ascii_lowercase();
+    if label.kind.is_global() {
+        (None, name)
+    } else {
+        (Some(label.sheet), name)
+    }
 }
 
 impl Nodes {
@@ -75,6 +93,13 @@ impl Nodes {
             .iter()
             .map(|t| WireEnd::Terminal(*t))
             .chain(project.junctions.iter().map(|j| WireEnd::junction(j.id)))
+            .chain(project.labels.iter().map(|l| WireEnd::label(l.id)))
+            .chain(
+                project
+                    .sheet_symbols
+                    .iter()
+                    .flat_map(|s| s.pins.iter().map(|p| WireEnd::sheet_pin(p.id))),
+            )
             .enumerate()
             .map(|(i, end)| (end, i))
             .collect();
@@ -84,13 +109,41 @@ impl Nodes {
         };
         for wire in &project.wires {
             if let (Some(&a), Some(&b)) = (nodes.index.get(&wire.from), nodes.index.get(&wire.to)) {
-                let (a, b) = (nodes.find(a), nodes.find(b));
-                if a != b {
-                    nodes.parent[a.max(b)] = a.min(b);
+                nodes.union(a, b);
+            }
+        }
+        let mut scoped: BTreeMap<(Option<SheetId>, String), usize> = BTreeMap::new();
+        let mut ports: BTreeMap<(SheetId, String), usize> = BTreeMap::new();
+        for label in &project.labels {
+            let Some(&at) = nodes.index.get(&WireEnd::label(label.id)) else {
+                continue;
+            };
+            let first = *scoped.entry(scope_key(label)).or_insert(at);
+            nodes.union(first, at);
+            if matches!(label.kind, LabelKind::Hierarchical { .. }) {
+                ports
+                    .entry((label.sheet, label.name.to_ascii_lowercase()))
+                    .or_insert(at);
+            }
+        }
+        for symbol in &project.sheet_symbols {
+            for pin in &symbol.pins {
+                let key = (symbol.child, pin.name.to_ascii_lowercase());
+                if let (Some(&at), Some(&port)) = (
+                    nodes.index.get(&WireEnd::sheet_pin(pin.id)),
+                    ports.get(&key),
+                ) {
+                    nodes.union(at, port);
                 }
             }
         }
         nodes
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b {
+            self.parent[a.max(b)] = a.min(b);
+        }
     }
     fn find(&mut self, mut at: usize) -> usize {
         while self.parent[at] != at {
@@ -102,6 +155,18 @@ impl Nodes {
     fn root(&mut self, end: WireEnd) -> Option<usize> {
         let at = *self.index.get(&end)?;
         Some(self.find(at))
+    }
+    /// The net each root carries, from the nets' terminals.
+    fn root_nets(&mut self, project: &Project) -> BTreeMap<usize, Id> {
+        let mut root_net = BTreeMap::new();
+        for net in &project.nets {
+            for terminal in &net.terminals {
+                if let Some(root) = self.root(WireEnd::Terminal(*terminal)) {
+                    root_net.insert(root, net.id);
+                }
+            }
+        }
+        root_net
     }
 }
 
@@ -123,14 +188,7 @@ pub fn components(project: &Project, terminals: &BTreeSet<Endpoint>) -> Vec<Vec<
 pub fn wire_nets(project: &Project) -> BTreeMap<Id, Id> {
     let terminals = terminals(project);
     let mut nodes = Nodes::new(project, &terminals);
-    let mut root_net: BTreeMap<usize, Id> = BTreeMap::new();
-    for net in &project.nets {
-        for terminal in &net.terminals {
-            if let Some(root) = nodes.root(WireEnd::Terminal(*terminal)) {
-                root_net.insert(root, net.id);
-            }
-        }
-    }
+    let root_net = nodes.root_nets(project);
     project
         .wires
         .iter()
@@ -139,6 +197,238 @@ pub fn wire_nets(project: &Project) -> BTreeMap<Id, Id> {
             Some((w.id, *root_net.get(&root)?))
         })
         .collect()
+}
+
+/// The net of every junction, label and sheet pin whose group reaches a
+/// terminal.
+pub fn point_nets(project: &Project) -> BTreeMap<WireEnd, Id> {
+    let terminals = terminals(project);
+    let mut nodes = Nodes::new(project, &terminals);
+    let root_net = nodes.root_nets(project);
+    let points: Vec<WireEnd> = nodes
+        .index
+        .keys()
+        .filter(|e| e.terminal().is_none())
+        .copied()
+        .collect();
+    points
+        .into_iter()
+        .filter_map(|end| Some((end, *root_net.get(&nodes.root(end)?)?)))
+        .collect()
+}
+
+/// What kind of object supplies a name to a net, in priority order: the
+/// first kind present names the net.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NameKind {
+    Power,
+    Global,
+    Local,
+    /// A hierarchical label or a sheet pin.
+    Hierarchical,
+}
+
+/// One label or sheet pin on a net.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NameSource {
+    /// `WireEnd::Label` or `WireEnd::SheetPin`.
+    pub end: WireEnd,
+    pub name: String,
+    pub kind: NameKind,
+    /// The sheet it is drawn on.
+    pub sheet: SheetId,
+}
+
+/// Each sheet's depth below its top-level ancestor (0 for a top-level
+/// sheet), bounded by the sheet count so a malformed cycle terminates.
+pub fn sheet_depths(project: &Project) -> BTreeMap<SheetId, usize> {
+    let parent: BTreeMap<SheetId, SheetId> = project
+        .sheet_symbols
+        .iter()
+        .map(|s| (s.child, s.sheet))
+        .collect();
+    let limit = project.sheets.list.len();
+    project
+        .sheets
+        .list
+        .iter()
+        .map(|sheet| {
+            let mut depth = 0;
+            let mut at = sheet.id;
+            while let Some(up) = parent.get(&at) {
+                depth += 1;
+                at = *up;
+                if depth > limit {
+                    break;
+                }
+            }
+            (sheet.id, depth)
+        })
+        .collect()
+}
+
+/// The labels and sheet pins on each net, by net ID, in priority order
+/// (kind, sheet depth, page order, name, then ID).
+pub fn name_sources(project: &Project) -> BTreeMap<Id, Vec<NameSource>> {
+    let terminals = terminals(project);
+    let mut nodes = Nodes::new(project, &terminals);
+    let root_net = nodes.root_nets(project);
+    let mut out: BTreeMap<Id, Vec<NameSource>> = BTreeMap::new();
+    let mut push = |end: WireEnd, source: NameSource| {
+        if let Some(net) = nodes.root(end).and_then(|r| root_net.get(&r)) {
+            out.entry(*net).or_default().push(source);
+        }
+    };
+    for label in &project.labels {
+        let kind = match label.kind {
+            LabelKind::Power { .. } => NameKind::Power,
+            LabelKind::Global { .. } => NameKind::Global,
+            LabelKind::Local => NameKind::Local,
+            LabelKind::Hierarchical { .. } => NameKind::Hierarchical,
+        };
+        let end = WireEnd::label(label.id);
+        push(
+            end,
+            NameSource {
+                end,
+                name: label.name.clone(),
+                kind,
+                sheet: label.sheet,
+            },
+        );
+    }
+    for symbol in &project.sheet_symbols {
+        for pin in &symbol.pins {
+            let end = WireEnd::sheet_pin(pin.id);
+            push(
+                end,
+                NameSource {
+                    end,
+                    name: pin.name.clone(),
+                    kind: NameKind::Hierarchical,
+                    sheet: symbol.sheet,
+                },
+            );
+        }
+    }
+    let depths = sheet_depths(project);
+    let order = |s: SheetId| project.sheets.number(s).unwrap_or(usize::MAX);
+    for sources in out.values_mut() {
+        sources.sort_by(|a, b| {
+            (a.kind, depths.get(&a.sheet), order(a.sheet), &a.name, a.end).cmp(&(
+                b.kind,
+                depths.get(&b.sheet),
+                order(b.sheet),
+                &b.name,
+                b.end,
+            ))
+        });
+    }
+    out
+}
+
+/// A sheet name as a net-name qualifier: whitespace and control characters
+/// become `_`.
+fn qualifier(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_whitespace() || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// `text` cut to at most `max` bytes on a character boundary.
+fn truncated(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Longest net name, in bytes ([`name_valid`]).
+const MAX_NAME: usize = 64;
+
+/// `wanted` if no net took it yet (case-insensitively), else made unique
+/// with the net's ID.
+fn claim(wanted: &str, id: Id, taken: &mut BTreeSet<String>) -> String {
+    let mut name = truncated(wanted, MAX_NAME).to_owned();
+    if taken.contains(&name.to_ascii_lowercase()) {
+        let suffix = format!("~{id}");
+        name = format!(
+            "{}{suffix}",
+            truncated(wanted, MAX_NAME.saturating_sub(suffix.len()))
+        );
+    }
+    taken.insert(name.to_ascii_lowercase());
+    name
+}
+
+/// Every net's name (docs/schematic-capture.md, "Which name wins"). A net
+/// with labels or sheet pins takes the name of the first by
+/// [`name_sources`] order: power port, global label, local label, then
+/// hierarchical label or sheet pin; among those, the one nearest the top of
+/// the hierarchy, on the earliest page, alphabetically first. A local or
+/// hierarchical name another net also carries is qualified with its sheet's
+/// name (`Power/EN`). A net without labels keeps its stored name unless a
+/// labelled net now carries it, when it falls back to `N<id>`. A global
+/// name is unique by construction: the same global name is the same net.
+pub fn names(project: &Project) -> BTreeMap<Id, String> {
+    let sources = name_sources(project);
+    let chosen: BTreeMap<Id, &NameSource> = sources
+        .iter()
+        .filter_map(|(net, s)| Some((*net, s.first()?)))
+        .collect();
+    let mut taken = BTreeSet::new();
+    let mut out = BTreeMap::new();
+    for (net, source) in &chosen {
+        if matches!(source.kind, NameKind::Power | NameKind::Global) {
+            out.insert(*net, claim(&source.name, *net, &mut taken));
+        }
+    }
+    let mut local_count: BTreeMap<String, usize> = BTreeMap::new();
+    for source in chosen.values() {
+        if matches!(source.kind, NameKind::Local | NameKind::Hierarchical) {
+            *local_count
+                .entry(source.name.to_ascii_lowercase())
+                .or_default() += 1;
+        }
+    }
+    for (net, source) in &chosen {
+        if !matches!(source.kind, NameKind::Local | NameKind::Hierarchical) {
+            continue;
+        }
+        let lower = source.name.to_ascii_lowercase();
+        let shared = local_count.get(&lower).copied().unwrap_or(0) > 1 || taken.contains(&lower);
+        let wanted = if shared {
+            let sheet = project
+                .sheet(source.sheet)
+                .map_or_else(|| source.sheet.to_string(), |s| qualifier(&s.name));
+            format!("{sheet}/{}", source.name)
+        } else {
+            source.name.clone()
+        };
+        out.insert(*net, claim(&wanted, *net, &mut taken));
+    }
+    for net in &project.nets {
+        if out.contains_key(&net.id) {
+            continue;
+        }
+        let stored = if taken.contains(&net.name.to_ascii_lowercase()) {
+            default_name(net.id)
+        } else {
+            net.name.clone()
+        };
+        out.insert(net.id, claim(&stored, net.id, &mut taken));
+    }
+    out
 }
 
 /// Rebuild `project.nets` from wires while preserving existing identities.
@@ -232,6 +522,12 @@ pub fn reconcile(project: &mut Project) -> Result<NetChanges> {
         .collect();
     nets.sort_by_key(|n| n.id);
     project.nets = nets;
+    let names = self::names(project);
+    for net in &mut project.nets {
+        if let Some(name) = names.get(&net.id) {
+            net.name.clone_from(name);
+        }
+    }
     Ok(changes)
 }
 
@@ -285,6 +581,14 @@ pub fn validate(project: &Project) -> Result<()> {
         if net.terminals != group {
             return invalid("net membership does not match wire connectivity");
         }
+    }
+    let names = self::names(project);
+    if project
+        .nets
+        .iter()
+        .any(|n| names.get(&n.id) != Some(&n.name))
+    {
+        return invalid("net names do not match their labels");
     }
     Ok(())
 }

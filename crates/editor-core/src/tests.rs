@@ -16,5 +16,6 @@ mod library_folders;
 mod net_classes;
 mod orientation;
 mod parts;
+mod sheets;
 mod staged;
 pub(crate) mod support;

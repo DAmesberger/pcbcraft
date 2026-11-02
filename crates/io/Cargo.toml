@@ -17,6 +17,7 @@ tempfile.workspace = true
 getrandom.workspace = true
 # The `.pcbcraft` ZIP container (D0). MIT; DEFLATE through flate2 and
 # zlib-rs (MIT OR Apache-2.0, Zlib). Licences checked by `cargo xtask licences`.
+pdf-writer.workspace = true
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]

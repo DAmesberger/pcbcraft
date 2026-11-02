@@ -7,6 +7,7 @@ pub mod library_folder_index;
 pub mod persistence;
 pub mod recovery;
 pub mod rule_profiles;
+pub mod schematic_pdf;
 pub mod settings;
 
 pub use persistence::{read_project, write_project};

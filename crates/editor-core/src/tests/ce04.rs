@@ -87,6 +87,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     let outcome = step(
         &mut engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: q.r1(),
             designator: Some("Q1".into()),
             properties: vec![],
@@ -130,6 +131,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     let Outcome::UnitPlaced { occurrence: occ_b } = step(
         &mut engine,
         Operation::Schematic(SchematicCommand::PlaceUnit {
+            sheet: None,
             instance: q1,
             unit: B,
             position: [30.0, 10.0],
@@ -324,6 +326,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     let Outcome::UnitPlaced { occurrence: occ_b } = apply(
         &mut engine,
         Operation::Schematic(SchematicCommand::PlaceUnit {
+            sheet: None,
             instance: q1,
             unit: B,
             position: [10.0, 10.0],

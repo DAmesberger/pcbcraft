@@ -24,7 +24,10 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
-                                   export a project as a native Solidcraft model";
+                                   export a project as a native Solidcraft model
+  export-schematic-pdf FILE.pcbcraft OUT.pdf [--sheet ID]...
+                                   print the schematic (all sheets, or the given
+                                   sheets in page order) as a vector PDF";
 
 fn main() -> ExitCode {
     match run() {
@@ -135,6 +138,15 @@ fn run() -> Result<()> {
                 json!({"command": "project.export_native", "params": {"path": target}}),
             )?)
         }
+        [command, source, target, rest @ ..] if command == "export-schematic-pdf" => {
+            let sheets = sheet_ids(rest)?;
+            let mut session = open(Some(source))?;
+            print(&execute(
+                &mut session,
+                json!({"command": "schematic.export_pdf",
+                       "params": {"path": target, "sheets": sheets}}),
+            )?)
+        }
         [command, rest @ ..] if command == "pinout" => pinout::run(rest),
         [command, rest @ ..] if command == "sample-packages" => sample_packages::run(rest),
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),
@@ -142,6 +154,22 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "design-part" => design_part::run(rest),
         _ => Err(usage().into()),
     }
+}
+
+/// Sheet IDs from `--sheet ID` pairs.
+fn sheet_ids(args: &[String]) -> Result<Vec<u32>> {
+    let mut sheets = Vec::new();
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        match (flag.as_str(), rest.next()) {
+            ("--sheet", Some(id)) => sheets.push(
+                id.parse()
+                    .map_err(|_| format!("--sheet takes a sheet ID, not {id}"))?,
+            ),
+            _ => return Err(usage().into()),
+        }
+    }
+    Ok(sheets)
 }
 
 /// Write the synthetic catalog (24 components plus generic components and

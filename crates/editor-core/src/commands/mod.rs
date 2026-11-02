@@ -138,6 +138,31 @@ pub enum Outcome {
     EdgeConstraintAdded {
         constraint: Id,
     },
+    /// The label or power port `label.place` created.
+    LabelPlaced {
+        label: Id,
+    },
+    /// The sheet `sheet.add` appended.
+    SheetAdded {
+        sheet: crate::ids::SheetId,
+    },
+    /// The sheet symbol `sheet_symbol.place` drew and the sheet it uses.
+    SheetSymbolPlaced {
+        symbol: Id,
+        child: crate::ids::SheetId,
+    },
+    /// The pins `sheet_pin.add` or `sheet_symbol.sync_pins` added.
+    SheetPinsAdded {
+        pins: Vec<Id>,
+    },
+    /// The note, line or rectangle `drawing.add` created.
+    DrawingAdded {
+        drawing: Id,
+    },
+    /// The designators `schematic.annotate` changed.
+    Annotated {
+        changes: Vec<crate::schematic::Renumbered>,
+    },
 }
 
 /// A symbol draft's pin, by its terminal, that lies off the authoring grid.

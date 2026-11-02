@@ -76,6 +76,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
     let revision = kept.revision();
     let operations = vec![
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: f.r1(),
             designator: Some("R1".into()),
             properties: vec![],
@@ -85,6 +86,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: f.r1(),
             designator: Some("R5".into()),
             properties: vec![],
@@ -94,6 +96,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: f.r1(),
             designator: Some("R5".into()),
             properties: vec![],
@@ -103,6 +106,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: f.r1(),
             designator: Some("R5".into()),
             properties: vec![],
@@ -158,6 +162,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             choice: None,
         }),
         Operation::Schematic(SchematicCommand::PlaceUnit {
+            sheet: None,
             instance: r1,
             unit: UnitId(1),
             position: [0.0, 0.0],

@@ -40,6 +40,16 @@ pub struct PathParams {
     pub path: String,
 }
 
+/// Where `schematic.export_pdf` writes and which sheets it prints.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchematicPdfParams {
+    pub path: String,
+    /// Sheets to print, in page order; every sheet when empty.
+    #[serde(default)]
+    pub sheets: Vec<pcbcraft_core::SheetId>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SaveParams {
@@ -261,6 +271,9 @@ pub enum Request {
     /// Set a component draft's marking with SVG artwork as text.
     #[serde(rename = "library.set_marking")]
     SetMarking(marking::SetMarkingParams),
+    /// Print the schematic as a vector PDF.
+    #[serde(rename = "schematic.export_pdf")]
+    SchematicPdf(SchematicPdfParams),
 }
 
 impl Request {
@@ -377,6 +390,10 @@ impl Request {
             info::<marking::SetMarkingParams>(
                 "library.set_marking",
                 "Set or clear a component draft's generic marking (display-only decals on the package's top face; a module's shield can): text items from templates such as {mpn}, SVG artwork given as text with its licence (the session packs it by SHA-256), and polarity marks, in the model's marking area or an explicit one, laser-etched or white ink. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
+            ),
+            info::<SchematicPdfParams>(
+                "schematic.export_pdf",
+                "Print the schematic as a vector PDF at path (written atomically, replacing a file there): one page per sheet in page order at its paper size, with the page frame and title block; sheets limits it to a selection (all when empty) and a sheet symbol links to its child sheet's page. Returns the page count. Not a document change.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -569,6 +586,18 @@ impl Session {
             Request::FirmwareExport(params) => return self.firmware(params, true),
             Request::InspectModelFile(params) => return self.inspect_model_file(params),
             Request::SetMarking(params) => return self.set_marking(params),
+            Request::SchematicPdf(params) => {
+                let pages = pcbcraft_io::schematic_pdf::export_schematic_pdf(
+                    self.engine.project(),
+                    &params.sheets,
+                    Path::new(&params.path),
+                )?;
+                return Ok(json!({
+                    "revision": self.engine.revision(),
+                    "path": params.path,
+                    "pages": pages
+                }));
+            }
         }
         Ok(self.snapshot())
     }

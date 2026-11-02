@@ -387,6 +387,14 @@ fn wire_end_label(project: &Project, end: WireEnd) -> String {
     match end {
         WireEnd::Terminal(endpoint) => endpoint_label(project, endpoint),
         WireEnd::Junction(j) => format!("junction {}", j.junction),
+        WireEnd::Label(l) => project.label(l.label).map_or_else(
+            || format!("label {}", l.label),
+            |label| format!("{} {}", label.kind.noun(), label.name),
+        ),
+        WireEnd::SheetPin(p) => project.sheet_pin(p.sheet_pin).map_or_else(
+            || format!("sheet pin {}", p.sheet_pin),
+            |(_, pin)| format!("sheet pin {}", pin.name),
+        ),
     }
 }
 
@@ -395,6 +403,14 @@ fn wire_end_name(project: &Project, end: WireEnd) -> String {
     match end {
         WireEnd::Terminal(endpoint) => end_name(project, endpoint),
         WireEnd::Junction(_) => "a junction".into(),
+        WireEnd::Label(l) => project.label(l.label).map_or_else(
+            || "a label".into(),
+            |label| format!("{} {}", label.kind.noun(), label.name),
+        ),
+        WireEnd::SheetPin(p) => project.sheet_pin(p.sheet_pin).map_or_else(
+            || "a sheet pin".into(),
+            |(_, pin)| format!("sheet pin {}", pin.name),
+        ),
     }
 }
 
@@ -1008,7 +1024,7 @@ fn revise_instance(
         layout::detach_instance(next, id, EditPolicy::Consequential)?;
     }
     if !places.is_empty() {
-        schematic::place_units(next, id, &places)?;
+        schematic::place_units(next, id, &places, None)?;
     }
     if matches!(action, Some(PartAction::Assign { .. }))
         && let Some(instance) = next.instance(id)

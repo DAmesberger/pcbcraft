@@ -13,7 +13,7 @@ use crate::fields::{
 };
 use crate::functions::{self, FunctionEdit, FunctionSelections, Resolution};
 use crate::geometry::{Point, point_valid};
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, TerminalId, UnitId};
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, SheetId, TerminalId, UnitId};
 use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
     PackageDefinition, Published, Rotation, SymbolDefinition, designator_prefix_valid,
@@ -562,6 +562,9 @@ pub struct NewInstance {
     pub unit: UnitId,
     pub position: Point,
     pub physical: Option<PhysicalChoice>,
+    /// The sheet the first unit is drawn on; the first sheet when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<SheetId>,
 }
 
 pub(crate) fn instance_mut(project: &mut Project, id: Id) -> Result<&mut ComponentInstance> {
@@ -579,15 +582,20 @@ pub(crate) fn add_occurrence(
     instance: Id,
     unit: UnitId,
     position: Point,
+    sheet: SheetId,
 ) -> Result<Id> {
     if project.occurrences.len() >= MAX_OCCURRENCES {
         return Err(Error::Limit(
             "This edition supports at most 16384 symbol occurrences.".into(),
         ));
     }
+    if project.sheet(sheet).is_none() {
+        return Err(Error::NotFound("Unknown sheet.".into()));
+    }
     let id = project.allocate()?;
     project.occurrences.push(SymbolOccurrence {
         id,
+        sheet,
         instance,
         unit,
         position,
@@ -629,7 +637,8 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         pin_config: Default::default(),
         marking: Default::default(),
     });
-    let occurrence = add_occurrence(project, id, request.unit, request.position)?;
+    let sheet = request.sheet.unwrap_or_else(|| project.sheets.first());
+    let occurrence = add_occurrence(project, id, request.unit, request.position, sheet)?;
     apply_properties(project, id, &request.properties)?;
     check_instance(project, id)?;
     check_designators(project)?;

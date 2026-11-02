@@ -41,6 +41,7 @@ cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft   
 cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
 cargo run --locked --profile ci -p pcbcraft-cli -- sample-library NEW_DIR [NAME]   # the same catalog as a library folder
 cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft
+cargo run --locked --profile ci -p pcbcraft-cli -- export-schematic-pdf example.pcbcraft example.pdf [--sheet ID]...   # vector PDF, one page per sheet
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
 cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]

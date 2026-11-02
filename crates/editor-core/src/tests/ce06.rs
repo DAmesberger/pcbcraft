@@ -433,6 +433,7 @@ fn place_mcu(engine: &mut Engine, m: &Mcu, designator: &str, y: f64) -> Result<I
     match apply(
         engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: ComponentRef::new(m.component, Revision::FIRST),
             designator: Some(designator.into()),
             properties: vec![],

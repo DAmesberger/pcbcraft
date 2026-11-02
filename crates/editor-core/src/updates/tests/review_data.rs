@@ -448,6 +448,7 @@ fn update_pcb_names_its_placements_and_titles_findings_as_issues() -> Result<()>
             engine.revision(),
             crate::Operation::Instance(crate::InstanceCommand::Place(
                 crate::instances::NewInstance {
+                    sheet: None,
                     component: first.component,
                     designator: Some(designator.into()),
                     properties: vec![],

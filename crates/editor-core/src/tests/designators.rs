@@ -55,6 +55,7 @@ fn request(
         .first()
         .ok_or_else(|| Error::NotFound("footprint".into()))?;
     Ok(Operation::Instance(InstanceCommand::Place(NewInstance {
+        sheet: None,
         component,
         designator: designator.map(Into::into),
         properties: vec![],

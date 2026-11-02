@@ -381,6 +381,7 @@ fn bounds_choices_types_and_text_length_are_rejected_atomically() -> Result<()> 
     // Placement applies initial values with the same rules.
     let placed = crate::Operation::Instance(crate::InstanceCommand::Place(
         crate::instances::NewInstance {
+            sheet: None,
             component: part.r1(),
             designator: Some("R9".into()),
             properties: vec![text(f.count, "12")],

@@ -22,6 +22,7 @@ fn close_bounds(a: Bounds, b: Bounds) -> bool {
 
 fn occurrence(position: Point, rotation: Rotation, mirror: bool) -> SymbolOccurrence {
     SymbolOccurrence {
+        sheet: Default::default(),
         id: 1,
         instance: 1,
         unit: crate::UnitId(1),

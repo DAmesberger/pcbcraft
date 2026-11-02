@@ -8,6 +8,36 @@ use std::fmt;
 /// definition lineages share one allocator) and net identity.
 pub type Id = u64;
 
+/// A schematic sheet, in its own allocation space (`Project.sheets.next`).
+/// Every project has at least one sheet; a new project's is
+/// [`SheetId::FIRST`].
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(transparent)]
+pub struct SheetId(pub u32);
+
+impl SheetId {
+    /// The sheet a new project starts with. An object on it omits its
+    /// `sheet` field in the file.
+    pub const FIRST: Self = Self(1);
+    pub fn is_first(&self) -> bool {
+        *self == Self::FIRST
+    }
+}
+
+impl Default for SheetId {
+    fn default() -> Self {
+        Self::FIRST
+    }
+}
+
+impl fmt::Display for SheetId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// A definition lineage. Opaque so the representation can change when shared
 /// library folders need collision-free identities.
 #[derive(

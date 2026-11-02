@@ -98,6 +98,11 @@ pub(super) fn group_title(code: &str) -> String {
         "erc.input_only_net" => "Inputs without a driver",
         "erc.undriven_power_input" => "Power inputs without a supply",
         "erc.unchecked_terminal" => "Terminals not checked",
+        "erc.label_unconnected" => "Labels without a wire",
+        "erc.global_label_single" => "Global labels used once",
+        "erc.hierarchy_mismatch" => "Sheet pins and labels that do not match",
+        "erc.label_conflict" => "Nets with conflicting labels",
+        "erc.power_port_undriven" => "Power nets without a source",
         NO_PART => "No Part chosen",
         CHECK_FAILED => "Instances that cannot be checked",
         "part.stale_component" => "Part for an older revision",
@@ -196,6 +201,11 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
             "Map the terminal on the Mapping tab"
         }
         "component.pin_missing" => "Add a pin for the terminal on the Symbol tab",
+        "erc.label_unconnected" => "Wire the label or remove it",
+        "erc.global_label_single" => "Use the name elsewhere or make it a local label",
+        "erc.hierarchy_mismatch" => "Add the missing pin or hierarchical label",
+        "erc.label_conflict" => "Rename the labels to one name",
+        "erc.power_port_undriven" => "Connect a supply to the net",
         _ => return None,
     })
 }
@@ -439,8 +449,13 @@ pub const KNOWN_CODES: &[&str] = &[
     "definition.revisions_exhausted",
     "definition.stale_base",
     "erc.driver_conflict",
+    "erc.global_label_single",
+    "erc.hierarchy_mismatch",
     "erc.input_only_net",
+    "erc.label_conflict",
+    "erc.label_unconnected",
     "erc.open_drain_contention",
+    "erc.power_port_undriven",
     "erc.unchecked_terminal",
     "erc.undriven_power_input",
     "fill.clearance",

@@ -175,7 +175,7 @@ fn native_export_writes_a_new_solidcraft_file_only() -> TestResult {
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();
-    assert_eq!(catalog.len(), 29);
+    assert_eq!(catalog.len(), 30);
     let schema = serde_json::to_string(&schemas())?;
     for command in &catalog {
         assert!(
@@ -197,6 +197,7 @@ fn placing_and_inspecting_through_json_matches_the_engine() -> TestResult {
     let component = engine.project().instances[0].component;
     let first = engine.project().instances[0].clone();
     let place = Operation::Instance(InstanceCommand::Place(NewInstance {
+        sheet: None,
         component,
         designator: Some("R3".into()),
         properties: vec![],
@@ -414,6 +415,7 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
     let id = |value: &Value| value.as_u64().map(pcbcraft_core::DefinitionId);
     let revision = results[0]["entry"]["revision"].as_u64().ok_or("revision")?;
     let place = Operation::Instance(InstanceCommand::Place(NewInstance {
+        sheet: None,
         component: pcbcraft_core::ComponentRef::new(
             pcbcraft_core::DefinitionId(lineage),
             pcbcraft_core::Revision(u32::try_from(revision)?),
@@ -838,5 +840,25 @@ fn set_marking_refuses_a_missing_draft_and_changes_nothing() -> TestResult {
         "marking": {"items": [{"item": "text", "template": "X"}]}}}));
     assert_eq!(reply["ok"], false, "{reply}");
     assert_eq!(session.engine().revision(), before);
+    Ok(())
+}
+
+#[test]
+fn schematic_export_pdf_writes_a_pdf_without_changing_the_document() -> TestResult {
+    let mut session = Session::new(Engine::demo()?);
+    let before = session.engine().revision();
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("schematic.pdf");
+    let reply = session.dispatch(json!({"command": "schematic.export_pdf", "params": {
+        "path": path.to_string_lossy()}}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["pages"], 1, "{reply}");
+    assert!(std::fs::read(&path)?.starts_with(b"%PDF-"));
+    assert_eq!(session.engine().revision(), before);
+    let other = dir.path().join("other.pdf");
+    let refused = session.dispatch(json!({"command": "schematic.export_pdf", "params": {
+        "path": other.to_string_lossy(), "sheets": [77]}}));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert!(!other.exists());
     Ok(())
 }

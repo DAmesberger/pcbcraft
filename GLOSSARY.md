@@ -259,6 +259,29 @@ A set of electrical connection points intended to be joined. Each net has a pers
 A schematic connection point where wires meet away from a terminal, made where a wire end lands on another wire's segment. The solid junction dot is drawn wherever three or more conductors meet (a pin counts as one); it is derived from connectivity, not stored. A plain wire crossing is not a junction.
 _Avoid_: Dot (as the stored object)
 
+**Sheet**:
+One page of the schematic, with its own name, paper size and page frame, in a project-wide page order. Symbol occurrences, wires, junctions, labels and sheet furniture each lie on one sheet; a wire never crosses sheets.
+_Avoid_: Page (as the object), schematic (for one sheet)
+
+**Net label**:
+A named connection point on a sheet that wires end on and whose name joins it to other labels: a local label within its sheet, a global label (off-sheet connector) across all sheets, a hierarchical label to the sheet pin of the same name on its sheet's symbol. Labels name their net by a fixed priority; they never join anything by drawn position.
+
+**Power port**:
+A global net label drawn as a ground or supply symbol (GND, +3V3, VBUS). It joins every power port and global label of its name and gives its net the highest-priority name. It is not a component instance and has no BOM line or footprint.
+_Avoid_: Power symbol (for the component kind of that name)
+
+**Sheet symbol**:
+A box on a parent sheet that stands for one child sheet, with sheet pins on its edges. Each sheet has at most one parent symbol; sheets without one are top-level.
+
+**Sheet pin**:
+A connection point on a sheet symbol's edge that joins the hierarchical labels of the same name on the child sheet.
+
+**Annotation**:
+Numbering designators in page and position order across sheets. By default only designators that are not yet prefix plus number change, so existing designators stay stable.
+
+**Title block**:
+The block in a page frame's corner that shows the project properties (title, revision, date, author, company), the sheet's name and "sheet n of m".
+
 **No-connect marker**:
 A project decision to leave a particular connection point unconnected. It is distinct from a manufacturer's declaration that a package terminal must not be connected.
 

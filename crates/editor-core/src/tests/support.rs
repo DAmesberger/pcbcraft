@@ -512,6 +512,7 @@ pub fn place_ref(
     match apply(
         engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component,
             designator: Some(designator.into()),
             properties: vec![],

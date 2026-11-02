@@ -13,7 +13,9 @@ use crate::functions::{ActiveFunction, Direction, Drive, Resolution};
 use crate::ids::{Endpoint, Id};
 use crate::instances;
 use crate::model::{ComponentInstance, Net, Project};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+mod labels;
 
 /// What one net terminal contributes to the net rules.
 enum Behavior<'a> {
@@ -56,6 +58,7 @@ fn net_checks(
     project: &Project,
     net: &Net,
     resolutions: &BTreeMap<Id, Resolution>,
+    power_nets: &BTreeSet<Id>,
     out: &mut Vec<Finding>,
 ) {
     let this = ObjectRef::Net { id: net.id };
@@ -132,9 +135,12 @@ fn net_checks(
             ));
         }
     }
-    if !active
-        .iter()
-        .any(|(_, f)| f.direction == Direction::PowerOutput)
+    // A net with a power port reports a missing source once, as
+    // `erc.power_port_undriven`.
+    if !power_nets.contains(&net.id)
+        && !active
+            .iter()
+            .any(|(_, f)| f.direction == Direction::PowerOutput)
     {
         for (endpoint, _) in active
             .iter()
@@ -166,9 +172,11 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         })
         .collect();
     let mut out = Vec::new();
+    let power_nets = labels::power_nets(project);
     for net in &project.nets {
-        net_checks(project, net, &resolutions, &mut out);
+        net_checks(project, net, &resolutions, &power_nets, &mut out);
     }
+    labels::checks(project, &resolutions, &mut out);
     for instance in &project.instances {
         if let Some(resolution) = resolutions.get(&instance.id) {
             let rules = project

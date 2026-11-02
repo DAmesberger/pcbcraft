@@ -227,6 +227,20 @@ pub enum Query {
     /// Per fill: whether its computed copper is stale.
     #[serde(rename = "fill.status")]
     FillStatus {},
+    /// Every schematic sheet in page order with its place in the hierarchy
+    /// (parent sheet symbol, depth) and what it holds.
+    #[serde(rename = "schematic.sheets")]
+    Sheets {},
+    /// Where a net appears across sheets: its labels, sheet pins and placed
+    /// terminals with sheet and position, in page order (jump between a
+    /// label's other occurrences).
+    #[serde(rename = "schematic.net_places")]
+    NetPlaces { net: Id },
+    /// Everything one sheet draws, resolved to shapes and text in sheet
+    /// millimetres: page frame and title block, labels, power ports, sheet
+    /// symbols, furniture, wires, junction dots and units.
+    #[serde(rename = "schematic.scene")]
+    SheetScene { sheet: SheetId },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -259,6 +273,9 @@ pub enum QueryResult {
     NetClassChanges(Vec<rules::netclass::ClassChange>),
     BoardShape(Box<model::SolvedBoard>),
     FillStatus(Vec<layout::fill::FillStatus>),
+    Sheets(Vec<schematic::SheetRow>),
+    NetPlaces(Box<schematic::NetPlaces>),
+    SheetScene(Box<schematic::scene::SheetScene>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -353,6 +370,7 @@ impl Engine {
             engine.apply(
                 engine.revision,
                 Operation::Instance(InstanceCommand::Place(instances::NewInstance {
+                    sheet: None,
                     component: ComponentRef::new(lineages.component, Revision::FIRST),
                     designator: Some((*designator).into()),
                     properties: vec![],
@@ -545,6 +563,7 @@ impl Engine {
             let outcome = engine.apply(
                 engine.revision,
                 Operation::Instance(InstanceCommand::Place(instances::NewInstance {
+                    sheet: None,
                     component: ComponentRef::new(refs.component, Revision::FIRST),
                     designator: None,
                     properties: vec![fields::PropertyEdit {
@@ -732,8 +751,16 @@ impl Engine {
                     command,
                     EditPolicy::Direct,
                 )? {
-                    Some(occurrence) => Outcome::UnitPlaced { occurrence },
-                    None => Outcome::None,
+                    schematic::Applied::None => Outcome::None,
+                    schematic::Applied::Unit(occurrence) => Outcome::UnitPlaced { occurrence },
+                    schematic::Applied::Label(label) => Outcome::LabelPlaced { label },
+                    schematic::Applied::Sheet(sheet) => Outcome::SheetAdded { sheet },
+                    schematic::Applied::SheetSymbol { symbol, child } => {
+                        Outcome::SheetSymbolPlaced { symbol, child }
+                    }
+                    schematic::Applied::SheetPins(pins) => Outcome::SheetPinsAdded { pins },
+                    schematic::Applied::Drawing(drawing) => Outcome::DrawingAdded { drawing },
+                    schematic::Applied::Annotated(changes) => Outcome::Annotated { changes },
                 }
             }
             // Restating the current fabrication changes nothing, so it
@@ -985,6 +1012,20 @@ impl Engine {
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
             ))),
+            Query::Sheets {} => Ok(QueryResult::Sheets(schematic::sheet_rows(
+                &self.document.project,
+            ))),
+            Query::NetPlaces { net } => Ok(QueryResult::NetPlaces(Box::new(
+                schematic::net_places(&self.document.project, net)?,
+            ))),
+            Query::SheetScene { sheet } => {
+                if self.document.project.sheet(sheet).is_none() {
+                    return Err(Error::NotFound("Unknown sheet.".into()));
+                }
+                Ok(QueryResult::SheetScene(Box::new(
+                    schematic::scene::sheet_scene(&self.document.project, sheet),
+                )))
+            }
             Query::Issues { scope } => Ok(QueryResult::Issues(issues::report(
                 &self.document.project,
                 &self.document.drafts,

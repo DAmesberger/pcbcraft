@@ -146,6 +146,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     apply(
         &mut engine,
         Operation::Schematic(SchematicCommand::PlaceUnit {
+            sheet: None,
             instance: u1,
             unit: P,
             position: [0.0, 20.0],
@@ -218,6 +219,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     let Ok(crate::Outcome::InstancePlaced { instance: u2, .. }) = apply(
         &mut engine,
         Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
             component: amp.r1(),
             designator: Some("U2".into()),
             properties: vec![text(gain, "2")],

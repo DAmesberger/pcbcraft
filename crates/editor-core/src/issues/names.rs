@@ -161,6 +161,26 @@ impl<'a> Names<'a> {
                 },
             ),
             ObjectRef::Board => "the board".into(),
+            ObjectRef::Label { id } => self.project.label(id).map_or_else(
+                || "a label".into(),
+                |l| format!("{} {}", l.kind.noun(), l.name),
+            ),
+            ObjectRef::SheetSymbol { id } => self
+                .project
+                .sheet_symbol(id)
+                .and_then(|s| self.project.sheet(s.child))
+                .map_or_else(
+                    || "a sheet symbol".into(),
+                    |s| format!("sheet symbol {}", s.name),
+                ),
+            ObjectRef::SheetPin { id } => self.project.sheet_pin(id).map_or_else(
+                || "a sheet pin".into(),
+                |(_, p)| format!("sheet pin {}", p.name),
+            ),
+            ObjectRef::Sheet { sheet } => self
+                .project
+                .sheet(sheet)
+                .map_or_else(|| "a sheet".into(), |s| format!("sheet {}", s.name)),
         }
     }
 

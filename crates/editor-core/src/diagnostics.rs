@@ -181,6 +181,22 @@ pub enum ObjectRef {
     /// one object on it (a check that stopped at its limit). Locating it
     /// frames the board.
     Board,
+    /// A net label or power port on a schematic sheet.
+    Label {
+        id: Id,
+    },
+    /// A hierarchical sheet symbol.
+    SheetSymbol {
+        id: Id,
+    },
+    /// A pin on a sheet symbol.
+    SheetPin {
+        id: Id,
+    },
+    /// A schematic sheet.
+    Sheet {
+        sheet: crate::ids::SheetId,
+    },
 }
 
 /// A derived completeness state a finding can block. Nothing stores these

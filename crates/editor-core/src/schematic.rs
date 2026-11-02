@@ -1,11 +1,16 @@
-//! Single-sheet capture: symbol occurrences, wires and junctions. Wire ends
-//! reference terminals or junctions; drawn crossings and coincident pins
-//! never imply a connection. A wire end routed onto another wire's segment
-//! splits it at a junction ([`wiring`]). [`placed_unit`] resolves what an occurrence
-//! draws and [`definition_unit`] what a unit being authored draws.
+//! Schematic capture over one or more sheets: symbol occurrences, wires,
+//! junctions, net labels and power ports ([`labels`]), sheets, hierarchical
+//! sheet symbols and sheet furniture ([`sheets`]), and designator
+//! annotation ([`annotate`]). Wire ends reference terminals, junctions,
+//! labels or sheet pins; drawn crossings and coincident pins never imply a
+//! connection, and labels join by name (`nets`). A wire end routed onto
+//! another wire's segment splits it at a junction ([`wiring`]).
+//! [`placed_unit`] resolves what an occurrence draws, [`definition_unit`]
+//! what a unit being authored draws and [`scene`] everything else a sheet
+//! draws. See docs/schematic-capture.md.
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
-use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, TerminalId, UnitId};
+use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
 use crate::library::graphics::{SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
@@ -14,7 +19,10 @@ use crate::library::{
     PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
     VAlign,
 };
-use crate::model::{EditPolicy, Net, Project, SymbolOccurrence, Wire};
+use crate::model::{
+    EditPolicy, LabelKind, Net, Paper, PaperOrientation, PortShape, Project, ProjectProperties,
+    SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
+};
 use crate::nets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,10 +30,15 @@ use std::collections::BTreeSet;
 
 pub const MAX_WIRES: usize = 16384;
 
+pub mod annotate;
+pub mod labels;
+pub mod scene;
+pub mod sheets;
 mod wiring;
+pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use wiring::{
-    JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, junction_dots,
-    nearest_on_wire, tidy, wire_ends, wire_net, wire_route,
+    JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
+    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_route, wire_sheet,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -38,6 +51,10 @@ pub enum SchematicCommand {
         instance: Id,
         unit: UnitId,
         position: Point,
+        /// The sheet to draw it on: the sheet of the instance's other
+        /// units, else the first sheet, when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
     },
     /// Presentation only; electrical identities are unchanged.
     #[serde(rename = "symbol.move_unit")]
@@ -62,9 +79,172 @@ pub enum SchematicCommand {
     Connect { from: WireTarget, to: WireTarget },
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
-    /// Relabel a net. Its identity, membership and routed copper are unchanged.
+    /// Relabel a net. Its identity, membership and routed copper are
+    /// unchanged. A net named by labels or sheet pins is renamed by renaming
+    /// every one of them that spells its current name.
     #[serde(rename = "schematic.net_rename")]
     RenameNet { net: Id, name: String },
+    /// Move a unit to another sheet. Refused while it is wired.
+    #[serde(rename = "symbol.move_to_sheet")]
+    MoveUnitToSheet {
+        occurrence: Id,
+        sheet: SheetId,
+        position: Point,
+    },
+    /// Place a net label or power port. `attach` wires it on placement: a
+    /// point on a wire splits the wire at the label; a terminal, junction,
+    /// label or sheet pin gets a wire to it.
+    #[serde(rename = "label.place")]
+    PlaceLabel {
+        /// The first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        name: String,
+        kind: LabelKind,
+        position: Point,
+        #[serde(default)]
+        rotation: Rotation,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attach: Option<WireTarget>,
+    },
+    /// Presentation only; wires follow.
+    #[serde(rename = "label.move")]
+    MoveLabel { label: Id, position: Point },
+    /// Rename, change the kind of, or turn a label. A name or kind change
+    /// may join or split nets.
+    #[serde(rename = "label.edit")]
+    EditLabel {
+        label: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<LabelKind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rotation: Option<Rotation>,
+    },
+    /// Remove a label; wires through it stay joined.
+    #[serde(rename = "label.remove")]
+    RemoveLabel { label: Id },
+    /// Append a sheet ("Sheet n", A4 landscape unless given).
+    #[serde(rename = "sheet.add")]
+    AddSheet {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        paper: Option<Paper>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        orientation: Option<PaperOrientation>,
+    },
+    #[serde(rename = "sheet.rename")]
+    RenameSheet { sheet: SheetId, name: String },
+    #[serde(rename = "sheet.set_page")]
+    SetPage {
+        sheet: SheetId,
+        paper: Paper,
+        orientation: PaperOrientation,
+    },
+    /// Move a sheet to page `index` (from 0).
+    #[serde(rename = "sheet.reorder")]
+    ReorderSheet { sheet: SheetId, index: usize },
+    /// Delete a sheet and what is drawn on it (its units return to
+    /// unplaced) and the sheet symbol that uses it. The last sheet stays.
+    #[serde(rename = "sheet.delete")]
+    DeleteSheet { sheet: SheetId },
+    /// Draw a sheet symbol for an existing sheet, or for a new one.
+    #[serde(rename = "sheet_symbol.place")]
+    PlaceSheetSymbol {
+        /// The sheet to draw it on; the first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        /// An existing sheet; a new sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child: Option<SheetId>,
+        /// The new sheet's name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Top-left corner.
+        position: Point,
+        size: Point,
+    },
+    #[serde(rename = "sheet_symbol.move")]
+    MoveSheetSymbol { symbol: Id, position: Point },
+    #[serde(rename = "sheet_symbol.resize")]
+    ResizeSheetSymbol { symbol: Id, size: Point },
+    #[serde(rename = "sheet_symbol.set_child")]
+    SetSheetChild { symbol: Id, child: SheetId },
+    /// Remove a sheet symbol; its sheet stays as a top-level sheet.
+    #[serde(rename = "sheet_symbol.remove")]
+    RemoveSheetSymbol { symbol: Id },
+    /// Add a pin for every hierarchical label name of the child sheet the
+    /// symbol lacks.
+    #[serde(rename = "sheet_symbol.sync_pins")]
+    SyncSheetPins { symbol: Id },
+    #[serde(rename = "sheet_pin.add")]
+    AddSheetPin {
+        symbol: Id,
+        name: String,
+        #[serde(default)]
+        shape: PortShape,
+        side: SheetSide,
+        offset: f64,
+    },
+    #[serde(rename = "sheet_pin.edit")]
+    EditSheetPin {
+        pin: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shape: Option<PortShape>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        side: Option<SheetSide>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<f64>,
+    },
+    #[serde(rename = "sheet_pin.remove")]
+    RemoveSheetPin { pin: Id },
+    /// Add a note, line or rectangle.
+    #[serde(rename = "drawing.add")]
+    AddDrawing {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        item: SheetItem,
+    },
+    /// Replace a drawing's item.
+    #[serde(rename = "drawing.edit")]
+    EditDrawing { drawing: Id, item: SheetItem },
+    #[serde(rename = "drawing.remove")]
+    RemoveDrawing { drawing: Id },
+    /// Set the title-block properties.
+    #[serde(rename = "project.set_properties")]
+    SetProperties { properties: ProjectProperties },
+    /// Number designators across sheets; existing annotated designators
+    /// stay unless `mode` is `all`.
+    #[serde(rename = "schematic.annotate")]
+    Annotate {
+        #[serde(default)]
+        order: AnnotateOrder,
+        #[serde(default)]
+        mode: AnnotateMode,
+        #[serde(default)]
+        numbering: Numbering,
+        /// Visit only instances whose first unit is on these sheets; all
+        /// when empty.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sheets: Vec<SheetId>,
+    },
+}
+
+/// What a schematic command created or changed, for the engine's outcome.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Applied {
+    None,
+    Unit(Id),
+    Label(Id),
+    Sheet(SheetId),
+    SheetSymbol { symbol: Id, child: SheetId },
+    SheetPins(Vec<Id>),
+    Drawing(Id),
+    Annotated(Vec<Renumbered>),
 }
 
 fn invalid(message: &str) -> Error {
@@ -78,34 +258,147 @@ fn conflict(message: &str) -> Error {
 }
 
 /// Apply to a candidate the caller discards on failure. The engine then
-/// reconciles nets and validates the document. Returns the occurrence a
-/// `PlaceUnit` created.
+/// reconciles nets and validates the document.
 pub fn apply(
     project: &mut Project,
     command: SchematicCommand,
     policy: EditPolicy,
-) -> Result<Option<Id>> {
+) -> Result<Applied> {
+    use SchematicCommand as C;
+    let none = |r: Result<()>| r.map(|()| Applied::None);
+    let first = project.sheets.first();
     match command {
-        SchematicCommand::PlaceUnit {
+        C::PlaceUnit {
             instance,
             unit,
             position,
-        } => place_unit(project, instance, unit, position).map(Some),
-        SchematicCommand::MoveUnit {
+            sheet,
+        } => place_units(project, instance, &[(unit, position)], sheet)?
+            .first()
+            .copied()
+            .map(Applied::Unit)
+            .ok_or_else(|| invalid("No unit was placed.")),
+        C::MoveUnit {
             occurrence,
             position,
-        } => move_unit(project, occurrence, position).map(|()| None),
-        SchematicCommand::OrientUnit {
+        } => none(move_unit(project, occurrence, position)),
+        C::OrientUnit {
             occurrence,
             rotation,
             mirror,
-        } => orient_unit(project, occurrence, rotation, mirror).map(|()| None),
-        SchematicCommand::UnplaceUnit { occurrence } => {
-            unplace_unit(project, occurrence, policy).map(|()| None)
+        } => none(orient_unit(project, occurrence, rotation, mirror)),
+        C::UnplaceUnit { occurrence } => none(unplace_unit(project, occurrence, policy)),
+        C::Connect { from, to } => none(connect(project, from, to)),
+        C::Disconnect { wire } => none(disconnect(project, wire)),
+        C::RenameNet { net, name } => none(rename_net(project, net, name)),
+        C::MoveUnitToSheet {
+            occurrence,
+            sheet,
+            position,
+        } => none(sheets::move_unit_to_sheet(
+            project, occurrence, sheet, position,
+        )),
+        C::PlaceLabel {
+            sheet,
+            name,
+            kind,
+            position,
+            rotation,
+            attach,
+        } => labels::place(
+            project,
+            labels::NewLabel {
+                sheet: sheet.unwrap_or(first),
+                name,
+                kind,
+                position,
+                rotation,
+                attach,
+            },
+        )
+        .map(Applied::Label),
+        C::MoveLabel { label, position } => none(labels::move_to(project, label, position)),
+        C::EditLabel {
+            label,
+            name,
+            kind,
+            rotation,
+        } => none(labels::edit(project, label, name, kind, rotation)),
+        C::RemoveLabel { label } => none(labels::remove(project, label)),
+        C::AddSheet {
+            name,
+            paper,
+            orientation,
+        } => sheets::add(project, name, paper, orientation).map(Applied::Sheet),
+        C::RenameSheet { sheet, name } => none(sheets::rename(project, sheet, name)),
+        C::SetPage {
+            sheet,
+            paper,
+            orientation,
+        } => none(sheets::set_page(project, sheet, paper, orientation)),
+        C::ReorderSheet { sheet, index } => none(sheets::reorder(project, sheet, index)),
+        C::DeleteSheet { sheet } => none(sheets::delete(project, sheet)),
+        C::PlaceSheetSymbol {
+            sheet,
+            child,
+            name,
+            position,
+            size,
+        } => sheets::place_symbol(
+            project,
+            sheets::NewSheetSymbol {
+                sheet: sheet.unwrap_or(first),
+                child,
+                name,
+                position,
+                size,
+            },
+        )
+        .map(|(symbol, child)| Applied::SheetSymbol { symbol, child }),
+        C::MoveSheetSymbol { symbol, position } => {
+            none(sheets::move_symbol(project, symbol, position))
         }
-        SchematicCommand::Connect { from, to } => connect(project, from, to).map(|()| None),
-        SchematicCommand::Disconnect { wire } => disconnect(project, wire).map(|()| None),
-        SchematicCommand::RenameNet { net, name } => rename_net(project, net, name).map(|()| None),
+        C::ResizeSheetSymbol { symbol, size } => none(sheets::resize_symbol(project, symbol, size)),
+        C::SetSheetChild { symbol, child } => none(sheets::set_child(project, symbol, child)),
+        C::RemoveSheetSymbol { symbol } => none(sheets::remove_symbol(project, symbol)),
+        C::SyncSheetPins { symbol } => sheets::sync_pins(project, symbol).map(Applied::SheetPins),
+        C::AddSheetPin {
+            symbol,
+            name,
+            shape,
+            side,
+            offset,
+        } => sheets::add_pin(
+            project,
+            sheets::NewSheetPin {
+                symbol,
+                name,
+                shape,
+                side,
+                offset,
+            },
+        )
+        .map(|pin| Applied::SheetPins(vec![pin])),
+        C::EditSheetPin {
+            pin,
+            name,
+            shape,
+            side,
+            offset,
+        } => none(sheets::edit_pin(project, pin, name, shape, side, offset)),
+        C::RemoveSheetPin { pin } => none(sheets::remove_pin(project, pin)),
+        C::AddDrawing { sheet, item } => {
+            sheets::add_drawing(project, sheet.unwrap_or(first), item).map(Applied::Drawing)
+        }
+        C::EditDrawing { drawing, item } => none(sheets::edit_drawing(project, drawing, item)),
+        C::RemoveDrawing { drawing } => none(sheets::remove_drawing(project, drawing)),
+        C::SetProperties { properties } => none(sheets::set_properties(project, properties)),
+        C::Annotate {
+            order,
+            mode,
+            numbering,
+            sheets,
+        } => annotate::annotate(project, order, mode, numbering, &sheets).map(Applied::Annotated),
     }
 }
 
@@ -115,26 +408,31 @@ pub fn place_unit(
     unit: UnitId,
     position: Point,
 ) -> Result<Id> {
-    place_units(project, instance, &[(unit, position)])?
+    place_units(project, instance, &[(unit, position)], None)?
         .first()
         .copied()
         .ok_or_else(|| invalid("No unit was placed."))
 }
 
-/// Draw several units of one instance, then check the instance once, so units
-/// whose wired terminals need each other can be placed together.
+/// Draw several units of one instance on `sheet` (by default the sheet of
+/// its other units, else the first sheet), then check the instance once, so
+/// units whose wired terminals need each other can be placed together.
 pub fn place_units(
     project: &mut Project,
     instance: Id,
     units: &[(UnitId, Point)],
+    sheet: Option<SheetId>,
 ) -> Result<Vec<Id>> {
     if project.instance(instance).is_none() {
         return Err(not_found("Unknown component instance."));
     }
+    let sheet = sheet
+        .or_else(|| project.occurrences_of(instance).next().map(|o| o.sheet))
+        .unwrap_or_else(|| project.sheets.first());
     let mut placed = Vec::with_capacity(units.len());
     for (unit, position) in units {
         placed.push(instances::add_occurrence(
-            project, instance, *unit, *position,
+            project, instance, *unit, *position, sheet,
         )?);
     }
     instances::check_instance(project, instance)?;
@@ -192,7 +490,7 @@ pub fn mirrored_on_sheet(rotation: Rotation, mirror: bool) -> (Rotation, bool) {
 }
 
 /// Wires on terminals the occurrence's unit draws.
-fn unit_wires(project: &Project, occurrence: &SymbolOccurrence) -> Result<Vec<Id>> {
+pub(crate) fn unit_wires(project: &Project, occurrence: &SymbolOccurrence) -> Result<Vec<Id>> {
     let instance = project
         .instance(occurrence.instance)
         .ok_or_else(|| not_found("Unknown component instance."))?;
@@ -305,6 +603,13 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
             "This edition supports at most 16384 wires.".into(),
         ));
     }
+    if let (Some(a), Some(b)) = (end_sheet(project, from), end_sheet(project, to))
+        && a != b
+    {
+        return Err(invalid(
+            "A wire joins two points on one sheet; connect sheets with labels.",
+        ));
+    }
     let id = project.allocate()?;
     project.wires.push(Wire { id, from, to });
     // `check_instance` owns terminal validity: instance, terminal, unit
@@ -325,6 +630,10 @@ pub fn disconnect(project: &mut Project, wire: Id) -> Result<()> {
     Ok(())
 }
 
+/// Rename a net. Refused when another net uses the name. A net named by
+/// labels or sheet pins renames every one that spells its current name,
+/// so the new name survives reconciliation (and hierarchical labels follow
+/// their sheet pins); an unlabelled net stores the name.
 pub fn rename_net(project: &mut Project, net: Id, name: String) -> Result<()> {
     if !nets::name_valid(&name) {
         return Err(invalid("Net names must be 1–64 bytes without spaces."));
@@ -335,6 +644,9 @@ pub fn rename_net(project: &mut Project, net: Id, name: String) -> Result<()> {
         .any(|n| n.id != net && n.name.eq_ignore_ascii_case(&name))
     {
         return Err(conflict("Another net already uses this name."));
+    }
+    if labels::rename_sources(project, net, &name)? {
+        return Ok(());
     }
     project
         .nets
@@ -366,9 +678,10 @@ pub fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
     Ok(())
 }
 
-/// Wire and occurrence records. Per-instance wiring rules belong to
-/// `instances::check_instance`.
+/// Wire, occurrence, label and sheet records. Per-instance wiring rules
+/// belong to `instances::check_instance`.
 pub fn validate(project: &Project) -> Result<()> {
+    sheets::validate(project)?;
     if project.wires.len() > MAX_WIRES || project.occurrences.len() > MAX_OCCURRENCES {
         return Err(invalid("Schematic exceeds supported item limits."));
     }
@@ -815,4 +1128,180 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
 /// The project's nets, sorted by ID.
 pub fn nets(project: &Project) -> &[Net] {
     &project.nets
+}
+
+/// One sheet in the hierarchy (`schematic.sheets`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SheetRow {
+    pub id: SheetId,
+    pub name: String,
+    /// Page number, from 1.
+    pub page: usize,
+    pub paper: Paper,
+    pub orientation: PaperOrientation,
+    /// The sheet symbol that uses this sheet and the sheet it is drawn on.
+    pub parent: Option<SheetParent>,
+    /// Depth below its top-level sheet (0 at the top).
+    pub depth: usize,
+    pub symbols: usize,
+    pub labels: usize,
+    pub wires: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct SheetParent {
+    pub symbol: Id,
+    pub sheet: SheetId,
+}
+
+/// Every sheet in page order with its place in the hierarchy.
+pub fn sheet_rows(project: &Project) -> Vec<SheetRow> {
+    let depths = nets::sheet_depths(project);
+    let mut wires: std::collections::BTreeMap<SheetId, usize> = Default::default();
+    for wire in &project.wires {
+        if let Some(sheet) = wire_sheet(project, wire) {
+            *wires.entry(sheet).or_default() += 1;
+        }
+    }
+    project
+        .sheets
+        .list
+        .iter()
+        .enumerate()
+        .map(|(i, sheet)| SheetRow {
+            id: sheet.id,
+            name: sheet.name.clone(),
+            page: i + 1,
+            paper: sheet.paper,
+            orientation: sheet.orientation,
+            parent: project.parent_symbol(sheet.id).map(|s| SheetParent {
+                symbol: s.id,
+                sheet: s.sheet,
+            }),
+            depth: depths.get(&sheet.id).copied().unwrap_or(0),
+            symbols: project
+                .occurrences
+                .iter()
+                .filter(|o| o.sheet == sheet.id)
+                .count(),
+            labels: project
+                .labels
+                .iter()
+                .filter(|l| l.sheet == sheet.id)
+                .count(),
+            wires: wires.get(&sheet.id).copied().unwrap_or(0),
+        })
+        .collect()
+}
+
+/// What sits at one place of a net on some sheet.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NetPlaceKind {
+    Label {
+        label: Id,
+        name: String,
+        label_kind: LabelKind,
+    },
+    SheetPin {
+        pin: Id,
+        symbol: Id,
+        name: String,
+    },
+    Terminal {
+        endpoint: Endpoint,
+        /// "R1.2"-style: designator and terminal name.
+        name: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct NetPlace {
+    pub sheet: SheetId,
+    pub position: Point,
+    #[serde(flatten)]
+    pub kind: NetPlaceKind,
+}
+
+/// Where a net appears across sheets, in page order then position: its
+/// labels, sheet pins and placed terminals (`schematic.net_places`), so a
+/// view can jump between a label's other occurrences.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct NetPlaces {
+    pub net: Id,
+    pub name: String,
+    pub places: Vec<NetPlace>,
+}
+
+pub fn net_places(project: &Project, net: Id) -> Result<NetPlaces> {
+    let item = project.net(net).ok_or_else(|| not_found("Unknown net."))?;
+    let mut places = Vec::new();
+    if let Some(sources) = nets::name_sources(project).get(&net) {
+        for source in sources {
+            let Some(position) = end_position(project, source.end) else {
+                continue;
+            };
+            let kind = match source.end {
+                WireEnd::Label(l) => match project.label(l.label) {
+                    Some(label) => NetPlaceKind::Label {
+                        label: label.id,
+                        name: label.name.clone(),
+                        label_kind: label.kind,
+                    },
+                    None => continue,
+                },
+                WireEnd::SheetPin(p) => match project.sheet_pin(p.sheet_pin) {
+                    Some((symbol, pin)) => NetPlaceKind::SheetPin {
+                        pin: pin.id,
+                        symbol: symbol.id,
+                        name: pin.name.clone(),
+                    },
+                    None => continue,
+                },
+                _ => continue,
+            };
+            places.push(NetPlace {
+                sheet: source.sheet,
+                position,
+                kind,
+            });
+        }
+    }
+    for endpoint in &item.terminals {
+        let (Some(position), Some(sheet)) = (
+            pin_position(project, *endpoint),
+            end_sheet(project, WireEnd::Terminal(*endpoint)),
+        ) else {
+            continue;
+        };
+        let name = project
+            .instance(endpoint.instance)
+            .map_or_else(String::new, |i| {
+                let terminal = project
+                    .library
+                    .component(i.component)
+                    .and_then(|c| c.definition.terminal(endpoint.terminal))
+                    .map_or_else(|| endpoint.terminal.to_string(), |t| t.name.clone());
+                format!("{}.{terminal}", i.designator)
+            });
+        places.push(NetPlace {
+            sheet,
+            position,
+            kind: NetPlaceKind::Terminal {
+                endpoint: *endpoint,
+                name,
+            },
+        });
+    }
+    let page = |s: SheetId| project.sheets.number(s).unwrap_or(usize::MAX);
+    places.sort_by(|a, b| {
+        (page(a.sheet), -a.position[1], a.position[0])
+            .partial_cmp(&(page(b.sheet), -b.position[1], b.position[0]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(NetPlaces {
+        net,
+        name: item.name.clone(),
+        places,
+    })
 }

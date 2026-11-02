@@ -13,8 +13,10 @@
 //! or more conductors meet (a pin counts as one).
 use super::{Error, Result, invalid, not_found, pin_position};
 use crate::geometry::{Point, point_valid};
-use crate::ids::{Endpoint, Id};
-use crate::model::{Junction, JunctionRef, Net, Project, Wire, WireEnd};
+use crate::ids::{Endpoint, Id, SheetId};
+use crate::instances;
+use crate::model::{Junction, JunctionRef, LabelRef, Net, Project, SheetPinRef, Wire, WireEnd};
+use crate::nets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,13 +36,16 @@ pub struct WirePoint {
 }
 
 /// Where a new wire end lands: a terminal (`{"instance", "terminal"}`), a
-/// junction (`{"junction"}`) or a point on a wire (`{"wire", "at"}`), which
+/// junction (`{"junction"}`), a label or power port (`{"label"}`), a sheet
+/// pin (`{"sheet_pin"}`) or a point on a wire (`{"wire", "at"}`), which
 /// splits that wire at a new junction. A point at a wire's end is that end.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(untagged)]
 pub enum WireTarget {
     Terminal(Endpoint),
     Junction(JunctionRef),
+    Label(LabelRef),
+    SheetPin(SheetPinRef),
     OnWire(WirePoint),
 }
 
@@ -55,6 +60,8 @@ impl From<WireEnd> for WireTarget {
         match end {
             WireEnd::Terminal(endpoint) => Self::Terminal(endpoint),
             WireEnd::Junction(junction) => Self::Junction(junction),
+            WireEnd::Label(label) => Self::Label(label),
+            WireEnd::SheetPin(pin) => Self::SheetPin(pin),
         }
     }
 }
@@ -64,13 +71,44 @@ pub fn wire_route(a: Point, b: Point) -> [Point; 3] {
     [a, [b[0], a[1]], b]
 }
 
-/// Where a wire end sits on the sheet. `None` for a terminal whose unit is
-/// not placed or a missing junction.
+/// Where a wire end sits on its sheet. `None` for a terminal whose unit is
+/// not placed or a missing object.
 pub fn end_position(project: &Project, end: WireEnd) -> Option<Point> {
     match end {
         WireEnd::Terminal(endpoint) => pin_position(project, endpoint),
         WireEnd::Junction(j) => project.junction(j.junction).map(|j| j.position),
+        WireEnd::Label(l) => project.label(l.label).map(|l| l.position),
+        WireEnd::SheetPin(p) => project
+            .sheet_pin(p.sheet_pin)
+            .map(|(symbol, pin)| symbol.pin_position(pin)),
     }
+}
+
+/// The sheet a wire end lies on. `None` for a terminal whose unit is not
+/// placed or a missing object.
+pub fn end_sheet(project: &Project, end: WireEnd) -> Option<SheetId> {
+    match end {
+        WireEnd::Terminal(endpoint) => {
+            let instance = project.instance(endpoint.instance)?;
+            let symbol = &instances::resolve(&project.library, instance)
+                .ok()?
+                .symbol
+                .definition;
+            let unit = instances::owning_unit(symbol, endpoint.terminal)?;
+            project
+                .occurrences_of(instance.id)
+                .find(|o| o.unit == unit)
+                .map(|o| o.sheet)
+        }
+        WireEnd::Junction(j) => project.junction(j.junction).map(|j| j.sheet),
+        WireEnd::Label(l) => project.label(l.label).map(|l| l.sheet),
+        WireEnd::SheetPin(p) => project.sheet_pin(p.sheet_pin).map(|(s, _)| s.sheet),
+    }
+}
+
+/// The sheet a wire is drawn on: that of its first end.
+pub fn wire_sheet(project: &Project, wire: &Wire) -> Option<SheetId> {
+    end_sheet(project, wire.from)
 }
 
 /// Both end positions of a wire.
@@ -119,15 +157,54 @@ pub(super) fn resolve(project: &mut Project, target: WireTarget) -> Result<WireE
             .junction(j.junction)
             .map(|_| WireEnd::Junction(j))
             .ok_or_else(|| not_found("Unknown junction.")),
-        WireTarget::OnWire(point) => split(project, point),
+        WireTarget::Label(l) => project
+            .label(l.label)
+            .map(|_| WireEnd::Label(l))
+            .ok_or_else(|| not_found("Unknown label.")),
+        WireTarget::SheetPin(p) => project
+            .sheet_pin(p.sheet_pin)
+            .map(|_| WireEnd::SheetPin(p))
+            .ok_or_else(|| not_found("Unknown sheet pin.")),
+        WireTarget::OnWire(point) => split(project, point, None),
     }
 }
 
+/// Where a point on a wire lies on its route: the route point and whether
+/// it is one of the wire's ends.
+pub(super) fn on_route(project: &Project, point: WirePoint) -> Result<(Point, Option<WireEnd>)> {
+    if !point_valid(point.at) {
+        return Err(invalid(
+            "Schematic position must be finite and within ±10000 mm.",
+        ));
+    }
+    let wire = project
+        .wire(point.wire)
+        .ok_or_else(|| not_found("Unknown schematic wire."))?;
+    let (a, b) =
+        wire_ends(project, wire).ok_or_else(|| invalid("This wire is not drawn on the sheet."))?;
+    let at = nearest_on_route(&wire_route(a, b), point.at);
+    if distance(at, point.at) > JUNCTION_TOLERANCE_MM {
+        return Err(invalid("The point is not on the wire."));
+    }
+    if distance(at, a) <= JUNCTION_TOLERANCE_MM {
+        return Ok((a, Some(wire.from)));
+    }
+    if distance(at, b) <= JUNCTION_TOLERANCE_MM {
+        return Ok((b, Some(wire.to)));
+    }
+    Ok((at, None))
+}
+
 /// Split a wire at a point on its route: the wire keeps its ID from its
-/// first end to a new junction, and a new wire runs from the junction to its
-/// second end, so the drawn path is unchanged. A point at an end is that
-/// end and splits nothing.
-fn split(project: &mut Project, point: WirePoint) -> Result<WireEnd> {
+/// first end to the split point, and a new wire runs from there to its
+/// second end, so the drawn path is unchanged. The split point is `node`
+/// (a label already at that point) or a new junction. A point at an end is
+/// that end and splits nothing.
+pub(super) fn split(
+    project: &mut Project,
+    point: WirePoint,
+    node: Option<WireEnd>,
+) -> Result<WireEnd> {
     if !point_valid(point.at) {
         return Err(invalid(
             "Schematic position must be finite and within ±10000 mm.",
@@ -137,30 +214,29 @@ fn split(project: &mut Project, point: WirePoint) -> Result<WireEnd> {
         .wire(point.wire)
         .cloned()
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
-    let (a, b) =
-        wire_ends(project, &wire).ok_or_else(|| invalid("This wire is not drawn on the sheet."))?;
-    let at = nearest_on_route(&wire_route(a, b), point.at);
-    if distance(at, point.at) > JUNCTION_TOLERANCE_MM {
-        return Err(invalid("The point is not on the wire."));
-    }
-    if distance(at, a) <= JUNCTION_TOLERANCE_MM {
-        return Ok(wire.from);
-    }
-    if distance(at, b) <= JUNCTION_TOLERANCE_MM {
-        return Ok(wire.to);
+    let (at, end) = on_route(project, point)?;
+    if let Some(end) = end {
+        return Ok(end);
     }
     if project.junctions.len() >= MAX_JUNCTIONS || project.wires.len() >= super::MAX_WIRES {
         return Err(Error::Limit(
             "This edition supports at most 16384 wires and 16384 junctions.".into(),
         ));
     }
-    let junction = project.allocate()?;
+    let end = match node {
+        Some(node) => node,
+        None => {
+            let junction = project.allocate()?;
+            let sheet = wire_sheet(project, &wire).unwrap_or_default();
+            project.junctions.push(Junction {
+                id: junction,
+                sheet,
+                position: at,
+            });
+            WireEnd::junction(junction)
+        }
+    };
     let tail = project.allocate()?;
-    let end = WireEnd::junction(junction);
-    project.junctions.push(Junction {
-        id: junction,
-        position: at,
-    });
     let index = project
         .wires
         .iter()
@@ -264,7 +340,7 @@ pub fn junction_dots(project: &Project) -> Vec<(WireEnd, Point)> {
         .into_iter()
         .filter(|(end, wires)| match end {
             WireEnd::Terminal(_) => *wires >= 2,
-            WireEnd::Junction(_) => *wires >= 3,
+            _ => *wires >= 3,
         })
         .filter_map(|(end, _)| Some((end, end_position(project, end)?)))
         .collect()
@@ -290,10 +366,17 @@ pub(super) fn validate(project: &Project) -> Result<()> {
             let known = match end {
                 WireEnd::Terminal(endpoint) => project.instance(endpoint.instance).is_some(),
                 WireEnd::Junction(j) => project.junction(j.junction).is_some(),
+                WireEnd::Label(l) => project.label(l.label).is_some(),
+                WireEnd::SheetPin(p) => project.sheet_pin(p.sheet_pin).is_some(),
             };
             if !known {
-                return Err(invalid("A wire references a missing terminal or junction."));
+                return Err(invalid("A wire references a missing connection point."));
             }
+        }
+        if let (Some(a), Some(b)) = (end_sheet(project, wire.from), end_sheet(project, wire.to))
+            && a != b
+        {
+            return Err(invalid("A wire must join two points on one sheet."));
         }
         let pair = if wire.from < wire.to {
             (wire.from, wire.to)
@@ -311,13 +394,18 @@ pub(super) fn validate(project: &Project) -> Result<()> {
 }
 
 /// The net a wire carries: the net of the first terminal reached from it
-/// through junctions. `None` when its group reaches no terminal.
+/// through junctions, else, when it reaches a label or sheet pin, the net
+/// that names join it to. `None` when its group reaches no terminal.
 pub fn wire_net<'a>(project: &'a Project, wire: &Wire) -> Option<&'a Net> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![wire.from, wire.to];
+    let mut named = None;
     while let Some(end) = stack.pop() {
         match end {
             WireEnd::Terminal(endpoint) => return project.net_of(endpoint),
+            WireEnd::Label(_) | WireEnd::SheetPin(_) => {
+                named.get_or_insert(end);
+            }
             WireEnd::Junction(j) => {
                 if !seen.insert(j.junction) {
                     continue;
@@ -328,5 +416,6 @@ pub fn wire_net<'a>(project: &'a Project, wire: &Wire) -> Option<&'a Net> {
             }
         }
     }
-    None
+    let net = *nets::point_nets(project).get(&named?)?;
+    project.net(net)
 }

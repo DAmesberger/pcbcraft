@@ -3,7 +3,7 @@
 use crate::fields::InstanceFields;
 use crate::functions::FunctionSelections;
 pub use crate::geometry::Point;
-use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, PartRef, TerminalId, UnitId};
+use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, PartRef, SheetId, TerminalId, UnitId};
 use crate::library::{Drafts, Library, Rotation};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -12,10 +12,15 @@ use std::sync::Arc;
 
 pub mod board;
 pub mod fill;
+pub mod sheet;
 mod stackup;
 mod via;
 pub use board::{BoardShape, EdgeConstraint, SolvedBoard};
 pub use fill::{Fill, Keepout};
+pub use sheet::{
+    Label, LabelKind, Paper, PaperOrientation, PortShape, PowerStyle, ProjectProperties, Sheet,
+    SheetDrawing, SheetItem, SheetPin, SheetSide, SheetSymbol, Sheets,
+};
 pub use stackup::{
     COPPER_LAYER_COUNTS, CopperFoil, CopperLayer, Dielectric, DielectricKind, GlassStyle, OUNCE_UM,
     Stackup,
@@ -75,6 +80,9 @@ pub struct ComponentInstance {
 #[serde(deny_unknown_fields)]
 pub struct SymbolOccurrence {
     pub id: Id,
+    /// The sheet it is drawn on.
+    #[serde(default, skip_serializing_if = "SheetId::is_first")]
+    pub sheet: SheetId,
     pub instance: Id,
     pub unit: UnitId,
     pub position: Point,
@@ -99,9 +107,11 @@ pub struct Wire {
     pub to: WireEnd,
 }
 
-/// One end of a wire: an instance terminal or a junction. A terminal end is
-/// written as the terminal itself, `{"instance", "terminal"}`; a junction
-/// end as `{"junction"}`.
+/// One end of a wire: an instance terminal, a junction, a label (or power
+/// port) or a sheet pin. A terminal end is written as the terminal itself,
+/// `{"instance", "terminal"}`; a junction end as `{"junction"}`, a label end
+/// as `{"label"}` and a sheet-pin end as `{"sheet_pin"}`. Both ends of a
+/// wire lie on one sheet.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -109,6 +119,26 @@ pub struct Wire {
 pub enum WireEnd {
     Terminal(Endpoint),
     Junction(JunctionRef),
+    Label(LabelRef),
+    SheetPin(SheetPinRef),
+}
+
+/// A wire end on a label or power port.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
+pub struct LabelRef {
+    pub label: Id,
+}
+
+/// A wire end on a sheet symbol's pin.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
+pub struct SheetPinRef {
+    pub sheet_pin: Id,
 }
 
 /// A wire end on a junction.
@@ -124,17 +154,35 @@ impl WireEnd {
     pub fn junction(id: Id) -> Self {
         Self::Junction(JunctionRef { junction: id })
     }
+    pub fn label(id: Id) -> Self {
+        Self::Label(LabelRef { label: id })
+    }
+    pub fn sheet_pin(id: Id) -> Self {
+        Self::SheetPin(SheetPinRef { sheet_pin: id })
+    }
     /// The terminal this end lands on, if it is a terminal end.
     pub fn terminal(self) -> Option<Endpoint> {
         match self {
             Self::Terminal(endpoint) => Some(endpoint),
-            Self::Junction(_) => None,
+            _ => None,
         }
     }
     pub fn junction_id(self) -> Option<Id> {
         match self {
-            Self::Terminal(_) => None,
             Self::Junction(j) => Some(j.junction),
+            _ => None,
+        }
+    }
+    pub fn label_id(self) -> Option<Id> {
+        match self {
+            Self::Label(l) => Some(l.label),
+            _ => None,
+        }
+    }
+    pub fn sheet_pin_id(self) -> Option<Id> {
+        match self {
+            Self::SheetPin(p) => Some(p.sheet_pin),
+            _ => None,
         }
     }
 }
@@ -153,6 +201,8 @@ impl From<Endpoint> for WireEnd {
 #[serde(deny_unknown_fields)]
 pub struct Junction {
     pub id: Id,
+    #[serde(default, skip_serializing_if = "SheetId::is_first")]
+    pub sheet: SheetId,
     pub position: Point,
 }
 
@@ -313,6 +363,21 @@ pub struct Project {
     pub fills: Vec<Fill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keepouts: Vec<Keepout>,
+    /// Schematic sheets in page order.
+    #[serde(default, skip_serializing_if = "Sheets::is_default")]
+    pub sheets: Sheets,
+    /// Title-block properties.
+    #[serde(default, skip_serializing_if = "ProjectProperties::is_default")]
+    pub properties: ProjectProperties,
+    /// Net labels and power ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<Label>,
+    /// Hierarchical sheet symbols.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheet_symbols: Vec<SheetSymbol>,
+    /// Sheet furniture: notes, lines and rectangles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drawings: Vec<SheetDrawing>,
 }
 
 impl Default for Project {
@@ -339,6 +404,11 @@ impl Default for Project {
             edge_constraints: vec![],
             fills: vec![],
             keepouts: vec![],
+            sheets: Sheets::default(),
+            properties: ProjectProperties::default(),
+            labels: vec![],
+            sheet_symbols: vec![],
+            drawings: vec![],
         }
     }
 }
@@ -387,6 +457,28 @@ impl Project {
     }
     pub fn junction(&self, id: Id) -> Option<&Junction> {
         self.junctions.iter().find(|j| j.id == id)
+    }
+    pub fn label(&self, id: Id) -> Option<&Label> {
+        self.labels.iter().find(|l| l.id == id)
+    }
+    pub fn sheet(&self, id: SheetId) -> Option<&Sheet> {
+        self.sheets.get(id)
+    }
+    pub fn sheet_symbol(&self, id: Id) -> Option<&SheetSymbol> {
+        self.sheet_symbols.iter().find(|s| s.id == id)
+    }
+    /// A sheet pin and the symbol it sits on.
+    pub fn sheet_pin(&self, id: Id) -> Option<(&SheetSymbol, &SheetPin)> {
+        self.sheet_symbols
+            .iter()
+            .find_map(|s| s.pin(id).map(|p| (s, p)))
+    }
+    /// The sheet symbol that uses `sheet` as its child, if any.
+    pub fn parent_symbol(&self, sheet: SheetId) -> Option<&SheetSymbol> {
+        self.sheet_symbols.iter().find(|s| s.child == sheet)
+    }
+    pub fn drawing(&self, id: Id) -> Option<&SheetDrawing> {
+        self.drawings.iter().find(|d| d.id == id)
     }
     pub fn placement_of(&self, instance: Id) -> Option<&Placement> {
         self.placements.iter().find(|p| p.instance == instance)
