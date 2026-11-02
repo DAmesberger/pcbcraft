@@ -28,8 +28,10 @@ pub use rules::{PinRule, PinRuleScript, RuleFailure, RuleNote};
 pub const MAX_FUNCTIONS: usize = 32;
 /// Resources (peripheral instances) one component declares.
 pub const MAX_RESOURCES: usize = 256;
-/// Roles of one resource.
-pub const MAX_ROLES: usize = 16;
+/// Roles of one resource: room for wide parallel buses (a 24-bit RGB LCD
+/// with its controls, MII Ethernet, a camera port). The suggestion solver
+/// stays bounded by its operation budget.
+pub const MAX_ROLES: usize = 64;
 /// Constraints one component declares.
 pub const MAX_CONSTRAINTS: usize = 1024;
 /// Bytes of a peripheral kind or role signal name.

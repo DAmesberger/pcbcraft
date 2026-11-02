@@ -58,6 +58,12 @@ pub const DEFAULT_MAX_USD: f64 = 15.0;
 /// Largest total of datasheet bytes one run sends (the API's request
 /// limit is 32 MB, base64 grows bytes by a third).
 pub const MAX_DATASHEET_BYTES: u64 = 22 * 1024 * 1024;
+/// Prompt tokens one PDF page is estimated at when the transport cannot
+/// count (each page is sent as text and as an image; Anthropic's PDF
+/// guidance puts a page at roughly 1 500–3 000 tokens: the high end).
+pub const TOKENS_PER_PAGE: u64 = 3_000;
+/// Pages assumed for a datasheet given by URL when estimating.
+const URL_PAGES: u64 = 120;
 /// Model text answers before a nudge to submit stops being sent.
 const MAX_NUDGES: u32 = 2;
 
@@ -177,14 +183,36 @@ pub struct Outcome {
     pub facts: RunFacts,
 }
 
-/// The document blocks of the datasheets: base64 PDFs or URLs, each titled
-/// and marked as untrusted data; the last one carries the cache
-/// breakpoint so every later request reads them from the cache.
+/// Page objects in a PDF's bytes (`/Type /Page`, not `/Pages`): an
+/// estimate for the cost cap, 0 when none are found.
+pub fn pdf_pages(bytes: &[u8]) -> u64 {
+    let mut count = 0u64;
+    for needle in [&b"/Type /Page"[..], &b"/Type/Page"[..]] {
+        let mut at = 0;
+        while let Some(k) = bytes
+            .get(at..)
+            .and_then(|rest| rest.windows(needle.len()).position(|w| w == needle))
+        {
+            let end = at + k + needle.len();
+            if bytes.get(end) != Some(&b's') {
+                count += 1;
+            }
+            at = end;
+        }
+    }
+    count
+}
+
+/// The document blocks of the datasheets, base64 PDFs or URLs, each titled
+/// and marked as untrusted data (the last one carries the cache breakpoint
+/// so every later request reads them from the cache), and their estimated
+/// prompt tokens ([`TOKENS_PER_PAGE`]).
 pub fn documents(datasheets: &[Datasheet]) -> Result<(Vec<Value>, u64)> {
     if datasheets.is_empty() {
         return Err(Error::Config("give at least one datasheet".into()));
     }
     let mut total = 0u64;
+    let mut tokens = 0u64;
     let mut blocks = Vec::new();
     for sheet in datasheets {
         let (source, title) = match sheet {
@@ -201,6 +229,14 @@ pub fn documents(datasheets: &[Datasheet]) -> Result<(Vec<Value>, u64)> {
                 if !bytes.starts_with(b"%PDF") {
                     return Err(Error::Config(format!("{} is not a PDF", path.display())));
                 }
+                let pages = pdf_pages(&bytes);
+                tokens = tokens.saturating_add(if pages > 0 {
+                    pages * TOKENS_PER_PAGE
+                } else {
+                    // Page objects in compressed streams: assume a page per
+                    // ~30 KB (datasheets run 20–60 KB a page).
+                    size.div_ceil(30_000) * TOKENS_PER_PAGE
+                });
                 let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 let title = path
                     .file_name()
@@ -215,6 +251,7 @@ pub fn documents(datasheets: &[Datasheet]) -> Result<(Vec<Value>, u64)> {
                 if !url.starts_with("https://") || url.len() > 2048 {
                     return Err(Error::Config(format!("{url} is not an https URL")));
                 }
+                tokens = tokens.saturating_add(URL_PAGES * TOKENS_PER_PAGE);
                 let title = url.rsplit('/').next().unwrap_or(url).to_owned();
                 (json!({"type": "url", "url": url}), title)
             }
@@ -229,7 +266,7 @@ pub fn documents(datasheets: &[Datasheet]) -> Result<(Vec<Value>, u64)> {
     if let Some(last) = blocks.last_mut() {
         last["cache_control"] = json!({"type": "ephemeral"});
     }
-    Ok((blocks, total))
+    Ok((blocks, tokens))
 }
 
 /// Whether a model takes the server-side refusal fallback.
@@ -274,7 +311,7 @@ pub fn run(
     if !(settings.max_usd.is_finite() && settings.max_usd > 0.0) {
         return Err(Error::Config("the cost cap must be a positive amount".into()));
     }
-    let (docs, pdf_bytes) = documents(&goal.datasheets)?;
+    let (docs, doc_tokens) = documents(&goal.datasheets)?;
     let mut first = docs;
     first.push(json!({"type": "text", "text": format!(
         "Create the part \"{}\" from these datasheets. {}",
@@ -310,7 +347,7 @@ pub fn run(
             // estimate (PDF pages cost text plus an image each).
             match transport.count_tokens(&body) {
                 Ok(Some(n)) => n,
-                _ => pdf_bytes / 2 + 30_000,
+                _ => doc_tokens + 30_000,
             }
         } else {
             last_prompt + appended / 3 + 4_000
@@ -453,6 +490,67 @@ pub fn run(
         stop,
         facts,
     })
+}
+
+/// `NAME.review.json` and `NAME.review.md` beside the project `out`.
+pub fn review_paths(out: &std::path::Path) -> [PathBuf; 2] {
+    let stem = out
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    [
+        out.with_file_name(format!("{stem}.review.json")),
+        out.with_file_name(format!("{stem}.review.md")),
+    ]
+}
+
+/// Save the run's drafts as a new project at `out` (`project.save`) and
+/// write the review beside it as JSON and Markdown, refusing to replace
+/// any existing file. File effects, not document changes. Returns the
+/// review paths.
+pub fn write_outputs(
+    session: &mut Session,
+    out: &std::path::Path,
+    outcome: &Outcome,
+) -> Result<[PathBuf; 2]> {
+    let reviews = review_paths(out);
+    for path in std::iter::once(out).chain(reviews.iter().map(PathBuf::as_path)) {
+        if path.try_exists()? {
+            return Err(Error::Config(format!(
+                "{} exists; choose a new output name",
+                path.display()
+            )));
+        }
+    }
+    let saved = session.dispatch(json!({"command": "project.save",
+        "params": {"path": out.to_string_lossy()}}));
+    if saved["ok"] != true {
+        return Err(Error::Config(format!("saving failed: {}", saved["error"])));
+    }
+    let json_report = json!({
+        "report": outcome.report,
+        "run": outcome.facts,
+        "project": saved["result"],
+    });
+    let [json_path, md_path] = &reviews;
+    write_new(json_path, serde_json::to_string_pretty(&json_report)?.as_bytes())?;
+    write_new(
+        md_path,
+        report::markdown(outcome.report.as_ref(), &outcome.facts).as_bytes(),
+    )?;
+    Ok(reviews)
+}
+
+/// Create `path` with `bytes`, refusing an existing file.
+fn write_new(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]

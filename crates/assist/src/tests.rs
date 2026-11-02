@@ -122,7 +122,10 @@ fn script() -> Fallible<Vec<Value>> {
 
 fn datasheet(dir: &tempfile::TempDir) -> Fallible<Datasheet> {
     let path = dir.path().join("exr22.pdf");
-    std::fs::write(&path, b"%PDF-1.4\n% synthetic test file\n")?;
+    std::fs::write(
+        &path,
+        b"%PDF-1.4\n1 0 obj << /Type /Pages >> endobj\n2 0 obj << /Type /Page >> endobj\n3 0 obj <</Type/Page>> endobj\n",
+    )?;
     Ok(Datasheet::File(path))
 }
 
@@ -290,6 +293,18 @@ fn a_tool_call_cut_off_at_max_tokens_is_not_run() -> Fallible {
 }
 
 #[test]
+fn pages_are_counted_for_the_estimate() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let Datasheet::File(path) = datasheet(&dir)? else {
+        return Err("a file".into());
+    };
+    assert_eq!(pdf_pages(&std::fs::read(&path)?), 2, "two pages, not the page tree");
+    let (_, tokens) = documents(&[Datasheet::File(path)])?;
+    assert_eq!(tokens, 2 * TOKENS_PER_PAGE);
+    Ok(())
+}
+
+#[test]
 fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("x.pdf");
@@ -311,3 +326,5 @@ fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
     assert!(matches!(result, Err(Error::Config(_))));
     Ok(())
 }
+
+mod board;
