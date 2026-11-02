@@ -172,22 +172,35 @@ impl Viewport {
         self.start_decals();
     }
 
-    /// Republish the instanced meshes (the model's and the decals') over
-    /// the published scene, without repacking its vertex stream.
+    /// Republish the instanced meshes (the model's and the decals') with
+    /// the model's vertex stream. While the published scene still waits in
+    /// the slot, only its instanced meshes are replaced. Once the renderer
+    /// has taken it, the slot is empty and the stream has moved to the GPU,
+    /// so the stream is packed again from the cached meshes off the UI
+    /// thread and published whole ([`Self::start_repack`]). A scene of
+    /// instanced meshes alone would show the decals without the model they
+    /// mark: the Component 3D view opened with its marking floating over
+    /// nothing until the model was moved.
     pub(super) fn publish_instanced(&mut self) {
         let instanced = self.instanced();
-        if let Ok(mut slot) = self.slot.lock() {
-            match slot.as_mut() {
-                Some(scene) => scene.instanced = instanced,
-                None => {
-                    *slot = Some(solidcraft_ui_egui::gpu::GpuScene {
-                        instanced,
-                        ..Default::default()
-                    });
-                }
+        let Ok(mut slot) = self.slot.lock() else {
+            return;
+        };
+        match slot.as_mut() {
+            Some(scene) => scene.instanced = instanced,
+            None if self.model.is_some() => {
+                drop(slot);
+                self.start_repack();
+                return;
             }
-            self.key = model_scene::next_key();
+            None => {
+                *slot = Some(solidcraft_ui_egui::gpu::GpuScene {
+                    instanced,
+                    ..Default::default()
+                });
+            }
         }
+        self.key = model_scene::next_key();
     }
 
     /// The decal meshes as drawn now, for tests.

@@ -364,6 +364,23 @@ pub enum AppCommand {
     FitView,
     /// Switch the PCB between its Layout and 3D views.
     TogglePcb3d,
+    /// Turn the PCB 3D view to a standard view.
+    View3d(View3d),
+}
+
+/// The PCB 3D view's standard views (the navigation cube's targets).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View3d {
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Left,
+    Right,
+    /// The isometric home view, fitted.
+    Iso,
+    /// Frame the selection, so orbiting turns about it.
+    Selection,
 }
 
 /// PCB display toggles: view state only, never the document.
@@ -518,6 +535,7 @@ impl Registry {
         .with_key_table(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
         .with_key_table(Context::PcbFill, FILL_KEYS)
         .with_key_table(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
+        .with_key_table(Context::Pcb3d, crate::navigation::NAVIGATION_3D)
     }
 
     /// Add a gesture's key table (key, what it does) for display, e.g. a
@@ -1221,6 +1239,38 @@ fn defaults() -> Vec<Command> {
         tab("pcb.3d", "3D view", C::Pcb, Workspace::Pcb, "3d")
             .icon("plane")
             .keywords("view model"),
+    ];
+    // PCB 3D standard views: the navigation cube's faces, in Solidcraft's
+    // order (its Ctrl+1 to 7; plain digits here, as Cmd+1 to 3 change
+    // workspace).
+    for (id, title, view, key) in [
+        ("view.front", "Front view", View3d::Front, K::Num1),
+        ("view.back", "Back view", View3d::Back, K::Num2),
+        ("view.left", "Left view", View3d::Left, K::Num3),
+        ("view.right", "Right view", View3d::Right, K::Num4),
+        ("view.top", "Top view", View3d::Top, K::Num5),
+        ("view.bottom", "Bottom view", View3d::Bottom, K::Num6),
+        ("view.iso", "Home view (isometric)", View3d::Iso, K::Num7),
+    ] {
+        v.push(
+            Command::new(id, title, C::Pcb3d, Action::App(A::View3d(view)))
+                .chord(Chord::key(key))
+                .icon("plane")
+                .keywords("orbit rotate turn camera standard view cube 3d"),
+        );
+    }
+    v.push(
+        Command::new(
+            "view.selection",
+            "Fit and orbit around selection",
+            C::Pcb3d,
+            Action::App(A::View3d(View3d::Selection)),
+        )
+        .chord(Chord::key(K::F).with_shift())
+        .icon("fit")
+        .keywords("zoom selected frame orbit pivot focus"),
+    );
+    v.extend([
         tool(
             "pcb.update",
             "Update PCB from schematic",
@@ -1347,7 +1397,7 @@ fn defaults() -> Vec<Command> {
             C::BoardShape,
             Chord::key(K::Escape),
         ),
-    ];
+    ]);
     // Layer and display toggles: in the palette; no default keys.
     for (n, layer) in [
         CopperLayer::Top,

@@ -118,6 +118,26 @@ impl Viewport {
         self.display
     }
 
+    /// What the renderer does at its next frame: take the model scene
+    /// published since its last frame (Solidcraft's `Batches::take` empties
+    /// the slot), if any.
+    #[cfg(test)]
+    pub(crate) fn take_published(&mut self) -> Option<solidcraft_ui_egui::gpu::GpuScene> {
+        self.slot.lock().ok().and_then(|mut s| s.take())
+    }
+
+    /// The model shown.
+    #[cfg(test)]
+    pub(crate) fn shown_model(&self) -> Option<&crate::model_scene::ModelScene> {
+        self.model.as_ref()
+    }
+
+    /// Whether the model's stream is being packed again off the UI thread.
+    #[cfg(test)]
+    pub(crate) fn repacking(&self) -> bool {
+        self.repack.is_some()
+    }
+
     /// Models shown so far: a rebuild shows a new one.
     #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {

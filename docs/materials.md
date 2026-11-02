@@ -97,6 +97,7 @@ Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman
 | Phosphor bronze | (0.90, 0.70, 0.52) | 1 | 0.30 | – | – | 8860 | **est.** Cu with about 5 % Sn, shifted toward tin. |
 | Brass | (0.910, 0.778, 0.423) | 1 | 0.28 | – | – | 8500 | Brass F0, Hoffman's table; roughness **est.** |
 | Aluminium | (0.913, 0.922, 0.924) | 1 | 0.30 | – | – | 2700 | Al F0, Hoffman's table; roughness **est.** |
+| Nickel silver | (0.80, 0.77, 0.70) | 1 | 0.45 | – | – | 8700 | **est.** CuNiZn (about 18 % Ni) reads silver-white: F0 between the Ni and Cu-alloy F0 with the copper tint mostly bleached; C75200 density. Module shield cans are stamped and lightly brushed, a satin light silver: 0.45 (was 0.22, which mirrored the dark surroundings and read near-black). Laser-marked nickel silver (F0 0.3) went from roughness 0.55 to 0.70, so it stays clearly duller than the satin can and still reads on it. The renderer has no anisotropic highlight, so the brushing is not drawn. |
 | PVC sleeve | (0.020, 0.045, 0.16) | 0 | 0.35 | 1.54 | – | 1380 | **est.** colour of a blue sleeve; n handbook. |
 | Borosilicate glass | (0.85, 0.88, 0.86) | 0 | 0.05 | 1.47 | transmission 1.0, (0.92, 0.95, 0.93) at 1 mm | 2230 | n and density handbook; attenuation **est.** Saved as an opaque tint until a layered saved appearance exists. |
 | PBT | (0.030, 0.030, 0.032) | 0 | 0.50 | 1.57 | – | 1530 | **est.** Black 30 % glass-filled housing. |

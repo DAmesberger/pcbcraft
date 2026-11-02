@@ -443,6 +443,25 @@ impl SceneController {
         self.viewport.highlight_selected(ids, selected);
     }
 
+    /// The pick identities of every body of the selected instance, track
+    /// or via (without its net).
+    pub fn selected_items(
+        &self,
+        instance: Option<Id>,
+        track: Option<Id>,
+        via: Option<Id>,
+    ) -> Vec<u64> {
+        self.sources
+            .iter()
+            .filter(|s| {
+                s.instance.is_some() && s.instance == instance
+                    || s.track.is_some() && s.track == track
+                    || s.via.is_some() && s.via == via
+            })
+            .map(|s| s.pick_id)
+            .collect()
+    }
+
     /// The electronics object a pick identifies.
     pub fn source(&self, pick: u64) -> Option<&Source> {
         self.sources.iter().find(|s| s.pick_id == pick)
@@ -641,3 +660,122 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+pub(crate) mod fixtures;
+
+#[cfg(test)]
+mod open_tests {
+    use super::*;
+    use pcbcraft_solidcraft::material::BodyKind;
+
+    type Fallible<T> = Result<T, Box<dyn std::error::Error>>;
+
+    /// Ask for `key` as the app does each frame and take finished builds,
+    /// until it is shown.
+    fn show(scene: &mut SceneController, key: &ModelKey) -> Fallible<()> {
+        for _ in 0..12_000 {
+            scene.request(key.clone(), None, || Ok(None));
+            scene.receive();
+            if let Status::Failed(error) = scene.status() {
+                return Err(error.clone().into());
+            }
+            if scene.display(key) == Display::Current {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Err("the model was never shown".into())
+    }
+
+    fn component_body(kind: BodyKind) -> bool {
+        matches!(
+            kind,
+            BodyKind::ModelBody
+                | BodyKind::PackageBody
+                | BodyKind::ChipResistor
+                | BodyKind::ChipCapacitor
+        )
+    }
+
+    /// Opening a file and entering PCB 3D, as the app does it: the demo
+    /// board was shown before, the opened board is built on the worker
+    /// (from the demo board's model) and published, and the renderer takes
+    /// the published scene. Without any edit, every placed part's body is
+    /// in the model and drawn: the WROOM-3 module's board, can and antenna
+    /// and every showcase part.
+    #[test]
+    fn an_opened_board_shows_its_component_bodies_without_an_edit() -> Fallible<()> {
+        let boards = [
+            ("WROOM-3", super::fixtures::wroom_board()?),
+            ("showcase", Engine::showcase()?),
+        ];
+        for (name, engine) in boards {
+            let mut scene = SceneController::new(
+                egui::Context::default(),
+                crate::viewport::Viewport::detached(),
+            );
+            let demo = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+            show(&mut scene, &demo)?;
+            scene.viewport.take_published();
+            let key = ModelKey::Project(Arc::clone(engine.project_arc()));
+            show(&mut scene, &key)?;
+            let published = scene
+                .viewport
+                .take_published()
+                .ok_or("the opened board was never published")?;
+            let model = scene.viewport.shown_model().ok_or("no model")?;
+            let drawn: std::collections::HashSet<u64> =
+                published.instanced.iter().map(|m| m.key).collect();
+            let project = engine.project();
+            assert!(!project.placements.is_empty(), "{name}");
+            for placement in &project.placements {
+                let picks: Vec<u64> = scene
+                    .sources
+                    .iter()
+                    .filter(|s| s.instance == Some(placement.instance) && s.pad.is_none())
+                    .map(|s| s.pick_id)
+                    .collect();
+                let bodies: Vec<usize> = model
+                    .geometry
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, g)| {
+                        component_body(g.kind) && g.item.is_some_and(|i| picks.contains(&i))
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                assert!(
+                    !bodies.is_empty(),
+                    "{name}: instance {} has a body",
+                    placement.instance
+                );
+                for body in bodies {
+                    let group = model
+                        .instanced
+                        .iter()
+                        .find(|g| g.bodies.contains(&body))
+                        .ok_or("a placed body is drawn instanced")?;
+                    assert!(
+                        drawn.contains(&group.mesh.key),
+                        "{name}: the {:?} of instance {} is in the published scene",
+                        model.geometry[body].kind,
+                        placement.instance
+                    );
+                }
+            }
+            if name == "WROOM-3" {
+                let can = model
+                    .geometry
+                    .iter()
+                    .filter(|g| g.kind == BodyKind::ModelBody)
+                    .count();
+                assert_eq!(can, 3, "the module's board, can and antenna");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod coplanar_tests;

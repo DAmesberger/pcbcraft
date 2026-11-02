@@ -57,6 +57,10 @@ const OVERCOAT_MM: f64 = 0.005;
 /// Solder fillet height as a share of the body height, at most 0.4 mm
 /// (J-STD-001 asks for at least a quarter of the termination height).
 const FILLET_HEIGHT_SHARE: f64 = 0.4;
+/// How far a fillet's foot stands off the land's finish (display only):
+/// its meniscus thins to nothing at the toe, and lying on the finish there
+/// it flickered against it (z-fighting).
+const FILLET_LIFT_MM: f64 = 0.002;
 const FILLET_MAX_MM: f64 = 0.4;
 /// The fillet is narrower than the termination it wets.
 const FILLET_WIDTH_SHARE: f64 = 0.92;
@@ -466,12 +470,15 @@ pub fn board_with(
         let Some(copper) = &land.copper else {
             continue;
         };
+        // The finish plates the land's top, its sides and the bore's wall,
+        // not its underside: it starts a finish thickness off the laminate,
+        // so its bottom never shares the copper's bottom face (the two
+        // flickered in streaks seen from below with the laminate hidden).
         let (z0, z1) = board.span(
             land.layer,
-            0.0,
+            FINISH_THICKNESS_MM,
             board.copper(land.layer) + FINISH_THICKNESS_MM,
         );
-        // The finish plates the land's top, its sides and the bore's wall.
         let region = Region {
             fills: offset_polygon(copper, FINISH_THICKNESS_MM)
                 .into_iter()
@@ -674,7 +681,13 @@ fn track(
             prism(&outline, c0, c1),
         )?;
     }
-    let (f0, f1) = board.span(path.layer, 0.0, copper + STRIP_SHARE * FINISH_THICKNESS_MM);
+    // Off the laminate like a land's finish, and lower than it, so the
+    // strip's underside meets neither copper's nor the land finish's.
+    let (f0, f1) = board.span(
+        path.layer,
+        (1.0 - STRIP_SHARE) * FINISH_THICKNESS_MM,
+        copper + STRIP_SHARE * FINISH_THICKNESS_MM,
+    );
     let half = path.width / 2.0 + STRIP_SHARE * FINISH_THICKNESS_MM;
     for &(a, b) in &openings {
         let (a, b) = (a.max(0.0), b.min(length));
@@ -979,7 +992,7 @@ fn fillet(
     rise: f64,
     span: [f64; 2],
 ) -> Mesh {
-    let base = FINISH_THICKNESS_MM;
+    let base = FINISH_THICKNESS_MM + FILLET_LIFT_MM;
     let mid = (span[0] + span[1]) / 2.0;
     let half = (span[1] - span[0]) / 2.0;
     let local = |s: f64, c: f64, z: f64| {
