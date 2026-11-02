@@ -136,9 +136,7 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
             "operation": {"editor": "Library", "operation": {"command": command, "params": params}},
         }})
     };
-    let query = |name: &str, params: Value| {
-        json!({"command": "project.query", "params": {"query": name, "params": params}})
-    };
+    let query = |name: &str, params: Value| json!({"command": "project.query", "params": {"query": name, "params": params}});
     let request = match name {
         "library_pinout_schema" => json!({"command": "library.pinout_schema", "params": {}}),
         "library_pinout_preview" => query(
@@ -162,7 +160,9 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
             }
             query("library.templates", p)
         }
-        "library_package_plan" => query("library.package_plan", json!({"request": input["request"]})),
+        "library_package_plan" => {
+            query("library.package_plan", json!({"request": input["request"]}))
+        }
         "library_package_from_template" => {
             library("library.package_from_template", input["request"].clone())
         }
@@ -185,13 +185,23 @@ pub fn execute(session: &mut Session, name: &str, input: &Value) -> ToolOutcome 
                         reply(json!({"refused": problems}), true, None)
                     }
                 }
-                Err(e) => reply(json!({"refused": format!("not a review report: {e}")}), true, None),
+                Err(e) => reply(
+                    json!({"refused": format!("not a review report: {e}")}),
+                    true,
+                    None,
+                ),
             };
         }
-        other => return reply(json!({"error": format!("unknown tool {other}")}), true, None),
+        other => {
+            return reply(
+                json!({"error": format!("unknown tool {other}")}),
+                true,
+                None,
+            );
+        }
     };
-    let mutation = request["command"] != "project.query"
-        && request["command"] != "library.pinout_schema";
+    let mutation =
+        request["command"] != "project.query" && request["command"] != "library.pinout_schema";
     let response = session.dispatch(request);
     if response["ok"] != true {
         return reply(response["error"].clone(), true, None);
@@ -252,9 +262,7 @@ pub fn drafts(snapshot: &Value) -> Vec<Value> {
                 .into_iter()
                 .flatten()
                 .take(MAX_FINDINGS)
-                .map(|f| {
-                    json!({"code": f["code"], "message": f["message"], "blocks": f["blocks"]})
-                })
+                .map(|f| json!({"code": f["code"], "message": f["message"], "blocks": f["blocks"]}))
                 .collect();
             json!({
                 "id": d["draft"]["id"],
@@ -307,7 +315,9 @@ mod tests {
         }
         // Nothing that publishes, saves or touches files.
         for name in &names {
-            assert!(!name.contains("publish") && !name.contains("save") && !name.contains("export"));
+            assert!(
+                !name.contains("publish") && !name.contains("save") && !name.contains("export")
+            );
         }
     }
 
@@ -319,7 +329,11 @@ mod tests {
             ToolOutcome::Reply { error: true, .. }
         ));
         assert!(matches!(
-            execute(&mut session, "submit_review", &json!({"report": {"part": "x"}})),
+            execute(
+                &mut session,
+                "submit_review",
+                &json!({"report": {"part": "x"}})
+            ),
             ToolOutcome::Reply { error: true, .. }
         ));
     }

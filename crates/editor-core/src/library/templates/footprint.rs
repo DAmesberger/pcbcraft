@@ -149,7 +149,9 @@ fn shape(layer: DrawingLayer, shape: Shape, width: f64) -> (DrawingLayer, Item) 
 /// antenna region ([`ModuleForm::antenna_keepout`]) on every copper layer.
 ///
 /// [`ModuleForm::antenna_keepout`]: crate::library::package_form::ModuleForm::antenna_keepout
-pub fn form_keepouts(form: &crate::library::package_form::PackageForm) -> Vec<crate::library::FootprintKeepout> {
+pub fn form_keepouts(
+    form: &crate::library::package_form::PackageForm,
+) -> Vec<crate::library::FootprintKeepout> {
     match form {
         crate::library::package_form::PackageForm::Module(m) => m
             .antenna_keepout()

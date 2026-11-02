@@ -44,9 +44,8 @@ fn covered(copper: &pcbcraft_core::model::fill::FilledCopper, q: [f64; 2]) -> bo
 #[test]
 fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut transport = ReplayTransport::new(script_on(Session::new(
-        pcbcraft_core::Engine::demo()?,
-    ))?);
+    let mut transport =
+        ReplayTransport::new(script_on(Session::new(pcbcraft_core::Engine::demo()?))?);
     transport.prompt_tokens = Some(60_000);
     let mut s = Session::new(pcbcraft_core::Engine::demo()?);
     let outcome = run(
@@ -109,7 +108,12 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         "fill.add",
         json!({"fill": {"name": "pour", "net": null, "layer": "Bottom", "outline": board}}),
     )?;
-    apply(&mut s, "Fill", "fill.refill", json!({"target": {"fills": "all"}}))?;
+    apply(
+        &mut s,
+        "Fill",
+        "fill.refill",
+        json!({"target": {"fills": "all"}}),
+    )?;
     let project = s.engine().project();
     // The module (20 mm long, 5 mm antenna end) at (30, 15): keep-out
     // x 23..37, y 20..25.
@@ -125,7 +129,10 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         !covered(copper, [30.0, 22.5]) && !covered(copper, [24.0, 20.5]),
         "but not the antenna area, even on the bottom layer"
     );
-    assert!(covered(copper, [30.0, 26.0]), "copper resumes past the keep-out");
+    assert!(
+        covered(copper, [30.0, 26.0]),
+        "copper resumes past the keep-out"
+    );
     // A via of a demo net in the antenna area is a keepout finding naming
     // the module.
     let net = project.nets.first().map(|n| n.id).ok_or("a demo net")?;

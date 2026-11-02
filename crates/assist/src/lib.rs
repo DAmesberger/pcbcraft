@@ -309,7 +309,9 @@ pub fn run(
 ) -> Result<Outcome> {
     let price = settings.prices.of(&settings.model)?;
     if !(settings.max_usd.is_finite() && settings.max_usd > 0.0) {
-        return Err(Error::Config("the cost cap must be a positive amount".into()));
+        return Err(Error::Config(
+            "the cost cap must be a positive amount".into(),
+        ));
     }
     let (docs, doc_tokens) = documents(&goal.datasheets)?;
     let mut first = docs;
@@ -352,7 +354,12 @@ pub fn run(
         } else {
             last_prompt + appended / 3 + 4_000
         };
-        if !ledger.affords(&price, prompt_tokens, u64::from(settings.max_tokens), settings.max_usd) {
+        if !ledger.affords(
+            &price,
+            prompt_tokens,
+            u64::from(settings.max_tokens),
+            settings.max_usd,
+        ) {
             break Stop::Budget(format!(
                 "${:.2} spent; the next request could cost more than the ${:.2} left",
                 ledger.spent_usd,
@@ -533,7 +540,10 @@ pub fn write_outputs(
         "project": saved["result"],
     });
     let [json_path, md_path] = &reviews;
-    write_new(json_path, serde_json::to_string_pretty(&json_report)?.as_bytes())?;
+    write_new(
+        json_path,
+        serde_json::to_string_pretty(&json_report)?.as_bytes(),
+    )?;
     write_new(
         md_path,
         report::markdown(outcome.report.as_ref(), &outcome.facts).as_bytes(),

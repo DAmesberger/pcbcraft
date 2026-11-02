@@ -52,7 +52,10 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
         .iter()
         .find(|(t, _)| t == "Create from datasheet…")
         .ok_or_else(|| format!("the button: {painted:?}"))?;
-    assert!(!painted.iter().any(|(t, _)| t == "Datasheets"), "closed at first");
+    assert!(
+        !painted.iter().any(|(t, _)| t == "Datasheets"),
+        "closed at first"
+    );
     let at = rect.center();
     let press = |pressed| egui::Event::PointerButton {
         pos: at,
@@ -69,8 +72,18 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
     }
     assert!(assist.open);
     let painted = frame(&ctx, vec![], |ui| draw(ui, &mut assist));
-    for label in ["Datasheets", "Part name", "Save as", "Model", "Cost cap", "Start"] {
-        assert!(painted.iter().any(|(t, _)| t == label), "{label}: {painted:?}");
+    for label in [
+        "Datasheets",
+        "Part name",
+        "Save as",
+        "Model",
+        "Cost cap",
+        "Start",
+    ] {
+        assert!(
+            painted.iter().any(|(t, _)| t == label),
+            "{label}: {painted:?}"
+        );
     }
     Ok(())
 }

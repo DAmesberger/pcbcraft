@@ -66,9 +66,8 @@ fn parse(args: &[String]) -> Result<Args> {
             }
             "--max-usd" => parsed.settings.max_usd = number("--max-usd")?,
             "--max-requests" => {
-                parsed.settings.max_requests = value
-                    .parse()
-                    .map_err(|_| "--max-requests takes a count")?;
+                parsed.settings.max_requests =
+                    value.parse().map_err(|_| "--max-requests takes a count")?;
             }
             "--prices" => {
                 let text = std::fs::read_to_string(&value)?;
@@ -76,10 +75,15 @@ fn parse(args: &[String]) -> Result<Args> {
             }
             "--record" => parsed.record = Some(PathBuf::from(value)),
             "--replay" => parsed.replay = Some(PathBuf::from(value)),
-            other => return Err(format!("unknown option {other}\nusage: pcbcraft-cli {USAGE}").into()),
+            other => {
+                return Err(format!("unknown option {other}\nusage: pcbcraft-cli {USAGE}").into());
+            }
         }
     }
-    if parsed.datasheets.is_empty() || parsed.name.trim().is_empty() || parsed.out.as_os_str().is_empty() {
+    if parsed.datasheets.is_empty()
+        || parsed.name.trim().is_empty()
+        || parsed.out.as_os_str().is_empty()
+    {
         return Err(format!("usage: pcbcraft-cli {USAGE}").into());
     }
     if parsed.record.is_some() && parsed.replay.is_some() {
@@ -97,7 +101,10 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     let mut transport: Box<dyn Transport> = match (&args.replay, &args.record) {
         (Some(path), _) => Box::new(ReplayTransport::from_file(path)?),
-        (None, Some(path)) => Box::new(RecordingTransport::new(HttpTransport::from_env()?, path.clone())),
+        (None, Some(path)) => Box::new(RecordingTransport::new(
+            HttpTransport::from_env()?,
+            path.clone(),
+        )),
         (None, None) => Box::new(HttpTransport::from_env()?),
     };
     let goal = Goal {
@@ -116,12 +123,19 @@ pub fn run(args: &[String]) -> Result<()> {
             Event::Request { n, prompt_tokens } => {
                 eprintln!("request {n}: ~{prompt_tokens} prompt tokens");
             }
-            Event::Response { n, stop_reason, spent_usd } => {
+            Event::Response {
+                n,
+                stop_reason,
+                spent_usd,
+            } => {
                 eprintln!("response {n}: {stop_reason}; spent ${spent_usd:.3}");
             }
             Event::Tool { name, error, step } => {
                 let status = if error { "refused" } else { "ok" };
-                eprintln!("  {name}: {status}{}", step.map(|s| format!(" — {s}")).unwrap_or_default());
+                eprintln!(
+                    "  {name}: {status}{}",
+                    step.map(|s| format!(" — {s}")).unwrap_or_default()
+                );
             }
             Event::Text(text) => {
                 let line: String = text.chars().take(200).collect();
@@ -131,7 +145,10 @@ pub fn run(args: &[String]) -> Result<()> {
         &cancel,
     )?;
     outcome.facts.transport = match (&args.replay, &args.record) {
-        (Some(path), _) => format!("a replay of {} (no API calls; spend not real)", path.display()),
+        (Some(path), _) => format!(
+            "a replay of {} (no API calls; spend not real)",
+            path.display()
+        ),
         (None, Some(path)) => format!("the Claude API, recorded to {}", path.display()),
         (None, None) => "the Claude API".into(),
     };

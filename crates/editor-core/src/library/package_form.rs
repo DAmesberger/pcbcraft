@@ -336,10 +336,11 @@ impl PackageForm {
         match self {
             Self::Generic => Vec::new(),
             Self::NoLead(n) if n.exposed_pad.is_some() => vec![leads, leads + 1],
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => self
-                .family_form()
-                .map(|f| f.terminal_counts())
-                .unwrap_or_default(),
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
+                self.family_form()
+                    .map(|f| f.terminal_counts())
+                    .unwrap_or_default()
+            }
             _ => vec![leads],
         }
     }
@@ -385,10 +386,11 @@ impl PackageForm {
                     ]
                 })
                 .collect(),
-            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => self
-                .family_form()
-                .map(|f| f.lead_points())
-                .unwrap_or_default(),
+            Self::Tabbed(_) | Self::Molded(_) | Self::Grid(_) | Self::Tht(_) | Self::Module(_) => {
+                self.family_form()
+                    .map(|f| f.lead_points())
+                    .unwrap_or_default()
+            }
         }
     }
 

@@ -423,7 +423,14 @@ fn custom_aliases(family: FamilyKind) -> &'static [&'static str] {
         FamilyKind::Molded => &["SOD", "SMA", "SMB", "SMC", "MELF", "tantalum", "diode"],
         FamilyKind::Grid => &["BGA", "FBGA", "LGA", "WLCSP", "CSP"],
         FamilyKind::Tht => &["DIP", "PDIP", "TO-220", "TO-92", "axial", "radial", "THT"],
-        FamilyKind::Module => &["module", "Wi-Fi module", "BLE module", "radio module", "castellated", "shield can"],
+        FamilyKind::Module => &[
+            "module",
+            "Wi-Fi module",
+            "BLE module",
+            "radio module",
+            "castellated",
+            "shield can",
+        ],
     }
 }
 

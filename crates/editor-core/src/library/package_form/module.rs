@@ -362,7 +362,13 @@ impl ModuleForm {
         }
         for single in &self.singles {
             let (t, number) = terminal.next()?;
-            push(Pad::smd_rect(PadId(0), *t, number, single.centre, single.size))?;
+            push(Pad::smd_rect(
+                PadId(0),
+                *t,
+                number,
+                single.centre,
+                single.size,
+            ))?;
         }
         Some(pads)
     }
@@ -490,7 +496,8 @@ impl FamilyForm for ModuleForm {
     }
     fn range_problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let in_range = |v: f64| v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v);
+        let in_range =
+            |v: f64| v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v);
         let mut positive = |name: &str, v: f64| {
             if !in_range(v) {
                 out.push(format!(
@@ -535,7 +542,9 @@ impl FamilyForm for ModuleForm {
         );
         rule(
             self.rows.len() <= MAX_MODULE_ROWS && self.singles.len() <= MAX_MODULE_SINGLES,
-            format!("A module has at most {MAX_MODULE_ROWS} pad rows and {MAX_MODULE_SINGLES} single pads."),
+            format!(
+                "A module has at most {MAX_MODULE_ROWS} pad rows and {MAX_MODULE_SINGLES} single pads."
+            ),
         );
         let n = self.row_pads();
         rule(
@@ -547,7 +556,9 @@ impl FamilyForm for ModuleForm {
             "Row pads and lands must not touch (width < pitch).".into(),
         );
         rule(
-            self.land_extend.iter().all(|v| *v > -self.pad_size[0] / 2.0),
+            self.land_extend
+                .iter()
+                .all(|v| *v > -self.pad_size[0] / 2.0),
             "A land may shrink by less than half the pad length at each end.".into(),
         );
         let (hw, hl) = (self.width / 2.0, self.length / 2.0);
@@ -595,13 +606,17 @@ impl FamilyForm for ModuleForm {
             );
             rule(
                 valid_number(&g.number),
-                format!("The ground terminal needs a number of 1–{MAX_PAD_NUMBER} printable characters."),
+                format!(
+                    "The ground terminal needs a number of 1–{MAX_PAD_NUMBER} printable characters."
+                ),
             );
         }
         rule(
-            self.singles
-                .iter()
-                .all(|p| valid_number(&p.number) && p.size.iter().all(|v| in_range(*v)) && inside(p.centre, p.size)),
+            self.singles.iter().all(|p| {
+                valid_number(&p.number)
+                    && p.size.iter().all(|v| in_range(*v))
+                    && inside(p.centre, p.size)
+            }),
             "Single pads need a number, a positive size and a place within the module.".into(),
         );
         let numbers = self.designations();
@@ -690,7 +705,11 @@ mod tests {
         assert!(m.range_problems().iter().any(|p| p.contains("shield can")));
         let mut m = ModuleForm::typical();
         m.rows[0].count = 30;
-        assert!(m.range_problems().iter().any(|p| p.contains("row pad must")));
+        assert!(
+            m.range_problems()
+                .iter()
+                .any(|p| p.contains("row pad must"))
+        );
         let mut m = ModuleForm::typical();
         m.height = 0.5;
         assert!(!m.range_problems().is_empty());

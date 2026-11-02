@@ -143,10 +143,9 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
         // (ENIG) pads and castellations.
         (PackageForm::Module(_), BodyRole::Body) => MaterialId::SolderMaskGreen,
         (PackageForm::Module(_), BodyRole::Other) => MaterialId::NickelSilver,
-        (
-            PackageForm::Module(_),
-            BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad,
-        ) => MaterialId::Gold,
+        (PackageForm::Module(_), BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => {
+            MaterialId::Gold
+        }
         (PackageForm::Header(_), BodyRole::Body) => MaterialId::Pbt,
         (PackageForm::Header(_), BodyRole::Lead) => MaterialId::Gold,
         // Formed leads are bright (satin) tin; chip terminations matte.

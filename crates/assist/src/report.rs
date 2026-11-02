@@ -13,7 +13,9 @@ pub const MAX_TEXT: usize = 4096;
 /// Values one report lists.
 pub const MAX_VALUES: usize = 1024;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
     /// Read directly from a dimensioned drawing or a table cell.

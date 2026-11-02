@@ -183,7 +183,17 @@ mod tests {
     #[test]
     fn unknown_models_and_bad_prices_are_refused() {
         assert!(PriceTable::default().of("some-model").is_err());
-        assert!(PriceTable::parse(r#"{"m": {"input": -1, "output": 1, "cache_write": 1, "cache_read": 1}}"#).is_err());
-        assert!(PriceTable::parse(r#"{"m": {"input": 1, "output": 1, "cache_write": 1, "cache_read": 1}}"#).is_ok());
+        assert!(
+            PriceTable::parse(
+                r#"{"m": {"input": -1, "output": 1, "cache_write": 1, "cache_read": 1}}"#
+            )
+            .is_err()
+        );
+        assert!(
+            PriceTable::parse(
+                r#"{"m": {"input": 1, "output": 1, "cache_write": 1, "cache_read": 1}}"#
+            )
+            .is_ok()
+        );
     }
 }

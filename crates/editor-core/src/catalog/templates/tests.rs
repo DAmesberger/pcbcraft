@@ -1039,8 +1039,8 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
             let terminal = pad.terminal.and_then(|t| package.terminal(t));
             let terminal =
                 terminal.ok_or(format!("{name}: pad {} lands no terminal", pad.number))?;
-            let shared = ground > 0
-                && pads.iter().filter(|p| p.terminal == pad.terminal).count() == ground;
+            let shared =
+                ground > 0 && pads.iter().filter(|p| p.terminal == pad.terminal).count() == ground;
             assert!(
                 landed.insert(terminal.id) || shared,
                 "{name}: {} twice",

@@ -72,11 +72,12 @@ pub enum ItemInput {
 impl Session {
     pub(super) fn set_marking(&mut self, params: SetMarkingParams) -> Result<Value> {
         let invalid = |m: String| crate::Error::Document(pcbcraft_core::Error::Invalid(m));
-        let draft = self
-            .engine
-            .drafts()
-            .get(params.draft)
-            .ok_or_else(|| invalid(format!("marking.draft: draft {} does not exist", params.draft)))?;
+        let draft = self.engine.drafts().get(params.draft).ok_or_else(|| {
+            invalid(format!(
+                "marking.draft: draft {} does not exist",
+                params.draft
+            ))
+        })?;
         let Definition::Component(component) = &draft.definition else {
             return Err(invalid(format!(
                 "marking.draft: ‘{}’ is not a component draft",
@@ -117,9 +118,8 @@ impl Session {
                                     MAX_ARTWORK_BYTES >> 10
                                 )));
                             }
-                            let data = pcbcraft_core::library::bundle::AssetBytes::new(
-                                svg.into_bytes(),
-                            );
+                            let data =
+                                pcbcraft_core::library::bundle::AssetBytes::new(svg.into_bytes());
                             let hash = data.hash();
                             if !artwork.iter().any(|a: &PackedAsset| a.hash == hash) {
                                 artwork.push(PackedAsset {

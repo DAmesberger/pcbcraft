@@ -105,9 +105,7 @@ impl MaterialId {
             BorosilicateGlass => MaterialCategory::Glass,
             EpoxyMould | EpoxyLaserMarked | MarkingInkWhite | ResistorOvercoat | PvcSleeve
             | Pbt | Lcp | Pa9t | SiliconeClear | SiliconeDiffuse | Polyimide | SolderMaskGreen
-            | SolderMaskOverCopper => {
-                MaterialCategory::Polymer
-            }
+            | SolderMaskOverCopper => MaterialCategory::Polymer,
         }
     }
 }

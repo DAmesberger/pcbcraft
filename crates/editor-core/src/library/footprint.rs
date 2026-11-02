@@ -98,9 +98,13 @@ impl FootprintKeepout {
             outline: Outline {
                 start: min,
                 segments: vec![
-                    Segment::Line { to: [max[0], min[1]] },
+                    Segment::Line {
+                        to: [max[0], min[1]],
+                    },
                     Segment::Line { to: max },
-                    Segment::Line { to: [min[0], max[1]] },
+                    Segment::Line {
+                        to: [min[0], max[1]],
+                    },
                     Segment::Line { to: min },
                 ],
             },
@@ -656,7 +660,11 @@ impl FootprintDefinition {
                     "footprint.keepout_open",
                     format!(
                         "Keep-out {} needs a closed outline of at least two segments.",
-                        if keepout.name.is_empty() { (k + 1).to_string() } else { keepout.name.clone() }
+                        if keepout.name.is_empty() {
+                            (k + 1).to_string()
+                        } else {
+                            keepout.name.clone()
+                        }
                     ),
                     vec![this],
                 ));

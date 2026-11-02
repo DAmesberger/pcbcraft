@@ -108,7 +108,11 @@ impl DatasheetAssist {
             "Claude reads the datasheets and drafts the component, symbol, package, footprint and 3D model through the Pcbcraft tools. The result is a new project of unreviewed drafts with a review report; nothing is published.",
         );
         if let Some(job) = &self.job {
-            kit::value_row(ui, "Spent", &format!("${:.2} of ${:.2}", self.spent, self.max_usd));
+            kit::value_row(
+                ui,
+                "Spent",
+                &format!("${:.2} of ${:.2}", self.spent, self.max_usd),
+            );
             for line in self.log.iter().rev().take(8).rev() {
                 kit::note(ui, line);
             }
@@ -118,7 +122,8 @@ impl DatasheetAssist {
             {
                 job.cancel.store(true, Ordering::Relaxed);
             }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
             return;
         }
         kit::multiline_row(ui, "Datasheets", &mut self.datasheets, false)
@@ -128,13 +133,20 @@ impl DatasheetAssist {
             .on_hover_text("A new .pcbcraft file; the review is written beside it");
         let models = [
             ("claude-opus-5-5".to_owned(), "Claude Opus 5.5".to_owned()),
-            ("claude-sonnet-5-5".to_owned(), "Claude Sonnet 5.5 (cheaper)".to_owned()),
+            (
+                "claude-sonnet-5-5".to_owned(),
+                "Claude Sonnet 5.5 (cheaper)".to_owned(),
+            ),
         ];
         kit::choice_row(ui, "Model", &mut self.model, &models);
         kit::number_row(ui, "Cost cap", &mut self.max_usd, "USD", 0.5..=100.0);
         match &self.result {
             Some(Ok(done)) => {
-                kit::value_row(ui, "Result", &format!("{} (${:.2})", done.stop, done.spent_usd));
+                kit::value_row(
+                    ui,
+                    "Result",
+                    &format!("{} (${:.2})", done.stop, done.spent_usd),
+                );
                 kit::value_row(ui, "Project", &done.project.display().to_string());
                 kit::value_row(ui, "Review", &done.review.display().to_string());
             }
@@ -232,7 +244,10 @@ fn work(
                 }
                 Event::Tool { name, error, step } => {
                     let status = if error { "refused" } else { "ok" };
-                    format!("{name}: {status}{}", step.map(|s| format!(" ({s})")).unwrap_or_default())
+                    format!(
+                        "{name}: {status}{}",
+                        step.map(|s| format!(" ({s})")).unwrap_or_default()
+                    )
                 }
                 Event::Text(text) => text.chars().take(160).collect(),
             };

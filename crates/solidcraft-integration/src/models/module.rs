@@ -91,23 +91,24 @@ fn board_outline(f: &ModuleForm, r: f64) -> Contour {
     // Each edge runs from `a` to `b`; `point(t)` is the edge point at
     // coordinate t; a notch is a clockwise half circle (bulge −1) into
     // the board.
-    let mut edge = |positions: Vec<f64>, ascending: bool, point: &dyn Fn(f64) -> [f64; 2], end: [f64; 2]| {
-        let mut ts = positions;
-        if !ascending {
-            ts.reverse();
-        }
-        let dir = if ascending { 1.0 } else { -1.0 };
-        for t in ts {
-            segments.push(Segment::Line {
-                to: point(t - dir * r),
-            });
-            segments.push(Segment::Arc {
-                to: point(t + dir * r),
-                bulge: -1.0,
-            });
-        }
-        segments.push(Segment::Line { to: end });
-    };
+    let mut edge =
+        |positions: Vec<f64>, ascending: bool, point: &dyn Fn(f64) -> [f64; 2], end: [f64; 2]| {
+            let mut ts = positions;
+            if !ascending {
+                ts.reverse();
+            }
+            let dir = if ascending { 1.0 } else { -1.0 };
+            for t in ts {
+                segments.push(Segment::Line {
+                    to: point(t - dir * r),
+                });
+                segments.push(Segment::Arc {
+                    to: point(t + dir * r),
+                    bulge: -1.0,
+                });
+            }
+            segments.push(Segment::Line { to: end });
+        };
     edge(notches(ModuleSide::Bottom), true, &|x| [x, -hl], [hw, -hl]);
     edge(notches(ModuleSide::Right), true, &|y| [hw, y], [hw, hl]);
     edge(notches(ModuleSide::Top), false, &|x| [x, hl], [-hw, hl]);
@@ -194,10 +195,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
     let board = b.name("board");
     let body_material = b.material(BodyRole::Body);
     let r = f.castellation / 2.0;
-    let castellated = r > 0.0
-        && f.row_centres()
-            .iter()
-            .any(|(s, c)| f.at_edge(*s, *c));
+    let castellated = r > 0.0 && f.row_centres().iter().any(|(s, c)| f.at_edge(*s, *c));
     if castellated {
         b.native.profile_body(ProfileBody {
             name: &board,
@@ -266,7 +264,9 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
         }
         // Castellation plating in this row's notches, if every pad of the
         // row meets the edge (a seed and the same pattern).
-        let row_centres = centres.get(offset..offset + row.count as usize).unwrap_or(&[]);
+        let row_centres = centres
+            .get(offset..offset + row.count as usize)
+            .unwrap_or(&[]);
         offset += row.count as usize;
         if castellated && row_centres.iter().all(|(s, c)| f.at_edge(*s, *c)) {
             let n = row.side.outward();
@@ -403,7 +403,9 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
     )?;
     let lo = [cx - cw / 2.0, cy - cl / 2.0, z_top];
     let hi = [cx + cw / 2.0, cy + cl / 2.0, f.height];
-    let edge = CAN_EDGE_MM.min(0.25 * (f.height - z_top)).min(0.1 * cw.min(cl));
+    let edge = CAN_EDGE_MM
+        .min(0.25 * (f.height - z_top))
+        .min(0.1 * cw.min(cl));
     b.round("can_round", &can, &top_edges(lo, hi), edge)?;
 
     // The printed antenna under the mask.
@@ -476,10 +478,26 @@ mod tests {
             pitch: 1.0,
             pad_size: [0.8, 0.5],
             rows: vec![
-                PadRow { side: ModuleSide::Left, count: 10, first: [-7.4, 3.5] },
-                PadRow { side: ModuleSide::Bottom, count: 8, first: [-3.5, -9.4] },
-                PadRow { side: ModuleSide::Right, count: 10, first: [7.4, -5.5] },
-                PadRow { side: ModuleSide::Top, count: 8, first: [3.5, 4.4] },
+                PadRow {
+                    side: ModuleSide::Left,
+                    count: 10,
+                    first: [-7.4, 3.5],
+                },
+                PadRow {
+                    side: ModuleSide::Bottom,
+                    count: 8,
+                    first: [-3.5, -9.4],
+                },
+                PadRow {
+                    side: ModuleSide::Right,
+                    count: 10,
+                    first: [7.4, -5.5],
+                },
+                PadRow {
+                    side: ModuleSide::Top,
+                    count: 8,
+                    first: [3.5, 4.4],
+                },
             ],
             castellation: 0.0,
             land_width: 0.5,
@@ -494,15 +512,25 @@ mod tests {
                 number: "37".into(),
             }),
             singles: vec![
-                SinglePad { number: "38".into(), centre: [-7.4, -9.4], size: [0.8, 0.8] },
-                SinglePad { number: "39".into(), centre: [7.4, -9.4], size: [0.8, 0.8] },
+                SinglePad {
+                    number: "38".into(),
+                    centre: [-7.4, -9.4],
+                    size: [0.8, 0.8],
+                },
+                SinglePad {
+                    number: "39".into(),
+                    centre: [7.4, -9.4],
+                    size: [0.8, 0.8],
+                },
             ],
             keepout: Some(crate::models::module::tests::keepout()),
         }
     }
 
     fn keepout() -> pcbcraft_core::library::package_form::module::AntennaKeepout {
-        pcbcraft_core::library::package_form::module::AntennaKeepout { beyond: [0.0, 0.0, 0.0] }
+        pcbcraft_core::library::package_form::module::AntennaKeepout {
+            beyond: [0.0, 0.0, 0.0],
+        }
     }
 
     fn package(form: ModuleForm) -> PackageDefinition {
@@ -548,7 +576,10 @@ mod tests {
     }
 
     fn terminal_bodies(def: &ModelDefinition, k: u32) -> Vec<&GeneratedBody> {
-        def.bodies.iter().filter(|b| b.terminal == Some(k)).collect()
+        def.bodies
+            .iter()
+            .filter(|b| b.terminal == Some(k))
+            .collect()
     }
 
     #[test]
@@ -579,7 +610,10 @@ mod tests {
             .ok_or_else(|| crate::Error::Verification("no can".into()))?;
         let (lo, hi) = bounds(&native, &can.name)?;
         assert!((hi[2] - 3.0).abs() < 1e-6 && (lo[2] - (PAD_MM + 0.8)).abs() < 1e-6);
-        assert!((hi[1] - 4.5).abs() < 1e-6, "clear of the antenna end: {hi:?}");
+        assert!(
+            (hi[1] - 4.5).abs() < 1e-6,
+            "clear of the antenna end: {hi:?}"
+        );
         let board = def
             .bodies
             .iter()
@@ -588,7 +622,9 @@ mod tests {
         let (lo, hi) = bounds(&native, &board.name)?;
         assert!((hi[0] - lo[0] - 16.0).abs() < 1e-6 && (hi[1] - lo[1] - 20.0).abs() < 1e-6);
         assert!(
-            def.bodies.iter().any(|b| b.material == MaterialId::SolderMaskOverCopper),
+            def.bodies
+                .iter()
+                .any(|b| b.material == MaterialId::SolderMaskOverCopper),
             "the antenna meander"
         );
         Ok(())
@@ -606,7 +642,10 @@ mod tests {
             .ok_or_else(|| crate::Error::Verification("no plating".into()))?;
         let (lo, hi) = bounds(&native, &plate.name)?;
         // In the −x edge's notch, through the board's thickness.
-        assert!((lo[0] - (-9.0)).abs() < 1e-6 && hi[0] < -9.0 + 0.31, "{lo:?} {hi:?}");
+        assert!(
+            (lo[0] - (-9.0)).abs() < 1e-6 && hi[0] < -9.0 + 0.31,
+            "{lo:?} {hi:?}"
+        );
         assert!((hi[2] - lo[2] - 0.8).abs() < 1e-6);
         assert_eq!(terminal_bodies(&def, 39).len(), 9, "the ground array");
         Ok(())

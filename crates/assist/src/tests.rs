@@ -35,13 +35,17 @@ fn pinout() -> Value {
                 (format!("IO{g}"), json!(f), "gpio_in")
             }
         };
-        pins.push(json!({"row": format!("r{n}"), "number": {"MOD": n.to_string()}, "name": name,
+        pins.push(
+            json!({"row": format!("r{n}"), "number": {"MOD": n.to_string()}, "name": name,
             "class": "electrical", "functions": functions, "default": default,
-            "source": {"page": 3, "table": "Table 1"}}));
+            "source": {"page": 3, "table": "Table 1"}}),
+        );
     }
-    pins.push(json!({"row": "r23", "number": {"MOD": "23"}, "name": "EPAD", "class": "electrical",
+    pins.push(
+        json!({"row": "r23", "number": {"MOD": "23"}, "name": "EPAD", "class": "electrical",
         "functions": [{"label": "gnd", "direction": "power_input", "signal": "power"}],
-        "default": "gnd", "source": {"page": 9, "table": "Figure 4"}}));
+        "default": "gnd", "source": {"page": 9, "table": "Figure 4"}}),
+    );
     json!({
         "format": 1,
         "device": {"name": "EXR-22 radio module", "reference": {"title": "EXR-22 datasheet (fictitious)", "document_revision": "1"}},
@@ -76,7 +80,9 @@ fn tool_turn(id: &str, name: &str, input: Value) -> Value {
 
 fn reply_json(outcome: ToolOutcome) -> Fallible<Value> {
     match outcome {
-        ToolOutcome::Reply { text, error: false, .. } => Ok(serde_json::from_str(&text)?),
+        ToolOutcome::Reply {
+            text, error: false, ..
+        } => Ok(serde_json::from_str(&text)?),
         other => Err(format!("unexpected tool outcome {other:?}").into()),
     }
 }
@@ -94,28 +100,46 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     let doc = pinout();
     let mut out = vec![tool_turn("t1", "library_pinout_schema", json!({}))];
     let preview_input = json!({"target": target, "document": doc});
-    let plan = reply_json(tools::execute(&mut shadow, "library_pinout_preview", &preview_input))?;
+    let plan = reply_json(tools::execute(
+        &mut shadow,
+        "library_pinout_preview",
+        &preview_input,
+    ))?;
     out.push(tool_turn("t2", "library_pinout_preview", preview_input));
     let apply_input = json!({"target": target, "document": doc, "base": plan["base"], "accept": {"accept": "all"}});
-    let applied = reply_json(tools::execute(&mut shadow, "library_pinout_apply", &apply_input))?;
+    let applied = reply_json(tools::execute(
+        &mut shadow,
+        "library_pinout_apply",
+        &apply_input,
+    ))?;
     out.push(tool_turn("t3", "library_pinout_apply", apply_input));
     let id_of = |kind: &str| {
         applied["drafts"]
             .as_array()
             .into_iter()
             .flatten()
-            .find(|d| d["kind"] == kind && d["name"].as_str().is_some_and(|n| n.starts_with("EXR-22")))
+            .find(|d| {
+                d["kind"] == kind && d["name"].as_str().is_some_and(|n| n.starts_with("EXR-22"))
+            })
             .map(|d| d["id"].clone())
             .ok_or_else(|| format!("no {kind} draft: {applied}"))
     };
     let package = id_of("package")?;
     let component = id_of("component")?;
     let request = json!({"request": {"draft": package, "row": {"source": "custom", "family": "module"}, "values": module_values()}});
-    reply_json(tools::execute(&mut shadow, "library_package_plan", &request))?;
+    reply_json(tools::execute(
+        &mut shadow,
+        "library_package_plan",
+        &request,
+    ))?;
     out.push(tool_turn("t4", "library_package_plan", request.clone()));
     out.push(tool_turn("t5", "library_package_from_template", request));
-    out.push(tool_turn("t6", "library_set_marking", json!({"draft": component,
-        "marking": {"items": [{"item": "text", "template": "EXR-22"}]}})));
+    out.push(tool_turn(
+        "t6",
+        "library_set_marking",
+        json!({"draft": component,
+        "marking": {"items": [{"item": "text", "template": "EXR-22"}]}}),
+    ));
     out.push(tool_turn("t7", "component_check_drafts", json!({})));
     out.push(tool_turn("t8", "submit_review", json!({"report": {
         "part": "EXR-22", "summary": "Synthetic module.",
@@ -159,14 +183,19 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     )?;
     assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
     assert!(
-        log.iter().all(|e| !matches!(e, Event::Tool { error: true, .. })),
+        log.iter()
+            .all(|e| !matches!(e, Event::Tool { error: true, .. })),
         "every tool call succeeded: {log:?}"
     );
     let report = outcome.report.ok_or("a report")?;
     assert_eq!(report.part, "EXR-22");
     // Eight responses at 500 in, 1000 out and 50 000 cache reads each:
     // 8 × (0.002 + 0.02 + 0.01) = 0.256 USD.
-    assert!((outcome.facts.spent_usd - 0.256).abs() < 1e-9, "{}", outcome.facts.spent_usd);
+    assert!(
+        (outcome.facts.spent_usd - 0.256).abs() < 1e-9,
+        "{}",
+        outcome.facts.spent_usd
+    );
     assert_eq!(outcome.facts.requests, 8);
 
     // The drafts: component, symbol, package, footprint and binding.
@@ -178,12 +207,24 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
             _ => None,
         })
         .ok_or("a footprint draft")?;
-    assert_eq!(footprint.pads.len(), 22 + 4, "edge lands and the ground array");
+    assert_eq!(
+        footprint.pads.len(),
+        22 + 4,
+        "edge lands and the ground array"
+    );
     assert_eq!(footprint.keepouts.len(), 1, "the antenna keep-out");
-    let pin1 = footprint.pads.iter().find(|p| p.number == "1").ok_or("pad 1")?;
+    let pin1 = footprint
+        .pads
+        .iter()
+        .find(|p| p.number == "1")
+        .ok_or("pad 1")?;
     // The 1.4 mm land reaches 0.4 beyond the −x edge at −7: outer end −7.4,
     // centre −7.4 + 0.7.
-    assert!((pin1.position[0] - (-7.4 + 0.7)).abs() < 1e-9, "{:?}", pin1.position);
+    assert!(
+        (pin1.position[0] - (-7.4 + 0.7)).abs() < 1e-9,
+        "{:?}",
+        pin1.position
+    );
     let component = drafts
         .iter()
         .find_map(|d| match &d.definition {
@@ -193,10 +234,16 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
         .ok_or("a component draft")?;
     assert!(component.marking.is_some(), "the can marking");
     assert!(
-        component.review.as_ref().is_some_and(|r| r.unreviewed.len() == 23),
+        component
+            .review
+            .as_ref()
+            .is_some_and(|r| r.unreviewed.len() == 23),
         "every imported row waits for review"
     );
-    assert!(session.engine().project().library.components.is_empty(), "nothing published");
+    assert!(
+        session.engine().project().library.components.is_empty(),
+        "nothing published"
+    );
 
     // The first request: datasheet cached, untrusted, tools, adaptive
     // thinking, fallback; no key anywhere in a request.
@@ -204,10 +251,17 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     let doc = &first["messages"][0]["content"][0];
     assert_eq!(doc["type"], "document");
     assert_eq!(doc["cache_control"]["type"], "ephemeral");
-    assert!(doc["context"].as_str().is_some_and(|c| c.contains("untrusted")));
+    assert!(
+        doc["context"]
+            .as_str()
+            .is_some_and(|c| c.contains("untrusted"))
+    );
     assert_eq!(first["thinking"]["type"], "adaptive");
     assert_eq!(first["fallbacks"], "default");
-    assert_eq!(first["tools"].as_array().map(Vec::len), Some(tools::definitions().len()));
+    assert_eq!(
+        first["tools"].as_array().map(Vec::len),
+        Some(tools::definitions().len())
+    );
     // Each later request carries the previous turn's assistant content
     // unchanged and one user message of tool results.
     let last = transport.requests.last().ok_or("a request")?;
@@ -221,7 +275,10 @@ fn the_cost_cap_stops_before_a_request_it_could_not_pay() -> Fallible {
     let mut expensive = tool_turn("t1", "library_pinout_schema", json!({}));
     // One million cache-write tokens: 5 USD at the default rates.
     expensive["usage"]["cache_creation_input_tokens"] = json!(1_000_000);
-    let mut transport = ReplayTransport::new(vec![expensive, tool_turn("t2", "component_check_drafts", json!({}))]);
+    let mut transport = ReplayTransport::new(vec![
+        expensive,
+        tool_turn("t2", "component_check_drafts", json!({})),
+    ]);
     transport.prompt_tokens = Some(10_000);
     let settings = Settings {
         max_usd: 5.5,
@@ -235,8 +292,16 @@ fn the_cost_cap_stops_before_a_request_it_could_not_pay() -> Fallible {
         &mut |_| {},
         &AtomicBool::new(false),
     )?;
-    assert!(matches!(outcome.stop, Stop::Budget(_)), "{:?}", outcome.stop);
-    assert_eq!(transport.requests.len(), 1, "the second request was never sent");
+    assert!(
+        matches!(outcome.stop, Stop::Budget(_)),
+        "{:?}",
+        outcome.stop
+    );
+    assert_eq!(
+        transport.requests.len(),
+        1,
+        "the second request was never sent"
+    );
     assert!(outcome.facts.spent_usd <= 5.5);
     Ok(())
 }
@@ -303,7 +368,11 @@ fn pages_are_counted_for_the_estimate() -> Fallible {
     let Datasheet::File(path) = datasheet(&dir)? else {
         return Err("a file".into());
     };
-    assert_eq!(pdf_pages(&std::fs::read(&path)?), 2, "two pages, not the page tree");
+    assert_eq!(
+        pdf_pages(&std::fs::read(&path)?),
+        2,
+        "two pages, not the page tree"
+    );
     let (_, tokens) = documents(&[Datasheet::File(path)])?;
     assert_eq!(tokens, 2 * TOKENS_PER_PAGE);
     Ok(())
