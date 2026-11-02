@@ -485,6 +485,10 @@ pub(super) fn classify(error: &EvalAltResult) -> ErrorClass {
                 .unwrap_or_default();
             ErrorClass::Reference(at(text))
         }
+        EvalAltResult::ErrorFunctionNotFound(signature, ..) => ErrorClass::Runtime(at(format!(
+            "{signature} is not a rule helper; a rule calls only {}",
+            super::HELPER_NAMES
+        ))),
         EvalAltResult::ErrorRuntime(value, ..) if value.is_string() => {
             ErrorClass::Runtime(at(value.to_string()))
         }

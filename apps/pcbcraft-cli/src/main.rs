@@ -3,6 +3,7 @@
 mod design_part;
 mod firmware;
 mod pinout;
+mod review_diff;
 mod rules_profile;
 mod sample_packages;
 
@@ -44,6 +45,7 @@ fn usage() -> String {
         firmware::USAGE,
         rules_profile::USAGE,
         design_part::USAGE,
+        review_diff::USAGE,
     ]
     .into_iter()
     .filter(|u| !u.is_empty())
@@ -140,6 +142,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),
         [command, rest @ ..] if command == "rules-profile" => rules_profile::run(rest),
         [command, rest @ ..] if command == "design-part" => design_part::run(rest),
+        [command, rest @ ..] if command == "review-diff" => review_diff::run(rest),
         _ => Err(usage().into()),
     }
 }

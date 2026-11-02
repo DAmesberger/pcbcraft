@@ -16,8 +16,9 @@ pub const API_VERSION: &str = "2026-10-21";
 /// "default"`).
 pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// Longest wait for one response: a long turn over two datasheets can run
-/// several minutes.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// several minutes, and a retry after a cut-off may write up to
+/// `Settings::max_tokens_after_cut` tokens without streaming.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// Largest response body read.
 const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 

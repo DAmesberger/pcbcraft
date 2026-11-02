@@ -495,6 +495,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "function.gpio",
     "function.label",
     "function.mux",
+    "function.mux_table",
     "function.pin_option",
     "function.resource_unknown",
     "graphic.degenerate",

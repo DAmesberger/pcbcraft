@@ -22,6 +22,7 @@ fn function(id: u32, label: &str, role: Option<(u32, u32)>) -> Function {
             role: RoleId(role),
         }),
         mux: None,
+        mux_table: None,
         source: None,
     }
 }
@@ -237,12 +238,15 @@ fn require_verdicts_block_electrical_resolution_and_warn_verdicts_are_erc_notes(
 #[test]
 fn a_rule_failing_on_an_assignment_is_a_blocking_finding_not_a_rejection() -> Result<()> {
     let mut engine = Engine::default();
+    // The name is computed, so publishing's samples (which activate the
+    // functions a rule names literally) cannot reach the loop; the
+    // literal form is refused at publish (next test).
     let f = mcu(
         &mut engine,
         vec![rule(
             90,
             "spin_on_spi",
-            r#"if active("SCK.spi_sck") { loop {} } ok()"#,
+            r#"let pin = "SC" + "K"; if active(pin, "spi_sck") { loop {} } ok()"#,
         )],
     )?;
     publish(&mut engine, f.all())?;
@@ -261,6 +265,56 @@ fn a_rule_failing_on_an_assignment_is_a_blocking_finding_not_a_rejection() -> Re
             .starts_with("U1: Pin rule ‘spin_on_spi’: The rule ran out of operations")
     );
     assert!(!report.electrically_resolved);
+    Ok(())
+}
+
+#[test]
+fn publishing_evaluates_each_rule_with_the_functions_it_names_active() -> Result<()> {
+    // Each rule is fine without selections and fails only on a branch a
+    // named function opens: an endless loop, a helper that does not
+    // exist, a branch that ends in a statement (no verdict).
+    for (script, code, cause) in [
+        (
+            r#"if active("SCK.spi_sck") { loop {} } ok()"#,
+            "rule.budget",
+            "operations",
+        ),
+        (
+            r#"if active("SCK", "spi_sck") { pin_used("SCK") } else { ok() }"#,
+            "rule.runtime",
+            "is not a rule helper",
+        ),
+        (
+            r#"if active("SCK.spi_sck") { let note = warn("SPI clock"); } else { ok() }"#,
+            "rule.runtime",
+            "must end with",
+        ),
+    ] {
+        let mut engine = Engine::default();
+        let f = mcu(&mut engine, vec![rule(90, "branchy", script)])?;
+        let kept = Snapshot::of(&engine);
+        assert_eq!(
+            publish(&mut engine, f.all()).err().map(|e| e.code()),
+            Some("conflict"),
+            "{script}"
+        );
+        kept.assert_kept(&engine, script);
+        let findings = check(
+            &engine,
+            crate::completeness::CheckTarget::Draft(f.component),
+        )?
+        .findings;
+        let finding = findings
+            .iter()
+            .find(|f| f.code == code)
+            .ok_or_else(|| Error::NotFound(format!("{code} for {script}: {findings:?}")))?;
+        assert!(
+            finding.message.contains("fails with SCK.spi_sck active")
+                && finding.message.contains(cause),
+            "{}",
+            finding.message
+        );
+    }
     Ok(())
 }
 

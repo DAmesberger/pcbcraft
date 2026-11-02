@@ -195,7 +195,13 @@ impl ComponentDefinition {
                 .into_iter()
                 .map(|p| issue(p.code, p.message, vec![object(id, p.local)])),
         );
-        out.extend(functions::rules::declaration_findings(id, &self.pin_rules));
+        // Compilation, references and evaluation: without selections and
+        // over the samples each rule names.
+        out.extend(functions::rules::publish_findings(
+            id,
+            Some((&declarations, &self.resources)),
+            &self.pin_rules,
+        ));
         if let Some(marking) = &self.marking {
             out.extend(super::marking::spec_findings(id, marking));
             out.extend(super::marking::artwork_findings(library, id, marking));

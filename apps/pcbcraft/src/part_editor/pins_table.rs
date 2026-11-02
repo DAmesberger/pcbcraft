@@ -153,9 +153,9 @@ pub fn chip_fill(component: &ComponentDefinition, function: &Function) -> Color3
 
 /// A function's chip text: its label and mux code.
 pub fn chip_text(function: &Function) -> String {
-    match &function.mux {
-        Some(mux) if !mux.0.is_empty() => format!("{} {}", function.label, mux.0),
-        _ => function.label.clone(),
+    match function.mux_text() {
+        Some(mux) => format!("{} {mux}", function.label),
+        None => function.label.clone(),
     }
 }
 
@@ -962,6 +962,7 @@ pub fn document(
                     peripheral: peripheral.map(str::to_owned),
                     role: role.map(str::to_owned),
                     mux: mux.map(str::to_owned),
+                    mux_table: None,
                 });
             }
         }
@@ -1023,6 +1024,7 @@ pub fn document(
                 peripheral: None,
                 role: None,
                 mux: None,
+                mux_table: None,
             });
         }
         let port = port_column.map(cell).filter(|p| !p.is_empty());
