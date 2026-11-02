@@ -134,7 +134,7 @@ fn ribbon_tooltips_include_shortcuts() -> Result<(), Box<dyn std::error::Error>>
     };
     let route = tip("route").ok_or("route")?;
     assert_eq!(route.title, "Route (R)");
-    assert_eq!(route.key.as_deref(), Some("X"));
+    assert_eq!(route.key.as_deref(), Some("R"));
     assert!(route.body.contains("Route copper"));
     assert_eq!(tip("via").ok_or("via")?.title, "Via (V)");
     assert_eq!(tip("fill").ok_or("fill")?.title, "Fill (P)");

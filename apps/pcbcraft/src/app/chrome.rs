@@ -284,6 +284,14 @@ impl App {
                     {
                         self.shortcut_sheet.open();
                     }
+                    let key =
+                        self.with_shortcut("Change keys and the key reveal", AppCommand::Settings);
+                    if ui_kit::button(ui, "Settings…", Button::Normal)
+                        .on_hover_text(key)
+                        .clicked()
+                    {
+                        self.settings_window.open();
+                    }
                 });
             });
     }

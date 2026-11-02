@@ -212,6 +212,7 @@ impl App {
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,
+            AppCommand::Settings => self.settings_window.toggle(),
             AppCommand::LibrarySources => self.sources.open_card(),
             AppCommand::Workspace(workspace) => self.enter(workspace),
             AppCommand::FitView => self.fit_view(),

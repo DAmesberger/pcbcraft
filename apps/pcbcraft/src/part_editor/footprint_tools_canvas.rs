@@ -429,61 +429,34 @@ impl PartEditor {
     /// Keys of the sketch tools. Plain letters only act while no text
     /// field has the keyboard.
     fn footprint_tool_keys(&mut self, ui: &Ui) {
-        use egui::{Key, Modifiers};
+        use crate::keys::{pressed, pressed_tool};
         if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
-        let space = ui.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(
-                    e,
-                    egui::Event::Key {
-                        key: Key::Space,
-                        pressed: true,
-                        repeat: false,
-                        ..
-                    }
-                )
-            })
-        });
-        if space {
+        let ctx = ui.ctx().clone();
+        // A held Space pans (navigation); its press turns the next pad.
+        if crate::keys::pressed_once(&ctx, "footprint.turn") {
             self.footprint_tool.turn();
         }
-        let pressed = |modifiers, key| ui.input_mut(|i| i.consume_key(modifiers, key));
-        // Shift chords first: a plain pattern also matches with Shift held.
-        if pressed(Modifiers::SHIFT, Key::R) {
+        if pressed(&ctx, "footprint.repeat") {
             self.footprint_tool.repeat();
         }
         for tool in FootprintTool::ALL {
-            if let Some(k) = tool.key().filter(|k| k.shift)
-                && pressed(Modifiers::SHIFT, k.key)
-            {
+            if pressed_tool(&ctx, "footprint", tool.id()) {
                 self.footprint_arm(tool);
             }
         }
-        for tool in FootprintTool::ALL {
-            if let Some(k) = tool.key().filter(|k| !k.shift)
-                && ui.input(|i| !i.modifiers.shift && !i.modifiers.command && !i.modifiers.alt)
-                && ui.input_mut(|i| i.consume_key(Modifiers::NONE, k.key))
-            {
-                self.footprint_arm(tool);
-            }
-        }
-        if ui.input(|i| !i.modifiers.shift && !i.modifiers.command && !i.modifiers.alt)
-            && pressed(Modifiers::NONE, Key::X)
-        {
+        if pressed(&ctx, "footprint.layer") {
             self.footprint_tool.layer = if self.footprint_tool.layer == ActiveLayer::Construction {
                 ActiveLayer::Silkscreen
             } else {
                 ActiveLayer::Construction
             };
         }
-        if !self.footprint_tool.selection.is_empty()
-            && (pressed(Modifiers::NONE, Key::Delete) || pressed(Modifiers::NONE, Key::Backspace))
-        {
+        if !self.footprint_tool.selection.is_empty() && pressed(&ctx, "footprint.delete") {
             self.footprint_tool.delete_requested = true;
         }
-        if pressed(Modifiers::NONE, Key::Escape) {
+        if pressed(&ctx, "footprint.cancel") {
             self.footprint_tool.cancel();
             self.footprint_tool.drag = None;
         }
@@ -510,16 +483,10 @@ impl PartEditor {
         let Some(tool) = self.footprint_tool_armed() else {
             return false;
         };
-        let key = tool
-            .key()
-            .map(|k| {
-                let name = k.key.name();
-                if k.shift {
-                    format!("\u{21e7}{name}")
-                } else {
-                    name.to_owned()
-                }
-            })
+        let keymap = crate::keys::registry(ui.ctx());
+        let key = keymap
+            .get_parts("footprint", tool.id())
+            .and_then(|c| keymap.shortcut(c))
             .unwrap_or_default();
         let (hint, tip) = tool_hint(tool);
         let card = kit::ToolCard {

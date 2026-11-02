@@ -4,6 +4,8 @@ mod commands;
 mod file_ui;
 mod fill_worker;
 mod issues;
+mod keymap;
+mod keys;
 mod kit;
 mod layer_view;
 mod library_sources;

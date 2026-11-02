@@ -209,12 +209,12 @@ fn tool_tables_are_listed_with_their_keys() -> Result<(), String> {
 /// cannot read is kept as text.
 #[test]
 fn key_tables_add_display_only_entries() {
-    let registry = Registry::default().with_key_table(
+    let registry = Registry::default().with_keys(
         Context::PcbRoute,
         &[
-            ("W", "Next width"),
-            ("⇧W", "Previous width"),
-            ("Wheel", "Zoom"),
+            KeyDecl::new("t.next", "W", "Next width"),
+            KeyDecl::new("t.previous", "⇧W", "Previous width"),
+            KeyDecl::new("t.zoom", "Wheel", "Zoom"),
         ],
     );
     let entries = registry.commands();
@@ -232,39 +232,103 @@ fn key_tables_add_display_only_entries() {
     assert!(registry.search("width", &[], &[]).is_empty());
 }
 
-/// The Route tool's real table: compound cells become several chords,
-/// shown as one cell; "Click" is text.
+/// The Route tool's declared keys are commands of their own: each
+/// direction of a cycle is its own key, the layer digits are nine
+/// commands, F flips with or without Shift, and "Click" is text that
+/// cannot be bound.
 #[test]
-fn the_route_tool_table_is_listed_with_every_key() -> Result<(), String> {
+fn the_route_tool_keys_are_commands() -> Result<(), String> {
     let registry = Registry::standard();
     let rows: Vec<&Command> = registry
         .commands()
         .iter()
-        .filter(|c| c.id.starts_with("keys.pcbroute."))
+        .filter(|c| c.context == Context::PcbRoute)
         .collect();
     assert_eq!(rows.len(), crate::pcb_editor::ROUTE_KEYS.len());
-    let row = |key: egui::Key| {
-        rows.iter()
-            .find(|c| registry.chords(c).contains(&Chord::key(key)))
-            .copied()
-    };
-    let layers = row(K::Num5).ok_or("1 to 9")?;
-    assert_eq!(registry.chords(layers).len(), 9);
-    assert_eq!(registry.shortcut(layers).as_deref(), Some("1–9"));
-    let via = row(K::V).ok_or("V")?;
+    let chords = |id: &str| registry.get(id).map(|c| registry.chords(c));
+    assert_eq!(chords("route.width-next"), Some(vec![Chord::key(K::W)]));
+    assert_eq!(
+        chords("route.width-previous"),
+        Some(vec![Chord::key(K::W).with_shift()])
+    );
+    assert_eq!(chords("route.layer-5"), Some(vec![Chord::key(K::Num5)]));
+    assert_eq!(
+        chords("route.flip"),
+        Some(vec![Chord::key(K::F), Chord::key(K::F).with_shift()])
+    );
+    let click = registry.get("route.click").ok_or("click")?;
+    assert_eq!(registry.shortcut(click).as_deref(), Some("Click"));
+    assert!(!Registry::bindable(click));
+    let mut rebound = registry.clone();
+    assert!(
+        rebound
+            .rebind("route.click", Some(Chord::key(K::K)))
+            .is_err()
+    );
+    Ok(())
+}
+
+/// A rebinding moves the key everywhere the registry is read: lookup,
+/// the shown key and the shortcuts sheet; Reset gives the default back.
+#[test]
+fn a_rebinding_reaches_lookup_display_and_the_sheet() -> Result<(), String> {
+    let mut registry = Registry::standard();
+    registry.rebind("route.width-next", Some(Chord::key(K::Q)))?;
+    let active = active_contexts(Context::PcbRoute);
+    let id = |registry: &Registry, chord| registry.resolve(chord, &active).map(|c| c.id.clone());
+    assert_eq!(
+        id(&registry, Chord::key(K::Q)).as_deref(),
+        Some("route.width-next")
+    );
+    assert_eq!(id(&registry, Chord::key(K::W)), None);
+    let command = registry.get("route.width-next").ok_or("width")?;
+    assert_eq!(registry.shortcut(command).as_deref(), Some("Q"));
+    assert!(registry.is_custom("route.width-next"));
+    let sheet = crate::app::sheet_rows(&registry, "next track width", &active);
+    assert_eq!(sheet, vec![("Next track width".to_owned(), "Q".to_owned())]);
+    registry.reset("route.width-next");
+    assert_eq!(
+        id(&registry, Chord::key(K::W)).as_deref(),
+        Some("route.width-next")
+    );
+    Ok(())
+}
+
+/// A key another command holds is refused with that command's name; Swap
+/// trades the two keys as one change, and is refused (changing nothing)
+/// when the freed key would clash with a third command.
+#[test]
+fn conflicts_are_refused_or_swapped() -> Result<(), String> {
+    let mut registry = Registry::standard();
+    let refused = registry.rebind("pcb.tune", Some(Chord::key(K::B)));
+    assert!(refused.is_err_and(|why| why.contains("Board shape")));
+    assert_eq!(
+        registry
+            .conflict_for("pcb.tune", Chord::key(K::B))
+            .map(|c| c.id.as_str()),
+        Some("pcb.board-shape")
+    );
+    // Route's V shadows the Via tool only: Route cannot take V.
     assert!(
         registry
-            .chords(via)
-            .contains(&Chord::key(K::V).with_shift())
+            .rebind("pcb.route", Some(Chord::key(K::V)))
+            .is_err()
     );
-    assert_eq!(
-        registry.shortcut(via),
-        Some(format!("V, {}", Chord::key(K::V).with_shift().shown()))
-    );
+    registry.swap("pcb.tune", Chord::key(K::B))?;
+    let chord = |r: &Registry, id: &str| r.get(id).and_then(|c| r.chord(c));
+    assert_eq!(chord(&registry, "pcb.tune"), Some(Chord::key(K::B)));
+    assert_eq!(chord(&registry, "pcb.board-shape"), Some(Chord::key(K::T)));
+    assert_eq!(registry.conflicts(), vec![]);
+    // Wire taking Fit view's F would hand W to Fit view, which applies
+    // everywhere and would clash with the Route tool's W: refused, and
+    // nothing changes.
+    let mut three = Registry::standard();
     assert!(
-        rows.iter()
-            .any(|c| c.chord.is_none() && registry.shortcut(c).as_deref() == Some("Click"))
+        three
+            .swap("schematic.wire", Chord::key(K::F))
+            .is_err_and(|why| why.contains("track width"))
     );
+    assert!(three.overrides().is_empty());
     Ok(())
 }
 
