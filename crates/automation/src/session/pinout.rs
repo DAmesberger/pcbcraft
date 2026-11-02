@@ -7,11 +7,13 @@ use crate::Result;
 use serde_json::Value;
 
 impl Session {
-    /// The pinout document schema, with its format number.
+    /// The pinout document schema, with its format number and the pin
+    /// rule script contract (helpers, verdicts, examples).
     pub(super) fn pinout_schema(&self) -> Result<Value> {
         Ok(serde_json::json!({
             "format": pcbcraft_core::library::pinout::PINOUT_FORMAT,
             "schema": pcbcraft_core::library::pinout::schema(),
+            "rule_api": pcbcraft_core::functions::rules::RULE_API,
         }))
     }
 }

@@ -74,6 +74,12 @@ pub struct Function {
     /// C2: the vendor's alternate-function selector, opaque data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mux: Option<MuxCode>,
+    /// Which of the vendor's mux tables `mux` belongs to ("IO MUX",
+    /// "LP IO MUX", "analog") when a part numbers several tables from the
+    /// same codes; opaque data like the code, at most
+    /// [`pin_config::MAX_MUX_TABLE`] bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux_table: Option<String>,
     /// C3: where an imported function came from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceSpan>,
@@ -374,11 +380,33 @@ impl Function {
         };
         drive_ok && (self.signal == SignalKind::Power) == self.direction.is_power()
     }
+
+    /// The mux selector as people read it: the table and the code ("LP IO
+    /// MUX F0"), the code alone ("AF7") when no table is named, the table
+    /// alone when it has no code; `None` without either.
+    pub fn mux_text(&self) -> Option<String> {
+        mux_text(
+            self.mux_table.as_deref(),
+            self.mux.as_ref().map(|m| m.0.as_str()),
+        )
+    }
     fn key(&self, terminal: TerminalId) -> FunctionKey {
         FunctionKey {
             terminal,
             function: self.id,
         }
+    }
+}
+
+/// [`Function::mux_text`] of a table and a code.
+pub fn mux_text(table: Option<&str>, code: Option<&str>) -> Option<String> {
+    let table = table.map(str::trim).filter(|t| !t.is_empty());
+    let code = code.map(str::trim).filter(|c| !c.is_empty());
+    match (table, code) {
+        (Some(t), Some(c)) => Some(format!("{t} {c}")),
+        (Some(t), None) => Some(t.to_owned()),
+        (None, Some(c)) => Some(c.to_owned()),
+        (None, None) => None,
     }
 }
 
@@ -406,6 +434,7 @@ impl TerminalFunctions {
                 drive,
                 resource_role: None,
                 mux: None,
+                mux_table: None,
                 source: None,
             }],
             design_default: None,
@@ -435,7 +464,11 @@ impl TerminalFunctions {
         self.functions.len() <= MAX_FUNCTIONS
             && self.functions.iter().all(|f| {
                 f.label.len() <= MAX_LABEL
-                    && pin_config::function_within_bounds(f.mux.as_ref(), f.source.as_ref())
+                    && pin_config::function_within_bounds(
+                        f.mux.as_ref(),
+                        f.mux_table.as_deref(),
+                        f.source.as_ref(),
+                    )
             })
             && pin_config::terminal_within_bounds(self.gpio.as_ref(), &self.options)
     }

@@ -23,6 +23,7 @@ fn pin(terminal: u32, name: &str, function: &str, firmware_name: &str, index: u1
         role: None,
         signal: None,
         mux: None,
+        mux_table: None,
         pull: None,
         speed: None,
         initial: None,
@@ -130,6 +131,38 @@ fn the_c_header_defines_ports_pins_and_mux_codes() -> Fallible<()> {
     defines.sort_unstable();
     defines.dedup();
     assert_eq!(defines.len(), all);
+    Ok(())
+}
+
+#[test]
+fn mux_tables_are_named_beside_their_codes() -> Fallible<()> {
+    // A part whose IO MUX and LP IO MUX both start at F0.
+    let mut ir = report();
+    for pin in &mut ir.pins {
+        if pin.mux.is_some() {
+            pin.mux = Some("F0".into());
+            pin.mux_table = Some("LP IO MUX".into());
+        }
+    }
+    let header = emit(&ir, &Emitter::CHeader, None)?.text;
+    assert!(
+        header
+            .lines()
+            .any(|l| l == "#define CONSOLE_TX_MUX_TABLE \"LP IO MUX\""),
+        "{header}"
+    );
+    assert!(header.lines().any(|l| l == "#define CONSOLE_TX_AF \"F0\""));
+    let consts = emit(&ir, &Emitter::RustConsts, None)?.text;
+    assert!(
+        consts.contains("    mux_table: Some(\"LP IO MUX\"),"),
+        "{consts}"
+    );
+    assert!(consts.contains("    pub mux_table: Option<&'static str>,"));
+    // Without a table the field is None and the JSON leaves it out.
+    let plain = emit(&report(), &Emitter::RustConsts, None)?.text;
+    assert!(plain.contains("    mux_table: None,"));
+    let json = emit(&report(), &Emitter::Json, None)?.text;
+    assert!(!json.contains("mux_table"));
     Ok(())
 }
 

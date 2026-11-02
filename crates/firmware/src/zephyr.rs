@@ -102,9 +102,13 @@ pub fn emit(report: &PinConfigReport) -> String {
                 " *   {label}: {} as {}{}",
                 comment(&pin.name),
                 comment(&pin.function),
-                pin.mux
-                    .as_deref()
-                    .map_or_else(String::new, |m| format!(", mux {}", comment(m)))
+                pin.mux.as_deref().map_or_else(String::new, |m| {
+                    let table = pin
+                        .mux_table
+                        .as_deref()
+                        .map_or_else(String::new, |t| format!("{} ", comment(t)));
+                    format!(", mux {table}{}", comment(m))
+                })
             );
         }
         out.push_str(" */\n");

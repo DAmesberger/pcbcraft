@@ -98,17 +98,38 @@ fn script() -> Fallible<Vec<Value>> {
 fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     let target = json!({"target": "new", "name": "EXR-22"});
     let doc = pinout();
+    let mut workspace = tools::Workspace::default();
     let mut out = vec![tool_turn("t1", "library_pinout_schema", json!({}))];
-    let preview_input = json!({"target": target, "document": doc});
+    // The document in two chunks: header, peripherals and the first rows;
+    // then the remaining rows and the rules.
+    let pins = doc["pins"].as_array().ok_or("pins")?;
+    let (first, rest) = pins.split_at(12);
+    let chunks = [
+        json!({"format": doc["format"], "device": doc["device"], "variants": doc["variants"],
+            "peripherals": doc["peripherals"], "pins": first}),
+        json!({"pins": rest, "rules": doc["rules"]}),
+    ];
+    for (k, chunk) in chunks.into_iter().enumerate() {
+        reply_json(tools::execute(
+            &mut shadow,
+            &mut workspace,
+            "library_pinout_edit",
+            &chunk,
+        ))?;
+        out.push(tool_turn(&format!("t2{k}"), "library_pinout_edit", chunk));
+    }
+    let preview_input = json!({"target": target});
     let plan = reply_json(tools::execute(
         &mut shadow,
+        &mut workspace,
         "library_pinout_preview",
         &preview_input,
     ))?;
     out.push(tool_turn("t2", "library_pinout_preview", preview_input));
-    let apply_input = json!({"target": target, "document": doc, "base": plan["base"], "accept": {"accept": "all"}});
+    let apply_input = json!({"base": plan["base"]});
     let applied = reply_json(tools::execute(
         &mut shadow,
+        &mut workspace,
         "library_pinout_apply",
         &apply_input,
     ))?;
@@ -129,6 +150,7 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     let request = json!({"request": {"draft": package, "row": {"source": "custom", "family": "module"}, "values": module_values()}});
     reply_json(tools::execute(
         &mut shadow,
+        &mut workspace,
         "library_package_plan",
         &request,
     ))?;
@@ -189,14 +211,24 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     );
     let report = outcome.report.ok_or("a report")?;
     assert_eq!(report.part, "EXR-22");
-    // Eight responses at 500 in, 1000 out and 50 000 cache reads each:
-    // 8 × (0.002 + 0.02 + 0.01) = 0.256 USD.
+    // Ten responses at 500 in, 1000 out and 50 000 cache reads each:
+    // 10 × (0.002 + 0.02 + 0.01) = 0.32 USD.
     assert!(
-        (outcome.facts.spent_usd - 0.256).abs() < 1e-9,
+        (outcome.facts.spent_usd - 0.32).abs() < 1e-9,
         "{}",
         outcome.facts.spent_usd
     );
-    assert_eq!(outcome.facts.requests, 8);
+    assert_eq!(outcome.facts.requests, 10);
+    assert_eq!(outcome.facts.request_log.len(), 10);
+    assert_eq!(
+        outcome.facts.request_log[1].tools,
+        vec!["library_pinout_edit".to_owned()]
+    );
+    // The review lists every pin by package number and the rule's checks.
+    assert_eq!(outcome.facts.pins.len(), 23);
+    assert_eq!(outcome.facts.pins[0].number, "1");
+    assert_eq!(outcome.facts.rules.len(), 1);
+    assert!(outcome.facts.rules[0].failures.is_empty());
 
     // The drafts: component, symbol, package, footprint and binding.
     let drafts = &session.engine().drafts().items;
@@ -265,7 +297,16 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     // Each later request carries the previous turn's assistant content
     // unchanged and one user message of tool results.
     let last = transport.requests.last().ok_or("a request")?;
-    assert_eq!(last["messages"].as_array().map(Vec::len), Some(1 + 2 * 7));
+    assert_eq!(last["messages"].as_array().map(Vec::len), Some(1 + 2 * 9));
+    // The model never sent the document again to apply it.
+    let apply = transport
+        .requests
+        .iter()
+        .flat_map(|r| r["messages"].as_array().cloned().unwrap_or_default())
+        .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+        .find(|b| b["name"] == "library_pinout_apply")
+        .ok_or("the apply call")?;
+    assert!(apply["input"].get("document").is_none());
     Ok(())
 }
 
@@ -402,3 +443,4 @@ fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
 }
 
 mod board;
+mod run1;

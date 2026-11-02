@@ -86,11 +86,26 @@ pub(crate) fn preview(
         }
     }
     dedupe(&mut findings);
+    let rules = staged
+        .drafts
+        .iter()
+        .find_map(|d| match &d.definition {
+            crate::library::Definition::Component(c) => {
+                Some(crate::functions::rules::check_samples(
+                    &c.declarations(),
+                    &c.resources,
+                    &c.pin_rules,
+                ))
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
     Ok(PinoutPlan {
         base,
         changes: staged.changes,
         findings,
         review: staged.review,
+        rules,
     })
 }
 

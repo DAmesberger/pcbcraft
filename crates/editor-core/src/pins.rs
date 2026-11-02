@@ -38,6 +38,9 @@ pub struct ReportFunction {
     pub signal: Option<String>,
     #[serde(default)]
     pub mux: Option<String>,
+    /// The mux table the code belongs to, when the part has several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux_table: Option<String>,
     /// Whether someone selected this function on the instance; `false`
     /// when it is active only as the terminal's fixed or default function.
     #[serde(default)]
@@ -233,6 +236,7 @@ fn report_function(
         role_label: role.map(|r| r.label.clone()),
         signal: role.and_then(|r| r.signal.clone()),
         mux: function.mux.as_ref().map(|m| m.0.clone()),
+        mux_table: function.mux_table.clone(),
         selected: active.origin == crate::functions::ActiveOrigin::Selected,
     })
 }

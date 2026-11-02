@@ -75,6 +75,9 @@ pub fn emit(report: &PinConfigReport) -> String {
                 let _ = writeln!(out, "#define {name}_AF_NUM {number}");
             }
         }
+        if let Some(table) = &pin.mux_table {
+            let _ = writeln!(out, "#define {name}_MUX_TABLE {}", c_string(table));
+        }
         if let Some(pull) = pin.pull {
             let _ = writeln!(out, "#define {name}_PULL PCBCRAFT_PULL_{}", pull_name(pull));
         }

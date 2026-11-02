@@ -15,4 +15,6 @@ pcbcraft-cli design-part --replay examples/esp32-s31-wroom-3/wroom3.replay.jsonl
   --name ESP32-S31-WROOM-3 --out new.pcbcraft
 ```
 
+- `run1/`: the first live Claude API run (`claude-opus-5-5`, $7.23): its recorded responses (`run1.recording.jsonl`, replayed by the `pcbcraft-assist` tests) and the project it produced. [docs/datasheet-assistant-run1.md](../../docs/datasheet-assistant-run1.md) compares it with the reference above; `pcbcraft-cli review-diff run1/esp32-s31-wroom-3.pcbcraft esp32-s31-wroom-3.pcbcraft run1 reference` lists the differences.
+
 Provenance: the values come from Espressif's public documentation (ESP32-S31-WROOM-3 & -3U datasheet v0.7, ESP32-S31 series datasheet v0.5, ESP32-S31 hardware design guidelines v0.3, all pre-release), downloaded from documentation.espressif.com. No EDA library data was used. The replay was written from those datasheets by the agent that built the assistant, because no API key was available; it is not a recording of a Claude API run and its usage figures are zero. The PDFs are not redistributed here.

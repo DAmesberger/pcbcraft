@@ -23,7 +23,7 @@ use pcbcraft_core::functions::rules::{MAX_PIN_RULES, PinRule, PinRuleScript};
 use pcbcraft_core::functions::{
     GpioRef, MAX_KIND, MAX_RESOURCES, MAX_ROLES, MuxCode, PinOption, Pull, Resource, ResourceRole,
     Role,
-    pin_config::{MAX_GPIO_PORT, MAX_MUX_CODE, MAX_OPTION_VALUES},
+    pin_config::{MAX_GPIO_PORT, MAX_MUX_CODE, MAX_MUX_TABLE, MAX_OPTION_VALUES},
 };
 use pcbcraft_core::ids::MAX_LABEL;
 use pcbcraft_core::library::ComponentDefinition;
@@ -930,6 +930,17 @@ impl PartEditor {
                 let mux = mux.trim().to_owned();
                 f.mux = (!mux.is_empty()).then_some(MuxCode(mux));
             }
+            let table = f.mux_table.clone().unwrap_or_default();
+            if let Some(table) = checked_row(
+                ui,
+                "Mux table",
+                &table,
+                "LP IO MUX",
+                byte_limit(MAX_MUX_TABLE, "A mux table name"),
+            ) {
+                let table = table.trim().to_owned();
+                f.mux_table = (!table.is_empty()).then_some(table);
+            }
             if let Some(source) = &f.source {
                 let text = match (source.page, &source.table) {
                     (Some(page), Some(table)) => format!("p. {page} · {table}"),
@@ -1261,7 +1272,9 @@ fn pin_summary(pin: &pcbcraft_core::library::pinout::PinoutPin) -> String {
             if let (Some(p), Some(r)) = (&f.peripheral, &f.role) {
                 text.push_str(&format!(" → {p} · {r}"));
             }
-            if let Some(mux) = &f.mux {
+            if let Some(mux) =
+                pcbcraft_core::functions::mux_text(f.mux_table.as_deref(), f.mux.as_deref())
+            {
                 text.push_str(&format!(" [{mux}]"));
             }
             text
