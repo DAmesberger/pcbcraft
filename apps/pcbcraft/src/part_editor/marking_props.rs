@@ -329,6 +329,9 @@ pub(super) fn laid_out(
     marking::layout_with(spec, inputs, &region)
 }
 
+/// SVG artwork text by content hash.
+pub(super) type ArtworkTexts = Vec<(pcbcraft_core::ContentHash, String)>;
+
 impl PartEditor {
     /// The marking the Component 3D view shows: the one the section edits
     /// (the component's, or the chosen Part's top mark), with what an
@@ -337,11 +340,7 @@ impl PartEditor {
     pub(super) fn shown_marking(
         &self,
         engine: &Engine,
-    ) -> Option<(
-        MarkingSpec,
-        MarkingInputs,
-        Vec<(pcbcraft_core::ContentHash, String)>,
-    )> {
+    ) -> Option<(MarkingSpec, MarkingInputs, ArtworkTexts)> {
         let set = self.draft.as_ref()?;
         let library = &engine.project().library;
         let state = &self.marking;

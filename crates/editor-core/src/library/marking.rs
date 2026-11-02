@@ -541,6 +541,9 @@ pub fn layout(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingLayou
     layout::run(spec, inputs)
 }
 
+/// A spec's region and chart on its surface, for [`layout_with`].
+pub type Region<'a> = dyn Fn(&MarkingSpec) -> Option<([f64; 2], Chart)> + 'a;
+
 /// Lay out `spec` and its decals, each in the area and chart `region`
 /// gives for it (the region of its surface; [`Placement::layout_area`] is
 /// applied here). A decal whose surface `region` cannot find lays out in
@@ -548,7 +551,7 @@ pub fn layout(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingLayou
 pub fn layout_with(
     spec: &MarkingSpec,
     inputs: &MarkingInputs,
-    region: &dyn Fn(&MarkingSpec) -> Option<([f64; 2], Chart)>,
+    region: &Region<'_>,
 ) -> Result<MarkingLayout> {
     let one = |s: &MarkingSpec| -> Result<MarkingLayout> {
         let mut inputs = inputs.clone();

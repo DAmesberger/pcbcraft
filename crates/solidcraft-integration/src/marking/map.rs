@@ -78,7 +78,7 @@ impl SurfaceMap {
         let axis = unit(vec(cylinder.axis)).ok_or_else(degenerate)?;
         let zero = vec(cylinder.zero);
         let zero = unit(zero - axis * zero.dot(axis)).ok_or_else(degenerate)?;
-        if !finite || !(cylinder.radius > 0.0) || cylinder.base.iter().any(|v| v.abs() > 1e5) {
+        if !finite || cylinder.radius <= 0.0 || cylinder.base.iter().any(|v| v.abs() > 1e5) {
             return Err(degenerate());
         }
         Ok(Self::Cylinder {
