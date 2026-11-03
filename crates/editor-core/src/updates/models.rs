@@ -14,6 +14,7 @@ pub(super) fn of<'a>(
 ) -> Option<&'a Published<ModelDefinition>> {
     match &package?.model {
         PackageModel::Library(model) => project.library.model(model.model),
+        PackageModel::PartFile(part) => project.library.model(part.model),
         PackageModel::Envelope { .. } | PackageModel::Generated { .. } => None,
     }
 }

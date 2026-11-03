@@ -612,7 +612,7 @@ pub fn surface_region(
                 .then_some((size, Chart::Flat))
         }
         SurfaceRef::Anchor { name } => {
-            let found = surface::anchor_of(&package?.form, name)?;
+            let found = surface::package_anchor(package?, name)?;
             surface::region(&found.geometry, placement)
         }
     }
@@ -756,6 +756,7 @@ pub fn package_area(
             .model(model.model)
             .and_then(|m| m.definition.marking_area)
             .map(|area| area.size_mm)?,
+        (PackageModel::PartFile(part), _) => part.default_area()?,
         (_, PackageForm::Chip(c)) => [c.length - 2.0 * c.termination, c.width],
         (_, PackageForm::GullWing(g)) => [g.body_length, g.body_width],
         (_, PackageForm::NoLead(n)) => [n.body_length, n.body_width],

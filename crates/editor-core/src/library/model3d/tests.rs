@@ -768,6 +768,7 @@ fn import_and_assign_is_one_undo_step() -> Fallible<()> {
     let missing = request(Some(AssignModel {
         package: DefinitionId(999_999),
         lead_map: lead_map.clone(),
+        part: None,
     }));
     assert!(engine.apply(revision, missing).is_err());
     assert_eq!(engine.to_file(), before);
@@ -776,6 +777,7 @@ fn import_and_assign_is_one_undo_step() -> Fallible<()> {
         request(Some(AssignModel {
             package: fixture.package,
             lead_map: lead_map.clone(),
+            part: None,
         })),
     )?
     else {

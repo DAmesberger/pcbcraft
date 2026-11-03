@@ -592,6 +592,7 @@ pub fn assigning(
     request.assign = Some(AssignModel {
         package: package_id,
         lead_map,
+        part: None,
     });
     request
 }
@@ -1847,7 +1848,7 @@ mod tests {
         let request = assigning(w.request()?, DefinitionId(7), map);
         assert!(matches!(
             &request.assign,
-            Some(AssignModel { package: DefinitionId(7), lead_map }) if lead_map.len() == 2
+            Some(AssignModel { package: DefinitionId(7), lead_map, .. }) if lead_map.len() == 2
         ));
         Ok(())
     }

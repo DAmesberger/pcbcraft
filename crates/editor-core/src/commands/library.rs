@@ -862,12 +862,25 @@ pub(crate) fn apply_library(
                     .get(*id)
                     .and_then(|d| d.pending())
                     .ok_or_else(|| Error::NotFound("The new model draft is missing".into()))?;
-                let edits = [PackageEdit::SetModel(library::PackageModel::Library(
-                    library::model3d::LibraryModel {
-                        model: crate::ids::ModelRef::new(*id, revision),
+                let model = crate::ids::ModelRef::new(*id, revision);
+                let edits = [PackageEdit::SetModel(match assign.part {
+                    Some(part) => {
+                        if !assign.lead_map.is_empty() {
+                            return Err(Error::Invalid(
+                                "part.values: a part file takes no lead map".into(),
+                            ));
+                        }
+                        library::PackageModel::PartFile(library::package_model::PartFileModel {
+                            model,
+                            values: part.values,
+                            derived: part.derived,
+                        })
+                    }
+                    None => library::PackageModel::Library(library::model3d::LibraryModel {
+                        model,
                         lead_map: assign.lead_map,
-                    },
-                ))];
+                    }),
+                })];
                 let (current, package) = package_draft(document, assign.package)?;
                 let footprint = landing_footprint(document, assign.package).ok();
                 let edited = package_fit::edit_package_in(package, footprint, &edits)?;

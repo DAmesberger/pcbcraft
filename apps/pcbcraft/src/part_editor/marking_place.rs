@@ -57,7 +57,7 @@ pub fn surfaces(package: &PackageDefinition) -> Vec<SurfaceChoice> {
         label: "Marking area (top)".into(),
         cylinder: false,
     }];
-    for anchor in surface::anchors(&package.form) {
+    for anchor in surface::package_anchors(package) {
         out.push(SurfaceChoice {
             label: anchor_label(&anchor.name),
             cylinder: matches!(anchor.geometry, SurfaceGeometry::Cylinder(_)),

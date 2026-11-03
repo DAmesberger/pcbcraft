@@ -271,7 +271,7 @@ pub fn surfaces(package: &PackageDefinition) -> Vec<Value> {
             Some(&SurfaceGeometry::Plane(area)),
         ));
     }
-    for anchor in surface::anchors(&package.form) {
+    for anchor in surface::package_anchors(package) {
         out.push(described(
             &SurfaceRef::Anchor {
                 name: anchor.name.clone(),

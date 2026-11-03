@@ -633,6 +633,23 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
     out
 }
 
+/// The named anchors a package offers: a part file's derived surfaces
+/// (docs/part-templates.md §11), else its form's ([`anchors`]).
+pub fn package_anchors(package: &super::super::PackageDefinition) -> Vec<AnchorInfo> {
+    match &package.model {
+        super::super::PackageModel::PartFile(part) => part.derived.surfaces.clone(),
+        _ => anchors(&package.form),
+    }
+}
+
+/// The anchor `name` of `package`, if it offers one ([`package_anchors`]).
+pub fn package_anchor(
+    package: &super::super::PackageDefinition,
+    name: &str,
+) -> Option<AnchorInfo> {
+    package_anchors(package).into_iter().find(|a| a.name == name)
+}
+
 /// The anchor `name` of `form`, if it offers one.
 pub fn anchor_of(form: &PackageForm, name: &str) -> Option<AnchorInfo> {
     anchors(form).into_iter().find(|a| a.name == name)

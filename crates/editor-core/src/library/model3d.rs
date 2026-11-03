@@ -455,7 +455,8 @@ impl ModelDefinition {
             }
         }
         // Bodies and materials.
-        if self.bodies.is_empty() {
+        // A part file's looks come from its appearance names (§11 L2).
+        if self.bodies.is_empty() && self.format != ModelFormat::Solidcraft {
             out.push(block(
                 "model.body_unmapped",
                 "The model maps no body to a role and material.".into(),
@@ -592,6 +593,21 @@ pub struct AssignModel {
     /// A package draft.
     pub package: DefinitionId,
     pub lead_map: Vec<LeadMapEntry>,
+    /// The new model is a part file (format `solidcraft`) the package uses
+    /// at these values (`PackageModel::PartFile`); the lead map is then
+    /// empty (docs/part-templates.md §11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<AssignPart>,
+}
+
+/// The part-file use `library.import_model` assigns: values and what the
+/// host evaluated them to.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssignPart {
+    #[serde(default)]
+    pub values: std::collections::BTreeMap<String, super::package_model::PartValue>,
+    pub derived: super::package_model::PartDerived,
 }
 
 /// Findings of a package that uses a library model and that need only the
@@ -715,6 +731,63 @@ pub fn library_findings(
     }
 }
 
+/// Findings of a package's part file that need the model revision: the
+/// revision exists (`reference.missing`) and is a Solidcraft design
+/// (`part.model`, blocking), and the derived bounds exceed the envelope by
+/// at most [`BOUNDS_TOLERANCE_MM`] (`model.bounds`, advisory).
+pub fn part_findings(
+    library: &Library,
+    package: &PackageDefinition,
+    part: &super::package_model::PartFileModel,
+    id: DefinitionId,
+    out: &mut Vec<Finding>,
+) {
+    let this = || vec![ObjectRef::Definition { id }];
+    let Some(published) = library.model(part.model) else {
+        out.push(Finding::blocking(
+            "reference.missing",
+            format!(
+                "{} is missing from the project library.",
+                super::names::capitalised(&library.describe(part.model.erased()))
+            ),
+            vec![
+                ObjectRef::Definition { id },
+                ObjectRef::Definition { id: part.model.id },
+            ],
+            Stage::Publish,
+        ));
+        return;
+    };
+    if published.definition.format != ModelFormat::Solidcraft {
+        out.push(Finding::blocking(
+            "part.model",
+            format!(
+                "‘{}’ is a {} model; a part file is a SolidCraft design.",
+                published.meta.name,
+                published.definition.format.label()
+            ),
+            this(),
+            Stage::Publish,
+        ));
+    }
+    let [lo, hi] = part.derived.bounds_mm;
+    let excess = (0..3)
+        .map(|i| (hi[i] - lo[i]) - package.envelope[i])
+        .fold(f64::NEG_INFINITY, f64::max);
+    if excess > BOUNDS_TOLERANCE_MM {
+        out.push(Finding::new(
+            "model.bounds",
+            format!(
+                "The part ({:.3} × {:.3} × {:.3} mm) exceeds the package envelope by {excess:.3} mm.",
+                hi[0] - lo[0],
+                hi[1] - lo[1],
+                hi[2] - lo[2]
+            ),
+            this(),
+        ));
+    }
+}
+
 /// The largest excess of a model's bounds over an envelope, mm (negative:
 /// inside in every axis). Both are in the model frame.
 pub fn bounds_excess(model: &ModelDefinition, envelope: [f64; 3]) -> f64 {
@@ -752,11 +825,16 @@ pub fn snapshot_problems(library: &Library) -> Result<()> {
         }
     }
     for package in &library.packages {
-        let PackageModel::Library(model) = &package.definition.model else {
-            continue;
-        };
         let mut found = Vec::new();
-        library_findings(library, &package.definition, model, package.id, &mut found);
+        match &package.definition.model {
+            PackageModel::Library(model) => {
+                library_findings(library, &package.definition, model, package.id, &mut found);
+            }
+            PackageModel::PartFile(part) => {
+                part_findings(library, &package.definition, part, package.id, &mut found);
+            }
+            _ => continue,
+        }
         if let Some(blocking) = found.iter().find(|f| f.blocks_stage(Stage::Publish)) {
             return Err(Error::Invalid(format!(
                 "{}: package ‘{}’ {}: {}",

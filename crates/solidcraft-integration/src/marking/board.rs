@@ -232,7 +232,7 @@ impl Marked<'_> {
                 ))
             }
             SurfaceRef::Anchor { name } => {
-                let found = surface::anchor_of(&self.package?.form, name)?;
+                let found = surface::package_anchor(self.package?, name)?;
                 let world = |p: [f64; 3]| match self.point(p) {
                     Some(q) => Some(q),
                     // Unplaced (a preview drawn in its model frame).
@@ -619,7 +619,7 @@ pub fn surfaces(package: Option<&PackageDefinition>) -> Vec<SurfaceRef> {
     out.extend(BoxFace::ALL.map(|face| SurfaceRef::Face { face }));
     if let Some(package) = package {
         out.extend(
-            surface::anchors(&package.form)
+            surface::package_anchors(package)
                 .into_iter()
                 .map(|a| SurfaceRef::Anchor { name: a.name }),
         );

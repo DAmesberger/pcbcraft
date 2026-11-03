@@ -104,6 +104,10 @@ impl PackageDefinition {
                 PackageModel::Generated { materials, .. } => {
                     materials.roles.len() <= MAX_ROLE_MATERIALS
                 }
+                PackageModel::PartFile(part) => {
+                    part.values.len() <= super::package_model::MAX_PART_VALUES
+                        && part.derived.surfaces.len() <= super::package_model::MAX_PART_SURFACES
+                }
                 _ => true,
             }
     }
@@ -192,6 +196,15 @@ impl PackageDefinition {
                     out.push(issue(
                         "package.model_materials",
                         "Each body role takes at most one material.".into(),
+                        vec![this],
+                    ));
+                }
+            }
+            PackageModel::PartFile(part) => {
+                for problem in part.problems() {
+                    out.push(issue(
+                        "part.values",
+                        format!("The part file: {problem}."),
                         vec![this],
                     ));
                 }

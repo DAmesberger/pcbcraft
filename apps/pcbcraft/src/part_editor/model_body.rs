@@ -283,6 +283,10 @@ fn model_hint(model: &PackageModel) -> (&'static str, &'static str) {
             "Library model; check it against the datasheet",
             "A model from the 3D library, placed by the offset below; its leads map by the lead map",
         ),
+        PackageModel::PartFile(_) => (
+            "Part file; check it against the datasheet",
+            "A parametric SolidCraft part file built at this package's values; its marking surfaces are the file's marking planes",
+        ),
     }
 }
 
@@ -444,7 +448,7 @@ impl Source {
         match model {
             PackageModel::Generated { .. } => Self::Generated,
             PackageModel::Envelope { .. } => Self::Envelope,
-            PackageModel::Library(_) => Self::Library,
+            PackageModel::Library(_) | PackageModel::PartFile(_) => Self::Library,
         }
     }
 }
@@ -532,6 +536,34 @@ impl ModelCard {
                         body_mm: package.envelope,
                         pins: None,
                     },
+                }
+            }
+            PackageModel::PartFile(part) => {
+                let published = engine.project().library.model(part.model).is_some();
+                let [lo, hi] = part.derived.bounds_mm;
+                let name = crate::model_library::model_definition(engine, part.model).map_or_else(
+                    || "Missing part file".to_owned(),
+                    |(name, definition)| {
+                        if name.trim().is_empty() {
+                            definition.asset.file_name.clone()
+                        } else {
+                            name.to_owned()
+                        }
+                    },
+                );
+                Self {
+                    name,
+                    revision: Some(if published {
+                        part.model.revision.to_string()
+                    } else {
+                        "draft".into()
+                    }),
+                    detail: format!("SolidCraft part file · {} value(s)", part.values.len()),
+                    licence: crate::model_library::model_definition(engine, part.model)
+                        .and_then(|(_, d)| d.provenance.record.licence.clone()),
+                    leads: None,
+                    body_mm: [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]],
+                    pins,
                 }
             }
         }

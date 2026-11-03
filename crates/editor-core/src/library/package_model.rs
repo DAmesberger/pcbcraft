@@ -31,6 +31,169 @@ pub enum PackageModel {
     /// A revisioned 3D library model with an explicit lead map
     /// ([`super::model3d`]).
     Library(super::model3d::LibraryModel),
+    /// A parametric Solidcraft part file (a Model of format `solidcraft`)
+    /// with values for some of its parameters ([`PartFileModel`]).
+    PartFile(PartFileModel),
+}
+
+/// Values one part-file package gives.
+pub const MAX_PART_VALUES: usize = 256;
+/// Bytes of a part parameter name.
+pub const MAX_PART_NAME: usize = 64;
+/// Marking surfaces one part file offers.
+pub const MAX_PART_SURFACES: usize = 16;
+/// Bodies one part file may have (as a library model maps).
+pub const MAX_PART_BODIES: u32 = 1024;
+/// Largest literal a part value may be (mm, degrees or a number).
+const MAX_PART_LITERAL: f64 = 10_000.0;
+
+/// A literal value of one part-file parameter: never an expression, so a
+/// value cannot name another parameter and hashes canonically. JSON
+/// `{"mm": 3.1}`, `{"deg": 45}`, `{"count": 25}` or `{"number": 0.5}`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum PartValue {
+    Mm(f64),
+    Deg(f64),
+    Count(u32),
+    Number(f64),
+}
+
+impl PartValue {
+    /// The Solidcraft parameter unit the value needs: `mm`, `deg` or none.
+    pub fn unit(self) -> &'static str {
+        match self {
+            Self::Mm(_) => "mm",
+            Self::Deg(_) => "deg",
+            Self::Count(_) | Self::Number(_) => "",
+        }
+    }
+
+    /// The value as a Solidcraft literal expression (`3.1 mm`, `45 deg`,
+    /// `25`). Rust's float display is shortest round-trip and never uses
+    /// an exponent, so the literal reads back exactly.
+    pub fn expression(self) -> String {
+        match self {
+            Self::Mm(v) => format!("{v} mm"),
+            Self::Deg(v) => format!("{v} deg"),
+            Self::Count(n) => n.to_string(),
+            Self::Number(v) => v.to_string(),
+        }
+    }
+
+    /// Finite and within ±10000 (the document's geometry range).
+    pub fn finite(self) -> bool {
+        match self {
+            Self::Mm(v) | Self::Deg(v) | Self::Number(v) => {
+                v.is_finite() && v.abs() <= MAX_PART_LITERAL
+            }
+            Self::Count(n) => f64::from(n) <= MAX_PART_LITERAL,
+        }
+    }
+}
+
+/// What a part file evaluated to when a package was given it: derived by
+/// the host (`pcbcraft_solidcraft::models::part_file`), stored so the core
+/// lays out markings without evaluating Solidcraft, and rechecked by every
+/// board build (`part.stale` on a difference).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PartDerived {
+    /// Union of the bodies in the model frame, mm.
+    pub bounds_mm: [[f64; 3]; 2],
+    pub bodies: u32,
+    /// Marking surfaces from the part's `marking-*` construction planes,
+    /// model frame; the first is the default area.
+    #[serde(default)]
+    pub surfaces: Vec<super::marking::surface::AnchorInfo>,
+}
+
+/// A package's part file: an exact Model revision (format `solidcraft`),
+/// literal values by the part's own parameter names, and what it evaluated
+/// to (docs/part-templates.md §11).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PartFileModel {
+    pub model: crate::ids::ModelRef,
+    #[serde(default)]
+    pub values: std::collections::BTreeMap<String, PartValue>,
+    pub derived: PartDerived,
+}
+
+/// Whether `name` may name a part parameter: 1–64 ASCII letters, digits
+/// and underscores, not starting with a digit.
+pub fn part_parameter_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_PART_NAME
+        && name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        && !name.as_bytes()[0].is_ascii_digit()
+}
+
+impl PartFileModel {
+    /// Problems with the values and derived data on their own (finding
+    /// `part.values`): names, literals, bounds, body count and surfaces.
+    pub fn problems(&self) -> Vec<String> {
+        use super::marking::surface::SurfaceGeometry;
+        let mut out = Vec::new();
+        if self.values.len() > MAX_PART_VALUES {
+            out.push(format!("a part file takes at most {MAX_PART_VALUES} values"));
+        }
+        for (name, value) in &self.values {
+            if !part_parameter_name_ok(name) {
+                out.push(format!(
+                    "‘{}’ is not a parameter name (1–{MAX_PART_NAME} ASCII letters, digits and underscores)",
+                    name.chars().take(80).collect::<String>()
+                ));
+            } else if !value.finite() {
+                out.push(format!("the value of {name} must be finite and within ±10000"));
+            }
+        }
+        let d = &self.derived;
+        let [lo, hi] = d.bounds_mm;
+        if !(finite_within(&lo) && finite_within(&hi)) || (0..3).any(|i| hi[i] <= lo[i]) {
+            out.push("the derived bounds must be finite with positive size".into());
+        }
+        if d.bodies == 0 || d.bodies > MAX_PART_BODIES {
+            out.push(format!("a part file has 1–{MAX_PART_BODIES} bodies"));
+        }
+        if d.surfaces.len() > MAX_PART_SURFACES {
+            out.push(format!("a part file offers at most {MAX_PART_SURFACES} marking surfaces"));
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for s in &d.surfaces {
+            if !part_parameter_name_ok(&s.name) || !names.insert(s.name.as_str()) {
+                out.push(format!("marking surface ‘{}’ is unnamed or repeated", s.name));
+            }
+            if s.description.len() > super::MAX_LABEL {
+                out.push(format!("marking surface {} has too long a description", s.name));
+            }
+            let ok = match &s.geometry {
+                SurfaceGeometry::Plane(a) => {
+                    finite_within(&a.origin)
+                        && finite_within(&a.normal)
+                        && finite_within(&a.u_axis)
+                        && a.size_mm.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= MAX_PART_LITERAL)
+                }
+                SurfaceGeometry::Cylinder(_) => false,
+            };
+            if !ok {
+                out.push(format!(
+                    "marking surface {} must be a plane with finite axes and a positive size",
+                    s.name
+                ));
+            }
+        }
+        out
+    }
+
+    /// The default marking area's size: the first surface's.
+    pub fn default_area(&self) -> Option<[f64; 2]> {
+        use super::marking::surface::SurfaceGeometry;
+        self.derived.surfaces.iter().find_map(|s| match s.geometry {
+            SurfaceGeometry::Plane(a) => Some(a.size_mm),
+            SurfaceGeometry::Cylinder(_) => None,
+        })
+    }
 }
 
 impl QuickAction {
@@ -58,6 +221,11 @@ impl PackageModel {
             ),
             Self::Generated { family_rev, .. } => format!("generated (builder rev {family_rev})"),
             Self::Library(library) => format!("library model {}", library.model),
+            Self::PartFile(part) => format!(
+                "part file {} with {} value(s)",
+                part.model,
+                part.values.len()
+            ),
         }
     }
 }
