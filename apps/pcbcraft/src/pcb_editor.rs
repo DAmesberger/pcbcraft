@@ -643,8 +643,15 @@ impl PcbEditor {
     fn sync(&mut self, engine: &Engine) {
         // A route step the engine took continues the route; any other
         // change ends it.
-        let continued = self.settle_route(engine.project(), engine.revision());
-        if self.cached_revision != Some(engine.revision()) {
+        let revision = engine.revision();
+        let continued = self.settle_route(engine.project(), revision)
+            || self
+                .cached_revision
+                .is_some_and(|cached| self.route_revision(cached, revision) == cached);
+        self.route
+            .fill_stores
+            .retain(|(_, after)| *after > revision);
+        if self.cached_revision != Some(revision) {
             self.cancel_drag();
             if !continued {
                 self.reset_route();
@@ -1334,6 +1341,7 @@ impl PcbEditor {
         if self.tool == Tool::Route && response.clicked_by(PointerButton::Secondary) {
             self.finish_route();
         }
+        kit::tool_cursor(ui, &response, self.tool != Tool::Select);
         let double = self.tool == Tool::Route && response.double_clicked();
         if double {
             self.finish_route();
@@ -1509,13 +1517,18 @@ impl PcbEditor {
     fn pills(&mut self, ui: &mut Ui, rect: Rect, project: &Project) {
         let t = Tokens::get();
         let text = match (self.route_start, self.net, self.highlighted) {
-            (Some(_), Some(net), _) => format!(
-                "Routing {} · {} mm · {} · {}",
-                project.net_name(net),
-                kit::number_text(self.width),
-                self.route.posture.label(),
-                self.route.mode.label()
-            ),
+            (Some(_), Some(net), _) => {
+                let ctx = ui.ctx();
+                let width = format!("{} mm", kit::number_text(self.width));
+                format!(
+                    "Routing {} · {} · {} · {} · {}",
+                    project.net_name(net),
+                    crate::keys::labelled(ctx, &width, "route.width-next"),
+                    crate::keys::labelled(ctx, &self.layer.name(), "route.via-next"),
+                    crate::keys::labelled(ctx, self.route.posture.label(), "route.posture"),
+                    crate::keys::labelled(ctx, self.route.mode.label(), "route.router-mode-next"),
+                )
+            }
             (None, _, Some(net)) if project.net(net).is_some() => {
                 format!("{} highlighted", project.net_name(net))
             }
@@ -3788,6 +3801,14 @@ mod tests {
                 "{label} missing: {shown:?}"
             );
         }
+        // The settings rows show the keys that step them (W and M are
+        // past the first eight rows of the Keys list).
+        for key in ["W", "M", "D"] {
+            assert!(
+                shown.iter().any(|t| t == key),
+                "{key} chip missing: {shown:?}"
+            );
+        }
         // Not a placement section under the tool.
         assert!(!shown.iter().any(|t| t == "PLACEMENT"));
         assert!(click(&mut editor, &engine, &ctx, "Done")?.is_none());
@@ -3799,6 +3820,32 @@ mod tests {
         assert!(!editor.has_view_menu());
         editor.set_3d(false);
         assert!(editor.has_view_menu());
+        Ok(())
+    }
+
+    /// An armed tool shows a crosshair over the canvas; Select keeps the
+    /// default pointer.
+    #[test]
+    fn an_armed_tool_shows_a_crosshair() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let hover = || vec![egui::Event::PointerMoved(Pos2::new(450.0, 350.0))];
+        let cursor = |editor: &mut PcbEditor| {
+            canvas_frame(editor, &engine, &ctx, hover());
+            canvas_frame(editor, &engine, &ctx, hover())
+                .0
+                .platform_output
+                .cursor_icon
+        };
+        assert_eq!(cursor(&mut editor), egui::CursorIcon::Default);
+        for tool in ["route", "via", "fill"] {
+            editor.on_tool(tool, &engine);
+            assert_eq!(cursor(&mut editor), egui::CursorIcon::Crosshair, "{tool}");
+        }
+        editor.on_tool("select", &engine);
+        assert_eq!(cursor(&mut editor), egui::CursorIcon::Default);
         Ok(())
     }
 
@@ -3829,10 +3876,17 @@ mod tests {
         // Walkaround stop at the board edge instead).
         editor.route.mode = pcbcraft_core::layout::router::RouteMode::Ignore;
         let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        // Each setting shows the key that steps it, from the keymap.
+        let key = |text: &str, id: &str| crate::keys::labelled(&ctx, text, id);
         let pill = format!(
-            "Routing {} · 0.3 mm · 45° · Ignore",
-            engine.project().net_name(net)
+            "Routing {} · {} · {} · {} · {}",
+            engine.project().net_name(net),
+            key("0.3 mm", "route.width-next"),
+            key("Top", "route.via-next"),
+            key("45°", "route.posture"),
+            key("Ignore", "route.router-mode-next"),
         );
+        assert!(pill.contains("0.3 mm (W)"), "{pill}");
         assert!(texts(&output).contains(&pill));
         // A click far outside the board is refused by the engine.
         let operation = {

@@ -1220,6 +1220,7 @@ impl SchematicEditor {
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
+        crate::kit::tool_cursor(ui, &response, self.tool != Tool::Select);
         self.view = rect.size();
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;

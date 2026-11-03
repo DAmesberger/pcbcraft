@@ -129,6 +129,9 @@ pub(super) struct RouteState {
     pub(super) index: Option<(u64, Rc<RouteIndex>)>,
     /// The last step planned (the preview), with its inputs.
     pub(super) planned: Option<(PlanKey, Rc<Planned>)>,
+    /// Revisions the fill worker made by storing fill copper (from, to):
+    /// no track or via changed, so a route continues through them.
+    pub(super) fill_stores: Vec<(u64, u64)>,
 }
 
 /// What a planned step was planned from.
@@ -286,6 +289,7 @@ impl PcbEditor {
         let sent = match commit {
             Commit::Step { revision, .. } | Commit::Unwind { revision } => revision,
         };
+        let revision = self.route_revision(sent, revision);
         if revision == sent || sent.checked_add(1) != Some(revision) {
             return false;
         }
@@ -347,6 +351,27 @@ impl PcbEditor {
             }
         }
         true
+    }
+
+    /// The fill worker stored fill copper, moving the document from
+    /// `before` to `after`; a route in progress continues through it.
+    pub fn fills_stored(&mut self, before: u64, after: u64) {
+        if after > before {
+            self.route.fill_stores.push((before, after));
+        }
+    }
+
+    /// `revision` less the fill-store revisions made since `since`: the
+    /// revision as far as tracks and vias are concerned.
+    pub(super) fn route_revision(&self, since: u64, revision: u64) -> u64 {
+        let stored: u64 = self
+            .route
+            .fill_stores
+            .iter()
+            .filter(|(before, after)| *before >= since && *after <= revision)
+            .map(|(before, after)| after - before)
+            .sum();
+        revision.saturating_sub(stored)
     }
 
     /// The router's index of the board at `revision`, built once.

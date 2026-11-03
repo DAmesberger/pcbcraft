@@ -72,19 +72,37 @@ impl PcbEditor {
             .iter()
             .map(|m| (*m, m.label().to_owned()))
             .collect();
-        kit::choice_row(ui, "Router", &mut self.route.mode, &routers);
+        let key = |id: &str| crate::keys::shown(ui.ctx(), id);
+        let (router_key, mode_key, flip_key, width_key, layer_key) = (
+            key("route.router-mode-next"),
+            key("route.posture"),
+            key("route.flip"),
+            key("route.width-next"),
+            key("route.via-next"),
+        );
+        kit::keyed(ui, router_key, |ui| {
+            kit::choice_row(ui, "Router", &mut self.route.mode, &routers)
+        });
         if self.route.mode == RouteMode::Shove {
             let mut move_vias = !self.route.vias_stay;
             if kit::check_row(ui, "Shove vias", &mut move_vias) {
                 self.route.vias_stay = !move_vias;
             }
         }
-        kit::choice_row(ui, "Mode", &mut self.route.posture, &modes);
-        kit::check_row(ui, "Flip elbow", &mut self.route.flipped);
-        kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE);
+        kit::keyed(ui, mode_key, |ui| {
+            kit::choice_row(ui, "Mode", &mut self.route.posture, &modes)
+        });
+        kit::keyed(ui, flip_key, |ui| {
+            kit::check_row(ui, "Flip elbow", &mut self.route.flipped)
+        });
+        kit::keyed(ui, width_key, |ui| {
+            kit::number_row(ui, "Width", &mut self.width, "mm", WIDTH_RANGE)
+        });
         let options = copper_options(&self.stack);
         let mut layer = self.layer;
-        if kit::choice_row(ui, "Layer", &mut layer, &options) {
+        if kit::keyed(ui, layer_key, |ui| {
+            kit::choice_row(ui, "Layer", &mut layer, &options)
+        }) {
             // During a route this is a layer change through a via at the
             // head, as a layer key is.
             self.change_layer_to(project, layer, None);
@@ -160,8 +178,11 @@ impl PcbEditor {
             .route
             .via_draft
             .unwrap_or_else(|| self.route_via_size(project));
-        let drill_input = kit::row(ui, "Via drill", |ui| {
-            kit::number_input(ui, "Via drill", &mut drill, "mm", VIA_RANGE)
+        let size_key = crate::keys::shown(ui.ctx(), "route.via-size-next");
+        let drill_input = kit::keyed(ui, size_key, |ui| {
+            kit::row(ui, "Via drill", |ui| {
+                kit::number_input(ui, "Via drill", &mut drill, "mm", VIA_RANGE)
+            })
         });
         if let Some(message) = &drill_input.invalid {
             kit::field_error(ui, &drill_input.response, message, true);

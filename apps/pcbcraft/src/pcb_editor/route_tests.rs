@@ -641,3 +641,87 @@ fn a_rebound_route_key_drives_the_tool() -> TestResult {
     assert!(rows.contains(&("Q".to_owned(), "Next track width".to_owned())));
     Ok(())
 }
+
+/// Fill copper the fill worker stores after a step (a new revision with
+/// no undo step) does not end the route: the next click continues from
+/// the head. Boards with pours ended every route after one step.
+#[test]
+fn a_route_continues_through_fill_copper_stored_after_a_step() -> TestResult {
+    use pcbcraft_core::layout::fill::{FillCache, FillCommand, compute_stale};
+    use pcbcraft_core::library::{Outline, Segment};
+    use pcbcraft_core::model::fill::FillSpec;
+    let mut engine = Engine::demo()?;
+    let net = shared_net(&engine)?;
+    let other = engine
+        .project()
+        .nets
+        .iter()
+        .find(|n| n.id != net)
+        .map(|n| n.id)
+        .ok_or("another net")?;
+    let [w, h] = engine.project().board_size;
+    let outline = Outline {
+        start: [0.0, 0.0],
+        segments: vec![
+            Segment::Line { to: [w, 0.0] },
+            Segment::Line { to: [w, h] },
+            Segment::Line { to: [0.0, h] },
+            Segment::Line { to: [0.0, 0.0] },
+        ],
+    };
+    engine.apply(
+        engine.revision(),
+        Operation::Fill(FillCommand::Add {
+            fill: Box::new(FillSpec {
+                name: "pour".into(),
+                net: Some(other),
+                layer: CopperLayer::Top,
+                outline,
+                priority: 0,
+                settings: Default::default(),
+            }),
+        }),
+    )?;
+    let mut cache = FillCache::default();
+    // What the app's fill worker does: store the stale fills' copper
+    // without an undo step and tell the editor.
+    let mut store = |editor: &mut PcbEditor,
+                     engine: &mut Engine|
+     -> Result<usize, Box<dyn std::error::Error>> {
+        let before = engine.revision();
+        let copper = compute_stale(engine.project(), &mut cache)?;
+        let stored = engine.store_fills(before, copper)?;
+        editor.fills_stored(before, engine.revision());
+        Ok(stored)
+    };
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    store(&mut editor, &mut engine)?;
+    start(&mut canvas, &mut editor, &engine)?;
+    let first = canvas.click(&mut editor, &engine, [11.0, 11.0]);
+    canvas.apply(&mut editor, &mut engine, first)?;
+    assert_eq!(editor.route.steps.len(), 1);
+    // The pour is stale after the step; its new copper lands next.
+    let before = engine.revision();
+    assert!(store(&mut editor, &mut engine)? > 0, "the pour refilled");
+    assert!(engine.revision() > before);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert_eq!(editor.route_start, Some([11.0, 11.0]), "the route goes on");
+    let second = canvas.click(&mut editor, &engine, [13.0, 11.0]);
+    let legs = &edits(&second)?.add;
+    assert_eq!((legs[0].start, legs[0].end), ([11.0, 11.0], [13.0, 11.0]));
+    canvas.apply(&mut editor, &mut engine, second)?;
+    assert_eq!(
+        editor.route.steps.len(),
+        2,
+        "both steps belong to the route"
+    );
+    // A store that lands between a click and the next frame too.
+    let third = canvas.click(&mut editor, &engine, [13.0, 13.0]);
+    engine.apply(engine.revision(), third.ok_or("no third step")?)?;
+    store(&mut editor, &mut engine)?;
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert_eq!(editor.route.steps.len(), 3);
+    assert_eq!(editor.route_start, Some([13.0, 13.0]));
+    Ok(())
+}

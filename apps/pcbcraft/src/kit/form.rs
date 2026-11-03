@@ -612,6 +612,54 @@ pub fn rule(ui: &mut Ui) {
     t.secondary_hline(ui.painter(), rect.x_range(), rect.center().y, t.dialog_rule);
 }
 
+/// One form row (`add`) with `key`, the key of the command that steps
+/// this setting as the keymap has it, as a chip at the right of the
+/// label column; no chip without a key. Settings rows of a tool card use
+/// it so the key that changes a setting shows beside it.
+pub fn keyed<R>(ui: &mut Ui, key: Option<String>, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let t = Tokens::get();
+    let start = ui.cursor().min;
+    let width = ui.available_width().max(0.0);
+    let inner = add(ui);
+    if let Some(key) = key {
+        let label_width = t.form_label_width.min(width * 0.45);
+        let column = egui::Rect::from_min_size(start, vec2(label_width, t.control_height));
+        key_chip(ui, column, &key);
+    }
+    inner
+}
+
+/// A key chip right-aligned and centred in `column`.
+fn key_chip(ui: &Ui, column: egui::Rect, key: &str) {
+    let t = Tokens::get();
+    let galley = ui.painter().layout_no_wrap(
+        key.to_owned(),
+        egui::FontId::proportional(t.font_small),
+        t.form_dim,
+    );
+    let pad = vec2(t.space_4, t.space_4 / 2.0);
+    let size = galley.size() + 2.0 * pad;
+    let chip = egui::Rect::from_min_size(
+        egui::pos2(column.right() - size.x, column.center().y - size.y / 2.0),
+        size,
+    );
+    ui.painter().rect_stroke(
+        chip,
+        t.control_radius,
+        egui::Stroke::new(1.0, t.border),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(chip.min + pad, galley, t.form_dim);
+}
+
+/// The pointer over a canvas: a crosshair while a drawing or placing
+/// tool is armed, so every editor shows an armed tool the same way.
+pub fn tool_cursor(ui: &Ui, canvas: &Response, armed: bool) {
+    if armed && canvas.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

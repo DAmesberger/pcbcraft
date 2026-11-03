@@ -74,6 +74,12 @@ Tips are derived as follows (`reveal::assign_tips`):
 
 Tips never use digits or letters the title lacks. Each tip is unique on its level, and no two-letter tip starts with a one-letter tip, so typing is never ambiguous. The same visible set always gets the same tips. A test checks every workspace's ribbon and its modes.
 
+### Keys beside tool settings
+
+A tool card's settings rows show the key that steps them as a chip at the right of the label (`kit::keyed`, reading the effective keymap, so a rebinding shows at once). The Route card shows M on Router, / on Mode, F on Flip elbow, W on Width, V on Layer and D on Via drill. While a route is in progress the pill above the canvas repeats them: "Routing GND · 0.3 mm (W) · Top (V) · 45° (/) · Shove (M)".
+
+An armed drawing or placing tool shows a crosshair over the canvas (`kit::tool_cursor`), in Layout and in the schematic alike; Select keeps the arrow.
+
 ## Default keymap
 
 The keymap is original. Letters are mnemonic where they can be: R route, V via, T tune, P place or fill (pour), B board shape, W wire, L label, H highlight. Solidcraft's sketch keys are kept in the sketch-like tools.

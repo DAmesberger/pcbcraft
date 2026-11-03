@@ -23,6 +23,8 @@ Vocabulary: "template" already names package-row templates, footprint templates 
 - release 1 varies instances by **render-time markings only**, with no per-instance geometry overrides (the `instance` binding of D5 is deferred);
 - upstream PRs are approved to *prepare* (§8), starting with the **photoreal look** rather than the performance work. Each PR still needs the founder's OK before it is opened.
 
+**Revision (founder, 3 November 2026): lean parts, Solidcraft stays generic.** No Pcbcraft-specific data goes into Solidcraft, in the fork or upstream: no metadata namespace, attribute panel or interface block (this drops SC2, SC5 and the `org.pcbcraft.*` interface below). The fork extends only the generic material model: a data-only material node graph (MaterialX/OpenPBR-style; clear coat is a graph input, not a format field), designed in the fork's docs/material-graph.md and proposed upstream once proven. A part is an ordinary Solidcraft design: named parameters choose the variant; its origin is the footprint origin and z = 0 its seating plane; marking areas and anchors are named construction planes and points that Pcbcraft finds by documented names and checks itself. Footprints stay Pcbcraft's (package forms and the datasheet assistant) and do not come from the part file. Sections below that assume the interface metadata are superseded where they conflict with this paragraph.
+
 ## 1. Decisions
 
 | # | Decision | Why |
