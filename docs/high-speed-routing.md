@@ -104,7 +104,7 @@ The modules are built so the push-and-shove router ([as built](push-and-shove.md
 ## Limits and follow-ups
 
 - Impedance is quasi-static and ignores solder mask, etch and roughness; offset stripline and the coupled forms are approximations (see the table). A 2D field solver would be the accurate follow-up.
-- A stackup editor in the desktop is not part of this work: Dk and plane flags enter through `layout.set_stackup` (CLI and MCP).
+- Dk and plane flags enter through `layout.set_stackup` or `layout.edit_stackup` (CLI and MCP) or the desktop's Stackup dialog (Board card › Copper › Stackup…).
 - Pair routing pushes other copper and walks round obstacles as one unit ([push-and-shove](push-and-shove.md)); it does not keep the pair coupled through a bend tighter than its pitch. A pad-to-pad pair whose pads lie along the route direction fans out across the partner pad and is refused by the clearance check.
 - Tuning meanders one straight segment per click; it does not spread a meander over several segments or tune a whole pair at once, and the accordion needs room on both sides (it is refused next to the partner half).
 - Length counts via barrels between the layers used, not stubs; pad-internal and package (die) lengths are not included.

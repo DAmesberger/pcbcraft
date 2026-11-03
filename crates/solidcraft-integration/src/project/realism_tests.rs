@@ -462,3 +462,40 @@ fn a_through_hole_pad_s_lands_and_barrels_carry_their_own_layers() -> Result<()>
     }
     Ok(())
 }
+
+/// Any layer count: on twelve layers a track on Inner 9 is saved copper at
+/// its stackup height, and the laminate is the twelve-layer dielectric.
+#[test]
+fn a_twelve_layer_board_saves_deep_inner_copper_at_its_height() -> Result<()> {
+    let (mut project, tracks, _) = four_layer()?;
+    project.stackup = Stackup::preset(12).map_err(invalid)?;
+    let layer = CopperLayer::Inner(9);
+    for track in &mut project.tracks {
+        track.layer = layer;
+    }
+    let model = build(&project)?;
+    let substrate = model
+        .geometry
+        .iter()
+        .find(|g| g.kind == BodyKind::Substrate)
+        .ok_or_else(|| invalid("no substrate"))?;
+    near(substrate.max[2], project.stackup.dielectric_mm());
+    let (low, high) = project
+        .stackup
+        .copper_span(layer)
+        .ok_or_else(|| invalid("no span"))?;
+    for id in tracks {
+        let copper = geometry_of(&model, |s| s.track == Some(id));
+        assert_eq!(copper.len(), 1);
+        assert_eq!(copper[0].layer, Some(layer));
+        near(copper[0].min[2], low);
+        near(copper[0].max[2], high);
+    }
+    let foils = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::EdgeCopper)
+        .count();
+    assert_eq!(foils, 12, "every foil shows at the routed edge");
+    Ok(())
+}

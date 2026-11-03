@@ -40,8 +40,23 @@ Materials, heights and looks are in [materials](materials.md).
   others.
 - Heights put z = 0 at the bottom of the lowest dielectric (`copper_span`,
   `dielectric_span`).
-- `layout.set_stackup` refuses a stackup that drops a copper layer still carrying tracks or
-  vias, and names that layer.
+- Stackup rules (`Stackup::check`): an even number of copper layers from 2 to 64, exactly one
+  dielectric between neighbouring foils, foils 5–210 µm, dielectrics 0.025–3.2 mm, Dk 1–20.
+  Odd counts are refused: fabricators laminate copper in pairs (double-sided cores and foil), so
+  an odd board is the next even build with one layer etched away, priced as that build and prone
+  to warp. 64 is not a fabrication limit (production boards above about 50 layers are rare); it
+  bounds the per-layer work a hostile or mistaken file can ask for. `Stackup::preset(n)` gives a
+  symmetric foil build for every even count (prepreg outside, cores inside, 1.6 mm of
+  dielectric up to ten layers, then 0.16 mm a layer).
+- A layer's identity is its name (`Inner(n)`), so a stackup that gains or loses layers renames
+  the foils below the change. `layout.set_stackup` keeps every name; `layout.edit_stackup`
+  (`restack::StackupEdit`) also moves copper: each `{from, to}` move takes every track, fill,
+  keepout layer and blind-via end on `from` to `to`, all at once (swaps work), and `removed`
+  lists old layers no foil continues. Copper left on a removed or missing layer refuses the whole
+  edit with a finding that names the layer and what it carries ("Inner 5 still carries 1 track,
+  1 keepout; move or delete it first"); nothing is deleted implicitly. The desktop's Stackup
+  dialog builds the edit from a `restack::StackupDraft`, which tracks the layer each foil came
+  from, and offers a "Move to" choice for each removed layer that carries copper.
 - A dielectric may carry the fabricator's Dk and a foil may be marked as a reference plane;
   the impedance model reads both ([high-speed routing](high-speed-routing.md#impedance-model)).
 

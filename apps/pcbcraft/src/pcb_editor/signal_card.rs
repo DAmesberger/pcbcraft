@@ -41,6 +41,7 @@ impl PcbEditor {
     /// Open the High speed card.
     pub fn open_signals(&mut self) {
         self.setup = None;
+        self.stackup = None;
         self.rules = None;
         self.net_classes = None;
         self.end_route();

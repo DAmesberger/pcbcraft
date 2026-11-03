@@ -131,6 +131,12 @@ impl App {
                 }
                 _ => Ok(()),
             },
+            Action::PcbLayer(index) => {
+                if self.pcb.is_3d() {
+                    return Err("Switch to the Layout view to use it".into());
+                }
+                self.pcb.layer_at(index).map(|_| ())
+            }
             Action::Pcb(toggle) => {
                 let three_d = self.pcb.is_3d();
                 match command.context {
@@ -177,6 +183,10 @@ impl App {
             Action::Pcb(toggle) => {
                 self.enter(Workspace::Pcb);
                 self.pcb.view_toggle(toggle);
+            }
+            Action::PcbLayer(index) => {
+                self.enter(Workspace::Pcb);
+                self.pcb.select_layer(self.engine.project(), index);
             }
             Action::Key => {}
         }
@@ -307,10 +317,13 @@ impl App {
             .map(|w| self.ribbon_state(w))
             .collect();
         let recent = palette.recent().to_vec();
+        // Commands about a copper layer list only the board's own layers.
+        let stack = self.engine.project().stackup.layers();
         let event = palette.show(ctx, |query| {
             self.registry
                 .search(query, &recent, &active)
                 .into_iter()
+                .filter(|command| command.stackup_layer().is_none_or(|l| l.on(&stack)))
                 .map(|command| {
                     let state = self.availability(command, &ribbons);
                     PaletteRow {

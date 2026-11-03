@@ -116,9 +116,19 @@ pub fn labelled(ctx: &egui::Context, text: &str, id: &str) -> String {
     }
 }
 
-/// A key table's rows as shown now: (key, what it does). The Route
-/// tool's "via to layer N" rows collapse to one `1–9` row while they keep
-/// their default digits.
+/// The one row the ten layer keys collapse to while they keep their
+/// default digits: (key, what it does).
+pub const LAYER_ROW: (&str, &str) = ("1–0", "Stackup layer 1–10 (through a via while routing)");
+
+/// Whether `command` is a layer key on its default digit, shown as
+/// [`LAYER_ROW`].
+pub fn default_layer_key(registry: &Registry, command: &Command) -> bool {
+    command.id.starts_with("pcb.layer-") && !registry.is_custom(&command.id)
+}
+
+/// A key table's rows as shown now: (key, what it does). The layer keys
+/// (`pcb.layer-1` to `pcb.layer-10`) collapse to one `1–0` row while they
+/// keep their default digits.
 pub fn rows(ctx: &egui::Context, table: &[crate::commands::KeyDecl]) -> Vec<(String, String)> {
     let registry = registry(ctx);
     let mut out: Vec<(String, String)> = Vec::with_capacity(table.len());
@@ -128,16 +138,13 @@ pub fn rows(ctx: &egui::Context, table: &[crate::commands::KeyDecl]) -> Vec<(Str
             continue;
         };
         let key = registry.shortcut(command).unwrap_or_else(|| "—".to_owned());
-        let digit = decl.id.starts_with("route.layer-") && !registry.is_custom(decl.id);
+        let digit = default_layer_key(&registry, command);
         if digit {
             digits += 1;
             if digits > 1 {
                 continue;
             }
-            out.push((
-                "1–9".to_owned(),
-                "Via to that layer of the stackup".to_owned(),
-            ));
+            out.push((LAYER_ROW.0.to_owned(), LAYER_ROW.1.to_owned()));
             continue;
         }
         out.push((key, decl.title.to_owned()));

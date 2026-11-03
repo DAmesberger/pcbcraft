@@ -227,6 +227,7 @@ impl PcbEditor {
     /// Open the Net classes card, on `class` when given.
     pub fn open_net_classes(&mut self, class: Option<NetClassId>) {
         self.setup = None;
+        self.stackup = None;
         self.rules = None;
         self.signals = None;
         self.end_route();

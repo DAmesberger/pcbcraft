@@ -500,7 +500,15 @@ pub(crate) fn free_rows(
             let Some(key) = key_in_force(registry, command, active) else {
                 continue;
             };
-            let row = (key, command.title.clone());
+            // The ten layer keys on their digits read as one row.
+            let row = if crate::keys::default_layer_key(registry, command) {
+                (
+                    crate::keys::LAYER_ROW.0.to_owned(),
+                    crate::keys::LAYER_ROW.1.to_owned(),
+                )
+            } else {
+                (key, command.title.clone())
+            };
             if !rows.contains(&row) {
                 rows.push(row);
             }

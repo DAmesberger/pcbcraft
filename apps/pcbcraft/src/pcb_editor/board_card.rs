@@ -1,5 +1,5 @@
-//! The Board card (size, copper layers and the finish summary), its Board
-//! setup dialog, and the view popover's layer and display toggles
+//! The Board card (size, copper layers with Stackup…, and the finish
+//! summary), its Board setup dialog, and the view popover's layer and display toggles
 //! (docs/sidebar-ia.md, "Properties card by subject").
 use super::PcbEditor;
 use crate::kit::{
@@ -55,6 +55,7 @@ impl PcbEditor {
     /// with Rules…, which opens the Design rules panel.
     pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) {
         let mut setup = false;
+        let mut stackup = false;
         let mut classes = false;
         let mut rules = false;
         let mut signals = false;
@@ -68,11 +69,13 @@ impl PcbEditor {
                     kit::number_text(project.board_size[1])
                 ),
             );
-            kit::value_row(
-                ui,
-                "Copper",
-                &format!("{} layers", project.stackup.layers().len()),
-            );
+            kit::row(ui, "Copper", |ui| {
+                stackup = kit::summary_row(
+                    ui,
+                    &super::stackup_panel::stackup_summary(&project.stackup),
+                    Some("Stackup…"),
+                );
+            });
             kit::row(ui, "Finish", |ui| {
                 setup = kit::summary_row(ui, &finish_summary(&project.fabrication), Some("Setup…"));
             });
@@ -111,6 +114,9 @@ impl PcbEditor {
         if setup {
             self.open_board_setup(project);
         }
+        if stackup {
+            self.open_stackup(project);
+        }
         if rules {
             self.open_rules(None);
         }
@@ -123,6 +129,7 @@ impl PcbEditor {
         self.net_classes = None;
         self.signals = None;
         self.rules = None;
+        self.stackup = None;
         self.setup = Some(BoardSetup::new(project.fabrication));
     }
 
@@ -196,13 +203,17 @@ impl PcbEditor {
         kit::form(ui, |ui| {
             ui.set_width(Tokens::get().form_label_width * 3.2);
             kit::section(ui, "pcb-view-layers", "Layers", true, None, |ui| {
-                // Every copper layer of the stackup, top to bottom, then
-                // the vias through them.
-                for layer in self.stack.clone() {
-                    if let Some(shown) = self.layers.copper_layer_mut(layer) {
+                // Every copper layer of the stackup, top to bottom (a
+                // scrolled list past ten), then the vias through them.
+                let stack = self.stack.clone();
+                let layers = &mut self.layers;
+                crate::layer_view::copper_rows(ui, stack.len(), |ui, index| {
+                    if let Some(layer) = stack.get(index).copied()
+                        && let Some(shown) = layers.copper_layer_mut(layer)
+                    {
                         kit::check_row(ui, &format!("{} copper", layer.name()), shown);
                     }
-                }
+                });
                 let l = &mut self.layers;
                 kit::check_row(ui, "Vias", &mut l.vias);
                 kit::check_row(ui, "Top silkscreen", &mut l.silk_top);

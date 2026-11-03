@@ -593,6 +593,7 @@ impl PcbEditor {
         topic: Option<RuleTopic>,
     ) {
         self.setup = None;
+        self.stackup = None;
         self.net_classes = None;
         self.signals = None;
         match &mut self.rules {

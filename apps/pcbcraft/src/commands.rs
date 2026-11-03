@@ -437,8 +437,29 @@ pub enum Action {
     /// The same event as the workspace's ribbon button or tab.
     Ribbon(Workspace, RibbonEvent),
     Pcb(PcbView),
+    /// Make layer `n` of the stackup (0: the top) the active copper layer;
+    /// while routing, change to it through a via.
+    PcbLayer(usize),
     /// A key of a gesture: shown, never run from the palette.
     Key,
+}
+
+/// A copper layer a command names: by its name, or by its place in the
+/// stackup from the top (0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackupLayer {
+    Named(CopperLayer),
+    Place(usize),
+}
+
+impl StackupLayer {
+    /// Whether a board with the copper layers `stack` (top to bottom) has it.
+    pub fn on(self, stack: &[CopperLayer]) -> bool {
+        match self {
+            Self::Named(layer) => stack.contains(&layer),
+            Self::Place(index) => index < stack.len(),
+        }
+    }
 }
 
 /// One registry entry.
@@ -509,6 +530,16 @@ impl Command {
     /// Whether the palette can run it.
     pub fn runnable(&self) -> bool {
         self.action != Action::Key
+    }
+
+    /// The copper layer of the stackup the command is about, by name or by
+    /// place: a board without it does not offer the command.
+    pub fn stackup_layer(&self) -> Option<StackupLayer> {
+        match self.action {
+            Action::Pcb(PcbView::Copper(layer)) => Some(StackupLayer::Named(layer)),
+            Action::PcbLayer(index) => Some(StackupLayer::Place(index)),
+            _ => None,
+        }
     }
 }
 
@@ -1527,17 +1558,27 @@ fn defaults() -> Vec<Command> {
             Chord::key(K::Escape),
         ),
     ]);
-    // Layer and display toggles: in the palette; no default keys.
-    for (n, layer) in [
-        CopperLayer::Top,
-        CopperLayer::Bottom,
-        CopperLayer::Inner(1),
-        CopperLayer::Inner(2),
-        CopperLayer::Inner(3),
-        CopperLayer::Inner(4),
-    ]
-    .into_iter()
-    .enumerate()
+    // The active copper layer by its place in the stackup: 1 to 9, then 0
+    // for the tenth (`crate::pcb_editor::LAYER_KEYS`).
+    for (index, decl) in crate::pcb_editor::LAYER_KEYS.iter().enumerate() {
+        v.push(
+            Command::new(decl.id, decl.title, C::PcbLayout, Action::PcbLayer(index))
+                .maybe(Chord::parse(decl.keys))
+                .icon("display")
+                .keywords("active copper layer switch via stackup"),
+        );
+    }
+    // Layer and display toggles: in the palette; no default keys. One per
+    // copper layer a stackup can have (`pcb.layer.copper-0` is the top, 1
+    // the bottom, then the inner layers); the palette lists those of the
+    // board's stackup.
+    let inner = (1..pcbcraft_core::MAX_COPPER_LAYERS - 1)
+        .filter_map(|n| u8::try_from(n).ok())
+        .map(CopperLayer::Inner);
+    for (n, layer) in [CopperLayer::Top, CopperLayer::Bottom]
+        .into_iter()
+        .chain(inner)
+        .enumerate()
     {
         v.push(view(
             &format!("pcb.layer.copper-{n}"),

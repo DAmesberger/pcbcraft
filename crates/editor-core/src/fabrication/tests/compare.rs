@@ -675,3 +675,51 @@ fn a_ten_thousand_via_board_is_written_in_seconds() -> Fallible<()> {
     eprintln!("10k vias: read back and compared in {:?}", start.elapsed());
     Ok(())
 }
+
+/// Layer naming, the job file and the drill span follow the stackup for
+/// any count: the showcase on twelve layers, its supply plane moved to
+/// Inner 10.
+#[test]
+fn a_twelve_layer_board_names_every_layer_and_spans_its_drills() -> Fallible<()> {
+    use crate::layout::LayoutCommand;
+    use crate::layout::restack::{LayerMove, StackupEdit};
+    let mut engine = Engine::showcase()?;
+    engine.apply(
+        engine.revision(),
+        crate::Operation::Layout(LayoutCommand::EditStackup(StackupEdit {
+            stackup: crate::model::Stackup::preset(12)?,
+            moves: vec![LayerMove {
+                from: CopperLayer::Inner(2),
+                to: CopperLayer::Inner(10),
+            }],
+            removed: Vec::new(),
+        })),
+    )?;
+    let project = engine.project().clone();
+    let set = fabrication::generate(&project, &FabricationOptions::default())?;
+    let copper: Vec<&str> = set
+        .files
+        .iter()
+        .filter(|f| f.name.contains("-copper-l"))
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(copper.len(), 12, "{copper:?}");
+    let inner = gerber(&set, "-copper-l11-inner10.gbr")?;
+    assert_eq!(
+        inner.file_attribute(".FileFunction"),
+        Some(&["Copper".to_string(), "L11".into(), "Inr".into()][..])
+    );
+    assert!(
+        !inner.objects.is_empty(),
+        "the moved plane draws on Inner 10"
+    );
+    let bottom = gerber(&set, "-copper-l12-bottom.gbr")?;
+    assert_eq!(
+        bottom.file_attribute(".FileFunction"),
+        Some(&["Copper".to_string(), "L12".into(), "Bot".into()][..])
+    );
+    assert!(text(&set, "-plated.drl")?.contains("TF.FileFunction,Plated,1,12,PTH"));
+    let job: serde_json::Value = serde_json::from_str(text(&set, ".gbrjob")?)?;
+    assert_eq!(job["GeneralSpecs"]["LayerNumber"], 12);
+    Ok(())
+}
