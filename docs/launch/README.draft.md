@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/launch/media/hero.webp" alt="Routing on the 4-layer showcase board: the Route tool shoves another net's track aside, then the view switches to 3D and orbits the same board" width="900">
+  <img src="docs/launch/media/hero.webp" alt="The 4-layer showcase board orbiting in the integrated 3D view: green lacquered soldermask, gold header pins, chip parts with solder fillets" width="900">
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@ Claude tool-use loop that drafts the component through the engine: pins and thei
 functions, Rhai pin rules, the package from a cited template, footprint, binding and markings. It
 only ever creates drafts, never publishes, and stops at a hard spending cap. Every value comes
 back in a review report with its datasheet page and a confidence level. The first live run
-drafted the 99-pin ESP32-S31-WROOM-3 module for **$7.23** over 13 requests
+drafted the ESP32-S31-WROOM-3 module for **$7.23** over 13 requests
 ([run 1](docs/datasheet-assistant-run1.md)).
 
 **Copper is real geometry.** Tracks, pads, plated barrels, vias and fills are thickness-aware
@@ -82,7 +82,7 @@ The whole board exports as a native, parametric `.solidcraft` model that plain S
 
 | | |
 | --- | --- |
-| <img src="docs/launch/media/component-3d.webp" alt="Component 3D tab: a generated package model with markings"> | **Component authoring.** Symbol, Footprint, Pins, Mapping and 3D tabs over five revisioned drafts. 204 package templates over eight families build the package, its lands and a generated 3D model in one step. Footprints are sketches with dimensions and constraints. Publishing creates immutable revisions; placed instances keep the exact revision they use. |
+| <img src="docs/launch/media/component-3d.webp" alt="Component 3D tab: a generated package model with markings"> | **Component authoring.** Symbol, Footprint, Pins, Mapping and 3D tabs over five revisioned drafts. 196 cited or estimated package rows over eight families build the package, its lands and a generated 3D model in one step. Footprints are sketches with dimensions and constraints. Publishing creates immutable revisions; placed instances keep the exact revision they use. |
 | <img src="docs/launch/media/schematic.webp" alt="Schematic with sheets, net labels and the Place palette"> | **Schematic capture.** Several sheets with a hierarchy, net labels, power ports, title blocks, annotation, ERC and vector PDF printing. Press **P** and type `res>=10k 0603`: the Place palette searches with units (50,000 entries at ≤ 3.85 ms p95). The pin-mux panel assigns MCU peripherals with a solver that respects the part's pin rules. |
 | <img src="docs/launch/media/route-shove.webp" alt="Route tool shoving a neighbouring track on the showcase board"> | **PCB layout.** Explicit schematic-to-board updates with a preview, placement, 45°/90°/free routing on any of 2 to 64 copper layers, vias, design-rule profiles and net classes, copper fills with thermals and hatching computed off the UI thread, and parametric board outlines with named edges. |
 | <img src="docs/launch/media/board-3d.webp" alt="The showcase board in the 3D view"> | **Integrated 3D.** One keystroke from 2D. Fit, a navigation cube and trackpad gestures; a Layers popover hides mask, silk, copper layers or parts without rebuilding geometry. A finished 10,000-via board draws its first 3D frame in 8–37 ms in the running app. |

@@ -8,10 +8,13 @@
 //                                          record only that process's largest window (ScreenCaptureKit,
 //                                          H.264, backing resolution); stops on SIGINT/SIGTERM or after N s
 //   launchkit play PID SHOT.shot TRACK.json [--activate]
+//   launchkit resize PID WIDTH HEIGHT [--x X --y Y]  Accessibility resize, where the window manager allows it
 //                                          run a shot script against the window, log the pointer track
 //
-// Only the given pid is ever recorded or receives events (CGEventPostToPid). Other windows are
-// neither captured nor sent input. Requires macOS 15 (SCRecordingOutput) and the Screen Recording
+// Only the given pid's window is recorded. Keys are posted to that pid (CGEventPostToPid). macOS
+// drops pointer events posted to a background app, so with --activate the window comes to the
+// front and pointer events go through the HID tap, each one only after checking that the
+// frontmost window under the point is the take's own (otherwise the take aborts). Requires macOS 15 (SCRecordingOutput) and the Screen Recording
 // permission for the terminal that runs it; `play` needs Accessibility for posted events.
 
 import AppKit
@@ -96,7 +99,9 @@ final class Recorder: NSObject, SCStreamOutput, SCRecordingOutputDelegate, SCStr
     }
 }
 
-func record(pid: pid_t, out: String, fps: Int, seconds: Double?, startedFile: String?) async {
+nonisolated(unsafe) var stopRequested: sig_atomic_t = 0
+
+func record(pid: pid_t, out: String, fps: Int, seconds: Double?, startedFile: String?, stopFile: String?) async {
     guard let info = largestWindow(pid: pid) else { fail("no on-screen window for pid \(pid)") }
     let content: SCShareableContent
     do {
@@ -139,21 +144,15 @@ func record(pid: pid_t, out: String, fps: Int, seconds: Double?, startedFile: St
     FileHandle.standardError.write(
         "capturing window \(info.id) \(config.width)x\(config.height) at \(fps) fps -> \(out)\n".data(using: .utf8)!)
 
-    let stop = DispatchSemaphore(value: 0)
-    signal(SIGINT, SIG_IGN)
-    signal(SIGTERM, SIG_IGN)
-    let sources = [SIGINT, SIGTERM].map { sig -> DispatchSourceSignal in
-        let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-        source.setEventHandler { stop.signal() }
-        source.resume()
-        return source
-    }
-    _ = sources
-    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-        DispatchQueue.global().async {
-            if let seconds { _ = stop.wait(timeout: .now() + seconds) } else { stop.wait() }
-            cont.resume()
-        }
+    // Stop on SIGINT/SIGTERM (a plain handler that sets a flag; bash starts background jobs with
+    // SIGINT ignored, so both are installed explicitly), on a stop file, or after `seconds`.
+    signal(SIGINT, { _ in stopRequested = 1 })
+    signal(SIGTERM, { _ in stopRequested = 1 })
+    let deadline = seconds.map { Date().addingTimeInterval($0) }
+    while stopRequested == 0 {
+        if let deadline, Date() >= deadline { break }
+        if let stopFile, FileManager.default.fileExists(atPath: stopFile) { break }
+        try? await Task.sleep(nanoseconds: 50_000_000)
     }
     do { try await stream.stopCapture() } catch {
         FileHandle.standardError.write("stop: \(error)\n".data(using: .utf8)!)
@@ -207,6 +206,7 @@ struct TrackEvent: Encodable {
 final class Player {
     let pid: pid_t
     var origin: CGPoint
+    let windowID: CGWindowID
     var pointer = CGPoint(x: 0, y: 0)  // window points
     var buttons: Set<String> = []
     var mods: CGEventFlags = []
@@ -216,6 +216,7 @@ final class Player {
     init(pid: pid_t, window: WindowInfo) {
         self.pid = pid
         self.origin = window.frame.origin
+        self.windowID = window.id
         self.pointer = CGPoint(x: window.frame.width / 2, y: window.frame.height / 2)
     }
 
@@ -223,18 +224,46 @@ final class Player {
 
     func log(_ event: TrackEvent) { track.append(event) }
 
+    /// Mouse through the HID tap (macOS drops pointer events posted to a pid), only while the
+    /// take's own window is frontmost under the pointer; see `ownsPoint`.
+    var hid = false
+
     func post(_ event: CGEvent?) {
         guard let event else { return }
         event.postToPid(pid)
     }
 
+    /// True when the frontmost normal window under a global point belongs to the take's pid.
+    func ownsPoint(_ g: CGPoint) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]]
+        else { return false }
+        for entry in list {  // front to back
+            guard let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
+                let boundsDict = entry[kCGWindowBounds as String] as? NSDictionary,
+                let bounds = CGRect(dictionaryRepresentation: boundsDict), bounds.contains(g)
+            else { continue }
+            return (entry[kCGWindowOwnerPID as String] as? Int) == Int(pid)
+        }
+        return false
+    }
+
     func global(_ p: CGPoint) -> CGPoint { CGPoint(x: origin.x + p.x, y: origin.y + p.y) }
 
     func mouse(_ type: CGEventType, button: CGMouseButton, at p: CGPoint, clicks: Int64 = 1) {
-        let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: global(p), mouseButton: button)
+        let g = global(p)
+        let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: g, mouseButton: button)
         event?.flags = mods
         event?.setIntegerValueField(.mouseEventClickState, value: clicks)
-        post(event)
+        event?.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
+        event?.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))
+        if hid {
+            // Never let a pointer event reach another app's window.
+            guard ownsPoint(g) else { fail("pointer target \(p) is not the take's window; take aborted") }
+            event?.post(tap: .cghidEventTap)
+        } else {
+            post(event)
+        }
     }
 
     func buttonOf(_ name: String) -> (CGMouseButton, CGEventType, CGEventType, CGEventType) {
@@ -310,7 +339,12 @@ final class Player {
             let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
             event?.location = global(pointer)
             event?.flags = mods
-            post(event)
+            if hid {
+                guard ownsPoint(global(pointer)) else { fail("scroll target is not the take's window; take aborted") }
+                event?.post(tap: .cghidEventTap)
+            } else {
+                post(event)
+            }
             Thread.sleep(forTimeInterval: seconds / Double(max(1, steps)))
         }
         log(TrackEvent(t: now(), kind: "scroll", x: pointer.x, y: pointer.y))
@@ -336,12 +370,22 @@ func play(pid: pid_t, shot: String, trackOut: String, activate: Bool) {
     if !AXIsProcessTrusted() {
         FileHandle.standardError.write("warning: this terminal lacks Accessibility; posted events may be dropped\n".data(using: .utf8)!)
     }
+    let previous = NSWorkspace.shared.frontmostApplication
+    let cursorBefore = CGEvent(source: nil)?.location
     if activate, let app = NSRunningApplication(processIdentifier: pid) {
         app.activate()
-        Thread.sleep(forTimeInterval: 0.4)
+        Thread.sleep(forTimeInterval: 0.5)
     }
     guard let text = try? String(contentsOfFile: shot, encoding: .utf8) else { fail("cannot read \(shot)") }
     let player = Player(pid: pid, window: window)
+    player.hid = activate
+    defer {
+        // Give the pointer and focus back as they were.
+        if activate {
+            if let cursorBefore { CGWarpMouseCursorPosition(cursorBefore) }
+            if let previous, previous.processIdentifier != pid { previous.activate() }
+        }
+    }
     player.log(TrackEvent(t: player.now(), kind: "begin", x: Double(window.frame.width), y: Double(window.frame.height)))
     for (number, raw) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
         let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
@@ -423,12 +467,34 @@ case "record":
     let seconds = option("--seconds").flatMap(Double.init)
     let done = DispatchSemaphore(value: 0)
     Task {
-        await record(pid: pid, out: argv[3], fps: fps, seconds: seconds, startedFile: option("--started"))
+        await record(pid: pid, out: argv[3], fps: fps, seconds: seconds, startedFile: option("--started"), stopFile: option("--stop"))
         done.signal()
     }
     while done.wait(timeout: .now()) == .timedOut {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }
+case "resize":
+    // resize PID WIDTH HEIGHT — set the window's size in points (Accessibility), keeping its origin.
+    guard argv.count >= 5, let w = Double(argv[3]), let h = Double(argv[4]) else { fail("resize PID WIDTH HEIGHT") }
+    guard AXIsProcessTrusted() else { fail("resize needs Accessibility for this terminal") }
+    let app = AXUIElementCreateApplication(pid)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+        let windows = value as? [AXUIElement], let window = windows.first
+    else { fail("no AX window for pid \(pid)") }
+    if let x = option("--x").flatMap(Double.init), let y = option("--y").flatMap(Double.init) {
+        var point = CGPoint(x: x, y: y)
+        if let axPoint = AXValueCreate(.cgPoint, &point) {
+            _ = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, axPoint)
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+    var size = CGSize(width: w, height: h)
+    guard let axSize = AXValueCreate(.cgSize, &size) else { fail("size") }
+    let status = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, axSize)
+    guard status == .success else { fail("AX resize failed: \(status.rawValue)") }
+    Thread.sleep(forTimeInterval: 0.3)
+    if let info = largestWindow(pid: pid) { print("\(Int(info.frame.width))x\(Int(info.frame.height))") }
 case "play":
     guard argv.count >= 5 else { fail("play PID SHOT TRACK.json") }
     play(pid: pid, shot: argv[3], trackOut: argv[4], activate: argv.contains("--activate"))

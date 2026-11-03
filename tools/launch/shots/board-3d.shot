@@ -1,0 +1,18 @@
+# Storyboard shot 10: the showcase board in the integrated 3D view.
+# Run with --prelude board-3d.prelude (switches to 3D unrecorded) and a --settle long enough for
+# the first model (about 1 s on an idle machine; minutes when the machine is saturated).
+# Window points for a 1500 x 1235 pt window.
+wait 0.5
+mark in
+caption "Same design, now in 3D" 2.8
+move 746 697 0.8
+drag 746 697 900 690 4.0 right   # slow orbit
+wait 0.4
+caption "Real copper. Real thickness." 3
+move 735 700 0.6
+scroll 0 4 30 2.4                # dolly in toward U1
+zoom 1.5 745 700 4.5
+wait 0.4
+drag 760 720 620 735 3.5 right   # orbit back across the fillets and lands
+wait 0.8
+mark out

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Post-process Pcbcraft launch takes with ffmpeg (stdlib only).
 
-  post.py take TAKE_DIR [--width 1920]        raw.mov + track.json -> TAKE_DIR/final.mp4
+  post.py take TAKE_DIR [--width 1920] [--stage 1920x1080]
+                                              raw.mov + track.json -> TAKE_DIR/final.mp4; --stage floats
+                                              the window on a 16:9 backdrop
   post.py reel OUT.mp4 TAKE_DIR...            join finished takes with short crossfades
   post.py hero IN.mp4 OUT_STEM --from S --to S [--width 1200]
                                               looping OUT_STEM.webp and OUT_STEM.gif for the README
@@ -65,10 +67,10 @@ def sprites(directory, scale):
     return halo, ring, h, r
 
 
-def smooth(a, b):
+def smooth(a, b, clock="it"):
     """ffmpeg expression: 0 before a, eases to 1 over RAMP, holds, eases back to 0 ending at b."""
-    up = f"clip((t-{a:.3f})/{RAMP},0,1)"
-    down = f"clip(({b:.3f}-t)/{RAMP},0,1)"
+    up = f"clip(({clock}-{a:.3f})/{RAMP},0,1)"
+    down = f"clip(({b:.3f}-{clock})/{RAMP},0,1)"
     e = f"min({up},{down})"
     return f"({e}*{e}*(3-2*{e}))"
 
@@ -77,7 +79,7 @@ def escape_text(text):
     return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "’").replace("%", "\\%")
 
 
-def take(directory, width):
+def take(directory, width, stage=None):
     raw = os.path.join(directory, "raw.mov")
     track = json.load(open(os.path.join(directory, "track.json")))
     started = json.load(open(os.path.join(directory, "started.json")))["started"]
@@ -131,6 +133,15 @@ def take(directory, width):
 
     out_w = width
     out_h = int(round(H * width / W / 2)) * 2
+    if stage:
+        # The window floats on a dark 16:9 backdrop with a soft shadow, whatever its own aspect.
+        stage_w, stage_h = stage
+        win_h = int(stage_h * 0.9) // 2 * 2
+        win_w = int(win_h * W / H) // 2 * 2
+        if win_w > stage_w * 0.94:
+            win_w = int(stage_w * 0.94) // 2 * 2
+            win_h = int(win_w * H / W) // 2 * 2
+        out_w, out_h = stage_w, stage_h
     fnt = font()
     caption_filters = []
     size = int(out_h * 0.034)
@@ -145,7 +156,7 @@ def take(directory, width):
             f"x=(w-text_w)/2:y=h-text_h-{int(out_h*0.075)}:alpha='{alpha}':enable='between(t,{a:.3f},{b:.3f})'")
 
     graph = [f"[0:v]fps={FPS},trim=start={t0:.4f}:duration={duration:.4f},setpts=PTS-STARTPTS,"
-             f"scale={W}:{H},format=rgba[base]"]
+             f"scale={W}:{H}:in_color_matrix=bt709:in_range=tv,format=rgba[base]"]
     current = "base"
     if has_pointer:
         # sendcmd sits before the overlays so each frame's commands reach them in time.
@@ -156,15 +167,30 @@ def take(directory, width):
         graph.append("[c1][r]overlay@ring=x=-4000:y=-4000:eval=frame:shortest=1[c2]")
         current = "c2"
     if zooms:
+        # zoompan with one output frame per input frame acts as an animated crop-and-scale.
+        # Its clock is `it`, the input frame's time.
         graph.append(
-            f"[{current}]scale=w='{W}*({z_expr})':h='{H}*({z_expr})':eval=frame:flags=lanczos,"
-            f"crop={W}:{H}:x='clip(({cx_expr})*({z_expr})-{W/2},0,iw-{W})':"
-            f"y='clip(({cy_expr})*({z_expr})-{H/2},0,ih-{H})'[z]")
+            f"[{current}]zoompan=z='{z_expr}':"
+            f"x='clip(({cx_expr})-iw/zoom/2,0,iw-iw/zoom)':y='clip(({cy_expr})-ih/zoom/2,0,ih-ih/zoom)':"
+            f"d=1:s={W}x{H}:fps={FPS}[z]")
         current = "z"
-    tail = f"[{current}]scale={out_w}:{out_h}:flags=lanczos"
+    if stage:
+        wx, wy = (stage_w - win_w) // 2, (stage_h - win_h) // 2 - int(stage_h * 0.012)
+        graph.append(f"[{current}]scale={win_w}:{win_h}:flags=lanczos[win]")
+        graph.append(f"gradients=s={stage_w}x{stage_h}:c0=0x1a2230:c1=0x07090d:x0={stage_w//2}:y0=0:"
+                     f"x1={stage_w//2}:y1={stage_h}:speed=0:r={FPS},format=rgba[bg]")
+        graph.append(f"color=c=black@0:s={stage_w}x{stage_h}:r={FPS},format=rgba,"
+                     f"drawbox=x={wx}:y={wy + int(stage_h*0.012)}:w={win_w}:h={win_h}:color=black@0.75:t=fill,"
+                     f"boxblur={int(stage_h*0.02)}[shadow]")
+        graph.append("[bg][shadow]overlay=shortest=0[bgs]")
+        graph.append(f"[bgs][win]overlay=x={wx}:y={wy}:shortest=1[staged]")
+        current = "staged"
+        tail = f"[{current}]null"
+    else:
+        tail = f"[{current}]scale={out_w}:{out_h}:flags=lanczos"
     if caption_filters:
         tail += "," + ",".join(caption_filters)
-    tail += ",format=yuv420p[out]"
+    tail += ",scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[out]"
     graph.append(tail)
 
     script = os.path.join(directory, "graph.txt")
@@ -174,8 +200,9 @@ def take(directory, width):
     inputs = ["-i", raw]
     if has_pointer:
         inputs += ["-i", halo, "-i", ring]
-    run([FFMPEG, "-y", "-loglevel", "warning", *inputs, "-/filter_complex", script, "-map", "[out]",
+    run([FFMPEG, "-y", "-loglevel", "error", *inputs, "-/filter_complex", script, "-map", "[out]",
          "-r", str(FPS), "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-pix_fmt", "yuv420p",
+         "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
          "-movflags", "+faststart", "-an", out])
     print(out)
 
@@ -238,7 +265,8 @@ def main():
     cmd = args.pop(0)
     if cmd == "take":
         width = int(opt("--width", "1920"))
-        take(args[0], width)
+        stage = opt("--stage", None)
+        take(args[0], width, tuple(int(v) for v in stage.split("x")) if stage else None)
     elif cmd == "reel":
         reel(args[0], args[1:])
     elif cmd == "hero":

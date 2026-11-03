@@ -6,14 +6,16 @@ schematic → PCB update → push-and-shove routing and a differential pair → 
 Gerbers and pre-flight → an MCP agent doing a step**.
 
 Every shot is recorded with [`tools/launch`](../../tools/launch/README.md): the app's own window
-only, at 60 fps and backing resolution (2760 × 1800 px for the 1380 × 900 pt default window), driven
+only, at 60 fps and backing resolution (2 px per point), driven
 by a shot script so takes repeat exactly. Captions, the cursor halo and push-ins are added in post
 from the same script. No voice-over is needed; captions carry the story.
 
 ## Look and conventions
 
-- **Window:** the default 1380 × 900 pt window, dark theme (the app follows the system appearance;
-  record with macOS in Dark mode), no other app visible in the frame (window-only capture).
+- **Window:** a fixed window size (the proof takes: 1500 × 1235 pt, set by the machine's window
+  tiling), floated on a dark 16:9 backdrop in post (`post.py --stage 1920x1080`); dark theme (the
+  app follows the system appearance: record with macOS in Dark mode); window-only capture, so no
+  other app can appear in the frame.
 - **Board:** the ESP32-S31 dev board being designed now (see *Dependencies*). Until it lands,
   the 4-layer showcase (`pcbcraft-cli showcase`) stands in.
 - **Captions:** IBM Plex Sans (SIL OFL, the app's own UI font), white on a 72 % dark box, lower
@@ -79,6 +81,10 @@ Shot scripts live in `tools/launch/shots/`. The proof take implements:
 - `shots/route-shove.shot` — shot 7 on the showcase board;
 - `shots/board-3d.shot` — shot 10 (orbit, push-in) on the showcase board;
 - `shots/component-3d.shot` — shot 3 on the WROOM-3 example.
+
+The proof media (not committed) are `route-shove-1080p.mp4`, `board-3d-1080p.mp4`,
+`component-3d-1080p.mp4`, `proof-reel.mp4` and `hero.webp`/`hero.gif` in the session scratchpad's
+`launch/` folder; the critique is in the [polish list](polish-list.md).
 
 Coordinates in scripts are window points for the default window size. When the UI layout changes,
 re-measure them from a still (`launchkit window PID` gives the frame; the proof stills show the
