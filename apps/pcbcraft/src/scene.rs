@@ -68,21 +68,24 @@ pub fn library_asset(
     engine: &Engine,
     package: &PackageDefinition,
 ) -> Result<Option<LibraryAsset>, String> {
-    let PackageModel::Library(use_) = &package.model else {
-        return Ok(None);
+    let model_ref = match &package.model {
+        PackageModel::Library(use_) => use_.model,
+        // A part file is a Model of format `solidcraft` (docs/part-templates.md §11).
+        PackageModel::PartFile(part) => part.model,
+        _ => return Ok(None),
     };
     let library = &engine.project().library;
-    let model = match library.model(use_.model) {
+    let model = match library.model(model_ref) {
         Some(published) => published.definition.clone(),
         None => engine
             .drafts()
-            .get(use_.model.id)
-            .filter(|d| d.pending() == Some(use_.model.revision))
+            .get(model_ref.id)
+            .filter(|d| d.pending() == Some(model_ref.revision))
             .and_then(|d| match &d.definition {
                 Definition::Model(model) => Some(model.as_ref().clone()),
                 _ => None,
             })
-            .ok_or_else(|| format!("The model {} is not in the library", use_.model))?,
+            .ok_or_else(|| format!("The model {model_ref} is not in the library"))?,
     };
     let bytes = library
         .assets
@@ -155,6 +158,10 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                         &ModelPlacement::default(),
                     )
                     .map(|geometry| (geometry, Vec::new()))
+                }
+                (PackageModel::PartFile(_), Some(asset)) => {
+                    pcbcraft_solidcraft::project::preview_part(&package, &asset.bytes)
+                        .map(|model| (model.geometry, model.sources))
                 }
                 _ => pcbcraft_solidcraft::project::preview(&package)
                     .map(|model| (model.geometry, model.sources)),

@@ -299,6 +299,55 @@ impl Builder {
         Ok(())
     }
 
+    /// Build the part-file definition of `use_` (its file `bytes`) unless
+    /// it is built, and return its name (`pkgp<key>`: packages with equal
+    /// file and values share it). The part is evaluated through the
+    /// process-wide cache, checked, and compared with what the package
+    /// stored (`part.stale`). Replaying, the previous build's definition of
+    /// the same key is taken as it is.
+    fn define_part(
+        &mut self,
+        package: &str,
+        use_: &pcbcraft_core::library::package_model::PartFileModel,
+        bytes: &[u8],
+    ) -> Result<String> {
+        use crate::models::part_file;
+        let part = part_file::evaluate(bytes, &use_.values)?;
+        if let Some(refusal) = part.refusal() {
+            return Err(refusal);
+        }
+        if !part_file::matches(&use_.derived, &part_file::derived(&part)) {
+            return Err(Error::Invalid(format!(
+                "part.stale: the part file of package {package} no longer builds what the package \
+                 recorded (bounds, bodies or marking surfaces); set its values again"
+            )));
+        }
+        let stem = part.stem();
+        if self.models.iter().any(|d| d.component == stem) {
+            return Ok(stem);
+        }
+        let definition = if self.native.is_replaying() {
+            match self.known.iter().find(|d| d.component == stem).cloned() {
+                Some(definition) if self.native.pass(&stem) => definition,
+                _ => {
+                    return Err(Error::Verification(format!(
+                        "the board's part model {stem} is new"
+                    )));
+                }
+            }
+        } else {
+            let start = self.native.step();
+            let definition = part_file::insert(&mut self.native, &stem, &part)?;
+            self.native.mark(&stem, start);
+            definition
+        };
+        for body in &definition.bodies {
+            self.record(&body.name, body.kind())?;
+        }
+        self.models.push(definition);
+        Ok(stem)
+    }
+
     /// An occurrence of the generated definition `stem` of `package`,
     /// unmoved: the definition is built on first use (its first occurrence
     /// returned), then every further call places it once more.
@@ -1375,6 +1424,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             PackageModel::Library(use_) => {
                 b.define_library(&stem, library_model(project, use_)?)?
             }
+            PackageModel::PartFile(use_) => {
+                b.define_part(&stem, use_, part_bytes(project, use_)?)?;
+            }
             _ if models::is_generated(package) => b.define(&stem, package)?,
             _ => {}
         }
@@ -1403,17 +1455,27 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             PackageModel::Library(use_) => Some(library_model(project, use_)?),
             _ => None,
         };
-        if library.is_some() || models::is_generated(package) {
+        let part = match &package.model {
+            PackageModel::PartFile(use_) => {
+                let stem =
+                    models::definition_name(physical.package.id, physical.package.revision.0);
+                Some(b.define_part(&stem, use_, part_bytes(project, use_)?)?)
+            }
+            _ => None,
+        };
+        if library.is_some() || part.is_some() || models::is_generated(package) {
             let stem = models::definition_name(physical.package.id, physical.package.revision.0);
-            let created = match library {
-                Some(library) => b.library_model(&stem, library)?,
-                None => b.model(&stem, package)?,
+            let generated = library.is_none() && part.is_none();
+            let created = match (library, part) {
+                (Some(library), _) => b.library_model(&stem, library)?,
+                (None, Some(part)) => b.model_occurrence(&part)?,
+                (None, None) => b.model(&stem, package)?,
             };
             let frame = datum_frame(package);
             let pick = next_pick(&sources);
             // Display-only solder fillets of a chip, while its placement
             // does not turn it out of the package frame they draw in.
-            if library.is_none() && package.chip_kind().is_some() && package_frame(&frame) {
+            if generated && package.chip_kind().is_some() && package_frame(&frame) {
                 parts.push(Part {
                     pick: Some(pick),
                     package,
@@ -1890,6 +1952,43 @@ pub fn library_model<'a>(
     Ok((definition, use_, asset.data.as_slice()))
 }
 
+/// The packed bytes of a package's part file: its Model revision (format
+/// `solidcraft`) and that model's asset in the project.
+pub fn part_bytes<'a>(
+    project: &'a Project,
+    use_: &pcbcraft_core::library::package_model::PartFileModel,
+) -> Result<&'a [u8]> {
+    let model = project.library.model(use_.model).ok_or_else(|| {
+        Error::Invalid(format!(
+            "part.model: the part file {} is not in the project",
+            use_.model
+        ))
+    })?;
+    part_asset(project, &model.definition)
+}
+
+/// The packed asset of a part-file model definition.
+pub fn part_asset<'a>(project: &'a Project, model: &LibraryModelDefinition) -> Result<&'a [u8]> {
+    if model.format != pcbcraft_core::library::model3d::ModelFormat::Solidcraft {
+        return Err(Error::Invalid(format!(
+            "part.model: a part file is a SolidCraft design, not {}",
+            model.format.label()
+        )));
+    }
+    project
+        .library
+        .assets
+        .iter()
+        .find(|a| a.hash == model.asset.hash)
+        .map(|a| a.data.as_slice())
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "part.model: the packed part file {} ({}) is not in the project",
+                model.asset.file_name, model.asset.hash
+            ))
+        })
+}
+
 /// Every board via as saved copper: an occurrence of its size's definition
 /// (`styles`, from [`via_styles`]) moved to the via. Like the drills, a via
 /// sits where it is now. Returns what the display layers draw of each.
@@ -2291,6 +2390,27 @@ fn move_by(native: &mut Native, occurrence: u64, placement: &ModelPlacement) -> 
             [r[2][0], r[2][1], r[2][2], p[2]],
         ],
     )
+}
+
+/// The part-file model of one package, draft or published, built from
+/// the part file's `bytes` at the package's values and placement (the
+/// Component 3D preview).
+pub fn preview_part(package: &PackageDefinition, bytes: &[u8]) -> Result<NativeModel> {
+    let PackageModel::PartFile(use_) = &package.model else {
+        return Err(Error::Invalid(
+            "model.unsupported: the package does not use a part file".into(),
+        ));
+    };
+    if !package.placement.finite() {
+        return Err(Error::Invalid(
+            "package.placement: placement values must be finite and within ±10000".into(),
+        ));
+    }
+    let mut b = Builder::new("Package model", &SourceCache::default())?;
+    let stem = b.define_part(DRAFT_MODEL, use_, bytes)?;
+    let created = b.model_occurrence(&stem)?;
+    move_by(&mut b.native, created.occurrence, &package.placement)?;
+    b.finish(vec![])
 }
 
 /// The definition name of an unpublished (draft) package's model.

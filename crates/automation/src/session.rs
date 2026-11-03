@@ -298,6 +298,15 @@ pub enum Request {
     /// Where a package can be marked: model area, box faces, anchors.
     #[serde(rename = "library.marking_surfaces")]
     MarkingSurfaces(marking::MarkingSurfacesParams),
+    /// Lean parts: evaluate and check a Solidcraft part file at values.
+    #[serde(rename = "library.check_part_file")]
+    CheckPartFile(part_files::CheckPartFileParams),
+    /// Lean parts: a package draft uses a part file at values.
+    #[serde(rename = "library.use_part_file")]
+    UsePartFile(part_files::UsePartFileParams),
+    /// Lean parts: new values for a package draft's part file.
+    #[serde(rename = "library.set_part_values")]
+    SetPartValues(part_files::SetPartValuesParams),
 }
 
 impl Request {
@@ -426,6 +435,18 @@ impl Request {
             info::<SchematicPdfParams>(
                 "schematic.export_pdf",
                 "Print the schematic as a vector PDF at path (written atomically, replacing a file there): one page per sheet in page order at its paper size, with the page frame and title block; sheets limits it to a selection (all when empty) and a sheet symbol links to its child sheet's page. Returns the page count. Not a document change.",
+            ),
+            info::<part_files::CheckPartFileParams>(
+                "library.check_part_file",
+                "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters with their values, bodies with the Pcbcraft material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, the pin1 point, bounds, timing and findings (part.read, part.structure, part.value, part.feature, part.seating, part.material, part.marking blocking; part.origin, part.no_marking, part.import, part.slow advisory). Lists the material appearance names. Not a document change.",
+            ),
+            info::<part_files::UsePartFileParams>(
+                "library.use_part_file",
+                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the snapshot and the check report.",
+            ),
+            info::<part_files::SetPartValuesParams>(
+                "library.set_part_values",
+                "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the snapshot and the check report.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -652,6 +673,9 @@ impl Session {
                 }));
             }
             Request::MarkingSurfaces(params) => return self.marking_surfaces(params),
+            Request::CheckPartFile(params) => return self.check_part_file(params),
+            Request::UsePartFile(params) => return self.use_part_file(params),
+            Request::SetPartValues(params) => return self.set_part_values(params),
         }
         Ok(self.snapshot())
     }
@@ -867,6 +891,7 @@ pub fn schemas() -> Value {
 mod firmware;
 mod marking;
 mod models;
+mod part_files;
 mod pinout;
 mod preview;
 pub mod sources;

@@ -148,6 +148,24 @@ pub fn definitions() -> Vec<Value> {
             &["draft", "marking"],
         ),
         tool(
+            "library_check_part_file",
+            "MCP library_check_part_file: evaluate a built-in SolidCraft part file (builtin: \"esp32-s31-wroom-3\", a shielded module body) at literal values for some of its parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report its parameters, bodies and materials, marking surfaces, bounds and convention findings. Changes nothing. Read the parameter list before choosing values.",
+            json!({"builtin": {"type": "string"}, "values": object}),
+            &["builtin"],
+        ),
+        tool(
+            "library_use_part_file",
+            "MCP library_use_part_file: make the package draft's 3D model the built-in part file at values taken from the datasheet's drawing (each value with its page in the review), instead of the generated model. The footprint, terminals and keep-out stay the package's. One undo step; refused on a blocking finding. Use it for a module whose body a built-in part file covers, after library_package_from_template.",
+            json!({"package": {"type": "integer"}, "builtin": {"type": "string"}, "values": object}),
+            &["package", "builtin"],
+        ),
+        tool(
+            "library_set_part_values",
+            "MCP library_set_part_values: new values for the part file the package draft uses (they replace the previous values). One undo step; refused on a blocking finding.",
+            json!({"package": {"type": "integer"}, "values": object}),
+            &["package", "values"],
+        ),
+        tool(
             "library_inspect_draft",
             "The full definition of one draft (component, symbol, package, footprint or binding) with its check findings. Use it to verify what was built, e.g. footprint pad positions or the package terminals.",
             json!({"id": {"type": "integer"}}),
@@ -226,6 +244,22 @@ pub fn execute(
         "library_set_marking" => json!({"command": "library.set_marking", "params": {
             "expected_revision": revision, "draft": input["draft"], "marking": input["marking"],
         }}),
+        "library_check_part_file" => {
+            let response = session.dispatch(json!({"command": "library.check_part_file",
+                "params": {"builtin": input["builtin"], "values": values(input)}}));
+            return if response["ok"] == true {
+                reply(response["result"]["report"].clone(), false, None)
+            } else {
+                reply(response["error"].clone(), true, None)
+            };
+        }
+        "library_use_part_file" => json!({"command": "library.use_part_file", "params": {
+            "expected_revision": revision, "package": input["package"],
+            "builtin": input["builtin"], "values": values(input),
+        }}),
+        "library_set_part_values" => json!({"command": "library.set_part_values", "params": {
+            "expected_revision": revision, "package": input["package"], "values": values(input),
+        }}),
         "library_inspect_draft" => return inspect(session, input),
         "library_edit" => library("library.edit", json!({"edits": input["edits"]})),
         "component_check_drafts" => {
@@ -285,6 +319,15 @@ pub fn execute(
     } else {
         // Query results come tagged (`{"query": …, "result": …}`).
         reply(result.get("result").unwrap_or(result).clone(), false, None)
+    }
+}
+
+/// A part-file tool's `values`, an empty object when absent.
+fn values(input: &Value) -> Value {
+    if input["values"].is_object() {
+        input["values"].clone()
+    } else {
+        json!({})
     }
 }
 

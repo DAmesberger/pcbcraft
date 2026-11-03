@@ -32,6 +32,7 @@ pub mod look;
 mod module;
 mod molded;
 mod no_lead;
+pub mod part_file;
 mod profile;
 mod tabbed;
 mod tht;
