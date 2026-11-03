@@ -270,7 +270,7 @@ These are never saved:
   their tracks: a 22 % translucent tint with a thin outline, or its hatching or outline when
   the Fills row says so. A large pour on another layer therefore never hides the active
   layer's copper, nor the tracks under it.
-- **Layer focus** (`pcb.layer-focus`, ⇧L, or the view popover's Layer focus row) cycles
+- **Layer focus** (`pcb.layer-focus`, ⇧L, or the view popover's Focus row) cycles
   All layers → Dim others → Active only. Dim others keeps 20 % of the other layers' colour
   and an 8 % fill tint. Active only draws and picks the active layer's copper alone, with
   the through-hole pads and the vias through it. The status line names the mode. It is

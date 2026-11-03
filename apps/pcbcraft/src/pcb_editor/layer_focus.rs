@@ -217,11 +217,11 @@ impl PcbEditor {
         self.focus = self.focus.next();
     }
 
-    /// The view popover's Layer focus row.
+    /// The view popover's Focus row, with its key chip.
     pub(super) fn focus_row(&mut self, ui: &mut egui::Ui) {
         let key = crate::keys::shown(ui.ctx(), "pcb.layer-focus");
         crate::kit::keyed(ui, key, |ui| {
-            crate::kit::choice_row(ui, "Layer focus", &mut self.focus, &LayerFocus::options())
+            crate::kit::choice_row(ui, "Focus", &mut self.focus, &LayerFocus::options())
         });
     }
 
