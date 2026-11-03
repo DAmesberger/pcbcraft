@@ -148,7 +148,7 @@ impl PcbEditor {
 
     /// Hover: the visible track under `at`.
     pub(super) fn tune_hover(&mut self, project: &Project, at: Option<Point>, tolerance: f64) {
-        let layers = self.layers;
+        let layers = self.seen();
         self.tune.hover = at.and_then(|at| {
             project
                 .tracks

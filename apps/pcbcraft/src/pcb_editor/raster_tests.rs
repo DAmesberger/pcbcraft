@@ -12,17 +12,17 @@ use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const SCREEN: [f32; 2] = [900.0, 700.0];
+pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
 /// An RGBA picture, unpremultiplied bytes, row-major from the top left.
-struct Picture {
-    width: usize,
-    height: usize,
+pub(super) struct Picture {
+    pub(super) width: usize,
+    pub(super) height: usize,
     pixels: Vec<[f32; 4]>,
 }
 
 impl Picture {
-    fn at(&self, p: Pos2) -> Option<Color32> {
+    pub(super) fn at(&self, p: Pos2) -> Option<Color32> {
         let (x, y) = (p.x.floor(), p.y.floor());
         if x < 0.0 || y < 0.0 {
             return None;
@@ -36,7 +36,7 @@ impl Picture {
         Some(Color32::from_rgb(byte(r), byte(g), byte(b)))
     }
 
-    fn png(&self) -> Option<Vec<u8>> {
+    pub(super) fn png(&self) -> Option<Vec<u8>> {
         let bytes: Vec<u8> = self
             .pixels
             .iter()
@@ -162,7 +162,7 @@ fn rasterize(
 }
 
 /// Draw the canvas twice (the first frame uploads the fonts) and fill it.
-fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
+pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut textures = Textures::default();
@@ -195,7 +195,7 @@ fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
     }
 }
 
-fn view_of(editor: &PcbEditor, engine: &Engine) -> BoardView {
+pub(super) fn view_of(editor: &PcbEditor, engine: &Engine) -> BoardView {
     board_view(
         Rect::from_min_size(Pos2::ZERO, egui::vec2(SCREEN[0], SCREEN[1])),
         engine.project().board_size,
@@ -239,7 +239,7 @@ fn corner_board(layer: CopperLayer, paths: &[&[Point]], width: f64) -> Result<En
 }
 
 /// An engine holding `project` in place of `engine`'s document.
-fn with_project(engine: &Engine, project: Project) -> pcbcraft_core::Result<Engine> {
+pub(super) fn with_project(engine: &Engine, project: Project) -> pcbcraft_core::Result<Engine> {
     let mut file = engine.to_file();
     file.project = project;
     Engine::from_file(file)
@@ -343,7 +343,7 @@ fn inner_and_selected_copper_have_no_darker_overlaps() -> TestResult {
     let mut editor = framed(&engine, [[8.0, 6.0], [19.0, 18.0]]);
     let ink = BoardInk::get();
     let colors = crate::palette::board();
-    let inner = ink.on_board(colors.copper_layer(CopperLayer::Inner(1)), INNER_SHADE);
+    let inner = ink.on_board(colors.copper_layer(CopperLayer::Inner(1)), OTHER_SHADE);
     let picture1 = picture(&mut editor, &engine);
     let view = view_of(&editor, &engine);
     let tracks = &engine.project().tracks;
@@ -351,7 +351,7 @@ fn inner_and_selected_copper_have_no_darker_overlaps() -> TestResult {
     let net = tracks.first().map(|t| t.net);
     editor.set_selection(None, tracks.first().map(|t| t.id), net);
     let picture2 = picture(&mut editor, &engine);
-    let selected = ink.on_board(colors.selected, INNER_SHADE);
+    let selected = ink.on_board(colors.selected, OTHER_SHADE);
     assert!(assert_copper(&picture2, view, tracks, selected) > 1000);
     Ok(())
 }

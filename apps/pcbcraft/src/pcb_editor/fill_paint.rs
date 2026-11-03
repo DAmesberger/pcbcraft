@@ -421,7 +421,7 @@ fn screen_ring(view: BoardView, outline: &Outline) -> Vec<Pos2> {
 impl PcbEditor {
     /// Whether fill `fill` shows: its layer shows.
     pub(super) fn fill_shown(&self, fill: &Fill) -> bool {
-        self.layers.copper_layer(fill.layer)
+        self.seen().copper_layer(fill.layer)
     }
 
     /// The fills on `layer`, lowest priority first (higher priorities
@@ -436,18 +436,21 @@ impl PcbEditor {
         fills
     }
 
-    /// The copper of the fills on one layer, `shade` of the way from the
-    /// board, under the layer's tracks: solid or hatched in the layer's
-    /// opaque colour, the selected fill and the highlighted net's in the
-    /// selection colour. A fill without copper, and every fill when the
-    /// view shows outlines only, is its dashed outline.
+    /// The copper of the fills on one layer as `look` has it, under the
+    /// layer's tracks: on the active layer solid or hatched in the layer's
+    /// opaque colour; on another layer lighter than its tracks (a
+    /// translucent tint with its outline, or the hatching `look.shade` of
+    /// the way from the board), so a pour never hides other copper. The
+    /// selected fill and the highlighted net's are in the selection
+    /// colour. A fill without copper, and every fill when the view shows
+    /// outlines only, is its dashed outline.
     pub(super) fn paint_fills(
         &self,
         painter: &egui::Painter,
         view: BoardView,
         project: &Project,
         layer: CopperLayer,
-        shade: f32,
+        look: super::Look,
     ) {
         let colors = crate::palette::board();
         let ink = BoardInk::get();
@@ -455,14 +458,12 @@ impl PcbEditor {
         for fill in self.fills_on(project, layer) {
             let chosen =
                 self.fill == Some(fill.id) || (fill.net.is_some() && self.highlighted == fill.net);
-            let color = ink.on_board(
-                if chosen {
-                    colors.selected
-                } else {
-                    colors.copper_layer(layer)
-                },
-                shade,
-            );
+            let base = if chosen {
+                colors.selected
+            } else {
+                colors.copper_layer(layer)
+            };
+            let color = ink.on_board(base, look.shade);
             let mesh = self
                 .fill_meshes
                 .mesh(fill.id)
@@ -480,7 +481,16 @@ impl PcbEditor {
                         painter.add(Shape::closed_line(points, Stroke::new(1.0, color)));
                     }
                 }
-                (Some(mesh), _) => paint_mesh(painter, view, mesh, color),
+                (Some(mesh), _) => match look.tint {
+                    None => paint_mesh(painter, view, mesh, color),
+                    Some(alpha) => {
+                        paint_mesh(painter, view, mesh, base.gamma_multiply(alpha));
+                        for ring in mesh.regions.iter().flatten() {
+                            let points: Vec<Pos2> = ring.iter().map(|p| view.screen(*p)).collect();
+                            painter.add(Shape::closed_line(points, Stroke::new(1.0, color)));
+                        }
+                    }
+                },
                 (None, _) => {
                     let ring = screen_ring(view, &fill.outline);
                     if let Some(first) = ring.first().copied() {

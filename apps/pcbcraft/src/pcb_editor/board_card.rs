@@ -196,8 +196,8 @@ impl PcbEditor {
         !self.view_3d
     }
 
-    /// The view popover: layer visibility, the side the board is seen
-    /// from, and the net highlight and airwire overlays. Display state
+    /// The view popover: layer visibility, the layer focus, the side the
+    /// board is seen from, and the net highlight and airwire overlays. Display state
     /// only; nothing here changes the document or rebuilds the board.
     pub fn view_menu(&mut self, ui: &mut Ui) {
         kit::form(ui, |ui| {
@@ -224,6 +224,7 @@ impl PcbEditor {
                 kit::hint(ui, "Hidden layers are not picked", "");
             });
             kit::section(ui, "pcb-view-display", "View", true, None, |ui| {
+                self.focus_row(ui);
                 kit::check_row(ui, "View from bottom", &mut self.from_bottom);
                 let mut highlight = self.highlighted.is_some();
                 let net = self.net;

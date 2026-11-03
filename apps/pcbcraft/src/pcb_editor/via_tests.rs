@@ -131,13 +131,13 @@ fn the_showcase_draws_vias_and_inner_tracks_under_their_toggles() -> TestResult 
     let colors = crate::palette::board();
     for inner in [CopperLayer::Inner(1), CopperLayer::Inner(2)] {
         assert!(project.tracks.iter().any(|t| t.layer == inner));
-        let fill = BoardInk::get().on_board(colors.copper_layer(inner), INNER_SHADE);
+        let fill = BoardInk::get().on_board(colors.copper_layer(inner), OTHER_SHADE);
         assert!(paths_filled(&output, fill) > 0, "{inner:?} tracks drawn");
     }
     // Hiding Inner 1 hides its tracks only.
     editor.layers.inner[0] = false;
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
-    let inner1 = BoardInk::get().on_board(colors.copper_layer(CopperLayer::Inner(1)), INNER_SHADE);
+    let inner1 = BoardInk::get().on_board(colors.copper_layer(CopperLayer::Inner(1)), OTHER_SHADE);
     assert_eq!(paths_filled(&output, inner1), 0);
     assert_eq!(
         circles(&output, drill),

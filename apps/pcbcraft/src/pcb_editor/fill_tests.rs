@@ -211,14 +211,16 @@ fn layout_draws_fill_copper_under_tracks_and_outlines_unfilled_fills() -> TestRe
     let (engine, _) = filled_showcase()?;
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
+    // Seen from the bottom with the bottom layer active.
     let mut editor = PcbEditor {
         from_bottom: true,
+        layer: CopperLayer::Bottom,
         ..Default::default()
     };
     let ink = BoardInk::get();
     let colors = crate::palette::board();
     let bottom = ink.on_board(colors.copper_layer(CopperLayer::Bottom), 1.0);
-    let inner = ink.on_board(colors.copper_layer(CopperLayer::Inner(1)), INNER_SHADE);
+    let inner = ink.on_board(colors.copper_layer(CopperLayer::Inner(1)), OTHER_SHADE);
 
     let (output, _) = canvas(&mut editor, &engine, &ctx, vec![]);
     let all = shapes(&output);
