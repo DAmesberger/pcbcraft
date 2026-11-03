@@ -231,13 +231,13 @@ impl Session {
         let operation = match self.model_with(hash) {
             Some(model) => Operation::Library(LibraryCommand::EditPackage {
                 draft: params.package,
-                edits: vec![PackageEdit::SetModel(PackageModel::PartFile(
+                edits: vec![PackageEdit::SetModel(PackageModel::PartFile(Box::new(
                     PartFileModel {
                         model,
                         values: params.values.clone(),
                         derived,
                     },
-                ))],
+                )))],
             }),
             None => {
                 let licence = if builtin {
@@ -326,13 +326,13 @@ impl Session {
         let part = checked(&bytes, &params.values)?;
         let operation = Operation::Library(LibraryCommand::EditPackage {
             draft: params.package,
-            edits: vec![PackageEdit::SetModel(PackageModel::PartFile(
+            edits: vec![PackageEdit::SetModel(PackageModel::PartFile(Box::new(
                 PartFileModel {
                     model: current.model,
                     values: params.values.clone(),
                     derived: part_file::derived(&part),
                 },
-            ))],
+            )))],
         });
         let mut reply = self.apply(params.expected_revision, operation)?;
         reply["part"] = serde_json::to_value(part.report())?;

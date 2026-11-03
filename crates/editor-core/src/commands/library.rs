@@ -870,11 +870,13 @@ pub(crate) fn apply_library(
                                 "part_file.values: a part file takes no lead map".into(),
                             ));
                         }
-                        library::PackageModel::PartFile(library::package_model::PartFileModel {
-                            model,
-                            values: part.values,
-                            derived: part.derived,
-                        })
+                        library::PackageModel::PartFile(Box::new(
+                            library::package_model::PartFileModel {
+                                model,
+                                values: part.values,
+                                derived: part.derived,
+                            },
+                        ))
                     }
                     None => library::PackageModel::Library(library::model3d::LibraryModel {
                         model,

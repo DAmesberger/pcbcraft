@@ -33,7 +33,7 @@ pub enum PackageModel {
     Library(super::model3d::LibraryModel),
     /// A parametric Solidcraft part file (a Model of format `solidcraft`)
     /// with values for some of its parameters ([`PartFileModel`]).
-    PartFile(PartFileModel),
+    PartFile(Box<PartFileModel>),
 }
 
 /// Values one part-file package gives.

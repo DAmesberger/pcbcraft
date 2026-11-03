@@ -55,8 +55,8 @@ fn call(session: &mut Session, command: &str, params: Value) -> Value {
 }
 
 #[test]
-fn the_builtin_wroom3_part_file_checks_clean() {
-    let (mut session, _) = open().unwrap_or_else(|e| panic!("{e}"));
+fn the_builtin_wroom3_part_file_checks_clean() -> TestResult {
+    let (mut session, _) = open()?;
     let reply = call(
         &mut session,
         "library.check_part_file",
@@ -85,6 +85,7 @@ fn the_builtin_wroom3_part_file_checks_clean() {
         json!({"path": EXAMPLE}),
     );
     assert_eq!(not_a_part["ok"], false, "{not_a_part}");
+    Ok(())
 }
 
 #[test]

@@ -207,6 +207,11 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
             .find(|b| b.name == format!("{stem} {plain}"))
             .unwrap();
         assert_eq!(made.material, body.material, "{plain}");
+        assert_eq!(
+            made.kind(),
+            body.kind(),
+            "{plain} is drawn as the builder draws it"
+        );
     }
     let union_a = models::imported::bounds_of(
         &generated,
@@ -224,9 +229,12 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     );
     assert!(worst_box < 1e-6, "{worst_box}");
     assert!(worst_volume < 1e-9, "{worst_volume}");
-    for i in 0..3 {
-        assert!((union_a[0][i] - part.bounds_mm[0][i]).abs() < 1e-6);
-        assert!((union_a[1][i] - part.bounds_mm[1][i]).abs() < 1e-6);
+    for (a, b) in union_a
+        .iter()
+        .flatten()
+        .zip(part.bounds_mm.iter().flatten())
+    {
+        assert!((a - b).abs() < 1e-6, "{union_a:?} vs {:?}", part.bounds_mm);
     }
     Ok(())
 }

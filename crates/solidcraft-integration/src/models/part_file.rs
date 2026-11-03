@@ -225,6 +225,28 @@ pub fn material_of(appearance: &str) -> Option<MaterialId> {
     serde_json::from_value(serde_json::Value::String(key)).ok()
 }
 
+/// A part-file body's role, from its material: a body plated or made in a
+/// lead finish (gold, tin, solder, nickel, copper alloys, brass) is a
+/// termination, drawn and listed as a lead; every other body (mould,
+/// ceramic, board, a nickel-silver or aluminium can) is the body. Display
+/// only: terminals and pads stay the package's.
+pub fn role_of(material: Option<MaterialId>) -> BodyRole {
+    use MaterialId as M;
+    match material {
+        Some(
+            M::Gold
+            | M::TinMatte
+            | M::TinBright
+            | M::SolderSac
+            | M::Nickel
+            | M::CopperAlloy
+            | M::PhosphorBronze
+            | M::Brass,
+        ) => BodyRole::Termination,
+        _ => BodyRole::Body,
+    }
+}
+
 /// The appearance name a part file gives a material's bodies.
 pub fn appearance_name(material: MaterialId) -> String {
     serde_json::to_value(material)
@@ -750,7 +772,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         .iter()
         .map(|b| GeneratedBody {
             name: body_name(&b.name),
-            role: BodyRole::Body,
+            role: role_of(b.material),
             material: b.material.unwrap_or(MaterialId::EpoxyMould),
             terminal: None,
         })
