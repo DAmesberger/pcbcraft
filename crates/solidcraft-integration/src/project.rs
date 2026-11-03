@@ -303,7 +303,7 @@ impl Builder {
     /// it is built, and return its name (`pkgp<key>`: packages with equal
     /// file and values share it). The part is evaluated through the
     /// process-wide cache, checked, and compared with what the package
-    /// stored (`part.stale`). Replaying, the previous build's definition of
+    /// stored (`part_file.stale`). Replaying, the previous build's definition of
     /// the same key is taken as it is.
     fn define_part(
         &mut self,
@@ -318,7 +318,7 @@ impl Builder {
         }
         if !part_file::matches(&use_.derived, &part_file::derived(&part)) {
             return Err(Error::Invalid(format!(
-                "part.stale: the part file of package {package} no longer builds what the package \
+                "part_file.stale: the part file of package {package} no longer builds what the package \
                  recorded (bounds, bodies or marking surfaces); set its values again"
             )));
         }
@@ -1960,7 +1960,7 @@ pub fn part_bytes<'a>(
 ) -> Result<&'a [u8]> {
     let model = project.library.model(use_.model).ok_or_else(|| {
         Error::Invalid(format!(
-            "part.model: the part file {} is not in the project",
+            "part_file.model: the part file {} is not in the project",
             use_.model
         ))
     })?;
@@ -1971,7 +1971,7 @@ pub fn part_bytes<'a>(
 pub fn part_asset<'a>(project: &'a Project, model: &LibraryModelDefinition) -> Result<&'a [u8]> {
     if model.format != pcbcraft_core::library::model3d::ModelFormat::Solidcraft {
         return Err(Error::Invalid(format!(
-            "part.model: a part file is a SolidCraft design, not {}",
+            "part_file.model: a part file is a SolidCraft design, not {}",
             model.format.label()
         )));
     }
@@ -1983,7 +1983,7 @@ pub fn part_asset<'a>(project: &'a Project, model: &LibraryModelDefinition) -> R
         .map(|a| a.data.as_slice())
         .ok_or_else(|| {
             Error::Invalid(format!(
-                "part.model: the packed part file {} ({}) is not in the project",
+                "part_file.model: the packed part file {} ({}) is not in the project",
                 model.asset.file_name, model.asset.hash
             ))
         })

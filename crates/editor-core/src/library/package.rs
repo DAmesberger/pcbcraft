@@ -203,7 +203,7 @@ impl PackageDefinition {
             PackageModel::PartFile(part) => {
                 for problem in part.problems() {
                     out.push(issue(
-                        "part.values",
+                        "part_file.values",
                         format!("The part file: {problem}."),
                         vec![this],
                     ));

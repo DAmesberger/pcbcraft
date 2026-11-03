@@ -94,7 +94,11 @@ fn text(reply: &Value, materials: bool) -> String {
         r["evaluate_ms"].as_f64().unwrap_or(0.0),
     );
     if let Some(b) = r["bounds_mm"].as_array() {
-        out.push_str(&format!("bounds (mm): {} .. {}\n", b[0], b.get(1).unwrap_or(&Value::Null)));
+        out.push_str(&format!(
+            "bounds (mm): {} .. {}\n",
+            b[0],
+            b.get(1).unwrap_or(&Value::Null)
+        ));
     }
     out.push_str("parameters:\n");
     for p in r["parameters"].as_array().into_iter().flatten() {
@@ -123,7 +127,11 @@ fn text(reply: &Value, materials: bool) -> String {
     for f in findings {
         out.push_str(&format!(
             "{} {}: {}\n",
-            if f["blocking"] == true { "error" } else { "note" },
+            if f["blocking"] == true {
+                "error"
+            } else {
+                "note"
+            },
             f["code"].as_str().unwrap_or_default(),
             f["message"].as_str().unwrap_or_default()
         ));
@@ -153,15 +161,21 @@ mod tests {
 
     #[test]
     fn the_builtin_part_checks_clean() -> Result<()> {
-        run(&["check".into(), "--builtin".into(), "esp32-s31-wroom-3".into()])?;
-        assert!(run(&[
+        run(&[
             "check".into(),
             "--builtin".into(),
             "esp32-s31-wroom-3".into(),
-            "--set".into(),
-            "nope=1mm".into()
-        ])
-        .is_err());
+        ])?;
+        assert!(
+            run(&[
+                "check".into(),
+                "--builtin".into(),
+                "esp32-s31-wroom-3".into(),
+                "--set".into(),
+                "nope=1mm".into()
+            ])
+            .is_err()
+        );
         Ok(())
     }
 }

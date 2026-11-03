@@ -733,7 +733,7 @@ pub fn library_findings(
 
 /// Findings of a package's part file that need the model revision: the
 /// revision exists (`reference.missing`) and is a Solidcraft design
-/// (`part.model`, blocking), and the derived bounds exceed the envelope by
+/// (`part_file.model`, blocking), and the derived bounds exceed the envelope by
 /// at most [`BOUNDS_TOLERANCE_MM`] (`model.bounds`, advisory).
 pub fn part_findings(
     library: &Library,
@@ -760,7 +760,7 @@ pub fn part_findings(
     };
     if published.definition.format != ModelFormat::Solidcraft {
         out.push(Finding::blocking(
-            "part.model",
+            "part_file.model",
             format!(
                 "‘{}’ is a {} model; a part file is a SolidCraft design.",
                 published.meta.name,

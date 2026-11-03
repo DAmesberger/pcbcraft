@@ -415,8 +415,12 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 // §11: a part file names an exact Model revision too; its
                 // values and derived data are local.
                 PackageModel::PartFile(part) => {
-                    let (id, revision) =
-                        exact(map, DefinitionKind::Model, part.model.id, part.model.revision)?;
+                    let (id, revision) = exact(
+                        map,
+                        DefinitionKind::Model,
+                        part.model.id,
+                        part.model.revision,
+                    )?;
                     part.model = crate::ids::ModelRef::new(id, revision);
                 }
             }

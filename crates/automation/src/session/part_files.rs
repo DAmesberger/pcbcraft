@@ -13,8 +13,8 @@ use pcbcraft_core::commands::LibraryCommand;
 use pcbcraft_core::ids::{DefinitionId, ModelRef};
 use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
 use pcbcraft_core::library::model3d::{
-    AssetRef, AssignModel, AssignPart, ImportModel, ModelDefinition, ModelFormat,
-    ModelProvenance, Redistribution,
+    AssetRef, AssignModel, AssignPart, ImportModel, ModelDefinition, ModelFormat, ModelProvenance,
+    Redistribution,
 };
 use pcbcraft_core::library::package_model::{PackageEdit, PartFileModel};
 use pcbcraft_core::library::{Basis, Provenance};
@@ -90,13 +90,17 @@ fn source(path: Option<&str>, builtin: Option<&str>) -> Result<(Vec<u8>, String,
     match (path, builtin) {
         (Some(path), None) => {
             if path.len() > MAX_PATH {
-                return Err(invalid("part.read: the path is too long".into()));
+                return Err(invalid("part_file.read: the path is too long".into()));
             }
             let p = Path::new(path);
-            if p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
+            if p.extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
                 != Some("solidcraft".into())
             {
-                return Err(invalid("part.read: a part file ends in .solidcraft".into()));
+                return Err(invalid(
+                    "part_file.read: a part file ends in .solidcraft".into(),
+                ));
             }
             let name = p
                 .file_name()
@@ -109,14 +113,14 @@ fn source(path: Option<&str>, builtin: Option<&str>) -> Result<(Vec<u8>, String,
             let bytes = part_file::builtin(name).ok_or_else(|| {
                 let known: Vec<&str> = part_file::BUILTIN.iter().map(|(n, _)| *n).collect();
                 invalid(format!(
-                    "part.read: no built-in part file {name}; built-ins: {}",
+                    "part_file.read: no built-in part file {name}; built-ins: {}",
                     known.join(", ")
                 ))
             })?;
             Ok((bytes.to_vec(), format!("{name}.solidcraft"), true))
         }
         _ => Err(invalid(
-            "part.read: give exactly one of path and builtin".into(),
+            "part_file.read: give exactly one of path and builtin".into(),
         )),
     }
 }
@@ -140,7 +144,7 @@ impl Session {
                 Definition::Package(p) => Some(p.clone()),
                 _ => None,
             })
-            .ok_or_else(|| invalid(format!("part.package: {id} is not a package draft")))
+            .ok_or_else(|| invalid(format!("part_file.package: {id} is not a package draft")))
     }
 
     /// The bytes of a Model revision's asset, published or the pending
@@ -158,11 +162,11 @@ impl Session {
                     Definition::Model(m) => Some(m.as_ref().clone()),
                     _ => None,
                 })
-                .ok_or_else(|| invalid(format!("part.model: the model {model} is missing")))?,
+                .ok_or_else(|| invalid(format!("part_file.model: the model {model} is missing")))?,
         };
         if definition.format != ModelFormat::Solidcraft {
             return Err(invalid(format!(
-                "part.model: the model {model} is not a SolidCraft part file"
+                "part_file.model: the model {model} is not a SolidCraft part file"
             )));
         }
         library
@@ -170,7 +174,11 @@ impl Session {
             .iter()
             .find(|a| a.hash == definition.asset.hash)
             .map(|a| a.data.as_slice().to_vec())
-            .ok_or_else(|| invalid(format!("part.model: the file of {model} is not packed")))
+            .ok_or_else(|| {
+                invalid(format!(
+                    "part_file.model: the file of {model} is not packed"
+                ))
+            })
     }
 
     /// A Model (published or drafted) whose asset is `hash` and format
@@ -180,18 +188,24 @@ impl Session {
         let published = library
             .models
             .iter()
-            .filter(|m| m.definition.asset.hash == hash && m.definition.format == ModelFormat::Solidcraft)
+            .filter(|m| {
+                m.definition.asset.hash == hash && m.definition.format == ModelFormat::Solidcraft
+            })
             .max_by_key(|m| (m.id, m.revision))
             .map(|m| ModelRef::new(m.id, m.revision));
         published.or_else(|| {
-            self.engine.drafts().items.iter().find_map(|d| match &d.definition {
-                Definition::Model(m)
-                    if m.asset.hash == hash && m.format == ModelFormat::Solidcraft =>
-                {
-                    d.pending().map(|r| ModelRef::new(d.id, r))
-                }
-                _ => None,
-            })
+            self.engine
+                .drafts()
+                .items
+                .iter()
+                .find_map(|d| match &d.definition {
+                    Definition::Model(m)
+                        if m.asset.hash == hash && m.format == ModelFormat::Solidcraft =>
+                    {
+                        d.pending().map(|r| ModelRef::new(d.id, r))
+                    }
+                    _ => None,
+                })
         })
     }
 
@@ -217,19 +231,30 @@ impl Session {
         let operation = match self.model_with(hash) {
             Some(model) => Operation::Library(LibraryCommand::EditPackage {
                 draft: params.package,
-                edits: vec![PackageEdit::SetModel(PackageModel::PartFile(PartFileModel {
-                    model,
-                    values: params.values.clone(),
-                    derived,
-                }))],
+                edits: vec![PackageEdit::SetModel(PackageModel::PartFile(
+                    PartFileModel {
+                        model,
+                        values: params.values.clone(),
+                        derived,
+                    },
+                ))],
             }),
             None => {
                 let licence = if builtin {
                     Some(BUILTIN_LICENCE.to_owned())
                 } else {
-                    Some(params.licence.clone().filter(|l| !l.trim().is_empty()).ok_or_else(
-                        || invalid("part.licence: a part file needs its licence stated".into()),
-                    )?)
+                    Some(
+                        params
+                            .licence
+                            .clone()
+                            .filter(|l| !l.trim().is_empty())
+                            .ok_or_else(|| {
+                                invalid(
+                                    "part_file.licence: a part file needs its licence stated"
+                                        .into(),
+                                )
+                            })?,
+                    )
                 };
                 // The model's own bounds: the file as it is.
                 let as_is = checked(&bytes, &PartValues::new())?;
@@ -250,7 +275,11 @@ impl Session {
                         },
                         record: Provenance {
                             origin: None,
-                            basis: if builtin { Basis::Authored } else { Basis::Imported },
+                            basis: if builtin {
+                                Basis::Authored
+                            } else {
+                                Basis::Imported
+                            },
                             licence,
                         },
                         ..ModelProvenance::default()
@@ -289,7 +318,7 @@ impl Session {
         let package = self.package_draft(params.package)?;
         let PackageModel::PartFile(current) = &package.model else {
             return Err(invalid(format!(
-                "part.package: package {} does not use a part file",
+                "part_file.package: package {} does not use a part file",
                 params.package
             )));
         };
@@ -297,11 +326,13 @@ impl Session {
         let part = checked(&bytes, &params.values)?;
         let operation = Operation::Library(LibraryCommand::EditPackage {
             draft: params.package,
-            edits: vec![PackageEdit::SetModel(PackageModel::PartFile(PartFileModel {
-                model: current.model,
-                values: params.values.clone(),
-                derived: part_file::derived(&part),
-            }))],
+            edits: vec![PackageEdit::SetModel(PackageModel::PartFile(
+                PartFileModel {
+                    model: current.model,
+                    values: params.values.clone(),
+                    derived: part_file::derived(&part),
+                },
+            ))],
         });
         let mut reply = self.apply(params.expected_revision, operation)?;
         reply["part"] = serde_json::to_value(part.report())?;

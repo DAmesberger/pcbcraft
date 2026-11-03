@@ -643,11 +643,10 @@ pub fn package_anchors(package: &super::super::PackageDefinition) -> Vec<AnchorI
 }
 
 /// The anchor `name` of `package`, if it offers one ([`package_anchors`]).
-pub fn package_anchor(
-    package: &super::super::PackageDefinition,
-    name: &str,
-) -> Option<AnchorInfo> {
-    package_anchors(package).into_iter().find(|a| a.name == name)
+pub fn package_anchor(package: &super::super::PackageDefinition, name: &str) -> Option<AnchorInfo> {
+    package_anchors(package)
+        .into_iter()
+        .find(|a| a.name == name)
 }
 
 /// The anchor `name` of `form`, if it offers one.

@@ -122,7 +122,11 @@ pub fn author_wroom3() -> Vec<u8> {
     // 2. A new design: the parameters by their plain names, the features
     // in its root component.
     let mut part = Session::default();
-    run(&mut part, "file.new", json!({"name": "ESP32-S31-WROOM-3 module"}));
+    run(
+        &mut part,
+        "file.new",
+        json!({"name": "ESP32-S31-WROOM-3 module"}),
+    );
     let rows: Vec<serde_json::Value> = src
         .doc
         .params
@@ -238,13 +242,37 @@ pub fn author_wroom3() -> Vec<u8> {
                 "can_length - 2 * can_round".into(),
             ],
         },
-        side("can-pos-x", BoxFace::PosX, [format!("{} + can_width / 2", mm(cx)), mm(cy)], "can_length"),
-        side("can-neg-x", BoxFace::NegX, [format!("{} - can_width / 2", mm(cx)), mm(cy)], "can_length"),
-        side("can-pos-y", BoxFace::PosY, [mm(cx), format!("{} + can_length / 2", mm(cy))], "can_width"),
-        side("can-neg-y", BoxFace::NegY, [mm(cx), format!("{} - can_length / 2", mm(cy))], "can_width"),
+        side(
+            "can-pos-x",
+            BoxFace::PosX,
+            [format!("{} + can_width / 2", mm(cx)), mm(cy)],
+            "can_length",
+        ),
+        side(
+            "can-neg-x",
+            BoxFace::NegX,
+            [format!("{} - can_width / 2", mm(cx)), mm(cy)],
+            "can_length",
+        ),
+        side(
+            "can-pos-y",
+            BoxFace::PosY,
+            [mm(cx), format!("{} + can_length / 2", mm(cy))],
+            "can_width",
+        ),
+        side(
+            "can-neg-y",
+            BoxFace::NegY,
+            [mm(cx), format!("{} - can_length / 2", mm(cy))],
+            "can_width",
+        ),
         Mark {
             name: "pcb-top",
-            origin: ["0 mm".into(), format!("({can_end} + length / 2) / 2"), silk.clone()],
+            origin: [
+                "0 mm".into(),
+                format!("({can_end} + length / 2) / 2"),
+                silk.clone(),
+            ],
             u: x,
             normal: up,
             size: ["width".into(), format!("length / 2 - {can_end}")],
@@ -264,10 +292,14 @@ pub fn author_wroom3() -> Vec<u8> {
     let mut extra = Vec::new();
     for m in &marks {
         let stem = m.name.replace('-', "_");
-        extra.push(json!({"name": format!("marking_{stem}_u"), "expression": m.size[0], "unit": "mm",
-            "comment": format!("marking-{} size along its u axis", m.name)}));
-        extra.push(json!({"name": format!("marking_{stem}_v"), "expression": m.size[1], "unit": "mm",
-            "comment": format!("marking-{} size across it", m.name)}));
+        extra.push(
+            json!({"name": format!("marking_{stem}_u"), "expression": m.size[0], "unit": "mm",
+            "comment": format!("marking-{} size along its u axis", m.name)}),
+        );
+        extra.push(
+            json!({"name": format!("marking_{stem}_v"), "expression": m.size[1], "unit": "mm",
+            "comment": format!("marking-{} size across it", m.name)}),
+        );
     }
     run(
         &mut part,
@@ -301,7 +333,9 @@ fn author_parts() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("esp32-s31-wroom-3.solidcraft");
     std::fs::write(&path, &bytes).unwrap();
-    let report = part_file::evaluate(&bytes, &BTreeMap::new()).unwrap().report();
+    let report = part_file::evaluate(&bytes, &BTreeMap::new())
+        .unwrap()
+        .report();
     eprintln!(
         "wrote {} ({} KiB): {} parameters, {} bodies, {} surfaces, findings {:?}",
         path.display(),
@@ -312,7 +346,10 @@ fn author_parts() {
         report.findings
     );
     for p in &report.parameters {
-        eprintln!("  {} = {} [{}] -> {:?}", p.name, p.expression, p.unit, p.value);
+        eprintln!(
+            "  {} = {} [{}] -> {:?}",
+            p.name, p.expression, p.unit, p.value
+        );
     }
     assert!(report.ok, "{:?}", report.findings);
 }

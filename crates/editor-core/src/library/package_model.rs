@@ -95,7 +95,7 @@ impl PartValue {
 /// What a part file evaluated to when a package was given it: derived by
 /// the host (`pcbcraft_solidcraft::models::part_file`), stored so the core
 /// lays out markings without evaluating Solidcraft, and rechecked by every
-/// board build (`part.stale` on a difference).
+/// board build (`part_file.stale` on a difference).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PartDerived {
@@ -131,12 +131,14 @@ pub fn part_parameter_name_ok(name: &str) -> bool {
 
 impl PartFileModel {
     /// Problems with the values and derived data on their own (finding
-    /// `part.values`): names, literals, bounds, body count and surfaces.
+    /// `part_file.values`): names, literals, bounds, body count and surfaces.
     pub fn problems(&self) -> Vec<String> {
         use super::marking::surface::SurfaceGeometry;
         let mut out = Vec::new();
         if self.values.len() > MAX_PART_VALUES {
-            out.push(format!("a part file takes at most {MAX_PART_VALUES} values"));
+            out.push(format!(
+                "a part file takes at most {MAX_PART_VALUES} values"
+            ));
         }
         for (name, value) in &self.values {
             if !part_parameter_name_ok(name) {
@@ -145,7 +147,9 @@ impl PartFileModel {
                     name.chars().take(80).collect::<String>()
                 ));
             } else if !value.finite() {
-                out.push(format!("the value of {name} must be finite and within ±10000"));
+                out.push(format!(
+                    "the value of {name} must be finite and within ±10000"
+                ));
             }
         }
         let d = &self.derived;
@@ -157,22 +161,32 @@ impl PartFileModel {
             out.push(format!("a part file has 1–{MAX_PART_BODIES} bodies"));
         }
         if d.surfaces.len() > MAX_PART_SURFACES {
-            out.push(format!("a part file offers at most {MAX_PART_SURFACES} marking surfaces"));
+            out.push(format!(
+                "a part file offers at most {MAX_PART_SURFACES} marking surfaces"
+            ));
         }
         let mut names = std::collections::BTreeSet::new();
         for s in &d.surfaces {
             if !part_parameter_name_ok(&s.name) || !names.insert(s.name.as_str()) {
-                out.push(format!("marking surface ‘{}’ is unnamed or repeated", s.name));
+                out.push(format!(
+                    "marking surface ‘{}’ is unnamed or repeated",
+                    s.name
+                ));
             }
             if s.description.len() > super::MAX_LABEL {
-                out.push(format!("marking surface {} has too long a description", s.name));
+                out.push(format!(
+                    "marking surface {} has too long a description",
+                    s.name
+                ));
             }
             let ok = match &s.geometry {
                 SurfaceGeometry::Plane(a) => {
                     finite_within(&a.origin)
                         && finite_within(&a.normal)
                         && finite_within(&a.u_axis)
-                        && a.size_mm.iter().all(|v| v.is_finite() && *v > 0.0 && *v <= MAX_PART_LITERAL)
+                        && a.size_mm
+                            .iter()
+                            .all(|v| v.is_finite() && *v > 0.0 && *v <= MAX_PART_LITERAL)
                 }
                 SurfaceGeometry::Cylinder(_) => false,
             };

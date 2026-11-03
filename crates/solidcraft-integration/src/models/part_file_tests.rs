@@ -101,14 +101,24 @@ fn the_built_in_wroom3_part_passes_its_check() -> Fallible {
     let report = part.report();
     assert!(report.ok, "{:?}", report.findings);
     assert!(
-        report.findings.iter().all(|f| f.code != "part.import"),
+        report.findings.iter().all(|f| f.code != "part_file.import"),
         "an original part imports nothing"
     );
     assert_eq!(report.bodies.len(), 110);
     assert!(report.bodies.iter().all(|b| b.material.is_some()));
-    assert_eq!(report.surfaces.first().map(|s| s.name.as_str()), Some("top"));
+    assert_eq!(
+        report.surfaces.first().map(|s| s.name.as_str()),
+        Some("top")
+    );
     assert!(report.pin1.is_some());
-    for name in ["can_height", "board_thickness", "can_width", "can_length", "width", "length"] {
+    for name in [
+        "can_height",
+        "board_thickness",
+        "can_width",
+        "can_length",
+        "width",
+        "length",
+    ] {
         assert!(report.parameters.iter().any(|p| p.name == name), "{name}");
     }
     Ok(())
@@ -167,7 +177,10 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     let inserted = insert(&mut board, &stem, &part)?;
     assert!(board.evaluation_error().is_none());
     assert_eq!(def.bodies.len(), inserted.bodies.len());
-    let (ga, gb) = (generated.session().world_state(), board.session().world_state());
+    let (ga, gb) = (
+        generated.session().world_state(),
+        board.session().world_state(),
+    );
     let (mut worst_box, mut worst_volume) = (0.0f64, 0.0f64);
     let (mut volume_a, mut volume_b) = (0.0, 0.0);
     for body in &def.bodies {
@@ -197,7 +210,10 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     }
     let union_a = models::imported::bounds_of(
         &generated,
-        &def.bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
+        &def.bodies
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>(),
     )?;
     eprintln!(
         "WROOM-3 parity: {} bodies each, worst bbox Δ {worst_box:.2e} mm, worst volume Δ \
@@ -263,20 +279,23 @@ fn bad_part_files_and_values_are_refused() -> Fallible {
         Err(Error::Invalid(m)) => m.split(':').next().unwrap_or_default().to_owned(),
         other => format!("{other:?}"),
     };
-    assert_eq!(code(evaluate(b"", &PartValues::new())), "part.read");
-    assert_eq!(code(evaluate(b"{not a design", &PartValues::new())), "part.read");
+    assert_eq!(code(evaluate(b"", &PartValues::new())), "part_file.read");
+    assert_eq!(
+        code(evaluate(b"{not a design", &PartValues::new())),
+        "part_file.read"
+    );
     let mut unknown = PartValues::new();
     unknown.insert("no_such".into(), PartValue::Mm(1.0));
-    assert_eq!(code(evaluate(bytes(), &unknown)), "part.value");
+    assert_eq!(code(evaluate(bytes(), &unknown)), "part_file.value");
     let mut unit = PartValues::new();
     unit.insert("can_height".into(), PartValue::Count(2));
-    assert_eq!(code(evaluate(bytes(), &unit)), "part.value");
+    assert_eq!(code(evaluate(bytes(), &unit)), "part_file.value");
     let mut name = PartValues::new();
     name.insert("can height; x".into(), PartValue::Mm(1.0));
-    assert_eq!(code(evaluate(bytes(), &name)), "part.value");
+    assert_eq!(code(evaluate(bytes(), &name)), "part_file.value");
     let mut huge = PartValues::new();
     huge.insert("can_height".into(), PartValue::Mm(f64::INFINITY));
-    assert_eq!(code(evaluate(bytes(), &huge)), "part.value");
+    assert_eq!(code(evaluate(bytes(), &huge)), "part_file.value");
     Ok(())
 }
 
@@ -290,7 +309,10 @@ fn codes(part: &EvaluatedPart) -> Vec<(&str, bool)> {
 #[test]
 fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
     // Good: seated, mapped, marked.
-    let good = small_part(&[([-1.0, -0.5, 0.0], [2.0, 1.0, 1.0], Some("epoxy-mould"))], true);
+    let good = small_part(
+        &[([-1.0, -0.5, 0.0], [2.0, 1.0, 1.0], Some("epoxy-mould"))],
+        true,
+    );
     let part = evaluate(&good, &PartValues::new())?;
     assert!(!part.blocked(), "{:?}", part.findings);
     assert_eq!(part.surfaces.len(), 1);
@@ -303,15 +325,18 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
         true,
     );
     let part = evaluate(&unmapped, &PartValues::new())?;
-    assert!(codes(&part).contains(&("part.material", true)));
+    assert!(codes(&part).contains(&("part_file.material", true)));
     let mut board = Native::new("board")?;
     assert!(insert(&mut board, &part.stem(), &part).is_err());
-    assert!(board.find_component(&part.stem()).is_none(), "nothing inserted");
+    assert!(
+        board.find_component(&part.stem()).is_none(),
+        "nothing inserted"
+    );
     // Floating above the seating plane, and no marking plane (advisory).
     let floating = small_part(&[([-1.0, -0.5, 0.5], [2.0, 1.0, 1.0], Some("gold"))], false);
     let part = evaluate(&floating, &PartValues::new())?;
-    assert!(codes(&part).contains(&("part.seating", true)));
-    assert!(codes(&part).contains(&("part.no_marking", false)));
+    assert!(codes(&part).contains(&("part_file.seating", true)));
+    assert!(codes(&part).contains(&("part_file.no_marking", false)));
     // A marking plane without its size, and the origin outside the part.
     let mut s = Session::new(solidcraft_engine::io::read_design(&good)?);
     s.execute(
@@ -326,15 +351,25 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
         "appearance.assign",
         &json!({"bodies": [far["created_bodies"][0]], "name": "gold", "color": "#d0a000", "opacity": 1.0}),
     )?;
-    s.execute("parameters.change", &json!({"changes": {"marking_top_u": "0 mm"}}))?;
-    let part = evaluate(&solidcraft_engine::io::write_design(&s.doc), &PartValues::new())?;
+    s.execute(
+        "parameters.change",
+        &json!({"changes": {"marking_top_u": "0 mm"}}),
+    )?;
+    let part = evaluate(
+        &solidcraft_engine::io::write_design(&s.doc),
+        &PartValues::new(),
+    )?;
     let found = codes(&part);
-    assert!(found.contains(&("part.marking", true)), "{found:?}");
+    assert!(found.contains(&("part_file.marking", true)), "{found:?}");
     // A feature failing at the values.
     let mut v = PartValues::new();
     v.insert("body_height".into(), PartValue::Mm(0.0));
     let part = evaluate(&good, &v)?;
-    assert!(codes(&part).contains(&("part.feature", true)), "{:?}", part.findings);
+    assert!(
+        codes(&part).contains(&("part_file.feature", true)),
+        "{:?}",
+        part.findings
+    );
     Ok(())
 }
 
@@ -344,12 +379,22 @@ fn a_nested_part_is_refused() -> Fallible {
         &[([-1.0, -0.5, 0.0], [2.0, 1.0, 1.0], Some("gold"))],
         true,
     ))?);
-    s.execute("component.create", &json!({"name": "inner", "grounded": false}))?;
+    s.execute(
+        "component.create",
+        &json!({"name": "inner", "grounded": false}),
+    )?;
     s.execute(
         "solid.box",
         &json!({"corner": [0, 0, 0], "length": 1, "width": 1, "height": 1, "name": "nested"}),
     )?;
-    let part = evaluate(&solidcraft_engine::io::write_design(&s.doc), &PartValues::new())?;
-    assert!(codes(&part).contains(&("part.structure", true)), "{:?}", part.findings);
+    let part = evaluate(
+        &solidcraft_engine::io::write_design(&s.doc),
+        &PartValues::new(),
+    )?;
+    assert!(
+        codes(&part).contains(&("part_file.structure", true)),
+        "{:?}",
+        part.findings
+    );
     Ok(())
 }

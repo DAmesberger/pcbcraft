@@ -652,7 +652,7 @@ Contract, 3 November 2026, for the founder's revision above. For release 1 it re
   ```
 
   Values are literals only: a value never names another parameter. A name must be an existing user parameter of the file (not a feature input or dimension), and the unit must match the parameter's (`mm` length, `deg` angle, none for counts and numbers). At most 256 values; names are at most 64 bytes of `[A-Za-z0-9_]`.
-- **Derived data.** `derived` is what the part evaluated to when it was assigned, like an imported model's bounds and lead contacts. The board build evaluates the part again. It refuses with `part.stale`, naming the package, when bounds or surfaces differ by more than `RECHECK_TOLERANCE_MM` (0.01 mm) or the body count differs. The core uses `derived.surfaces` for marking layout and `library.marking_surfaces`, so it never evaluates Solidcraft.
+- **Derived data.** `derived` is what the part evaluated to when it was assigned, like an imported model's bounds and lead contacts. The board build evaluates the part again. It refuses with `part_file.stale`, naming the package, when bounds or surfaces differ by more than `RECHECK_TOLERANCE_MM` (0.01 mm) or the body count differs. The core uses `derived.surfaces` for marking layout and `library.marking_surfaces`, so it never evaluates Solidcraft.
 - **Identity of a build.** `PartKey = sha256(asset hash ‖ canonical JSON of values)`. Packages with the same key share one native definition, named `pkgp<first 12 hex of the key>`, with parameters `pkgp…_<name>` and bodies `pkgp… <name>`.
 
 ### L2. Naming conventions and the check
@@ -671,20 +671,20 @@ A part file follows these conventions, all over generic Solidcraft features:
 
 **The check** evaluates the file at given values and reports findings with these codes. All block assignment and build unless marked advisory:
 
-- `part.read`: unreadable, too large (the 64 MiB asset bound) or an unsupported Solidcraft format;
-- `part.structure`: subcomponents, occurrences or joints;
-- `part.value`: a value names an unknown or non-user parameter, or its unit does not match;
-- `part.feature`: a feature fails at the values (the first 16 are named);
-- `part.empty`, `part.bodies`: no bodies, or more than 1024;
-- `part.seating`: the lowest geometry is not at z = 0;
-- `part.origin` (advisory): the origin is outside the xy bounds;
-- `part.material`: a body's appearance names no Pcbcraft material (the bodies are named);
-- `part.marking`: a `marking-*` plane without both size parameters, a size that is not positive, or two surfaces with one anchor name;
-- `part.no_marking` (advisory): no marking surface;
-- `part.import` (advisory): the file contains an import feature; its source licence must be recorded on the Model;
-- `part.slow` (advisory): the cold evaluation took more than 100 ms (a target).
+- `part_file.read`: unreadable, too large (the 64 MiB asset bound) or an unsupported Solidcraft format;
+- `part_file.structure`: subcomponents, occurrences or joints;
+- `part_file.value`: a value names an unknown or non-user parameter, or its unit does not match;
+- `part_file.feature`: a feature fails at the values (the first 16 are named);
+- `part_file.empty`, `part_file.bodies`: no bodies, or more than 1024;
+- `part_file.seating`: the lowest geometry is not at z = 0;
+- `part_file.origin` (advisory): the origin is outside the xy bounds;
+- `part_file.material`: a body's appearance names no Pcbcraft material (the bodies are named);
+- `part_file.marking`: a `marking-*` plane without both size parameters, a size that is not positive, or two surfaces with one anchor name;
+- `part_file.no_marking` (advisory): no marking surface;
+- `part_file.import` (advisory): the file contains an import feature; its source licence must be recorded on the Model;
+- `part_file.slow` (advisory): the cold evaluation took more than 100 ms (a target).
 
-The automation layer reports these codes for a package's part file. The core adds two library findings: `part.model`, for a model that is missing or not of format `solidcraft`, and `part.values`, for malformed values or derived data.
+The automation layer reports these codes for a package's part file. The core adds two library findings: `part_file.model`, for a model that is missing or not of format `solidcraft`, and `part_file.values`, for malformed values or derived data.
 
 ### L3. Build and cache API (`pcbcraft_solidcraft::models::part_file`)
 
@@ -706,7 +706,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
 pub fn cache_counts() -> (u64 /* hits */, u64 /* evaluations */);
 ```
 
-- **Evaluate.** It reads the bytes with Solidcraft's reader, applies the values as literal parameter expressions and evaluates once. It then reads the bodies, appearances, construction geometry and parameters. It refuses `part.read` and `part.value` problems; every other finding is reported in the result.
+- **Evaluate.** It reads the bytes with Solidcraft's reader, applies the values as literal parameter expressions and evaluates once. It then reads the bodies, appearances, construction geometry and parameters. It refuses `part_file.read` and `part_file.value` problems; every other finding is reported in the result.
 - **Cache.** A process-wide LRU of at most 32 evaluated parts, keyed by `PartKey` (a target bound). Equal packages, the Component 3D preview, the check and every board build share it. A hit costs a hash of the bytes' identity and values and a lookup.
 - **Insert.** It adds the evaluated part's history to the board design as component `stem`; this is the spike's typed insert. Every root feature is cloned with `Feature::remap_clone` over complete maps: feature ids, feature names → `<stem> <name>`, body names → `<stem> <name>`, and every `param_defs` name → `<stem>_<name>`. User parameters are copied with `clone_expression`, then the design is evaluated once.
   - It refuses a name collision or any inserted feature failing. It runs inside the board build, which is discarded whole on any failure, so a refusal leaves no partial board.
@@ -719,7 +719,7 @@ pub fn cache_counts() -> (u64 /* hits */, u64 /* evaluations */);
 
 | Kind | ID | Payload → result |
 |---|---|---|
-| Core library command | `library.edit_package` `PackageEdit::SetModel(PackageModel::PartFile(…))` | A package draft uses a part file: shape-checked (`part.values`), one undo step. |
+| Core library command | `library.edit_package` `PackageEdit::SetModel(PackageModel::PartFile(…))` | A package draft uses a part file: shape-checked (`part_file.values`), one undo step. |
 | Core library command | `library.import_model` with `assign.part` | `{ name, assets, definition (format solidcraft), assign: { package, lead_map: [], part: { values, derived } } }`: the Model draft and the package's part-file model in one step. |
 | Automation command | `library.use_part_file` | `{ package, path \| builtin, values?, name?, expected_revision? }` → the check report and the new revision. It reads the file (bounded) and checks it, refusing blocking findings. It then applies `library.import_model` with `assign.part`, or `SetModel` when the same asset is already a Model in the project. |
 | Automation command | `library.set_part_values` | `{ package, values, expected_revision? }` → report and revision. It evaluates at the new values and applies `SetModel`. |

@@ -44,7 +44,7 @@ pub const DEFAULT_MARKING: &str = "marking-top";
 pub const PIN1_POINT: &str = "pin1";
 /// The lowest geometry lies this close to z = 0, mm.
 pub const SEATING_TOLERANCE_MM: f64 = 0.01;
-/// Cold evaluation above this is advisory `part.slow`, ms (a target).
+/// Cold evaluation above this is advisory `part_file.slow`, ms (a target).
 pub const SLOW_MS: f64 = 100.0;
 /// Evaluated parts the cache keeps (a target bound).
 pub const CACHE_ENTRIES: usize = 32;
@@ -305,29 +305,31 @@ pub fn evaluate(bytes: &[u8], values: &PartValues) -> Result<Arc<EvaluatedPart>>
 
 fn check_request(bytes: &[u8], values: &PartValues) -> Result<()> {
     if bytes.is_empty() {
-        return Err(Error::Invalid("part.read: the part file is empty".into()));
+        return Err(Error::Invalid(
+            "part_file.read: the part file is empty".into(),
+        ));
     }
     if bytes.len() > MAX_ASSET_BYTES {
         return Err(Error::Invalid(format!(
-            "part.read: the part file has {} bytes; a part file has at most {MAX_ASSET_BYTES}",
+            "part_file.read: the part file has {} bytes; a part file has at most {MAX_ASSET_BYTES}",
             bytes.len()
         )));
     }
     if values.len() > MAX_PART_VALUES {
         return Err(Error::Invalid(format!(
-            "part.value: at most {MAX_PART_VALUES} values"
+            "part_file.value: at most {MAX_PART_VALUES} values"
         )));
     }
     for (name, value) in values {
         if !part_parameter_name_ok(name) {
             return Err(Error::Invalid(format!(
-                "part.value: ‘{}’ is not a parameter name",
+                "part_file.value: ‘{}’ is not a parameter name",
                 name.chars().take(80).collect::<String>()
             )));
         }
         if !value.finite() {
             return Err(Error::Invalid(format!(
-                "part.value: the value of {name} must be finite and within ±10000"
+                "part_file.value: the value of {name} must be finite and within ±10000"
             )));
         }
     }
@@ -348,17 +350,17 @@ fn arr(v: solidcraft_engine::geom::Vec3) -> [f64; 3] {
 
 fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<EvaluatedPart> {
     let mut doc = solidcraft_engine::io::read_design(bytes)
-        .map_err(|e| Error::Invalid(format!("part.read: {e}")))?;
+        .map_err(|e| Error::Invalid(format!("part_file.read: {e}")))?;
     // The values, as literal expressions of user parameters.
     for (name, value) in values {
         let Some(param) = doc.params.iter_mut().find(|p| &p.name == name && !p.model) else {
             return Err(Error::Invalid(format!(
-                "part.value: the part file has no user parameter {name}"
+                "part_file.value: the part file has no user parameter {name}"
             )));
         };
         if param.unit != value.unit() {
             return Err(Error::Invalid(format!(
-                "part.value: {name} is in ‘{}’; the value is in ‘{}’",
+                "part_file.value: {name} is in ‘{}’; the value is in ‘{}’",
                 param.unit,
                 value.unit()
             )));
@@ -374,7 +376,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
     let nested = doc.features.iter().filter(|f| f.component != 0).count();
     if nested > 0 || !doc.occurrences.is_empty() || !doc.assembly.joints.is_empty() {
         findings.push(finding(
-            "part.structure",
+            "part_file.structure",
             true,
             format!(
                 "a part file keeps its features in the root component, with no occurrences or joints \
@@ -384,13 +386,14 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             ),
         ));
     }
-    if doc
-        .features
-        .iter()
-        .any(|f| matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::MeshImport { .. }))
-    {
+    if doc.features.iter().any(|f| {
+        matches!(
+            f.kind,
+            FeatureKind::Import { .. } | FeatureKind::MeshImport { .. }
+        )
+    }) {
         findings.push(finding(
-            "part.import",
+            "part_file.import",
             false,
             "the part file imports geometry; record its source licence on the model".into(),
         ));
@@ -403,7 +406,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         .collect();
     if !failed.is_empty() {
         findings.push(finding(
-            "part.feature",
+            "part_file.feature",
             true,
             format!(
                 "{} feature(s) fail at these values: {}",
@@ -461,10 +464,14 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
     let bounds_mm = union.unwrap_or_default();
     let count = u32::try_from(bodies.len()).unwrap_or(u32::MAX);
     if bodies.is_empty() {
-        findings.push(finding("part.empty", true, "the part file has no bodies".into()));
+        findings.push(finding(
+            "part_file.empty",
+            true,
+            "the part file has no bodies".into(),
+        ));
     } else if count > MAX_PART_BODIES {
         findings.push(finding(
-            "part.bodies",
+            "part_file.bodies",
             true,
             format!("the part file has {count} bodies; at most {MAX_PART_BODIES}"),
         ));
@@ -472,7 +479,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         let low = bounds_mm[0][2];
         if low.abs() > SEATING_TOLERANCE_MM {
             findings.push(finding(
-                "part.seating",
+                "part_file.seating",
                 true,
                 format!(
                     "the lowest geometry is at z = {low:.3} mm; the seating plane is z = 0 (±{SEATING_TOLERANCE_MM} mm)"
@@ -482,7 +489,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         let [lo, hi] = bounds_mm;
         if !(lo[0] <= 0.0 && hi[0] >= 0.0 && lo[1] <= 0.0 && hi[1] >= 0.0) {
             findings.push(finding(
-                "part.origin",
+                "part_file.origin",
                 false,
                 "the design origin (the footprint origin) lies outside the part's xy bounds".into(),
             ));
@@ -498,12 +505,17 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         .collect();
     if !unmapped.is_empty() {
         findings.push(finding(
-            "part.material",
+            "part_file.material",
             true,
             format!(
                 "{} body(ies) have no appearance named after a Pcbcraft material: {}",
                 unmapped.len(),
-                unmapped.iter().take(8).cloned().collect::<Vec<_>>().join(", ")
+                unmapped
+                    .iter()
+                    .take(8)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         ));
     }
@@ -525,7 +537,10 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
                 }
                 let (u, v) = (format!("marking_{stem}_u"), format!("marking_{stem}_v"));
                 let (Some(su), Some(sv)) = (length(&u), length(&v)) else {
-                    marking_problems.push(format!("{} needs the length parameters {u} and {v}", c.name));
+                    marking_problems.push(format!(
+                        "{} needs the length parameters {u} and {v}",
+                        c.name
+                    ));
                     continue;
                 };
                 if !(su.is_finite() && sv.is_finite() && su > 0.0 && sv > 0.0) {
@@ -536,7 +551,8 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
                     marking_problems.push(format!("two marking planes are named {stem}"));
                     continue;
                 }
-                let (Some(ux), Some(n)) = (plane.x.normalized(), plane.normal().normalized()) else {
+                let (Some(ux), Some(n)) = (plane.x.normalized(), plane.normal().normalized())
+                else {
                     marking_problems.push(format!("{} has no direction", c.name));
                     continue;
                 };
@@ -563,10 +579,14 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         ));
     }
     if !marking_problems.is_empty() {
-        findings.push(finding("part.marking", true, marking_problems.join("; ")));
+        findings.push(finding(
+            "part_file.marking",
+            true,
+            marking_problems.join("; "),
+        ));
     } else if surfaces.is_empty() {
         findings.push(finding(
-            "part.no_marking",
+            "part_file.no_marking",
             false,
             "no marking plane (`marking-<name>`): markings use the envelope's top".into(),
         ));
@@ -579,7 +599,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
     }
     if evaluate_ms > SLOW_MS {
         findings.push(finding(
-            "part.slow",
+            "part_file.slow",
             false,
             format!("the cold evaluation took {evaluate_ms:.0} ms (target {SLOW_MS:.0} ms)"),
         ));
@@ -651,7 +671,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
     let created = native.component(stem, false)?;
     let session = native.session_mut();
     let engine = |message: String| Error::Engine {
-        command: "part.insert".into(),
+        command: "part_file.insert".into(),
         message,
     };
     {
@@ -659,7 +679,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         let taken: BTreeSet<String> = doc.param_defs().into_iter().map(|d| d.name).collect();
         if let Some(clash) = parameters.values().find(|n| taken.contains(*n)) {
             return Err(Error::Invalid(format!(
-                "part.insert: the design already has a parameter {clash}"
+                "part_file.insert: the design already has a parameter {clash}"
             )));
         }
         let mut next = doc.next_id.max(1);
@@ -669,12 +689,12 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
             ids.insert(f.id, next);
             next = next
                 .checked_add(1)
-                .ok_or_else(|| Error::Invalid("part.insert: feature ids ran out".into()))?;
+                .ok_or_else(|| Error::Invalid("part_file.insert: feature ids ran out".into()))?;
             names.insert(f.name.clone(), format!("{stem} {}", f.name));
         }
         if let Some(clash) = names.values().find(|n| doc.find_feature(n).is_some()) {
             return Err(Error::Invalid(format!(
-                "part.insert: the design already has a feature {clash}"
+                "part_file.insert: the design already has a feature {clash}"
             )));
         }
         doc.next_id = next;

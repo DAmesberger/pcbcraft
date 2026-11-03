@@ -867,7 +867,7 @@ pub(crate) fn apply_library(
                     Some(part) => {
                         if !assign.lead_map.is_empty() {
                             return Err(Error::Invalid(
-                                "part.values: a part file takes no lead map".into(),
+                                "part_file.values: a part file takes no lead map".into(),
                             ));
                         }
                         library::PackageModel::PartFile(library::package_model::PartFileModel {

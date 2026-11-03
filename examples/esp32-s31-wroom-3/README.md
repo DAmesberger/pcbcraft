@@ -2,9 +2,10 @@
 
 The first library part made with the datasheet assistant ([docs/datasheet-assistant.md](../../docs/datasheet-assistant.md)). Unreviewed drafts: nothing here is published.
 
-- `esp32-s31-wroom-3.pcbcraft`: the project of drafts (component with 99 pins, IO MUX/LP/analog functions and eight Rhai pin rules; symbol; the LGA module package with its antenna keep-out and generated 3D model; footprint; binding).
+- `esp32-s31-wroom-3.pcbcraft`: the project of drafts (component with 99 pins, IO MUX/LP/analog functions and eight Rhai pin rules; symbol; the LGA module package with its antenna keep-out; footprint; binding; and the module body's part file as a Model draft).
 - `esp32-s31-wroom-3.review.md` / `.review.json`: the review report: every value with its datasheet page and table or figure, confidence and open questions.
 - `marking.json`: the module's display-only marking, as `library.set_marking` takes it: the model name etched on the can (`can_top`, laser etch on metal), a placeholder logo box and a certification placeholder (original artwork, CC0-1.0; supply your own logo in your project, Pcbcraft ships no vendor artwork), a QR code of the instance's designator, and the designator in white silkscreen on the board beyond the can (`pcb_top`). The `.pcbcraft` file carries it on the component draft; after the replay regenerates the file, apply it again with `PCBCRAFT_WRITE_EXAMPLE=1 cargo test -p pcbcraft-automation write_the_example_marking -- --ignored`.
+- **3D body.** The package's model is the built-in part file `library/parts/esp32-s31-wroom-3.solidcraft` ([lean parts](../../docs/part-templates.md#11-lean-parts-contract)): an ordinary parametric SolidCraft design, built at the values the replay's step 06b gives from the drawing (`width`, `length`, `board_thickness`, `can_width`, `can_length`, `can_height`). Its marking surfaces (`can_top`, `pcb_top`, …) are the file's `marking-*` construction planes. It builds exactly what the module builder built before (110 bodies, bounding boxes and volumes equal). After the replay regenerates the file, the switch is applied with `PCBCRAFT_WRITE_EXAMPLE=1 cargo test -p pcbcraft-automation write_the_example_part_file -- --ignored`, before the marking.
 - `wroom3.replay.jsonl`: the tool calls, replayable without network:
 
 ```sh
