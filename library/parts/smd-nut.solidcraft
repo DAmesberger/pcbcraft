@@ -1,0 +1,147 @@
+{
+  "format": "solidcraft/43",
+  "name": "SMD nut",
+  "units": "mm",
+  "params": [
+    {
+      "name": "thread_d",
+      "expr": "3 mm",
+      "unit": "mm",
+      "comment": "thread (bore) diameter",
+      "model": false
+    },
+    {
+      "name": "outer_d",
+      "expr": "5 mm",
+      "unit": "mm",
+      "comment": "outer diameter",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "3 mm",
+      "unit": "mm",
+      "comment": "height above the seating plane",
+      "model": false
+    },
+    {
+      "name": "marking_top_u",
+      "expr": "outer_d * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size along its u axis",
+      "model": false
+    },
+    {
+      "name": "marking_top_v",
+      "expr": "outer_d * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size across it",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Body",
+      "suppressed": false,
+      "body_names": [
+        "Nut"
+      ],
+      "param_names": [
+        "d1",
+        "d2"
+      ],
+      "type": "cylinder",
+      "base": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "(outer_d) / 2",
+      "height": "height",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "Bore",
+      "suppressed": false,
+      "param_names": [
+        "d3",
+        "d4"
+      ],
+      "participants": [
+        "Nut"
+      ],
+      "type": "cylinder",
+      "base": [
+        "0 mm",
+        "0 mm",
+        "-1 mm"
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "(thread_d) / 2",
+      "height": "height + 2 mm",
+      "operation": "cut"
+    },
+    {
+      "id": 3,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "0 mm",
+            "height"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    }
+  ],
+  "next_id": 4,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "Nut": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  }
+}

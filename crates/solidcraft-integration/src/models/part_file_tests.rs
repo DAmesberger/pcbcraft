@@ -406,3 +406,121 @@ fn a_nested_part_is_refused() -> Fallible {
     );
     Ok(())
 }
+
+/// The evaluated part's total volume, mm³, through Solidcraft's measure.
+fn volume(part: &EvaluatedPart) -> Fallible<f64> {
+    let mut s = Session::new((*part.source).clone());
+    let measured = s.execute("inspect.measure", &json!({}))?;
+    Ok(measured["total"]["volume_mm3"].as_f64().unwrap_or(0.0))
+}
+
+/// The mechanical starter set (docs/mechanical-parts.md §M7): each built-in
+/// passes its check at its defaults, names its parameters and material,
+/// seats on z = 0, has `marking-top`, and follows its values.
+#[test]
+fn the_mechanical_built_ins_pass_their_check_and_follow_their_values() -> Fallible {
+    type Expected = (
+        &'static str,
+        &'static [(&'static str, &'static str)],
+        MaterialId,
+    );
+    let set: [Expected; 3] = [
+        (
+            "smd-nut",
+            &[("thread_d", "mm"), ("outer_d", "mm"), ("height", "mm")],
+            MaterialId::TinMatte,
+        ),
+        (
+            "round-spacer",
+            &[("inner_d", "mm"), ("outer_d", "mm"), ("height", "mm")],
+            MaterialId::Pa9t,
+        ),
+        (
+            "finned-heatsink",
+            &[
+                ("length", "mm"),
+                ("width", "mm"),
+                ("height", "mm"),
+                ("base_height", "mm"),
+                ("fin_count", ""),
+                ("fin_thickness", "mm"),
+            ],
+            MaterialId::Aluminium,
+        ),
+    ];
+    for (name, params, material) in set {
+        let part = evaluate(builtin(name).unwrap(), &PartValues::new())?;
+        let report = part.report();
+        eprintln!(
+            "{name}: {} bodies, cold evaluate {:.1} ms",
+            report.bodies.len(),
+            report.evaluate_ms
+        );
+        assert!(report.ok, "{name}: {:?}", report.findings);
+        for (p, unit) in params {
+            let found = report.parameters.iter().find(|q| q.name == *p);
+            assert_eq!(found.map(|q| q.unit.as_str()), Some(*unit), "{name} {p}");
+        }
+        assert_eq!(
+            report.surfaces.first().map(|s| s.name.as_str()),
+            Some("top"),
+            "{name}"
+        );
+        assert!(!report.bodies.is_empty(), "{name}");
+        assert!(
+            report.bodies.iter().all(|b| b.material == Some(material)),
+            "{name}: {:?}",
+            report.bodies
+        );
+        assert!(
+            report.bounds_mm[0][2].abs() <= 0.01,
+            "{name} seats on z = 0"
+        );
+        for axis in 0..2 {
+            let mid = (report.bounds_mm[0][axis] + report.bounds_mm[1][axis]) / 2.0;
+            assert!(mid.abs() < 1e-6, "{name} centred: {:?}", report.bounds_mm);
+        }
+    }
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    // The nut's height, and its marking area on top.
+    let mut values = PartValues::new();
+    values.insert("height".into(), PartValue::Mm(4.0));
+    let nut = evaluate(builtin("smd-nut").unwrap(), &values)?;
+    assert!(!nut.blocked(), "{:?}", nut.findings);
+    assert!(close(nut.bounds_mm[1][2], 4.0), "{:?}", nut.bounds_mm);
+    let Some(SurfaceGeometry::Plane(area)) = nut.surfaces.first().map(|s| s.geometry) else {
+        panic!("a planar marking-top");
+    };
+    assert!(
+        close(area.origin[2], 4.0),
+        "marking-top on the top: {area:?}"
+    );
+    assert!(close(area.size_mm[0], 3.0), "0.6 × outer_d: {area:?}");
+    // The spacer's diameter. A round body's outline bounds hold the
+    // circle but are not tight (they come from its edges' outline), so the
+    // check is that the box holds 8 mm and scales with the diameter.
+    let mut values = PartValues::new();
+    values.insert("outer_d".into(), PartValue::Mm(8.0));
+    let spacer = evaluate(builtin("round-spacer").unwrap(), &values)?;
+    assert!(!spacer.blocked(), "{:?}", spacer.findings);
+    let six = evaluate(builtin("round-spacer").unwrap(), &PartValues::new())?;
+    for axis in 0..2 {
+        let w = spacer.bounds_mm[1][axis] - spacer.bounds_mm[0][axis];
+        let w6 = six.bounds_mm[1][axis] - six.bounds_mm[0][axis];
+        assert!(w >= 8.0 - 0.01, "8 mm across: {:?}", spacer.bounds_mm);
+        assert!((w / w6 - 8.0 / 6.0).abs() < 1e-3, "{w} vs {w6}");
+    }
+    // The heatsink's fin count: fewer fins, less metal, one body still.
+    let heatsink = builtin("finned-heatsink").unwrap();
+    let six = evaluate(heatsink, &PartValues::new())?;
+    let mut values = PartValues::new();
+    values.insert("fin_count".into(), PartValue::Count(4));
+    let four = evaluate(heatsink, &values)?;
+    assert!(!four.blocked(), "{:?}", four.findings);
+    assert_eq!(four.bodies.len(), six.bodies.len());
+    // A 20 × 20 × 2 base and fins of 20 × 1.2 × 8 = 192 mm³ each.
+    let (v6, v4) = (volume(&six)?, volume(&four)?);
+    assert!((v6 - (800.0 + 6.0 * 192.0)).abs() < 0.5, "six fins: {v6}");
+    assert!((v4 - (800.0 + 4.0 * 192.0)).abs() < 0.5, "four fins: {v4}");
+    Ok(())
+}

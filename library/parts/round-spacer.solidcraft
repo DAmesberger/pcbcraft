@@ -1,0 +1,147 @@
+{
+  "format": "solidcraft/43",
+  "name": "Round spacer",
+  "units": "mm",
+  "params": [
+    {
+      "name": "inner_d",
+      "expr": "3.2 mm",
+      "unit": "mm",
+      "comment": "bore diameter",
+      "model": false
+    },
+    {
+      "name": "outer_d",
+      "expr": "6 mm",
+      "unit": "mm",
+      "comment": "outer diameter",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "5 mm",
+      "unit": "mm",
+      "comment": "height above the seating plane",
+      "model": false
+    },
+    {
+      "name": "marking_top_u",
+      "expr": "outer_d * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size along its u axis",
+      "model": false
+    },
+    {
+      "name": "marking_top_v",
+      "expr": "outer_d * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size across it",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Body",
+      "suppressed": false,
+      "body_names": [
+        "Spacer"
+      ],
+      "param_names": [
+        "d1",
+        "d2"
+      ],
+      "type": "cylinder",
+      "base": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "(outer_d) / 2",
+      "height": "height",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "Bore",
+      "suppressed": false,
+      "param_names": [
+        "d3",
+        "d4"
+      ],
+      "participants": [
+        "Spacer"
+      ],
+      "type": "cylinder",
+      "base": [
+        "0 mm",
+        "0 mm",
+        "-1 mm"
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "(inner_d) / 2",
+      "height": "height + 2 mm",
+      "operation": "cut"
+    },
+    {
+      "id": 3,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "0 mm",
+            "height"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    }
+  ],
+  "next_id": 4,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "Spacer": {
+        "name": "pa9t",
+        "color": [
+          48,
+          48,
+          48
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.45,
+          "dielectric_ior": 1.53
+        }
+      }
+    }
+  }
+}

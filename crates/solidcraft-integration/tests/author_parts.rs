@@ -11,6 +11,11 @@
 //! planes `marking-<name>` placed by expressions over those parameters,
 //! sized by `marking_<name>_u` / `_v`; `pin1` is a construction point.
 //!
+//! The mechanical starter set (docs/mechanical-parts.md §M7: SMD nut,
+//! round spacer, finned heatsink) is drawn directly from primitives and a
+//! parametric pattern over plain parameters, with generic illustrative
+//! dimensions.
+//!
 //! `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -18,6 +23,7 @@ use pcbcraft_core::ids::PackageTerminalId;
 use pcbcraft_core::library::{
     GeneratedMaterials, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
 };
+use pcbcraft_core::materials::MaterialId;
 use pcbcraft_solidcraft::models::{self, look, part_file};
 use pcbcraft_solidcraft::native::Native;
 use serde_json::json;
@@ -325,31 +331,203 @@ pub fn author_wroom3() -> Vec<u8> {
     solidcraft_engine::io::write_design(&part.doc)
 }
 
+/// Give `bodies` the Solidcraft appearance named after `material`, with
+/// Pcbcraft's opaque PBR projection of its look.
+fn assign_look(s: &mut Session, bodies: &[&str], material: MaterialId) {
+    let d = look::definition(material).unwrap();
+    let l = look::saved(&d);
+    let [r, g, b] = l.srgb8;
+    run(
+        s,
+        "appearance.assign",
+        json!({"bodies": bodies, "name": part_file::appearance_name(material),
+            "color": format!("#{r:02x}{g:02x}{b:02x}"), "opacity": 1.0,
+            "pbr": {"metallic": l.metallic, "roughness": l.roughness, "dielectric_ior": l.ior}}),
+    );
+}
+
+/// A new design `title` with the user parameters `(name, expression,
+/// unit, comment)` and the `marking-top` size parameters.
+fn new_part(title: &str, params: &[(&str, &str, &str, &str)], mark: [&str; 2]) -> Session {
+    let mut s = Session::default();
+    run(&mut s, "file.new", json!({"name": title}));
+    let mut rows: Vec<serde_json::Value> = params
+        .iter()
+        .map(|(name, expression, unit, comment)| {
+            json!({"name": name, "expression": expression, "unit": unit, "comment": comment})
+        })
+        .collect();
+    rows.push(
+        json!({"name": "marking_top_u", "expression": mark[0], "unit": "mm",
+        "comment": "marking-top size along its u axis"}),
+    );
+    rows.push(
+        json!({"name": "marking_top_v", "expression": mark[1], "unit": "mm",
+        "comment": "marking-top size across it"}),
+    );
+    run(
+        &mut s,
+        "parameters.import",
+        json!({"text": serde_json::to_string(&rows).unwrap()}),
+    );
+    s
+}
+
+/// The `marking-top` plane at the top centre (`top` an expression), u
+/// along +x, normal +z; then the design's bytes.
+fn finish_part(mut s: Session, top: &str) -> Vec<u8> {
+    run(
+        &mut s,
+        "construct.plane.offset",
+        json!({"base": {"origin": ["0 mm", "0 mm", top], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]},
+            "offset": "0 mm", "name": "marking-top"}),
+    );
+    s.refresh();
+    let errors: Vec<String> = s
+        .model
+        .results
+        .iter()
+        .filter_map(|r| r.error.clone().map(|e| format!("{}: {e}", r.name)))
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    solidcraft_engine::io::write_design(&s.doc)
+}
+
+/// A tube standing on z = 0: a cylinder of diameter `outer` with a
+/// through bore of diameter `inner`, `height` tall.
+fn tube(s: &mut Session, body: &str, outer: &str, inner: &str) {
+    run(
+        s,
+        "solid.cylinder",
+        json!({"diameter": outer, "height": "height", "name": "Body", "body_name": body}),
+    );
+    run(
+        s,
+        "solid.cylinder",
+        json!({"diameter": inner, "height": "height + 2 mm", "base": ["0 mm", "0 mm", "-1 mm"],
+            "operation": "cut", "targets": [body], "name": "Bore"}),
+    );
+}
+
+/// An SMD nut: a tin-plated tube soldered to the board by its base.
+/// Generic illustrative dimensions.
+pub fn author_smd_nut() -> Vec<u8> {
+    let mut s = new_part(
+        "SMD nut",
+        &[
+            ("thread_d", "3 mm", "mm", "thread (bore) diameter"),
+            ("outer_d", "5 mm", "mm", "outer diameter"),
+            ("height", "3 mm", "mm", "height above the seating plane"),
+        ],
+        ["outer_d * 0.6", "outer_d * 0.6"],
+    );
+    tube(&mut s, "Nut", "outer_d", "thread_d");
+    assign_look(&mut s, &["Nut"], MaterialId::TinMatte);
+    finish_part(s, "height")
+}
+
+/// A round spacer: a plastic tube. Generic illustrative dimensions.
+pub fn author_round_spacer() -> Vec<u8> {
+    let mut s = new_part(
+        "Round spacer",
+        &[
+            ("inner_d", "3.2 mm", "mm", "bore diameter"),
+            ("outer_d", "6 mm", "mm", "outer diameter"),
+            ("height", "5 mm", "mm", "height above the seating plane"),
+        ],
+        ["outer_d * 0.6", "outer_d * 0.6"],
+    );
+    tube(&mut s, "Spacer", "outer_d", "inner_d");
+    assign_look(&mut s, &["Spacer"], MaterialId::Pa9t);
+    finish_part(s, "height")
+}
+
+/// A finned heatsink: a base plate and `fin_count` fins along x, evenly
+/// spaced across the width with the outer fins flush with the sides. The
+/// first fin joins the base, and a rectangular pattern whose count is the
+/// `fin_count` parameter replays it, so the part stays one body at any
+/// count. Generic illustrative dimensions.
+pub fn author_finned_heatsink() -> Vec<u8> {
+    let mut s = new_part(
+        "Finned heatsink",
+        &[
+            (
+                "length",
+                "20 mm",
+                "mm",
+                "size along x (the fins' direction)",
+            ),
+            ("width", "20 mm", "mm", "size along y"),
+            (
+                "height",
+                "10 mm",
+                "mm",
+                "overall height above the seating plane",
+            ),
+            ("base_height", "2 mm", "mm", "base plate thickness"),
+            ("fin_count", "6", "", "number of fins (at least 2)"),
+            ("fin_thickness", "1.2 mm", "mm", "thickness of one fin"),
+        ],
+        ["length", "width"],
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-length / 2", "-width / 2", "0 mm"], "length": "length",
+            "width": "width", "height": "base_height", "name": "Base", "body_name": "Heatsink"}),
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-length / 2", "-width / 2", "base_height"], "length": "length",
+            "width": "fin_thickness", "height": "height - base_height", "operation": "join",
+            "targets": ["Heatsink"], "name": "Fin"}),
+    );
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"features": ["Fin"], "dir1": [0, 1, 0], "count1": "fin_count",
+            "spacing1": "(width - fin_thickness) / (fin_count - 1)", "name": "Fins"}),
+    );
+    assign_look(&mut s, &["Heatsink"], MaterialId::Aluminium);
+    finish_part(s, "height")
+}
+
 #[test]
 #[ignore = "writes library/parts/*.solidcraft"]
 fn author_parts() {
-    let bytes = author_wroom3();
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../library/parts");
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("esp32-s31-wroom-3.solidcraft");
-    std::fs::write(&path, &bytes).unwrap();
-    let report = part_file::evaluate(&bytes, &BTreeMap::new())
-        .unwrap()
-        .report();
-    eprintln!(
-        "wrote {} ({} KiB): {} parameters, {} bodies, {} surfaces, findings {:?}",
-        path.display(),
-        bytes.len() / 1024,
-        report.parameters.len(),
-        report.bodies.len(),
-        report.surfaces.len(),
-        report.findings
-    );
-    for p in &report.parameters {
+    type Author = fn() -> Vec<u8>;
+    let parts: [(&str, Author); 4] = [
+        ("esp32-s31-wroom-3", author_wroom3),
+        ("smd-nut", author_smd_nut),
+        ("round-spacer", author_round_spacer),
+        ("finned-heatsink", author_finned_heatsink),
+    ];
+    for (name, author) in parts {
+        let bytes = author();
+        let path = dir.join(format!("{name}.solidcraft"));
+        std::fs::write(&path, &bytes).unwrap();
+        let report = part_file::evaluate(&bytes, &BTreeMap::new())
+            .unwrap()
+            .report();
         eprintln!(
-            "  {} = {} [{}] -> {:?}",
-            p.name, p.expression, p.unit, p.value
+            "wrote {} ({} KiB): {} parameters, {} bodies, {} surfaces, {:.1} ms, findings {:?}",
+            path.display(),
+            bytes.len() / 1024,
+            report.parameters.len(),
+            report.bodies.len(),
+            report.surfaces.len(),
+            report.evaluate_ms,
+            report.findings
         );
+        for p in &report.parameters {
+            eprintln!(
+                "  {} = {} [{}] -> {:?}",
+                p.name, p.expression, p.unit, p.value
+            );
+        }
+        assert!(report.ok, "{name}: {:?}", report.findings);
     }
-    assert!(report.ok, "{:?}", report.findings);
 }

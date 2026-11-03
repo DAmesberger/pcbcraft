@@ -1,0 +1,185 @@
+{
+  "format": "solidcraft/43",
+  "name": "Finned heatsink",
+  "units": "mm",
+  "params": [
+    {
+      "name": "length",
+      "expr": "20 mm",
+      "unit": "mm",
+      "comment": "size along x (the fins' direction)",
+      "model": false
+    },
+    {
+      "name": "width",
+      "expr": "20 mm",
+      "unit": "mm",
+      "comment": "size along y",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "10 mm",
+      "unit": "mm",
+      "comment": "overall height above the seating plane",
+      "model": false
+    },
+    {
+      "name": "base_height",
+      "expr": "2 mm",
+      "unit": "mm",
+      "comment": "base plate thickness",
+      "model": false
+    },
+    {
+      "name": "fin_count",
+      "expr": "6",
+      "unit": "",
+      "comment": "number of fins (at least 2)",
+      "model": false
+    },
+    {
+      "name": "fin_thickness",
+      "expr": "1.2 mm",
+      "unit": "mm",
+      "comment": "thickness of one fin",
+      "model": false
+    },
+    {
+      "name": "marking_top_u",
+      "expr": "length",
+      "unit": "mm",
+      "comment": "marking-top size along its u axis",
+      "model": false
+    },
+    {
+      "name": "marking_top_v",
+      "expr": "width",
+      "unit": "mm",
+      "comment": "marking-top size across it",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Base",
+      "suppressed": false,
+      "body_names": [
+        "Heatsink"
+      ],
+      "param_names": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "type": "box",
+      "corner": [
+        "-length / 2",
+        "-width / 2",
+        "0 mm"
+      ],
+      "length": "length",
+      "width": "width",
+      "height": "base_height",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "Fin",
+      "suppressed": false,
+      "param_names": [
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "participants": [
+        "Heatsink"
+      ],
+      "type": "box",
+      "corner": [
+        "-length / 2",
+        "-width / 2",
+        "base_height"
+      ],
+      "length": "length",
+      "width": "fin_thickness",
+      "height": "height - base_height",
+      "operation": "join"
+    },
+    {
+      "id": 3,
+      "name": "Fins",
+      "suppressed": false,
+      "param_names": [
+        "d7",
+        "d8"
+      ],
+      "type": "pattern",
+      "features": [
+        2
+      ],
+      "pattern": {
+        "type": "rectangular",
+        "dir1": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "count1": "fin_count",
+        "spacing1": "(width - fin_thickness) / (fin_count - 1)"
+      }
+    },
+    {
+      "id": 4,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d9"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "0 mm",
+            "height"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    }
+  ],
+  "next_id": 5,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "Heatsink": {
+        "name": "aluminium",
+        "color": [
+          245,
+          246,
+          246
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  }
+}
