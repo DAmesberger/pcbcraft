@@ -14,6 +14,7 @@ mod model_library;
 mod model_scene;
 mod navigation;
 mod palette;
+mod part_chooser;
 mod part_editor;
 mod pcb_editor;
 mod pin_mux;

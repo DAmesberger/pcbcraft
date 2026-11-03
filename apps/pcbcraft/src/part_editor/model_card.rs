@@ -10,6 +10,10 @@ use pcbcraft_core::{Engine, ObjectRef, Operation};
 
 impl PartEditor {
     pub(super) fn model_card(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        // M5: the part-file chooser sheet floats above the card.
+        if let Some(operation) = self.part_chooser_sheet(&ui.ctx().clone(), engine) {
+            return Some(operation);
+        }
         // D3: the import wizard's steps replace the card while it runs.
         let wizard = self.import_wizard(ui, engine);
         if wizard.is_some() || self.model_import.is_open() {

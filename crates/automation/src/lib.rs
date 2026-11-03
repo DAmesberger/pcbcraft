@@ -8,7 +8,7 @@ pub mod lines;
 pub mod mcp;
 pub mod session;
 
-pub use session::{Request, Session};
+pub use session::{Request, Session, part_files};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

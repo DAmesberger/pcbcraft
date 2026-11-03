@@ -23,6 +23,8 @@ pub const MAX_SOURCES: usize = 64;
 pub const MAX_FAVOURITES: usize = 256;
 /// Recents kept, most recent first.
 pub const MAX_RECENT: usize = 32;
+/// Recent part files kept (the part-file chooser), most recent first.
+pub const MAX_RECENT_PART_FILES: usize = 8;
 /// Bytes of the settings file.
 pub const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
 /// The widest panel width kept, in points.
@@ -65,6 +67,10 @@ pub struct UserSettings {
     /// The user's keymap and the key-reveal overlays.
     #[serde(default, skip_serializing_if = "KeyboardSettings::is_default")]
     pub keyboard: KeyboardSettings,
+    /// Part files opened in the part-file chooser, most recent first:
+    /// absolute paths, at most [`MAX_RECENT_PART_FILES`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub part_files: Vec<PathBuf>,
 }
 
 impl Default for UserSettings {
@@ -76,6 +82,7 @@ impl Default for UserSettings {
             recent: Vec::new(),
             browser_width: None,
             keyboard: KeyboardSettings::default(),
+            part_files: Vec::new(),
         }
     }
 }
@@ -308,6 +315,18 @@ impl UserSettings {
         self.recent.truncate(MAX_RECENT);
     }
 
+    /// Put the part file `path` first among the recent part files, dropping
+    /// an older mention and the oldest beyond [`MAX_RECENT_PART_FILES`]. A
+    /// path the settings would refuse (relative or overlong) is not kept.
+    pub fn remember_part_file(&mut self, path: PathBuf) {
+        if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+            return;
+        }
+        self.part_files.retain(|p| *p != path);
+        self.part_files.insert(0, path);
+        self.part_files.truncate(MAX_RECENT_PART_FILES);
+    }
+
     /// Add or remove a favourite; returns whether it is now a favourite.
     /// Adding beyond [`MAX_FAVOURITES`] is refused.
     pub fn toggle_favourite(&mut self, key: EntryKey) -> Result<bool> {
@@ -349,6 +368,22 @@ impl UserSettings {
             )));
         }
         self.keyboard.check()?;
+        if self.part_files.len() > MAX_RECENT_PART_FILES {
+            return Err(Error::TooLarge(format!(
+                "at most {MAX_RECENT_PART_FILES} recent part files"
+            )));
+        }
+        for path in &self.part_files {
+            if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+                return Err(Error::Invalid(format!(
+                    "recent part file {} must be an absolute path of at most {MAX_PATH} bytes",
+                    path.display()
+                )));
+            }
+        }
+        if self.part_files.iter().collect::<BTreeSet<_>>().len() != self.part_files.len() {
+            return Err(Error::Invalid("a recent part file is listed twice".into()));
+        }
         let mut paths = BTreeSet::new();
         for source in &self.sources {
             if !source.path.is_absolute() || source.path.as_os_str().len() > MAX_PATH {
@@ -440,10 +475,24 @@ mod tests {
                 lineage: SourceLineageId(3),
             }],
             browser_width: Some(312.5),
+            part_files: vec!["/parts/nut.solidcraft".into()],
             ..UserSettings::default()
         };
         write_settings(&path, &settings)?;
         assert_eq!(read_settings(&path)?, settings);
+        // Recent part files: absolute, unique, at most eight.
+        let mut parts = settings.clone();
+        for i in 0..12 {
+            parts.remember_part_file(format!("/parts/p{i}.solidcraft").into());
+        }
+        parts.remember_part_file("relative.solidcraft".into());
+        parts.remember_part_file("/parts/p5.solidcraft".into());
+        assert_eq!(parts.part_files.len(), MAX_RECENT_PART_FILES);
+        assert_eq!(parts.part_files[0], PathBuf::from("/parts/p5.solidcraft"));
+        parts.check()?;
+        let mut twice = parts.clone();
+        twice.part_files[1] = twice.part_files[0].clone();
+        assert!(twice.check().is_err(), "duplicate part file");
         // A width that is not a positive, bounded number is refused.
         for width in [f32::NAN, f32::INFINITY, 0.0, -1.0, MAX_PANEL_WIDTH + 1.0] {
             let mut wide = settings.clone();

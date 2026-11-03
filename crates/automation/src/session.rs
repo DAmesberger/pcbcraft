@@ -916,7 +916,7 @@ mod firmware;
 mod marking;
 pub mod mechanical_parts;
 mod models;
-mod part_files;
+pub mod part_files;
 mod pinout;
 mod preview;
 pub mod sources;

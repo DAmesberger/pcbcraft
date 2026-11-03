@@ -794,3 +794,138 @@ fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResu
     );
     Ok(())
 }
+
+/// The chip package of [`Harness`] using the built-in WROOM-3 part file
+/// through `library.use_part_file`'s operation.
+fn use_builtin(h: &mut Harness) -> TestResult {
+    use pcbcraft_automation::part_files::{self, UsePartFile};
+    let package = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
+    let file = part_files::read_part_file(None, Some("esp32-s31-wroom-3"))?;
+    let (operation, report) = part_files::use_part_file_operation(
+        &h.engine,
+        &UsePartFile {
+            package,
+            file,
+            values: Default::default(),
+            name: None,
+            licence: None,
+            redistribution: None,
+        },
+    )?;
+    assert!(report.ok, "{:?}", report.findings);
+    h.sent.push(operation);
+    assert_eq!(h.apply_sent()?, 1);
+    Ok(())
+}
+
+fn package_model(
+    h: &Harness,
+) -> Result<pcbcraft_core::library::PackageModel, Box<dyn std::error::Error>> {
+    let id = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
+    match &h.engine.drafts().get(id).ok_or("package")?.definition {
+        Definition::Package(p) => Ok(p.model.clone()),
+        _ => Err("not a package".into()),
+    }
+}
+
+/// Inspector frames until the part file's parameters are evaluated.
+fn settle_card(h: &mut Harness) -> Result<Vec<(String, Pos2)>, Box<dyn std::error::Error>> {
+    for _ in 0..600 {
+        h.inspector(vec![]);
+        let card = &h.editor.part_file.evaluator;
+        if !card.busy() && card.last().is_some() {
+            return Ok(h.inspector(vec![]));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Err("the part file was not evaluated".into())
+}
+
+#[test]
+fn a_committed_part_value_is_one_operation_and_one_undo_step() -> TestResult {
+    use pcbcraft_core::library::PackageModel;
+    use pcbcraft_core::library::package_model::PartValue;
+    let mut h = Harness::new()?;
+    use_builtin(&mut h)?;
+    let texts = settle_card(&mut h)?;
+    assert!(
+        texts.iter().any(|(t, _)| t == "can_height"),
+        "the form shows the parameters: {texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t == "esp32-s31-wroom-3.solidcraft")
+    );
+    assert!(h.sent.is_empty(), "showing the form sends nothing");
+    // A committed field (what Enter or focus loss hands over).
+    let mut values = pcbcraft_solidcraft::models::part_file::PartValues::new();
+    values.insert("can_height".into(), PartValue::Mm(2.8));
+    h.editor.part_file.pending = Some(values.clone());
+    for _ in 0..600 {
+        h.inspector(vec![]);
+        if !h.sent.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    for _ in 0..5 {
+        h.inspector(vec![]);
+    }
+    let revision = h.engine.revision();
+    assert_eq!(h.apply_sent()?, 1, "exactly one operation");
+    assert_eq!(h.engine.revision(), revision + 1);
+    match package_model(&h)? {
+        PackageModel::PartFile(part) => assert_eq!(part.values, values),
+        other => return Err(format!("expected the part file, got {other:?}").into()),
+    }
+    // One undo step restores the file's own values.
+    h.engine.undo()?;
+    h.editor.commit(&h.ctx, &h.engine);
+    match package_model(&h)? {
+        PackageModel::PartFile(part) => assert!(part.values.is_empty()),
+        other => return Err(format!("expected the part file, got {other:?}").into()),
+    }
+    Ok(())
+}
+
+#[test]
+fn use_generated_model_restores_the_generated_model() -> TestResult {
+    use pcbcraft_core::library::PackageModel;
+    let mut h = Harness::new()?;
+    use_builtin(&mut h)?;
+    settle_card(&mut h)?;
+    h.click_label("Use generated model")?;
+    assert_eq!(h.apply_sent()?, 1);
+    assert!(
+        matches!(package_model(&h)?, PackageModel::Generated { .. }),
+        "the typed chip form shows its generated model again"
+    );
+    Ok(())
+}
+
+#[test]
+fn part_file_opens_the_chooser_and_use_assigns_the_checked_file() -> TestResult {
+    use pcbcraft_core::library::PackageModel;
+    let mut h = Harness::new()?;
+    h.click_label("Part file…")?;
+    assert!(h.editor.part_chooser.is_open());
+    assert_eq!(
+        h.editor.part_chooser.selected(),
+        Some(&crate::part_chooser::PartSource::Builtin(
+            "esp32-s31-wroom-3".into()
+        ))
+    );
+    h.inspector(vec![]);
+    h.editor.part_chooser.wait();
+    let texts = h.inspector(vec![]);
+    assert!(
+        texts.iter().any(|(t, _)| t.starts_with("PARAMETERS")),
+        "{texts:?}"
+    );
+    h.click_label("Use")?;
+    assert_eq!(h.apply_sent()?, 1, "Use is one operation");
+    assert!(!h.editor.part_chooser.is_open());
+    assert!(matches!(package_model(&h)?, PackageModel::PartFile(_)));
+    Ok(())
+}

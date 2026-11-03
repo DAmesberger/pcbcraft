@@ -372,26 +372,35 @@ impl PartEditor {
         operation.or(source)
     }
 
-    /// The Model section: the model card and its two actions, and for a
-    /// typed form the choice between the generated model and the envelope.
+    /// The Model section: the model card and its actions, and for a typed
+    /// form the choice between the generated model and the envelope. A
+    /// package using a part file also shows the file and its parameters
+    /// (`model_part.rs`).
     fn model_source(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let set = self.draft.as_ref()?;
         let draft = set.ids.package;
-        let package = &set.package;
-        let chooser = &mut self.model_chooser;
-        let import = &mut self.model_import;
+        let package = set.package.clone();
         let mut operation = None;
+        let mut open_part = false;
+        let mut choose = false;
+        let mut import = false;
+        let busy = self.model_import.busy();
         kit::section(ui, "model-source", "Model", true, None, |ui| {
-            let card = ModelCard::of(engine, package);
+            let card = ModelCard::of(engine, &package);
             model_card_rows(ui, &card);
+            if let PackageModel::PartFile(part) = &package.model {
+                operation = self.part_file_rows(ui, engine, draft, part);
+            }
             if package.form != PackageForm::Generic {
                 let mut source = Source::of(&package.model);
                 let mut options = vec![
                     (Source::Generated, "Generated parametric model".to_owned()),
                     (Source::Envelope, "Envelope box".to_owned()),
                 ];
-                if source == Source::Library {
-                    options.push((Source::Library, "Library model".to_owned()));
+                match source {
+                    Source::Library => options.push((Source::Library, "Library model".to_owned())),
+                    Source::PartFile => options.push((Source::PartFile, "Part file".to_owned())),
+                    _ => {}
                 }
                 if kit::choice_row(ui, "Source", &mut source, &options) {
                     let model = match source {
@@ -399,7 +408,7 @@ impl PartEditor {
                         Source::Envelope => Some(PackageModel::Envelope {
                             material: MaterialId::EpoxyMould,
                         }),
-                        Source::Library => None,
+                        Source::Library | Source::PartFile => None,
                     };
                     if let Some(model) = model {
                         operation =
@@ -410,7 +419,6 @@ impl PartEditor {
             let (shown, tip) = model_hint(&package.model);
             kit::hint(ui, shown, tip);
             kit::actions(ui, |ui| {
-                let busy = import.busy();
                 let response = ui_kit::button(ui, "Import model file…", Button::Enabled(!busy));
                 let response = if busy {
                     response.on_disabled_hover_text("An import is already running")
@@ -418,19 +426,43 @@ impl PartEditor {
                     response
                         .on_hover_text("Import a STEP, GLB or .solidcraft file into the 3D library")
                 };
-                if response.clicked() {
-                    import.start(ui.ctx());
-                }
-                if ui_kit::button(ui, "Choose model…", Button::Small)
+                import = response.clicked();
+                choose = ui_kit::button(ui, "Choose model…", Button::Small)
                     .on_hover_text(
                         "Search the 3D library, ranked by how well each model fits this package",
                     )
-                    .clicked()
-                {
-                    chooser.open_for(draft);
+                    .clicked();
+            });
+            kit::actions(ui, |ui| {
+                open_part = ui_kit::button(ui, "Part file…", Button::Small)
+                    .on_hover_text(
+                        "Use a parametric SolidCraft part file: built-in, from this project or from disk",
+                    )
+                    .clicked();
+                if matches!(package.model, PackageModel::PartFile(_)) {
+                    let generic = package.form == PackageForm::Generic;
+                    if ui_kit::button(ui, "Use generated model", Button::Small)
+                        .on_hover_text(if generic {
+                            "Stop using the part file: the package shows its envelope box"
+                        } else {
+                            "Stop using the part file: the package shows its generated model"
+                        })
+                        .clicked()
+                    {
+                        operation = Some(super::model_part::use_own_model(draft, &package));
+                    }
                 }
             });
         });
+        if import {
+            self.model_import.start(ui.ctx());
+        }
+        if choose {
+            self.model_chooser.open_for(draft);
+        }
+        if open_part {
+            self.open_part_chooser();
+        }
         operation
     }
 }
@@ -441,6 +473,7 @@ enum Source {
     Generated,
     Envelope,
     Library,
+    PartFile,
 }
 
 impl Source {
@@ -448,7 +481,8 @@ impl Source {
         match model {
             PackageModel::Generated { .. } => Self::Generated,
             PackageModel::Envelope { .. } => Self::Envelope,
-            PackageModel::Library(_) | PackageModel::PartFile(_) => Self::Library,
+            PackageModel::Library(_) => Self::Library,
+            PackageModel::PartFile(_) => Self::PartFile,
         }
     }
 }

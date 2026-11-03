@@ -442,6 +442,12 @@ impl App {
             .set_context(sources.generation(), || sources.context());
         let loading = sources.loading();
         self.schematic.palette_mut().set_loading(loading);
+        // The part-file chooser's recent files are kept per user.
+        let chooser = self.part.part_chooser_mut();
+        if let Some(recent) = chooser.take_recent_changed() {
+            self.sources.set_recent_part_files(&recent);
+        }
+        chooser.set_recent(self.sources.recent_part_files());
     }
 
     /// What the palette, the Schematic instance properties and the

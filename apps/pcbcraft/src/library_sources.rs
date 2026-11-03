@@ -737,6 +737,25 @@ impl LibrarySources {
         }
     }
 
+    /// The part files last opened in the part-file chooser, most recent
+    /// first.
+    pub fn recent_part_files(&self) -> &[std::path::PathBuf] {
+        &self.settings.part_files
+    }
+
+    /// Keep the chooser's recent part files per user (bounded and checked
+    /// by [`UserSettings::remember_part_file`]).
+    pub fn set_recent_part_files(&mut self, recent: &[std::path::PathBuf]) {
+        let mut kept = UserSettings::default();
+        for path in recent.iter().rev() {
+            kept.remember_part_file(path.clone());
+        }
+        if kept.part_files != self.settings.part_files {
+            self.settings.part_files = kept.part_files;
+            self.persist();
+        }
+    }
+
     /// The user's keymap and key-reveal settings.
     pub fn keyboard(&self) -> &settings::KeyboardSettings {
         &self.settings.keyboard

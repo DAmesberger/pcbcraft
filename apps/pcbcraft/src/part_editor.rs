@@ -39,6 +39,7 @@ mod marking_props;
 mod model_body;
 mod model_card;
 mod model_import;
+mod model_part;
 mod model_place;
 #[cfg(test)]
 pub(crate) use model_place::overlay as land_overlay;
@@ -250,6 +251,9 @@ pub struct PartEditor {
     /// D3: the model chooser sheet and import wizard.
     model_chooser: crate::model_library::ModelChooser,
     model_import: model_import::ModelImport,
+    /// M5: the part-file chooser and the Model section's part-file form.
+    part_chooser: crate::part_chooser::PartChooser,
+    part_file: model_part::PartFileCard,
     /// D6: the 3D tab's Marking section.
     marking: marking_props::MarkingProps,
 }
@@ -309,6 +313,8 @@ impl Default for PartEditor {
             gallery: Default::default(),
             model_chooser: Default::default(),
             model_import: Default::default(),
+            part_chooser: Default::default(),
+            part_file: Default::default(),
             marking: Default::default(),
         }
     }
