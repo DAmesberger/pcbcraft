@@ -627,3 +627,104 @@ They are parallel after C0. Hours are agent-hours.
 - Data Matrix codes.
 - Template editing inside Pcbcraft: geometry is always edited in Solidcraft.
 - Live two-way sync between an open Solidcraft template and Pcbcraft. Re-import makes a new revision; `--watch` only checks.
+
+## 11. Lean parts: contract
+
+Contract, 3 November 2026, for the founder's revision above. For release 1 it replaces §3 SC2–SC5, §4 and the `PartTemplate` kind of §5. A **part file** is an ordinary parametric Solidcraft design (`.solidcraft`). A package uses one by naming it and giving values for some of its parameters. Pcbcraft builds the 3D body through Solidcraft's engine and reads the marking surfaces from named construction planes. The footprint, terminals and keep-outs stay the package's own (package form, datasheet assistant). Release 1 varies geometry per package only; instances vary by render-time markings.
+
+### L1. The package's reference
+
+- **Asset.** The part file is a Model library definition (`library/model3d.rs`) with `format: solidcraft`: an exact revision whose `asset` pins the file's SHA-256 and whose provenance records author and licence. Snapshots, bundles, promotion and update plans carry it as they carry any Model. A Solidcraft-format model maps no bodies (`bodies` may be empty): its looks come from appearance names (L2).
+- **Package model.** `PackageModel::PartFile(PartFileModel)`:
+
+  ```rust
+  pub struct PartFileModel {
+      pub model: ModelRef,                        // exact Model revision, format solidcraft
+      pub values: BTreeMap<String, PartValue>,    // by the part's own parameter name
+      pub derived: PartDerived,                   // derived at assignment, rechecked at build
+  }
+  pub enum PartValue { Mm(f64), Deg(f64), Count(u32), Number(f64) } // JSON {"mm": 3.1}
+  pub struct PartDerived {
+      pub bounds_mm: [[f64; 3]; 2],               // union of the bodies, model frame
+      pub bodies: u32,
+      pub surfaces: Vec<AnchorInfo>,              // marking surfaces (L2), model frame
+  }
+  ```
+
+  Values are literals only: a value never names another parameter. A name must be an existing user parameter of the file (not a feature input or dimension), and the unit must match the parameter's (`mm` length, `deg` angle, none for counts and numbers). At most 256 values; names are at most 64 bytes of `[A-Za-z0-9_]`.
+- **Derived data.** `derived` is what the part evaluated to when it was assigned, like an imported model's bounds and lead contacts. The board build evaluates the part again. It refuses with `part.stale`, naming the package, when bounds or surfaces differ by more than `RECHECK_TOLERANCE_MM` (0.01 mm) or the body count differs. The core uses `derived.surfaces` for marking layout and `library.marking_surfaces`, so it never evaluates Solidcraft.
+- **Identity of a build.** `PartKey = sha256(asset hash ‖ canonical JSON of values)`. Packages with the same key share one native definition, named `pkgp<first 12 hex of the key>`, with parameters `pkgp…_<name>` and bodies `pkgp… <name>`.
+
+### L2. Naming conventions and the check
+
+A part file follows these conventions, all over generic Solidcraft features:
+
+| Convention | Rule |
+|---|---|
+| Single component | The part's features live in the root component: no subcomponents, occurrences or joints. |
+| Frame | The design origin is the footprint origin; z = 0 is the seating plane; x runs along the package length. The lowest geometry lies at z = 0 (±0.01 mm), and the origin lies inside the xy bounds. |
+| Parameters | Plain user parameter names (`can_height`, `body_height`, `rows_left`). Any user parameter may be given a value; the rest are internal. |
+| Materials | Each body's Solidcraft appearance is named after a Pcbcraft material: its `MaterialId` in kebab case (`nickel-silver`, `solder-mask-green`, `gold`, `epoxy-mould`, …; `pcbcraft-cli part check --materials` lists them). Case and `_`, `-` or space are not told apart. A body with any other appearance, or none, is a blocking finding. The Solidcraft look keeps Pcbcraft's opaque PBR projection, so plain Solidcraft shows it right; Pcbcraft draws its own full look for the material. When the fork's material graph lands, a graph material named the same way maps the same way (only `part_file::material_of` changes). |
+| Marking surfaces | A construction plane named `marking-<name>` is a marking surface. Its origin is the area's centre, its x axis the area's u (reading) direction, and its normal points out of the part. Its size is the two length parameters `marking_<name>_u` and `marking_<name>_v` (`-` in `<name>` becomes `_`). It becomes the anchor `<name>` with `-` turned into `_` (`marking-can-top` → `can_top`). `marking-top` is the default marking area (`placement.on: model`); without it, the default is the first surface. |
+| Anchors | A construction point named `pin1` marks pin 1. It is optional and reported by the check. Other named construction points are listed but not used in release 1. |
+| Roles | Every body has the role `body`. A part file carries no lead tags; terminals and pads stay the package's. |
+
+**The check** evaluates the file at given values and reports findings with these codes. All block assignment and build unless marked advisory:
+
+- `part.read`: unreadable, too large (the 64 MiB asset bound) or an unsupported Solidcraft format;
+- `part.structure`: subcomponents, occurrences or joints;
+- `part.value`: a value names an unknown or non-user parameter, or its unit does not match;
+- `part.feature`: a feature fails at the values (the first 16 are named);
+- `part.empty`, `part.bodies`: no bodies, or more than 1024;
+- `part.seating`: the lowest geometry is not at z = 0;
+- `part.origin` (advisory): the origin is outside the xy bounds;
+- `part.material`: a body's appearance names no Pcbcraft material (the bodies are named);
+- `part.marking`: a `marking-*` plane without both size parameters, a size that is not positive, or two surfaces with one anchor name;
+- `part.no_marking` (advisory): no marking surface;
+- `part.import` (advisory): the file contains an import feature; its source licence must be recorded on the Model;
+- `part.slow` (advisory): the cold evaluation took more than 100 ms (a target).
+
+The automation layer reports these codes for a package's part file. The core adds two library findings: `part.model`, for a model that is missing or not of format `solidcraft`, and `part.values`, for malformed values or derived data.
+
+### L3. Build and cache API (`pcbcraft_solidcraft::models::part_file`)
+
+```rust
+pub type PartValues = BTreeMap<String, PartValue>;
+pub struct EvaluatedPart {           // shared, immutable
+    pub key: [u8; 32],               // PartKey (L1)
+    pub parameters: Vec<PartParameter>,   // name, expression, unit, value as evaluated
+    pub bodies: Vec<PartBody>,       // source name, MaterialId (None: unmapped), bounds
+    pub surfaces: Vec<AnchorInfo>,
+    pub pin1: Option<[f64; 3]>,
+    pub bounds_mm: [[f64; 3]; 2],
+    pub findings: Vec<PartFinding>,  // code, blocking, message (L2)
+    pub evaluate_ms: f64,
+}
+pub fn evaluate(bytes: &[u8], values: &PartValues) -> Result<Arc<EvaluatedPart>>; // cached
+pub fn derived(part: &EvaluatedPart) -> PartDerived;
+pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<ModelDefinition>;
+pub fn cache_counts() -> (u64 /* hits */, u64 /* evaluations */);
+```
+
+- **Evaluate.** It reads the bytes with Solidcraft's reader, applies the values as literal parameter expressions and evaluates once. It then reads the bodies, appearances, construction geometry and parameters. It refuses `part.read` and `part.value` problems; every other finding is reported in the result.
+- **Cache.** A process-wide LRU of at most 32 evaluated parts, keyed by `PartKey` (a target bound). Equal packages, the Component 3D preview, the check and every board build share it. A hit costs a hash of the bytes' identity and values and a lookup.
+- **Insert.** It adds the evaluated part's history to the board design as component `stem`; this is the spike's typed insert. Every root feature is cloned with `Feature::remap_clone` over complete maps: feature ids, feature names → `<stem> <name>`, body names → `<stem> <name>`, and every `param_defs` name → `<stem>_<name>`. User parameters are copied with `clone_expression`, then the design is evaluated once.
+  - It refuses a name collision or any inserted feature failing. It runs inside the board build, which is discarded whole on any failure, so a refusal leaves no partial board.
+  - Looks are assigned through `appearance.assign` from the material table. Bodies are recorded in the `org.pcbcraft.electronics.models.N` chunks, so the saved `.solidcraft` board stays parametric and opens in plain Solidcraft.
+- **Fork.** The insert uses only the pinned fork's public API (`Session::doc_mut`, `Feature::remap_clone`, `Document::param_defs`, `clone_expression`). The fork's generic `component.insert_history` (SC1) is prepared on the fork branch `insert-history`: any CAD user inserts a design's history with deterministic name maps, prefixed parameters and literal overrides, as one undo step, atomically. Once it is pushed and pinned, `insert` calls it instead, with no change to this contract.
+- **Board.** `project::build` defines each distinct `PartKey` once, before the parts, inside the existing put-off evaluation, and places occurrences as for generated models. A replayed build passes a definition whose key is unchanged.
+- **Threads.** Evaluation runs where board builds and previews run (the model worker); the UI thread only reads results. The automation and CLI calls are synchronous by nature.
+
+### L4. Commands (one engine for UI, CLI and MCP)
+
+| Kind | ID | Payload → result |
+|---|---|---|
+| Core library command | `library.edit_package` `PackageEdit::SetModel(PackageModel::PartFile(…))` | A package draft uses a part file: shape-checked (`part.values`), one undo step. |
+| Core library command | `library.import_model` with `assign.part` | `{ name, assets, definition (format solidcraft), assign: { package, lead_map: [], part: { values, derived } } }`: the Model draft and the package's part-file model in one step. |
+| Automation command | `library.use_part_file` | `{ package, path \| builtin, values?, name?, expected_revision? }` → the check report and the new revision. It reads the file (bounded) and checks it, refusing blocking findings. It then applies `library.import_model` with `assign.part`, or `SetModel` when the same asset is already a Model in the project. |
+| Automation command | `library.set_part_values` | `{ package, values, expected_revision? }` → report and revision. It evaluates at the new values and applies `SetModel`. |
+| Automation query | `library.check_part_file` | `{ path \| builtin, values? }` → the report: parameters, bodies, materials, surfaces, pin 1, bounds, findings, timing. |
+| CLI | `pcbcraft-cli part check FILE [--set name=value]… [--json] [--materials]` | The report; exit status 1 on a blocking finding. |
+| MCP and assistant | `library_check_part_file`, `library_use_part_file`, `library_set_part_values` | The automation requests above, as tools. |
+
+Built-in part files ship under `library/parts/` and are named by `builtin` (`esp32-s31-wroom-3`). They are original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`.
