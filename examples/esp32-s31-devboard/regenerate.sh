@@ -29,7 +29,7 @@ rm -rf "$dir/fab" "$dir/esp32-s31-devboard-schematic.pdf" "$dir/esp32-s31-devboa
 "$cli" fab "$dir/esp32-s31-devboard.pcbcraft" "$dir/fab" --date none > /dev/null
 "$cli" export-schematic-pdf "$dir/esp32-s31-devboard.pcbcraft" "$dir/esp32-s31-devboard-schematic.pdf" > /dev/null
 if [ "${NATIVE:-0}" = 1 ]; then
-    # About three minutes on an M-series Mac (see docs/e2e-esp32-devboard.md).
+    # About 10 s of CPU (see docs/e2e-esp32-devboard.md, gap 3).
     "$cli" export "$dir/esp32-s31-devboard.pcbcraft" "$dir/esp32-s31-devboard.solidcraft" > /dev/null
 fi
 echo "wrote $dir/esp32-s31-devboard.pcbcraft, $dir/fab/ and the schematic PDF"
