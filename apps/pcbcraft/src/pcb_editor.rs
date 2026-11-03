@@ -2893,7 +2893,7 @@ mod tests {
         assert_eq!(editor.subject(), Subject::Dialog);
         assert!(click(&mut editor, &engine, &ctx, "2 layers")?.is_none());
         assert!(click(&mut editor, &engine, &ctx, "6 layers")?.is_none());
-        assert!(click(&mut editor, &engine, &ctx, "Add layer pair")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "Add pair")?.is_none());
         // One more foil makes an odd draft: OK is refused by the rule.
         assert!(click(&mut editor, &engine, &ctx, "Add core")?.is_none());
         assert!(click(&mut editor, &engine, &ctx, "OK")?.is_none());

@@ -30,6 +30,8 @@ pub(super) struct StackupSetup {
     draft: StackupDraft,
     /// A removed layer's copper → the layer of the new stackup it moves to.
     dropped: BTreeMap<CopperLayer, CopperLayer>,
+    /// The table row the editor below it edits.
+    selected: Option<DraftRow>,
     sent: Option<u64>,
     refusal: Option<String>,
     opening: bool,
@@ -40,6 +42,7 @@ impl StackupSetup {
         Self {
             draft: StackupDraft::of(stackup),
             dropped: BTreeMap::new(),
+            selected: None,
             sent: None,
             refusal: None,
             opening: true,
@@ -106,7 +109,7 @@ impl PcbEditor {
             .map(|e| refusal::shown_error(&e));
         let mut dialog = DialogPanel::new(StackupSetup::id(), "plane", "Stackup", "OK");
         dialog.kind = "Board";
-        dialog.body_rows = 16.0;
+        dialog.body_rows = 28.0;
         dialog.reset_scroll = setup.opening;
         let refused = setup.refusal.clone();
         dialog.refusal = refused.as_deref();
@@ -155,29 +158,48 @@ fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
     {
         setup.refusal = None;
     }
-    let stackup = &setup.draft.stackup;
     kit::value_row(
         ui,
         "Total",
         &format!(
-            "{} mm over copper · {} copper layers",
-            kit::number_text((stackup.thickness_mm() * 1000.0).round() / 1000.0),
-            stackup.copper.len()
+            "{} mm over copper",
+            kit::number_text((setup.draft.stackup.thickness_mm() * 1000.0).round() / 1000.0)
         ),
     );
-    let edit = table(ui, &mut setup.draft);
+    if let Some(row) = table(ui, &setup.draft, setup.selected) {
+        setup.selected = Some(row);
+    }
+    let edit = match setup.selected {
+        Some(row) => {
+            ui.push_id(("stackup-row", row_key(row)), |ui| {
+                row_editor(ui, &mut setup.draft, row)
+            })
+            .inner
+        }
+        None => {
+            kit::hint(ui, "Select a row to edit it", "");
+            None
+        }
+    };
     if let Some(edit) = edit {
         let done = match edit {
-            RowEdit::Move(row, up) => setup.draft.move_row(row, up),
-            RowEdit::Remove(index) => setup.draft.remove_layer(index),
+            RowEdit::Move(row, up) => setup.draft.move_row(row, up).map(|()| {
+                let step = |i: usize| if up { i.saturating_sub(1) } else { i + 1 };
+                Some(match row {
+                    DraftRow::Foil(i) => DraftRow::Foil(step(i)),
+                    DraftRow::Dielectric(i) => DraftRow::Dielectric(step(i)),
+                })
+            }),
+            RowEdit::Remove(index) => setup.draft.remove_layer(index).map(|()| None),
         };
-        if done.is_ok() {
+        if let Ok(selected) = done {
+            setup.selected = selected;
             setup.refusal = None;
         }
     }
     kit::actions(ui, |ui| {
         let full = setup.draft.stackup.copper.len() >= pcbcraft_core::MAX_COPPER_LAYERS;
-        let pair = ui_kit::button(ui, "Add layer pair", Button::Enabled(!full))
+        let pair = ui_kit::button(ui, "Add pair", Button::Enabled(!full))
             .on_hover_text("A prepreg and a core with two inner foils, above the bottom");
         if pair.clicked() && setup.draft.add_pair().is_ok() {
             setup.refusal = None;
@@ -193,6 +215,14 @@ fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
             }
         }
     });
+    // The selection may name a row the draft no longer has.
+    let foils = setup.draft.stackup.copper.len();
+    if setup.selected.is_some_and(|row| match row {
+        DraftRow::Foil(i) => i >= foils,
+        DraftRow::Dielectric(i) => i + 1 >= foils,
+    }) {
+        setup.selected = None;
+    }
     // A removed layer that carries copper: where its copper goes. Left
     // unmoved, the engine refuses the edit and names what it carries.
     let layers = setup.draft.stackup.layers();
@@ -221,52 +251,37 @@ fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
     setup.dropped.retain(|_, to| layers.contains(to));
 }
 
-/// The layer table: a row per foil and per dielectric, top to bottom.
-/// Returns the add, remove or move a row's buttons asked for.
-fn table(ui: &mut Ui, draft: &mut StackupDraft) -> Option<RowEdit> {
+/// A stable key of a draft row, for ids.
+fn row_key(row: DraftRow) -> (bool, usize) {
+    match row {
+        DraftRow::Foil(i) => (true, i),
+        DraftRow::Dielectric(i) => (false, i),
+    }
+}
+
+/// The layer table, top to bottom: each foil, then the dielectric below
+/// it, read-only (layer, thickness, use or glass and Dk). Returns the row
+/// clicked, which the editor below the table then edits.
+fn table(ui: &mut Ui, draft: &StackupDraft, selected: Option<DraftRow>) -> Option<DraftRow> {
     let columns = [
         kit::TableColumn {
             title: "Layer",
-            weight: 1.5,
-        },
-        kit::TableColumn {
-            title: "Material",
-            weight: 1.3,
-        },
-        kit::TableColumn {
-            title: "Thickness",
-            weight: 1.3,
-        },
-        kit::TableColumn {
-            title: "Glass · use",
             weight: 1.4,
         },
         kit::TableColumn {
-            title: "Dk",
-            weight: 0.8,
+            title: "Thickness",
+            weight: 1.0,
         },
         kit::TableColumn {
-            title: "",
-            weight: 1.2,
+            title: "Use · glass",
+            weight: 1.0,
         },
     ];
-    let foils = draft.stackup.copper.len();
-    let rows = foils + draft.stackup.dielectrics.len();
-    let layers = draft.stackup.layers();
-    let origins: Vec<Option<CopperLayer>> = (0..foils).map(|i| draft.origin(i)).collect();
-    let mut edit = None;
-    let kinds = [
-        (DielectricKind::Core, "Core".to_owned()),
-        (DielectricKind::Prepreg, "Prepreg".to_owned()),
-    ];
-    let glasses = [
-        (GlassStyle::Style106, "106".to_owned()),
-        (GlassStyle::Style1080, "1080".to_owned()),
-        (GlassStyle::Style2116, "2116".to_owned()),
-        (GlassStyle::Style7628, "7628".to_owned()),
-    ];
-    let roles = [(false, "Signal".to_owned()), (true, "Plane".to_owned())];
-    let stackup = &mut draft.stackup;
+    let stackup = &draft.stackup;
+    let foils = stackup.copper.len();
+    let rows = foils + stackup.dielectrics.len();
+    let layers = stackup.layers();
+    let mut clicked = None;
     kit::table(
         ui,
         &columns,
@@ -274,120 +289,145 @@ fn table(ui: &mut Ui, draft: &mut StackupDraft) -> Option<RowEdit> {
         |ui, row, column| {
             // Even rows are foils, odd rows the dielectric below.
             let index = row / 2;
-            if row % 2 == 0 {
-                let (Some(layer), Some(foil)) = (layers.get(index), stackup.copper.get_mut(index))
-                else {
-                    return;
-                };
-                let inner = index > 0 && index + 1 < foils;
-                match column {
-                    0 => {
-                        let label = ui.label(layer.name());
-                        let origin = origins.get(index).copied().flatten();
-                        let was = match origin {
-                            None => "New layer".to_owned(),
-                            Some(o) if o != *layer => {
-                                format!("Was {}; its copper follows", o.name())
-                            }
-                            Some(_) => "Copper stays on this layer".to_owned(),
-                        };
-                        label.on_hover_text(was);
-                    }
-                    1 => {
-                        ui.label(format!(
-                            "Copper · {} oz",
-                            kit::number_text((foil.thickness_um / OUNCE_UM * 10.0).round() / 10.0)
-                        ));
-                    }
-                    2 => {
-                        kit::number_field(
-                            ui,
-                            &format!("cu-{index}"),
-                            &mut foil.thickness_um,
-                            "µm",
-                            COPPER_UM_RANGE,
-                        );
-                    }
-                    3 => {
-                        kit::dropdown(ui, ("role", index), &mut foil.plane, &roles);
-                    }
-                    5 if inner => {
-                        if let Some(e) = row_buttons(ui, DraftRow::Foil(index), foils, true) {
-                            edit = Some(e);
-                        }
-                    }
-                    _ => {}
-                }
+            let this = if row % 2 == 0 {
+                DraftRow::Foil(index)
             } else {
-                let Some(d) = stackup.dielectrics.get_mut(index) else {
-                    return;
-                };
-                match column {
-                    1 => {
-                        kit::dropdown(ui, ("kind", index), &mut d.kind, &kinds);
+                DraftRow::Dielectric(index)
+            };
+            let text = match this {
+                DraftRow::Foil(i) => {
+                    let (Some(layer), Some(foil)) = (layers.get(i), stackup.copper.get(i)) else {
+                        return;
+                    };
+                    match column {
+                        0 => layer.name(),
+                        1 => format!("{} µm", kit::number_text(foil.thickness_um)),
+                        _ => if foil.plane { "Plane" } else { "Signal" }.to_owned(),
                     }
-                    2 => {
-                        kit::number_field(
-                            ui,
-                            &format!("d-{index}"),
-                            &mut d.thickness_mm,
-                            "mm",
-                            DIELECTRIC_MM_RANGE,
-                        );
-                    }
-                    3 => {
-                        kit::dropdown(ui, ("glass", index), &mut d.glass, &glasses);
-                    }
-                    4 => {
-                        let mut dk = d.permittivity();
-                        let input =
-                            kit::number_input(ui, &format!("dk-{index}"), &mut dk, "", DK_RANGE);
-                        if input.changed {
-                            d.dk = Some(dk);
-                        }
-                        if d.dk.is_none() {
-                            input.response.on_hover_text(
-                                "Estimated from the glass; enter the fabricator's Dk",
-                            );
-                        }
-                    }
-                    5 => {
-                        if let Some(e) = row_buttons(ui, DraftRow::Dielectric(index), foils, false)
-                        {
-                            edit = Some(e);
-                        }
-                    }
-                    _ => {}
                 }
+                DraftRow::Dielectric(i) => {
+                    let Some(d) = stackup.dielectrics.get(i) else {
+                        return;
+                    };
+                    match column {
+                        0 => format!("  {}", kind_label(d.kind)),
+                        1 => format!("{} mm", kit::number_text(d.thickness_mm)),
+                        _ => glass_label(d.glass).to_owned(),
+                    }
+                }
+            };
+            if ui.selectable_label(selected == Some(this), text).clicked() {
+                clicked = Some(this);
             }
         },
         None,
     );
-    edit
+    clicked
 }
 
-/// A row's move buttons, and Remove on an inner foil.
-fn row_buttons(ui: &mut Ui, row: DraftRow, foils: usize, foil: bool) -> Option<RowEdit> {
-    let (index, first, last) = match row {
-        DraftRow::Foil(i) => (i, 1, foils.saturating_sub(2)),
-        DraftRow::Dielectric(i) => (i, 0, foils.saturating_sub(2)),
-    };
-    let mut edit = None;
-    let up = ui_kit::button(ui, "↑", Button::Enabled(index > first)).on_hover_text("Move up");
-    if up.clicked() {
-        edit = Some(RowEdit::Move(row, true));
+fn kind_label(kind: DielectricKind) -> &'static str {
+    match kind {
+        DielectricKind::Core => "Core",
+        DielectricKind::Prepreg => "Prepreg",
     }
-    let down = ui_kit::button(ui, "↓", Button::Enabled(index < last)).on_hover_text("Move down");
-    if down.clicked() {
-        edit = Some(RowEdit::Move(row, false));
+}
+
+fn glass_label(glass: GlassStyle) -> &'static str {
+    match glass {
+        GlassStyle::Style106 => "106",
+        GlassStyle::Style1080 => "1080",
+        GlassStyle::Style2116 => "2116",
+        GlassStyle::Style7628 => "7628",
     }
-    if foil {
-        let remove = ui_kit::button(ui, "×", Button::Enabled(true))
-            .on_hover_text("Remove this layer and the dielectric below it");
-        if remove.clicked() {
-            edit = Some(RowEdit::Remove(index));
+}
+
+/// The selected row's fields, edited in the draft, and its move and
+/// remove buttons.
+fn row_editor(ui: &mut Ui, draft: &mut StackupDraft, row: DraftRow) -> Option<RowEdit> {
+    let foils = draft.stackup.copper.len();
+    let layers = draft.stackup.layers();
+    match row {
+        DraftRow::Foil(i) => {
+            let layer = layers.get(i).copied()?;
+            let origin = draft.origin(i);
+            let foil = draft.stackup.copper.get_mut(i)?;
+            let ounces = kit::number_text((foil.thickness_um / OUNCE_UM * 10.0).round() / 10.0);
+            let title = match origin {
+                None => format!("{} · new · {ounces} oz", layer.name()),
+                Some(o) if o != layer => {
+                    format!("{} · was {} · {ounces} oz", layer.name(), o.name())
+                }
+                Some(_) => format!("{} · {ounces} oz", layer.name()),
+            };
+            kit::value_row(ui, "Foil", &title);
+            kit::number_row(ui, "Copper", &mut foil.thickness_um, "µm", COPPER_UM_RANGE);
+            let roles = [(false, "Signal".to_owned()), (true, "Plane".to_owned())];
+            kit::choice_row(ui, "Use", &mut foil.plane, &roles);
+            let inner = i > 0 && i + 1 < foils;
+            row_buttons(ui, row, inner && i > 1, inner && i + 2 < foils, inner)
+        }
+        DraftRow::Dielectric(i) => {
+            let count = draft.stackup.dielectrics.len();
+            let d = draft.stackup.dielectrics.get_mut(i)?;
+            let kinds = [DielectricKind::Core, DielectricKind::Prepreg]
+                .map(|k| (k, kind_label(k).to_owned()));
+            kit::choice_row(ui, "Material", &mut d.kind, &kinds);
+            kit::number_row(
+                ui,
+                "Thickness",
+                &mut d.thickness_mm,
+                "mm",
+                DIELECTRIC_MM_RANGE,
+            );
+            let glasses = [
+                GlassStyle::Style106,
+                GlassStyle::Style1080,
+                GlassStyle::Style2116,
+                GlassStyle::Style7628,
+            ]
+            .map(|g| (g, glass_label(g).to_owned()));
+            kit::choice_row(ui, "Glass", &mut d.glass, &glasses);
+            let mut dk = d.permittivity();
+            if kit::number_row(ui, "Dk", &mut dk, "", DK_RANGE) {
+                d.dk = Some(dk);
+            }
+            if d.dk.is_none() {
+                kit::hint(
+                    ui,
+                    "Dk estimated from the glass; enter the fabricator's",
+                    "",
+                );
+            }
+            row_buttons(ui, row, i > 0, i + 1 < count, false)
         }
     }
+}
+
+/// Move up, Move down and, for an inner foil, Remove.
+fn row_buttons(
+    ui: &mut Ui,
+    row: DraftRow,
+    up: bool,
+    down: bool,
+    removable: bool,
+) -> Option<RowEdit> {
+    let mut edit = None;
+    kit::actions(ui, |ui| {
+        if removable
+            && ui_kit::button(ui, "Remove", Button::Enabled(true))
+                .on_hover_text("Remove this layer and the dielectric below it")
+                .clicked()
+            && let DraftRow::Foil(i) = row
+        {
+            edit = Some(RowEdit::Remove(i));
+        }
+        if ui_kit::button(ui, "Move down", Button::Enabled(down)).clicked() {
+            edit = Some(RowEdit::Move(row, false));
+        }
+        if ui_kit::button(ui, "Move up", Button::Enabled(up)).clicked() {
+            edit = Some(RowEdit::Move(row, true));
+        }
+    });
     edit
 }
 
