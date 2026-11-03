@@ -31,6 +31,7 @@ first group before the final recording.
 | 11 | UI text is small at 1080p, because the whole 1500 pt window is shown. | Use push-ins (`zoom`) on details, as the takes do. Consider a UI scale setting (⌘+/⌘−) for recordings. |
 | 12 | The Browser root reads "Untitled" for `showcase.pcbcraft`. | Name the root after the file. |
 | 13 | 3D showcase: the header pins look flat yellow, the floor is a flat dark grey, and no silkscreen shows on top. | Brushed or plated look for pins, a subtle floor reflection or gradient, and the legend layer in 3D. The Realistic mode and material graphs in progress are the natural place for this. |
+| 14a | In the staged 1080p frame the 3D board fills only about a third of the picture: the Browser and Properties take the sides, and the canvas leaves wide margins around the fitted board. | Hide both panels for 3D shots (a single "focus canvas" command), fit tighter (the 8 % margin is generous for video), and crop the hero to the canvas (`post.py hero --crop`, as the proof hero does). |
 | 14 | The orbit in `component-3d` drifts the module towards the left edge, because the orbit pivots on the point under the pointer. | Orbit about the selection or model centre when the drag starts on empty canvas, or add `view.orbit_about_selection`. |
 
 ## Recording conditions for the final take

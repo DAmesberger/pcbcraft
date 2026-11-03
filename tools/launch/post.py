@@ -5,7 +5,7 @@
                                               raw.mov + track.json -> TAKE_DIR/final.mp4; --stage floats
                                               the window on a 16:9 backdrop
   post.py reel OUT.mp4 TAKE_DIR...            join finished takes with short crossfades
-  post.py hero IN.mp4 OUT_STEM --from S --to S [--width 1200]
+  post.py hero IN.mp4 OUT_STEM --from S --to S [--width 1200] [--crop W:H:X:Y]
                                               looping OUT_STEM.webp and OUT_STEM.gif for the README
 
 A take directory holds what take.sh records: raw.mov (window-only capture), started.json (the wall
@@ -238,13 +238,14 @@ def reel(out, dirs, fade=0.5):
     print(out)
 
 
-def hero(source, stem, start, end, width):
+def hero(source, stem, start, end, width, crop=None):
     span = ["-ss", f"{start}", "-t", f"{end - start}"]
+    pre = f"crop={crop}," if crop else ""
     run([FFMPEG, "-y", "-loglevel", "warning", *span, "-i", source, "-vf",
-         f"fps=30,scale={width}:-2:flags=lanczos", "-loop", "0", "-c:v", "libwebp_anim", "-quality", "80",
+         f"{pre}fps=30,scale={width}:-2:flags=lanczos", "-loop", "0", "-c:v", "libwebp_anim", "-quality", "80",
          "-compression_level", "6", stem + ".webp"])
     run([FFMPEG, "-y", "-loglevel", "warning", *span, "-i", source, "-vf",
-         f"fps=20,scale={int(width*0.8)}:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=200:stats_mode=diff[p];"
+         f"{pre}fps=20,scale={int(width*0.8)}:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=200:stats_mode=diff[p];"
          f"[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle", "-loop", "0", stem + ".gif"])
     print(stem + ".webp", stem + ".gif")
 
@@ -273,7 +274,8 @@ def main():
         start = float(opt("--from", "0"))
         end = float(opt("--to", "6"))
         width = int(opt("--width", "1200"))
-        hero(args[0], args[1], start, end, width)
+        crop = opt("--crop", None)  # W:H:X:Y of the source, e.g. the canvas only
+        hero(args[0], args[1], start, end, width, crop)
     else:
         die(__doc__)
 
