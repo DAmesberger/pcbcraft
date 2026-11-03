@@ -124,10 +124,12 @@ impl PackageDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
-        if !(1..=MAX_PACKAGE_TERMINALS).contains(&self.terminals.len()) {
+        // A part-file body may be purely mechanical (docs/mechanical-parts.md).
+        let least = usize::from(!matches!(self.model, super::PackageModel::PartFile(_)));
+        if !(least..=MAX_PACKAGE_TERMINALS).contains(&self.terminals.len()) {
             out.push(issue(
                 "package.terminal_count",
-                "A package needs 1–512 physical terminals.".into(),
+                format!("A package needs {least}–{MAX_PACKAGE_TERMINALS} physical terminals."),
                 vec![this],
             ));
         }

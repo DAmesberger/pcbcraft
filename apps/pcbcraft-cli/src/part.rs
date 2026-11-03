@@ -6,7 +6,8 @@ use super::{Result, execute, open, print};
 use serde_json::{Map, Value, json};
 
 pub const USAGE: &str = "part check FILE.solidcraft|--builtin NAME [--set NAME=VALUE[mm|deg]]... [--json] [--materials]
-                                   check a part file's conventions at values (exit 1 on a blocking finding)";
+                                   check a part file's conventions at values (exit 1 on a blocking finding)
+  part list [--json]               the built-in part files with their kind, prefix and parameters";
 
 /// A `--set` value: `2.465mm`, `45deg`, `25` (a count) or `0.5` (a number).
 fn value(text: &str) -> Result<Value> {
@@ -35,6 +36,9 @@ pub fn run(args: &[String]) -> Result<()> {
     let Some((command, rest)) = args.split_first() else {
         return Err(usage().into());
     };
+    if command == "list" {
+        return list(rest);
+    }
     if command != "check" {
         return Err(usage().into());
     }
@@ -80,6 +84,47 @@ pub fn run(args: &[String]) -> Result<()> {
     } else {
         Err("the part file has blocking findings".into())
     }
+}
+
+/// `part list`: `library.part_files`'s built-ins.
+fn list(args: &[String]) -> Result<()> {
+    let json_out = match args {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+    };
+    let mut session = open(None)?;
+    let reply = execute(
+        &mut session,
+        json!({"command": "library.part_files", "params": {}}),
+    )?;
+    if json_out {
+        return print(&reply);
+    }
+    for b in reply["builtin"].as_array().into_iter().flatten() {
+        let parameters: Vec<String> = b["parameters"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| !p["name"].as_str().unwrap_or_default().starts_with("marking_"))
+            .map(|p| {
+                format!(
+                    "{}={}",
+                    p["name"].as_str().unwrap_or_default(),
+                    p["expression"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        println!(
+            "{} ({}, {}, prefix {}): {}",
+            b["name"].as_str().unwrap_or_default(),
+            b["title"].as_str().unwrap_or_default(),
+            b["kind"].as_str().unwrap_or_default(),
+            b["prefix"].as_str().unwrap_or_default(),
+            parameters.join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// The report as text for a person.

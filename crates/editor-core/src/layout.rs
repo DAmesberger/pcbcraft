@@ -33,6 +33,7 @@ pub mod meander;
 pub mod obstacles;
 pub mod outline;
 pub mod pair;
+mod part;
 mod placed;
 pub mod posture;
 pub mod restack;
@@ -160,6 +161,41 @@ pub enum LayoutCommand {
     /// refused. `layout.route_preview` returns the same plan unapplied.
     #[serde(rename = "layout.route_step")]
     RouteStep { request: router::RouteStepRequest },
+    /// Find or make the variant of a mechanical part spec (its component,
+    /// mechanical symbol, package using the part file, footprint and
+    /// binding; docs/mechanical-parts.md) and place a new instance of it
+    /// with its unit off-sheet, as one undo step
+    /// (`Outcome::PartPlaced`).
+    #[serde(rename = "layout.place_part")]
+    PlacePart {
+        part: Box<crate::library::mechanical::PartSpec>,
+        position: Point,
+        #[serde(default)]
+        rotation_deg: f64,
+        layer: Layer,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        designator: Option<String>,
+    },
+    /// Move a placed mechanical part to the variant of another spec (found
+    /// or made), keeping its identity, designator, placement and marking,
+    /// as one undo step (`Outcome::PartPlaced`).
+    #[serde(rename = "layout.set_part")]
+    SetPart {
+        instance: Id,
+        part: Box<crate::library::mechanical::PartSpec>,
+    },
+    /// Remove a mechanical part with no sheet occurrence and no connected
+    /// terminal, with its placement, as one undo step.
+    #[serde(rename = "layout.remove_part")]
+    RemovePart { instance: Id },
+}
+
+impl LayoutCommand {
+    /// Whether the command places or re-points a mechanical part (its
+    /// outcome is `Outcome::PartPlaced`).
+    pub fn places_part(&self) -> bool {
+        matches!(self, Self::PlacePart { .. } | Self::SetPart { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -621,6 +657,20 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             }
             project.board_size = size;
         }
+        LayoutCommand::PlacePart {
+            part,
+            position,
+            rotation_deg,
+            layer,
+            designator,
+        } => {
+            return part::place(project, &part, position, rotation_deg, layer, designator)
+                .map(Some);
+        }
+        LayoutCommand::SetPart { instance, part } => {
+            return part::set(project, instance, &part).map(Some);
+        }
+        LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
     }
     Ok(None)
 }

@@ -41,7 +41,9 @@
 //!
 //! The design model has no do-not-populate flag or assembly variants yet.
 //! Every instance is fitted, and `bom-parts.csv` says so in its Fitted
-//! column.
+//! column. A mechanical part placed from a part file carries its own
+//! `bom` and `pick_and_place` flags (docs/mechanical-parts.md M1.6): it is
+//! left out of the BOM files or the pick-and-place rows when they are off.
 use super::{FabFile, FabricationOptions, FileGroup};
 use crate::completeness::{self, BomLine, PurchasingState};
 use crate::diagnostics::{Error, Result};
@@ -246,6 +248,9 @@ pub fn rows(project: &Project, convention: &PlacementConvention) -> Result<Vec<P
         let Some(instance) = project.instance(placement.instance) else {
             continue;
         };
+        if !crate::library::mechanical::in_pick_and_place(&project.library, instance.component) {
+            continue;
+        }
         let Some(package) = package_name(project, instance) else {
             continue;
         };
@@ -429,7 +434,11 @@ pub fn bom_csv(project: &Project) -> Result<String> {
 pub fn bom_parts_csv(project: &Project) -> Result<String> {
     let report = completeness::bom(project)?;
     let lines = line_index(&report);
-    let mut instances: Vec<&crate::model::ComponentInstance> = project.instances.iter().collect();
+    let mut instances: Vec<&crate::model::ComponentInstance> = project
+        .instances
+        .iter()
+        .filter(|i| crate::library::mechanical::in_bom(&project.library, i.component))
+        .collect();
     instances.sort_by(|a, b| {
         designator_key(&a.designator)
             .cmp(&designator_key(&b.designator))

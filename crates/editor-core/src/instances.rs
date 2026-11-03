@@ -645,6 +645,57 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
     Ok((id, occurrence))
 }
 
+/// Create one instance with no occurrence: every unit of its
+/// representation unused (a mechanical part placed on the board,
+/// docs/mechanical-parts.md M2). Without a designator the core numbers it
+/// under the component's prefix.
+pub fn place_off_sheet(
+    project: &mut Project,
+    component: ComponentRef,
+    representation: crate::ids::SymbolRef,
+    physical: PhysicalChoice,
+    designator: Option<String>,
+) -> Result<Id> {
+    if project.instances.len() >= MAX_INSTANCES {
+        return Err(Error::Limit(
+            "This edition supports at most 4096 component instances.".into(),
+        ));
+    }
+    let Some(published) = project.library.component(component) else {
+        return Err(Error::NotFound(
+            "Choose a published component revision first.".into(),
+        ));
+    };
+    let prefix = published.definition.designator_prefix.clone();
+    let units: BTreeSet<UnitId> = project
+        .library
+        .symbol(representation)
+        .map(|s| s.definition.units.iter().map(|u| u.id).collect())
+        .unwrap_or_default();
+    let designator = match designator {
+        Some(designator) => designator,
+        None => next_designator(project, &prefix)?,
+    };
+    let id = project.allocate()?;
+    project.instances.push(ComponentInstance {
+        id,
+        component,
+        designator,
+        properties: InstanceFields::new(),
+        representation: representation.id,
+        physical: Some(physical),
+        unused_units: units,
+        no_connect: BTreeSet::new(),
+        functions: FunctionSelections::new(),
+        part: None,
+        pin_config: Default::default(),
+        marking: Default::default(),
+    });
+    check_instance(project, id)?;
+    check_designators(project)?;
+    Ok(id)
+}
+
 /// The lowest free designator `{prefix}{n}`, n ≥ 1, compared
 /// case-insensitively with every designator in the project. Fails for a
 /// prefix that is not 1–8 uppercase letters.

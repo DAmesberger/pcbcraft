@@ -646,10 +646,17 @@ impl FootprintDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, library: &Library, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
-        if !(1..=MAX_PADS).contains(&self.pads.len()) {
+        // The footprint of a terminal-less package (a purely mechanical
+        // part, docs/mechanical-parts.md) may have no pads.
+        let least = usize::from(
+            library
+                .package(self.package)
+                .is_none_or(|p| !p.definition.terminals.is_empty()),
+        );
+        if !(least..=MAX_PADS).contains(&self.pads.len()) {
             out.push(issue(
                 "footprint.pad_count",
-                "A footprint needs 1–1024 pads.".into(),
+                format!("A footprint needs {least}–{MAX_PADS} pads."),
                 vec![this],
             ));
         }

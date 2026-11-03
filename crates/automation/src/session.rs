@@ -307,6 +307,15 @@ pub enum Request {
     /// Lean parts: new values for a package draft's part file.
     #[serde(rename = "library.set_part_values")]
     SetPartValues(part_files::SetPartValuesParams),
+    /// Mechanical parts: the part files a project can place.
+    #[serde(rename = "library.part_files")]
+    PartFiles(NoParams),
+    /// Mechanical parts: place a part file directly on the board.
+    #[serde(rename = "layout.place_part_file")]
+    PlacePartFile(Box<mechanical_parts::PlacePartFileParams>),
+    /// Mechanical parts: new values (or flags) for a placed part.
+    #[serde(rename = "layout.set_part_file_values")]
+    SetPartFileValues(mechanical_parts::SetPartFileValuesParams),
 }
 
 impl Request {
@@ -447,6 +456,18 @@ impl Request {
             info::<part_files::SetPartValuesParams>(
                 "library.set_part_values",
                 "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the snapshot and the check report.",
+            ),
+            info::<NoParams>(
+                "library.part_files",
+                "List the SolidCraft part files this project can place or use (docs/mechanical-parts.md): the built-ins (name, title, designator prefix, kind pads, mechanical or package, parameters with units and defaults, licence) and the project's Models of format solidcraft (model, name, file, licence). Not a document change.",
+            ),
+            info::<mechanical_parts::PlacePartFileParams>(
+                "layout.place_part_file",
+                "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the snapshot, the outcome (PartPlaced: instance, designator, component, created) and the check report.",
+            ),
+            info::<mechanical_parts::SetPartFileValuesParams>(
+                "layout.set_part_file_values",
+                "Give a placed mechanical part new literal values (they replace the previous values) and optionally new pads, bom or pick_and_place: re-evaluated and checked, a built-in's lands re-derived (other lands kept), and the instance moved to the variant for them (reused or made), keeping its designator, placement and marking, in one undo step at expected_revision. Returns the snapshot, the outcome and the check report.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -676,6 +697,9 @@ impl Session {
             Request::CheckPartFile(params) => return self.check_part_file(params),
             Request::UsePartFile(params) => return self.use_part_file(params),
             Request::SetPartValues(params) => return self.set_part_values(params),
+            Request::PartFiles(_) => return self.part_files(),
+            Request::PlacePartFile(params) => return self.place_part_file(*params),
+            Request::SetPartFileValues(params) => return self.set_part_file_values(params),
         }
         Ok(self.snapshot())
     }
@@ -890,6 +914,7 @@ pub fn schemas() -> Value {
 
 mod firmware;
 mod marking;
+pub mod mechanical_parts;
 mod models;
 mod part_files;
 mod pinout;

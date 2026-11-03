@@ -13,6 +13,7 @@ pub mod footprint_source;
 pub mod graphics;
 pub mod import;
 pub mod marking;
+pub mod mechanical;
 pub mod model3d;
 pub mod names;
 mod package;

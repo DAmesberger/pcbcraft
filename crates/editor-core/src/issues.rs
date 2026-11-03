@@ -391,6 +391,11 @@ fn collect(project: &Project, drafts: &Drafts) -> Result<Vec<(IssueArea, Vec<Fin
         match completeness::instance(project, instance.id) {
             Ok(report) => {
                 schematic.extend(report.findings);
+                // A mechanical part kept out of the BOM is not purchased
+                // through this design (docs/mechanical-parts.md M6).
+                if !crate::library::mechanical::in_bom(&project.library, instance.component) {
+                    continue;
+                }
                 if report.purchasing.state == completeness::PurchasingState::NoPart {
                     schematic.push(Finding::new(
                         rules::NO_PART,

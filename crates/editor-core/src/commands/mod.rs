@@ -81,6 +81,15 @@ pub enum Outcome {
     Imported {
         report: crate::library::import::ImportReport,
     },
+    /// `layout.place_part` / `layout.set_part`: the mechanical part's
+    /// instance, its designator, the variant's component revision and
+    /// whether the variant was made by this command.
+    PartPlaced {
+        instance: Id,
+        designator: String,
+        component: crate::ids::ComponentRef,
+        created: bool,
+    },
     /// `library.place_from`: the import (absent for a project revision) and
     /// the placed instance, as `InstancePlaced` reports it.
     PlacedFrom {

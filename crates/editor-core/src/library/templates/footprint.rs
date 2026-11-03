@@ -174,6 +174,16 @@ pub fn add_standard_graphics(
     package: &PackageDefinition,
 ) -> Result<Vec<GraphicId>> {
     let envelope = footprint.envelope_outline(package);
+    add_standard_graphics_over(footprint, package, envelope)
+}
+
+/// [`add_standard_graphics`] over an explicit body outline in the footprint
+/// frame (a mechanical part's bounds, which need not be centred).
+pub fn add_standard_graphics_over(
+    footprint: &mut FootprintDefinition,
+    package: &PackageDefinition,
+    envelope: Bounds,
+) -> Result<Vec<GraphicId>> {
     let mut items = vec![shape(
         DrawingLayer::Assembly,
         Shape::rect(envelope.min, envelope.max),

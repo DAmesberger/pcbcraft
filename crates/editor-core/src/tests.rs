@@ -14,6 +14,7 @@ mod high_speed;
 mod junctions;
 mod library;
 mod library_folders;
+mod mechanical;
 mod net_classes;
 mod orientation;
 mod parts;

@@ -158,10 +158,14 @@ struct Row<'a> {
     key: String,
 }
 
-/// Every instance in designator order (prefix, then number, then text).
+/// Every instance in designator order (prefix, then number, then text),
+/// without mechanical parts kept out of the BOM.
 fn rows(project: &Project) -> Result<Vec<Row<'_>>> {
     let mut out = Vec::with_capacity(project.instances.len());
     for instance in &project.instances {
+        if !crate::library::mechanical::in_bom(&project.library, instance.component) {
+            continue;
+        }
         let resolved = instances::resolve(&project.library, instance)?;
         let requirements = instances::requirements(&project.library, instance)?;
         let normal: Vec<Requirement> = requirements

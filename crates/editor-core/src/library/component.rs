@@ -48,6 +48,11 @@ pub struct ComponentDefinition {
     /// C3/C5: import review state (F8); `None` when nothing is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<Box<super::pinout::ImportReview>>,
+    /// Set when the core generated this revision's set from a part file
+    /// (`layout.place_part`, docs/mechanical-parts.md). Display, dedupe and
+    /// assembly flags only: electrical rules never read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanical: Option<Box<super::mechanical::MechanicalPart>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -166,10 +171,12 @@ impl ComponentDefinition {
                 vec![this],
             ));
         }
-        if !(1..=MAX_TERMINALS).contains(&self.terminals.len()) {
+        // A mechanical part (docs/mechanical-parts.md) may have none.
+        let least = usize::from(self.mechanical.is_none());
+        if !(least..=MAX_TERMINALS).contains(&self.terminals.len()) {
             out.push(issue(
                 "component.terminal_count",
-                format!("A component needs 1–{MAX_TERMINALS} electrical terminals."),
+                format!("A component needs {least}–{MAX_TERMINALS} electrical terminals."),
                 vec![this],
             ));
         }

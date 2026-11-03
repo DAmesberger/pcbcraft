@@ -150,6 +150,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
                 pin_rules: Vec::new(),
                 marking: None,
                 review: None,
+                mechanical: None,
                 // Terminals 1–2, then their fixed passive functions 3–4.
                 next_local: 5,
                 designator_prefix: kind.prefix.into(),
@@ -1262,6 +1263,7 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                 pin_rules: Vec::new(),
                 marking: None,
                 review: None,
+                mechanical: None,
                 next_local: 2 * count + 1,
                 designator_prefix: prefix.into(),
                 terminals: terminals

@@ -821,7 +821,19 @@ impl Engine {
                 Outcome::None
             }
             Operation::Layout(command) => {
-                match layout::apply_staged(Arc::make_mut(&mut candidate.project), command)? {
+                let part = command.places_part();
+                let before = candidate.project.library.components.len();
+                let project = Arc::make_mut(&mut candidate.project);
+                match layout::apply_staged(project, command)? {
+                    Some(instance) if part => {
+                        let found = project.instance(instance);
+                        Outcome::PartPlaced {
+                            instance,
+                            designator: found.map(|i| i.designator.clone()).unwrap_or_default(),
+                            component: found.map(|i| i.component).unwrap_or_default(),
+                            created: project.library.components.len() > before,
+                        }
+                    }
                     Some(via) => Outcome::ViaAdded { via },
                     None => Outcome::None,
                 }
