@@ -183,7 +183,8 @@ def build(s):
                  [pin(r, n, name, "passive", V, "unspecified", page=1, table="Pin/Signal table") for r, n, name in rows])
     comp, sym, pkg, bind = ids
     generic_package(s, pkg, [8.94, 7.35, 3.31],
-                    "GCT USB4105 drawing sheet 1: receptacle 8.94 wide, 7.35 deep, 3.31 high (top mount)", "nickel")
+                    "GCT USB4105 drawing sheet 1: receptacle 8.94 wide, 7.35 deep, 3.31 high (top mount)", "nickel",
+                    offset=[0.0, 3.675, 0.0])  # the body runs from the PCB edge (the footprint origin) 7.35 mm in
     # Footprint origin: the PCB edge line, centred; +y into the board.
     pads = []
     xs = {"A1B12": -3.20, "A4B9": -2.40, "B8": -1.75, "A5": -1.25, "B7": -0.75, "A6": -0.25, "A7": 0.25,

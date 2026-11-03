@@ -14,7 +14,7 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
 | `authoring/` | The Python client that wrote the replay: placement coordinates, routes and part data with their datasheet sources. It is not application code. `python3 -B examples/esp32-s31-devboard/authoring/build.py route` from the repository root re-records the replay. |
-| `images/` | Schematic pages and copper layers, the latter rendered by PyGerber (MIT) from the Gerber files. |
+| `images/` | Schematic pages; copper layers rendered by PyGerber (MIT) from the Gerber files; desktop screenshots of PCB 2D and 3D. |
 
 ```sh
 cargo build --locked --profile ci -p pcbcraft-cli        # or inside nix develop
@@ -89,7 +89,10 @@ Copper, rendered from the Gerber files by PyGerber 2.4.3 (MIT), an independent p
 ![Inner 2](images/gerber-copper-l3-inner2.png)
 ![Bottom copper](images/gerber-copper-l4-bottom.png)
 
-The desktop app's PCB 2D and 3D screenshots are in `images/app-*.png` where available. See the log for the 3D state.
+The board in the desktop app: PCB 2D (top copper and the top pour; 0 airwires), and the integrated 3D view:
+
+![PCB 2D in the desktop app](images/app-pcb-2d.png)
+![PCB 3D in the desktop app](images/app-pcb-3d.png)
 
 ## Design notes and known limits
 

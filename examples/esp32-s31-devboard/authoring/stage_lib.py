@@ -102,12 +102,14 @@ def footprint_body(package_id, pads, graphics):
             "pads": out_pads, "polarity": None, "source": None}
 
 
-def generic_package(s, pkg_id, envelope, prov, material="epoxy_mould"):
+def generic_package(s, pkg_id, envelope, prov, material="epoxy_mould", offset=None):
     d = drafts(s)[pkg_id]
     body = d["definition"]["body"]
     body["envelope"] = envelope
     body["form"] = {"family": "generic"}
     body["model"] = {"source": "envelope", "material": material}
+    if offset:
+        body["placement"]["translation"] = offset
     edit(s, [{"id": pkg_id, "meta": d["meta"] | {"provenance": prov}, "definition": d["definition"]}], f"generic package {pkg_id}")
 
 

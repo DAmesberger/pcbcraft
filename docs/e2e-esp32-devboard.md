@@ -60,6 +60,7 @@ The agent used the tools as a user would. It added no features and made no code 
 | 22 | Schematic | polish | Wiring by labels attached to every pin is quick through the API, but at the module's 2.5 mm pin pitch the labels and ports overlap and read poorly (sheet 2). | Readable label placement, or auto-orientation by pin direction. | Orient attached labels and ports away from the pin, and offset ports on dense rows. | 3 h |
 | 23 | Automation | polish | The 4.4 MB `commands` dump is hard to navigate. Editor tags are PascalCase (`"editor": "Library"`) beside dotted lowercase command ids. Outcomes name ids differently (`id`, `class`, `pair`, `ids`, `sheet`), and class and pair id 0 is easy to mistake for "none". Stored values show float noise (10 µF as `9.999999999999999e-06`). | One small example per command, consistent outcome keys, ids from 1. | Generate examples into `commands`, and normalise outcome id keys. | 2–3 h |
 | 24 | Build | polish | A cold `ci` build of `pcbcraft-cli` took 27 minutes, and the desktop app built for a further 40+ minutes in this worktree. The machine was shared with other agents' builds, so these times are inflated; a fresh worktree still builds everything from scratch. | A prebuilt CLI for agents, or a shared target cache across worktrees. | Shared `CARGO_TARGET_DIR` or sccache in the dev shell, and published CLI binaries. | 1–2 h |
+| 25 | 3D | minor | An envelope 3D model is centred on the footprint origin. For a connector whose origin is the PCB edge (USB4105), half the box hung off the board, and nothing flagged it. | The envelope placed over the courtyard or pads, or a check that the body lies on the board. | Default the envelope to the courtyard centre, and warn when a body extends past the board outline. | 1–2 h |
 
 ## Choices the run made (adjust if they are wrong)
 
@@ -96,6 +97,13 @@ The agent used the tools as a user would. It added no features and made no code 
 - **Rules.** Previewing and switching the profile (*Standard 6/6*) and the per-rule overrides worked through the API.
 - **Fabrication.** The export is one command taking 0.14 s. Its outputs parse in an independent reader. The drill files match the project hole for hole. The BOM, pick-and-place and drawings are consistent.
 
-## Desktop
+## Desktop check
 
-See the [desktop section](#desktop-check) below. The UI was checked only where noted, and the founder's app windows were not touched.
+The agent opened the saved board in the desktop app (`target/nix/ci/pcbcraft`) with its own recovery, config and cache directories, used it, and closed it by its pid. The founder's windows were not touched. The screenshots are in the example's `images/`.
+
+- **PCB 2D.** It opens on the board with 0 airwires and the 44 warnings in the Issues badge. The Board card shows the 4-layer stackup, the Standard 6/6 profile, 2 net classes, 1 pair and the sketched outline with `width`, `height` and `corner_r` editable. The Browser lists the 11 components with their Parts, both sheets and the 20 instances.
+- **PCB 3D.**
+  - The integrated 3D view shows the module's part-file body with its marking, the generated passives, SOT packages and headers, the copper, mask and legend, and the mounting holes.
+  - Under the load described in gap 3 it took about 2–3 minutes to show "Preparing 3D model…" and then the model.
+  - The first look showed the USB-C envelope box centred on the footprint origin, which is the PCB edge, so half of it hung off the board. The fix was a package placement offset of 3.675 mm in the replay. The 3D-position tools (`library.fit_leads`, `centre_on_pads`) work on typed leads, which an envelope does not have.
+- **Not exercised in the UI:** routing, tuning, the Stackup and Production dialogs. The command engine covered these.
