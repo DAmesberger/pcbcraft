@@ -428,6 +428,8 @@ pub enum PcbView {
     FromBottom,
     Airwires,
     HighlightNet,
+    /// Cycle the layer focus: all layers, dim others, active only.
+    LayerFocus,
 }
 
 /// What running a command does.
@@ -1537,6 +1539,14 @@ fn defaults() -> Vec<Command> {
             PcbView::Airwires,
         )
         .keywords("ratsnest unrouted connections"),
+        view(
+            "pcb.layer-focus",
+            "Cycle layer focus (all, dim others, active only)",
+            C::PcbLayout,
+            PcbView::LayerFocus,
+        )
+        .chord(Chord::key(K::L).with_shift())
+        .keywords("active layer single only dim others solo focus"),
         // Board shape keys besides its tools.
         key(
             "shape.construction",
