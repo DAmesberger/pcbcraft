@@ -46,7 +46,10 @@ impl Canvas {
                 events,
                 ..Default::default()
             },
-            |ui| command = editor.canvas(ui, engine),
+            |ui| {
+                command = editor.canvas(ui, engine);
+                dispatch_layer_keys(ui.ctx(), editor, engine);
+            },
         );
         output.textures_delta.clear();
         command
@@ -117,6 +120,42 @@ impl Canvas {
         engine.apply(engine.revision(), operation)?;
         self.frame(editor, engine, vec![], egui::Modifiers::NONE);
         Ok(())
+    }
+}
+
+/// The app's dispatcher for the layer keys (`App::dispatch_keys`): each
+/// press the canvas left resolves in the editor's contexts, and a layer
+/// command runs as `App::run_command` runs it.
+fn dispatch_layer_keys(ctx: &egui::Context, editor: &mut PcbEditor, engine: &Engine) {
+    use crate::commands::{Action, Chord, Handler, active_contexts};
+    let registry = crate::keys::registry(ctx);
+    let active = active_contexts(editor.shortcut_context());
+    let presses: Vec<Chord> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some(Chord {
+                    key: *key,
+                    command: modifiers.command,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                }),
+                _ => None,
+            })
+            .collect()
+    });
+    for chord in presses {
+        if let Some(command) = registry.resolve(chord, &active)
+            && command.handler == Handler::Registry
+            && let Action::PcbLayer(index) = command.action
+        {
+            editor.select_layer(engine.project(), index);
+        }
     }
 }
 
@@ -583,7 +622,7 @@ fn finishing_keys_end_the_route_and_the_card_lists_the_keys() -> TestResult {
         "Backspace",
         "V",
         previous.as_str(),
-        "1–9",
+        "1–0",
     ] {
         assert!(
             shown.iter().any(|t| t == label),
@@ -637,7 +676,7 @@ fn a_rebound_route_key_drives_the_tool() -> TestResult {
         egui::Modifiers::NONE,
     );
     assert_eq!(editor.width, 0.8);
-    let rows = crate::keys::rows(&canvas.ctx, super::route_tool::ROUTE_KEYS);
+    let rows = crate::keys::rows(&canvas.ctx, &super::route_tool::route_key_table());
     assert!(rows.contains(&("Q".to_owned(), "Next track width".to_owned())));
     Ok(())
 }

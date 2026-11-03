@@ -266,6 +266,29 @@ mod tests {
         Ok(())
     }
 
+    /// The edge follows any count: every foil of a 24-layer stackup has
+    /// its band, and the bands tile the section without gaps.
+    #[test]
+    fn a_many_layer_edge_shows_every_foil_and_tiles_the_section() -> Result<()> {
+        let stackup = Stackup::preset(24).map_err(|e| crate::Error::Invalid(e.to_string()))?;
+        let bands = bands(&stackup, &board(&stackup))?;
+        let copper: Vec<Option<CopperLayer>> = bands
+            .iter()
+            .filter(|g| g.kind == BodyKind::EdgeCopper)
+            .map(|g| g.layer)
+            .collect();
+        assert_eq!(copper.len(), 24);
+        for layer in stackup.layers() {
+            assert!(copper.contains(&Some(layer)), "{layer:?}");
+        }
+        let mut spans: Vec<(f64, f64)> = bands.iter().map(|g| (g.min[2], g.max[2])).collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for w in spans.windows(2) {
+            assert!((w[1].0 - w[0].1).abs() < 1e-9, "a gap or overlap: {w:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn coarse_core_glass_shows_its_weave_more_than_fine_prepreg() {
         let core = weave_strength(DielectricKind::Core, GlassStyle::Style7628);

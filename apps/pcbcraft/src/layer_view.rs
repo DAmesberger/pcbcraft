@@ -240,6 +240,31 @@ pub fn button(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool
     changed
 }
 
+/// Most copper rows a layer list shows before it scrolls.
+const COPPER_ROWS: u8 = 10;
+
+/// `len` copper layer rows, top to bottom; past [`COPPER_ROWS`] they
+/// scroll within that height, so a many-layer board's list stays on
+/// screen. Every row stays reachable.
+pub fn copper_rows(ui: &mut Ui, len: usize, mut row: impl FnMut(&mut Ui, usize)) {
+    if len <= usize::from(COPPER_ROWS) {
+        for index in 0..len {
+            row(ui, index);
+        }
+        return;
+    }
+    let t = Tokens::get();
+    let height = t.control_height + t.space_4;
+    egui::ScrollArea::vertical()
+        .id_salt("copper-rows")
+        .max_height(height * f32::from(COPPER_ROWS))
+        .show(ui, |ui| {
+            for index in 0..len {
+                row(ui, index);
+            }
+        });
+}
+
 /// The popover's content: a caption, one check per layer and Show all.
 fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
     let t = Tokens::get();
@@ -252,12 +277,36 @@ fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
         t.text_dim,
     );
     let mut changed = false;
-    for layer in ViewLayer::stack(copper) {
+    let mut toggle = |ui: &mut Ui, layer: ViewLayer| {
         let mut shown = view.visible(layer);
         if crate::kit::check_row(ui, &layer.label(), &mut shown) {
             view.set(layer, shown);
             changed = true;
         }
+    };
+    // The films above, the copper and laminate (scrolled on a many-layer
+    // board), the films below and the vias.
+    let stack = ViewLayer::stack(copper);
+    let first = stack
+        .iter()
+        .position(|l| matches!(l, ViewLayer::Copper(_)))
+        .unwrap_or(stack.len());
+    let last = stack
+        .iter()
+        .rposition(|l| matches!(l, ViewLayer::Copper(_)))
+        .map_or(first, |i| i + 1);
+    let (above, rest) = stack.split_at(first.min(stack.len()));
+    let (board, below) = rest.split_at(last.saturating_sub(first).min(rest.len()));
+    for layer in above {
+        toggle(ui, *layer);
+    }
+    copper_rows(ui, board.len(), |ui, index| {
+        if let Some(layer) = board.get(index) {
+            toggle(ui, *layer);
+        }
+    });
+    for layer in below {
+        toggle(ui, *layer);
     }
     ui.horizontal(|ui| {
         let x_ray = LayerView::x_ray();

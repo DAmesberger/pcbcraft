@@ -323,7 +323,7 @@ impl Request {
         vec![
             info::<ApplyParams>(
                 "project.apply",
-                "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
+                "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup, layout.edit_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
             info::<NoParams>(
                 "project.inspect",

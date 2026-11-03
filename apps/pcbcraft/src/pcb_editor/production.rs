@@ -488,6 +488,7 @@ impl PcbEditor {
     /// [`Self::open_production`] over a given library (tests).
     pub(super) fn open_production_in(&mut self, library: Option<ProfileLibrary>) {
         self.setup = None;
+        self.stackup = None;
         self.net_classes = None;
         self.rules = None;
         if self.production.is_none() {

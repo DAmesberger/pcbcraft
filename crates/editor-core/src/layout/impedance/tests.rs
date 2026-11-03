@@ -146,6 +146,38 @@ fn layers_find_their_reference_planes() -> Result<()> {
     Ok(())
 }
 
+/// Any count: on twelve layers an inner layer is stripline between its
+/// neighbours, and a marked plane far away is the reference it finds.
+#[test]
+fn a_twelve_layer_stackup_finds_references_for_every_layer() -> Result<()> {
+    let twelve = Stackup::preset(12)?;
+    for layer in twelve.layers() {
+        let line = structure(&twelve, layer)?;
+        assert_eq!(
+            line.references.len(),
+            if layer.side().is_some() { 1 } else { 2 }
+        );
+    }
+    let inner = structure(&twelve, CopperLayer::Inner(5))?;
+    assert!(matches!(inner.structure, Structure::Stripline { .. }));
+    assert_eq!(
+        inner.references,
+        vec![CopperLayer::Inner(4), CopperLayer::Inner(6)]
+    );
+    let mut marked = twelve.clone();
+    for i in [2, 9] {
+        if let Some(foil) = marked.copper.get_mut(i) {
+            foil.plane = true;
+        }
+    }
+    let inner = structure(&marked, CopperLayer::Inner(5))?;
+    assert_eq!(
+        inner.references,
+        vec![CopperLayer::Inner(2), CopperLayer::Inner(9)]
+    );
+    Ok(())
+}
+
 fn usb_class(project: &mut Project, signal: SignalRules) -> Result<NetClassId> {
     crate::rules::apply(
         &mut project.rules,

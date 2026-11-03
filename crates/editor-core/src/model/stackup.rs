@@ -10,12 +10,17 @@ use serde::{Deserialize, Serialize};
 /// Copper foil thickness of one ounce per square foot, in µm (IPC-4562
 /// nominal 34.8 µm, rounded as fabricators quote it).
 pub const OUNCE_UM: f64 = 35.0;
-/// Copper layer counts a stackup may have.
-pub const COPPER_LAYER_COUNTS: [usize; 3] = [2, 4, 6];
-const MIN_COPPER_UM: f64 = 5.0;
-const MAX_COPPER_UM: f64 = 210.0;
-const MIN_DIELECTRIC_MM: f64 = 0.025;
-const MAX_DIELECTRIC_MM: f64 = 3.2;
+/// Fewest copper layers of a stackup: a double-sided board.
+pub const MIN_COPPER_LAYERS: usize = 2;
+/// Most copper layers of a stackup. Not a fabrication limit: production
+/// boards above about 50 layers are rare and 64 stays above them. It bounds
+/// the per-layer work a hostile or mistaken file can ask for (layer rows
+/// and commands, artwork files, 3D foils and edge bands).
+pub const MAX_COPPER_LAYERS: usize = 64;
+/// Finished copper foil thicknesses a stackup accepts, in µm.
+pub const COPPER_UM_RANGE: std::ops::RangeInclusive<f64> = 5.0..=210.0;
+/// Dielectric thicknesses a stackup accepts, in mm.
+pub const DIELECTRIC_MM_RANGE: std::ops::RangeInclusive<f64> = 0.025..=3.2;
 
 /// A named copper layer of the board, top to bottom. Its identity is its
 /// name: `Inner(1)` is the first inner layer below the top, whatever the
@@ -180,47 +185,63 @@ impl Default for Stackup {
 }
 
 impl Stackup {
-    /// A symmetric preset of `count` copper layers (2, 4 or 6) of 1 oz
-    /// copper: prepreg outside, cores inside, about 1.6 mm of dielectric.
+    /// A symmetric preset of `count` copper layers of 1 oz copper, for any
+    /// count the rules allow: prepreg outside and between the cores, which
+    /// carry the inner layers in pairs (foil lamination). Up to ten layers
+    /// it keeps the common 1.6 mm of dielectric; above that it grows by
+    /// 0.16 mm a layer, as thick high-count boards do. Thin builds use the
+    /// finer glass styles.
     pub fn preset(count: usize) -> Result<Self> {
+        check_count(count)?;
+        if count == MIN_COPPER_LAYERS {
+            return Ok(Self::default());
+        }
+        let prepregs = count / 2;
+        let cores = prepregs - 1;
+        let lossy = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
+        let total = if count <= 10 {
+            1.6
+        } else {
+            0.16 * lossy(count)
+        };
+        let prepreg_mm = if count <= 6 { 0.2 } else { 0.1 };
+        let core_mm =
+            ((total - prepreg_mm * lossy(prepregs)) / lossy(cores) * 1000.0).round() / 1000.0;
         let prepreg = Dielectric {
             kind: DielectricKind::Prepreg,
-            thickness_mm: 0.2,
-            glass: GlassStyle::Style2116,
+            thickness_mm: prepreg_mm,
+            glass: if prepreg_mm >= 0.2 {
+                GlassStyle::Style2116
+            } else {
+                GlassStyle::Style1080
+            },
             dk: None,
         };
-        let dielectrics = match count {
-            2 => return Ok(Self::default()),
-            4 => vec![
-                prepreg,
-                Dielectric {
-                    kind: DielectricKind::Core,
-                    thickness_mm: 1.2,
-                    glass: GlassStyle::Style7628,
-                    dk: None,
-                },
-                prepreg,
-            ],
-            6 => {
-                let core = Dielectric {
-                    kind: DielectricKind::Core,
-                    thickness_mm: 0.4,
-                    glass: GlassStyle::Style7628,
-                    dk: None,
-                };
-                vec![prepreg, core, prepreg, core, prepreg]
-            }
-            _ => {
-                return Err(Error::Invalid(
-                    "a stackup has 2, 4 or 6 copper layers".into(),
-                ));
-            }
+        let core = Dielectric {
+            kind: DielectricKind::Core,
+            thickness_mm: core_mm,
+            glass: if core_mm >= 0.3 {
+                GlassStyle::Style7628
+            } else {
+                GlassStyle::Style2116
+            },
+            dk: None,
         };
-        Ok(Self {
+        let dielectrics = (0..count - 1)
+            .map(|i| if i % 2 == 0 { prepreg } else { core })
+            .collect();
+        let stackup = Self {
             copper: vec![CopperFoil::ounces(1.0); count],
             dielectrics,
             ..Self::default()
-        })
+        };
+        stackup.check()?;
+        Ok(stackup)
+    }
+
+    /// The copper layer counts [`Stackup::preset`] offers, in order.
+    pub fn preset_counts() -> impl Iterator<Item = usize> {
+        (MIN_COPPER_LAYERS..=MAX_COPPER_LAYERS).step_by(2)
     }
 
     /// The copper layers top to bottom.
@@ -230,7 +251,7 @@ impl Stackup {
             .map(|i| match i {
                 0 => CopperLayer::Top,
                 i if i + 1 == count => CopperLayer::Bottom,
-                // Bounded by `check`: at most 6 layers.
+                // Bounded by `check`: at most `MAX_COPPER_LAYERS`.
                 i => CopperLayer::Inner(u8::try_from(i).unwrap_or(u8::MAX)),
             })
             .collect()
@@ -306,28 +327,29 @@ impl Stackup {
         Some((top - dielectric.thickness_mm, top))
     }
 
-    /// The stackup rules: 2, 4 or 6 copper layers, one dielectric between
-    /// each pair, finite thicknesses within fabrication ranges.
+    /// The stackup rules: an even number of copper layers from
+    /// [`MIN_COPPER_LAYERS`] to [`MAX_COPPER_LAYERS`], exactly one
+    /// dielectric between neighbouring foils, finite thicknesses within
+    /// fabrication ranges and Dk within [`DK_RANGE`].
     pub fn check(&self) -> Result<()> {
-        if !COPPER_LAYER_COUNTS.contains(&self.copper.len()) {
-            return Err(Error::Invalid(
-                "a stackup has 2, 4 or 6 copper layers".into(),
-            ));
-        }
+        check_count(self.copper.len())?;
         if self.dielectrics.len() + 1 != self.copper.len() {
             return Err(Error::Invalid(
                 "a stackup has one dielectric between each pair of copper layers".into(),
             ));
         }
-        if !self.copper.iter().all(|c| {
-            c.thickness_um.is_finite() && (MIN_COPPER_UM..=MAX_COPPER_UM).contains(&c.thickness_um)
-        }) {
+        if !self
+            .copper
+            .iter()
+            .all(|c| c.thickness_um.is_finite() && COPPER_UM_RANGE.contains(&c.thickness_um))
+        {
             return Err(Error::Invalid("copper thickness must be 5–210 µm".into()));
         }
-        if !self.dielectrics.iter().all(|d| {
-            d.thickness_mm.is_finite()
-                && (MIN_DIELECTRIC_MM..=MAX_DIELECTRIC_MM).contains(&d.thickness_mm)
-        }) {
+        if !self
+            .dielectrics
+            .iter()
+            .all(|d| d.thickness_mm.is_finite() && DIELECTRIC_MM_RANGE.contains(&d.thickness_mm))
+        {
             return Err(Error::Invalid(
                 "dielectric thickness must be 0.025–3.2 mm".into(),
             ));
@@ -343,3 +365,30 @@ impl Stackup {
         Ok(())
     }
 }
+
+/// The copper count rules. Odd counts are refused: fabricators laminate
+/// copper in pairs (double-sided cores and foil), so an odd board is the
+/// next even build with one layer etched away, priced as that build and
+/// prone to warp from the unbalanced copper.
+fn check_count(count: usize) -> Result<()> {
+    if count < MIN_COPPER_LAYERS {
+        return Err(Error::Invalid(format!(
+            "a stackup has at least {MIN_COPPER_LAYERS} copper layers"
+        )));
+    }
+    if count > MAX_COPPER_LAYERS {
+        return Err(Error::Invalid(format!(
+            "a stackup has at most {MAX_COPPER_LAYERS} copper layers"
+        )));
+    }
+    if !count.is_multiple_of(2) {
+        return Err(Error::Invalid(
+            "a stackup has an even number of copper layers".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "stackup_tests.rs"]
+mod tests;

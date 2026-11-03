@@ -12,7 +12,7 @@ Every surface reads the *effective* keymap: the defaults with the user's changes
 
 ## One key path
 
-A command runs the same event as its ribbon button, so document changes still go through the editor's typed operation and the one engine. A key that only means something inside a gesture stays with the canvas that owns it. Enter closing a fill outline and W changing the route width are examples. Such a key is still a registry command (`Handler::InPlace`). The editor declares it as a `KeyDecl` (id, default key cell, title) and reads it by id with `crate::keys::pressed(ctx, "route.width-next")`. It never names the physical key. The app publishes the effective keymap to the egui context (`keys::publish`) whenever it changes. The editors read it from there, and tests use the default keymap. Each direction of a cycle is its own bindable command, such as `route.width-next` (W) and `route.width-previous` (⇧W). The Route tool's nine layer keys are nine commands, `route.layer-1` to `route.layer-9`.
+A command runs the same event as its ribbon button, so document changes still go through the editor's typed operation and the one engine. A key that only means something inside a gesture stays with the canvas that owns it. Enter closing a fill outline and W changing the route width are examples. Such a key is still a registry command (`Handler::InPlace`). The editor declares it as a `KeyDecl` (id, default key cell, title) and reads it by id with `crate::keys::pressed(ctx, "route.width-next")`. It never names the physical key. The app publishes the effective keymap to the egui context (`keys::publish`) whenever it changes. The editors read it from there, and tests use the default keymap. Each direction of a cycle is its own bindable command, such as `route.width-next` (W) and `route.width-previous` (⇧W). The ten layer keys are ten registry commands of PCB › Layout, `pcb.layer-1` to `pcb.layer-10` (`pcb_editor::LAYER_KEYS`, `Action::PcbLayer`). The app's dispatcher runs them, so they are in the palette, Settings › Keyboard and the key reveal, and they work in every Layout tool. While routing they change layer through a via at the pointer, as V does. Otherwise they set the active layer that Route, Via and Fill use, with no via. A key past the board's stackup does nothing and says how many copper layers the board has. The palette lists only the layer commands of the board's own layers.
 
 `cargo xtask raw-keys` (part of `cargo xtask ci`) parses the app and rejects raw key reads (`key_pressed`, `consume_key`, `consume_shortcut`, `key_down`, `key_released`, `num_presses`) outside the dispatch layer. The dispatch layer is `keys.rs`, `commands.rs`, `app/command_dispatch.rs`, `app/settings_window.rs` and `app/key_reveal.rs`. A counted, reasoned list allows the reads that are not command shortcuts. The check fails on a new site, on one more read in a listed file, and on a stale count. The kept exceptions are these:
 
@@ -76,7 +76,7 @@ Tips never use digits or letters the title lacks. Each tip is unique on its leve
 
 ### Keys beside tool settings
 
-A tool card's settings rows show the key that steps them as a chip at the right of the label (`kit::keyed`, reading the effective keymap, so a rebinding shows at once). The Route card shows M on Router, / on Mode, F on Flip elbow, W on Width, V on Layer and D on Via drill. While a route is in progress the pill above the canvas repeats them: "Routing GND · 0.3 mm (W) · Top (V) · 45° (/) · Shove (M)".
+A tool card's settings rows show the key that steps them as a chip at the right of the label (`kit::keyed`, reading the effective keymap, so a rebinding shows at once). The Route card shows M on Router, / on Mode, F on Flip elbow, W on Width, the active layer's digit on Layer (V past the tenth layer) and D on Via drill. While a route is in progress the pill above the canvas repeats them: "Routing GND · 0.3 mm (W) · Top (1) · 45° (/) · Shove (M)".
 
 An armed drawing or placing tool shows a crosshair over the canvas (`kit::tool_cursor`), in Layout and in the schematic alike; Select keeps the arrow.
 
@@ -92,14 +92,14 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |
 | Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
-| PCB Layout | R route · V via · T tune length · P fill · B board shape · ⇧F view from bottom · H highlight complete net · Esc cancel |
+| PCB Layout | R route · V via · T tune length · P fill · B board shape · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧F view from bottom · H highlight complete net · Esc cancel |
 | PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
-| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–9 via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off · M / ⇧M next / previous router (shove, walkaround, ignore; [push-and-shove](push-and-shove.md)) |
+| Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–0 (the Layout's layer keys) via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off · M / ⇧M next / previous router (shove, walkaround, ignore; [push-and-shove](push-and-shove.md)) |
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool (`FILL_KEYS`) | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
 | Board shape | L line · A arc · C circle · R rectangle · F fillet · D dimension · U cutout · H hole · ⇧H slot · E name edge · X construction · Delete or Backspace · Esc |
 
-Layer and display toggles have palette commands but no default keys. They cover each copper layer, vias, silkscreens, courtyards, assembly, holes, component bodies and airwires.
+Layer and display toggles have palette commands but no default keys. They cover each copper layer a stackup can have (the palette lists the board's), vias, silkscreens, courtyards, assembly, holes, component bodies and airwires.
 
 Route moved from X to R. The Component workspace's Open moved from ⌘P to ⇧⌘O, because ⌘P now opens the palette.
 
@@ -119,7 +119,7 @@ Changing any of these keys would also change a key tip, because a tip equals a c
 
 ## 3D navigation
 
-The PCB 3D view has a navigation cube in its top-right corner. It follows Solidcraft's cube: click a face for that side's view, click a corner square for that corner's isometric view, or drag the cube to orbit. The house button above the cube goes home (isometric, fitted). The same views are the PCB 3D commands above (registry commands, rebindable in Settings and shown by the key reveal; 1–7 belong to PCB 3D and the Route tool's 1–9 to Layout, sibling contexts that never see each other's keys), and the canvas hint at the bottom left names the trackpad gestures. The Keyboard shortcuts sheet lists every gesture under PCB › 3D (`navigation::NAVIGATION_3D`):
+The PCB 3D view has a navigation cube in its top-right corner. It follows Solidcraft's cube: click a face for that side's view, click a corner square for that corner's isometric view, or drag the cube to orbit. The house button above the cube goes home (isometric, fitted). The same views are the PCB 3D commands above (registry commands, rebindable in Settings and shown by the key reveal; 1–7 belong to PCB 3D and the layer keys 1–0 to Layout, sibling contexts that never see each other's keys), and the canvas hint at the bottom left names the trackpad gestures. The Keyboard shortcuts sheet lists every gesture under PCB › 3D (`navigation::NAVIGATION_3D`):
 
 | Input | Trackpad | Mouse |
 | --- | --- | --- |

@@ -35,6 +35,7 @@ pub mod outline;
 pub mod pair;
 mod placed;
 pub mod posture;
+pub mod restack;
 pub mod router;
 pub mod showcase;
 pub mod via;
@@ -106,10 +107,17 @@ pub enum LayoutCommand {
     /// pad finish, silkscreen colour) as one undo step.
     #[serde(rename = "layout.set_fabrication")]
     SetFabrication(Fabrication),
-    /// Replace the board's stackup as one undo step. Tracks and vias on a
-    /// copper layer the new stackup lacks make it fail.
+    /// Replace the board's stackup as one undo step; copper layers keep
+    /// their names. Copper (tracks, fills, keepouts, blind vias) on a layer
+    /// the new stackup lacks makes it fail (`layout.edit_stackup` moves it).
     #[serde(rename = "layout.set_stackup")]
     SetStackup(Stackup),
+    /// Replace the board's stackup and move copper between layers as one
+    /// undo step ([`restack::StackupEdit`]): every track, fill, keepout
+    /// and blind-via end on a moved layer moves with it, all at once.
+    /// Copper left on a layer the new stackup lacks refuses the edit.
+    #[serde(rename = "layout.edit_stackup")]
+    EditStackup(restack::StackupEdit),
     /// Add a board via; the outcome names it (`Outcome::ViaAdded`).
     #[serde(rename = "layout.add_via")]
     AddVia { via: ViaRequest },
@@ -571,10 +579,15 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             )?;
         }
         LayoutCommand::SetFabrication(fabrication) => project.fabrication = fabrication,
-        LayoutCommand::SetStackup(stackup) => {
-            via::check_stackup_change(project, &stackup)?;
-            project.stackup = stackup;
-        }
+        LayoutCommand::SetStackup(stackup) => restack::apply(
+            project,
+            restack::StackupEdit {
+                stackup,
+                moves: Vec::new(),
+                removed: Vec::new(),
+            },
+        )?,
+        LayoutCommand::EditStackup(edit) => restack::apply(project, edit)?,
         LayoutCommand::AddVia { via } => return via::add(project, via).map(Some),
         LayoutCommand::MoveVia { id, position } => via::move_to(project, id, position)?,
         LayoutCommand::DeleteVia { id } => via::delete(project, id)?,

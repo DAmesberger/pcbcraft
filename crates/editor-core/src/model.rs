@@ -23,8 +23,8 @@ pub use sheet::{
     SheetDrawing, SheetItem, SheetPin, SheetSide, SheetSymbol, Sheets,
 };
 pub use stackup::{
-    COPPER_LAYER_COUNTS, CopperFoil, CopperLayer, Dielectric, DielectricKind, GlassStyle, OUNCE_UM,
-    Stackup,
+    COPPER_UM_RANGE, CopperFoil, CopperLayer, DIELECTRIC_MM_RANGE, DK_RANGE, Dielectric,
+    DielectricKind, GlassStyle, MAX_COPPER_LAYERS, MIN_COPPER_LAYERS, OUNCE_UM, Stackup,
 };
 pub use via::{Via, ViaSpan};
 

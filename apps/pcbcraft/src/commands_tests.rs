@@ -128,8 +128,6 @@ fn resolve_follows_the_active_contexts() {
         Chord::key(K::Slash),
         Chord::key(K::Backspace),
         Chord::key(K::Escape),
-        Chord::key(K::Num1),
-        Chord::key(K::Num9),
     ] {
         assert_eq!(
             in_route(chord),
@@ -144,7 +142,16 @@ fn resolve_follows_the_active_contexts() {
     );
     // Outside Route the same keys keep their meaning.
     assert_eq!(id(Context::PcbLayout, Chord::key(K::D)), s("pcb.toggle-3d"));
-    assert_eq!(id(Context::PcbLayout, Chord::key(K::Num1)), None);
+    // The layer digits are Layout's in every tool, never the Route tool's.
+    for context in [
+        Context::PcbLayout,
+        Context::PcbRoute,
+        Context::PcbFill,
+        Context::PcbTune,
+    ] {
+        assert_eq!(id(context, Chord::key(K::Num1)), s("pcb.layer-1"));
+        assert_eq!(id(context, Chord::key(K::Num0)), s("pcb.layer-10"));
+    }
     assert_eq!(id(Context::PcbFill, Chord::key(K::F)), s("view.fit"));
     // The board shape sketch: X is construction, V nothing, ⌘S still saves.
     assert_eq!(
@@ -251,7 +258,7 @@ fn the_route_tool_keys_are_commands() -> Result<(), String> {
         chords("route.width-previous"),
         Some(vec![Chord::key(K::W).with_shift()])
     );
-    assert_eq!(chords("route.layer-5"), Some(vec![Chord::key(K::Num5)]));
+    assert!(registry.get("route.layer-5").is_none());
     assert_eq!(
         chords("route.flip"),
         Some(vec![Chord::key(K::F), Chord::key(K::F).with_shift()])
@@ -514,10 +521,23 @@ fn view_keys_and_route_digits_resolve_by_context() -> Result<(), String> {
     );
     assert_eq!(
         id(Context::PcbRoute, Chord::key(K::Num1)).as_deref(),
-        Some("route.layer-1")
+        Some("pcb.layer-1")
     );
-    assert_eq!(id(Context::PcbLayout, Chord::key(K::Num1)), None);
-    assert_eq!(id(Context::Pcb3d, Chord::key(K::Num9)), None);
+    assert_eq!(
+        id(Context::PcbLayout, Chord::key(K::Num7)).as_deref(),
+        Some("pcb.layer-7")
+    );
+    assert_eq!(
+        id(Context::PcbLayout, Chord::key(K::Num0)).as_deref(),
+        Some("pcb.layer-10")
+    );
+    // 3D keeps its 1-7 views; its 8, 9 and 0 are free (the layer keys are
+    // Layout's, a sibling context).
+    for key in [K::Num8, K::Num9, K::Num0] {
+        assert_eq!(id(Context::Pcb3d, Chord::key(key)), None);
+    }
+    // The board shape sketch hides them.
+    assert_eq!(id(Context::BoardShape, Chord::key(K::Num1)), None);
     let shift_f = Chord::key(K::F).with_shift();
     assert_eq!(
         id(Context::Pcb3d, shift_f).as_deref(),
@@ -549,6 +569,71 @@ fn view_keys_and_route_digits_resolve_by_context() -> Result<(), String> {
         gestures
             .iter()
             .all(|c| !Registry::bindable(c) && registry.chords(c).is_empty())
+    );
+    Ok(())
+}
+
+/// The ten layer keys are app-wide, rebindable commands with the default
+/// digits 1 to 9 and 0; the copper toggles cover every layer a stackup can
+/// have, and a command names its stackup layer.
+#[test]
+fn the_layer_keys_and_copper_toggles_cover_the_stackup() -> Result<(), String> {
+    use crate::commands::StackupLayer;
+    let mut registry = Registry::standard();
+    let digits = [
+        K::Num1,
+        K::Num2,
+        K::Num3,
+        K::Num4,
+        K::Num5,
+        K::Num6,
+        K::Num7,
+        K::Num8,
+        K::Num9,
+        K::Num0,
+    ];
+    for (index, key) in digits.into_iter().enumerate() {
+        let id = format!("pcb.layer-{}", index + 1);
+        let command = registry.get(&id).ok_or_else(|| id.clone())?;
+        assert_eq!(command.chord, Some(Chord::key(key)), "{id}");
+        assert_eq!(command.handler, Handler::Registry);
+        assert!(command.runnable());
+        assert_eq!(command.stackup_layer(), Some(StackupLayer::Place(index)));
+    }
+    registry.rebind("pcb.layer-3", Some(Chord::key(K::Q).with_shift()))?;
+    assert_eq!(
+        registry
+            .resolve(
+                Chord::key(K::Q).with_shift(),
+                &active_contexts(Context::PcbRoute)
+            )
+            .map(|c| c.id.as_str()),
+        Some("pcb.layer-3")
+    );
+    let toggles = registry
+        .commands()
+        .iter()
+        .filter(|c| matches!(c.stackup_layer(), Some(StackupLayer::Named(_))))
+        .count();
+    assert_eq!(toggles, pcbcraft_core::MAX_COPPER_LAYERS);
+    let inner = registry
+        .get("pcb.layer.copper-63")
+        .and_then(|c| c.stackup_layer())
+        .ok_or("the last inner toggle")?;
+    assert_eq!(
+        inner,
+        StackupLayer::Named(pcbcraft_core::CopperLayer::Inner(62))
+    );
+    let four = pcbcraft_core::Stackup::preset(4)
+        .map_err(|e| e.to_string())?
+        .layers();
+    assert!(StackupLayer::Place(3).on(&four));
+    assert!(!StackupLayer::Place(4).on(&four));
+    assert!(!inner.on(&four));
+    assert!(
+        registry.conflicts().is_empty(),
+        "{:?}",
+        registry.conflicts()
     );
     Ok(())
 }

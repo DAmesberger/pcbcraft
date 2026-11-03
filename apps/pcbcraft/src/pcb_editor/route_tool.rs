@@ -32,7 +32,9 @@ use std::rc::Rc;
 
 /// The Route tool's keys while the canvas is hovered. Each is a registry
 /// command (`crate::commands::KeyDecl`), read through `crate::keys`, so a
-/// rebinding changes the key itself. The Route card lists them.
+/// rebinding changes the key itself. The Route card lists them, with the
+/// Layout's layer keys (`LAYER_KEYS`: 1 to 9 and 0 change layer through a
+/// via while routing).
 pub const ROUTE_KEYS: &[KeyDecl] = &[
     KeyDecl::new(
         "route.click",
@@ -52,15 +54,6 @@ pub const ROUTE_KEYS: &[KeyDecl] = &[
     KeyDecl::new("route.back", "Backspace", "Remove the last segment"),
     KeyDecl::new("route.via-next", "V", "Via to the next layer"),
     KeyDecl::new("route.via-previous", "Shift+V", "Via to the previous layer"),
-    KeyDecl::new("route.layer-1", "1", "Via to stackup layer 1"),
-    KeyDecl::new("route.layer-2", "2", "Via to stackup layer 2"),
-    KeyDecl::new("route.layer-3", "3", "Via to stackup layer 3"),
-    KeyDecl::new("route.layer-4", "4", "Via to stackup layer 4"),
-    KeyDecl::new("route.layer-5", "5", "Via to stackup layer 5"),
-    KeyDecl::new("route.layer-6", "6", "Via to stackup layer 6"),
-    KeyDecl::new("route.layer-7", "7", "Via to stackup layer 7"),
-    KeyDecl::new("route.layer-8", "8", "Via to stackup layer 8"),
-    KeyDecl::new("route.layer-9", "9", "Via to stackup layer 9"),
     KeyDecl::new("route.posture", "/", "Next mode: 45°, 90°, free"),
     // F with any Shift: ⇧F must not also flip the board view.
     KeyDecl::new("route.flip", "F, Shift+F", "Flip the elbow corner"),
@@ -85,18 +78,18 @@ pub const ROUTE_KEYS: &[KeyDecl] = &[
     ),
 ];
 
-/// The ids of the "via to stackup layer N" keys, layer 1 first.
-pub const ROUTE_LAYER_KEYS: [&str; 9] = [
-    "route.layer-1",
-    "route.layer-2",
-    "route.layer-3",
-    "route.layer-4",
-    "route.layer-5",
-    "route.layer-6",
-    "route.layer-7",
-    "route.layer-8",
-    "route.layer-9",
-];
+/// The keys the Route card lists: the Route tool's, with the Layout's
+/// layer keys after the via keys.
+pub(crate) fn route_key_table() -> Vec<KeyDecl> {
+    let mut table = Vec::with_capacity(ROUTE_KEYS.len() + super::LAYER_KEYS.len());
+    for decl in ROUTE_KEYS {
+        table.push(*decl);
+        if decl.id == "route.via-previous" {
+            table.extend(super::LAYER_KEYS);
+        }
+    }
+    table
+}
 
 /// The route in progress besides its head (`PcbEditor::route_start`) and
 /// pending via, and the routing settings that outlive one route.
@@ -772,11 +765,6 @@ impl PcbEditor {
                 self.next_layer(project, pointer, reverse);
             }
         }
-        if let Some(index) = ROUTE_LAYER_KEYS.iter().position(|id| pressed(id))
-            && let Some(&layer) = self.stack.get(index)
-        {
-            self.change_layer_to(project, layer, pointer);
-        }
         if pressed("route.back") {
             return self.route_back(revision);
         }
@@ -843,6 +831,6 @@ mod tests {
         assert_eq!(cycle(&widths, 0.25, false, by_value), Some(0.3));
         assert_eq!(cycle(&widths, 0.25, true, by_value), Some(0.2));
         assert_eq!(cycle::<f64>(&[], 0.25, true, by_value), None);
-        assert_eq!(ROUTE_KEYS.len(), 24);
+        assert_eq!(ROUTE_KEYS.len(), 15);
     }
 }

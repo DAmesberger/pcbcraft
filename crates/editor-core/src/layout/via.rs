@@ -16,7 +16,7 @@ use super::{
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};
 use crate::ids::Id;
-use crate::model::{CopperLayer, Project, Stackup, Via, ViaSpan};
+use crate::model::{CopperLayer, Project, Via, ViaSpan};
 use crate::rules::{CopperObject, RuleKey};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -183,35 +183,6 @@ pub(super) fn route_layer_change(project: &mut Project, request: LayerChangeRequ
     )?;
     check_clearance(project, id)?;
     Ok(id)
-}
-
-/// Refuse a stackup that drops a copper layer tracks still use, naming it.
-pub(super) fn check_stackup_change(project: &Project, stackup: &Stackup) -> Result<()> {
-    stackup.check()?;
-    let mut used = std::collections::BTreeMap::<CopperLayer, usize>::new();
-    for track in &project.tracks {
-        if !stackup.has(track.layer) {
-            *used.entry(track.layer).or_default() += 1;
-        }
-    }
-    if let Some((layer, count)) = used.into_iter().next() {
-        return Err(Error::Conflict(format!(
-            "{} still carries {count} track{}; delete or move them before removing the layer",
-            layer.name(),
-            if count == 1 { "" } else { "s" }
-        )));
-    }
-    for via in &project.vias {
-        if let ViaSpan::Between { from, to } = via.span
-            && (!stackup.has(from) || !stackup.has(to))
-        {
-            return Err(Error::Conflict(format!(
-                "via {} spans a copper layer the new stackup lacks",
-                via.id
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// Whether a via has copper on any layer a pad has copper on.

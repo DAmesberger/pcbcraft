@@ -37,6 +37,7 @@ mod board_card;
 pub(crate) mod board_shape;
 mod board_shape_ui;
 mod commands;
+pub(crate) use commands::LAYER_KEYS;
 pub(crate) use commands::shape_tool_entries;
 pub(crate) use route_tool::ROUTE_KEYS;
 pub(crate) use tune_tool::TUNE_KEYS;
@@ -63,6 +64,7 @@ mod rules_panel;
 #[cfg(test)]
 mod shove_tests;
 mod signal_card;
+mod stackup_panel;
 mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
@@ -86,8 +88,9 @@ enum Tool {
     Tune,
 }
 
-/// Most inner copper layers a stackup has (six-layer boards).
-const MAX_INNER: usize = 4;
+/// Most inner copper layers a stackup has: every layer but the two sides
+/// of the largest stackup the rules allow.
+const MAX_INNER: usize = pcbcraft_core::MAX_COPPER_LAYERS - 2;
 
 /// Which board layers Layout draws and picks. Hidden layers do not pick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,8 +145,8 @@ impl Layers {
                 .unwrap_or(true),
         }
     }
-    /// The toggle of a copper layer, for the view popover; `None` past
-    /// [`MAX_INNER`].
+    /// The toggle of a copper layer, for the view popover; `None` for an
+    /// inner layer no stackup can have.
     fn copper_layer_mut(&mut self, layer: CopperLayer) -> Option<&mut bool> {
         match layer {
             CopperLayer::Top => Some(&mut self.copper_top),
@@ -322,6 +325,9 @@ pub struct PcbEditor {
     layer: CopperLayer,
     /// The board's copper layers, top to bottom, per revision.
     stack: Vec<CopperLayer>,
+    /// The Route tool's board point under the pointer while it hovers the
+    /// canvas: where a layer key's via goes during a route.
+    hover_at: Option<Point>,
     width: f64,
     /// The net and class width `width` was last set from, so a new net or
     /// a class edit sets the width and an edit by hand keeps it.
@@ -381,6 +387,8 @@ pub struct PcbEditor {
     errors: FieldErrors,
     /// The Board setup dialog while it is open.
     setup: Option<board_card::BoardSetup>,
+    /// The docked Stackup dialog (`stackup_panel`).
+    stackup: Option<stackup_panel::StackupSetup>,
     /// The Design rules panel while it is open.
     rules: Option<rules_panel::RulesPanel>,
     /// The Production files dialog while it is open.
@@ -433,6 +441,7 @@ impl Default for PcbEditor {
             highlighted: None,
             route_lit: None,
             layer: CopperLayer::Top,
+            hover_at: None,
             stack: vec![CopperLayer::Top, CopperLayer::Bottom],
             width: 0.3,
             width_from: None,
@@ -469,6 +478,7 @@ impl Default for PcbEditor {
             sent: Default::default(),
             errors: FieldErrors::default(),
             setup: None,
+            stackup: None,
             rules: None,
             production: None,
             frame_request: None,
@@ -1071,7 +1081,11 @@ impl PcbEditor {
             subject
         } else if let Some(subject) = self.rules_subject() {
             subject
-        } else if self.setup.is_some() || self.net_classes.is_some() || self.signals.is_some() {
+        } else if self.setup.is_some()
+            || self.stackup.is_some()
+            || self.net_classes.is_some()
+            || self.signals.is_some()
+        {
             Subject::Dialog
         } else if (self.shape.active
             || matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill | Tool::Tune))
@@ -1127,6 +1141,9 @@ impl PcbEditor {
                 CardResponse::output(None)
             }
             Subject::Tool => CardResponse::output(self.route_card(ui, engine.project())),
+            Subject::Dialog if self.stackup.is_some() => {
+                CardResponse::output(self.stackup_setup(ui, engine))
+            }
             Subject::Dialog if self.signals.is_some() => self.signals_card(ui, engine),
             Subject::Dialog if self.setup.is_none() => self.net_classes_card(ui, engine),
             Subject::Dialog => CardResponse::output(self.board_setup(ui, engine)),
@@ -1152,6 +1169,9 @@ impl PcbEditor {
         }
         if let Some(setup) = &mut self.setup {
             setup.claim(ctx);
+        }
+        if let Some(stackup) = &mut self.stackup {
+            stackup.claim(ctx);
         }
     }
 
@@ -1325,8 +1345,10 @@ impl PcbEditor {
         // The Route keys (`route_tool::ROUTE_KEYS`). A layer change during
         // a route puts a via at the pointer, which the next click routes
         // through.
+        self.hover_at = None;
         if self.tool == Tool::Route && response.hovered() {
             let at = cursor.map(|at| self.route_point(at, scale));
+            self.hover_at = at;
             if let Some(back) = self.route_keys(ui, project, engine.revision(), at) {
                 operation = Some(back);
             }
@@ -1524,7 +1546,7 @@ impl PcbEditor {
                     "Routing {} · {} · {} · {} · {}",
                     project.net_name(net),
                     crate::keys::labelled(ctx, &width, "route.width-next"),
-                    crate::keys::labelled(ctx, &self.layer.name(), "route.via-next"),
+                    self.layer_label(ctx),
                     crate::keys::labelled(ctx, self.route.posture.label(), "route.posture"),
                     crate::keys::labelled(ctx, self.route.mode.label(), "route.router-mode-next"),
                 )
@@ -2848,6 +2870,115 @@ mod tests {
         assert_eq!(engine.project().fabrication, Fabrication::default());
         Ok(())
     }
+
+    /// Stackup… opens the docked Stackup dialog; a preset and Add layer
+    /// pair edit the draft, and OK sends one `layout.edit_stackup` that the
+    /// engine applies as one undo step. An odd draft cannot be sent: the
+    /// core's rule says why. A removed layer that carries copper offers
+    /// where its copper goes, and the edit moves it there.
+    #[test]
+    fn the_stackup_dialog_edits_layers_as_one_command() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            painted(&output)
+                .texts
+                .iter()
+                .any(|t| t == "2 layers · 1.67 mm")
+        );
+        assert!(click(&mut editor, &engine, &ctx, "Stackup…")?.is_none());
+        assert_eq!(editor.subject(), Subject::Dialog);
+        assert!(click(&mut editor, &engine, &ctx, "2 layers")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "6 layers")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "Add pair")?.is_none());
+        // One more foil makes an odd draft: OK is refused by the rule.
+        assert!(click(&mut editor, &engine, &ctx, "Add core")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "OK")?.is_none());
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(
+            painted(&output)
+                .texts
+                .iter()
+                .any(|t| t.contains("even number of copper layers")),
+            "the rule shows"
+        );
+        assert!(click(&mut editor, &engine, &ctx, "Add prepreg")?.is_none());
+        let operation = click(&mut editor, &engine, &ctx, "OK")?.ok_or("OK did nothing")?;
+        let Operation::Layout(LayoutCommand::EditStackup(edit)) = &operation else {
+            return Err("OK issued another command".into());
+        };
+        assert_eq!(edit.stackup.copper.len(), 10);
+        edit.stackup.check()?;
+        engine.apply(engine.revision(), operation)?;
+        frame(&mut editor, &engine, &ctx, vec![]);
+        assert_eq!(editor.subject(), Subject::Properties);
+        assert_eq!(editor.stack.len(), 10);
+        // Copper on Inner 7, then shrink to four layers moving it to Inner 2.
+        let net = engine.project().nets[0].id;
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Route {
+                request: RouteRequest {
+                    net,
+                    start: [20.0, 20.0],
+                    end: [30.0, 20.0],
+                    width: 0.3,
+                    layer: CopperLayer::Inner(7),
+                },
+            }),
+        )?;
+        assert!(click(&mut editor, &engine, &ctx, "Stackup…")?.is_none());
+        // The ten-layer build is no preset any more.
+        assert!(click(&mut editor, &engine, &ctx, "Custom")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "4 layers")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "Not moved")?.is_none());
+        assert!(click(&mut editor, &engine, &ctx, "Move to Inner 2")?.is_none());
+        let operation = click(&mut editor, &engine, &ctx, "OK")?.ok_or("OK did nothing")?;
+        let before = engine.project().clone();
+        engine.apply(engine.revision(), operation)?;
+        assert_eq!(engine.project().stackup.copper.len(), 4);
+        assert_eq!(engine.project().tracks[0].layer, CopperLayer::Inner(2));
+        engine.undo()?;
+        assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    /// The layer keys set the active layer outside a route, and a key past
+    /// the stackup is unavailable with a hint.
+    #[test]
+    fn layer_keys_set_the_active_layer_within_the_stackup() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut engine = Engine::demo()?;
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::SetStackup(pcbcraft_core::Stackup::preset(
+                12,
+            )?)),
+        )?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        frame(&mut editor, &engine, &ctx, vec![]);
+        editor.select_layer(engine.project(), 9);
+        assert_eq!(editor.layer, CopperLayer::Inner(9));
+        assert!(editor.pending_via.is_none(), "no route: no via");
+        assert_eq!(editor.layer_key_id(), Some("pcb.layer-10"));
+        assert_eq!(editor.layer_label(&ctx), "Inner 9 (0)");
+        editor.select_layer(engine.project(), 11);
+        assert_eq!(editor.layer, CopperLayer::Bottom);
+        assert_eq!(editor.layer_key_id(), None);
+        assert!(editor.layer_at(12).is_err());
+        editor.select_layer(engine.project(), 12);
+        assert_eq!(
+            editor.layer,
+            CopperLayer::Bottom,
+            "past the stackup: nothing"
+        );
+        Ok(())
+    }
     #[test]
     fn sync_preview_cancels_cleanly_and_requires_recompute_after_document_edit()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3882,11 +4013,14 @@ mod tests {
             "Routing {} · {} · {} · {} · {}",
             engine.project().net_name(net),
             key("0.3 mm", "route.width-next"),
-            key("Top", "route.via-next"),
+            key("Top", "pcb.layer-1"),
             key("45°", "route.posture"),
             key("Ignore", "route.router-mode-next"),
         );
-        assert!(pill.contains("0.3 mm (W)"), "{pill}");
+        assert!(
+            pill.contains("0.3 mm (W)") && pill.contains("Top (1)"),
+            "{pill}"
+        );
         assert!(texts(&output).contains(&pill));
         // A click far outside the board is refused by the engine.
         let operation = {

@@ -3,7 +3,6 @@
 //! (docs/sidebar-ia.md, "Tool card"). Every setting takes effect from the
 //! next step, also during a route. The route in progress shows as a canvas
 //! pill; view toggles live in the view popover.
-use super::route_tool::ROUTE_KEYS;
 use super::{PcbEditor, copper_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
@@ -78,7 +77,7 @@ impl PcbEditor {
             key("route.posture"),
             key("route.flip"),
             key("route.width-next"),
-            key("route.via-next"),
+            key(self.layer_key_id().unwrap_or("route.via-next")),
         );
         kit::keyed(ui, router_key, |ui| {
             kit::choice_row(ui, "Router", &mut self.route.mode, &routers)
@@ -152,7 +151,7 @@ impl PcbEditor {
             }
             super::impedance_view::route_rows(ui, project, class_id, self.layer, self.width, pair);
         }
-        let rows = crate::keys::rows(ui.ctx(), ROUTE_KEYS);
+        let rows = crate::keys::rows(ui.ctx(), &super::route_tool::route_key_table());
         kit::section(ui, "route-keys", "Keys", true, None, |ui| {
             let max = if self.route.keys_all {
                 rows.len()

@@ -38,8 +38,8 @@ impl BoardColors {
         match layer {
             CopperLayer::Top => self.copper_top,
             CopperLayer::Bottom => self.copper_bottom,
-            CopperLayer::Inner(n) => {
-                let (d, l) = match n % 4 {
+            CopperLayer::Inner(n @ 1..=4) => {
+                let (d, l) = match n {
                     1 => ((206, 190, 76), (150, 132, 20)),
                     2 => ((112, 186, 104), (52, 128, 52)),
                     3 => ((196, 120, 204), (140, 60, 150)),
@@ -47,6 +47,13 @@ impl BoardColors {
                 };
                 let (r, g, b) = if dark { d } else { l };
                 Color32::from_rgb(r, g, b)
+            }
+            // Further inner layers: hues a golden angle apart, so
+            // neighbouring layers stay apart on any count.
+            CopperLayer::Inner(n) => {
+                let hue = (f32::from(n) * 0.381_966).fract();
+                let value = if dark { 0.80 } else { 0.56 };
+                egui::ecolor::Hsva::new(hue, 0.55, value, 1.0).into()
             }
         }
     }
