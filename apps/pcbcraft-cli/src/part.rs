@@ -106,7 +106,12 @@ fn list(args: &[String]) -> Result<()> {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|p| !p["name"].as_str().unwrap_or_default().starts_with("marking_"))
+            .filter(|p| {
+                !p["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("marking_")
+            })
             .map(|p| {
                 format!(
                     "{}={}",

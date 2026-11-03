@@ -6,6 +6,7 @@
 //! when new, the part file's Model), published as revision 1 through the
 //! ordinary publish rules. The core never evaluates the part file: the host
 //! sends what it evaluated (`PartDerived`) and the lands (M3).
+use super::ApertureId;
 use super::bundle::{AssetBytes, asset_hash, validate_assets};
 use super::drafts::{self, Drafts};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
@@ -13,18 +14,17 @@ use super::model3d::{ModelDefinition, ModelFormat};
 use super::package_model::{PartDerived, PartFileModel, PartValue, part_parameter_name_ok};
 use super::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, FootprintDefinition, Hole,
-    HoleShape, Library, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
-    PackedAsset, Pad, PadKind, PadShape, PadSide, PasteRule, PasteWindow, SymbolDefinition,
-    Terminal, TerminalClass, TerminalMap, Unit, designator_prefix_valid, latest_of,
+    HoleShape, Library, PackageDefinition, PackageForm, PackageModel, PackageTerminal, PackedAsset,
+    Pad, PadKind, PadShape, PadSide, PasteRule, PasteWindow, SymbolDefinition, Terminal,
+    TerminalClass, TerminalMap, Unit, designator_prefix_valid, latest_of,
 };
 use crate::diagnostics::{Error, Result};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::geometry::{Bounds, Point, Shape, finite_within};
-use super::ApertureId;
 use crate::ids::{
-    BindingRef, ComponentRef, ContentHash, DefinitionId, FootprintRef, FunctionId,
-    GraphicId, MAX_LABEL, ModelRef, PackageRef, PackageTerminalId, PadId, Revision, SymbolRef,
-    TerminalId, UnitId,
+    BindingRef, ComponentRef, ContentHash, DefinitionId, FootprintRef, FunctionId, GraphicId,
+    MAX_LABEL, ModelRef, PackageRef, PackageTerminalId, PadId, Revision, SymbolRef, TerminalId,
+    UnitId,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -303,33 +303,51 @@ pub fn find_variant(library: &Library, key: ContentHash) -> Option<VariantRefs> 
     let ids: BTreeSet<DefinitionId> = library.components.iter().map(|c| c.id).collect();
     ids.into_iter()
         .filter_map(|id| latest_of(&library.components, id))
-        .filter(|c| c.definition.mechanical.as_ref().is_some_and(|m| m.key == key))
-        .find_map(|c| variant_refs(library, ComponentRef::new(c.id, c.revision)))
+        .filter_map(|c| variant_refs(library, ComponentRef::new(c.id, c.revision)))
+        .find(|refs| record(library, refs).is_some_and(|m| m.key == key))
+}
+
+fn record<'a>(library: &'a Library, refs: &VariantRefs) -> Option<&'a MechanicalPart> {
+    library
+        .package(refs.package)
+        .and_then(|p| p.definition.mechanical.as_deref())
 }
 
 /// A mechanical component revision's symbol, binding, footprint and
 /// package (its first of each), or `None` for any other component.
 pub fn variant_refs(library: &Library, component: ComponentRef) -> Option<VariantRefs> {
     let published = library.component(component)?;
-    published.definition.mechanical.as_ref()?;
     let symbol = *published.definition.representations.first()?;
     let binding = *published.definition.implementations.first()?;
     let body = &library.binding(binding)?.definition;
     let footprint = *body.footprints.first()?;
-    Some(VariantRefs {
+    let refs = VariantRefs {
         component,
         symbol,
         binding,
         footprint,
         package: body.package,
-    })
+    };
+    record(library, &refs)?;
+    Some(refs)
 }
 
-/// The mechanical record of a component revision.
+/// The mechanical record of a component revision (on its package).
 pub fn mechanical_of(library: &Library, component: ComponentRef) -> Option<&MechanicalPart> {
-    library
-        .component(component)
-        .and_then(|c| c.definition.mechanical.as_deref())
+    let refs = variant_refs(library, component)?;
+    record(library, &refs)
+}
+
+/// Whether every implementation of `component` lands a mechanical-part
+/// package (such a component may have no terminals).
+pub fn implemented_mechanically(library: &Library, component: &ComponentDefinition) -> bool {
+    !component.implementations.is_empty()
+        && component.implementations.iter().all(|b| {
+            library
+                .binding(*b)
+                .and_then(|b| library.package(b.definition.package))
+                .is_some_and(|p| p.definition.mechanical.is_some())
+        })
 }
 
 /// Whether instances of `component` belong in the BOM (true for every
@@ -361,7 +379,10 @@ fn choose_model(library: &Library, spec: &PartSpec) -> Result<ModelChoice> {
                     "part.model: the model {model} is not a SolidCraft part file"
                 )));
             }
-            Ok(ModelChoice::Existing(*model, published.definition.asset.hash))
+            Ok(ModelChoice::Existing(
+                *model,
+                published.definition.asset.hash,
+            ))
         }
         PartModelSource::File {
             name,
@@ -457,9 +478,9 @@ pub fn make_variant(
         PadUse::Mechanical => Vec::new(),
         PadUse::Terminals => spec.lands.iter().filter(|l| l.shape.copper()).collect(),
     };
-    let count = u32::try_from(terminal_lands.len())
-        .map_err(|_| invalid("too many terminals".into()))?;
-    let package_body = package_definition(spec, model, count);
+    let count =
+        u32::try_from(terminal_lands.len()).map_err(|_| invalid("too many terminals".into()))?;
+    let package_body = package_definition(spec, model, count, key);
     let footprint_body = footprint_definition(spec, package, &package_body)?;
     let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let set = [
@@ -499,7 +520,6 @@ pub fn make_variant(
             name.clone(),
             Definition::Component(component_definition(
                 spec,
-                key,
                 &terminal_lands,
                 symbol,
                 binding,
@@ -550,10 +570,19 @@ pub fn variant_name(spec: &PartSpec) -> String {
 fn trim(v: f64) -> String {
     let text = format!("{v:.4}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" { "0".into() } else { text.into() }
+    if text == "-0" {
+        "0".into()
+    } else {
+        text.into()
+    }
 }
 
-fn package_definition(spec: &PartSpec, model: ModelRef, terminals: u32) -> PackageDefinition {
+fn package_definition(
+    spec: &PartSpec,
+    model: ModelRef,
+    terminals: u32,
+    key: ContentHash,
+) -> PackageDefinition {
     let [lo, hi] = spec.derived.bounds_mm;
     PackageDefinition {
         next_local: terminals + 1,
@@ -569,6 +598,14 @@ fn package_definition(spec: &PartSpec, model: ModelRef, terminals: u32) -> Packa
             model,
             values: spec.values.clone(),
             derived: spec.derived.clone(),
+        })),
+        mechanical: Some(Box::new(MechanicalPart {
+            key,
+            name: spec.name.trim().to_owned(),
+            source: spec.source.clone(),
+            pads: spec.pads,
+            bom: spec.bom,
+            pick_and_place: spec.in_pick_and_place(),
         })),
         ..PackageDefinition::default()
     }
@@ -738,7 +775,6 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
 
 fn component_definition(
     spec: &PartSpec,
-    key: ContentHash,
     lands: &[&MechanicalLand],
     symbol: SymbolRef,
     binding: BindingRef,
@@ -768,13 +804,5 @@ fn component_definition(
         pin_rules: vec![],
         marking: None,
         review: None,
-        mechanical: Some(Box::new(MechanicalPart {
-            key,
-            name: spec.name.trim().to_owned(),
-            source: spec.source.clone(),
-            pads: spec.pads,
-            bom: spec.bom,
-            pick_and_place: spec.in_pick_and_place(),
-        })),
     })
 }

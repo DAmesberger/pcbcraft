@@ -63,7 +63,10 @@ fn a_placed_builtin_reuses_its_variant_and_new_values_move_it() -> TestResult {
     assert_eq!(second["ok"], true, "{second}");
     let project = session.engine().project();
     assert_eq!(project.instances.len(), 2);
-    assert_eq!(project.instances[0].component, project.instances[1].component);
+    assert_eq!(
+        project.instances[0].component,
+        project.instances[1].component
+    );
     assert_eq!(project.library.models.len(), 1);
     let rev = revision(&session);
     let moved = call(
@@ -144,8 +147,14 @@ fn the_starter_set_builds_in_3d_and_reaches_the_outputs() -> TestResult {
         &project,
         &pcbcraft_core::fabrication::assembly::PlacementConvention::default(),
     )?;
-    assert!(rows.iter().any(|r| r.designator == "H1"), "the nut is placed");
-    assert!(!rows.iter().any(|r| r.designator == "HS1"), "no heatsink row");
+    assert!(
+        rows.iter().any(|r| r.designator == "H1"),
+        "the nut is placed"
+    );
+    assert!(
+        !rows.iter().any(|r| r.designator == "HS1"),
+        "no heatsink row"
+    );
     let bom = pcbcraft_core::fabrication::assembly::bom_csv(&project)?;
     assert!(bom.contains("HS1") && bom.contains("H1"));
     let holes = pcbcraft_core::fabrication::drill::holes(&project);

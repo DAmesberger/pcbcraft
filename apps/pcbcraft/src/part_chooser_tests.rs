@@ -93,7 +93,8 @@ fn the_chooser_lists_the_builtins_and_the_projects_part_files() -> TestResult {
         chooser.show(ui.ctx(), &engine);
     });
     assert!(
-        has(&texts, "BUILT-IN  1") && has(&texts, "THIS PROJECT  0"),
+        has(&texts, &format!("BUILT-IN  {}", part_file::BUILTIN.len()))
+            && has(&texts, "THIS PROJECT  0"),
         "{texts:?}"
     );
     for (name, _) in part_file::BUILTIN {
@@ -118,7 +119,11 @@ fn the_place_mode_names_its_primary() {
         chooser.show(ui.ctx(), &engine);
     });
     assert!(
-        has(&texts, "Place") && has(&texts, "PLACE 3D PART  1"),
+        has(&texts, "Place")
+            && has(
+                &texts,
+                &format!("PLACE 3D PART  {}", part_file::BUILTIN.len())
+            ),
         "{texts:?}"
     );
 }

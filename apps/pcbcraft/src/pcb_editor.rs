@@ -52,6 +52,7 @@ pub(crate) mod net_classes;
 #[cfg(test)]
 mod pair_tests;
 mod pair_tool;
+mod part_place;
 mod placement_card;
 mod production;
 #[cfg(test)]
@@ -387,6 +388,15 @@ pub struct PcbEditor {
     errors: FieldErrors,
     /// The Board setup dialog while it is open.
     setup: Option<board_card::BoardSetup>,
+    /// Place 3D part…: the part-file chooser in Place mode.
+    part_chooser: crate::part_chooser::PartChooser,
+    /// The 3D part section of a selected mechanical part.
+    part_section: part_place::PartSection,
+    /// The revision before a 3D part was placed: the new part is selected
+    /// once the engine is past it.
+    select_placed: Option<u64>,
+    /// The board point at the centre of the Layout view, last drawn.
+    view_centre: Option<Point>,
     /// The docked Stackup dialog (`stackup_panel`).
     stackup: Option<stackup_panel::StackupSetup>,
     /// The Design rules panel while it is open.
@@ -478,6 +488,10 @@ impl Default for PcbEditor {
             sent: Default::default(),
             errors: FieldErrors::default(),
             setup: None,
+            part_chooser: Default::default(),
+            part_section: Default::default(),
+            select_placed: None,
+            view_centre: None,
             stackup: None,
             rules: None,
             production: None,
@@ -903,6 +917,9 @@ impl PcbEditor {
                         Button::new("board-shape", "sketch", "Shape")
                             .enabled(!self.view_3d)
                             .tip("Edit the board outline, cutouts and named edges as a sketch"),
+                        Button::new("place-part", "component", "3D part")
+                            .selected(self.part_chooser.is_open())
+                            .tip("Place a parametric 3D part (nut, spacer, heatsink) from a part file"),
                     ],
                 },
                 Group {
@@ -969,6 +986,7 @@ impl PcbEditor {
                 }
             }
             "production" => self.open_production(),
+            "place-part" => self.open_part_chooser(),
             "refill" if !engine.project().fills.is_empty() => {
                 return Some(Operation::Fill(layout::fill::FillCommand::Refill {
                     target: layout::fill::RefillTarget::All,
@@ -1122,6 +1140,9 @@ impl PcbEditor {
     pub fn subject_slot(&mut self, ui: &mut Ui, engine: &Engine) -> CardResponse<Operation> {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
+        if let Some(operation) = self.part_chooser_frame(ui.ctx(), engine) {
+            return CardResponse::output(Some(operation));
+        }
         match self.subject() {
             Subject::Dialog if self.production.is_some() && !self.update.is_open() => {
                 self.production_slot(ui, engine)
@@ -1211,7 +1232,9 @@ impl PcbEditor {
         match self.inspected(project) {
             Inspected::Placement(id) => {
                 let placement = project.placements.iter().find(|p| p.instance == id)?;
-                self.placement_section(ui, project, placement)
+                let moved = self.placement_section(ui, project, placement);
+                let part = self.part_section(ui, engine, id);
+                moved.or(part)
             }
             Inspected::Unplaced(_) => {
                 self.unplaced_section(ui, engine);
@@ -1314,6 +1337,7 @@ impl PcbEditor {
         let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
         let world = |p: Pos2| view.world(p);
+        self.view_centre = Some(world(rect.center()));
         let painter = ui.painter().with_clip_rect(rect);
         let metric = symbol_view::metric(&painter);
         let pointer = response

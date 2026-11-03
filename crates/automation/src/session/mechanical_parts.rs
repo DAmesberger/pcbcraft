@@ -280,7 +280,11 @@ pub fn footprint_lands(engine: &Engine, footprint: FootprintRef) -> Result<Vec<M
         .project()
         .library
         .footprint(footprint)
-        .ok_or_else(|| invalid(format!("part.lands: the project has no footprint {footprint}")))?;
+        .ok_or_else(|| {
+            invalid(format!(
+                "part.lands: the project has no footprint {footprint}"
+            ))
+        })?;
     published
         .definition
         .pads
@@ -609,15 +613,15 @@ pub fn placed_part(engine: &Engine, instance: Id) -> Result<PlacedPart> {
     let component = library
         .component(refs.component)
         .ok_or_else(|| invalid("part.instance: the component is missing".into()))?;
-    let record = component
+    let package = library
+        .package(refs.package)
+        .ok_or_else(|| invalid("part.instance: the package is missing".into()))?;
+    let record = package
         .definition
         .mechanical
         .as_deref()
         .cloned()
         .ok_or_else(|| invalid("part.not_mechanical: no mechanical record".into()))?;
-    let package = library
-        .package(refs.package)
-        .ok_or_else(|| invalid("part.instance: the package is missing".into()))?;
     let PackageModel::PartFile(file) = &package.definition.model else {
         return Err(invalid(
             "part.not_mechanical: the package does not use a part file".into(),

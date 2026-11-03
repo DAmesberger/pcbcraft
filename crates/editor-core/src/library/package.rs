@@ -27,6 +27,12 @@ pub struct PackageDefinition {
     pub model: PackageModel,
     /// The model in the datum frame (`model_frame`).
     pub placement: ModelPlacement,
+    /// Set when the core generated this package's set from a part file
+    /// (`layout.place_part`, docs/mechanical-parts.md): the variant record.
+    /// Display, dedupe and assembly flags only; electrical rules never
+    /// read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanical: Option<Box<super::mechanical::MechanicalPart>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -261,6 +267,7 @@ mod tests {
                 materials: GeneratedMaterials::default(),
             },
             placement: ModelPlacement::default(),
+            mechanical: None,
         }
     }
 

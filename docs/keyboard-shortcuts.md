@@ -32,6 +32,7 @@ While the Route tool is armed, its keys shadow these:
 - D shadows the Layout ↔ 3D switch: it cycles the via size instead.
 - Esc shadows the Layout's Esc: it ends the route.
 - P shadows the Fill tool: it switches pair routing off and on instead ([high-speed routing](high-speed-routing.md#differential-pair-routing)).
+- M shadows Place 3D part: it cycles the router instead.
 
 R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
@@ -92,7 +93,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |
 | Schematic | P place · W wire · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
-| PCB Layout | R route · V via · T tune length · P fill · B board shape · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧F view from bottom · H highlight complete net · Esc cancel |
+| PCB Layout | R route · V via · T tune length · P fill · B board shape · M place 3D part ([mechanical parts](mechanical-parts.md)) · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧F view from bottom · H highlight complete net · Esc cancel |
 | PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
 | Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–0 (the Layout's layer keys) via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off · M / ⇧M next / previous router (shove, walkaround, ignore; [push-and-shove](push-and-shove.md)) |
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |

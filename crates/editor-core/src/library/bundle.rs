@@ -325,7 +325,6 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 pin_rules: _,
                 marking,
                 review: _,
-                mechanical: _,
             } = component;
             if let Some(marking) = marking {
                 marking_refs(marking, map)?;
@@ -376,6 +375,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 envelope: _,
                 model,
                 placement,
+                mechanical: _,
             } = package;
             // The form, model and placement name no other lineage and no
             // asset: materials are built-in `MaterialId`s of the project's

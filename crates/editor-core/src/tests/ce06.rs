@@ -279,7 +279,6 @@ fn mcu_component(lineages: &Mcu) -> ComponentDefinition {
         pin_rules: Vec::new(),
         marking: None,
         review: None,
-        mechanical: None,
     }
 }
 

@@ -25,7 +25,7 @@ It follows the founder's rules: Solidcraft stays generic, footprints stay Pcbcra
 - **Library size.** Each distinct value set adds one small set of five definitions. The Model (the file bytes) is shared. For the realistic case, a few nut heights and one heatsink, this is a handful of sets. The number of sets is bounded by the number of instances (4096).
 - **BOM.** An M3 × 4 mm and an M3 × 6 mm nut are different purchases and get different BOM lines. This is wanted.
 - **Updates.** A newer revision of the part file is not applied to placed parts automatically. Re-choosing the file in Properties makes a new variant, and the instance moves to it. A library update across all instances of a set (impact preview) uses the existing update plans once the set is promoted to a library. Release 1 adds no part-file-specific update plan.
-- **Editing the set.** The generated set can be drafted and edited in the Component workspace like any component, for example to adjust its footprint. The edited revision keeps its `mechanical` record and key, so later placements with the same values reuse the edited footprint. The key therefore names the variant's origin, not a guarantee that its footprint is unchanged.
+- **Editing the set.** The generated set can be drafted and edited in the Component workspace like any component, for example to adjust its footprint. The edited package keeps its `mechanical` record and key, so later placements with the same values reuse the edited footprint. The key therefore names the variant's origin, not a guarantee that its footprint is unchanged.
 - **Rejected alternatives.**
   - *Per-instance geometry* is deferred by the founder (O4).
   - *One component with one binding per variant* would make a new component revision for every new value set, and every existing instance would then face an update.
@@ -33,10 +33,10 @@ It follows the founder's rules: Solidcraft stays generic, footprints stay Pcbcra
 ## M2. Data model (core)
 
 ```rust
-// library/component.rs
-pub struct ComponentDefinition {
+// library/package.rs (the package variant; as built, see M10)
+pub struct PackageDefinition {
     …
-    /// Set when the core generated this revision's set from a part file
+    /// Set when the core generated this package's set from a part file
     /// (`layout.place_part`). Display, dedupe and assembly flags only:
     /// electrical rules never read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,13 +103,13 @@ pub enum PartModelSource {
 | Definition | Content |
 |---|---|
 | Model | From `File`, unless an equal asset hash exists (M1.8). |
-| Package | `PackageForm::Generic`, `envelope` = the body's bounds size, model `PartFile { model, values, derived }`, default placement (part origin = footprint origin, seating plane z = 0). Terminals: one per copper land when `pads: terminals`, else none. |
+| Package | `PackageForm::Generic`, `envelope` = the body's bounds size, model `PartFile { model, values, derived }`, `mechanical`, default placement (part origin = footprint origin, seating plane z = 0). Terminals: one per copper land when `pads: terminals`, else none. |
 | Footprint | One pad per land (M3), standard graphics over the body's xy bounds (`add_standard_graphics` over the bounds box, not the centred envelope): assembly outline, silkscreen outline, courtyard (`COURTYARD_EXCESS_MM`), designator. Datum at the origin. |
 | Binding | Package terminal *n* to component terminal *n*, or no mappings. |
 | Symbol | One unit `A`: a 10.16 × 5.08 mm body, designator above and component name below, one pin per terminal on the left (2.54 mm pitch). |
-| Component | `designator_prefix`, passive terminals `1…N` (or none), the symbol and binding, `mechanical`, and the name `"<name> <values>"` (for example `SMD nut height 4 mm`), limited to `MAX_LABEL`. |
+| Component | `designator_prefix`, passive terminals `1…N` (or none), the symbol and binding, and the name `"<name> <values>"` (for example `SMD nut height 4 mm`), limited to `MAX_LABEL`. |
 
-**Dedupe.** The variant for a spec is the component lineage whose **latest** revision has `mechanical.key == key(spec)`. A placement reuses it. Two equal specs therefore never make two sets.
+**Dedupe.** The variant for a spec is the component lineage whose **latest** revision's package has `mechanical.key == key(spec)`. A placement reuses it. Two equal specs therefore never make two sets.
 
 **Instance.** A `ComponentInstance` with `representation` = the symbol, `physical` = (binding, footprint), `unused_units = {1}`, no occurrence, and a `Placement`. Designators are numbered under the prefix as `component.place` does.
 
@@ -188,14 +188,14 @@ pub enum PartModelSource {
   - **Pads**: mechanical or terminals;
   - **In BOM** and **In pick-and-place**.
 
-  Delete on the board removes a board-only mechanical part with `layout.remove_part`.
+  **Remove from board** in that section removes a board-only mechanical part with `layout.remove_part`. (Layout has no Delete key for placements yet.)
 
 ## M6. Outputs and checks
 
 | Output | Behaviour |
 |---|---|
 | 3D view, native `.solidcraft` export, STEP | Unchanged path. The board build defines each `PartKey` once (L3) and places one occurrence per instance; the bodies keep their materials. |
-| BOM (`project.bom`, `bom.csv`, `bom-parts.csv`) | Includes instances whose component has no `mechanical` record or has `bom: true`. A mechanical line without a Part is `no part`, as for any part, until a Part is assigned. |
+| BOM (`project.bom`, `bom.csv`, `bom-parts.csv`) | Includes instances whose package has no `mechanical` record or has `bom: true`. A mechanical line without a Part is `no part`, as for any part, until a Part is assigned. |
 | Pick-and-place | Rows only for parts with `pick_and_place: true` (or no mechanical record). |
 | Purchasing completeness | Instances excluded from the BOM raise no purchasing finding. |
 | Assembly drawing (PDF) | Draws the assembly outline and designator like any footprint. |
@@ -227,3 +227,54 @@ The parts are original parametric designs, authored through Solidcraft's command
 1. **Stacked parts.** Release 1 reports a heatsink on a chip as a courtyard overlap, which the user waives. Should a mechanical part be able to declare "stacks on" another instance?
 2. **Lands from part files.** The rule chosen here is that footprints stay Pcbcraft's. If the founder later prefers a part-file land hint (for example named construction points `pad-<n>`), it would be an additional land source (M3) with no format change.
 3. **Assembly flags beyond mechanical parts.** `bom` and `pick_and_place` live on mechanical sets only. A general do-not-populate flag, or assembly variants, would replace them.
+
+## M10. As built (3 November 2026)
+
+- **Code.**
+  - Core: `library/mechanical.rs`: `PartSpec`, `MechanicalPart`, `MechanicalLand`, `variant_key`, `find_variant`, `make_variant` (the set is published through `library::publish` over a scratch draft set), `in_bom`, `in_pick_and_place`.
+  - The commands are in `layout/part.rs` (`layout.place_part`, `layout.set_part`, `layout.remove_part`), with `Outcome::PartPlaced`.
+  - `instances::place_off_sheet` creates the instance with its unit unused.
+  - Automation: `session/mechanical_parts.rs`: `BUILTIN_PARTS` and their land rules, `place_part_operation`, `set_part_operation`, `placed_part`, and the three requests. MCP exposes them as `library_part_files`, `layout_place_part_file` and `layout_set_part_file_values` (generated from the catalog).
+  - CLI: `pcbcraft-cli part list`.
+  - Desktop:
+    - `part_chooser.rs`: one sheet for Use and Place, with its worker-thread `Evaluator`;
+    - `part_editor/model_part.rs`: the Body section's Part file…, the parameters form and Use generated model;
+    - `pcb_editor/part_place.rs`: Place 3D part… (`pcb.place-part`, key M, with its route-mode shadow) and the placement card's 3D part section: parameters, pad use, BOM and pick-and-place, and Remove from board.
+- **Deviations from M2.**
+  - **Where the record lives.** The variant record is `PackageDefinition.mechanical`, not a component field. A component field pushed `Definition` past Clippy's large-variant limit, and the package is the "package variant" of the founder's wording anyway. Dedupe goes through the component's first binding to its package.
+  - **Publish rules.** Three rules now allow a purely mechanical set:
+    - a package whose model is a part file may have no terminals;
+    - a footprint of a terminal-less package may have no pads;
+    - a component may have no terminals when every implementation lands a mechanical-part package.
+- **Built-ins.** `smd-nut`, `round-spacer` and `finned-heatsink` are in `library/parts/`, authored by `tests/author_parts.rs`. Each is one body. The heatsink's fins are a rectangular pattern whose count is the `fin_count` parameter.
+
+  Cold evaluation, single-threaded, Apple M5 Max under heavy load, measured once:
+
+  | Part | Cold evaluation |
+  |---|---|
+  | `smd-nut` | 10.8 ms |
+  | `round-spacer` | 8.5 ms |
+  | `finned-heatsink` | 64.9 ms |
+- **Evidence.**
+  - Core tests (`tests/mechanical.rs`) cover:
+    - the off-sheet instance, the generated set, the courtyard, paste windows and the non-plated hole;
+    - one undo step;
+    - dedupe, and one Model per file;
+    - terminal pads;
+    - BOM and pick-and-place flags;
+    - moving an instance to a variant and back;
+    - refusals that keep the document;
+    - removal.
+  - Automation tests cover:
+    - the list;
+    - placing a built-in and reusing its variant;
+    - new values moving the instance;
+    - explicit lands;
+    - refusals;
+    - the starter set on the showcase board, which builds in 3D and reaches BOM, pick-and-place and the drill table.
+  - The pictures come from `write_mechanical_board_pictures` (`viewport/pictures.rs`).
+- **Known limits.**
+  - Round bodies' bounds come from Solidcraft's outline bounds. A cylinder's box is up to about 10 % larger than its diameter, so a round part's courtyard and assembly outline are that much larger too.
+  - A heatsink stacked on a chip is a courtyard overlap (M9.1).
+  - Layout has no Delete key for placements, so Remove from board is in the section.
+  - The part is placed at the view centre and then moved. It does not follow the pointer.

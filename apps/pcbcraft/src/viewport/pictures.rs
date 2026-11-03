@@ -1331,3 +1331,83 @@ fn write_wroom_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "wroom-board-pads-closeup")?;
     Ok(())
 }
+
+/// The showcase board with built-in mechanical parts placed directly
+/// (docs/mechanical-parts.md): SMD nuts in two corners, a spacer and a
+/// finned heatsink over U2, each through the same `layout.place_part`
+/// the Place 3D part command applies.
+pub(crate) fn mechanical_board() -> Result<pcbcraft_core::Engine, Box<dyn std::error::Error>> {
+    use pcbcraft_automation::session::mechanical_parts::{
+        PartFileSource, PlacePartFileParams, place_part_operation,
+    };
+    use pcbcraft_core::library::package_model::PartValue;
+    let mut engine = pcbcraft_core::Engine::showcase()?;
+    type Placed<'a> = (&'a str, [f64; 2], Vec<(&'a str, PartValue)>);
+    let parts: [Placed<'_>; 4] = [
+        ("smd-nut", [3.5, 3.5], vec![]),
+        (
+            "smd-nut",
+            [40.5, 24.5],
+            vec![("height", PartValue::Mm(4.0))],
+        ),
+        ("round-spacer", [40.5, 3.5], vec![]),
+        (
+            "finned-heatsink",
+            [36.0, 15.0],
+            vec![
+                ("length", PartValue::Mm(8.0)),
+                ("width", PartValue::Mm(8.0)),
+                ("height", PartValue::Mm(6.0)),
+                ("fin_count", PartValue::Count(5)),
+                ("fin_thickness", PartValue::Mm(0.8)),
+                ("base_height", PartValue::Mm(1.2)),
+            ],
+        ),
+    ];
+    for (name, at, values) in parts {
+        let mut params =
+            PlacePartFileParams::new(PartFileSource::Builtin(name.into()), at, engine.revision());
+        params.values = values.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
+        let (operation, _) = place_part_operation(&engine, &params)?;
+        engine.apply(engine.revision(), operation)?;
+    }
+    Ok(engine)
+}
+
+/// The mechanical-parts board in 3D. Run with `PCBCRAFT_PICTURES=<dir>
+/// cargo test -p pcbcraft write_mechanical_board_pictures -- --ignored`.
+#[test]
+#[ignore = "writes mechanical-part board pictures"]
+fn write_mechanical_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let engine = mechanical_board()?;
+    let project = engine.project().clone();
+    let mut v = viewport(&project)?;
+    let model = pcbcraft_solidcraft::project::build(&project)?;
+    v.set_model(crate::model_scene::build(model.geometry.clone())?);
+    v.fit_to(4.0 / 3.0);
+    let mut save =
+        |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
+            let (w, h) = (1280, 960);
+            let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}.png")), png)?;
+            Ok(())
+        };
+    let b = v.bounds;
+    aim(&mut v, b.center(), 1.2 * b.diagonal(), 30.0, 35.0);
+    save(&mut v, "mechanical-board")?;
+    aim(&mut v, Vec3::new(36.0, 15.0, 3.0), 26.0, 35.0, 30.0);
+    save(&mut v, "mechanical-board-heatsink")?;
+    aim(&mut v, Vec3::new(3.5, 3.5, 1.5), 12.0, 40.0, 35.0);
+    save(&mut v, "mechanical-board-nut")?;
+    Ok(())
+}

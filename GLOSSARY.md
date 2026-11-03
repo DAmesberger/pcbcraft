@@ -120,7 +120,7 @@ The authored rigid transform of a package's 3D model relative to its footprint d
 The plane a package rests on: z = 0 of the model frame, at the top of the land copper. Lead contacts lie on it; a body below it reaches into the board.
 
 **Mechanical part**:
-A part placed directly on the board from a part file (a solderable nut, spacer or heatsink): an ordinary component instance of a generated set (component, mechanical symbol, package using the part file, footprint, binding) recorded with its variant key, source and assembly flags. Its symbol unit starts unused; its pads are mechanical copper that may land terminals.
+A part placed directly on the board from a part file (a solderable nut, spacer or heatsink): an ordinary component instance of a generated set (component, mechanical symbol, package using the part file, footprint, binding) whose package records its variant key, source and assembly flags. Its symbol unit starts unused; its pads are mechanical copper that may land terminals.
 _Avoid_: Board-only object, inferring a mechanical part from a designator
 
 **Part variant**:

@@ -316,6 +316,12 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
     (Context::PcbRoute, Chord::key(egui::Key::D), "pcb.toggle-3d"),
     // P switches pair routing instead of arming the Fill tool.
     (Context::PcbRoute, Chord::key(egui::Key::P), "pcb.fill"),
+    // M cycles the router instead of placing a 3D part.
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::M),
+        "pcb.place-part",
+    ),
     // Tuning: F flips the meander's side instead of fitting the view.
     (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
     (
@@ -1479,6 +1485,18 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::key(K::P))
             .icon("polygon")
             .keywords("pour zone plane copper area"),
+        tool(
+            "pcb.place-part",
+            "Place 3D part…",
+            C::PcbLayout,
+            Workspace::Pcb,
+            "place-part",
+        )
+        .chord(Chord::key(K::M))
+        .icon("component")
+        .keywords(
+            "mechanical part file solidcraft nut standoff spacer heatsink bracket parametric",
+        ),
         tool(
             "pcb.refill",
             "Refill all fills",
