@@ -1,0 +1,159 @@
+{
+  "DesignRules": [
+    {
+      "Layers": "Outer",
+      "MinLineWidth": 0.1524,
+      "PadToPad": 0.1524,
+      "PadToTrack": 0.1524,
+      "RegionToRegion": 0.1524,
+      "TrackToRegion": 0.1524,
+      "TrackToTrack": 0.1524
+    }
+  ],
+  "FilesAttributes": [
+    {
+      "FileFunction": "Copper,L1,Top",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-copper-l1-top.gbr"
+    },
+    {
+      "FileFunction": "Copper,L2,Inr",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-copper-l2-inner1.gbr"
+    },
+    {
+      "FileFunction": "Copper,L3,Inr",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-copper-l3-inner2.gbr"
+    },
+    {
+      "FileFunction": "Copper,L4,Bot",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-copper-l4-bottom.gbr"
+    },
+    {
+      "FileFunction": "Soldermask,Top",
+      "FilePolarity": "Negative",
+      "Path": "esp32-s31-devboard-mask-top.gbr"
+    },
+    {
+      "FileFunction": "Soldermask,Bot",
+      "FilePolarity": "Negative",
+      "Path": "esp32-s31-devboard-mask-bottom.gbr"
+    },
+    {
+      "FileFunction": "Paste,Top",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-paste-top.gbr"
+    },
+    {
+      "FileFunction": "Legend,Top",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-legend-top.gbr"
+    },
+    {
+      "FileFunction": "Profile,NP",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-profile.gbr"
+    },
+    {
+      "FileFunction": "Plated,1,4,PTH",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-plated.drl"
+    },
+    {
+      "FileFunction": "NonPlated,1,4,NPTH",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-non-plated.drl"
+    },
+    {
+      "FileFunction": "Drillmap",
+      "FilePolarity": "Positive",
+      "Path": "esp32-s31-devboard-drill-map.gbr"
+    }
+  ],
+  "GeneralSpecs": {
+    "BoardThickness": 1.74,
+    "Finish": "ENIG",
+    "LayerNumber": 4,
+    "ProjectId": {
+      "GUID": "6679b116-7d99-81d6-9bbd-bd6206611356",
+      "Name": "Untitled",
+      "Revision": "1"
+    },
+    "Size": {
+      "X": 40.0,
+      "Y": 64.0
+    }
+  },
+  "Header": {
+    "GenerationSoftware": {
+      "Application": "Pcbcraft",
+      "Vendor": "Pcbcraft",
+      "Version": "0.1.0"
+    }
+  },
+  "MaterialStackup": [
+    {
+      "Color": "White",
+      "Name": "Top legend",
+      "Type": "Legend"
+    },
+    {
+      "Color": "Green",
+      "Name": "Top solder mask",
+      "Type": "SolderMask"
+    },
+    {
+      "Name": "Top copper",
+      "Thickness": 0.035,
+      "Type": "Copper"
+    },
+    {
+      "Material": "FR4",
+      "Name": "Prepreg 1",
+      "Notes": "2116 glass",
+      "Thickness": 0.2,
+      "Type": "Dielectric"
+    },
+    {
+      "Name": "Inner 1 copper",
+      "Thickness": 0.035,
+      "Type": "Copper"
+    },
+    {
+      "Material": "FR4",
+      "Name": "Core 2",
+      "Notes": "7628 glass",
+      "Thickness": 1.2,
+      "Type": "Dielectric"
+    },
+    {
+      "Name": "Inner 2 copper",
+      "Thickness": 0.035,
+      "Type": "Copper"
+    },
+    {
+      "Material": "FR4",
+      "Name": "Prepreg 3",
+      "Notes": "2116 glass",
+      "Thickness": 0.2,
+      "Type": "Dielectric"
+    },
+    {
+      "Name": "Bottom copper",
+      "Thickness": 0.035,
+      "Type": "Copper"
+    },
+    {
+      "Color": "Green",
+      "Name": "Bottom solder mask",
+      "Type": "SolderMask"
+    },
+    {
+      "Color": "White",
+      "Name": "Bottom legend",
+      "Type": "Legend"
+    }
+  ]
+}

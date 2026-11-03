@@ -1,0 +1,21 @@
+Designator,Value,Package,Manufacturer,MPN,Fitted
+C1,10 µF 16 V,Capacitor 0805 package,Murata,GRM21BR61C106KE15L,yes
+C2,22 µF 10 V,Capacitor 0805 package,Murata,GRM21BR61A226ME51L,yes
+C3,100 nF 16 V,Capacitor 0603 package,Murata,GRM188R71C104KA01D,yes
+C4,1 µF 16 V,Capacitor 0603 package,Murata,GRM188R61C105KA93D,yes
+D1,APT1608SGC,APT1608SGC package,Kingbright,APT1608SGC,yes
+D2,APT1608SGC,APT1608SGC package,Kingbright,APT1608SGC,yes
+J1,USB4105-GF-A,USB4105-GF-A USB4105,GCT,USB4105-GF-A,yes
+J2,Pin header 1x12 2.54 mm,Pin header 1x12 2.54 mm package,Samtec,TSW-112-07-G-S,yes
+J3,Pin header 1x12 2.54 mm,Pin header 1x12 2.54 mm package,Samtec,TSW-112-07-G-S,yes
+J4,Pin header 1x4 2.54 mm,Pin header 1x4 2.54 mm package,Samtec,TSW-104-07-G-S,yes
+R1,10 kΩ,Resistor 0603 package,Yageo,RC0603FR-0710KL,yes
+R2,470 Ω,Resistor 0603 package,Yageo,RC0603FR-07470RL,yes
+R3,470 Ω,Resistor 0603 package,Yageo,RC0603FR-07470RL,yes
+R4,5.1 kΩ,Resistor 0603 package,Yageo,RC0603FR-075K1L,yes
+R5,5.1 kΩ,Resistor 0603 package,Yageo,RC0603FR-075K1L,yes
+SW1,B3U-1000P,B3U-1000P package,Omron,B3U-1000P,yes
+SW2,B3U-1000P,B3U-1000P package,Omron,B3U-1000P,yes
+U1,ESP32-S31-WROOM-3,ESP32-S31-WROOM-3 WROOM-3,Espressif,ESP32-S31-WROOM-3,yes
+U2,TLV75733PDBVR,TLV75733PDBVR SOT-23-5,Texas Instruments,TLV75733PDBVR,yes
+U3,TPD2E009DBZR,TPD2E009DBZR SOT-23-3,Texas Instruments,TPD2E009DBZR,yes

@@ -63,7 +63,8 @@ Four founder requests are built here: configurable manufacturing parameters with
   - An explicit refill (the Fill card's and Layout's Refill) also runs on the worker. The app commits its copper as one undoable `fill.store_all` and says "Refilling in the background" meanwhile; a refill whose revision moved on is computed again. The CLI and MCP keep the synchronous `fill.refill`.
 - **Measured** (1 November 2026, macOS arm64, release build): one fill of a 200 × 200 mm plane over 10,000 through vias took 1.40 s, and its inputs key 2.1 ms (`a_large_board_fills_in_seconds`, which prints both).
 - **PCB 2D** (`fill_paint.rs`, `fill_tool.rs`, `fill_card.rs`):
-  - Fill copper is drawn under its layer's tracks in the layer's opaque colour: solid, hatched or outlines only, set in the view popover's Fills row. It is triangulated once per copper with `spade` and cached.
+  - Fill copper is drawn under its layer's tracks: solid, hatched or outlines only, set in the view popover's Fills row. On the active layer it is the layer's opaque colour; on another layer it is lighter than that layer's tracks (a translucent tint with its outline), so a pour never hides the active layer ([PCB realism](pcb-realism.md#pcb-2d-appspcbcraft)). It is triangulated once per copper with `spade` and cached.
+  - Keepouts are drawn as hatched outlines over all copper, labelled with the layers they apply to, in every layer focus mode.
   - Unfilled fills show as dashed outlines.
   - The selected fill's outline has vertex and midpoint handles. Each release is one `fill.edit`.
   - The Fill tool draws outlines with lines and three-point arcs. The Fill card edits net, layer, priority and settings, with Refill and Delete in its footer.
