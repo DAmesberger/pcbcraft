@@ -739,3 +739,7 @@ Built-in part files ship under `library/parts/` and are named by `builtin` (`esp
 - **Cost** (release, Apple M5 Max, `tests/part_timings.rs`, three runs): module builder 103–122 ms; part file cold (read, apply values, evaluate, inspect) 45–47 ms, of which Solidcraft's evaluation is 43–45 ms; cached 0.27 ms; insert into a board 47–49 ms. Equal keys share one definition in a board.
 - **Fork.** `component.insert_history` is on the fork branch `insert-history` (commit 7442748af, on `pcbcraft-via2` d53b131), not pushed and not pinned: Pcbcraft's insert uses the public API at the current pin, so merging this work needs no fork push. Switching `part_file::insert` to the command is a later, contract-neutral change once the fork is pushed and pinned.
 - **Open.** No desktop chooser for part files yet (UI, CLI and MCP share the automation commands; the Body card shows a part file's name, licence and size). Instances vary by markings only (release 1).
+
+## 12. Mechanical parts and the part-file chooser
+
+The desktop part-file chooser and parametric 3D parts placed directly on the PCB (solderable nuts and standoffs, spacers, heatsinks) are specified in [mechanical-parts.md](mechanical-parts.md). They build on L1–L4 unchanged: a directly placed part is an ordinary instance of a generated component set whose package uses a part file, one set per variant (file, values, lands, assembly flags), and its footprint is Pcbcraft data, never taken from the part file.
