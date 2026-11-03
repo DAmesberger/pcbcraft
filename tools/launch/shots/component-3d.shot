@@ -1,0 +1,25 @@
+# Storyboard shot 3: the WROOM-3 part file in the Component 3D tab, with its markings.
+# Project: examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft (copy it first; the take never saves).
+# Window points for a 1500 x 1235 pt window.
+wait 0.5
+key 1 cmd                        # Component workspace (start page)
+wait 1.2
+click 592 374 0.5                # open ESP32-S31-WROOM-3 (draft)
+wait 1.2
+click 477 56 0.5                 # 3D tab
+wait 5                           # part file evaluates and the decals draw
+key escape                       # drop the placement triad's focus
+wait 0.4
+mark in
+caption "A parametric Solidcraft part" 3
+move 560 980 0.8
+drag 560 980 630 968 4.0 right   # slow orbit, started on empty canvas (a drag on the model or triad edits its placement)
+wait 0.3
+caption "Markings: laser etch and a QR code" 3.4
+move 735 820 0.5
+scroll 0 4 24 2.0                # dolly in on the etched can
+zoom 1.45 735 800 4.0
+wait 0.3
+drag 600 990 550 998 3.2 right  # glide back, again from empty canvas
+wait 0.8
+mark out

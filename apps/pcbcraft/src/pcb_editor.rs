@@ -48,6 +48,12 @@ mod fill_paint;
 mod fill_tests;
 mod fill_tool;
 mod impedance_view;
+mod layer_focus;
+#[cfg(test)]
+use layer_focus::OTHER_SHADE;
+use layer_focus::{FAR_SHADE, LayerFocus, Look};
+#[cfg(test)]
+mod layer_focus_tests;
 pub(crate) mod net_classes;
 #[cfg(test)]
 mod pair_tests;
@@ -163,11 +169,14 @@ impl Layers {
                 .iter()
                 .any(|l| self.copper_layer(*l) && via.on(*l, stack))
     }
-    /// A through-hole pad shows while either copper layer does; a bare
-    /// hole with the hole layer.
+    /// A through-hole pad shows while any copper layer does (inner
+    /// flags of layers the stackup lacks are cleared by
+    /// [`PcbEditor::seen`]); a bare hole with the hole layer.
     fn pad(&self, pad: &PlacedPad) -> bool {
         match pad.pad.kind {
-            PadKind::PlatedThrough => self.copper_top || self.copper_bottom,
+            PadKind::PlatedThrough => {
+                self.copper_top || self.copper_bottom || self.inner.iter().any(|v| *v)
+            }
             PadKind::NonPlatedHole => self.holes,
             PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => self.copper(pad.layer),
         }
@@ -411,6 +420,10 @@ pub struct PcbEditor {
     stale_fills: BTreeSet<Id>,
     /// How Layout shows fill copper.
     fill_display: fill_paint::FillDisplay,
+    /// How Layout shows the copper layers besides the active one.
+    focus: LayerFocus,
+    /// Board and footprint keepouts with flattened outlines, per revision.
+    keepouts: Vec<layer_focus::KeepoutShape>,
     /// The Fill tool's outline in progress and settings.
     fill_draw: fill_tool::FillDraw,
     /// A handle of the selected fill's outline being dragged.
@@ -490,6 +503,8 @@ impl Default for PcbEditor {
             fill_meshes: Default::default(),
             stale_fills: BTreeSet::new(),
             fill_display: Default::default(),
+            focus: LayerFocus::All,
+            keepouts: Vec::new(),
             fill_draw: Default::default(),
             fill_drag: None,
             fill_card: None,
@@ -760,6 +775,7 @@ impl PcbEditor {
             })
             .collect();
         self.graphics = layout::placed_graphics(project);
+        self.keepouts = layer_focus::keepout_shapes(project);
         self.track_ends = project
             .tracks
             .iter()
@@ -1508,12 +1524,13 @@ impl PcbEditor {
                 Stroke::new(1.5, t.body_selected),
             );
         }
+        let focus = crate::keys::labelled(ui.ctx(), self.focus.label(), "pcb.layer-focus");
         kit::canvas_hint(
             &painter,
             rect,
             t.space_16,
             &format!(
-                "{} · {} copper · grid 0.5 mm · {} airwires{}",
+                "{} · {} copper · {focus} · grid 0.5 mm · {} airwires{}",
                 match self.tool {
                     Tool::Route => "Route (keys in the Route card)",
                     Tool::Via => "Via",
@@ -1584,11 +1601,12 @@ impl PcbEditor {
     /// pointer is inside, the nearest centre.
     fn route_snap(&self, at: Point, scale: f32) -> Option<&PlacedPad> {
         let reach = f64::from(8.0 / scale);
+        let seen = self.seen();
         self.board_pads
             .iter()
             .filter(|b| {
                 let p = &b.placed;
-                p.net.is_some() && pad_on(p, self.layer) && self.layers.pad(p)
+                p.net.is_some() && pad_on(p, self.layer) && seen.pad(p)
             })
             .map(|b| {
                 (
@@ -1614,11 +1632,12 @@ impl PcbEditor {
     /// pixels of `at`.
     fn track_end(&self, at: Point, scale: f32, net: Option<Id>) -> Option<Point> {
         let reach = f64::from(8.0 / scale);
+        let seen = self.seen();
         self.track_ends
             .iter()
             .filter(|(end, track_net, layer)| {
                 net.is_none_or(|n| n == *track_net)
-                    && self.layers.copper_layer(*layer)
+                    && seen.copper_layer(*layer)
                     && pcbcraft_core::geometry::distance(*end, at) < reach
             })
             .min_by(|a, b| {
@@ -1638,7 +1657,7 @@ impl PcbEditor {
     /// pad, via or track under the pointer, else the chosen net. `None`
     /// without a net.
     fn place_via(&mut self, project: &Project, at: Point, scale: f32) -> Option<Operation> {
-        let layers = self.layers;
+        let layers = self.seen();
         let position = self.via_point(at, scale);
         let under = self
             .pick_pad(at, |p| layers.pad(p))
@@ -1669,8 +1688,9 @@ impl PcbEditor {
 
     /// The topmost visible via whose pad is under `at`.
     fn pick_via<'a>(&self, project: &'a Project, at: Point) -> Option<&'a Via> {
+        let seen = self.seen();
         project.vias.iter().rev().find(|via| {
-            self.layers.via(via, &self.stack)
+            seen.via(via, &self.stack)
                 && pcbcraft_core::geometry::distance(via.position, at) <= via.diameter / 2.0
         })
     }
@@ -1689,7 +1709,7 @@ impl PcbEditor {
     /// layers: a pad (and its net), a track, then a part by its graphics or
     /// outline; empty board clears the selection.
     fn select_at(&mut self, project: &Project, at: Point, tolerance: f64, metric: TextMetric) {
-        let layers = self.layers;
+        let layers = self.seen();
         if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
             let (instance, net) = (pad.instance, pad.net);
             self.set_selection(Some(instance), None, net);
@@ -1719,7 +1739,7 @@ impl PcbEditor {
         tolerance: f64,
         metric: TextMetric,
     ) -> Option<Id> {
-        let layers = self.layers;
+        let layers = self.seen();
         self.pick_pad(at, |p| layers.pad(p))
             .map(|p| p.instance)
             .or_else(|| {
@@ -1806,34 +1826,29 @@ impl PcbEditor {
                 Stroke::new(0.5, t.grid),
             );
         }
-        // Far side dimmed underneath; then near assembly, copper, holes,
-        // silkscreen and courtyard (graphics spec §6 order).
+        // Far side drawings dimmed underneath; then every copper layer but
+        // the active one, farthest first and dimmed by the focus mode; the
+        // near assembly drawing, the through-hole pads and the active
+        // layer on top at full strength; the other layers' selected and
+        // highlighted copper over it; vias, holes, keepouts, then the near
+        // silkscreen and courtyard (docs/pcb-realism.md, PCB 2D).
         self.paint_drawings(painter, view, &ink, far, true, |_| true);
-        self.paint_copper(painter, view, project, Some(far), true);
-        // Inner layers between the sides, far to near, dimmed unless Route
-        // draws on one; that one is drawn again over the near copper.
-        let mut inner: Vec<CopperLayer> = self
-            .stack
+        let order = self.paint_order();
+        let looks: Vec<(CopperLayer, Look)> = order
             .iter()
-            .copied()
-            .filter(|l| l.side().is_none())
+            .filter_map(|l| self.look(*l, near).map(|look| (*l, look)))
             .collect();
-        if !self.from_bottom {
-            inner.reverse();
-        }
-        let routing_inner =
-            (self.tool == Tool::Route && self.layer.side().is_none()).then_some(self.layer);
-        for layer in &inner {
-            self.paint_fills(painter, view, project, *layer, INNER_SHADE);
-            self.paint_tracks(painter, view, project, *layer, INNER_SHADE);
+        for (layer, look) in looks.iter().filter(|(l, _)| *l != self.layer) {
+            self.paint_layer(painter, view, project, *layer, *look, false);
         }
         let assembly = |l: BoardDrawing| matches!(l, BoardDrawing::Assembly(_));
         self.paint_drawings(painter, view, &ink, near, false, assembly);
-        self.paint_copper(painter, view, project, None, false);
-        self.paint_copper(painter, view, project, Some(near), false);
-        if let Some(layer) = routing_inner {
-            self.paint_fills(painter, view, project, layer, 1.0);
-            self.paint_tracks(painter, view, project, layer, 1.0);
+        self.paint_through_pads(painter, view, near);
+        if let Some((layer, look)) = looks.iter().find(|(l, _)| *l == self.layer) {
+            self.paint_layer(painter, view, project, *layer, *look, false);
+        }
+        for (layer, look) in looks.iter().filter(|(l, _)| *l != self.layer) {
+            self.paint_layer(painter, view, project, *layer, *look, true);
         }
         self.paint_vias(painter, view, project, near);
         if self.layers.holes {
@@ -1857,6 +1872,7 @@ impl PcbEditor {
                 }
             }
         }
+        self.paint_keepouts(painter, view);
         let silk = |l: BoardDrawing| matches!(l, BoardDrawing::Silkscreen(_));
         let courtyard = |l: BoardDrawing| matches!(l, BoardDrawing::Courtyard(_));
         self.paint_drawings(painter, view, &ink, near, false, silk);
@@ -1916,8 +1932,9 @@ impl PcbEditor {
             }
         }
         if scale > 7.0 {
+            let seen = self.seen();
             for pad in &self.board_pads {
-                if pad.placed.pad.number.is_empty() || !self.layers.pad(&pad.placed) {
+                if pad.placed.pad.number.is_empty() || !seen.pad(&pad.placed) {
                     continue;
                 }
                 let delta = self.drag_delta(pad.placed.instance);
@@ -1933,39 +1950,73 @@ impl PcbEditor {
         }
     }
 
-    /// Copper of one side (tracks, then surface pads), or with `None` the
-    /// through-hole pads that span both.
-    fn paint_copper(
+    /// The copper of one layer as `look` has it: its fills, tracks and
+    /// surface pads; with `chosen` only its selected and highlighted
+    /// copper (drawn again over the active layer).
+    fn paint_layer(
         &self,
         painter: &egui::Painter,
         view: BoardView,
         project: &Project,
-        side: Option<Layer>,
-        dim: bool,
+        layer: CopperLayer,
+        look: Look,
+        chosen: bool,
     ) {
-        let ink = BoardInk::get();
-        let factor = if dim { FAR_SHADE } else { 1.0 };
-        let shade = |c: Color32| ink.on_board(c, factor);
-        if let Some(layer) = side {
-            if !self.layers.copper(layer) {
-                return;
-            }
-            self.paint_fills(painter, view, project, layer.into(), factor);
-            self.paint_tracks(painter, view, project, layer.into(), factor);
+        let seen = self.seen();
+        if !seen.copper_layer(layer) {
+            return;
         }
+        if !chosen {
+            self.paint_fills(painter, view, project, layer, look);
+        }
+        self.paint_tracks(painter, view, project, layer, look.shade, chosen);
+        let Some(side) = layer.side() else {
+            return;
+        };
+        let ink = BoardInk::get();
         for pad in &self.board_pads {
             let placed = &pad.placed;
-            let through = placed.pad.kind.through_hole();
-            match side {
-                Some(layer) if through || placed.layer != layer => continue,
-                None if !through => continue,
-                _ => {}
-            }
-            if !self.layers.pad(placed) {
+            if placed.pad.kind.through_hole() || placed.layer != side || !seen.pad(placed) {
                 continue;
             }
-            let selected = self.is_selected(placed.instance)
-                || (placed.net.is_some() && self.highlighted == placed.net);
+            let selected = self.pad_chosen(placed);
+            if chosen && !selected {
+                continue;
+            }
+            let shape = view.shape(&pad.outline, self.drag_delta(placed.instance));
+            symbol_view::paint_shape(
+                painter,
+                view.view,
+                &shape,
+                Some(ink.on_board(copper_color(side, selected), look.shade)),
+                None,
+            );
+        }
+    }
+
+    /// Whether a pad is selected or on the highlighted net.
+    fn pad_chosen(&self, placed: &PlacedPad) -> bool {
+        self.is_selected(placed.instance)
+            || (placed.net.is_some() && self.highlighted == placed.net)
+    }
+
+    /// The pads through every layer, in the active layer's colour (the
+    /// near side's while it is hidden), and bare holes' keep-out lands.
+    fn paint_through_pads(&self, painter: &egui::Painter, view: BoardView, near: Layer) {
+        let ink = BoardInk::get();
+        let colors = crate::palette::board();
+        let seen = self.seen();
+        let base = if seen.copper_layer(self.layer) {
+            colors.copper_layer(self.layer)
+        } else {
+            colors.copper(near)
+        };
+        for pad in &self.board_pads {
+            let placed = &pad.placed;
+            if !placed.pad.kind.through_hole() || !seen.pad(placed) {
+                continue;
+            }
+            let selected = self.pad_chosen(placed);
             let shape = view.shape(&pad.outline, self.drag_delta(placed.instance));
             if placed.pad.kind == PadKind::NonPlatedHole {
                 // A bare hole has no copper: outline its keep-out land.
@@ -1983,16 +2034,12 @@ impl PcbEditor {
                 );
                 continue;
             }
-            let layer = match side {
-                Some(layer) => layer,
-                None if self.from_bottom => Layer::Bottom,
-                None => Layer::Top,
-            };
+            let color = if selected { colors.selected } else { base };
             symbol_view::paint_shape(
                 painter,
                 view.view,
                 &shape,
-                Some(shade(copper_color(layer, selected))),
+                Some(ink.on_board(color, 1.0)),
                 None,
             );
         }
@@ -2000,9 +2047,10 @@ impl PcbEditor {
 
     /// The tracks on one copper layer in its colour, `shade` of the way
     /// from the board; the selected track and the highlighted net in the
-    /// selection colour. Each track is its round-capped copper outline
-    /// ([`layout::track_shape`]) in an opaque colour, so joins at any
-    /// angle are seamless and overlapping copper of a layer reads as one.
+    /// selection colour (with `chosen`, only those). Each track is its
+    /// round-capped copper outline ([`layout::track_shape`]) in an opaque
+    /// colour, so joins at any angle are seamless and overlapping copper
+    /// of a layer reads as one.
     fn paint_tracks(
         &self,
         painter: &egui::Painter,
@@ -2010,8 +2058,9 @@ impl PcbEditor {
         project: &Project,
         layer: CopperLayer,
         shade: f32,
+        chosen_only: bool,
     ) {
-        if !self.layers.copper_layer(layer) {
+        if !self.seen().copper_layer(layer) {
             return;
         }
         let colors = crate::palette::board();
@@ -2024,6 +2073,9 @@ impl PcbEditor {
             .filter(|t| t.layer == layer && !self.shoved.0.contains(&t.id))
         {
             let chosen = self.track == Some(track.id) || self.highlighted == Some(track.net);
+            if chosen_only && !chosen {
+                continue;
+            }
             painter.add(Shape::convex_polygon(
                 capsule(
                     view.screen(track.start),
@@ -2036,28 +2088,35 @@ impl PcbEditor {
         }
     }
 
-    /// Board vias: the pad ring in the near copper colour and the drill.
-    /// A tented via's ring shows under a mask tint with an outline; an
-    /// open via's ring is solid with a bright finished edge.
+    /// Board vias: the pad ring and the drill. A via through the active
+    /// layer has its ring in that layer's colour at full strength; any
+    /// other in the colour of the first shown layer it joins, dimmed as
+    /// that layer is. A tented via's ring shows under a mask tint with an
+    /// outline; an open via's ring is solid with a bright finished edge.
     fn paint_vias(&self, painter: &egui::Painter, view: BoardView, project: &Project, near: Layer) {
         let colors = crate::palette::board();
         let ink = BoardInk::get();
         let scale = view.view.scale;
+        let seen = self.seen();
         for via in &project.vias {
-            if !self.layers.via(via, &self.stack) || self.shoved.1.contains(&via.id) {
+            if !seen.via(via, &self.stack) || self.shoved.1.contains(&via.id) {
                 continue;
             }
             let selected = self.via == Some(via.id) || self.highlighted == Some(via.net);
-            let ring = if selected {
-                colors.selected
+            let joins = |l: CopperLayer| seen.copper_layer(l) && via.on(l, &self.stack);
+            let (ring, share) = if selected {
+                (colors.selected, 1.0)
+            } else if joins(self.layer) {
+                (colors.copper_layer(self.layer), 1.0)
             } else {
-                // The near layer's colour when its copper shows, else the
-                // first shown layer the via joins.
-                let shown = std::iter::once(CopperLayer::from(near))
-                    .chain(self.stack.iter().copied())
-                    .find(|l| self.layers.copper_layer(*l) && via.on(*l, &self.stack))
+                let shown = self
+                    .stack
+                    .iter()
+                    .copied()
+                    .find(|l| joins(*l))
                     .unwrap_or(CopperLayer::from(near));
-                colors.copper_layer(shown)
+                let share = self.look(shown, near).map_or(1.0, |l| l.shade);
+                (colors.copper_layer(shown), share)
             };
             let at = view.screen(via.position);
             let outer = (via.diameter as f32 * scale / 2.0).max(2.5);
@@ -2066,14 +2125,14 @@ impl PcbEditor {
                 painter.circle(
                     at,
                     outer,
-                    ink.on_board(ring, TENTED_SHADE),
-                    Stroke::new(1.0, ink.on_board(ring, 1.0)),
+                    ink.on_board(ring, TENTED_SHADE * share),
+                    Stroke::new(1.0, ink.on_board(ring, share)),
                 );
             } else {
                 painter.circle(
                     at,
                     outer,
-                    ink.on_board(ring, 1.0),
+                    ink.on_board(ring, share),
                     Stroke::new(1.0, ink.unplated),
                 );
             }
@@ -2196,10 +2255,6 @@ struct BoardInk {
     board: Color32,
 }
 
-/// How much of its colour the far side's copper keeps over the board.
-const FAR_SHADE: f32 = 0.45;
-/// Inner layers' share, unless Route draws on one.
-const INNER_SHADE: f32 = 0.6;
 /// A tented via's ring under its mask.
 const TENTED_SHADE: f32 = 0.55;
 

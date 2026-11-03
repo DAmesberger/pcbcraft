@@ -245,13 +245,50 @@ These are never saved:
 
 ## PCB 2D (`apps/pcbcraft`)
 
-- Layout draws every copper layer of the stackup in its own colour: the far side and the
-  inner layers dimmed under the near side, and the inner layer Route draws on at full
-  strength over the near copper. The view popover has a toggle for each copper layer and
-  one for vias.
+- Layout draws every copper layer of the stackup in its own colour. The active layer (the
+  one Route, Via and Fill use, set by 1–0 or the Route card) is always on top at full
+  strength, in every tool and from either side. The view popover has a toggle for each
+  copper layer and one for vias.
+- **Paint order** (`PcbEditor::paint_board`, `layer_focus.rs`), bottom to top:
+  1. the board, its grid and the far side's drawings (silkscreen, assembly, courtyard),
+     dimmed;
+  2. every copper layer but the active one, the farthest from the viewer first: its fills,
+     tracks and surface pads, dimmed;
+  3. the near side's assembly drawing;
+  4. the through-hole pads, in the active layer's colour;
+  5. the active layer: fills, tracks and surface pads at full strength;
+  6. the other layers' selected and highlighted copper again, so a selection stays on top;
+  7. vias and holes;
+  8. keepouts;
+  9. the near side's silkscreen and courtyard, courtyard overlaps, airwires, part outlines
+     and labels, then pad numbers.
+
+  Previews (the route step, the Tune meander, the Via tool's ring), the selected fill's
+  handles and the update review's marks are drawn over the board.
+- **Other layers.** Under All layers, the far side keeps 45 % of its colour over the board
+  and the other layers 60 % (`FAR_SHADE`, `OTHER_SHADE`). Their fill copper is lighter than
+  their tracks: a 22 % translucent tint with a thin outline, or its hatching or outline when
+  the Fills row says so. A large pour on another layer therefore never hides the active
+  layer's copper, nor the tracks under it.
+- **Layer focus** (`pcb.layer-focus`, ⇧L, or the view popover's Focus row) cycles
+  All layers → Dim others → Active only. Dim others keeps 20 % of the other layers' colour
+  and an 8 % fill tint. Active only draws and picks the active layer's copper alone, with
+  the through-hole pads and the vias through it. The status line names the mode. It is
+  view state like View from bottom and the Fills row: it is not saved and changes no
+  document.
+- **Keepouts** (board keepouts and the placed parts' footprint keepouts) are an overlay
+  above all copper in every focus mode, whatever layer is active and whichever copper is
+  shown: a hatched outline in the keepout colour, solid where it applies to the active layer
+  and dashed elsewhere, labelled with its name and layers ("Antenna · Inner 2", "Keepout ·
+  all layers"). A footprint keepout follows its part while it is dragged.
 - Vias are drawn as their ring and drill: a tented via's ring under a mask tint with an
-  outline, an open via's ring solid. A via shows while the via toggle and a copper layer it
-  joins are shown.
+  outline, an open via's ring solid. A via through the active layer has its ring in that
+  layer's colour; another via has the colour of the first shown layer it joins, dimmed as
+  that layer is. A via shows while the via toggle and a copper layer it joins are shown.
+- `layer_focus_tests.rs` measures this on the rasterized canvas: with each layer of the
+  showcase active, from the top and from the bottom, every pixel inside the active layer's
+  tracks and fill copper is that layer's full colour; each focus mode paints only the
+  colours it says; keepouts are drawn after all copper in every mode.
 - A click selects a via (and lights its net). Its Via card shows net, position, drill,
   pad, ring and span, with Tented and Locked toggles and Delete via in the footer. A 3D
   pick on a via body selects the via too. A finding that names only a via locates it: it

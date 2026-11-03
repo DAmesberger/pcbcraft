@@ -1,0 +1,33 @@
+# Storyboard shot 7: push and shove on the 4-layer showcase (pcbcraft-cli showcase).
+# Window points for a 1500 x 1235 pt window (see window.json of the take).
+wait 0.8
+mark in
+move 640 660 0.8
+scroll 0 12 10 0.8              # zoom the layout in about the U1-U2 bundle
+wait 0.6
+caption "Push-and-shove routing" 3.2
+key r                            # arm Route
+wait 0.5
+click 661 778 0.9                # C1 pad 2 (VCC)
+wait 0.4
+move 742 776 0.7
+click                            # corner, one step
+wait 0.3
+zoom 1.7 900 730 6.5             # push in on the bundle while it moves
+move 860 740 0.8
+move 1000 735 1.8                # the head runs into the bundle: other nets' tracks slide aside
+wait 0.7
+move 900 752 0.9
+move 1000 735 1.2
+wait 0.5
+caption "Each click: one atomic step" 3
+click                            # commit the shoved tracks with the step
+wait 1.2
+key escape
+wait 0.6
+caption "Undo takes it back in one step" 2.6
+key z cmd
+wait 1.2
+key z cmd shift
+wait 1.0
+mark out

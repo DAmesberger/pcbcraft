@@ -61,6 +61,7 @@ impl PcbEditor {
             PcbView::Components => self.view_layers.visible(ViewLayer::Bodies),
             PcbView::FromBottom => self.from_bottom,
             PcbView::Airwires => self.show_airwires,
+            PcbView::LayerFocus => self.focus != super::LayerFocus::All,
             PcbView::HighlightNet => {
                 if self.highlighted.is_none() && self.net.is_none() {
                     return Err("Select a pad or track to choose its net");
@@ -91,6 +92,7 @@ impl PcbEditor {
             PcbView::Components => self.view_layers.set(ViewLayer::Bodies, !shown),
             PcbView::FromBottom => self.from_bottom = !shown,
             PcbView::Airwires => self.show_airwires = !shown,
+            PcbView::LayerFocus => self.cycle_layer_focus(),
             PcbView::HighlightNet => {
                 self.highlighted = if shown { None } else { self.net };
             }
