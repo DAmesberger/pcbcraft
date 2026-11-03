@@ -110,3 +110,49 @@ fn explicit_lands_make_mechanical_pads_and_refusals_change_nothing() -> TestResu
     assert_eq!(revision(&session), before);
     Ok(())
 }
+
+/// The starter set on the showcase board: one undo step each, the 3D build
+/// defines one part per key, the nut's non-plated hole is in the drill
+/// table, the heatsink is in the BOM but not in pick-and-place, and the
+/// fabrication set generates.
+#[test]
+fn the_starter_set_builds_in_3d_and_reaches_the_outputs() -> TestResult {
+    let mut session = Session::new(Engine::showcase()?);
+    for (builtin, at) in [
+        ("smd-nut", [3.5, 3.5]),
+        ("round-spacer", [40.5, 3.5]),
+        ("finned-heatsink", [36.0, 15.0]),
+    ] {
+        let reply = place(&mut session, json!({"builtin": builtin, "position": at}));
+        assert_eq!(reply["ok"], true, "{builtin}: {reply}");
+    }
+    let project = session.engine().project().clone();
+    let designators: Vec<&str> = project
+        .instances
+        .iter()
+        .rev()
+        .take(3)
+        .map(|i| i.designator.as_str())
+        .collect();
+    assert_eq!(designators, ["HS1", "H2", "H1"]);
+    let model = pcbcraft_solidcraft::project::build(&project)?;
+    assert!(!model.geometry.is_empty());
+    let options = pcbcraft_core::fabrication::FabricationOptions::default();
+    let set = pcbcraft_core::fabrication::generate(&project, &options)?;
+    assert!(!set.files.is_empty());
+    let rows = pcbcraft_core::fabrication::assembly::rows(
+        &project,
+        &pcbcraft_core::fabrication::assembly::PlacementConvention::default(),
+    )?;
+    assert!(rows.iter().any(|r| r.designator == "H1"), "the nut is placed");
+    assert!(!rows.iter().any(|r| r.designator == "HS1"), "no heatsink row");
+    let bom = pcbcraft_core::fabrication::assembly::bom_csv(&project)?;
+    assert!(bom.contains("HS1") && bom.contains("H1"));
+    let holes = pcbcraft_core::fabrication::drill::holes(&project);
+    assert!(
+        holes.iter().any(|h| !h.plated
+            && matches!(h.feature, pcbcraft_core::fabrication::drill::HoleFeature::Round { diameter, .. } if (diameter - 3.2).abs() < 1e-6)),
+        "the nut's 3.2 mm thread clearance is a non-plated hole"
+    );
+    Ok(())
+}
