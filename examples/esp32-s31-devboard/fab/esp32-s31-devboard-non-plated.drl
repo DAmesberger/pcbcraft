@@ -1,0 +1,26 @@
+M48
+; Pcbcraft 0.1.0 drill file: non-plated
+; #@! TF.GenerationSoftware,Pcbcraft,Pcbcraft,0.1.0
+; #@! TF.ProjectId,Untitled,6679b116-7d99-81d6-9bbd-bd6206611356,1
+; #@! TF.SameCoordinates
+; #@! TF.FileFunction,NonPlated,1,4,NPTH
+; #@! TF.FilePolarity,Positive
+FMAT,2
+METRIC
+; #@! TA.AperFunction,NonPlated,NPTH,MechanicalDrill
+T1C0.650
+; #@! TA.AperFunction,NonPlated,NPTH,MechanicalDrill
+T2C2.700
+%
+G90
+G05
+T1
+X17.110Y6.280
+X22.890Y6.280
+T2
+X3.500Y3.500
+X36.500Y3.500
+X3.500Y60.500
+X36.500Y60.500
+T0
+M30
