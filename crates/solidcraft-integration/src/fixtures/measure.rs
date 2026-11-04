@@ -59,7 +59,7 @@ pub(crate) fn snapshot(s: &Session) -> Result<Snapshot> {
         }
     }
     let p = parameters(s)?;
-    let world = crate::native::world_state(&s)?;
+    let world = crate::native::world_state(s)?;
     let mut bodies = Vec::new();
     for body in &world.bodies {
         let m = body

@@ -1310,7 +1310,11 @@ pub(crate) mod tests {
                 .filter_map(|t| g.mesh.tri(t))
                 .filter(|p| {
                     let face = (p[1] - p[0]).cross(p[2] - p[0]);
-                    !covered(g, unit_direction(face).unwrap_or(Vec3::Z), &LayerView::default())
+                    !covered(
+                        g,
+                        unit_direction(face).unwrap_or(Vec3::Z),
+                        &LayerView::default(),
+                    )
                 })
                 .count();
             let bytes = 3 * stride * shaded;
