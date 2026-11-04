@@ -104,6 +104,23 @@ impl Gpu {
     /// The viewport's frame at `w` × `h` pixels (supersampled `ssaa` times),
     /// as straight RGBA.
     fn draw(&mut self, viewport: &mut Viewport, w: u32, h: u32, ssaa: f32) -> Option<Vec<u8>> {
+        // Material shapes compile over a few frames (their base response until then).
+        let mut picture = self.draw_once(viewport, w, h, ssaa);
+        for _ in 0..256 {
+            let pending = self
+                .resources
+                .get::<Renderer>()
+                .is_some_and(|r| r.material_stats().pending > 0);
+            if !pending {
+                break;
+            }
+            picture = self.draw_once(viewport, w, h, ssaa);
+        }
+        picture
+    }
+
+    /// One frame, as the window draws it.
+    fn draw_once(&mut self, viewport: &mut Viewport, w: u32, h: u32, ssaa: f32) -> Option<Vec<u8>> {
         // As `show` does: shadows follow the side seen.
         viewport.publish_shadows();
         let view_proj = viewport

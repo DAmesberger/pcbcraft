@@ -227,7 +227,7 @@ fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std:
 /// renderer keeps their buffers and uploads only the stream and the
 /// placements.
 #[test]
-fn a_layer_toggle_uploads_no_via_triangles() -> Result<(), Box<dyn std::error::Error>> {
+fn a_layer_toggle_uploads_no_instanced_via_mesh() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = gpu()? else {
         return Ok(());
     };
@@ -240,7 +240,12 @@ fn a_layer_toggle_uploads_no_via_triangles() -> Result<(), Box<dyn std::error::E
         v.slot
             .lock()
             .ok()
-            .and_then(|s| s.as_ref().map(|s| s.tris.len() as u64))
+            .and_then(|s| {
+                s.as_ref().map(|s| {
+                    let material: usize = s.graphs.draws().iter().map(|d| d.vertices.len()).sum();
+                    (s.tris.len() + material) as u64
+                })
+            })
             .unwrap_or(0)
     };
     let placements = |v: &Viewport| {
@@ -337,7 +342,14 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         let started = std::time::Instant::now();
         let scene = crate::model_scene::build(model.geometry.clone())?;
         let built = started.elapsed();
-        let stream = scene.stream.tris.len();
+        let stream = scene.stream.tris.len()
+            + scene
+                .stream
+                .graphs
+                .draws()
+                .iter()
+                .map(|d| d.vertices.len())
+                .sum::<usize>();
         let meshes: usize = scene
             .instanced
             .iter()
@@ -359,7 +371,7 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
             let mut v = Viewport::detached();
             v.set_model(scene);
             v.fit_to(f64::from(w) / f64::from(h));
-            gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+            gpu.draw_once(&mut v, w, h, 1.0).ok_or("no picture")?;
             first = first.min(started.elapsed());
         }
         let mut v = Viewport::detached();
@@ -377,7 +389,7 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         for k in 0..5 {
             v.camera.yaw += 0.05 * f64::from(k + 1);
             let started = std::time::Instant::now();
-            gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+            gpu.draw_once(&mut v, w, h, 1.0).ok_or("no picture")?;
             orbit = orbit.min(started.elapsed());
         }
         let triangles = gpu
@@ -392,5 +404,45 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
             placements as f64 / f64::from(1 << 20),
         );
     }
+    Ok(())
+}
+
+/// The ESP32-S31 example's 3D view: its native build, the GPU-ready scene and
+/// the first frame on the finished build. Run with
+/// `cargo test --profile ci -p pcbcraft esp32_display_timings -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn esp32_display_timings() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    let document = pcbcraft_io::read_project(&path)?.into_document();
+    let started = std::time::Instant::now();
+    let model = pcbcraft_solidcraft::project::build(&document.project)?;
+    let native = started.elapsed();
+    let started = std::time::Instant::now();
+    let scene = crate::model_scene::build(model.geometry.clone())?;
+    let built = started.elapsed();
+    let triangles: usize = model.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
+    let started = std::time::Instant::now();
+    let mut v = Viewport::detached();
+    v.set_model(scene);
+    v.fit_to(1280.0 / 800.0);
+    gpu.draw_once(&mut v, 1280, 800, 1.0).ok_or("no picture")?;
+    let first = started.elapsed();
+    let picture = gpu.draw(&mut v, 1280, 800, 1.0).ok_or("no picture")?;
+    if let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)?;
+        let png =
+            pcbcraft_solidcraft::render::png(1280, 800, picture).ok_or("png encoding failed")?;
+        std::fs::write(dir.join("esp32-overview.png"), png)?;
+    }
+    eprintln!(
+        "esp32: native build {native:.2?}, scene {built:.2?}, first frame {first:.2?}, {} bodies, {triangles} triangles",
+        model.geometry.len()
+    );
     Ok(())
 }

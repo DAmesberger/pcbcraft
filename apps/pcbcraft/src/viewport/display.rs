@@ -290,7 +290,9 @@ mod tests {
     #[test]
     fn a_display_transform_moves_instanced_bodies_by_their_placements()
     -> Result<(), Box<dyn std::error::Error>> {
-        let project = crate::model_scene::tests::via_project(64)?;
+        // A round hole is one wall face on this kernel: enough holes for the
+        // laminate to count as a large body.
+        let project = crate::model_scene::tests::via_project(512)?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         assert!(
             model
