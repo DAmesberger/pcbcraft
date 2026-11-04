@@ -7,6 +7,7 @@
 pub mod appearance;
 pub mod board;
 pub mod footprint;
+pub mod look_graph;
 pub mod marking;
 pub mod material;
 pub mod models;
@@ -17,7 +18,14 @@ pub mod scene;
 pub mod silkscreen;
 pub mod stackup_edge;
 pub mod svg;
-pub use solidcraft_engine::{geom, render};
+pub use solidcraft_engine::render;
+
+/// Solidcraft's geometry, with the plain vector and profile data its public
+/// API uses, which live in solidcore's record crate.
+pub mod geom {
+    pub use solidcore_record::{Loop2, Plane, Seg2, Vec2, Vec3};
+    pub use solidcraft_engine::geom::*;
+}
 
 /// Native foundation fixtures (parametric probe and copper sample). They are
 /// acceptance tests for Solidcraft capabilities, not product features.

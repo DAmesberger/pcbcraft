@@ -574,7 +574,7 @@ fn a_package_preview_gets_its_decal_on_top() -> TestResult {
 
 #[test]
 fn bottom_faces_are_marked_from_below() -> TestResult {
-    use solidcraft_engine::geom::Mesh;
+    use crate::geom::Mesh;
     // A unit cube body from z = −1.6 down to −2.6 (a part under the board).
     let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
     let positions = vec![

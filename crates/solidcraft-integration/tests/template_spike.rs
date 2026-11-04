@@ -218,7 +218,7 @@ fn insert_history(
         .map(|d| (d.name.clone(), format!("{prefix}_{}", d.name)))
         .collect();
     let mut bodies: BTreeMap<String, String> = BTreeMap::new();
-    for b in &template.world_state().bodies {
+    for b in &template.world_state().unwrap().bodies {
         bodies.insert(b.name.clone(), rename_body(&b.name));
     }
     let feats: Vec<&solidcraft_engine::doc::Feature> = src
@@ -305,7 +305,7 @@ fn errors(s: &Session) -> Vec<String> {
 
 /// Per-body bounding-box and volume difference, by body name.
 fn compare(a: &Session, b: &Session, bodies: &[String], rename: &dyn Fn(&str) -> String) {
-    let (wa, wb) = (a.world_state(), b.world_state());
+    let (wa, wb) = (a.world_state().unwrap(), b.world_state().unwrap());
     let mut worst_box = 0.0f64;
     let mut worst_vol = 0.0f64;
     let mut missing = Vec::new();
@@ -410,6 +410,7 @@ fn run(label: &str, pkg: &PackageDefinition, change: (&str, &str), namespace: bo
     let t = Instant::now();
     let tris: usize = alone
         .world_state()
+        .unwrap()
         .bodies
         .iter()
         .map(|b| b.mesh().triangles.len())
@@ -457,7 +458,7 @@ fn run(label: &str, pkg: &PackageDefinition, change: (&str, &str), namespace: bo
         "  typed insert 1: {:.1} ms, errors {:?}, bodies {}",
         ms(a),
         &errs[..errs.len().min(3)],
-        typed.world_state().bodies.len()
+        typed.world_state().unwrap().bodies.len()
     );
     compare(
         &g.native.session().clone_for_spike(),
@@ -473,7 +474,7 @@ fn run(label: &str, pkg: &PackageDefinition, change: (&str, &str), namespace: bo
         change.1,
         ms(b2),
         &errs[..errs.len().min(3)],
-        typed.world_state().bodies.len()
+        typed.world_state().unwrap().bodies.len()
     );
     let t = Instant::now();
     typed
@@ -559,7 +560,7 @@ fn run(label: &str, pkg: &PackageDefinition, change: (&str, &str), namespace: bo
         "  transplant 2 (other parameter set): {:.1} ms, errors {:?}, bodies {}",
         ms(second),
         &errs[..errs.len().min(3)],
-        board.world_state().bodies.len()
+        board.world_state().unwrap().bodies.len()
     );
     // Placements of a definition: shared geometry.
     let comp = board

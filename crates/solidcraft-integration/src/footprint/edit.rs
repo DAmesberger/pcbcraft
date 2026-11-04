@@ -5,12 +5,12 @@
 
 use std::collections::BTreeSet;
 
+use crate::geom::Vec2;
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::library::footprint_source::{
     DimKind, DimValue, GeomConstraint, PadTemplate, PadTemplateParams, SketchConstraintId,
     SketchCurveId, SketchEdit, SketchOutcome, SketchPointId, SketchRef,
 };
-use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{
     ConstraintKind, CurveKind, Sketch, SketchError, measure_dimension,
 };

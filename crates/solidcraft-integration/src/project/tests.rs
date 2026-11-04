@@ -25,9 +25,9 @@ fn envelope_demo() -> Result<Project> {
     }
     Ok(project)
 }
+use crate::geom::Vec3;
 use pcbcraft_core::library::PadShape;
 use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
-use solidcraft_engine::geom::Vec3;
 
 /// The demo's two instances, by designator.
 fn instances(project: &Project) -> Result<(Id, Id)> {

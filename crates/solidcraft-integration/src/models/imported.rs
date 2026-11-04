@@ -26,6 +26,7 @@
 //! bytes, which Solidcraft's command API does not offer.
 use super::ModelDefinition as BuiltDefinition;
 use super::{GeneratedBody, PARAMETER_PREFIX, look};
+use crate::geom::Vec3;
 use crate::material::{BodyKind, Detail, linear_to_srgb8};
 use crate::native::{Look, Native};
 use crate::scene::Geometry;
@@ -40,7 +41,6 @@ use pcbcraft_core::library::model3d::{
 };
 use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
-use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::{MIN_ROUGHNESS, OpaqueSurface};
 use std::collections::{BTreeMap, BTreeSet};
@@ -961,7 +961,7 @@ pub fn preview(
     let by_name: BTreeMap<&str, &LibraryBody> =
         built.bodies.iter().map(|b| (b.name.as_str(), b)).collect();
     let mut out = Vec::with_capacity(built.bodies.len());
-    for body in native.session().world_state().bodies.iter() {
+    for body in native.world_state()?.bodies.iter() {
         let name = body.definition_name();
         let Some(lib) = by_name.get(name) else {
             continue;

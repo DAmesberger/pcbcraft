@@ -16,7 +16,7 @@
 //! `[x, y, z, kind, r, g, b, outer, axis xyz, inner, ref_dist², min_dist, …]`
 //! with kind 0 directional (xyz toward the light), 1 point, 4 ambient.
 use pcbcraft_solidcraft::{
-    geom::{Aabb3, Vec3},
+    geom::{Aabb3, Vec3, prelude::*},
     render::Camera,
 };
 use solidcraft_ui_egui::gpu::{ProductLook, StudioPreset};
@@ -153,15 +153,14 @@ pub fn studio(camera: &Camera, bounds: &Aabb3) -> Vec<[f32; 16]> {
 }
 
 /// The product look: the studio fixed in the world (it does not turn with
-/// the camera), patterns in millimetres at glass style 7628. The same for
-/// every view and model.
+/// the camera). Patterns are in millimetres (the frame's `units_per_mm`) at
+/// glass style 7628 (the look graphs' pitch). The same for every view and model.
 pub fn look() -> ProductLook {
     ProductLook {
         exposure: EXPOSURE,
         studio: STUDIO,
         rotation: STUDIO_TURN_DEG.to_radians(),
         intensity: STUDIO_INTENSITY,
-        units_per_mm: 1.0,
         ..ProductLook::default()
     }
 }
@@ -317,13 +316,11 @@ pub(crate) mod tests {
     /// highlights slide across the board as it is orbited; patterns keep
     /// their physical size.
     #[test]
-    fn the_look_is_fixed_in_the_world_and_in_millimetres() {
+    fn the_look_is_fixed_in_the_world() {
         let l = look();
         assert_eq!(l.sanitized(), l, "every value is within range");
         assert_eq!(l.studio, STUDIO);
-        assert_eq!(l.units_per_mm, 1.0);
-        assert_eq!(l.weave_pitch, ProductLook::WEAVE_7628);
-        assert_eq!(l.ply_thickness, ProductLook::PLY_7628);
+        assert_eq!(l.room, None);
     }
 
     #[test]

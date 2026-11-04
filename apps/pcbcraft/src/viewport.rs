@@ -26,7 +26,7 @@ use crate::layer_view::{LayerView, ViewLayer};
 use crate::lighting;
 use crate::model_scene::{self, ModelScene, ShadowVertex, next_key};
 use pcbcraft_solidcraft::{
-    geom::{Aabb3, Vec3},
+    geom::{Aabb3, Vec3, prelude::*},
     render::Camera,
     scene::{Geometry, Place},
 };
@@ -90,7 +90,7 @@ impl ShadowLayers {
 struct Repack {
     generation: u64,
     layers: LayerView,
-    result: Receiver<Result<Vec<u8>, String>>,
+    result: Receiver<Result<GpuScene, String>>,
 }
 
 pub struct Viewport {
@@ -314,12 +314,21 @@ impl Viewport {
         if !model.bounds.is_empty() {
             self.model_bounds = model.bounds;
         }
-        let mut pbr = std::mem::take(&mut model.pbr);
-        model_scene::keep_visible(&mut pbr, &model.runs, &self.layers);
+        let mut stream = std::mem::take(&mut model.stream);
+        // Built with every layer. The material stream cannot drop runs in
+        // place: another view shows plain faces until its repack lands.
+        let every_layer = self.layers == LayerView::default();
+        if !every_layer {
+            model_scene::keep_visible(&mut stream.tris, &model.runs, &self.layers);
+            stream.graphs = Default::default();
+        }
         self.model = Some(model);
         self.generation = self.generation.wrapping_add(1);
         self.repack = None;
-        self.publish_pbr(pbr);
+        self.publish_stream(stream);
+        if !every_layer {
+            self.start_repack();
+        }
         self.shadow_view = None;
         // A new model is shown as built; the Part view sets its placement
         // transform again before drawing.
@@ -368,17 +377,20 @@ impl Viewport {
             return;
         };
         let layers = self.layers.clone();
-        let geometry = if self.display == pcbcraft_core::geometry::Transform3::IDENTITY {
-            model.geometry.clone()
+        let (geometry, decals) = if self.display == pcbcraft_core::geometry::Transform3::IDENTITY {
+            (model.geometry.clone(), self.decals.geometry.clone())
         } else {
-            display::transformed(&model.geometry, &self.display)
+            (
+                display::transformed(&model.geometry, &self.display),
+                display::transformed(&self.decals.geometry, &self.display),
+            )
         };
         let (send, result) = mpsc::channel();
         let view = layers.clone();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-repack".into())
             .spawn(move || {
-                let packed = model_scene::pack(&geometry, &view).map(|(bytes, _)| bytes);
+                let packed = model_scene::pack(&geometry, &decals, &view).map(|(scene, _)| scene);
                 let _ = send.send(packed);
             });
         self.repack = match spawned {
@@ -397,11 +409,11 @@ impl Viewport {
             return false;
         };
         match repack.result.try_recv() {
-            Ok(Ok(bytes))
+            Ok(Ok(stream))
                 if repack.generation == self.generation && repack.layers == self.layers =>
             {
                 self.repack = None;
-                self.publish_pbr(bytes);
+                self.publish_stream(stream);
                 false
             }
             Ok(_) | Err(mpsc::TryRecvError::Disconnected) => {
@@ -419,17 +431,13 @@ impl Viewport {
         }
     }
 
-    /// Publish the model's unplaced bodies' PBR vertices `pbr` with its
-    /// placed bodies drawn instanced: the shown layers' definition meshes
+    /// Publish the model's opaque vertices and material stream `stream` with
+    /// its placed bodies drawn instanced: the shown layers' definition meshes
     /// (the same shared triangles each time, so their GPU buffers are kept)
     /// at their placements under the display transform.
-    fn publish_pbr(&mut self, pbr: Vec<u8>) {
-        let scene = GpuScene {
-            pbr_detailed: pbr,
-            instanced: self.instanced(),
-            ..GpuScene::default()
-        };
-        Self::publish(&self.slot, &mut self.key, scene);
+    fn publish_stream(&mut self, mut stream: GpuScene) {
+        stream.instanced = self.instanced(&mut stream);
+        Self::publish(&self.slot, &mut self.key, stream);
     }
 
     /// The display transform as a placement, or `None` for none.
@@ -447,36 +455,42 @@ impl Viewport {
         })
     }
 
-    /// The shown layers' instanced meshes.
-    fn instanced(&self) -> Vec<gpu::InstancedMesh> {
+    /// The shown layers' instanced meshes, in the colours of `scene`'s palette
+    /// (the model's are in it by [`model_scene::palette_of`]; decals' join it).
+    fn instanced(&self, scene: &mut GpuScene) -> Vec<gpu::InstancedMesh> {
         let Some(model) = &self.model else {
             return Vec::new();
         };
         let display = self.display_place();
-        let place = |i: &model_scene::Instanced, geometry: &[Geometry]| match display {
-            // Unmoved: the placements as built, without a pass over them.
-            None => i.mesh.clone(),
-            Some(_) => i.placed(
-                geometry,
+        let shown = |i: &&model_scene::Instanced| self.layers.visible(i.layer);
+        let mut out = Vec::new();
+        for i in model.instanced.iter().filter(shown) {
+            out.push(match display {
+                // Unmoved: the placements as built, without a pass over them.
+                None => i.mesh.clone(),
+                Some(_) => {
+                    let color = scene.color(i.colour);
+                    i.placed(
+                        &model.geometry,
+                        display.as_ref(),
+                        i.mesh.look,
+                        color,
+                        |_| true,
+                    )
+                }
+            });
+        }
+        for i in self.decals.meshes.iter().filter(shown) {
+            let color = scene.color(i.colour);
+            out.push(i.placed(
+                &self.decals.geometry,
                 display.as_ref(),
                 i.mesh.look,
-                gpu::PaletteIndex(0),
+                color,
                 |_| true,
-            ),
-        };
-        model
-            .instanced
-            .iter()
-            .filter(|i| self.layers.visible(i.layer))
-            .map(|i| place(i, &model.geometry))
-            .chain(
-                self.decals
-                    .meshes
-                    .iter()
-                    .filter(|i| self.layers.visible(i.layer))
-                    .map(|i| place(i, &self.decals.geometry)),
-            )
-            .collect()
+            ));
+        }
+        out
     }
 
     fn current_shadow_view(&self) -> ShadowView {
@@ -667,7 +681,9 @@ impl Viewport {
         Frame {
             product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
             product_look: Some(lighting::look()),
+            units_per_mm: 1.0,
             product: false,
+            upload_error: None,
             key: self.key,
             slot: self.slot.clone(),
             sketch_key: self.sketch_key,
@@ -687,7 +703,7 @@ impl Viewport {
             clip: [0.0; 4],
             cap: [0.0; 4],
             images: vec![],
-            points: vec![],
+            clouds: vec![],
             analysis: [0.0; 8],
             analysis_colors: [0.0; 36],
             access: None,
@@ -703,6 +719,8 @@ impl Viewport {
             ssaa,
             hover_tint: [0.1; 3],
             selection_tint: [0.8, 0.7, 0.1],
+            hatch: Default::default(),
+            sky: [0.0; 4],
         }
     }
 
@@ -1492,14 +1510,14 @@ mod tests {
     fn pbr_bytes(slot: &SceneSlot) -> Vec<u8> {
         slot.lock()
             .ok()
-            .and_then(|s| s.as_ref().map(|s| s.pbr_detailed.clone()))
+            .and_then(|s| s.as_ref().map(|s| s.tris.clone()))
             .unwrap_or_default()
     }
 
     fn pbr_len(slot: &SceneSlot) -> usize {
         slot.lock()
             .ok()
-            .and_then(|s| s.as_ref().map(|s| s.pbr_detailed.len()))
+            .and_then(|s| s.as_ref().map(|s| s.tris.len()))
             .unwrap_or(0)
     }
 
@@ -1626,9 +1644,9 @@ mod tests {
         assert_eq!(kind(&viewport), Some(BodyKind::CopperTrack));
         settle(&mut viewport)?;
         let model = viewport.model.as_ref().ok_or("no model")?;
-        let (expected, _) = model_scene::pack(&model.geometry, viewport.layers())?;
-        assert_eq!(pbr_bytes(&viewport.slot), expected);
-        assert!(expected.len() < full);
+        let (expected, _) = model_scene::pack(&model.geometry, &[], viewport.layers())?;
+        assert_eq!(pbr_bytes(&viewport.slot), expected.tris);
+        assert!(expected.tris.len() < full);
         let after: Vec<usize> = model
             .geometry
             .iter()
@@ -1690,12 +1708,16 @@ mod tests {
         let mut view = LayerView::default();
         view.set(ViewLayer::Substrate, false);
         view.set(ViewLayer::Silkscreen(Layer::Top), false);
-        let (expected, _) = model_scene::pack(&scene.geometry, &view)?;
+        let (expected, _) = model_scene::pack(&scene.geometry, &[], &view)?;
         let mut viewport = Viewport::detached();
         viewport.set_layers(view);
         viewport.set_model(scene);
-        assert!(viewport.repack.is_none());
-        assert_eq!(pbr_bytes(&viewport.slot), expected);
+        // The opaque bytes are the view's at once, kept in place; only the
+        // material stream, which cannot drop runs, follows from a repack.
+        assert_eq!(pbr_bytes(&viewport.slot), expected.tris);
+        assert!(viewport.repack.is_some());
+        settle(&mut viewport)?;
+        assert_eq!(pbr_bytes(&viewport.slot), expected.tris);
         Ok(())
     }
 

@@ -178,8 +178,8 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     assert!(board.evaluation_error().is_none());
     assert_eq!(def.bodies.len(), inserted.bodies.len());
     let (ga, gb) = (
-        generated.session().world_state(),
-        board.session().world_state(),
+        generated.session().world_state()?,
+        board.session().world_state()?,
     );
     let (mut worst_box, mut worst_volume) = (0.0f64, 0.0f64);
     let (mut volume_a, mut volume_b) = (0.0, 0.0);

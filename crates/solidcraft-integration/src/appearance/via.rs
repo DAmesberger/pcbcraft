@@ -7,10 +7,11 @@ use super::{
     slab,
 };
 use crate::Result;
+use crate::geom::prelude::*;
+use crate::geom::{Mesh, Vec3};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use pcbcraft_core::{CopperLayer, Layer};
-use solidcraft_engine::geom::{Mesh, Vec3};
 
 /// The dome a tented side shows and the bore shadow of an open one.
 pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) -> Result<()> {

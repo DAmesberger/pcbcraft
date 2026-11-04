@@ -10,15 +10,16 @@
 //! ([`dimensions_using`]), parameter values ([`parameter_values`]) and the
 //! dimension layout share one loaded sketch, [`LiveSketch`], which the
 //! Footprint tab keeps per source change instead of reloading every frame.
+use crate::geom::prelude::*;
 use std::collections::BTreeSet;
 
+use crate::geom::Vec2;
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::library::footprint_source::{
     FootprintSource, PackageValue, ParamName, ParamUnit, ParamValue, SketchConstraintId,
     SketchCurveId, SketchPointId, SolveStatus,
 };
-use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{
     Analysis, Budget, CurveKind, Hold, Sketch, chain_centres, default_text, dim_frame,
     dim_layout_reaching, dim_reach, move_point_towards, solve_after_edit_with_analysis, solve_with,

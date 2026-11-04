@@ -14,11 +14,11 @@
 //! lip over it, as a section through a plane under the mask shows them.
 use crate::Result;
 use crate::appearance::{self, Board, MASK_CAP_MM, Region, slab};
+use crate::geom::Mesh;
 use crate::material::{BodyKind, Detail, Pattern};
 use crate::scene::Geometry;
 use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::{CopperLayer, DielectricKind, GlassStyle, Layer, Point, Stackup};
-use solidcraft_engine::geom::Mesh;
 
 /// How far the bands stand proud of the routed edge, so they win the depth
 /// test without z-fighting the substrate's walls (display only).

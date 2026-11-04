@@ -12,9 +12,11 @@
 //! their virtual intersection (a point on both lines), so dimensions to it
 //! keep holding and a named edge still runs corner to corner.
 
+use crate::geom::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
+use crate::geom::Vec2;
 use pcbcraft_core::diagnostics::{Error, Finding, ObjectRef, Result};
 use pcbcraft_core::geometry::{Point, polygon_contains};
 use pcbcraft_core::layout::outline::{
@@ -31,7 +33,6 @@ use pcbcraft_core::model::board::{
     BoardSketch, EdgeName, NamedEdge, RECT_EDGES, SolvedBoard, SolvedCutout, SolvedEdge,
     SolvedMountingHole, flatten,
 };
-use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{ConstraintKind, CurveKind, Sketch};
 
 use crate::footprint::check::{self, MAX_COORD_MM};

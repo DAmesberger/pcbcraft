@@ -109,6 +109,7 @@ pub fn author_wroom3() -> Vec<u8> {
         .collect();
     let mut bodies: BTreeMap<String, String> = src
         .world_state()
+        .unwrap()
         .bodies
         .iter()
         .map(|b| (b.name.clone(), plain(&b.name)))

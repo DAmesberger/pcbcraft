@@ -6,6 +6,8 @@
 //! so the saved model's bodies stay disjoint (except copper joining copper)
 //! and its mass properties stay physical. Dimensions and sources are in
 //! `docs/materials.md`.
+use crate::geom::prelude::*;
+use crate::geom::{Mesh, Vec3};
 use crate::material::{self, BodyKind};
 use crate::scene::{Geometry, Place};
 use crate::{Error, Result};
@@ -13,7 +15,6 @@ use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
 use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::library::{ChipKind, FootprintDefinition, PackageDefinition, PadKind, PadSide};
 use pcbcraft_core::{CopperLayer, Fabrication, Layer, Placement, Point, Project, layout};
-use solidcraft_engine::geom::{Mesh, Vec3};
 use std::sync::Arc;
 
 mod outline;

@@ -54,6 +54,8 @@ mod surface_tests;
 #[cfg(test)]
 mod tests;
 
+use crate::geom::Vec3;
+use crate::geom::prelude::*;
 use crate::material::{Detail, Pattern, srgb8_to_linear};
 use crate::models::look;
 use crate::{Error, Result};
@@ -66,7 +68,6 @@ use pcbcraft_core::library::marking::{
     Finish, LaidElement, MarkingLayout, Placement, PolarityMark, Symbol,
 };
 use pcbcraft_core::library::model3d::MarkingArea;
-use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::surface::OpaqueSurface;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};

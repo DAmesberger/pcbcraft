@@ -5,11 +5,11 @@
 //!
 //! Values come from the core's cited table (`materials::builtin`), the one
 //! source of package material values.
+use crate::geom::Vec3;
 use crate::material::{Coat, Detail, Material, Pattern, linear_to_srgb8};
 use crate::native::Look;
 use crate::{Error, Result};
 use pcbcraft_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
-use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::OpaqueSurface;
 

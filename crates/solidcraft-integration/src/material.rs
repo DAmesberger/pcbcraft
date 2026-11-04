@@ -6,10 +6,10 @@
 //! constants; dielectrics use F0 = ((n−1)/(n+1))². Sources, estimates and the
 //! soldermask layer model are in `docs/materials.md`. No EDA tool, library or
 //! material file was consulted.
+use crate::geom::Vec3;
 use crate::{Error, Result};
 use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 use serde::{Deserialize, Serialize};
-use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::OpaqueSurface;
 

@@ -5,11 +5,12 @@ mod build;
 mod tests;
 
 use super::call;
+use crate::geom::Vec3;
 use crate::scene::Geometry;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use solidcraft_engine::{Session, doc, geom::Vec3};
+use solidcraft_engine::{Session, doc};
 use std::sync::Arc;
 
 const META: &str = "org.pcbcraft.copper-fixture";
@@ -310,7 +311,7 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
             result.name, result.error
         )));
     }
-    let world = session.world_state();
+    let world = crate::native::world_state(session)?;
     let mut geometry = vec![];
     for body in &world.bodies {
         let m = body

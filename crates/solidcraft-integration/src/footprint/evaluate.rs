@@ -4,8 +4,10 @@
 //! mask/paste and vias → arrays and overrides → derived graphics → datum
 //! → quantization to 1e-6 mm and the result hash.
 
+use crate::geom::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::geom::Vec2;
 use pcbcraft_core::diagnostics::{Finding, ObjectRef, Stage};
 use pcbcraft_core::geometry::{Point, Shape};
 use pcbcraft_core::ids::PadId;
@@ -21,7 +23,6 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
 use serde::Serialize;
-use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{
     Analysis, CurveKind, Sketch, find_profiles, flips_from_stored, profile_at_point,
     solve_after_edit_with_analysis,

@@ -537,7 +537,7 @@ fn the_saved_model_reopens_parametric_with_materials_in_plain_solidcraft() -> Re
     let bodies = recorded(&reopened)?;
     assert_eq!(bodies.len(), 9);
     let doc = &reopened.session().doc;
-    for body in &reopened.session().world_state().bodies {
+    for body in &crate::native::world_state(reopened.session())?.bodies {
         let look = doc
             .model_body_look(body)
             .and_then(|l| l.opaque_surface().ok().flatten())

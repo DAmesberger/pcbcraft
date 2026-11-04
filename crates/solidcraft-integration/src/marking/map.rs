@@ -4,11 +4,12 @@
 //! chords stay within [`WRAP_CHORD_MM`] of the curve). A freeform map
 //! is one more variant here: it needs only `point` and `frame` for a chart
 //! point; flattening, placing and clipping stay as they are.
+use crate::geom::Vec3;
+use crate::geom::prelude::*;
 use crate::{Error, Result};
 use pcbcraft_core::Point;
 use pcbcraft_core::library::marking::surface::{CylinderArea, WrapChart};
 use pcbcraft_core::library::model3d::MarkingArea;
-use solidcraft_engine::geom::Vec3;
 
 /// Largest gap between a wrapped decal's chords and its cylinder, mm.
 pub const WRAP_CHORD_MM: f64 = 0.002;

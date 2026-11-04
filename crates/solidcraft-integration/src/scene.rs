@@ -1,7 +1,7 @@
 //! Evaluated geometry handed to renderers. Meshes are shared, so selection,
 //! highlighting and camera changes reuse them without rebuilding.
+use crate::geom::{Mesh, Vec3};
 use crate::material::{BodyKind, Detail};
-use solidcraft_engine::geom::{Mesh, Vec3};
 use solidcraft_engine::render::surface::OpaqueSurface;
 use std::sync::{Arc, OnceLock};
 

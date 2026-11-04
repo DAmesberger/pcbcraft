@@ -14,7 +14,7 @@
 //! them. Copper meeting copper is one conductor in one colour (tracks
 //! entering via rings and pads, by design). Copper lying on the laminate
 //! under the mask is checked elsewhere by the board's own tests.
-use pcbcraft_solidcraft::geom::Vec3;
+use pcbcraft_solidcraft::geom::{Vec3, prelude::*};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
 

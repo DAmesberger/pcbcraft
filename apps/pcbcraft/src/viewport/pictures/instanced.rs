@@ -240,7 +240,7 @@ fn a_layer_toggle_uploads_no_via_triangles() -> Result<(), Box<dyn std::error::E
         v.slot
             .lock()
             .ok()
-            .and_then(|s| s.as_ref().map(|s| s.pbr_detailed.len() as u64))
+            .and_then(|s| s.as_ref().map(|s| s.tris.len() as u64))
             .unwrap_or(0)
     };
     let placements = |v: &Viewport| {
@@ -337,14 +337,14 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         let started = std::time::Instant::now();
         let scene = crate::model_scene::build(model.geometry.clone())?;
         let built = started.elapsed();
-        let stream = scene.pbr.len();
+        let stream = scene.stream.tris.len();
         let meshes: usize = scene
             .instanced
             .iter()
             .map(|i| {
                 std::iter::once(&i.mesh.tris)
                     .chain(i.mesh.levels.iter().map(|(t, _)| t))
-                    .map(|t| t.vertices.len() / 24 * 64 + t.indices.len() * 4)
+                    .map(|t| t.vertices.len() + t.indices.len() * 4)
                     .sum::<usize>()
             })
             .sum();

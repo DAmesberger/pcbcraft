@@ -3,10 +3,10 @@
 //! use an exact table, so copies carry no cos(90°) residue. Identity is the
 //! generation key `(array, i, j)`, never position or number.
 
+use crate::geom::Vec2;
 use pcbcraft_core::library::footprint_source::{
     ArrayLayout, NumberingScheme, PadArray, Pin1Position,
 };
-use solidcraft_engine::geom::Vec2;
 
 use super::params::Values;
 use super::{Outcome, problem};

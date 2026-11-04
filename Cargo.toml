@@ -41,6 +41,9 @@ egui-wgpu = "0.36"
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
 solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
 solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
+# The vector types of Solidcraft's public API live in solidcore's record crate. The same pin as
+# Solidcraft's workspace; a mismatch fails to compile.
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -77,8 +80,4 @@ debug = false
 [patch.crates-io]
 egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
 winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-truck-geometry = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-truck-shapeops = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-truck-stepio = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-truck-meshalgo = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-matext4cgmath = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
+accesskit_macos = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }

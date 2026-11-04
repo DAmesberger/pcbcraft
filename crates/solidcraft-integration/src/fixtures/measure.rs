@@ -59,7 +59,7 @@ pub(crate) fn snapshot(s: &Session) -> Result<Snapshot> {
         }
     }
     let p = parameters(s)?;
-    let world = s.world_state();
+    let world = crate::native::world_state(&s)?;
     let mut bodies = Vec::new();
     for body in &world.bodies {
         let m = body
@@ -89,10 +89,8 @@ pub(crate) fn snapshot(s: &Session) -> Result<Snapshot> {
             .iter()
             .find(|o| o.id == joint.b.occurrence)
             .ok_or_else(|| Error::Verification(format!("missing occurrence for {role}")))?;
-        let origin = solidcraft_engine::doc::apply_point(
-            &occurrence.transform,
-            solidcraft_engine::geom::Vec3::ZERO,
-        );
+        let origin =
+            solidcraft_engine::doc::apply_point(&occurrence.transform, crate::geom::Vec3::ZERO);
         placements.push(Placement {
             role: role.into(),
             occurrence_id: occurrence.id,

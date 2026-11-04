@@ -18,6 +18,8 @@
 //!   frame as placed (the package placement, the board joint and side).
 use super::map::SurfaceMap;
 use super::{DecalCache, DecalMesh, Ink, Region, finish_detail, ink_surface, place_on};
+use crate::geom::prelude::*;
+use crate::geom::{Mesh, Vec3};
 use crate::material::{BodyKind, Detail};
 use crate::project::Source;
 use crate::scene::{Geometry, Place};
@@ -29,7 +31,6 @@ use pcbcraft_core::library::marking::surface::{self, CylinderArea, SurfaceGeomet
 use pcbcraft_core::library::marking::{BoxFace, MarkingLayout, Placement, SurfaceRef};
 use pcbcraft_core::library::model3d::MarkingArea;
 use pcbcraft_core::{Layer, Project};
-use solidcraft_engine::geom::{Mesh, Vec3};
 use solidcraft_engine::render::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

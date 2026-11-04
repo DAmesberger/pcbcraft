@@ -173,34 +173,23 @@ impl Viewport {
     }
 
     /// Republish the instanced meshes (the model's and the decals') with
-    /// the model's vertex stream. While the published scene still waits in
-    /// the slot, only its instanced meshes are replaced. Once the renderer
-    /// has taken it, the slot is empty and the stream has moved to the GPU,
-    /// so the stream is packed again from the cached meshes off the UI
-    /// thread and published whole ([`Self::start_repack`]). A scene of
-    /// instanced meshes alone would show the decals without the model they
-    /// mark: the Component 3D view opened with its marking floating over
-    /// nothing until the model was moved.
+    /// the model's vertex stream. The stream and the material stream hold
+    /// the decals' looks and have moved to the GPU, so they are packed again
+    /// from the cached meshes off the UI thread and published whole
+    /// ([`Self::start_repack`]). A scene of instanced meshes alone would show
+    /// the decals without the model they mark: the Component 3D view opened
+    /// with its marking floating over nothing until the model was moved.
     pub(super) fn publish_instanced(&mut self) {
-        let instanced = self.instanced();
-        let Ok(mut slot) = self.slot.lock() else {
+        if self.model.is_some() {
+            self.start_repack();
             return;
-        };
-        match slot.as_mut() {
-            Some(scene) => scene.instanced = instanced,
-            None if self.model.is_some() => {
-                drop(slot);
-                self.start_repack();
-                return;
-            }
-            None => {
-                *slot = Some(solidcraft_ui_egui::gpu::GpuScene {
-                    instanced,
-                    ..Default::default()
-                });
-            }
         }
-        self.key = model_scene::next_key();
+        let mut scene = solidcraft_ui_egui::gpu::GpuScene::default();
+        scene.instanced = self.instanced(&mut scene);
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = Some(scene);
+            self.key = model_scene::next_key();
+        }
     }
 
     /// The decal meshes as drawn now, for tests.

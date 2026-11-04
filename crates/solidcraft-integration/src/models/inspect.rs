@@ -169,7 +169,7 @@ fn read_design(bytes: &[u8], frame: &SourceFrame) -> Result<ModelInspection> {
         .filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name)))
         .collect();
     warnings.truncate(16);
-    let state = session.world_state();
+    let state = crate::native::world_state(&session)?;
     let mut bodies = Vec::with_capacity(state.bodies.len());
     let mut union: Option<[[f64; 3]; 2]> = None;
     let mut seen = std::collections::BTreeSet::new();

@@ -3,10 +3,10 @@
 //! Solidcraft's glyph outlines (`solidcraft_sketch::text`, the built-in
 //! Liberation Sans, SIL OFL 1.1), polarity marks and colour bands as plain
 //! shapes. SVG artwork is read by [`super::paint`].
+use crate::geom::Vec2;
 use crate::{Error, Result};
 use pcbcraft_core::Point;
 use pcbcraft_core::library::marking::{LaidText, PolarityMark, TEXT_ADVANCE};
-use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{LinkGeom, TextAlign, TextStyle, text_geometry_styled};
 
 /// Chord tolerance of flattened glyph and artwork curves, mm.
@@ -225,6 +225,7 @@ fn flatten(g: &LinkGeom) -> Vec<Point> {
             control: true,
             degree: 3,
             periodic: false,
+            nurbs: None,
         } if pts.len() == 4 => {
             let p: Vec<Point> = pts.iter().map(|v| pt(*v)).collect();
             let m = second(p[0], p[1], p[2]).max(second(p[1], p[2], p[3]));

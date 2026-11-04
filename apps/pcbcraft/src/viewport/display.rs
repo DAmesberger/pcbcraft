@@ -171,9 +171,14 @@ impl Viewport {
             moved = transformed(&model.geometry, &self.display);
             &moved
         };
-        if let Ok((pbr, _)) = model_scene::pack(geometry, &self.layers) {
+        let decals = if identity {
+            self.decals.geometry.clone()
+        } else {
+            transformed(&self.decals.geometry, &self.display)
+        };
+        if let Ok((stream, _)) = model_scene::pack(geometry, &decals, &self.layers) {
             self.repack = None;
-            self.publish_pbr(pbr);
+            self.publish_stream(stream);
         }
         self.shadow_view = None;
         self.publish_shadows();

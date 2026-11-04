@@ -1,54 +1,75 @@
 //! GPU-ready form of a built native model, prepared on the model worker so
-//! the UI thread only publishes it. PBR vertices carry each body's physical
-//! look, clear coat and procedural pattern (Solidcraft's detailed PBR
-//! stream, drawn with the product look) in one buffer, grouped by
-//! [`ViewLayer`] so a layer view keeps or drops whole runs of it; the
-//! buffer moves into the viewport once and is never repacked on the UI
+//! the UI thread only publishes it. Every body's faces are drawn twice:
+//! once as plain opaque triangles (depth, occlusion, edges, its look's
+//! colour), grouped by [`ViewLayer`] in one buffer so a layer view keeps or
+//! drops whole runs of it, and once through Solidcraft's material-graph
+//! stream ([`GpuScene::graphs`]), which shades them with the body's physical
+//! look, clear coat and procedural pattern under the product look. The
+//! buffers move into the viewport once and are never repacked on the UI
 //! thread. Shadows are theme-free geometry with alpha weights; highlight
 //! blocks are flat copies keyed by pick identity and view layer, so
 //! selection only recolours and hidden layers drop their blocks.
 //!
 //!
 //! Placements of a shared definition (every via of a size, each component
-//! body) are not copied into the stream: each definition mesh is one
-//! [`Instanced`] mesh drawn at every placement through the same PBR
-//! material path ([`InstanceLook::Pbr`]), with coarser levels for
+//! body) are not copied into the opaque buffer: each definition mesh is one
+//! [`Instanced`] mesh drawn at every placement, with coarser levels for
 //! placements small on screen, and highlighted by drawing the selected
-//! placements again ([`Instanced::highlight`]).
+//! placements again ([`Instanced::highlight`]). The material stream holds
+//! world vertices, so its copy of a placed body is one per placement:
+//! [`MAX_GRAPH_BYTES`] bounds that, and placements past it keep the plain
+//! colour of their instanced mesh.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! upstream revision 4f3ac07, unchanged in the pinned fork; see
 //! ATTRIBUTION.md), adapted to a Z-up board.
 use crate::layer_view::{LayerView, ViewLayer};
 use pcbcraft_solidcraft::{
-    geom::{Aabb3, Vec3},
-    material::{BodyKind, Pattern},
-    render::surface::unit_direction,
+    geom::{Aabb3, Vec3, prelude::*, srgb},
+    look_graph::{self, LookKey, LoweredLook},
+    material::BodyKind,
+    render::surface::{OpaqueSurface, unit_direction},
     scene::{Geometry, Place},
 };
 use solidcraft_ui_egui::gpu::{
-    BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PBR_DETAILED_SIZE, PaletteIndex,
-    PbrInstanceLook, SceneBlock, SharedTris, SurfacePattern, TriClass,
+    BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PaletteIndex, SceneBlock,
+    SharedTris, TRI_SIZE, TriClass,
 };
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Upper bound on PBR vertex bytes per model: about 480 000 triangles of
-/// detailed (64-byte) vertices, a little above what the earlier 48-byte
-/// stream accepted under 64 MiB, so no board that loaded before is refused.
+/// Upper bound on opaque vertex bytes per model: about 1 000 000 triangles,
+/// so no board that loaded before is refused.
 pub const MAX_PBR_BYTES: usize = 88 << 20;
 
-/// Solidcraft's pattern for a body's procedural detail.
-pub fn surface_pattern(pattern: Pattern) -> SurfacePattern {
-    match pattern {
-        Pattern::None => SurfacePattern::None,
-        Pattern::Weave => SurfacePattern::Fr4Weave,
-        Pattern::MaskPeel => SurfacePattern::SolderMask,
-        Pattern::MaskPeelOverWeave => SurfacePattern::SolderMaskOverWeave,
-        Pattern::Silkscreen => SurfacePattern::Silkscreen,
+/// Upper bound on the material stream per model. The unplaced bodies always
+/// fit (the same triangle bound as [`MAX_PBR_BYTES`], at the largest vertex);
+/// past it placed bodies are drawn in their plain colour, largest count last.
+pub const MAX_GRAPH_BYTES: usize = 256 << 20;
+
+/// The plain colour of a look (sRGB8), which its faces show where the material
+/// stream does not draw them.
+pub fn plain_colour(surface: OpaqueSurface) -> [u8; 4] {
+    let b = surface.base_color();
+    [
+        srgb::encode8(b.x),
+        srgb::encode8(b.y),
+        srgb::encode8(b.z),
+        255,
+    ]
+}
+
+/// An empty scene whose palette holds every colour of `geometry` in order of
+/// first use: the same for any layer view of the same bodies, so instanced
+/// placements keep their index.
+pub fn palette_of(geometry: &[Geometry]) -> GpuScene {
+    let mut scene = GpuScene::default();
+    for g in geometry {
+        scene.color(plain_colour(g.surface));
     }
+    scene
 }
 
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
@@ -74,10 +95,11 @@ pub struct Shadows {
 
 pub struct ModelScene {
     pub geometry: Vec<pcbcraft_solidcraft::scene::Geometry>,
-    /// PBR vertices of every body, grouped by view layer in [`ViewLayer`]
-    /// order. The viewport takes it.
-    pub pbr: Vec<u8>,
-    /// Each view layer's run of `pbr` bytes, in buffer order.
+    /// Every body's opaque vertices (`tris`, grouped by view layer in
+    /// [`ViewLayer`] order), its palette and its material stream (`graphs`).
+    /// The viewport takes it.
+    pub stream: GpuScene,
+    /// Each view layer's run of `stream.tris` bytes, in buffer order.
     pub runs: Runs,
     pub shadows: Shadows,
     /// One flat block per pick identity and view layer, drawn over the model
@@ -93,7 +115,9 @@ pub struct ModelScene {
 /// layer and material.
 pub struct Instanced {
     pub layer: ViewLayer,
-    /// [`InstanceLook::Pbr`]; a placement each, in `bodies` order.
+    /// The look's plain colour.
+    pub colour: [u8; 4],
+    /// A placement each, in `bodies` order.
     pub mesh: InstancedMesh,
     /// The index in [`ModelScene::geometry`] of each placement.
     pub bodies: Vec<usize>,
@@ -125,6 +149,7 @@ impl Instanced {
             } else {
                 Vec::new()
             },
+            closed: false,
         };
         for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
             if !keep(g) {
@@ -158,6 +183,7 @@ impl Instanced {
             instances: Vec::new(),
             look: InstanceLook::Opaque,
             levels: Vec::new(),
+            closed: false,
         };
         for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
             let (Some(place), Some(item)) = (g.place, g.item) else {
@@ -209,7 +235,8 @@ pub fn instance_bodies(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> 
 
 fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
     let mut out: Vec<Instanced> = Vec::new();
-    let mut by: HashMap<(usize, PbrInstanceLook, ViewLayer), usize> = HashMap::new();
+    let mut palette = palette_of(geometry);
+    let mut by: HashMap<(usize, [u8; 4], ViewLayer), usize> = HashMap::new();
     let mut tris: HashMap<usize, (Arc<SharedTris>, Levels)> = HashMap::new();
     let uses = {
         let mut uses: HashMap<usize, usize> = HashMap::new();
@@ -226,12 +253,8 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
         let place = g.place.unwrap_or(Place::IDENTITY);
         let layer = ViewLayer::of(g.kind, g.layer);
         let address = Arc::as_ptr(&g.mesh) as usize;
-        let look = PbrInstanceLook::new(
-            g.surface,
-            surface_pattern(g.detail.pattern),
-            g.detail.strength as f32,
-        );
-        let at = *by.entry((address, look, layer)).or_insert_with(|| {
+        let colour = plain_colour(g.surface);
+        let at = *by.entry((address, colour, layer)).or_insert_with(|| {
             let (shared, levels) = tris
                 .entry(address)
                 .or_insert_with(|| {
@@ -248,19 +271,21 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
             );
             out.push(Instanced {
                 layer,
+                colour,
                 mesh: InstancedMesh {
                     key: address as u64,
                     tris: shared,
                     instances: Vec::new(),
-                    look: InstanceLook::Pbr(look),
+                    look: InstanceLook::Opaque,
                     levels,
+                    closed: false,
                 },
                 bodies: Vec::new(),
             });
             out.len() - 1
         });
         if let Some(group) = out.get_mut(at) {
-            group.mesh.place(place.rows_f32(), PaletteIndex(0));
+            group.mesh.place(place.rows_f32(), palette.color(colour));
             group.bodies.push(index);
             bytes = bytes.saturating_add(solidcraft_ui_egui::gpu::INSTANCE_SIZE);
         }
@@ -271,11 +296,9 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
     Ok(out)
 }
 
-/// Bytes a mesh's triangles take on the GPU drawn through the PBR path: a
-/// detailed vertex each, and the indices.
+/// Bytes a mesh's triangles take on the GPU: its vertices and indices.
 pub fn gpu_bytes(tris: &SharedTris) -> usize {
-    tris.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE * PBR_DETAILED_SIZE
-        + tris.indices.len() * 4
+    tris.vertices.len() + tris.indices.len() * 4
 }
 
 /// `mesh`'s triangles with each vertex stored once per position and
@@ -444,10 +467,32 @@ fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
     out
 }
 
-/// Detailed PBR vertex bytes of the streamed bodies of `geometry` that
-/// `view` shows ([`streamed`]), grouped by view layer, and each layer's run
-/// of bytes.
-pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), String> {
+/// The looks of a scene, lowered once each (a board has a few dozen).
+#[derive(Default)]
+struct Looks(HashMap<LookKey, Arc<LoweredLook>>);
+
+impl Looks {
+    fn get(&mut self, g: &Geometry) -> Result<Arc<LoweredLook>, String> {
+        let key = look_graph::look_key(g.surface, g.detail);
+        if let Some(look) = self.0.get(&key) {
+            return Ok(Arc::clone(look));
+        }
+        let look =
+            Arc::new(look_graph::lower_look(g.surface, g.detail).map_err(|e| e.to_string())?);
+        self.0.insert(key, Arc::clone(&look));
+        Ok(look)
+    }
+}
+
+/// The opaque vertices of the streamed bodies of `geometry` that `view` shows
+/// ([`streamed`]), grouped by view layer, with each layer's run of bytes, and
+/// the material stream of those and of the placed bodies, `decals` too. See
+/// [`MAX_GRAPH_BYTES`] for placed bodies past the bound.
+pub fn pack(
+    geometry: &[Geometry],
+    decals: &[Geometry],
+    view: &LayerView,
+) -> Result<(GpuScene, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
         .filter(|(layer, _)| view.draws(*layer))
@@ -459,23 +504,28 @@ pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), 
             g.mesh
                 .triangles
                 .len()
-                .checked_mul(3 * PBR_DETAILED_SIZE)
+                .checked_mul(3 * TRI_SIZE)
                 .and_then(|b| n.checked_add(b))
         })
         .ok_or_else(too_large)?;
     if total > MAX_PBR_BYTES {
         return Err(too_large());
     }
-    let mut scene = GpuScene::default();
+    let mut scene = palette_of(geometry);
     scene
-        .pbr_detailed
+        .tris
         .try_reserve_exact(total)
         .map_err(|e| e.to_string())?;
+    let mut looks = Looks::default();
     let mut runs: Runs = Vec::new();
     for (layer, g) in bodies {
-        let start = scene.pbr_detailed.len();
-        let pattern = surface_pattern(g.detail.pattern);
-        let strength = g.detail.strength as f32;
+        let start = scene.tris.len();
+        let colour = scene.color(plain_colour(g.surface));
+        let look = looks.get(g)?;
+        let material = scene
+            .graphs
+            .material(&look.ir, &look.words, &look.base)
+            .map_err(|e| e.to_string())?;
         for indices in &g.mesh.triangles {
             let Some(p) = g.mesh.tri(indices) else {
                 continue;
@@ -488,22 +538,80 @@ pub fn pack(geometry: &[Geometry], view: &LayerView) -> Result<(Vec<u8>, Runs), 
                     .and_then(|i| g.mesh.normals.get(i))
                     .and_then(|n| unit_direction(*n).ok())
                     .unwrap_or(face);
-                scene.pbr_tri_with(
-                    corner.to_f32(),
-                    normal.to_f32(),
-                    g.surface,
-                    pattern,
-                    strength,
-                );
+                let (p, n) = (corner.to_f32(), normal.to_f32());
+                scene.tri(p, n, colour);
+                scene.graphs.vertex(material, p, n, p);
             }
         }
-        let end = scene.pbr_detailed.len();
+        let end = scene.tris.len();
         match runs.last_mut() {
             Some((last, run)) if *last == layer => run.end = end,
             _ => runs.push((layer, start..end)),
         }
     }
-    Ok((scene.pbr_detailed, runs))
+    pack_placed(&mut scene, &mut looks, geometry, decals, view)?;
+    Ok((scene, runs))
+}
+
+/// Bytes the material stream may hold before a placed body's vertices go in.
+fn stream_bytes(scene: &GpuScene) -> usize {
+    scene.graphs.draws().iter().map(|d| d.vertices.len()).sum()
+}
+
+/// The placed bodies that `view` shows into the material stream, fewest
+/// placements of a definition first: past [`MAX_GRAPH_BYTES`] the vias of a
+/// large board are the ones left in plain colour, not its packages.
+fn pack_placed(
+    scene: &mut GpuScene,
+    looks: &mut Looks,
+    geometry: &[Geometry],
+    decals: &[Geometry],
+    view: &LayerView,
+) -> Result<(), String> {
+    let mut uses: HashMap<usize, usize> = HashMap::new();
+    let placed: Vec<&Geometry> = geometry
+        .iter()
+        .chain(decals)
+        .filter(|g| !streamed(g) && view.draws(ViewLayer::of(g.kind, g.layer)))
+        .inspect(|g| *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1)
+        .collect();
+    let mut order: Vec<&Geometry> = placed;
+    order.sort_by_key(|g| {
+        uses.get(&(Arc::as_ptr(&g.mesh) as usize))
+            .copied()
+            .unwrap_or(0)
+    });
+    for g in order {
+        if stream_bytes(scene) > MAX_GRAPH_BYTES {
+            break;
+        }
+        let look = looks.get(g)?;
+        let material = scene
+            .graphs
+            .material(&look.ir, &look.words, &look.base)
+            .map_err(|e| e.to_string())?;
+        let place = g.place.unwrap_or(Place::IDENTITY);
+        for indices in &g.mesh.triangles {
+            let Some(p) = g.mesh.tri(indices) else {
+                continue;
+            };
+            let face = (p[1] - p[0]).cross(p[2] - p[0]);
+            let face = unit_direction(face).unwrap_or(Vec3::Z);
+            for (corner, index) in p.iter().zip(indices) {
+                let normal = usize::try_from(*index)
+                    .ok()
+                    .and_then(|i| g.mesh.normals.get(i))
+                    .and_then(|n| unit_direction(*n).ok())
+                    .unwrap_or(face);
+                let at = place.point(*corner).to_f32();
+                let n = unit_direction(place.vector(normal))
+                    .unwrap_or(normal)
+                    .to_f32();
+                scene.graphs.vertex(material, at, n, at);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Keep only the runs of `bytes` that `view` shows, in place: a move of
@@ -525,7 +633,7 @@ pub fn keep_visible(bytes: &mut Vec<u8>, runs: &[(ViewLayer, Range<usize>)], vie
 }
 
 pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
-    let (pbr, runs) = pack(&geometry, &LayerView::default())?;
+    let (stream, runs) = pack(&geometry, &[], &LayerView::default())?;
     let mut bounds = Aabb3::EMPTY;
     let mut flat: Vec<(u64, ViewLayer, BlockBuilder)> = Vec::new();
     let mut index: HashMap<(u64, ViewLayer), usize> = HashMap::new();
@@ -562,7 +670,7 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
     Ok(ModelScene {
         instanced,
         geometry,
-        pbr,
+        stream,
         runs,
         shadows,
         highlight: flat
@@ -872,7 +980,7 @@ pub(crate) mod tests {
         assert_eq!(drawn, placed);
         for group in &scene.instanced {
             assert_eq!(group.mesh.count(), group.bodies.len());
-            assert!(matches!(group.mesh.look, InstanceLook::Pbr(_)));
+            assert_eq!(group.mesh.look, InstanceLook::Opaque);
             for (k, at) in group.bodies.iter().enumerate() {
                 let g = &scene.geometry[*at];
                 assert_eq!(Arc::as_ptr(&g.mesh) as usize as u64, group.mesh.key);
@@ -892,16 +1000,11 @@ pub(crate) mod tests {
             .iter()
             .find(|g| g.kind == BodyKind::ViaCopper)
             .ok_or("no via copper")?;
-        let look = PbrInstanceLook::new(
-            copper.surface,
-            surface_pattern(copper.detail.pattern),
-            copper.detail.strength as f32,
-        );
         assert!(
             scene
                 .instanced
                 .iter()
-                .any(|i| i.mesh.look == InstanceLook::Pbr(look) && i.layer == ViewLayer::Vias)
+                .any(|i| i.colour == plain_colour(copper.surface) && i.layer == ViewLayer::Vias)
         );
         let unplaced: usize = scene
             .geometry
@@ -909,7 +1012,7 @@ pub(crate) mod tests {
             .filter(|g| streamed(g))
             .map(|g| g.mesh.triangles.len())
             .sum();
-        assert_eq!(scene.pbr.len(), unplaced * 3 * PBR_DETAILED_SIZE);
+        assert_eq!(scene.stream.tris.len(), unplaced * 3 * TRI_SIZE);
         let via = vias[7].item.ok_or("via has no pick id")?;
         assert!(scene.highlight.iter().all(|(item, _, _)| *item != via));
         let highlighted = std::collections::HashSet::from([via]);
@@ -1003,12 +1106,12 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(tris.len(), bodies.iter().filter(|b| is_via(b.kind)).count());
         assert_eq!(
-            scene.pbr.len(),
-            base * 3 * PBR_DETAILED_SIZE,
+            scene.stream.tris.len(),
+            base * 3 * TRI_SIZE,
             "no via in the stream"
         );
         let triangles: usize = bodies.iter().map(|b| b.mesh.triangles.len()).sum();
-        let copied = vias * triangles * 3 * PBR_DETAILED_SIZE;
+        let copied = vias * triangles * 3 * TRI_SIZE;
         let held: usize = scene.instanced.iter().map(|i| resident(&i.mesh)).sum();
         let placements: usize = scene.instanced.iter().map(|i| i.mesh.instances.len()).sum();
         assert_eq!(
@@ -1036,7 +1139,7 @@ pub(crate) mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let scene = demo_scene()?;
         let bytes = |layer: ViewLayer| {
-            3 * PBR_DETAILED_SIZE
+            3 * TRI_SIZE
                 * scene
                     .geometry
                     .iter()
@@ -1054,7 +1157,7 @@ pub(crate) mod tests {
             assert_eq!(run.len(), bytes(*layer), "{layer:?}");
             at = run.end;
         }
-        assert_eq!(at, scene.pbr.len());
+        assert_eq!(at, scene.stream.tris.len());
         for layer in [
             ViewLayer::Bodies,
             ViewLayer::Substrate,
@@ -1089,13 +1192,20 @@ pub(crate) mod tests {
             LayerView::default(),
         ];
         for view in views {
-            let mut kept = scene.pbr.clone();
+            let mut kept = scene.stream.tris.clone();
             keep_visible(&mut kept, &scene.runs, &view);
-            let (packed, runs) = pack(&scene.geometry, &view)?;
-            assert_eq!(kept, packed, "{view:?}");
+            let (packed, runs) = pack(&scene.geometry, &[], &view)?;
+            assert_eq!(kept, packed.tris, "{view:?}");
             assert!(runs.iter().all(|(l, _)| view.draws(*l)));
             if view != LayerView::default() {
-                assert!(kept.len() < scene.pbr.len(), "{view:?} hides something");
+                assert!(
+                    kept.len() < scene.stream.tris.len(),
+                    "{view:?} hides something"
+                );
+                assert!(
+                    stream_bytes(&packed) < stream_bytes(&scene.stream),
+                    "{view:?} hides its material stream too"
+                );
             }
         }
         Ok(())
@@ -1110,7 +1220,7 @@ pub(crate) mod tests {
                 .and_then(|b| b.try_into().ok())
                 .map(f32::from_le_bytes)
         };
-        for vertex in scene.pbr.chunks_exact(PBR_DETAILED_SIZE) {
+        for vertex in scene.stream.tris.chunks_exact(TRI_SIZE) {
             let v: Vec<f32> = (0..6).filter_map(|i| word(vertex, 4 * i)).collect();
             assert_eq!(v.len(), 6);
             let n = &v[3..6];
@@ -1135,53 +1245,96 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// Each vertex is Solidcraft's detailed PBR vertex: position, normal,
-    /// base colour, (metallic, roughness, IOR) and the detail (pattern id
-    /// plus the coat IOR in its fraction, strength, coat weight, coat
-    /// roughness). Masks carry their lacquer coat and orange peel, the
-    /// laminate its weave, everything else neither.
+    /// Each body's vertices in the material stream name its look's record:
+    /// (base, metallic), (roughness, IOR, coat weight, coat roughness), (coat
+    /// IOR, ...) and then its graph's uniforms, which hold the pattern's
+    /// strength. Each pattern draws with its own shape. Masks carry their
+    /// lacquer coat and orange peel, the laminate its weave, everything else
+    /// neither.
     #[test]
     fn vertices_carry_each_body_s_coat_and_pattern() -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(PBR_DETAILED_SIZE, 64);
         let scene = demo_scene()?;
-        let floats = |vertex: &[u8]| -> Vec<f32> {
-            vertex
-                .chunks_exact(4)
-                .filter_map(|b| b.try_into().ok().map(f32::from_le_bytes))
-                .collect()
-        };
-        let mut at = 0;
+        let graphs = &scene.stream.graphs;
         let mut seen = std::collections::HashSet::new();
-        for (_, g) in ordered(&scene.geometry) {
-            let bytes = 3 * PBR_DETAILED_SIZE * g.mesh.triangles.len();
-            let body = scene.pbr.get(at..at + bytes).ok_or("short buffer")?;
-            at += bytes;
-            let Some(vertex) = body.chunks_exact(PBR_DETAILED_SIZE).next() else {
+        // Where each draw's stream has been read to.
+        let mut read: HashMap<usize, usize> = HashMap::new();
+        for (_, g) in ordered(&scene.geometry)
+            .into_iter()
+            .filter(|(_, g)| streamed(g))
+        {
+            let look = look_graph::lower_look(g.surface, g.detail)?;
+            let (at, draw) = graphs
+                .draws()
+                .iter()
+                .enumerate()
+                .find(|(i, d)| {
+                    d.shape == look.ir.shape && d.vertices.len() > read.get(i).copied().unwrap_or(0)
+                })
+                .ok_or("no draw of the body's shape")?;
+            assert_eq!(draw.object, look.ir.object_space, "{:?}", g.kind);
+            let stride = if draw.object { 40 } else { 28 };
+            let start = read.entry(at).or_default();
+            let bytes = 3 * stride * g.mesh.triangles.len();
+            let body = draw
+                .vertices
+                .get(*start..*start + bytes)
+                .ok_or("short stream")?;
+            *start += bytes;
+            let Some(vertex) = body.chunks_exact(stride).next() else {
                 continue;
             };
-            let v = floats(vertex);
-            assert_eq!(v.len(), 16);
-            let [id, strength, weight, coat_roughness] = [v[12], v[13], v[14], v[15]];
-            let pattern = surface_pattern(g.detail.pattern).id() as f32;
-            assert_eq!(id.floor(), pattern, "{:?}", g.kind);
-            assert!((strength - g.detail.strength as f32).abs() < 1e-6);
+            let record = u32::from_le_bytes(vertex[24..28].try_into()?) as usize;
+            let page = graphs.pages().get(draw.page as usize).ok_or("no page")?;
+            let word = |i: usize| f32::from_bits(page.words[record * 4 + i]);
+            // The base response, then the graph's own uniforms.
+            let base = g.surface.base_color();
+            assert!((f64::from(word(0)) - base.x).abs() < 1e-3, "{:?}", g.kind);
+            assert_eq!(word(3), g.surface.metallic() as f32, "{:?}", g.kind);
+            assert_eq!(word(4), g.surface.roughness() as f32, "{:?}", g.kind);
             match g.surface.clear_coat() {
                 Some(coat) => {
-                    assert_eq!(weight, 1.0, "{:?}", g.kind);
-                    assert!((coat_roughness - coat.roughness() as f32).abs() < 1e-6);
-                    let ior = 1.0 + (id.fract() - 0.25) * 4.0;
-                    assert!((ior - 1.52).abs() < 1e-3, "{:?}: {ior}", g.kind);
-                    assert_eq!(v[11], 1.0, "the body under the coat has IOR 1");
+                    assert_eq!(word(6), 1.0, "{:?}", g.kind);
+                    assert_eq!(word(7), coat.roughness() as f32, "{:?}", g.kind);
+                    assert!((word(8) - 1.52).abs() < 1e-3, "{:?}", g.kind);
+                    assert_eq!(word(5), 1.0, "the body under the coat has IOR 1");
                 }
-                None => assert_eq!(weight, 0.0, "{:?}", g.kind),
+                None => assert_eq!(word(6), 0.0, "{:?}", g.kind),
+            }
+            for (i, w) in look.words.iter().enumerate() {
+                assert_eq!(
+                    page.words[record * 4 + 4 * BASE_VEC4 + i],
+                    *w,
+                    "{:?}: the graph's uniform {i}",
+                    g.kind
+                );
             }
             seen.insert((g.kind, g.detail.pattern));
         }
-        assert_eq!(at, scene.pbr.len());
+        use pcbcraft_solidcraft::material::Pattern;
         assert!(seen.contains(&(BodyKind::Substrate, Pattern::Weave)));
         assert!(seen.contains(&(BodyKind::MaskTop, Pattern::MaskPeelOverWeave)));
         assert!(seen.contains(&(BodyKind::MaskCap, Pattern::MaskPeel)));
         assert!(seen.contains(&(BodyKind::PadFinish, Pattern::None)));
+        Ok(())
+    }
+
+    /// The vec4s of the base response at the head of a material record.
+    const BASE_VEC4: usize = 7;
+
+    /// Placed bodies join the material stream, one copy a placement, so their
+    /// metal reflects the studio like the rest of the board.
+    #[test]
+    fn placed_bodies_are_shaded_by_the_material_stream() -> Result<(), Box<dyn std::error::Error>> {
+        let scene = demo_scene()?;
+        let vertices: usize = scene
+            .stream
+            .graphs
+            .draws()
+            .iter()
+            .map(|d| d.vertices.len() / if d.object { 40 } else { 28 })
+            .sum();
+        let triangles: usize = scene.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
+        assert_eq!(vertices, 3 * triangles);
         Ok(())
     }
 
@@ -1194,7 +1347,7 @@ pub(crate) mod tests {
             .find(|g| streamed(g))
             .cloned()
             .ok_or("no geometry")?;
-        let per_copy = one.mesh.triangles.len() * 3 * PBR_DETAILED_SIZE;
+        let per_copy = one.mesh.triangles.len() * 3 * TRI_SIZE;
         let copies = MAX_PBR_BYTES / per_copy.max(1) + 1;
         geometry.extend(std::iter::repeat_n(one, copies));
         assert!(build(geometry).is_err());
@@ -1291,13 +1444,10 @@ pub(crate) mod tests {
             run(&scene, ViewLayer::Bodies),
             run(&plain, ViewLayer::Bodies)
         );
+        assert_eq!(run(&scene, ViewLayer::Markings), 3 * TRI_SIZE * triangles);
         assert_eq!(
-            run(&scene, ViewLayer::Markings),
-            3 * PBR_DETAILED_SIZE * triangles
-        );
-        assert_eq!(
-            scene.pbr.len(),
-            plain.pbr.len() + 3 * PBR_DETAILED_SIZE * triangles
+            scene.stream.tris.len(),
+            plain.stream.tris.len() + 3 * TRI_SIZE * triangles
         );
         let laser = finish_surface(pcbcraft_core::library::marking::Finish::LaserEtch)?;
         for g in &decals {
@@ -1312,12 +1462,12 @@ pub(crate) mod tests {
         for hidden in [ViewLayer::Bodies, ViewLayer::Markings] {
             let mut view = LayerView::default();
             view.set(hidden, false);
-            let (marked, _) = pack(&scene.geometry, &view)?;
-            let (unmarked, _) = pack(&plain.geometry, &view)?;
-            assert_eq!(marked, unmarked, "{hidden:?}");
-            let mut kept = scene.pbr.clone();
+            let (marked, _) = pack(&scene.geometry, &[], &view)?;
+            let (unmarked, _) = pack(&plain.geometry, &[], &view)?;
+            assert_eq!(marked.tris, unmarked.tris, "{hidden:?}");
+            let mut kept = scene.stream.tris.clone();
             keep_visible(&mut kept, &scene.runs, &view);
-            assert_eq!(kept, marked, "{hidden:?}: kept without a repack");
+            assert_eq!(kept, marked.tris, "{hidden:?}: kept without a repack");
         }
         assert_eq!(scene.shadows.top.len(), plain.shadows.top.len());
         Ok(())

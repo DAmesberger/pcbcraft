@@ -304,6 +304,11 @@ impl Native {
         &self.session
     }
 
+    /// The evaluated design with its placements applied.
+    pub fn world_state(&self) -> Result<std::sync::Arc<solidcraft_engine::doc::ModelState>> {
+        world_state(&self.session)
+    }
+
     /// Put off evaluating the design after each command until [`Native::evaluate_deferred`]
     /// (Solidcraft's `Session::defer_evaluation`): a board built in hundreds of commands is
     /// evaluated a few times instead of after every one.
@@ -1045,4 +1050,15 @@ pub(crate) fn id(reply: &Value, key: &str) -> Result<u64> {
         .get(key)
         .and_then(Value::as_u64)
         .ok_or_else(|| Error::Verification(format!("missing {key} in {reply}")))
+}
+
+/// The evaluated design of `session` with its placements applied. Placing can
+/// fail (a definition that will not evaluate); that is an engine error here.
+pub fn world_state(
+    session: &Session,
+) -> Result<std::sync::Arc<solidcraft_engine::doc::ModelState>> {
+    session.world_state().map_err(|error| Error::Engine {
+        command: "world state".into(),
+        message: error.to_string(),
+    })
 }

@@ -5,8 +5,8 @@
 //! horizontal slabs: each tile clips the loops to its square, splits at
 //! every vertex and crossing height and pairs the edges in each slab into
 //! trapezoids. Walls stand wherever the region's inside meets its outside.
+use crate::geom::{Mesh, Vec3};
 use pcbcraft_core::Point;
-use solidcraft_engine::geom::{Mesh, Vec3};
 
 /// Most tiles of one region; larger regions get larger tiles.
 const MAX_TILES: usize = 16_384;
@@ -518,6 +518,7 @@ fn wall(mesh: &mut Mesh, edges: &[Edge], p: Point, q: Point, z0: f64, z1: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::prelude::*;
 
     fn square(c: Point, h: f64) -> Vec<Point> {
         vec![

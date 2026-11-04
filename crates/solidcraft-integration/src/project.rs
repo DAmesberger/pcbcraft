@@ -9,6 +9,7 @@
 //! terminations and solder fillets are display-only layers
 //! ([`crate::appearance`]) added to the drawn geometry, never to the file.
 use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
+use crate::geom::prelude::*;
 use crate::material::{self, BodyKind, Detail};
 use crate::models::imported::{LibraryDefinition, SourceCache};
 use crate::models::{self, ModelDefinition, look};
@@ -444,7 +445,7 @@ impl Builder {
         if updated.is_some() {
             // The kinds were recorded from the previous build's replies: a
             // slab whose edit left it in other pieces is built anew.
-            let world = self.native.session().world_state();
+            let world = self.native.world_state()?;
             let made: BTreeSet<&str> = world.bodies.iter().map(|b| b.definition_name()).collect();
             if let Some(gone) = self
                 .bodies
@@ -497,7 +498,7 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
         return Ok(out);
     }
     let doc = &native.session().doc;
-    let world = native.session().world_state();
+    let world = native.world_state()?;
     let placements = doc.placements();
     for component in shared {
         let paths: Vec<&Vec<u64>> = placements
@@ -608,7 +609,8 @@ fn finish_with(
     // Every display mesh not taken from `previous` at once, on all cores
     // (each the mesh it makes alone). A placement of a definition shares
     // the definition's mesh, so only that is made, never a moved copy.
-    let bodies = &native.session().world_state().bodies;
+    let world = native.world_state()?;
+    let bodies = &world.bodies;
     let kept = |key: Option<u64>, name: &str| {
         previous.as_ref().is_some_and(|p| {
             key.is_some_and(|k| p.by_key.contains_key(&k))
@@ -625,7 +627,7 @@ fn finish_with(
         body.mesh_in_place();
     });
     let mut reuse = Reused::default();
-    for (index, body) in native.session().world_state().bodies.iter().enumerate() {
+    for (index, body) in native.world_state()?.bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
@@ -713,9 +715,7 @@ fn finish_with(
                 let b = body.mesh_bounds();
                 let outline = body.body.outline_bounds();
                 let span = b.min.dist(b.max).max(1.0);
-                let near = |p: solidcraft_engine::geom::Vec3, q: solidcraft_engine::geom::Vec3| {
-                    p.dist(q) <= span * 1e-12
-                };
+                let near = |p: crate::geom::Vec3, q: crate::geom::Vec3| p.dist(q) <= span * 1e-12;
                 // A box the mesh reaches exactly: the body's vertices and edges' controls
                 // span no more than the mesh does (a laminate slab, a pad, a track),
                 // so that box is the body's own. Its volume (meshing the body more

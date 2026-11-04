@@ -3,8 +3,9 @@
 //! with its rotation, or an exact custom outline. Holes come from their
 //! role-owned construction curves.
 
+use crate::geom::prelude::*;
+use crate::geom::{Loop2, Seg2, Vec2};
 use pcbcraft_core::library::{CornerMask, Hole, HoleShape, Outline, PadShape, Segment};
-use solidcraft_engine::geom::{Loop2, Seg2, Vec2};
 use solidcraft_engine::sketch::{CurveKind, Sketch};
 
 use super::{Outcome, problem};

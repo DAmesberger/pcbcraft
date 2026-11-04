@@ -15,7 +15,10 @@
 //! the Pcbcraft camera, with Solidcraft's public theme tokens
 //! (`Tokens::navigation_cube`).
 use egui::{Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
-use pcbcraft_solidcraft::{geom::Vec3, render::Camera};
+use pcbcraft_solidcraft::{
+    geom::{Vec3, prelude::*},
+    render::Camera,
+};
 use solidcraft_ui_egui::theme::Tokens;
 
 /// The cube's square on screen (points), and its half size in it.

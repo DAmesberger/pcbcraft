@@ -913,10 +913,10 @@ fn show_layers(
     view: crate::layer_view::LayerView,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let model = v.model.as_ref().ok_or("no model")?;
-    let (pbr, _) = crate::model_scene::pack(&model.geometry, &view)?;
+    let (stream, _) = crate::model_scene::pack(&model.geometry, &v.decals.geometry, &view)?;
     v.set_layers(view);
     v.repack = None;
-    v.publish_pbr(pbr);
+    v.publish_stream(stream);
     Ok(())
 }
 

@@ -978,7 +978,7 @@ impl Seg {
 
 /// Reader output in millimetres times `scale`, as directed segments.
 fn segments(geometry: &[Geom2], scale: f64, tol: f64) -> Vec<Seg> {
-    let p = |v: &solidcraft_engine::geom::Vec2| [v.x * scale, v.y * scale];
+    let p = |v: &crate::geom::Vec2| [v.x * scale, v.y * scale];
     let mut out = Vec::new();
     for g in geometry {
         match g {

@@ -1430,7 +1430,7 @@ impl<'a> Walk<'a> {
         let geometry = text_geometry_styled(
             None,
             &text,
-            solidcraft_engine::geom::Vec2::new(0.0, 0.0),
+            crate::geom::Vec2::new(0.0, 0.0),
             1.0,
             0.0,
             &style,

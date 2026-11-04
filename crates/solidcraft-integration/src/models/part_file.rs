@@ -15,6 +15,7 @@
 //! parametric. It uses only the pinned fork's public API (the spike's typed
 //! insert, `tests/template_spike.rs`).
 use super::{GeneratedBody, ModelDefinition, PARAMETER_PREFIX, look};
+use crate::geom::prelude::*;
 use crate::native::Native;
 use crate::{Error, Result};
 use pcbcraft_core::library::BodyRole;
@@ -366,7 +367,7 @@ fn finding(code: &str, blocking: bool, message: String) -> PartFinding {
     }
 }
 
-fn arr(v: solidcraft_engine::geom::Vec3) -> [f64; 3] {
+fn arr(v: crate::geom::Vec3) -> [f64; 3] {
     [v.x, v.y, v.z]
 }
 
@@ -462,7 +463,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             .map(|v| v.v)
     };
     // Bodies and materials.
-    let state = session.world_state();
+    let state = crate::native::world_state(&session)?;
     let mut bodies = Vec::with_capacity(state.bodies.len());
     let mut union: Option<[[f64; 3]; 2]> = None;
     for body in &state.bodies {

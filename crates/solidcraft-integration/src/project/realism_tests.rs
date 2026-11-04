@@ -3,8 +3,8 @@
 //! the laminate is physical around them, and the display layers (domes,
 //! finished rings, bores, silkscreen and edge bands) carry their layers.
 use super::*;
+use crate::geom::Vec3;
 use pcbcraft_core::{Engine, Track, Via, ViaSpan};
-use solidcraft_engine::geom::Vec3;
 
 fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");

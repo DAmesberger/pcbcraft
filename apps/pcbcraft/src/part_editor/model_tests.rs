@@ -761,7 +761,7 @@ fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResu
         .viewport
         .take_published()
         .ok_or("the model was published")?;
-    assert!(!model.pbr_detailed.is_empty());
+    assert!(!model.tris.is_empty());
     h.set_marking(MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template("{designator}".into()),
@@ -788,8 +788,8 @@ fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResu
     let last = last.ok_or("nothing was published with the decals")?;
     assert!(!last.instanced.is_empty(), "the decals are drawn");
     assert_eq!(
-        last.pbr_detailed.len(),
-        model.pbr_detailed.len(),
+        last.tris.len(),
+        model.tris.len(),
         "the scene with the decals still draws the whole model"
     );
     Ok(())
