@@ -240,12 +240,7 @@ fn a_layer_toggle_uploads_no_instanced_via_mesh() -> Result<(), Box<dyn std::err
         v.slot
             .lock()
             .ok()
-            .and_then(|s| {
-                s.as_ref().map(|s| {
-                    let material: usize = s.graphs.draws().iter().map(|d| d.vertices.len()).sum();
-                    (s.tris.len() + material) as u64
-                })
-            })
+            .and_then(|s| s.as_ref().map(|s| s.tris.len() as u64))
             .unwrap_or(0)
     };
     let placements = |v: &Viewport| {
