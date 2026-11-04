@@ -484,6 +484,29 @@ impl Looks {
     }
 }
 
+/// Whether a face of `g` with unit normal `n` lies under a layer `view` shows,
+/// so the material stream leaves it out. The stream tests against the opaque
+/// faces' depth with a bias of some pixels' depth slope (Solidcraft's overlay
+/// depth), wider than a 20 µm mask when zoomed out: a covered face would shade
+/// over the layer above it. Its opaque copy stays, for depth.
+fn covered(g: &Geometry, n: Vec3, view: &LayerView) -> bool {
+    use pcbcraft_core::{CopperLayer, Layer};
+    if n.z.abs() < 0.9 {
+        return false;
+    }
+    let side = if n.z > 0.0 { Layer::Top } else { Layer::Bottom };
+    let mask = view.draws(ViewLayer::Mask(side));
+    match g.kind {
+        BodyKind::Substrate => mask,
+        BodyKind::CopperTrack | BodyKind::FillCopper => match g.layer {
+            Some(CopperLayer::Top) => side == Layer::Top && mask,
+            Some(CopperLayer::Bottom) => side == Layer::Bottom && mask,
+            _ => view.draws(ViewLayer::Substrate),
+        },
+        _ => false,
+    }
+}
+
 /// The opaque vertices of the streamed bodies of `geometry` that `view` shows
 /// ([`streamed`]), grouped by view layer, with each layer's run of bytes, and
 /// the material stream of those and of the placed bodies, `decals` too. See
@@ -532,6 +555,7 @@ pub fn pack(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
+            let shaded = !covered(g, face, view);
             for (corner, index) in p.iter().zip(indices) {
                 let normal = usize::try_from(*index)
                     .ok()
@@ -540,7 +564,9 @@ pub fn pack(
                     .unwrap_or(face);
                 let (p, n) = (corner.to_f32(), normal.to_f32());
                 scene.tri(p, n, colour);
-                scene.graphs.vertex(material, p, n, p);
+                if shaded {
+                    scene.graphs.vertex(material, p, n, p);
+                }
             }
         }
         let end = scene.tris.len();
@@ -597,6 +623,9 @@ fn pack_placed(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
+            if covered(g, unit_direction(place.vector(face)).unwrap_or(face), view) {
+                continue;
+            }
             for (corner, index) in p.iter().zip(indices) {
                 let normal = usize::try_from(*index)
                     .ok()
@@ -1274,7 +1303,17 @@ pub(crate) mod tests {
             assert_eq!(draw.object, look.ir.object_space, "{:?}", g.kind);
             let stride = if draw.object { 40 } else { 28 };
             let start = read.entry(at).or_default();
-            let bytes = 3 * stride * g.mesh.triangles.len();
+            let shaded = g
+                .mesh
+                .triangles
+                .iter()
+                .filter_map(|t| g.mesh.tri(t))
+                .filter(|p| {
+                    let face = (p[1] - p[0]).cross(p[2] - p[0]);
+                    !covered(g, unit_direction(face).unwrap_or(Vec3::Z), &LayerView::default())
+                })
+                .count();
+            let bytes = 3 * stride * shaded;
             let body = draw
                 .vertices
                 .get(*start..*start + bytes)
@@ -1333,8 +1372,27 @@ pub(crate) mod tests {
             .iter()
             .map(|d| d.vertices.len() / if d.object { 40 } else { 28 })
             .sum();
-        let triangles: usize = scene.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
+        let view = LayerView::default();
+        let triangles: usize = scene
+            .geometry
+            .iter()
+            .map(|g| {
+                let place = g.place.unwrap_or(Place::IDENTITY);
+                g.mesh
+                    .triangles
+                    .iter()
+                    .filter_map(|t| g.mesh.tri(t))
+                    .filter(|p| {
+                        let face = (p[1] - p[0]).cross(p[2] - p[0]);
+                        let face = unit_direction(face).unwrap_or(Vec3::Z);
+                        !covered(g, unit_direction(place.vector(face)).unwrap_or(face), &view)
+                    })
+                    .count()
+            })
+            .sum();
         assert_eq!(vertices, 3 * triangles);
+        // A mask's own faces are drawn; the laminate's faces under it are not.
+        assert!(triangles > 0);
         Ok(())
     }
 
