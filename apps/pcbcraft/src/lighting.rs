@@ -16,7 +16,7 @@
 //! `[x, y, z, kind, r, g, b, outer, axis xyz, inner, ref_dist², min_dist, …]`
 //! with kind 0 directional (xyz toward the light), 1 point, 4 ambient.
 use pcbcraft_solidcraft::{
-    geom::{Aabb3, Vec3, prelude::*},
+    geom::{Aabb3, Vec3},
     render::Camera,
 };
 use solidcraft_ui_egui::gpu::{ProductLook, StudioPreset};
@@ -174,6 +174,7 @@ pub fn ao_radius(bounds: &Aabb3) -> f32 {
 pub(crate) mod tests {
     use super::*;
     use pcbcraft_core::Fabrication;
+    use pcbcraft_solidcraft::geom::prelude::*;
     use pcbcraft_solidcraft::material::{BodyKind, material};
     use pcbcraft_solidcraft::render::surface::OpaqueSurface;
 
