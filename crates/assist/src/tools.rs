@@ -17,6 +17,7 @@
 //! What is deliberately absent: `library.publish`, publishing to folders,
 //! saving, opening, file exports and library sources. A run only ever
 //! creates drafts; publishing stays with a person (the import review gate).
+use crate::model::ToolSpec;
 use crate::report::ReviewReport;
 use pcbcraft_automation::Session;
 use pcbcraft_core::library::pinout::{
@@ -45,6 +46,8 @@ pub enum ToolOutcome {
         text: String,
         error: bool,
         step: Option<String>,
+        /// Images that go with the text (a rendered datasheet page).
+        images: Vec<crate::model::Image>,
     },
     /// The model submitted its review report: the run is complete.
     Report(Box<ReviewReport>),
@@ -63,21 +66,21 @@ pub struct Workspace {
     pub applied: Option<Value>,
 }
 
-fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "input_schema": {
+fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> ToolSpec {
+    ToolSpec {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        input_schema: json!({
             "type": "object",
             "properties": properties,
             "required": required,
             "additionalProperties": false,
-        },
-    })
+        }),
+    }
 }
 
 /// The tool definitions, in a fixed order so the prompt prefix caches.
-pub fn definitions() -> Vec<Value> {
+pub fn definitions() -> Vec<ToolSpec> {
     let object = json!({"type": "object"});
     let objects = json!({"type": "array", "items": {"type": "object"}});
     let strings = json!({"type": "array", "items": {"type": "string"}});
@@ -622,7 +625,12 @@ fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
         text.truncate(end);
         text.push_str("… [cut: the result exceeded the tool reply limit; ask for a narrower view]");
     }
-    ToolOutcome::Reply { text, error, step }
+    ToolOutcome::Reply {
+        text,
+        error,
+        step,
+        images: Vec::new(),
+    }
 }
 
 /// A short description of an outcome for the run log: its keys, and how
@@ -703,9 +711,9 @@ mod tests {
         let tools = definitions();
         let mut names = std::collections::BTreeSet::new();
         for t in &tools {
-            assert!(names.insert(t["name"].as_str().unwrap_or_default().to_owned()));
-            assert_eq!(t["input_schema"]["type"], "object");
-            assert_eq!(t["input_schema"]["additionalProperties"], false);
+            assert!(names.insert(t.name.clone()));
+            assert_eq!(t.input_schema["type"], "object");
+            assert_eq!(t.input_schema["additionalProperties"], false);
         }
         // Nothing that publishes, saves or touches files.
         for name in &names {

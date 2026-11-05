@@ -159,6 +159,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),
         [command, rest @ ..] if command == "rules-profile" => rules_profile::run(rest),
         [command, rest @ ..] if command == "design-part" => design_part::run(rest),
+        [command, rest @ ..] if command == "llm-key" => design_part::key(rest),
         [command, rest @ ..] if command == "review-diff" => review_diff::run(rest),
         [command, rest @ ..] if command == "part" => part::run(rest),
         _ => Err(usage().into()),

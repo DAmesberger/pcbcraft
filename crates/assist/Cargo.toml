@@ -17,6 +17,11 @@ schemars.workspace = true
 thiserror.workspace = true
 base64 = "0.22"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+# Degrading openly for models without native PDF: text and rendered pages.
+pdf-extract = "0.12"
+hayro = "0.9"
+# API keys per connection: Keychain, Credential Manager, Secret Service.
+keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [dev-dependencies]
 tempfile.workspace = true

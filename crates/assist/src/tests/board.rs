@@ -44,14 +44,12 @@ fn covered(copper: &pcbcraft_core::model::fill::FilledCopper, q: [f64; 2]) -> bo
 #[test]
 fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut transport =
-        ReplayTransport::new(script_on(Session::new(pcbcraft_core::Engine::demo()?))?);
-    transport.prompt_tokens = Some(60_000);
+    let mut backend = anthropic(script_on(Session::new(pcbcraft_core::Engine::demo()?))?);
     let mut s = Session::new(pcbcraft_core::Engine::demo()?);
     let outcome = run(
         &goal(datasheet(&dir)?),
-        &Settings::default(),
-        &mut transport,
+        &RunConfig::default(),
+        &mut backend,
         &mut s,
         &mut |_| {},
         &AtomicBool::new(false),

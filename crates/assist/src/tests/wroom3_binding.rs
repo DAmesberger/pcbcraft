@@ -20,7 +20,7 @@ fn reference_input(tool: &str) -> Fallible<Value> {
     for line in std::fs::read_to_string(path)?.lines() {
         let response: Value = serde_json::from_str(line)?;
         for block in response["content"].as_array().into_iter().flatten() {
-            if block["type"] == "tool_use" && block["name"] == tool {
+            if block["type"] == "tool_call" && block["name"] == tool {
                 return Ok(block["input"].clone());
             }
         }

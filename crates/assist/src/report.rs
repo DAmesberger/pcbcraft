@@ -117,12 +117,33 @@ impl ReviewReport {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct RunFacts {
     pub model: String,
-    /// Where the responses came from: the Claude API, or a replay file
-    /// (whose spend is not real).
+    /// The wire format it was reached by.
+    #[serde(default)]
+    pub provider: String,
+    /// What was declared for it.
+    #[serde(default)]
+    pub capabilities: String,
+    /// Where the responses came from: an endpoint, or a replay file (whose
+    /// spend is not real).
     #[serde(default)]
     pub transport: String,
     pub spent_usd: f64,
-    pub cap_usd: f64,
+    /// `None` when the model has no price: spend is unknown, and the token,
+    /// time and request caps are what bound the run.
+    #[serde(default)]
+    pub cap_usd: Option<f64>,
+    /// Wall-clock time of the run.
+    #[serde(default)]
+    pub elapsed_seconds: f64,
+    /// The server gave no counts for some requests: the tokens are estimates.
+    #[serde(default)]
+    pub usage_estimated: bool,
+    /// How each datasheet reached the model.
+    #[serde(default)]
+    pub documents: Vec<crate::documents::DocumentFacts>,
+    /// What a person should know about this run's result.
+    #[serde(default)]
+    pub warnings: Vec<String>,
     pub requests: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -157,9 +178,68 @@ pub struct RequestFacts {
     pub cache_read_tokens: u64,
     pub output_tokens: u64,
     pub cost_usd: f64,
+    /// How long the response took.
+    #[serde(default)]
+    pub seconds: f64,
     /// The tools it called, in order (`name!` when the call failed or was
     /// not run).
     pub tools: Vec<String>,
+}
+
+/// Fill in what the runner measured once a run has stopped.
+pub(crate) fn finish_facts(
+    facts: &mut RunFacts,
+    ledger: &crate::cost::Ledger,
+    stop: &crate::Stop,
+    session: &pcbcraft_automation::Session,
+) {
+    facts.spent_usd = ledger.spent_usd;
+    facts.requests = ledger.requests;
+    facts.input_tokens = ledger.usage.input_tokens;
+    facts.output_tokens = ledger.usage.output_tokens;
+    facts.cache_write_tokens = ledger.usage.cache_write_tokens;
+    facts.cache_read_tokens = ledger.usage.cache_read_tokens;
+    facts.stop = stop.to_string();
+    let snapshot = session.snapshot();
+    facts.pins = crate::pins::rows(&snapshot);
+    facts.rules = session
+        .engine()
+        .drafts()
+        .items
+        .iter()
+        .find_map(|d| match &d.definition {
+            pcbcraft_core::library::Definition::Component(c) => {
+                Some(pcbcraft_core::functions::rules::check_samples(
+                    &c.declarations(),
+                    &c.resources,
+                    &c.pin_rules,
+                ))
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    for d in crate::tools::drafts(&snapshot) {
+        let id = d["id"].as_u64().unwrap_or(0);
+        facts.drafts.push((
+            id,
+            d["kind"].as_str().unwrap_or("").to_owned(),
+            d["name"].as_str().unwrap_or("").to_owned(),
+        ));
+        let codes = d["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| {
+                let code = f["code"].as_str()?;
+                Some(if f["blocks"].is_null() {
+                    code.to_owned()
+                } else {
+                    format!("{code}!")
+                })
+            })
+            .collect();
+        facts.findings.push((id, codes));
+    }
 }
 
 fn cell(t: &str) -> String {
@@ -180,16 +260,48 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     } else {
         format!(" via {}", facts.transport)
     };
+    let spend = match facts.cap_usd {
+        Some(cap) => format!("spend ${:.2} of the ${cap:.2} cap", facts.spent_usd),
+        None => "no price declared, so spend is not tracked".to_owned(),
+    };
     let _ = writeln!(
         s,
-        "Run: model `{}`{via}, {} requests, spend ${:.2} of the ${:.2} cap; stopped: {}.\n",
-        facts.model, facts.requests, facts.spent_usd, facts.cap_usd, facts.stop
+        "Run: model `{}`{via}, {} requests in {:.0} s, {spend}; stopped: {}.\n",
+        facts.model, facts.requests, facts.elapsed_seconds, facts.stop
     );
+    let estimated = if facts.usage_estimated {
+        " Estimated from the characters where the server reported no counts."
+    } else {
+        ""
+    };
     let _ = writeln!(
         s,
-        "Tokens: {} input, {} cache write, {} cache read, {} output.\n",
+        "Tokens: {} input, {} cache write, {} cache read, {} output.{estimated}\n",
         facts.input_tokens, facts.cache_write_tokens, facts.cache_read_tokens, facts.output_tokens
     );
+    if !facts.capabilities.is_empty() {
+        let _ = writeln!(s, "Declared for this model: {}.\n", facts.capabilities);
+    }
+    for warning in &facts.warnings {
+        let _ = writeln!(s, "**Warning:** {warning}\n");
+    }
+    if !facts.documents.is_empty() {
+        let _ = writeln!(s, "## How the model read the datasheets\n");
+        for d in &facts.documents {
+            let _ = write!(s, "- **{}**: {}", d.title, d.delivery.describe());
+            if d.text_chars > 0 {
+                let _ = write!(s, "; {} pages, {} characters", d.pages, d.text_chars);
+            }
+            if !d.sparse_pages.is_empty() {
+                let _ = write!(s, "; almost no text on pages {:?}", d.sparse_pages);
+            }
+            if !d.pages_viewed.is_empty() {
+                let _ = write!(s, "; it viewed pages {:?}", d.pages_viewed);
+            }
+            let _ = writeln!(s, ".");
+        }
+        let _ = writeln!(s);
+    }
     if let Some(r) = report {
         let _ = writeln!(s, "## Summary\n\n{}\n", r.summary);
         let _ = writeln!(s, "## Sources\n");
@@ -270,12 +382,12 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
         let _ = writeln!(s, "\n## Requests\n");
         let _ = writeln!(
             s,
-            "| # | Stop | Cache write | Cache read | Input | Output | USD | Tools |\n|---|---|---|---|---|---|---|---|"
+            "| # | Stop | Cache write | Cache read | Input | Output | USD | Seconds | Tools |\n|---|---|---|---|---|---|---|---|---|"
         );
         for r in &facts.request_log {
             let _ = writeln!(
                 s,
-                "| {} | {} | {} | {} | {} | {} | {:.3} | {} |",
+                "| {} | {} | {} | {} | {} | {} | {:.3} | {:.0} | {} |",
                 r.n,
                 r.stop_reason,
                 r.cache_write_tokens,
@@ -283,6 +395,7 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
                 r.input_tokens,
                 r.output_tokens,
                 r.cost_usd,
+                r.seconds,
                 r.tools.join(", ")
             );
         }
@@ -332,7 +445,7 @@ mod tests {
         let facts = RunFacts {
             model: "claude-opus-5-5".into(),
             spent_usd: 1.234,
-            cap_usd: 15.0,
+            cap_usd: Some(15.0),
             ..RunFacts::default()
         };
         let md = markdown(Some(&report()), &facts);
