@@ -448,6 +448,19 @@ pub fn effective_fields(
         .collect()
 }
 
+/// An instance's value text: the effective text of the first field its
+/// component selects with `show_on_symbol` and a value ("100 nF"), the
+/// value the schematic and the BOM show. `None` when no shown field has
+/// one; never the component name.
+pub fn value_text(library: &Library, instance: &ComponentInstance) -> Result<Option<String>> {
+    Ok(effective_fields(library, instance)?
+        .into_iter()
+        .filter(|f| f.show_on_symbol)
+        .filter_map(|f| f.text)
+        .map(|t| t.trim().to_owned())
+        .find(|t| !t.is_empty()))
+}
+
 /// The effective value of every field `component` selects when nothing is
 /// assigned, in selection order: what an instance placed now would show.
 pub fn default_fields(

@@ -752,6 +752,69 @@ fn bom_and_resolve_groups_follow_requirements_footprint_and_parts() -> Result<()
     Ok(())
 }
 
+/// E2E UX run finding 16: the BOM's Value is the value the schematic shows
+/// (the first shown field), else the Part's MPN, else the name of a part of
+/// more than two terminals, else empty, never a passive's component name.
+#[test]
+fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<()> {
+    let mut s = setup()?;
+    let ten = publish_resistor(&mut s, "EX-R0603-10K0-F", 10e3)?;
+    placed(&mut s, "R1", "10k")?;
+    let r2 = place(&mut s.engine, &s.fixture, "R2", 1, [0.0, 0.0])?.0;
+    assign(&mut s.engine, vec![r2], Some(ten))?;
+    place(&mut s.engine, &s.fixture, "R3", 1, [0.0, 0.0])?;
+    let ic = component_with_fields(
+        &mut s.engine,
+        &Spec {
+            name: "Regulator EX-LDO",
+            terminals: vec![
+                (1, "IN", passive()),
+                (2, "GND", passive()),
+                (3, "OUT", passive()),
+            ],
+            units: vec![(
+                1,
+                "A",
+                vec![(1, [0.0, 0.0]), (2, [0.0, -2.54]), (3, [5.08, 0.0])],
+            )],
+            package: vec![(1, "1"), (2, "2"), (3, "3")],
+            mapping: vec![(1, 1), (2, 2), (3, 3)],
+            physical: true,
+        },
+        vec![],
+    )?;
+    place(&mut s.engine, &ic, "U1", 1, [10.0, 0.0])?;
+
+    let csv = crate::fabrication::assembly::bom_parts_csv(s.engine.project())?;
+    let values: Vec<(&str, &str)> = csv
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let mut f = l.split(',');
+            Some((f.next()?, f.next()?))
+        })
+        .collect();
+    assert_eq!(
+        values,
+        [
+            ("R1", "10 kΩ"),
+            ("R2", "EX-R0603-10K0-F"),
+            ("R3", ""),
+            ("U1", "Regulator EX-LDO")
+        ]
+    );
+    let grouped = crate::fabrication::assembly::bom_csv(s.engine.project())?;
+    assert!(
+        grouped.lines().any(|l| l.starts_with("1,1,R1,10 kΩ,")),
+        "{grouped}"
+    );
+    assert!(
+        grouped.lines().any(|l| l.starts_with("3,1,R3,,")),
+        "{grouped}"
+    );
+    Ok(())
+}
+
 #[test]
 fn a_component_update_keeps_or_clears_the_part_and_never_repoints_it() -> Result<()> {
     let mut s = setup()?;

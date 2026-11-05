@@ -413,7 +413,7 @@ fn dimension(page: &mut Page, a: P, b: P, normal: P, off: f64, value: f64) {
 }
 
 fn tool_label(tool: &DrillTool) -> String {
-    format!("{}{}", if tool.plated { "P" } else { "N" }, tool.number)
+    format!("T{}", tool.number)
 }
 
 /// The fabrication drawing: outline with dimensions, drill table, stackup

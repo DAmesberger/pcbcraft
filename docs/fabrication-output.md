@@ -93,7 +93,7 @@ The check reports every project issue under the chosen fabrication profile. Over
 - **Header:** `M48`, X2 attributes as `; #@! TF.…` comments, `FMAT,2`, `METRIC`, and one `TnnCd.ddd` tool table per file, each tool preceded by its `TA.AperFunction` comment.
 - **Body:** `%`, `G90`, `G05`, then decimal-point coordinates at 3 decimals, so no zero-suppression convention applies. The file ends with `T0` and `M30`.
 - **Slots:** pad slots and plated straight board slots are canned `G85` slots with the tool's width.
-- **Tools:** one per (plating, diameter to 1 µm, hit or slot, function), numbered from 1 per file.
+- **Tools:** one per (plating, diameter to 1 µm, hit or slot, function), numbered from 1 across both files, plated first (T1–T3 plated, T4 non-plated), so a number names one tool in the drill table, the drill map, the fabrication drawing and either file. Excellon numbers tools per file, but a fabricator who loads both files into one CAM job, or reads the combined drill table, then never sees two tools called T1.
 
 ### Pick-and-place
 
@@ -106,6 +106,7 @@ The check reports every project issue under the chosen fabrication profile. Over
   - Bottom angle seen from below: `(180 − rotation) mod 360`, optionally with bottom x negated.
   - Rotation offsets by package-name pattern.
 - **CSV format:** RFC 4180 quoting, LF line ends, UTF-8 without BOM.
+- **Value column** (pick-and-place and both BOMs): the value the schematic shows, the first field shown on the symbol that has a value ("100 nF"). Without one: the chosen Part's MPN, else the component name for a part of more than two terminals (an IC's name is its identity), else empty. A passive's component name ("Chip capacitor 0603 (1608 metric)") is a package description the Package column already carries, so it is never written as a value; its Status reads "no part".
 
 ### Drawings
 

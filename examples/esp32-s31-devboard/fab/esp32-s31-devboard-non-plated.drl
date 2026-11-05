@@ -8,16 +8,16 @@ M48
 FMAT,2
 METRIC
 ; #@! TA.AperFunction,NonPlated,NPTH,MechanicalDrill
-T1C0.650
+T4C0.650
 ; #@! TA.AperFunction,NonPlated,NPTH,MechanicalDrill
-T2C2.700
+T5C2.700
 %
 G90
 G05
-T1
+T4
 X17.110Y6.280
 X22.890Y6.280
-T2
+T5
 X3.500Y3.500
 X36.500Y3.500
 X3.500Y60.500
