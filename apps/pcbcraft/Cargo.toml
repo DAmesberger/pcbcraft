@@ -5,8 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
+# The workspace lints, except unsafe_code: denied, not forbidden, so that
+# src/open_documents.rs (macOS file-open events) can allow it: it has no safe
+# API. Keep the rest in sync with [workspace.lints], as Solidcraft's app does.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
 
 [dependencies]
 pcbcraft-core.workspace = true
@@ -27,6 +38,12 @@ spade = "2.15"
 # about unsaved work instead of ending the app at once.
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21.2", default-features = false }
+# Files opened from Finder and the Dock (src/open_documents.rs), as Solidcraft's;
+# all already come with eframe and rfd.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSNotification", "NSOperation", "NSString", "NSURL"] }
+block2 = "0.6"
 
 [dev-dependencies]
 tempfile.workspace = true
