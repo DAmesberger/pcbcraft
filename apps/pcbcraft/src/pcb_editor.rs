@@ -338,6 +338,8 @@ pub struct PcbEditor {
     layer: CopperLayer,
     /// The board's copper layers, top to bottom, per revision.
     stack: Vec<CopperLayer>,
+    /// The Board card's Project row: the name last seen and the text being edited.
+    project_name: (String, String),
     /// The Route tool's board point under the pointer while it hovers the
     /// canvas: where a layer key's via goes during a route.
     hover_at: Option<Point>,
@@ -472,6 +474,7 @@ impl Default for PcbEditor {
             route_lit: None,
             layer: CopperLayer::Top,
             hover_at: None,
+            project_name: Default::default(),
             stack: vec![CopperLayer::Top, CopperLayer::Bottom],
             width: 0.3,
             width_from: None,
@@ -1287,8 +1290,8 @@ impl PcbEditor {
                 self.fill_section(ui, project, engine.revision(), fill)
             }
             Inspected::Board | Inspected::Review => {
-                self.board_section(ui, project);
-                self.board_shape_section(ui, engine)
+                let renamed = self.board_section(ui, project);
+                renamed.or(self.board_shape_section(ui, engine))
             }
         }
     }
