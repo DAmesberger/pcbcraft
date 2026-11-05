@@ -1324,7 +1324,7 @@ const MCU_PINS: [&str; 14] = [
 
 /// On every row the left and the right pin names, measured as printed,
 /// lie inside the body and keep at least a millimetre between them.
-fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) {
+fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) -> Result<()> {
     let m = crate::schematic::scene::LABEL_METRIC;
     let unit = &symbol.units[0];
     let Some(body) = unit.graphics.iter().find_map(|g| match &g.item {
@@ -1334,7 +1334,7 @@ fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) {
         } => Bounds::of([*a, *b]),
         _ => None,
     }) else {
-        panic!("no body");
+        return Err(Error::NotFound("no body".into()));
     };
     let boxes: Vec<(f64, Bounds)> = unit
         .pins
@@ -1369,21 +1369,22 @@ fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) {
             assert!((k - k.round()).abs() < 1e-9, "off grid {c}");
         }
     }
+    Ok(())
 }
 
 #[test]
-fn a_generated_ic_box_is_as_wide_as_its_pin_names() {
+fn a_generated_ic_box_is_as_wide_as_its_pin_names() -> Result<()> {
     let terminals: Vec<(TerminalId, &str)> = MCU_PINS
         .iter()
         .enumerate()
         .map(|(k, name)| (TerminalId(k as u32 + 1), *name))
         .collect();
     let symbol = samples::named_block_symbol(DefinitionId(7), &terminals);
-    assert_names_fit(&symbol, &MCU_PINS);
+    assert_names_fit(&symbol, &MCU_PINS)
 }
 
 #[test]
-fn an_existing_narrow_box_widens_when_its_pins_are_renamed() {
+fn an_existing_narrow_box_widens_when_its_pins_are_renamed() -> Result<()> {
     // Drawn while the pins were named by number, as a package template
     // draws it, then renamed by a pin table.
     let ids: Vec<TerminalId> = (1..=14).map(TerminalId).collect();
@@ -1391,7 +1392,7 @@ fn an_existing_narrow_box_widens_when_its_pins_are_renamed() {
     let before = symbol.clone();
     let name = |t: TerminalId| MCU_PINS.get(t.0 as usize - 1).map(|n| (*n).to_owned());
     assert!(samples::fit_pin_names(&mut symbol, name));
-    assert_names_fit(&symbol, &MCU_PINS);
+    assert_names_fit(&symbol, &MCU_PINS)?;
     // Rows, pin lengths and graphics IDs are kept: only the width changed.
     for (a, b) in symbol.units[0].pins.iter().zip(&before.units[0].pins) {
         assert_eq!(
@@ -1401,4 +1402,5 @@ fn an_existing_narrow_box_widens_when_its_pins_are_renamed() {
     }
     // Fitting again changes nothing.
     assert!(!samples::fit_pin_names(&mut symbol, name));
+    Ok(())
 }

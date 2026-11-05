@@ -674,7 +674,8 @@ impl SchematicEditor {
         let ((a_net, a), (b_net, b)) = (side(from), side(to));
         match (a, b) {
             (Some(a), Some(b)) => {
-                !(a_net.is_some() && a_net == b_net) && !a.eq_ignore_ascii_case(&b)
+                let same_net = a_net.is_some() && a_net == b_net;
+                !(same_net || a.eq_ignore_ascii_case(&b))
             }
             _ => false,
         }

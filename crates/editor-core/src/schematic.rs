@@ -1073,15 +1073,15 @@ fn draw(
     };
     // The value slot (a `ComponentName` text) shows the instance's value
     // (`instances::value_text`, the value the BOM shows too), else the
-    // Part's MPN, else, for a part of more than two terminals (an IC, whose
-    // name is its identity), the component name. A two-terminal part
-    // without a value shows none: its component name ("Chip capacitor
-    // 0603") is a description, never a value.
+    // Part's MPN, else the component name, which identifies an IC
+    // ("AP2112K-3.3") or a rail symbol ("GND"). A two-terminal part without
+    // a value shows none: its component name ("Chip capacitor 0603") is a
+    // description, never a value.
     let value = r
         .value
         .clone()
         .or_else(|| r.mpn.clone().filter(|m| !m.trim().is_empty()))
-        .or_else(|| (component.terminals.len() > 2).then(|| r.component_name.to_owned()));
+        .or_else(|| (component.terminals.len() != 2).then(|| r.component_name.to_owned()));
     // Turned a quarter, the symbol keeps its designator and value upright
     // and beside the body, reading outward from it, instead of along the
     // pins where they would run over neighbouring pins and labels.
