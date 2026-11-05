@@ -17,7 +17,8 @@ use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project, updates::C
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
-/// Bound on typed placement coordinates (mm); the board is far smaller.
+/// Bound on typed placement coordinates (mm). The engine bounds a part's
+/// datum to its working area, a smaller square, and says so when refusing.
 const COORDINATE_LIMIT: f64 = 10_000.0;
 
 /// Why a locked placement's fields and actions are disabled.
@@ -106,8 +107,7 @@ impl PcbEditor {
                 .response
                 .on_disabled_hover_text(why(fixed));
             if let Some(message) = self.errors.0.get(&Field::Position) {
-                let message = position_error(project, self.position, message);
-                kit::field_error(ui, &position, &message, true);
+                kit::field_error(ui, &position, message, true);
             }
             let rotation = ui
                 .add_enabled_ui(!(locked || (fixed && turns)), |ui| {
@@ -433,22 +433,5 @@ impl PcbEditor {
             }
         });
         action.map(Operation::Layout)
-    }
-}
-
-/// The Position field's refusal: the board bounds when the typed point is
-/// off the board (the field's own value says why), else the engine's
-/// wording.
-fn position_error(project: &Project, position: Point, refusal: &str) -> String {
-    let [w, h] = project.board_size;
-    let inside = (0.0..=w).contains(&position[0]) && (0.0..=h).contains(&position[1]);
-    if inside {
-        refusal.to_owned()
-    } else {
-        format!(
-            "Must stay inside the board ({} × {} mm)",
-            kit::number_text(w),
-            kit::number_text(h)
-        )
     }
 }

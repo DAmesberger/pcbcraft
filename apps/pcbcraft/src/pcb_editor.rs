@@ -3852,9 +3852,9 @@ mod tests {
         Ok(())
     }
 
-    /// An off-board Position is refused by the engine; the refusal comes
-    /// back to the field, which keeps the typed value marked with the
-    /// board bounds under it, and the document is unchanged.
+    /// A Position outside the working area is refused by the engine; the
+    /// refusal comes back to the field, which keeps the typed value marked
+    /// with the engine's bounds under it, and the document is unchanged.
     #[test]
     fn a_refused_position_shows_under_the_field_and_is_not_resent()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3866,7 +3866,7 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.set_selection(Some(r1), None, None);
         frame(&mut editor, &engine, &ctx, vec![]);
-        editor.position = [500.0, 9.0];
+        editor.position = [5000.0, 9.0];
         let operation = frame(&mut editor, &engine, &ctx, vec![])
             .1
             .ok_or("the field did not commit")?;
@@ -3874,7 +3874,7 @@ mod tests {
         let error = engine
             .apply(engine.revision(), operation)
             .err()
-            .ok_or("the engine took an off-board placement")?;
+            .ok_or("the engine took a part outside the working area")?;
         assert_eq!(engine.project(), &before);
         // The app hands it back during the frame that applied it.
         let mut refused = Some(refusal::Refused { origin, error });
@@ -3891,10 +3891,10 @@ mod tests {
         assert!(
             shown
                 .iter()
-                .any(|t| t == "Must stay inside the board (60 × 40 mm)"),
+                .any(|t| t == "R1 must stay within -1000 to 2000 mm on each axis"),
             "{shown:?}"
         );
-        assert_eq!(editor.position, [500.0, 9.0], "the typed value stays");
+        assert_eq!(editor.position, [5000.0, 9.0], "the typed value stays");
         assert!(refusal::unclaimed(&ctx).is_empty(), "the field claimed it");
         // Another subject drops the edit and its refusal.
         editor.set_selection(None, None, None);
@@ -3902,7 +3902,7 @@ mod tests {
         assert!(
             !texts(&output)
                 .iter()
-                .any(|t| t.starts_with("Must stay inside"))
+                .any(|t| t.contains("must stay within"))
         );
         Ok(())
     }
