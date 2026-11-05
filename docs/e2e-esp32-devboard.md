@@ -18,7 +18,7 @@ The agent used the tools as a user would. It added no features and made no code 
   - DRC and the production check are clean under the built-in *Standard 6/6* profile with edge-clearance overrides.
   - The remaining warnings: 43 starved thermals, 5 envelope-only 3D models, 1 legend over a pad opening, and the pair skew discussed in gap 2.
 - **Outputs:** Gerber X2 (4 copper layers, 2 masks, paste, legend, profile), plated and non-plated Excellon, drill map and table, job file, top pick-and-place, both BOMs, fabrication and assembly PDFs, and the schematic PDF.
-- **Reproducibility:** the replay (655 requests, 204 KB) rebuilds a byte-identical `project.json`. It took 20.7 s and 52 s on a heavily loaded machine (load average in the hundreds, shared with other agents); about half of the requests' time is serialising the 0.5 MB snapshot each mutation returns (gap 1).
+- **Reproducibility:** the replay (655 requests, 204 KB) rebuilds a byte-identical `project.json`. It took 20.7 s and 52 s on a heavily loaded machine (load average in the hundreds, shared with other agents); replies are now compact (gap 1): the replay takes 3.0 s against 4.5 s with full replies on the same quiet machine.
 - **Independent Gerber check:**
   - PyGerber 2.4.3 (MIT, not an EDA tool) parsed every Gerber layer and rendered it (`images/`).
   - Copper bounding boxes lie 0.305 mm inside the 40 × 64 board, as the 0.3 mm edge rule requires. The renders show the antenna keep-out empty on every layer, the rounded corners, the mounting-hole clearances and the buses.
@@ -36,7 +36,7 @@ The agent used the tools as a user would. It added no features and made no code 
 
 | # | Stage | Severity | What happened | What a user would expect | Suggested fix | Estimate |
 |---|---|---|---|---|---|---|
-| 1 | Automation (MCP) | **blocker** for MCP clients | Every mutation reply carries the whole document snapshot: 0.5 MB per call on this board and 1.7 MB after `fill.refill`. MCP sends it twice, as text and as `structuredContent`. `tools/list` is 607 KB, of which `project_apply`'s schema is 319 KB and `project_query`'s 199 KB. An LLM MCP client would exhaust its context on the tool list, or after one placement. The run used `stdio` with its own client, which discarded the replies. | Compact replies by default: outcome, new and changed ids, revision, and findings for what changed. A tool list an agent can load. | Use the datasheet assistant's compact reply shape as the default for MCP and stdio, with `verbose: true` returning the snapshot. Split `project_apply` and `project_query` into per-editor tools, or serve operation schemas on demand. | 3–4 h replies, 4–6 h tool schemas |
+| 1 | Automation (MCP) | **fixed** | Was: every mutation reply carried the whole document snapshot (0.5 MB per call, 1.7 MB after `fill.refill`), MCP sent it twice, and `tools/list` was 625 KB. Now replies on `stdio` and MCP are compact (revision, outcome, changed ids, new and resolved findings, changed drafts), sent once, and `tools/list` is 45 KB with operation schemas on demand through `project_schema`. Measured [below](#gap-1-measured). | | | Done |
 | 2 | Diff pair / length | major | Pair skew and uncoupled length use the total copper of each net, branches included. A USB-C receptacle must join both plug orientations (A6–B6, A7–B7 through a via jumper), so the check reports a 4.735 mm skew. The receptacle-to-module paths are equal by hand: 23.575 mm each. Tuning to satisfy the check would create real skew, so the warning was left. | Length along the pad-to-pad path the pair connects, with stubs and branches reported separately. Pair endpoints settable. | Measure each half along the path between the pair's chosen endpoints, list branch stubs as their own lines in the length report, and exclude them from skew. | 4–6 h |
 | 3 | 3D / native | minor (measure again) | `project.export_native` of the routed board took **9.8 s of CPU** (169 s wall: the machine's load average was 350–650, with other agents building). The shipped showcase took **4.6 s of CPU** (99 s wall) in the same conditions; it is documented at 2.3 s wall on an idle machine. So the board costs about twice the showcase, which suggests about 5 s wall when idle. The memory target is that the 3D view opens instantly. The wall times measured here are not representative. | A 3D view that opens in about a second for a board this size. | Measure on an idle machine with `build_timings`, then look at the module part file (110 bodies) and the inner fills around 55 vias. | 1 h to measure, then according to findings |
 | 4 | Library | major | A part made in another project, such as the WROOM-3 drafts in their example file, cannot be brought into a board project except through a library folder. A library folder mints random lineage ids (`getrandom`), so a replay that places from a folder is not reproducible. The run therefore built the board *inside* the module's project file, which is why it is named "Untitled" (gap 15). | Import a part (with its closure) from another `.pcbcraft` file, and deterministic ids in replays. | Add `library.import_from_project {path, root}` as one undo step. Let the folder writer take caller-supplied ids, or have replays map recorded ids. | 4–6 h |
@@ -61,6 +61,29 @@ The agent used the tools as a user would. It added no features and made no code 
 | 23 | Automation | polish | The 4.4 MB `commands` dump is hard to navigate. Editor tags are PascalCase (`"editor": "Library"`) beside dotted lowercase command ids. Outcomes name ids differently (`id`, `class`, `pair`, `ids`, `sheet`), and class and pair id 0 is easy to mistake for "none". Stored values show float noise (10 µF as `9.999999999999999e-06`). | One small example per command, consistent outcome keys, ids from 1. | Generate examples into `commands`, and normalise outcome id keys. | 2–3 h |
 | 24 | Build | polish | A cold `ci` build of `pcbcraft-cli` took 27 minutes, and the desktop app built for a further 40+ minutes in this worktree. The machine was shared with other agents' builds, so these times are inflated; a fresh worktree still builds everything from scratch. | A prebuilt CLI for agents, or a shared target cache across worktrees. | Shared `CARGO_TARGET_DIR` or sccache in the dev shell, and published CLI binaries. | 1–2 h |
 | 25 | 3D | minor | An envelope 3D model is centred on the footprint origin. For a connector whose origin is the PCB edge (USB4105), half the box hung off the board, and nothing flagged it. | The envelope placed over the courtyard or pads, or a check that the body lies on the board. | Default the envelope to the courtyard centre, and warn when a body extends past the board outline. | 1–2 h |
+
+### Gap 1 measured
+
+On `examples/esp32-s31-devboard`, the `ci` profile, `pcbcraft-cli` at 70ee104 against this change, the same machine and the same scripted client. The replay still rebuilds a byte-identical `project.json` (SHA-256 `49d8a8ed…`). The client in `authoring/pc.py` reads the document from `project.inspect`, so it asks for it with `verbose: true`; the recorded requests are unchanged.
+
+| What | Before | After |
+|---|---|---|
+| Replay, all 655 replies | 303,937,483 bytes | 347,707 bytes |
+| Median reply | 481,396 | 167 |
+| Largest reply | 1,745,903 (`fill.refill`) | 9,243 (`component.check_drafts`, a query) |
+| `layout.route_step`, median | 524,446 | 137 |
+| `fill.refill` | 1,745,903 | 3,832 |
+| Replay time | 4.5 s | 3.0 s |
+| MCP `tools/list` | 624,905 | 45,454 |
+| `project_apply` tool definition | 326,098 | 3,550 |
+| `project_query` tool definition | 200,728 | 3,545 |
+| MCP `project_open` on the board | 3,547,229 | 865 |
+| MCP `layout.add_via` | 3,573,335 | 3,488 (at the cap of 20 listed findings; the rest are counted) |
+| MCP `fill.refill` | 3,564,759 | 347 |
+| MCP `project_inspect` with `verbose: true` | | 1,815,377 (sent once) |
+
+**Why schemas on demand, not per-editor tools.** Splitting by editor leaves a 197 KB `library` tool, and one tool per operation means 126 more tools. The median operation's schema is 1.2 KB, but the largest 136 KB, because they share the `Definition` type. So `tools/list` names every operation and query, and `project_schema {name}` returns one exact schema (up to 24 KiB of definitions, `def` reads the others). All of it is generated from the catalog, so a command added to the engine is listed and served with no further work.
+
 
 ## Choices the run made (adjust if they are wrong)
 

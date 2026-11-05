@@ -351,9 +351,9 @@ impl Session {
             Operation::Library(command),
             hosted(),
         )?;
-        let mut snapshot = self.snapshot();
-        snapshot["outcome"] = serde_json::to_value(outcome)?;
-        Ok(snapshot)
+        let mut reply = self.document_reply();
+        reply["outcome"] = serde_json::to_value(outcome)?;
+        Ok(reply)
     }
 
     pub(super) fn marking_surfaces(&self, params: MarkingSurfacesParams) -> Result<Value> {
