@@ -287,6 +287,12 @@ pub struct Label {
     /// Quarter turns counter-clockwise of the drawing about its point.
     #[serde(default)]
     pub rotation: Rotation,
+    /// A person placed, moved or turned it: it is drawn at `position` and
+    /// `rotation`. Otherwise a label whose only wire goes to a pin sits on
+    /// that pin's end and faces away from its symbol, placed when drawn
+    /// (`schematic::labels::attached_pin`, `schematic::scene::sheet_labels`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub manual: bool,
 }
 
 /// Which edge of a sheet symbol a sheet pin sits on.

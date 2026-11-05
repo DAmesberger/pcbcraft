@@ -8,7 +8,7 @@ As built on 2 November 2026. This extends the single-sheet capture described in 
 | --- | --- | --- |
 | Sheets in page order, page size and orientation | `Project.sheets` (`Sheets { list, next }`) | `SheetId` (own allocation space; a new project has sheet 1, "Sheet 1", A4 landscape) |
 | Title-block properties: title, revision, date, author, company | `Project.properties` | — |
-| Labels and power ports | `Project.labels` (`Label { id, sheet, name, kind, position, rotation }`) | object `Id` |
+| Labels and power ports | `Project.labels` (`Label { id, sheet, name, kind, position, rotation, manual }`) | object `Id` |
 | Sheet symbols and their pins | `Project.sheet_symbols` (`SheetSymbol { id, sheet, child, position, size, pins }`) | object `Id` (pins too) |
 | Notes, lines, rectangles | `Project.drawings` (`SheetDrawing { id, sheet, item }`) | object `Id` |
 | Sheet of a symbol occurrence or junction | `SymbolOccurrence.sheet`, `Junction.sheet` | — |
@@ -27,6 +27,16 @@ A label (`label.place`) is a named connection point: wires end on it like on a j
 | `power` (`style` ground/bar/arrow) | Like `global`: GND, +3V3, VBUS … are one net across all sheets |
 
 Names are net names (1–64 bytes, no spaces) and compare ASCII-case-insensitively, as net names do. `label.place` may `attach` the label: to `{"wire", "at"}` (the label sits on that point and splits the wire there; at a wire end it is wired to that end), or to a terminal, junction, label or sheet pin (a wire joins them). `label.move` moves it (wires follow), `label.edit` renames it, changes its kind or turns it, `label.remove` removes it (wires through it stay joined at a junction left in its place; a single dangling wire goes).
+
+### Placement on a pin
+
+A label or power port placed with `attach` to a terminal places itself; nothing of that placement is stored. While it is not `manual` and its only wire goes to a pin on its sheet (`schematic::labels::attached_pin`), its connection point is that pin's end (`labels::anchor`, which every wire end, drag and hit test uses), so the wire to it has no length and is not drawn. It faces away from the symbol along the pin, from where the pin meets the body to its end, after the occurrence's rotation and mirror (`labels::outward`): a flag or tag runs outward on the pin's line with its name reading left to right or bottom to top, and a supply port's bar or arrow or a ground's bars lie beyond the pin's end, so a GND port on a left-side pin points left. `schematic::scene::sheet_labels` is the one placement the canvas, `schematic.scene` and the PDF draw from. It places the self-placing labels of a sheet row by row. Each stands off its pin along a wire-width leader in 2.5 mm steps (up to six) until its ink, with a 0.2 mm gap, clears every symbol's body, texts, pin names, numbers and stubs, and every label already placed. On a dense row of ground ports, whose 3 mm bars are wider than the 2.5 mm pitch, the ports alternate between two depths. A port pointing up or down from a row whose names would reach across each other reads its name along its stem. Label text is measured at 0.95 cap heights per character (`scene::LABEL_METRIC`, Helvetica capitals as printed), wider than the core metric's 0.6, so flags fit their names and the clearance holds in print. Placement follows the pins: moving or turning a symbol moves its labels, and an existing document is placed this way when it is drawn.
+
+A person's placement wins: `label.move` and a `label.edit` that turns the label set `manual` (omitted from the file when false). A moved label keeps the way it faced and stays where it was dropped, with its wire drawn to the pin. A turned label stays on the pin's end at the new rotation. A label placed free or on a wire is `manual` from the start. There is no command yet to hand a manual label back to automatic placement.
+
+Label, port and sheet-pin text is 1.0 mm, the pin name and number height (`library::graphics::PIN_TEXT_HEIGHT_MM`). Every net label has an outline 2 mm tall, so outlines on adjacent 2.5 mm pins keep a gap and a name's underscores clear the edge: a global label is the pointed flag of its port shape (a square-cornered box when passive), a local label a tag with rounded corners, both stroked at the sheet's line width like power ports. The name runs along the outline, centred.
+
+A pin name or number longer than its pin reaches past the pin's end. A self-placing label starts beyond it, on a leader that continues the pin, so the number sits over a line and the port or flag starts after it.
 
 Net identity is unchanged: nets are terminal groups with persistent IDs (`nets::reconcile`); labels, power ports and sheet pins only add connections. The PCB sees the same `Net` objects, so net classes, explicit class assignments, board sync and routing protection work across sheets unchanged. A label edit that changes a routed net's membership is refused like any direct edit; preview it through `project.preview_update` (`Change::Schematic`).
 

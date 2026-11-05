@@ -15,7 +15,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
 /// An RGBA picture, unpremultiplied bytes, row-major from the top left.
-pub(super) struct Picture {
+pub(crate) struct Picture {
     pub(super) width: usize,
     pub(super) height: usize,
     pixels: Vec<[f32; 4]>,
@@ -36,7 +36,7 @@ impl Picture {
         Some(Color32::from_rgb(byte(r), byte(g), byte(b)))
     }
 
-    pub(super) fn png(&self) -> Option<Vec<u8>> {
+    pub(crate) fn png(&self) -> Option<Vec<u8>> {
         let bytes: Vec<u8> = self
             .pixels
             .iter()
@@ -169,9 +169,15 @@ pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
     })
 }
 
+/// Draw `ui` on the test screen over the viewport background. The schematic
+/// canvas uses it too.
+pub(crate) fn render(draw: impl FnMut(&mut egui::Ui)) -> Picture {
+    picture_of(SCREEN, Tokens::get().viewport_bottom, draw)
+}
+
 /// Draw `draw` in a `size` screen twice (the first frame uploads the fonts
 /// and icons) and fill it over `background`.
-pub(super) fn picture_of(
+pub(crate) fn picture_of(
     size: [f32; 2],
     background: Color32,
     mut draw: impl FnMut(&mut egui::Ui),

@@ -65,7 +65,7 @@ mod part_place;
 mod placement_card;
 mod production;
 #[cfg(test)]
-mod raster_tests;
+pub(crate) mod raster_tests;
 mod route_card;
 #[cfg(test)]
 mod route_tests;

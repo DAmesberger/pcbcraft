@@ -134,7 +134,9 @@ pub(super) struct SceneCache {
 /// corner, a note's anchor, a line's start or a rectangle's corner.
 pub(super) fn anchor(project: &Project, item: Item) -> Option<Point> {
     match item {
-        Item::Label(id) => project.label(id).map(|l| l.position),
+        Item::Label(id) => project
+            .label(id)
+            .map(|l| schematic::labels::anchor(project, l)),
         Item::SheetSymbol(id) => project.sheet_symbol(id).map(|s| s.position),
         Item::SheetPin(id) => project.sheet_pin(id).map(|(s, p)| s.pin_position(p)),
         Item::Drawing(id) => project.drawing(id).map(|d| match &d.item {
@@ -294,8 +296,8 @@ impl SchematicEditor {
         for s in project.sheet_symbols.iter().filter(|s| s.sheet == sheet) {
             items.push((Item::SheetSymbol(s.id), scene::sheet_symbol(project, s)));
         }
-        for l in project.labels.iter().filter(|l| l.sheet == sheet) {
-            items.push((Item::Label(l.id), scene::label(l)));
+        for (id, drawing) in scene::sheet_labels(project, sheet) {
+            items.push((Item::Label(id), drawing));
         }
         let page = project.sheet(sheet).map(|s| {
             let [w, h] = s.size_mm();
@@ -372,7 +374,12 @@ impl SchematicEditor {
             .labels
             .iter()
             .filter(|l| l.sheet == self.sheet)
-            .map(|l| (WireTarget::from(WireEnd::label(l.id)), l.position));
+            .map(|l| {
+                (
+                    WireTarget::from(WireEnd::label(l.id)),
+                    schematic::labels::anchor(project, l),
+                )
+            });
         let pins = project
             .sheet_symbols
             .iter()
@@ -622,7 +629,13 @@ impl SchematicEditor {
                     && (l.kind.is_global() == label.kind.is_global())
                     && (label.kind.is_global() || l.sheet == label.sheet)
             })
-            .map(|l| (Item::Label(l.id), l.sheet, l.position))
+            .map(|l| {
+                (
+                    Item::Label(l.id),
+                    l.sheet,
+                    schematic::labels::anchor(project, l),
+                )
+            })
             .collect();
         places.sort_by_key(|(_, s, _)| project.sheets.number(*s).unwrap_or(usize::MAX));
         places

@@ -77,7 +77,9 @@ pub fn end_position(project: &Project, end: WireEnd) -> Option<Point> {
     match end {
         WireEnd::Terminal(endpoint) => pin_position(project, endpoint),
         WireEnd::Junction(j) => project.junction(j.junction).map(|j| j.position),
-        WireEnd::Label(l) => project.label(l.label).map(|l| l.position),
+        WireEnd::Label(l) => project
+            .label(l.label)
+            .map(|l| super::labels::anchor(project, l)),
         WireEnd::SheetPin(p) => project
             .sheet_pin(p.sheet_pin)
             .map(|(symbol, pin)| symbol.pin_position(pin)),
