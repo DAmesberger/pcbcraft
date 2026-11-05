@@ -497,6 +497,38 @@ pub fn field_error(ui: &mut Ui, field: &Response, message: &str, not_stored: boo
     line_hover(response, message, &tip, cut)
 }
 
+/// A refused commit of `field` whose field went back to the stored value:
+/// no red ring (what the field shows is valid), and the whole reason under
+/// it, wrapped, so a refusal that names parts and distances is read in
+/// full. Call it right after the field's row; it shows until the field is
+/// edited again or the document changes.
+pub fn field_refused(ui: &mut Ui, field: &Response, message: &str) -> Response {
+    let t = Tokens::get();
+    let size = t.font_small;
+    let left = field.rect.left().max(ui.max_rect().left());
+    let width = (ui.max_rect().right() - left - size - t.space_4).max(24.0);
+    let galley = ui.painter().layout(
+        message.to_owned(),
+        FontId::proportional(t.font_small),
+        t.error,
+        width,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width().max(0.0), galley.size().y),
+        Sense::hover(),
+    );
+    let first = line_height(ui, &FontId::proportional(t.font_small));
+    severity_glyph(
+        ui.painter(),
+        pos2(left + size / 2.0, rect.top() + first / 2.0),
+        size,
+        Level::Error,
+    );
+    ui.painter()
+        .galley(pos2(left + size + t.space_4, rect.top()), galley, t.error);
+    response
+}
+
 /// A dialog's refusal: the last body row, an error band with one clipped
 /// line and the full text on hover. Shown once; the dialog reveals it.
 pub fn refusal(ui: &mut Ui, message: &str) -> Response {

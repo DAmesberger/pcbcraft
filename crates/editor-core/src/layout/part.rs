@@ -98,7 +98,7 @@ pub(super) fn set(project: &mut Project, instance: Id, part: &PartSpec) -> Resul
         .placement_of(instance)
         .is_some_and(|placement| placement.locked)
     {
-        return Err(Error::Conflict("placement is locked".into()));
+        return Err(super::locked(project, instance, "change"));
     }
     let refs = variant(project, part)?;
     let current = project
@@ -155,7 +155,7 @@ pub(super) fn remove(project: &mut Project, instance: Id) -> Result<()> {
         .placement_of(instance)
         .is_some_and(|placement| placement.locked)
     {
-        return Err(Error::Conflict("placement is locked".into()));
+        return Err(super::locked(project, instance, "remove"));
     }
     project.placements.retain(|p| p.instance != instance);
     instances::remove(project, instance)

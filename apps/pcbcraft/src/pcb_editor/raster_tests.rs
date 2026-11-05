@@ -102,8 +102,9 @@ fn rasterize(
     output: egui::FullOutput,
     textures: &Textures,
     background: Color32,
+    size: [f32; 2],
 ) -> Picture {
-    let (width, height) = (SCREEN[0] as usize, SCREEN[1] as usize);
+    let (width, height) = (size[0] as usize, size[1] as usize);
     let bg = background.to_array().map(|v| f32::from(v) / 255.0);
     let mut pixels = vec![[bg[0], bg[1], bg[2], 1.0]; width * height];
     for clipped in ctx.tessellate(output.shapes, output.pixels_per_point) {
@@ -119,9 +120,9 @@ fn rasterize(
                 continue;
             }
             let min_x = a.x.min(b.x).min(c.x).max(clip.min.x).max(0.0).floor() as usize;
-            let max_x = a.x.max(b.x).max(c.x).min(clip.max.x).min(SCREEN[0]).ceil() as usize;
+            let max_x = a.x.max(b.x).max(c.x).min(clip.max.x).min(size[0]).ceil() as usize;
             let min_y = a.y.min(b.y).min(c.y).max(clip.min.y).max(0.0).floor() as usize;
-            let max_y = a.y.max(b.y).max(c.y).min(clip.max.y).min(SCREEN[1]).ceil() as usize;
+            let max_y = a.y.max(b.y).max(c.y).min(clip.max.y).min(size[1]).ceil() as usize;
             for y in min_y..max_y.min(height) {
                 for x in min_x..max_x.min(width) {
                     let p = egui::pos2(x as f32 + 0.5, y as f32 + 0.5);
@@ -163,30 +164,39 @@ fn rasterize(
 
 /// Draw the canvas twice (the first frame uploads the fonts) and fill it.
 pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
+    picture_of(SCREEN, Tokens::get().viewport_bottom, |ui| {
+        editor.canvas(ui, engine);
+    })
+}
+
+/// Draw `draw` in a `size` screen twice (the first frame uploads the fonts
+/// and icons) and fill it over `background`.
+pub(super) fn picture_of(
+    size: [f32; 2],
+    background: Color32,
+    mut draw: impl FnMut(&mut egui::Ui),
+) -> Picture {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut textures = Textures::default();
     let mut output = None;
-    for _ in 0..2 {
+    for _ in 0..3 {
         let mut frame = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(
                     Pos2::ZERO,
-                    egui::vec2(SCREEN[0], SCREEN[1]),
+                    egui::vec2(size[0], size[1]),
                 )),
                 ..Default::default()
             },
-            |ui| {
-                editor.canvas(ui, engine);
-            },
+            |ui| draw(ui),
         );
         textures.apply(&frame.textures_delta);
         frame.textures_delta.clear();
         output = Some(frame);
     }
-    let background = Tokens::get().viewport_bottom;
     match output {
-        Some(output) => rasterize(&ctx, output, &textures, background),
+        Some(output) => rasterize(&ctx, output, &textures, background, size),
         None => Picture {
             width: 0,
             height: 0,
