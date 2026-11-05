@@ -145,6 +145,50 @@ pub(super) fn rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
             );
         }
     }
+    changed |= land_rows(ui, form);
+    changed
+}
+
+/// The datasheet's land pattern over the estimates: off, the form's estimate
+/// shows; on, the rows start from that estimate. The first lead's land is
+/// every lead's, and the tab's land comes last.
+fn land_rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
+    let sizes = form.land_sizes();
+    let lead = sizes.first().copied().unwrap_or([1.0, 1.0]);
+    let estimated_span = form.span - form.foot_length + 0.2;
+    let mut changed = false;
+    let mut datasheet = form.lands.size.is_some() || form.lands.span.is_some();
+    if kit::check_row(ui, "Datasheet land pattern", &mut datasheet) {
+        form.lands.size = datasheet.then_some(lead);
+        form.lands.span = datasheet.then_some(estimated_span);
+        changed = true;
+    }
+    if let Some(size) = &mut form.lands.size {
+        changed |= length(ui, "Land width", &mut size[0]);
+        changed |= length(ui, "Land length", &mut size[1]);
+    }
+    if let Some(span) = &mut form.lands.span {
+        changed |= length(ui, "Land row span", span);
+    }
+    if form.tab.is_some() {
+        let tab = sizes.last().copied().unwrap_or([1.0, 1.0]);
+        let mut own = form.lands.tab_size.is_some();
+        if kit::check_row(ui, "Datasheet tab land", &mut own) {
+            form.lands.tab_size = own.then_some(tab);
+            changed = true;
+        }
+        if let Some(size) = &mut form.lands.tab_size {
+            changed |= length(ui, "Tab land width", &mut size[0]);
+            changed |= length(ui, "Tab land length", &mut size[1]);
+        }
+    }
+    if datasheet {
+        kit::hint(
+            ui,
+            "Lands rebuild when the template applies",
+            "These values set the pads the next Create or Apply builds",
+        );
+    }
     changed
 }
 
@@ -166,7 +210,54 @@ mod tests {
             foot_length: 0.45,
             tab: None,
             lead_step: [1, 2],
+            lands: Default::default(),
         }
+    }
+
+    /// The labels the rows draw in one frame of `form`.
+    fn drawn(form: &mut TabbedForm) -> Vec<String> {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let mut out = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            land_rows(ui, form);
+        });
+        output.textures_delta.clear();
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        for shape in &output.shapes {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn the_land_rows_show_only_what_the_form_overrides() {
+        let mut f = sot23_5();
+        let shown = drawn(&mut f);
+        assert!(
+            shown.iter().any(|t| t == "Datasheet land pattern"),
+            "{shown:?}"
+        );
+        assert!(!shown.iter().any(|t| t == "Land width"), "{shown:?}");
+        assert!(
+            !shown.iter().any(|t| t == "Datasheet tab land"),
+            "{shown:?}"
+        );
+        f.lands.size = Some([0.6, 1.1]);
+        f.lands.span = Some(2.6);
+        let shown = drawn(&mut f);
+        for row in ["Land width", "Land length", "Land row span"] {
+            assert!(shown.iter().any(|t| t == row), "{row}: {shown:?}");
+        }
+        set_tab(&mut f, TabKind::Lead);
+        let shown = drawn(&mut f);
+        assert!(shown.iter().any(|t| t == "Datasheet tab land"), "{shown:?}");
     }
 
     #[test]

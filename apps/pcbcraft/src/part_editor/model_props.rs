@@ -18,7 +18,7 @@ const FIT_TOLERANCE_MM: f64 = 0.05;
 const ANGLE: std::ops::RangeInclusive<f64> = -360.0..=360.0;
 
 /// The quick actions offered, in order, with their labels.
-const QUICK: [(&str, QuickAction); 11] = [
+const QUICK: [(&str, QuickAction); 12] = [
     ("X +90°", rotate(Axis::X, 1)),
     ("X −90°", rotate(Axis::X, -1)),
     ("Y +90°", rotate(Axis::Y, 1)),
@@ -30,6 +30,7 @@ const QUICK: [(&str, QuickAction); 11] = [
     ("Seat", QuickAction::Seat),
     ("Centre on pads", QuickAction::CentreOnPads),
     ("Pin 1 → pad 1", QuickAction::Pin1ToPad1),
+    ("Centre on courtyard", QuickAction::CentreOnCourtyard),
 ];
 
 const fn rotate(axis: Axis, quarter_turns: i8) -> QuickAction {

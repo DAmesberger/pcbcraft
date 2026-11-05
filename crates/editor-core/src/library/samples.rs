@@ -642,8 +642,15 @@ pub fn form_lands_with(
             PackageForm::Molded(_) => at[0] += at[0].signum() * TOE_HEEL_SHIFT_MM,
             PackageForm::Tabbed(t) => {
                 let flange = t.tab.is_some_and(|tab| tab.flange.is_some());
-                if !(Some(k) == tab_index && flange) {
-                    at[1] += at[1].signum() * TOE_HEEL_SHIFT_MM;
+                match t.lands.span {
+                    // The datasheet's rows, centre to centre.
+                    Some(span) if Some(k) != tab_index => {
+                        at[1] = at[1].signum() * span / 2.0;
+                    }
+                    _ if !(Some(k) == tab_index && flange) => {
+                        at[1] += at[1].signum() * TOE_HEEL_SHIFT_MM;
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -1416,7 +1423,7 @@ fn trim_pads(pads: &mut [Pad], mm: f64) {
 /// the rest up its right side, on the default symbol grid
 /// ([`graphics::SYMBOL_MODULE_MM`]), with the designator above and the
 /// name below.
-fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+pub(super) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let left = terminals.len().div_ceil(2);
     let rows = left.max(1) as f64;
@@ -1474,7 +1481,7 @@ fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefi
 
 /// A narrow body with every terminal down its left side in package order,
 /// on the default symbol grid (a connector's starting point).
-fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let mut symbol = block_symbol(component, &[]);
     let rows = terminals.len().max(1) as f64;

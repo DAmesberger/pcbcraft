@@ -159,6 +159,10 @@ pub enum Query {
         #[serde(default)]
         limit: Option<usize>,
     },
+    /// The built-in standard fields as a bundle `library.import` takes
+    /// (`library.import_standard_fields` does both in one step).
+    #[serde(rename = "library.standard_fields")]
+    StandardFields {},
     /// B1: what `library.package_from_template` would change.
     #[serde(rename = "library.package_plan")]
     PackagePlan {
@@ -300,6 +304,8 @@ pub enum QueryResult {
     FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
     UpdatesAvailable(Vec<catalog::UpdateAvailable>),
     Promote(Box<library::import::PromotePlan>),
+    /// `library.standard_fields`: a bundle for `library.import`.
+    StandardFields(Box<library::Bundle>),
     Issues(issues::IssueReport),
     Templates(catalog::templates::TemplateReport),
     PackagePlan(library::templates::catalog::PackagePlan),
@@ -1026,6 +1032,9 @@ impl Engine {
             Query::UpdatesAvailable {} => Ok(QueryResult::UpdatesAvailable(
                 catalog::updates_available(&self.document.project.library, &context.sources)?,
             )),
+            Query::StandardFields {} => Ok(QueryResult::StandardFields(Box::new(
+                library::standard_fields::bundle()?,
+            ))),
             Query::PromotePreview {
                 root,
                 library,

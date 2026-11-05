@@ -77,6 +77,10 @@ pub enum Outcome {
         changes: Vec<crate::library::footprint_edit::TerminalChange>,
         applied: bool,
     },
+    /// `library.footprint_from_pads`: the pads and drawings it made.
+    FootprintFromPads {
+        report: crate::library::pad_table::PadTableReport,
+    },
     /// What `library.import` appended or reused.
     Imported {
         report: crate::library::import::ImportReport,

@@ -22,6 +22,79 @@ use pcbcraft_solidcraft::footprint::SketchEvaluator;
 const EV: SketchEvaluator = SketchEvaluator;
 const TOL: f64 = 1e-6;
 
+/// A parametric pad 10 mm from the origin takes the untyped package's
+/// envelope with it, in the edit's one undo step.
+#[test]
+fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
+    use pcbcraft_core::geometry::Point;
+    use pcbcraft_core::library::footprint_source::{PadTemplate, PadTemplateParams};
+    use pcbcraft_core::library::{
+        Definition, DefinitionMeta, ModelPlacement, PackageForm, PadSide,
+    };
+    use pcbcraft_core::{Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision};
+    let mut engine = Engine::default();
+    let meta = |name: &str| DefinitionMeta {
+        name: name.into(),
+        description: String::new(),
+        provenance: "original test fixture".into(),
+    };
+    let mut new_draft = |definition, name: &str| {
+        let revision = engine.revision();
+        match engine.apply(
+            revision,
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: meta(name),
+                definition,
+            }),
+        )? {
+            Outcome::DraftCreated { id } => Ok::<_, Error>(id),
+            other => Err(Error::Invalid(format!("{other:?}"))),
+        }
+    };
+    let pkg = package(1, [4.0, 3.0, 1.0]);
+    assert_eq!(pkg.form, PackageForm::Generic);
+    let package_id = new_draft(Definition::Package(pkg), "connector")?;
+    let footprint = new_draft(
+        Definition::Footprint(FootprintDefinition {
+            package: PackageRef::new(package_id, Revision::FIRST),
+            next_local: 1,
+            ..FootprintDefinition::default()
+        }),
+        "connector-fp",
+    )?;
+    let placement = |engine: &Engine| match engine.drafts().get(package_id).map(|d| &d.definition) {
+        Some(Definition::Package(p)) => p.placement,
+        _ => ModelPlacement::default(),
+    };
+    let at: Point = [10.0, 0.0];
+    let revision = engine.revision();
+    engine.apply_with(
+        revision,
+        Operation::Library(LibraryCommand::EditFootprint {
+            draft: footprint,
+            edits: vec![FootprintEdit::AddPad {
+                template: PadTemplate::Rect,
+                at,
+                params: PadTemplateParams {
+                    width: Expr("1".into()),
+                    height: Expr("2".into()),
+                    radius_ratio: None,
+                    kind: PadKind::Smd,
+                    side: PadSide::Top,
+                    terminal: None,
+                    number: "1".into(),
+                },
+            }],
+        }),
+        &EV,
+    )?;
+    assert_eq!(engine.revision(), revision + 1, "one undo step");
+    assert_eq!(placement(&engine).translation, [10.0, 0.0, 0.0]);
+    engine.undo()?;
+    assert_eq!(placement(&engine), ModelPlacement::default());
+    Ok(())
+}
+
 fn package(terminals: usize, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
         envelope: body,

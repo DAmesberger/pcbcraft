@@ -7,9 +7,9 @@ use crate::kit;
 use egui::Ui;
 use pcbcraft_core::fields::{self, FieldDefinition, FieldSelection, FieldValue, MAX_FIELDS};
 use pcbcraft_core::library::{
-    ComponentDefinition, FieldView, Library, Published, designator_prefix_valid,
+    ComponentDefinition, FieldView, Library, Published, designator_prefix_valid, standard_fields,
 };
-use pcbcraft_core::{DefinitionId, Engine, FieldRef, Id, Operation};
+use pcbcraft_core::{DefinitionId, Engine, FieldRef, Id, LibraryCommand, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 impl PartEditor {
@@ -18,8 +18,8 @@ impl PartEditor {
     pub(super) fn details_card(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let unpublished = self.unpublished(engine);
         self.definition_section(ui, engine, unpublished);
-        self.fields_section(ui, engine);
-        let operation = self.part_section(ui, engine, None);
+        let standard = self.fields_section(ui, engine);
+        let operation = self.part_section(ui, engine, None).or(standard);
         self.library_section(ui, engine);
         self.provenance_section(ui);
         operation
@@ -128,11 +128,11 @@ impl PartEditor {
     }
 
     /// The component's selected fields with their component defaults.
-    pub(super) fn fields_section(&mut self, ui: &mut Ui, engine: &Engine) {
+    /// Returns the import of the built-in fields when it is asked for.
+    pub(super) fn fields_section(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let library = &engine.project().library;
-        let Some(set) = &mut self.draft else {
-            return;
-        };
+        let set = self.draft.as_mut()?;
+        let mut import = None;
         let component = &mut set.component;
         let buffers = &mut self.field_buffers;
         buffers.retain(|lineage, _| component.field(*lineage).is_some());
@@ -239,8 +239,25 @@ impl PartEditor {
                     });
                 }
             }
+            if !has_standard_fields(library)
+                && ui_kit::button(ui, "Add standard fields", Button::Small)
+                    .on_hover_text("Resistance, capacitance, voltage and other SI fields")
+                    .clicked()
+            {
+                import = Some(Operation::Library(LibraryCommand::ImportStandardFields {}));
+            }
         });
+        import
     }
+}
+
+/// Whether the project holds the built-in fields already.
+fn has_standard_fields(library: &Library) -> bool {
+    let source = standard_fields::library_id();
+    library
+        .origins
+        .iter()
+        .any(|o| Some(o.origin.library) == source)
 }
 
 /// Parse a component default for a field: empty text is no default.

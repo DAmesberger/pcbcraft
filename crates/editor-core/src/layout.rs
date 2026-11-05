@@ -21,6 +21,7 @@ const MAX_TRACKS: usize = 2_000;
 pub const MAX_PLACED_PADS: usize = 4_096;
 
 pub mod board_edge;
+pub mod body_outline;
 mod copper;
 pub mod courtyard;
 pub mod fill;

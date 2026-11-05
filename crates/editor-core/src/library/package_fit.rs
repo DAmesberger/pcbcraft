@@ -9,11 +9,13 @@
 //! models) is documented in [`super::package_form`].
 use super::footprint::{FootprintDefinition, PAD_ARC_TOLERANCE_MM, PadKind};
 use super::package_form::{MAX_FORM_LEADS, PackageForm};
-use super::package_model::{self, Axis, ModelPlacement, PackageEdit, QuickAction, model_frame};
+use super::package_model::{
+    self, Axis, ModelPlacement, PackageEdit, PackageModel, QuickAction, model_frame,
+};
 use super::publish::object;
-use super::{Datum, PackageDefinition};
+use super::{Datum, PackageDefinition, Pad};
 use crate::diagnostics::{Error, Finding, Result};
-use crate::geometry::{Point, Point3, Transform3, cos_sin};
+use crate::geometry::{Bounds, Point, Point3, Transform3, cos_sin};
 use crate::ids::{DefinitionId, PackageTerminalId, PadId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -616,7 +618,62 @@ pub fn apply_quick(
         QuickAction::Pin1ToPad1 => {
             pin1_to_pad1(package, footprint.ok_or(needs_footprint(action))?, current)
         }
+        QuickAction::CentreOnCourtyard => {
+            let footprint = footprint.ok_or(needs_footprint(action))?;
+            let to = courtyard_centre(footprint).ok_or_else(|| {
+                Error::Invalid(
+                    "package.quick_no_pads: the footprint has no courtyard and no pads".into(),
+                )
+            })?;
+            let to = to_datum(&footprint.datum, to);
+            moved(
+                current,
+                &Transform3::translation([to[0] - pivot[0], to[1] - pivot[1], 0.0]),
+            )
+        }
     }
+}
+
+/// The centre a body sits over on `footprint`, in the footprint frame: the
+/// box of its courtyard graphics, or without any the box of every pad and
+/// hole. `None` for a footprint with neither.
+pub fn courtyard_centre(footprint: &FootprintDefinition) -> Option<Point> {
+    use super::graphics::{DrawingLayer, Item};
+    footprint
+        .graphics
+        .iter()
+        .filter(|g| g.layer == DrawingLayer::Courtyard)
+        .filter_map(|g| match &g.item {
+            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+            Item::Text(_) => None,
+        })
+        .reduce(Bounds::union)
+        .or_else(|| footprint.pads.iter().map(Pad::bounds).reduce(Bounds::union))
+        .map(|b| b.center())
+}
+
+/// Where an envelope model sits by default on `footprint`: over the
+/// courtyard, so a footprint whose origin is not its middle (a connector
+/// drawn from the board edge) does not leave the box hanging off it. Only an
+/// untyped package's envelope at the default placement has a default: a
+/// typed form's body is located by its leads, and a placement someone set
+/// stays. `None` when nothing would move.
+pub fn envelope_default(
+    package: &PackageDefinition,
+    footprint: &FootprintDefinition,
+) -> Result<Option<ModelPlacement>> {
+    if !matches!(package.model, PackageModel::Envelope { .. })
+        || package.form != PackageForm::Generic
+        || package.placement != ModelPlacement::default()
+    {
+        return Ok(None);
+    }
+    if courtyard_centre(footprint).is_none() {
+        return Ok(None);
+    }
+    let placement = apply_quick(package, Some(footprint), QuickAction::CentreOnCourtyard)?;
+    let moved = placement.translation[0].abs() > 1e-9 || placement.translation[1].abs() > 1e-9;
+    Ok(moved.then_some(placement))
 }
 
 /// [`package_model::edit_package`] with the footprint the package lands

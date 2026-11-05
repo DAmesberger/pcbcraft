@@ -17,6 +17,7 @@ mod library_folders;
 mod mechanical;
 mod net_classes;
 mod orientation;
+mod part_authoring;
 mod parts;
 mod sheets;
 mod staged;

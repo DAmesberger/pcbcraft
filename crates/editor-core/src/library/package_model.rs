@@ -220,6 +220,7 @@ impl QuickAction {
             Self::Seat => "Seat",
             Self::CentreOnPads => "Centre on pads",
             Self::Pin1ToPad1 => "Pin 1 to pad 1",
+            Self::CentreOnCourtyard => "Centre on courtyard",
         }
     }
 }
@@ -384,6 +385,9 @@ pub enum QuickAction {
     CentreOnPads,
     /// Rotate in quarter turns so terminal 1's lead lands on pad 1.
     Pin1ToPad1,
+    /// Centre the body over the footprint's courtyard (without one, over
+    /// its pads and holes) in x/y.
+    CentreOnCourtyard,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -415,7 +419,11 @@ impl PackageEdit {
     pub fn needs_footprint(&self) -> bool {
         matches!(
             self,
-            Self::ApplyQuick(QuickAction::CentreOnPads | QuickAction::Pin1ToPad1)
+            Self::ApplyQuick(
+                QuickAction::CentreOnPads
+                    | QuickAction::Pin1ToPad1
+                    | QuickAction::CentreOnCourtyard
+            )
         )
     }
 }
