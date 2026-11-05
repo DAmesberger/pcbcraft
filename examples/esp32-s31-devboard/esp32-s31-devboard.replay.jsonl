@@ -652,4 +652,5 @@
 {"command":"project.apply","params":{"expected_revision":595,"operation":{"editor":"Fill","operation":{"command":"fill.add","params":{"fill":{"name":"GND bottom","net":1,"layer":"Bottom","outline":{"start":[0.0,0.0],"segments":[{"line":{"to":[40.0,0.0]}},{"line":{"to":[40.0,64.0]}},{"line":{"to":[0.0,64.0]}},{"line":{"to":[0.0,0.0]}}]}}}}}}}
 {"command":"project.apply","params":{"expected_revision":596,"operation":{"editor":"Fill","operation":{"command":"fill.add","params":{"fill":{"name":"GND top","net":1,"layer":"Top","outline":{"start":[0.0,0.0],"segments":[{"line":{"to":[40.0,0.0]}},{"line":{"to":[40.0,64.0]}},{"line":{"to":[0.0,64.0]}},{"line":{"to":[0.0,0.0]}}]},"settings":{"clearance":0.4}}}}}}}
 {"command":"project.apply","params":{"expected_revision":597,"operation":{"editor":"Fill","operation":{"command":"fill.refill","params":{"target":{"fills":"all"}}}}}}
+{"command":"project.apply","params":{"expected_revision":598,"operation":{"editor":"Schematic","operation":{"command":"project.rename","params":{"name":"ESP32-S31 dev board"}}}}}
 {"command":"project.save","params":{"path":"examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"}}
