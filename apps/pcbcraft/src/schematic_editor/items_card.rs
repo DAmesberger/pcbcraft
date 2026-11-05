@@ -774,6 +774,22 @@ impl SchematicEditor {
         });
         let props = project.properties.clone();
         kit::section(ui, "title-block", "Title block", true, None, |ui| {
+            if let Some(name) = self.live_text(
+                ui,
+                "project/name".to_owned(),
+                "Project",
+                &project.name,
+                false,
+                |t| {
+                    if t.trim().is_empty() {
+                        Some("Enter a project name")
+                    } else {
+                        (t.trim().len() > 256).then_some("At most 256 characters")
+                    }
+                },
+            ) {
+                output = op(SchematicCommand::RenameProject { name });
+            }
             let fields: [(&str, &str, Field); 5] = [
                 ("title", "Title", |p| &mut p.title),
                 ("revision", "Revision", |p| &mut p.revision),

@@ -551,3 +551,33 @@ fn edit_field(
     );
     Ok(frame(editor, engine, ctx, vec![key(egui::Key::Enter)]).1)
 }
+
+/// The Sheet card's Project field: Enter commits one `project.rename`, one
+/// undo step; an emptied field is marked and sends nothing.
+#[test]
+fn the_title_block_renames_the_project_in_one_step() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = SchematicEditor::default();
+    let was = engine.project().name.clone();
+    let before = engine.revision();
+    let operation = edit_field(&mut editor, &engine, &ctx, &was, "Dev board")?;
+    let operation = operation.ok_or("the command")?;
+    assert!(
+        matches!(
+            &operation,
+            Operation::Schematic(SchematicCommand::RenameProject { name }) if name == "Dev board"
+        ),
+        "{operation:?}"
+    );
+    engine.apply(before, operation)?;
+    assert_eq!(engine.project().name, "Dev board");
+    assert_eq!(engine.revision(), before + 1);
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let empty = edit_field(&mut editor, &engine, &ctx, "Dev board", " ")?;
+    assert!(empty.is_none(), "an empty name is not sent");
+    engine.undo()?;
+    assert_eq!(engine.project().name, was);
+    Ok(())
+}

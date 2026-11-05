@@ -79,6 +79,33 @@ pub fn apply(production: &mut Production, command: FabricationCommand) -> Result
     Ok(())
 }
 
+/// The profile a `fabrication.preflight` query checks under.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(
+    untagged,
+    expecting = "a rule profile id such as std-6-6, or a whole rule profile"
+)]
+pub enum ProfileChoice {
+    /// A profile id. The engine knows the built-in profiles; a host with a
+    /// user profile library resolves the rest before it asks.
+    Id(String),
+    Profile(Box<RuleProfile>),
+}
+
+impl ProfileChoice {
+    /// The profile chosen. An id that is not a built-in profile is not found.
+    pub fn into_profile(self) -> Result<RuleProfile> {
+        match self {
+            Self::Id(id) => rules::builtin::by_id(&id).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "rules.profile_unknown: no rule profile has the id {id}"
+                ))
+            }),
+            Self::Profile(profile) => Ok(*profile),
+        }
+    }
+}
+
 /// One pre-flight finding.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PreflightItem {

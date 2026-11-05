@@ -58,6 +58,10 @@ enum Arrange {
     Mirror,
 }
 
+/// The canvas zoom range, in points per sheet millimetre. The low end frames
+/// the largest page, A0, in a 600-point canvas.
+const SCALE_MIN: f32 = 0.5;
+const SCALE_MAX: f32 = 60.0;
 /// Pick tolerance around drawn symbol content, in pixels.
 const HIT_PX: f32 = 6.0;
 /// Pick radius of a pin end or junction, and of a wire's path, in pixels.
@@ -1236,7 +1240,7 @@ impl SchematicEditor {
                 bounds = bounds.expand(5.0);
                 self.scale = (rect.width() / bounds.width())
                     .min(rect.height() / bounds.height())
-                    .clamp(2.0, 60.0);
+                    .clamp(SCALE_MIN, SCALE_MAX);
                 self.pan = -bounds.center().to_vec2() * self.scale;
             } else {
                 self.pan = Vec2::ZERO;
@@ -1253,7 +1257,7 @@ impl SchematicEditor {
         if response.contains_pointer() && wheel.moves() {
             self.pan += wheel.pan;
             let old_scale = self.scale;
-            self.scale = (self.scale * wheel.scale_factor()).clamp(2.0, 60.0);
+            self.scale = (self.scale * wheel.scale_factor()).clamp(SCALE_MIN, SCALE_MAX);
             if let Some(pointer) = response.hover_pos() {
                 let relative = pointer - rect.center();
                 self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
@@ -2143,7 +2147,7 @@ impl SchematicEditor {
         let height = (b.max[1] - b.min[1]).max(f64::EPSILON) as f32;
         let fit = (rect.width() / width).min(rect.height() / height);
         if fit < self.scale {
-            self.scale = fit.clamp(2.0, 60.0);
+            self.scale = fit.clamp(SCALE_MIN, SCALE_MAX);
         }
         let [x, y] = b.center();
         // Sheet y is up, screen y down.

@@ -248,6 +248,18 @@ impl SchematicEditor {
         self.sheet = sheet;
     }
 
+    /// Another document replaced the last one (opened, recovered or new):
+    /// start on its first page with nothing selected and the page framed.
+    /// The frame waits for the next canvas frame, whenever Schematic shows.
+    pub fn document_opened(&mut self, project: &Project) {
+        self.select(None, None, project);
+        self.wire_from = None;
+        self.draw_from = None;
+        self.frame_request = None;
+        self.sheet = project.sheets.first();
+        self.fit_requested = true;
+    }
+
     /// Switch to `sheet` without fitting (a located object frames itself).
     pub(super) fn switch_sheet(&mut self, sheet: Option<SheetId>, project: &Project) {
         if let Some(sheet) = sheet.filter(|s| project.sheet(*s).is_some()) {

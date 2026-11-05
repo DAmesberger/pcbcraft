@@ -773,6 +773,7 @@ impl App {
         self.sources.forget_project();
         self.pending_import = None;
         self.pcb.set_selection(None, None, None);
+        self.schematic.document_opened(self.engine.project());
         match self.files.adopt(&self.engine, path, recovered) {
             Ok(()) if recovered => {
                 self.say(Level::Info, format!("Recovered {name}; save it to keep it"));

@@ -6,6 +6,7 @@ use pcbcraft_core::{
     DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
     catalog::EntryKey,
     erc,
+    fabrication::ProfileChoice,
     format::EditorFile,
     geometry::Point,
     ids::{DefinitionRef, LibraryId, Revision, SourceLineageId},
@@ -535,6 +536,18 @@ impl Session {
             }
             Request::Inspect(_) => {}
             Request::Query(query) => {
+                // A profile id reads as it does for an export: a built-in
+                // profile or one of the user's library.
+                let query = match query {
+                    Query::Preflight {
+                        profile: Some(ProfileChoice::Id(id)),
+                    } => Query::Preflight {
+                        profile: Some(ProfileChoice::Profile(Box::new(
+                            pcbcraft_io::fabrication::resolve_profile(&id)?,
+                        ))),
+                    },
+                    other => other,
+                };
                 return Ok(serde_json::to_value(self.engine.query_using(
                     query,
                     &self.sources.context(),

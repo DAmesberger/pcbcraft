@@ -60,7 +60,7 @@ A sheet symbol (`sheet_symbol.place`, with an existing `child` or a new sheet) s
 
 ## Sheet furniture and title block
 
-`drawing.add`/`edit`/`remove` place notes (multi-line text, 0.5–50 mm), lines and rectangles; they are never electrical. Every sheet has a page frame from its paper size: an outer and inner border with zone references (numbers across, letters down, about 50 mm apart) and a 110 × 32 mm title block in the bottom-right corner showing the title (the project name when empty), company, author, date, revision, "Sheet n of m", paper size, sheet name and project name. `project.set_properties` sets the title-block fields.
+`drawing.add`/`edit`/`remove` place notes (multi-line text, 0.5–50 mm), lines and rectangles; they are never electrical. Every sheet has a page frame from its paper size: an outer and inner border with zone references (numbers across, letters down, about 50 mm apart) and a 110 × 32 mm title block in the bottom-right corner showing the title (the project name when empty), company, author, date, revision, "Sheet n of m", paper size, sheet name and project name. `project.set_properties` sets the title-block fields, and `project.rename` the project name (the Sheet card's Project field; one undo step, and the name fabrication outputs carry).
 
 ## ERC
 

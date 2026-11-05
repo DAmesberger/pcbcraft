@@ -816,6 +816,73 @@ fn net_places_list_a_nets_labels_and_pins_across_sheets() -> Result<()> {
     Ok(())
 }
 
+/// `project.rename`: the name reaches the title block, is one undo step,
+/// says nothing new when it is the same name, and a refused name changes
+/// nothing.
+#[test]
+fn renaming_the_project_is_one_undo_step() -> Result<()> {
+    let Two { mut engine, s2, .. } = two_sheets()?;
+    let was = engine.project().name.clone();
+    let start = engine.revision();
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: "  ESP32 board  ".into(),
+        },
+    )?;
+    assert_eq!(engine.project().name, "ESP32 board", "trimmed");
+    assert_eq!(engine.revision(), start + 1);
+    let frame = scene::frame(engine.project(), s2);
+    assert!(frame.texts.iter().any(|t| t.text == "ESP32 board"));
+
+    // The same name: no new revision and no undo step.
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: "ESP32 board ".into(),
+        },
+    )?;
+    assert_eq!(engine.revision(), start + 1);
+
+    let kept = engine.to_file();
+    let revision = engine.revision();
+    for bad in [
+        String::new(),
+        "   ".into(),
+        "two\nlines".into(),
+        "x".repeat(257),
+    ] {
+        let refused = run(&mut engine, C::RenameProject { name: bad.clone() });
+        assert!(matches!(refused, Err(Error::Invalid(_))), "{bad:?}");
+        assert_eq!(engine.revision(), revision);
+        assert_eq!(engine.to_file(), kept);
+    }
+    let longest = "x".repeat(256);
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: longest.clone(),
+        },
+    )?;
+    assert_eq!(engine.project().name, longest);
+    assert!(
+        engine
+            .apply(start, op(C::RenameProject { name: "Old".into() }))
+            .is_err()
+    );
+    assert_eq!(engine.project().name, longest, "an outdated revision");
+
+    engine.undo()?;
+    assert_eq!(engine.project().name, "ESP32 board");
+    engine.undo()?;
+    assert_eq!(engine.project().name, was);
+    assert_eq!(
+        engine.redo().map(|()| engine.project().name.clone())?,
+        "ESP32 board"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_title_block_shows_properties_and_the_page() -> Result<()> {
     let Two { mut engine, s2, .. } = two_sheets()?;

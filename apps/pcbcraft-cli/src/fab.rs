@@ -1,14 +1,20 @@
 //! `fab FILE.pcbcraft OUT [--zip] [--profile ID] [--date ISO|none]`: write
 //! the production files through the `project.export_fabrication` request.
+//! A blocked export lists the findings that block it.
 use super::{Result, execute, open, print};
-use serde_json::json;
+use pcbcraft_automation::session::Session;
+use serde_json::{Value, json};
 
 /// The usage line(s).
 pub const USAGE: &str = "fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]
                                    check the design and write Gerber X2, Excellon, job,
                                    pick-and-place, BOM and PDF drawings; --date defaults
                                    to SOURCE_DATE_EPOCH or now (none: no date, for
-                                   byte-identical output)";
+                                   byte-identical output); a blocked export
+                                   lists the errors that block it";
+
+/// Blocking findings printed by one refused export; the rest are counted.
+const MAX_LISTED: usize = 100;
 
 /// Run the subcommand with the arguments after its name.
 pub fn run(args: &[String]) -> Result<()> {
@@ -60,15 +66,53 @@ pub fn run(args: &[String]) -> Result<()> {
     if let Some(date) = date {
         options["creation_date"] = json!(date);
     }
-    print(&execute(
-        &mut session,
-        json!({"command": "project.export_fabrication", "params": {
-            "output": output,
-            "zip": zip,
-            "profile": profile,
-            "options": options,
+    let reply = session.dispatch(json!({"command": "project.export_fabrication", "params": {
+        "output": output,
+        "zip": zip,
+        "profile": profile,
+        "options": options,
+    }}));
+    if reply["ok"] == true {
+        return print(&reply["result"]);
+    }
+    let error = reply["error"].to_string();
+    if !error.contains("fabrication.blocked") {
+        return Err(error.into());
+    }
+    let report = blocking_report(&mut session, profile.as_deref())?;
+    Err(format!("{error}\n{}", blocking_titles(&report)).into())
+}
+
+/// The production check the refused export ran.
+fn blocking_report(session: &mut Session, profile: Option<&str>) -> Result<Value> {
+    execute(
+        session,
+        json!({"command": "project.query", "params": {
+            "query": "fabrication.preflight",
+            "params": {"profile": profile},
         }}),
-    )?)
+    )
+}
+
+/// One line per unwaived error of a `fabrication.preflight` result, each
+/// the finding's title, at most [`MAX_LISTED`] and then how many remain.
+fn blocking_titles(report: &Value) -> String {
+    let items = report["result"]["items"].as_array();
+    let titles: Vec<&str> = items
+        .into_iter()
+        .flatten()
+        .filter(|i| i["severity"] == "error" && i.get("waiver").is_none())
+        .filter_map(|i| i["title"].as_str())
+        .collect();
+    let mut lines: Vec<String> = titles
+        .iter()
+        .take(MAX_LISTED)
+        .map(|title| format!("  {title}"))
+        .collect();
+    if let Some(more) = titles.len().checked_sub(MAX_LISTED).filter(|n| *n > 0) {
+        lines.push(format!("  and {more} more"));
+    }
+    lines.join("\n")
 }
 
 /// `SOURCE_DATE_EPOCH` when set (reproducible builds), else the current
@@ -112,7 +156,67 @@ fn iso_utc(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::iso_utc;
+    use super::{MAX_LISTED, Value, blocking_titles, iso_utc, json, run};
+
+    /// The shipped showcase under Standard 6/6: its fills were computed
+    /// under other rules, so they are stale errors and the export is
+    /// refused, naming each one.
+    #[test]
+    fn a_blocked_export_lists_the_error_titles() -> super::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("board.pcbcraft");
+        let out = dir.path().join("out");
+        let arg = |p: &std::path::Path| p.display().to_string();
+        let mut session =
+            pcbcraft_automation::session::Session::new(pcbcraft_automation::session::showcase()?);
+        super::execute(
+            &mut session,
+            json!({"command": "project.save", "params": {"path": arg(&project)}}),
+        )?;
+        let report = super::blocking_report(&mut session, Some("std-6-6"))?;
+        let error = run(&[
+            arg(&project),
+            arg(&out),
+            "--profile".into(),
+            "std-6-6".into(),
+        ])
+        .err()
+        .ok_or("the export should be refused")?
+        .to_string();
+        assert!(error.contains("fabrication.blocked"), "{error}");
+        let blocking: Vec<&Value> = report["result"]["items"]
+            .as_array()
+            .ok_or("items")?
+            .iter()
+            .filter(|i| i["severity"] == "error")
+            .collect();
+        assert!(!blocking.is_empty());
+        for item in &blocking {
+            let title = item["title"].as_str().ok_or("title")?;
+            assert!(error.contains(title), "{title} in {error}");
+        }
+        assert!(!out.exists(), "nothing is written");
+        Ok(())
+    }
+
+    /// Warnings and waived errors do not block; a long list says how many
+    /// it left out.
+    #[test]
+    fn only_unwaived_errors_are_listed_and_a_long_list_is_counted() {
+        let report = json!({"result": {"items": [
+            {"severity": "error", "title": "Fill GND is stale"},
+            {"severity": "error", "title": "Waived", "waiver": {"key": "k", "reason": "r"}},
+            {"severity": "warning", "title": "A warning"},
+        ]}});
+        assert_eq!(blocking_titles(&report), "  Fill GND is stale");
+        let many: Vec<Value> = (0..MAX_LISTED + 3)
+            .map(|k| json!({"severity": "error", "title": format!("Finding {k}")}))
+            .collect();
+        let long = blocking_titles(&json!({"result": {"items": many}}));
+        let lines: Vec<&str> = long.lines().collect();
+        assert_eq!(lines.len(), MAX_LISTED + 1);
+        assert_eq!(lines.last().copied(), Some("  and 3 more"));
+    }
 
     #[test]
     fn epoch_seconds_print_as_utc_dates() {

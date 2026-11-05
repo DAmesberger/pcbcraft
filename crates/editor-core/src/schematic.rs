@@ -217,6 +217,11 @@ pub enum SchematicCommand {
     /// Set the title-block properties.
     #[serde(rename = "project.set_properties")]
     SetProperties { properties: ProjectProperties },
+    /// Name the project: the name fabrication outputs, drawings and the
+    /// title block's Project cell show. The same name changes nothing and
+    /// adds no undo step.
+    #[serde(rename = "project.rename")]
+    RenameProject { name: String },
     /// Number designators across sheets; existing annotated designators
     /// stay unless `mode` is `all`.
     #[serde(rename = "schematic.annotate")]
@@ -393,6 +398,7 @@ pub fn apply(
         C::EditDrawing { drawing, item } => none(sheets::edit_drawing(project, drawing, item)),
         C::RemoveDrawing { drawing } => none(sheets::remove_drawing(project, drawing)),
         C::SetProperties { properties } => none(sheets::set_properties(project, properties)),
+        C::RenameProject { name } => none(sheets::rename_project(project, &name)),
         C::Annotate {
             order,
             mode,

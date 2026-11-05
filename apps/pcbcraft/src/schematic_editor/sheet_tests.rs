@@ -504,3 +504,110 @@ fn delete_removes_the_selected_label_in_one_step() -> TestResult {
     assert!(engine.project().labels.is_empty());
     Ok(())
 }
+
+/// The ESP32 dev board example, opened over the demo the app starts with
+/// as the app opens a file.
+fn esp32_board() -> Result<Engine, Box<dyn std::error::Error>> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    Ok(engine)
+}
+
+/// Every symbol of the active sheet lies on the canvas and shows its
+/// designator, and the view is the framed page: its width plus a 5 mm
+/// margin on each side across 800 points. Returns how many symbols.
+fn assert_framed(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    page_width_mm: f32,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let shown = texts(&canvas_frame(editor, engine, ctx, vec![]).0);
+    let project = engine.project();
+    let view = schematic_view(editor);
+    let mut symbols = 0;
+    for occurrence in project
+        .occurrences
+        .iter()
+        .filter(|o| o.sheet == editor.sheet)
+    {
+        let bounds = editor
+            .placed_bounds
+            .get(&occurrence.id)
+            .ok_or("a resolved symbol")?;
+        for corner in [bounds.min, bounds.max] {
+            assert!(
+                CANVAS.contains(view.screen(corner)),
+                "{bounds:?} at scale {} and pan {:?}",
+                editor.scale,
+                editor.pan
+            );
+        }
+        let designator = &project
+            .instance(occurrence.instance)
+            .ok_or("its instance")?
+            .designator;
+        assert!(shown.contains(designator), "{designator} in {shown:?}");
+        symbols += 1;
+    }
+    let scale = 800.0 / (page_width_mm + 10.0);
+    assert!((editor.scale - scale).abs() < 1e-3, "{}", editor.scale);
+    Ok(symbols)
+}
+
+/// The founder's test drive: the ESP32 schematic opened zoomed into an
+/// empty corner of its sheet, showing no circuit until Fit.
+#[test]
+fn an_opened_schematic_and_a_switched_to_sheet_show_their_content_framed() -> TestResult {
+    let engine = esp32_board()?;
+    let project = engine.project();
+    let ctx = ctx();
+    let mut editor = SchematicEditor::default();
+    // A view left over from the document before.
+    editor.show_sheet(project.sheets.list[1].id, project);
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    editor.scale = 40.0;
+    editor.pan = vec2(900.0, -700.0);
+    // As the app does on open, before Schematic has drawn a frame.
+    editor.document_opened(project);
+    assert_eq!(editor.active_sheet(), SheetId::FIRST);
+    // Sheet 1 is A4 landscape, sheet 2 A3 landscape.
+    let first = assert_framed(&mut editor, &engine, &ctx, 297.0)?;
+    assert!(first > 0, "sheet 1 has symbols");
+
+    let second = project.sheets.list[1].id;
+    editor.scale = 40.0;
+    editor.pan = vec2(-900.0, 700.0);
+    editor.show_sheet(second, project);
+    let symbols = assert_framed(&mut editor, &engine, &ctx, 420.0)?;
+    assert!(symbols > 0, "sheet 2 has symbols");
+    assert_eq!(first + symbols, project.occurrences.len());
+    Ok(())
+}
+
+/// Framing happens once. The user's view stays through later frames and
+/// edits, and across a visit to another workspace, which draws no canvas.
+#[test]
+fn a_framed_sheet_keeps_the_users_view_afterwards() -> TestResult {
+    let mut engine = esp32_board()?;
+    let ctx = ctx();
+    let mut editor = SchematicEditor::default();
+    editor.document_opened(engine.project());
+    assert_framed(&mut editor, &engine, &ctx, 297.0)?;
+    editor.scale = 9.0;
+    editor.pan = vec2(120.0, -80.0);
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::RenameProject {
+            name: "ESP32 board".into(),
+        }),
+    )?;
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!((editor.scale, editor.pan), (9.0, vec2(120.0, -80.0)));
+    Ok(())
+}

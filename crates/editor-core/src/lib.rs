@@ -277,12 +277,13 @@ pub enum Query {
         request: layout::meander::TuneRequest,
     },
     /// The production check before fabrication export: the design checked
-    /// under `profile` (the project's rules when omitted) plus production
-    /// findings, each with its waiver key and saved waiver.
+    /// under `profile` (a profile id such as `std-6-6` or a whole profile;
+    /// the project's rules when omitted) plus production findings, each
+    /// with its waiver key and saved waiver.
     #[serde(rename = "fabrication.preflight")]
     Preflight {
         #[serde(default)]
-        profile: Option<Box<rules::RuleProfile>>,
+        profile: Option<fabrication::ProfileChoice>,
     },
 }
 
@@ -795,6 +796,12 @@ impl Engine {
             Operation::Instance(command) => {
                 commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
             }
+            // The project's own name again: no change and no undo step.
+            Operation::Schematic(schematic::SchematicCommand::RenameProject { name })
+                if name.trim() == candidate.project.name =>
+            {
+                Outcome::None
+            }
             Operation::Schematic(command) => {
                 match schematic::apply(
                     Arc::make_mut(&mut candidate.project),
@@ -1090,13 +1097,18 @@ impl Engine {
             Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
                 self.document.project.board().into_owned(),
             ))),
-            Query::Preflight { profile } => Ok(QueryResult::Preflight(Box::new(
-                fabrication::preflight::report(
-                    &self.document.project,
-                    &self.document.drafts,
-                    profile.as_deref(),
-                )?,
-            ))),
+            Query::Preflight { profile } => {
+                let profile = profile
+                    .map(fabrication::ProfileChoice::into_profile)
+                    .transpose()?;
+                Ok(QueryResult::Preflight(Box::new(
+                    fabrication::preflight::report(
+                        &self.document.project,
+                        &self.document.drafts,
+                        profile.as_ref(),
+                    )?,
+                )))
+            }
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
             ))),

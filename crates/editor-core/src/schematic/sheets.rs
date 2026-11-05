@@ -592,6 +592,19 @@ pub fn set_properties(project: &mut Project, properties: ProjectProperties) -> R
     Ok(())
 }
 
+/// Name the project: trimmed, not empty, at most [`MAX_PROPERTY`] bytes (the
+/// bound a saved project is validated against), without control characters.
+pub fn rename_project(project: &mut Project, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || name.len() > MAX_PROPERTY || name.chars().any(char::is_control) {
+        return Err(invalid(
+            "project.name: a project name is 1 to 256 bytes without control characters.",
+        ));
+    }
+    name.clone_into(&mut project.name);
+    Ok(())
+}
+
 /// Move a unit to another sheet. Refused while wires touch its terminals,
 /// because a wire cannot cross sheets: connect across sheets with labels.
 pub fn move_unit_to_sheet(

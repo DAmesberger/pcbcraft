@@ -7,7 +7,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 ## One command
 
 - **Automation:** the `project.export_fabrication` request takes `{output, zip, profile, options}`. It runs the production check and then writes a new or empty folder, or one new `.zip`. It returns the pre-flight report, every file with its size, and the time each step took. It is a file effect: it adds no revision and no undo step.
-- **CLI:** `pcbcraft-cli fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file.
+- **CLI:** `pcbcraft-cli fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
 - **MCP:** the same request reaches MCP through the generic catalog.
 - **Desktop:** PCB workspace → ribbon Output → Production, or "Production files…" in the command palette.
   - The dialog shows a profile picker, Folder or ZIP output, an output toggle for each group and the placement convention.
@@ -18,7 +18,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 
 ## Production check (`fabrication.preflight`)
 
-The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues.
+The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id such as `"std-6-6"` (a built-in profile or one of the user's library, as for an export) or a whole profile; omitted, the project's own rules apply.
 
 **Errors** (they block export):
 - unrouted connections and unplaced parts;
@@ -63,7 +63,7 @@ The check reports every project issue under the chosen fabrication profile. Over
 
 - **Format:** `%FSLAX46Y46*%` and `%MOMM*%` (1 nm), absolute coordinates, `G75` multi-quadrant arcs, `M02`. Unchanged coordinates are left out; `D01`/`D02`/`D03` are always written.
 - **Apertures:** each is defined once, numbered from D10 in first-use order, with its `.AperFunction` set by `%TA` before its `%AD`.
-- **File attributes:** `.GenerationSoftware`, `.CreationDate` (only when asked), `.ProjectId` (name, a stable GUID derived from the name, revision 1), `.SameCoordinates`, `.FileFunction` and `.FilePolarity`.
+- **File attributes:** `.GenerationSoftware`, `.CreationDate` (only when asked), `.ProjectId` (the project name set by `project.rename`, a stable GUID derived from the name, revision 1), `.SameCoordinates`, `.FileFunction` and `.FilePolarity`.
 - **Copper order:**
   1. Fill regions, largest first: each region dark, its holes clear (`%LPC`). An island inside another region's hole is smaller, so it is drawn after that hole is cleared; nothing drawn after the fills is erased.
   2. Tracks, as round-aperture `D01` draws, so their ends are exactly round.

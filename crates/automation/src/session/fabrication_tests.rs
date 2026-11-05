@@ -96,6 +96,107 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     Ok(())
 }
 
+/// `project.rename` over the JSON contract names every output, and one
+/// undo step takes it back.
+#[test]
+fn the_project_name_reaches_the_production_files() -> Fallible<()> {
+    let dir = tempfile::tempdir()?;
+    let mut session = Session::new(showcase()?);
+    let was = session.engine().project().name.clone();
+    let revision = session.engine().revision();
+    let renamed = ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Schematic", "operation": {
+                "command": "project.rename", "params": {"name": "Dev board A"}}},
+        }}),
+    )?;
+    assert_eq!(renamed["revision"], revision + 1);
+    let stale = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "project.rename", "params": {"name": "Late"}}},
+    }}));
+    assert_eq!(stale["ok"], false, "{stale}");
+    let malformed = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision + 1,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "project.rename", "params": {"title": "Wrong field"}}},
+    }}));
+    assert_eq!(malformed["ok"], false, "{malformed}");
+    assert_eq!(session.engine().project().name, "Dev board A");
+
+    let out = dir.path().join("named");
+    ok(&mut session, export(&out, false, None))?;
+    let mut gerbers = 0;
+    for entry in std::fs::read_dir(&out)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "gbr") {
+            let text = std::fs::read_to_string(&path)?;
+            assert!(
+                text.contains("%TF.ProjectId,Dev board A,"),
+                "{}",
+                path.display()
+            );
+            assert!(!text.contains(&was), "{}", path.display());
+            gerbers += 1;
+        }
+        if path.to_string_lossy().ends_with("-drill-table.txt") {
+            let text = std::fs::read_to_string(&path)?;
+            assert!(text.starts_with("Drill table: Dev board A\n"), "{text}");
+        }
+    }
+    assert!(gerbers > 0);
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
+    assert_eq!(session.engine().project().name, was);
+    Ok(())
+}
+
+/// The query takes a profile id as the export does, with the same result
+/// as the whole profile; an unknown id and a malformed one are refused.
+#[test]
+fn the_production_check_takes_a_profile_id() -> Fallible<()> {
+    let mut session = Session::new(showcase()?);
+    let query = |profile: Value| {
+        json!({"command": "project.query", "params": {
+            "query": "fabrication.preflight",
+            "params": {"profile": profile},
+        }})
+    };
+    let by_id = ok(&mut session, query(json!("std-6-6")))?;
+    let whole = ok(
+        &mut session,
+        query(serde_json::to_value(pcbcraft_core::rules::builtin::by_id(
+            "std-6-6",
+        ))?),
+    )?;
+    assert_eq!(by_id, whole);
+    // The report names the profile it checked under.
+    assert_eq!(by_id["result"]["profile"], "Standard 6/6");
+    assert!(by_id["result"]["blocking"].as_u64() > Some(0));
+
+    let revision = session.engine().revision();
+    let unknown = session.dispatch(query(json!("no-such-profile")));
+    assert_eq!(unknown["ok"], false, "{unknown}");
+    for malformed in [json!(6), json!({"id": "std-6-6"})] {
+        let reply = session.dispatch(query(malformed));
+        assert_eq!(reply["ok"], false, "{reply}");
+    }
+    assert_eq!(session.engine().revision(), revision);
+
+    // The engine alone knows the built-in profiles.
+    let engine = session.engine();
+    let refused = engine.query(pcbcraft_core::Query::Preflight {
+        profile: Some(pcbcraft_core::fabrication::ProfileChoice::Id("mine".into())),
+    });
+    assert!(refused.is_err());
+    Ok(())
+}
+
 #[test]
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
