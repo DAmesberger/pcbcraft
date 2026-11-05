@@ -88,6 +88,9 @@ pub struct App {
     settings_window: settings_window::SettingsWindow,
     /// Hold ⌘ for key badges, tap ⌥ for key tips.
     reveal: key_reveal::KeyReveal,
+    /// The macOS app menu, whose Quit asks about unsaved work.
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
 }
 
 impl App {
@@ -144,6 +147,19 @@ impl App {
         }
         let registry = Arc::new(registry);
         crate::keys::publish(&cc.egui_ctx, &registry);
+        quit_through_registry(&cc.egui_ctx);
+        #[cfg(target_os = "macos")]
+        let native_menu = match crate::native_menu::NativeMenu::new(&cc.egui_ctx, &registry) {
+            Ok(menu) => Some(menu),
+            Err(error) => {
+                messages.push(
+                    Level::Warning,
+                    &format!("App menu unavailable: {error}"),
+                    0.0,
+                );
+                None
+            }
+        };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         Ok(Self {
             scene: SceneController::new(
@@ -176,6 +192,8 @@ impl App {
             shortcut_sheet: Default::default(),
             settings_window: Default::default(),
             reveal: Default::default(),
+            #[cfg(target_os = "macos")]
+            native_menu,
         })
     }
 
@@ -969,13 +987,34 @@ impl App {
         }
     }
 
-    /// Closing with unsaved work asks first; the file workflow closes the
-    /// window once recovery data is cleaned up.
-    fn guard_close(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.files.request(file_ui::Action::Close);
+    /// The app menu's commands (Quit), run as the registry's.
+    fn native_menu(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "macos")]
+        if let Some(mut menu) = self.native_menu.take() {
+            for id in menu.take_commands(&self.registry) {
+                self.run_command(ctx, id);
+            }
+            self.native_menu = Some(menu);
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = ctx;
+    }
+}
+
+/// ⌘Q (Ctrl+Q) is the registry's `app.quit`, rebindable and asking about
+/// unsaved work like every other quit; egui's own quit key, which closes
+/// the window directly, is turned off.
+fn quit_through_registry(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.quit_shortcuts.clear());
+}
+
+/// Closing the window (its close button, or the system closing it) with
+/// unsaved work asks first: the close is cancelled and the file workflow
+/// closes the window once answered. `closing`: the answer was given.
+fn guard_close(ctx: &egui::Context, files: &mut FileUi, closing: bool) {
+    if ctx.input(|i| i.viewport().close_requested()) && !closing {
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        files.request(file_ui::Action::Close);
     }
 }
 
@@ -1010,7 +1049,8 @@ impl eframe::App for App {
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(&ctx, Origin::Command, draft);
         self.dispatch_keys(&ctx);
-        self.guard_close(&ctx);
+        self.native_menu(&ctx);
+        guard_close(&ctx, &mut self.files, self.closing);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
         self.sources.dialogs(&ctx);
@@ -1025,6 +1065,14 @@ impl eframe::App for App {
         if self.open_timing.pending() {
             ctx.request_repaint();
         }
+    }
+
+    /// The app ends without asking only when the system ends it (Dock ›
+    /// Quit on macOS, a logout): unsaved work then goes to this session's
+    /// recovery snapshot, which the next launch offers to restore.
+    fn on_exit(&mut self) {
+        self.files
+            .keep_for_recovery(std::time::Duration::from_secs(5));
     }
 }
 
@@ -1104,6 +1152,111 @@ mod edit_copy_tests {
         let again = crate::part_editor::edit_copy(&mut engine, bundle)?;
         assert!(!again.changed);
         assert_eq!(again.lineage, copied.lineage);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod quit_tests {
+    use super::{file_ui, guard_close, quit_through_registry};
+    use crate::commands::{Chord, Context, Registry, active_contexts};
+    use pcbcraft_core::{Engine, Operation, schematic::SchematicCommand};
+
+    type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    fn input(events: Vec<egui::Event>, close: bool) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        if close {
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .events
+                .push(egui::ViewportEvent::Close);
+        }
+        input
+    }
+
+    fn commands(output: &egui::FullOutput) -> Vec<egui::ViewportCommand> {
+        output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|v| v.commands.clone())
+            .unwrap_or_default()
+    }
+
+    /// The window's close button with unsaved work: the close is cancelled
+    /// and the unsaved-changes question is asked instead. Once answered
+    /// (`closing`), a close request goes through.
+    #[test]
+    fn the_close_button_asks_about_unsaved_work() -> Fallible {
+        let dir = tempfile::tempdir()?;
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut files = file_ui::FileUi::with_directory(
+            &ctx,
+            rfd::AsyncFileDialog::new(),
+            &engine,
+            dir.path().to_path_buf(),
+        );
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::RenameProject {
+                name: "Unsaved".into(),
+            }),
+        )?;
+        files.observe(&engine, 0.0);
+        let mut output = ctx.run_ui(input(vec![], true), |ui| {
+            guard_close(ui.ctx(), &mut files, false);
+        });
+        output.textures_delta.clear();
+        assert!(commands(&output).contains(&egui::ViewportCommand::CancelClose));
+        assert!(files.prompting(), "no unsaved-changes question");
+        let mut output = ctx.run_ui(input(vec![], true), |ui| {
+            guard_close(ui.ctx(), &mut files, true);
+        });
+        output.textures_delta.clear();
+        assert!(!commands(&output).contains(&egui::ViewportCommand::CancelClose));
+        Ok(())
+    }
+
+    /// ⌘Q is the registry's `app.quit`, in every context and while typing.
+    /// egui's own ⌘Q, which would close the window without asking, is off.
+    #[test]
+    fn quit_key_is_the_registry_command() -> Fallible {
+        let registry = Registry::standard();
+        let quit = Chord::cmd(egui::Key::Q);
+        for context in Context::ALL {
+            let command = registry
+                .resolve(quit, &active_contexts(context))
+                .ok_or_else(|| format!("⌘Q does nothing in {context:?}"))?;
+            assert_eq!(command.id, "app.quit", "{context:?}");
+            assert!(super::command_dispatch::dispatchable(
+                command, quit, true, true
+            ));
+        }
+        let press = egui::Event::Key {
+            key: egui::Key::Q,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        let plain = egui::Context::default();
+        let mut output = plain.run_ui(input(vec![press.clone()], false), |_| {});
+        output.textures_delta.clear();
+        assert!(
+            commands(&output).contains(&egui::ViewportCommand::Close),
+            "egui's default quit key closes directly"
+        );
+        let ctx = egui::Context::default();
+        quit_through_registry(&ctx);
+        let mut output = ctx.run_ui(input(vec![press], false), |_| {});
+        output.textures_delta.clear();
+        assert!(!commands(&output).contains(&egui::ViewportCommand::Close));
         Ok(())
     }
 }

@@ -23,5 +23,10 @@ rfd = "0.17"
 pollster = "0.4"
 spade = "2.15"
 
+# The macOS app menu (src/native_menu.rs), as Solidcraft's: its Quit asks
+# about unsaved work instead of ending the app at once.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.21.2", default-features = false }
+
 [dev-dependencies]
 tempfile.workspace = true

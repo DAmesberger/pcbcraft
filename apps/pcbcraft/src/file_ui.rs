@@ -337,17 +337,31 @@ pub struct FileUi {
     changed_at: f64,
     recovery_retry_at: f64,
     now: f64,
+    /// Quitting was asked for while a file operation ran: ask once it ends.
+    close_pending: bool,
+    /// The window is closing with the user's answer (or nothing unsaved):
+    /// the exit keeps no recovery copy.
+    closed: bool,
 }
 impl FileUi {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: &Engine) -> Self {
+        let picker = rfd::AsyncFileDialog::new().set_parent(cc);
+        Self::with_directory(&cc.egui_ctx, picker, engine, recovery_directory())
+    }
+    /// The file workflow with recovery snapshots in `directory`.
+    pub(crate) fn with_directory(
+        ctx: &egui::Context,
+        picker: rfd::AsyncFileDialog,
+        engine: &Engine,
+        directory: PathBuf,
+    ) -> Self {
         let (events, receiver) = mpsc::channel();
-        let directory = recovery_directory();
-        let sender = worker(cc.egui_ctx.clone(), directory, events.clone());
+        let sender = worker(ctx.clone(), directory, events.clone());
         Self {
             controller: Controller::new(engine.revision()),
             document: engine.document().clone(),
             captured: None,
-            picker: rfd::AsyncFileDialog::new().set_parent(cc),
+            picker,
             folder: home_directory(),
             sender,
             event_sender: events,
@@ -361,6 +375,8 @@ impl FileUi {
             changed_at: 0.0,
             recovery_retry_at: 0.0,
             now: 0.0,
+            close_pending: false,
+            closed: false,
         }
     }
     pub fn observe(&mut self, engine: &Engine, now: f64) {
@@ -398,6 +414,39 @@ impl FileUi {
         self.clear_recovery(false);
         Ok(())
     }
+    /// The app is ending without a Save or Don't Save answer (Dock › Quit,
+    /// a logout, a signal): write unsaved work to this session's recovery
+    /// snapshot now, waiting at most `wait`, so the next launch offers it.
+    /// Returns whether the snapshot holds the current document.
+    pub fn keep_for_recovery(&mut self, wait: Duration) -> bool {
+        if self.closed || !self.controller.dirty() {
+            return false;
+        }
+        if self.controller.recovered.as_ref() == Some(&self.controller.current) {
+            return true;
+        }
+        let Ok(ticket) = self.controller.allocate() else {
+            return false;
+        };
+        self.controller.recovery_flight = Some(ticket.clone());
+        self.send(Job::Recover(
+            ticket.clone(),
+            self.document.clone(),
+            self.controller.path.clone(),
+        ));
+        let deadline = std::time::Instant::now() + wait;
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            let Ok(event) = self.receiver.recv_timeout(left) else {
+                break;
+            };
+            let ours = matches!(&event, Event::Recovered(t, false, false, _) if *t == ticket);
+            self.receive(event);
+            if ours {
+                break;
+            }
+        }
+        self.controller.recovered.as_ref() == Some(&self.controller.current)
+    }
     fn send(&mut self, job: Job) {
         if let Err(error) = self.sender.send(job) {
             self.controller.flight = None;
@@ -418,6 +467,19 @@ impl FileUi {
         }
     }
     pub fn request(&mut self, action: Action) {
+        if matches!(action, Action::Close) && self.closed {
+            return;
+        }
+        if matches!(action, Action::Close) && self.controller.prompt.is_none() {
+            if self.busy() {
+                // A save or a file panel is still open: quit once it ends.
+                self.close_pending = true;
+                return;
+            }
+            // The startup recovery question is kept on disk for the next
+            // launch, as "Keep for later" does.
+            self.recoveries.clear();
+        }
         if self.busy() || self.controller.prompt.is_some() || !self.recoveries.is_empty() {
             return;
         }
@@ -559,7 +621,13 @@ impl FileUi {
         while let Ok(event) = self.receiver.try_recv() {
             self.receive(event);
         }
+        if self.close_pending && !self.busy() {
+            self.close_pending = false;
+            self.request(Action::Close);
+        }
+        // Once closing (Don't Save), no new snapshot brings the work back.
         if self.controller.dirty()
+            && !self.closed
             && !self.prompting()
             && self.controller.recovery_flight.is_none()
             && self.controller.recovered.as_ref() != Some(&self.controller.current)
@@ -741,6 +809,7 @@ impl FileUi {
                 if close {
                     let current = self.controller.accept(&ticket, Kind::Close);
                     if current && result.is_ok() {
+                        self.closed = true;
                         self.effects.push(Effect::Close);
                     } else if result.is_ok() {
                         self.controller.prompt = Some(Transition::Close);
@@ -788,37 +857,37 @@ impl FileUi {
     /// Unsaved-changes and startup-recovery prompts, in Solidcraft's system
     /// window chrome.
     pub fn dialogs(&mut self, ctx: &egui::Context) {
-        if self.controller.prompt.is_some() {
+        if let Some(transition) = &self.controller.prompt {
+            let title = match transition {
+                Transition::Close => "Save changes before quitting?",
+                Transition::New | Transition::Open(_) => "Save changes before continuing?",
+            };
             let mut choice = None;
-            ui_kit::Window::new(
-                egui::Id::new("file-unsaved"),
-                "status_warning",
-                "Save changes before continuing?",
-            )
-            .required()
-            .show_body(ctx, |ui| {
-                dialog_body(ui, |ui| {
-                    crate::kit::status(
-                        ui,
-                        "The project or component draft has unsaved changes.",
-                        crate::kit::Tone::Dim,
-                    );
-                    if let Some((_, status)) = &self.status {
-                        crate::kit::note(ui, status);
-                    }
-                    crate::kit::actions(ui, |ui| {
-                        if crate::kit::primary(ui, "Save", true).clicked() {
-                            choice = Some(Choice::Save);
+            ui_kit::Window::new(egui::Id::new("file-unsaved"), "status_warning", title)
+                .required()
+                .show_body(ctx, |ui| {
+                    dialog_body(ui, |ui| {
+                        crate::kit::status(
+                            ui,
+                            "The project or component draft has unsaved changes.",
+                            crate::kit::Tone::Dim,
+                        );
+                        if let Some((_, status)) = &self.status {
+                            crate::kit::note(ui, status);
                         }
-                        if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
-                            choice = Some(Choice::Discard);
-                        }
-                        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
-                            choice = Some(Choice::Cancel);
-                        }
+                        crate::kit::actions(ui, |ui| {
+                            if crate::kit::primary(ui, "Save", true).clicked() {
+                                choice = Some(Choice::Save);
+                            }
+                            if ui_kit::button(ui, DONT_SAVE, Button::Normal).clicked() {
+                                choice = Some(Choice::Discard);
+                            }
+                            if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
+                                choice = Some(Choice::Cancel);
+                            }
+                        });
                     });
                 });
-            });
             match choice {
                 Some(Choice::Save) => {
                     let next = self.controller.prompt.take();
@@ -829,7 +898,10 @@ impl FileUi {
                         self.proceed(next);
                     }
                 }
-                Some(Choice::Cancel) => self.controller.prompt = None,
+                Some(Choice::Cancel) => {
+                    self.controller.prompt = None;
+                    self.close_pending = false;
+                }
                 None => {}
             }
             return;
@@ -911,6 +983,11 @@ impl FileUi {
     }
 }
 
+/// The unsaved-changes answer that goes on without saving. It keeps no
+/// recovery copy either: the session's snapshot is removed before the
+/// window closes, as in Solidcraft.
+const DONT_SAVE: &str = "Don't Save";
+
 /// One recovery as the dialog lists it: name, age and size.
 fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
     if entry.error.is_some() {
@@ -982,6 +1059,10 @@ fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
             crate::kit::form(ui, add);
         });
 }
+
+#[cfg(test)]
+#[path = "file_ui_tests.rs"]
+mod quit_tests;
 
 #[cfg(test)]
 mod tests {

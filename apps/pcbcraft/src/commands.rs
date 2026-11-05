@@ -402,6 +402,8 @@ pub enum AppCommand {
     TogglePcb3d,
     /// Turn the PCB 3D view to a standard view.
     View3d(View3d),
+    /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
+    Quit,
 }
 
 /// The PCB 3D view's standard views (the navigation cube's targets).
@@ -1059,6 +1061,10 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::Slash))
             .icon("list")
             .keywords("keys keymap hotkeys help cheat sheet"),
+        app("app.quit", "Quit Pcbcraft", A::Quit)
+            .chord(Chord::cmd(K::Q))
+            .icon("close")
+            .keywords("exit close window"),
         app("file.new", "New project", A::New)
             .chord(Chord::cmd(K::N))
             .icon("new"),

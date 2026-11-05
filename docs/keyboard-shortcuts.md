@@ -36,6 +36,8 @@ While the Route tool is armed, its keys shadow these:
 
 R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
+**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. egui's built-in quit key, which closed the window without asking, is turned off. On macOS the app menu (`native_menu.rs`, built with muda as in Solidcraft) replaces winit's default menu, whose Quit ended the app at once. Its Quit item runs `app.quit` and shows the command's effective key. The menu has no other key equivalents, so every other key still reaches the dispatcher.
+
 Chords are named as in Solidcraft's keymap (`Ctrl+Shift+S`, where Ctrl is ⌘ on macOS). macOS shows ⌃⌥⇧⌘ glyphs, and other platforms show `Ctrl+Alt+Shift+K`. ⌘ below means Ctrl on Windows and Linux, and ⌥ means Alt.
 
 ## Changing keys: Settings › Keyboard
@@ -87,7 +89,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 
 | Context | Keys |
 | --- | --- |
-| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · F fit view |
+| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘Q quit · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · F fit view |
 | Component | ⇧⌘N new component · ⇧⌘O open component · ⌘[ / ⌘] previous / next component |
 | Symbol tab | L line · ⇧L polyline · R rectangle · C circle · A arc · ⇧P polygon · ⇧T text · ⇧F field · N pin · ⌘R rotate · ⇧X mirror · ⌘D duplicate · Delete or Backspace · ⇧R repeat tool · Enter finish · Esc cancel |
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |
