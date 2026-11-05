@@ -1254,6 +1254,16 @@ fn defaults() -> Vec<Command> {
         .icon("line")
         .keywords("connect net"),
         tool(
+            "schematic.junction",
+            "Junction point",
+            C::Schematic,
+            Workspace::Schematic,
+            "junction",
+        )
+        .chord(Chord::key(K::J))
+        .icon("point")
+        .keywords("dot join connect crossing"),
+        tool(
             "schematic.rotate",
             "Rotate symbol",
             C::Schematic,

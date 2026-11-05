@@ -2,9 +2,11 @@
 //! junctions, net labels and power ports ([`labels`]), sheets, hierarchical
 //! sheet symbols and sheet furniture ([`sheets`]), and designator
 //! annotation ([`annotate`]). Wire ends reference terminals, junctions,
-//! labels or sheet pins; drawn crossings and coincident pins never imply a
-//! connection, and labels join by name (`nets`). A wire end routed onto
-//! another wire's segment splits it at a junction ([`wiring`]).
+//! labels or sheet pins. A connection point that lies on a wire's path
+//! connects to it: every edit is normalised so the stored topology says so
+//! ([`tidy`]). Crossings join nothing without a junction point, new
+//! wires route around points they do not end on, and labels also join by
+//! name (`nets`).
 //! [`placed_unit`] resolves what an occurrence draws, [`definition_unit`]
 //! what a unit being authored draws and [`scene`] everything else a sheet
 //! draws. See docs/schematic-capture.md.
@@ -20,8 +22,8 @@ use crate::library::{
     VAlign,
 };
 use crate::model::{
-    EditPolicy, LabelKind, Net, Paper, PaperOrientation, PortShape, Project, ProjectProperties,
-    SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
+    EditPolicy, Junction, LabelKind, Net, Paper, PaperOrientation, PortShape, Project,
+    ProjectProperties, SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
 };
 use crate::nets;
 use schemars::JsonSchema;
@@ -56,7 +58,8 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
     },
-    /// Presentation only; electrical identities are unchanged.
+    /// Move a unit; wires follow its pins. A pin moved onto a wire
+    /// connects to it.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
     /// Set an occurrence's orientation about its origin: `mirror` reflects
@@ -79,6 +82,22 @@ pub enum SchematicCommand {
     Connect { from: WireTarget, to: WireTarget },
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
+    /// Put a junction point on the wires at `position`: on a wire's path it
+    /// joins everything meeting there, and where two wires cross it joins
+    /// them. Refused off every wire and on an existing connection point.
+    #[serde(rename = "junction.place")]
+    PlaceJunction {
+        /// The first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        position: Point,
+    },
+    /// Remove a junction point where straight wires pass through it: each
+    /// pair of wires leaving it in opposite directions becomes one wire
+    /// again, so a crossing stops joining. Refused at a bend or a T, where
+    /// removing a wire is the way to change the drawing.
+    #[serde(rename = "junction.remove")]
+    RemoveJunction { junction: Id },
     /// Relabel a net. Its identity, membership and routed copper are
     /// unchanged. A net named by labels or sheet pins is renamed by renaming
     /// every one of them that spells its current name.
@@ -245,6 +264,7 @@ pub enum Applied {
     None,
     Unit(Id),
     Label(Id),
+    Junction(Id),
     Sheet(SheetId),
     SheetSymbol { symbol: Id, child: SheetId },
     SheetPins(Vec<Id>),
@@ -295,6 +315,10 @@ pub fn apply(
         C::UnplaceUnit { occurrence } => none(unplace_unit(project, occurrence, policy)),
         C::Connect { from, to } => none(connect(project, from, to)),
         C::Disconnect { wire } => none(disconnect(project, wire)),
+        C::PlaceJunction { sheet, position } => {
+            wiring::place_junction(project, sheet.unwrap_or(first), position).map(Applied::Junction)
+        }
+        C::RemoveJunction { junction } => none(wiring::remove_junction(project, junction)),
         C::RenameNet { net, name } => none(rename_net(project, net, name)),
         C::MoveUnitToSheet {
             occurrence,
@@ -616,8 +640,48 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
             "A wire joins two points on one sheet; connect sheets with labels.",
         ));
     }
-    let id = project.allocate()?;
-    project.wires.push(Wire { id, from, to });
+    // The wire must not run over a connection point it does not end on,
+    // which would join that point too: route around it, with each bend a
+    // junction point.
+    let path = match (
+        end_sheet(project, from),
+        wiring::end_position(project, from),
+        wiring::end_position(project, to),
+    ) {
+        (Some(sheet), Some(a), Some(b)) => wiring::clean_route(project, sheet, a, b, [from, to])?
+            .into_iter()
+            .map(|p| (sheet, p))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let bends = path.len().saturating_sub(2);
+    if project.wires.len() + bends + 1 > MAX_WIRES
+        || project.junctions.len() + bends > wiring::MAX_JUNCTIONS
+    {
+        return Err(Error::Limit(
+            "This edition supports at most 16384 wires and 16384 junctions.".into(),
+        ));
+    }
+    let mut stops = vec![from];
+    for (sheet, position) in path.iter().skip(1).take(bends) {
+        let junction = project.allocate()?;
+        project.junctions.push(Junction {
+            id: junction,
+            sheet: *sheet,
+            position: *position,
+            placed: false,
+        });
+        stops.push(WireEnd::junction(junction));
+    }
+    stops.push(to);
+    for leg in stops.windows(2) {
+        let id = project.allocate()?;
+        project.wires.push(Wire {
+            id,
+            from: leg[0],
+            to: leg[1],
+        });
+    }
     // `check_instance` owns terminal validity: instance, terminal, unit
     // placement and NC/no-connect exclusion.
     for end in [from, to] {
@@ -755,6 +819,37 @@ pub struct PlacedPin {
     /// The designations the instance's binding maps to the terminal; `None`
     /// without a physical choice, never guessed.
     pub number: Option<PlacedText>,
+}
+
+/// Radius of the open ring that marks a pin end still needing a decision
+/// (wire it or mark it no-connect): its diameter is 0.8 of the pin text
+/// height, so it reads as a mark on the pin rather than a symbol of its own.
+pub const PIN_RING_MM: f64 = 0.4 * crate::library::graphics::PIN_TEXT_HEIGHT_MM;
+/// Half the width of the no-connect cross on a decided pin end.
+pub const NO_CONNECT_MM: f64 = 0.5 * crate::library::graphics::PIN_TEXT_HEIGHT_MM;
+
+impl PlacedPin {
+    /// The unit vector from the pin's body end out through its connection
+    /// end; zero for a pin of no length.
+    pub fn outward(&self) -> Point {
+        let d = [
+            self.end[0] - self.body_end[0],
+            self.end[1] - self.body_end[1],
+        ];
+        let len = d[0].hypot(d[1]);
+        if len > 0.0 && len.is_finite() {
+            [d[0] / len, d[1] / len]
+        } else {
+            [0.0, 0.0]
+        }
+    }
+    /// Where a ring of `radius` touching the connection end from outside
+    /// is centred, so the pin line stops at the ring's edge instead of
+    /// running into it.
+    pub fn ring_centre(&self, radius: f64) -> Point {
+        let o = self.outward();
+        [self.end[0] + o[0] * radius, self.end[1] + o[1] * radius]
+    }
 }
 
 /// Everything one unit draws, resolved against exact revisions. Views draw

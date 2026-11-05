@@ -15,9 +15,21 @@ As built on 2 November 2026. This extends the single-sheet capture described in 
 
 File format (still version 1, no migrations): every new field has a default and is omitted when it holds it (`sheets` when it is the single default sheet, `sheet` when it is sheet 1, empty lists), so a single-sheet design without labels writes exactly what it wrote before. Wire ends gain `{"label": id}` and `{"sheet_pin": id}`; a wire's sheet is that of its ends, and both ends must lie on one sheet. Sheet coordinates are millimetres with y up; every page has its top-left corner at (−30, 30) mm (`model::sheet::PAGE_TOP_LEFT`), so content near the origin, as single-sheet designs placed it, lies inside the frame.
 
+## Wires, connection points and junctions
+
+The schematic connects what it shows, as other schematic editors do. Connection points are pin ends, junction points, labels and power ports, and sheet pins.
+
+- **A wire that runs over a connection point connects to it**, at the wire's end or anywhere along a leg. The engine normalises the wiring after every edit (`schematic::tidy`): a point inside a wire's path splits the wire there into pieces that draw the same path (the point then carries a T), and a point on another wire's end is joined to it. So placing or moving a part whose pin lands on a wire joins it, in the same undo step. Every view, ERC, the netlist and Update PCB read this one stored topology.
+- **Wires that only cross do not connect.** Put a junction point on the crossing to join them.
+- **A wire end on another wire's middle** (`schematic.connect` to `{wire, at}`) splits that wire at a new junction point and joins it, with a dot. This is the usual behaviour of schematic editors; it is our assumption, and the founder may overrule it.
+- **Junction points** (`junction.place { sheet, position }`, the Junction tool, J) go on a wire or on a crossing and join every wire there; one placed on a lone straight wire shows as a dot, ready for a wire to end on it. `junction.remove` takes one away where wires pass straight through (a crossing stops joining). At a bend or a T it is refused: remove a wire instead. Off every wire, or on an existing connection point, placing is refused.
+- **Dots** mark where three or more conductors meet (a pin counts as one), and every junction point placed with `junction.place` (stored as `placed`). Bends, including the junction points at a routed wire's corners, have none.
+- **A new wire never connects by accident.** `schematic.connect` (and the wire `label.place` draws to its attach target) takes the horizontal-first L when it runs over no connection point but its own ends. Otherwise it takes the vertical-first L, else the shortest three-legged dogleg whose middle leg runs up to 30 mm beyond either end on a 2.5 mm pitch. Each bend is a junction point, so it may not lie on a wire. When no such path exists the command is refused, naming the point in the way, and the document is unchanged.
+- **Existing documents.** A document saved before this rule may hold wires drawn over pins they did not connect to. The first edit normalises it, and that can join nets. On routed nets, the edit is refused like any other change to routed connectivity, until the update is previewed. Both shipped examples were rebuilt so their drawings are honest and their nets are unchanged (`examples/esp32-s31-devboard/nets.json` holds that netlist, and a test compares against it).
+
 ## Labels
 
-A label (`label.place`) is a named connection point: wires end on it like on a junction, and its name joins it to other labels. Nothing joins by drawn position.
+A label (`label.place`) is a named connection point: wires end on it like on a junction, and its name joins it to other labels. Labels never join one another by drawn position. Like any connection point, though, a label lying on a wire connects to that wire (see above).
 
 | Kind (`kind.type`) | Joins |
 | --- | --- |

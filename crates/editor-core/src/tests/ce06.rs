@@ -575,7 +575,8 @@ fn ce06_functions_are_selected_per_instance_and_checked_by_drive() -> Result<()>
     // gpio-out on 1: one push-pull driver and an input.
     choose(&mut engine, u1, &[(1, Some(GPIO_OUT_1))])?;
     assert_eq!(erc_on(&engine, net1), Vec::<String>::new());
-    let (pp1, _) = place(&mut engine, &push_pull, "PP1", 1, [30.0, 10.0])?;
+    // Clear of the U1.1 wire's corner at (30, 10): a pin there would join it.
+    let (pp1, _) = place(&mut engine, &push_pull, "PP1", 1, [45.0, 10.0])?;
     connect(&mut engine, ep(pp1, 1), ep(u1, 1))?;
     let net1 = net_of(&engine, ep(u1, 1))?;
     assert_eq!(erc_on(&engine, net1), ["erc.driver_conflict"]);
@@ -591,7 +592,9 @@ fn ce06_functions_are_selected_per_instance_and_checked_by_drive() -> Result<()>
     // A push-pull driver on that net is contention, not a driver conflict:
     // ERC uses the open-drain drive, not the direction alone.
     let (pp2, _) = place(&mut engine, &push_pull, "PP2", 1, [30.0, 40.0])?;
-    connect(&mut engine, ep(pp2, 1), ep(u1, 3))?;
+    // Wired to the pull-up below it: U1.3 already has wires on both sides,
+    // and a third could only reach it along the pins above or below.
+    connect(&mut engine, ep(pp2, 1), ep(pull, 1))?;
     let net3 = net_of(&engine, ep(u1, 3))?;
     assert_eq!(erc_on(&engine, net3), ["erc.open_drain_contention"]);
     choose(&mut engine, u1, &[(3, Some(UART_RX))])?;

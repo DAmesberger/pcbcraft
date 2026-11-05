@@ -22,9 +22,9 @@ const CAP_HEIGHT: f64 = 0.718;
 const CHORD_MM: f64 = 0.02;
 /// Thinnest printed stroke, mm.
 const MIN_STROKE_MM: f64 = 0.1;
-/// Junction dot radius and no-connect cross half-size, mm.
+/// Junction dot radius, mm. The no-connect cross is core's
+/// `schematic::NO_CONNECT_MM`, as on the canvas.
 const DOT_MM: f64 = 0.4;
-const CROSS_MM: f64 = 0.8;
 const WHITE: Colour = Colour::Grey(1.0);
 
 /// Text the WinAnsi canvas can set: Ω (resistance values) is spelled
@@ -165,7 +165,7 @@ fn draw(scene: &SheetScene) -> Page {
         page.disc(f.map(*p), DOT_MM, Colour::BLACK);
     }
     for p in &scene.no_connects {
-        let h = CROSS_MM;
+        let h = pcbcraft_core::schematic::NO_CONNECT_MM;
         line(&mut page, &f, [p[0] - h, p[1] - h], [p[0] + h, p[1] + h]);
         line(&mut page, &f, [p[0] - h, p[1] + h], [p[0] + h, p[1] - h]);
     }

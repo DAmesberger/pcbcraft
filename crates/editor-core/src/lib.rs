@@ -451,14 +451,42 @@ impl Engine {
                     *terminal,
                 )?);
             }
+            // Wire each terminal to the next; where no wire can be drawn
+            // without running over another pin, a pair of labels of the
+            // net's name, each on its pin, joins them instead.
+            let mut labelled = std::collections::BTreeSet::new();
             for pair in ends.windows(2) {
-                engine.apply(
+                let wired = engine.apply(
                     engine.revision,
                     Operation::Schematic(schematic::SchematicCommand::Connect {
                         from: pair[0].into(),
                         to: pair[1].into(),
                     }),
-                )?;
+                );
+                match wired {
+                    Ok(_) => {}
+                    Err(Error::Conflict(_)) => {
+                        for end in [pair[0], pair[1]] {
+                            if !labelled.insert(end) {
+                                continue;
+                            }
+                            let position = schematic::pin_position(engine.project(), end)
+                                .ok_or_else(|| Error::Invalid("showcase pin".into()))?;
+                            engine.apply(
+                                engine.revision,
+                                Operation::Schematic(schematic::SchematicCommand::PlaceLabel {
+                                    sheet: None,
+                                    name: (*name).into(),
+                                    kind: model::LabelKind::Local,
+                                    position,
+                                    rotation: Default::default(),
+                                    attach: Some(end.into()),
+                                }),
+                            )?;
+                        }
+                    }
+                    Err(other) => return Err(other),
+                }
             }
             let net = ends
                 .first()
@@ -823,6 +851,7 @@ impl Engine {
                     schematic::Applied::None => Outcome::None,
                     schematic::Applied::Unit(occurrence) => Outcome::UnitPlaced { occurrence },
                     schematic::Applied::Label(label) => Outcome::LabelPlaced { label },
+                    schematic::Applied::Junction(junction) => Outcome::JunctionPlaced { junction },
                     schematic::Applied::Sheet(sheet) => Outcome::SheetAdded { sheet },
                     schematic::Applied::SheetSymbol { symbol, child } => {
                         Outcome::SheetSymbolPlaced { symbol, child }
@@ -934,7 +963,7 @@ impl Engine {
         };
         if !Arc::ptr_eq(&candidate.project, &self.document.project) {
             let project = Arc::make_mut(&mut candidate.project);
-            schematic::tidy(project);
+            schematic::tidy(project)?;
             let changes = nets::reconcile(project)?;
             // Explicit net-class assignments follow their nets through
             // merges and splits; a net that no longer exists takes its

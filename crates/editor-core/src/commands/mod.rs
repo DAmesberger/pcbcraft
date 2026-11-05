@@ -168,6 +168,10 @@ pub enum Outcome {
     LabelPlaced {
         label: Id,
     },
+    /// The junction point `junction.place` put on the wires there.
+    JunctionPlaced {
+        junction: Id,
+    },
     /// The sheet `sheet.add` appended.
     SheetAdded {
         sheet: crate::ids::SheetId,

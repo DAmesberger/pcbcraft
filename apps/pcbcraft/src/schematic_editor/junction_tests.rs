@@ -180,13 +180,25 @@ fn junction_dots_mark_three_conductors_and_scale_with_zoom() -> TestResult {
         assert!(near(&dots, screen(&editor, pin(ep(r91, 1))?)));
         // Wired pin ends carry no open ring; unconnected ones keep the
         // Issues to-do ring.
-        let rings = circles(&shapes, 3.5, false);
+        // The ring sits just outside the pin end, touching it, so the pin
+        // line stops at its edge: its centre is one radius plus half its
+        // stroke from the end.
+        let (radius, width) = pin_ring(scale);
+        let rings = circles(&shapes, radius, false);
+        let ringed = |e| -> Result<bool, Box<dyn std::error::Error>> {
+            let end = screen(&editor, pin(e)?);
+            Ok(rings
+                .iter()
+                .any(|c| (c.distance(end) - (radius + 0.5 * width)).abs() < 0.05))
+        };
         for wired in [ep(r90, 2), ep(r91, 1), ep(r92, 1), ep(r93, 1)] {
-            assert!(!near(&rings, screen(&editor, pin(wired)?)), "{wired:?}");
+            assert!(!ringed(wired)?, "{wired:?}");
         }
         for open in [ep(r90, 1), ep(r92, 2)] {
-            assert!(near(&rings, screen(&editor, pin(open)?)), "{open:?}");
+            assert!(ringed(open)?, "{open:?}");
         }
+        // Proportioned to the pin text: diameter 0.8 of its height.
+        assert!((2.0 * radius - 0.8 * scale).abs() < 1e-3, "scale {scale}");
     }
     assert!((dot_radius(20.0) - 2.0 * dot_radius(10.0)).abs() < 1e-6);
     Ok(())
@@ -201,7 +213,13 @@ fn a_plain_wire_end_on_a_pin_has_no_dot_and_no_ring() -> TestResult {
     let mut editor = centred(end, 12.0);
     let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
     assert!(circles(&shapes, dot_radius(12.0), true).is_empty());
-    assert!(!near(&circles(&shapes, 3.5, false), screen(&editor, end)));
+    let (radius, width) = pin_ring(12.0);
+    let rings = circles(&shapes, radius, false);
+    assert!(
+        !rings
+            .iter()
+            .any(|c| c.distance(screen(&editor, end)) < radius + width)
+    );
     Ok(())
 }
 
@@ -262,5 +280,89 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
     );
     engine.undo()?;
     assert_eq!(engine.project(), &before);
+    Ok(())
+}
+
+/// Click the Wire tool at `p` (move, press, release).
+fn click(editor: &mut SchematicEditor, engine: &Engine, ctx: &egui::Context, p: Pos2) {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: p,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for events in [
+        vec![egui::Event::PointerMoved(p)],
+        vec![button(true)],
+        vec![button(false)],
+    ] {
+        canvas_frame(editor, engine, ctx, events);
+    }
+}
+
+#[test]
+fn the_wire_tool_snaps_to_pin_ends_and_pin_lines_with_a_marker() -> TestResult {
+    let (engine, [_, _, r92, r93], _) = engine()?;
+    let project = engine.project();
+    let start = schematic::pin_position(project, ep(r92, 2)).ok_or("pin")?;
+    let occurrence = project
+        .occurrences_of(r93)
+        .next()
+        .map(|o| o.id)
+        .ok_or("occurrence")?;
+    let placed = schematic::placed_unit(project, occurrence)?;
+    let pin = placed
+        .pins
+        .iter()
+        .find(|p| p.terminal == pcbcraft_core::TerminalId(1))
+        .ok_or("R93.1")?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = centred(start, 12.0);
+    editor.on_tool("wire", &engine);
+    // Ten pixels off R92.2's end, beyond the old 9 px pick radius: the
+    // marker sits exactly on the pin end, and the click lands there.
+    let near = screen(&editor, start) + vec2(8.0, -6.0);
+    canvas_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(near)],
+    );
+    let (shapes, _) = canvas_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(near)],
+    );
+    let markers = circles(&shapes, SNAP_MARKER_PX, false);
+    assert!(
+        markers
+            .iter()
+            .any(|c| c.distance(screen(&editor, start)) < 1e-3),
+        "{markers:?}"
+    );
+    click(&mut editor, &engine, &ctx, near);
+    assert_eq!(editor.wire_from, Some(WireTarget::Terminal(ep(r92, 2))));
+    // Halfway along R93.1's drawn line, well away from its end: the wire
+    // still lands on the connection end.
+    let along = [
+        0.5 * (pin.end[0] + pin.line_end[0]),
+        0.5 * (pin.end[1] + pin.line_end[1]),
+    ];
+    let p = screen(&editor, along) + vec2(0.0, 2.0);
+    assert!(
+        p.distance(screen(&editor, pin.end)) > SNAP_PX,
+        "the pin is long enough"
+    );
+    click(&mut editor, &engine, &ctx, p);
+    let Some(Change::Schematic {
+        command: SchematicCommand::Connect { from, to },
+    }) = editor.update.change().cloned()
+    else {
+        return Err(format!("no connect under review: {:?}", editor.update.change()).into());
+    };
+    assert_eq!(from, WireTarget::Terminal(ep(r92, 2)));
+    assert_eq!(to, WireTarget::Terminal(ep(r93, 1)));
     Ok(())
 }
