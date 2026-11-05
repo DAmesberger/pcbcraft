@@ -33,6 +33,27 @@ fn a_repeated_refused_call_is_named_then_ends_the_run() -> Fallible {
 }
 
 #[test]
+fn a_call_that_succeeds_between_refusals_starts_the_count_again() -> Fallible {
+    // A tuning run was stopped wrongly: the same preview was refused, the
+    // document fixed, the same preview refused for the next problem. A call
+    // that succeeds in between means something may have changed.
+    let dir = tempfile::tempdir()?;
+    let config = local_config(131_072);
+    let apply = || chat_call("a", "library_pinout_apply", r#"{"base": "12"}"#);
+    let edit = chat_call("e", "library_pinout_edit", r#"{"format": 1}"#);
+    let mut backend = openai(
+        vec![apply(), edit, apply(), apply(), apply(), apply()],
+        &config,
+    );
+    let mut session = Session::default();
+    let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
+    assert!(matches!(outcome.stop, Stop::Repeated(_)), "{log:?}");
+    // Three refusals after the edit, not two after it plus one before.
+    assert_eq!(outcome.facts.requests, 5);
+    Ok(())
+}
+
+#[test]
 fn claude_runs_with_the_base_prompt_and_every_tool() -> Fallible {
     let dir = tempfile::tempdir()?;
     let config = RunConfig::default();

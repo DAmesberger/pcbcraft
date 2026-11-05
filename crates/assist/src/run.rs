@@ -225,7 +225,8 @@ pub fn run(
     let mut cuts = 0;
     let mut last_prompt = 0u64;
     let mut appended = 0u64;
-    // Refused calls by tool and exact input, to notice a model repeating one.
+    // Refused calls by tool and exact input since the last call that
+    // succeeded, to notice a model repeating one.
     let mut refused: HashMap<(String, String), u32> = HashMap::new();
     let mut repeated: Option<String> = None;
     let stop = loop {
@@ -451,7 +452,12 @@ pub fn run(
                     step,
                     images,
                 } => {
-                    if error {
+                    if !error {
+                        // Something may have changed (a preview refused, the
+                        // document edited, the same preview fine): only
+                        // refusals with nothing succeeding between count.
+                        refused.clear();
+                    } else {
                         let seen = refused
                             .entry((name.clone(), input.to_string()))
                             .or_insert(0);
