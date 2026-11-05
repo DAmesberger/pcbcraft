@@ -1,6 +1,6 @@
 //! The tools an assisted run offers the model: the Pcbcraft MCP contract
 //! narrowed to authoring one part, executed in-process against an
-//! automation [`Session`] through [`Session::dispatch`] (the same request
+//! automation [`Session`] through the gate ([`send`]: the same request
 //! types and command engine the MCP server and CLI use). Each tool names
 //! the MCP command it runs. The runner fills `expected_revision` from the
 //! session, so the model never handles revisions, and compacts replies:
@@ -19,7 +19,7 @@
 //! creates drafts; publishing stays with a person (the import review gate).
 use crate::model::ToolSpec;
 use crate::report::ReviewReport;
-use pcbcraft_automation::Session;
+use pcbcraft_automation::{Decision, Policy, Session};
 use pcbcraft_core::library::pinout::{
     MAX_PINOUT_PERIPHERALS, MAX_PINOUT_PINS, MAX_PINOUT_RULES, MAX_PINOUT_VARIANTS,
 };
@@ -116,9 +116,9 @@ pub fn definitions() -> Vec<ToolSpec> {
         ),
         tool(
             "library_pinout_apply",
-            "MCP project_apply library.pinout_apply: import exactly the document last previewed, with that plan's base (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
+            "MCP project_apply library.pinout_apply: import exactly the document last previewed. base is optional: leave it out to apply the last preview, or give the plan's base exactly (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
             json!({"base": {"type": "integer"}, "accept": object, "target": object, "document": object}),
-            &["base"],
+            &[],
         ),
         tool(
             "library_package_schema",
@@ -198,6 +198,7 @@ pub fn definitions() -> Vec<ToolSpec> {
 /// Run one tool call against `session`.
 pub fn execute(
     session: &mut Session,
+    policy: &Policy,
     workspace: &mut Workspace,
     name: &str,
     input: &Value,
@@ -213,9 +214,9 @@ pub fn execute(
     let request = match name {
         "library_pinout_schema" => json!({"command": "library.pinout_schema", "params": {}}),
         "library_pinout_edit" => return edit(workspace, input),
-        "library_pinout_preview" => return preview(session, workspace, input),
+        "library_pinout_preview" => return preview(session, policy, workspace, input),
         "library_pinout_apply" => {
-            let (target, document) = match apply_inputs(workspace, input) {
+            let (target, document, base) = match apply_inputs(workspace, input) {
                 Ok(inputs) => inputs,
                 Err(why) => return reply(json!({"refused": why}), true, None),
             };
@@ -227,7 +228,7 @@ pub fn execute(
             workspace.applied = Some(document.clone());
             library(
                 "library.pinout_apply",
-                json!({"target": target, "document": document, "base": input["base"], "accept": accept}),
+                json!({"target": target, "document": document, "base": base, "accept": accept}),
             )
         }
         "library_package_schema" => return reply(package_schema(), false, None),
@@ -248,8 +249,12 @@ pub fn execute(
             "expected_revision": revision, "draft": input["draft"], "marking": input["marking"],
         }}),
         "library_check_part_file" => {
-            let response = session.dispatch(json!({"command": "library.check_part_file",
-                "params": {"builtin": input["builtin"], "values": values(input)}}));
+            let response = send(
+                session,
+                policy,
+                json!({"command": "library.check_part_file",
+                "params": {"builtin": input["builtin"], "values": values(input)}}),
+            );
             return if response["ok"] == true {
                 reply(response["result"]["report"].clone(), false, None)
             } else {
@@ -296,7 +301,7 @@ pub fn execute(
     };
     let mutation =
         request["command"] != "project.query" && request["command"] != "library.pinout_schema";
-    let response = session.dispatch(request);
+    let response = send(session, policy, request);
     if response["ok"] != true {
         if name == "library_pinout_apply" {
             workspace.applied = None;
@@ -322,6 +327,19 @@ pub fn execute(
     } else {
         // Query results come tagged (`{"query": …, "result": …}`).
         reply(result.get("result").unwrap_or(result).clone(), false, None)
+    }
+}
+
+/// Every request a tool sends to the session goes through the gate. The
+/// runner reads full results (each draft's findings), so it asks for them.
+pub fn send(session: &mut Session, policy: &Policy, mut request: Value) -> Value {
+    request["verbose"] = json!(true);
+    match session.check_request(policy, &request) {
+        Decision::Run => session.respond(request),
+        // There is no one to ask in a run yet: Ask is refused, with a reason
+        // the model can read.
+        Decision::Ask(_) => session.respond_gated(policy, request),
+        Decision::Refuse(refusal) => refusal.reply(),
     }
 }
 
@@ -519,7 +537,12 @@ fn ranges(numbers: &[u64]) -> String {
 
 /// `library_pinout_preview`: the working document (or the given one,
 /// which replaces it) through `library.pinout_preview`, compacted.
-fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> ToolOutcome {
+fn preview(
+    session: &mut Session,
+    policy: &Policy,
+    workspace: &mut Workspace,
+    input: &Value,
+) -> ToolOutcome {
     if let Some(document) = input["document"].as_object() {
         workspace.pinout = document.clone();
     }
@@ -531,10 +554,14 @@ fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> T
         );
     }
     let document = Value::Object(workspace.pinout.clone());
-    let response = session.dispatch(json!({"command": "project.query", "params": {
-        "query": "library.pinout_preview",
-        "params": {"target": input["target"], "document": document},
-    }}));
+    let response = send(
+        session,
+        policy,
+        json!({"command": "project.query", "params": {
+            "query": "library.pinout_preview",
+            "params": {"target": input["target"], "document": document},
+        }}),
+    );
     if response["ok"] != true {
         workspace.previewed = None;
         return reply(response["error"].clone(), true, None);
@@ -547,9 +574,13 @@ fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> T
 
 /// The target and document `library_pinout_apply` imports: the given
 /// ones, or the last preview's, refusing a working document changed since.
-fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), String> {
+fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value, Value), String> {
     if input["document"].is_object() {
-        return Ok((input["target"].clone(), input["document"].clone()));
+        return Ok((
+            input["target"].clone(),
+            input["document"].clone(),
+            input["base"].clone(),
+        ));
     }
     let Some((target, base, document)) = &workspace.previewed else {
         return Err("preview the pinout first (library_pinout_preview)".into());
@@ -557,10 +588,20 @@ fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), 
     if *document != Value::Object(workspace.pinout.clone()) {
         return Err("the working document changed since the last preview; preview it again".into());
     }
-    if input["base"] != *base {
+    let given = &input["base"];
+    let same = match given {
+        Value::Null => true,
+        Value::String(text) => text.trim().parse::<u64>().ok() == base.as_u64(),
+        other => other == base,
+    };
+    if !same {
+        let float = if given.is_f64() {
+            " (it arrived as a rounded number: an integer this long loses digits as a float)"
+        } else {
+            ""
+        };
         return Err(format!(
-            "base {} is not the last preview's base {base}",
-            input["base"]
+            "base {given} is not the last preview's base {base}{float}. Leave base out to apply exactly what was last previewed"
         ));
     }
     let target = if input["target"].is_object() {
@@ -568,7 +609,7 @@ fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), 
     } else {
         target.clone()
     };
-    Ok((target, document.clone()))
+    Ok((target, document.clone(), base.clone()))
 }
 
 /// A pinout plan without per-object detail: change counts (the changes
@@ -728,12 +769,19 @@ mod tests {
         let mut session = Session::default();
         let mut workspace = Workspace::default();
         assert!(matches!(
-            execute(&mut session, &mut workspace, "library_publish", &json!({})),
+            execute(
+                &mut session,
+                &Policy::default(),
+                &mut workspace,
+                "library_publish",
+                &json!({})
+            ),
             ToolOutcome::Reply { error: true, .. }
         ));
         assert!(matches!(
             execute(
                 &mut session,
+                &Policy::default(),
                 &mut workspace,
                 "submit_review",
                 &json!({"report": {"part": "x"}})

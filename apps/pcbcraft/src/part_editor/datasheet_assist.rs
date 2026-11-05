@@ -283,6 +283,8 @@ impl DatasheetAssist {
 
     /// The run the form describes, or why it can't start.
     fn plan(&self) -> Result<Plan, String> {
+        let policy = pcbcraft_assist::output_policy(std::path::Path::new(self.out.trim()))
+            .map_err(|e| e.to_string())?;
         let endpoint = Endpoint::parse(&self.endpoint).map_err(|e| e.to_string())?;
         let key = Secret::new(&self.key);
         if key.is_some() {
@@ -307,6 +309,7 @@ impl DatasheetAssist {
                 ..Budget::default()
             },
             prices,
+            policy,
         };
         let goal = Goal {
             name: self.name.trim().to_owned(),

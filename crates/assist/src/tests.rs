@@ -9,6 +9,7 @@ use crate::model::openai::OpenAiBackend;
 use crate::model::wire::ScriptedWire;
 use crate::model::{ModelBackend, ModelProfile};
 use crate::tools::ToolOutcome;
+use pcbcraft_automation::{Mode, Policy};
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
 
@@ -85,6 +86,16 @@ fn tool_turn(id: &str, name: &str, input: Value) -> Value {
         "usage": {"input_tokens": 500, "output_tokens": 1_000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 50_000}})
 }
 
+/// A tool call under the default policy (edits run, no folders).
+fn execute_open(
+    session: &mut Session,
+    workspace: &mut tools::Workspace,
+    name: &str,
+    input: &Value,
+) -> ToolOutcome {
+    tools::execute(session, &Policy::default(), workspace, name, input)
+}
+
 fn reply_json(outcome: ToolOutcome) -> Fallible<Value> {
     match outcome {
         ToolOutcome::Reply {
@@ -117,7 +128,7 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
         json!({"pins": rest, "rules": doc["rules"]}),
     ];
     for (k, chunk) in chunks.into_iter().enumerate() {
-        reply_json(tools::execute(
+        reply_json(execute_open(
             &mut shadow,
             &mut workspace,
             "library_pinout_edit",
@@ -126,7 +137,7 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
         out.push(tool_turn(&format!("t2{k}"), "library_pinout_edit", chunk));
     }
     let preview_input = json!({"target": target});
-    let plan = reply_json(tools::execute(
+    let plan = reply_json(execute_open(
         &mut shadow,
         &mut workspace,
         "library_pinout_preview",
@@ -134,7 +145,7 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     ))?;
     out.push(tool_turn("t2", "library_pinout_preview", preview_input));
     let apply_input = json!({"base": plan["base"]});
-    let applied = reply_json(tools::execute(
+    let applied = reply_json(execute_open(
         &mut shadow,
         &mut workspace,
         "library_pinout_apply",
@@ -155,7 +166,7 @@ fn script_on(mut shadow: Session) -> Fallible<Vec<Value>> {
     let package = id_of("package")?;
     let component = id_of("component")?;
     let request = json!({"request": {"draft": package, "row": {"source": "custom", "family": "module"}, "values": module_values()}});
-    reply_json(tools::execute(
+    reply_json(execute_open(
         &mut shadow,
         &mut workspace,
         "library_package_plan",
@@ -466,6 +477,134 @@ fn pages_are_counted_for_the_estimate() -> Fallible {
         &RunConfig::default().profile.capabilities,
     )?;
     assert_eq!(prepared.tokens, 2 * TOKENS_PER_PAGE);
+    Ok(())
+}
+
+// The gate: every tool call's request passes it with the run's policy.
+
+#[test]
+fn publishing_and_paths_outside_the_output_folder_are_refused_by_the_gate() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let policy = output_policy(&dir.path().join("part.pcbcraft"))?;
+    let mut session = Session::default();
+    let before = session.engine().revision();
+    // Publishing needs a person, and a run has no one to ask.
+    let reply = tools::send(
+        &mut session,
+        &policy,
+        json!({"command": "project.apply", "params": {"expected_revision": before,
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.publish", "params": {"drafts": []}}}}}),
+    );
+    assert_eq!(reply["error"]["code"], "gate.cannot_ask", "{reply}");
+    // A file outside the run's folder is refused before anything is written.
+    let outside = tempfile::tempdir()?;
+    let target = outside.path().join("elsewhere.pcbcraft");
+    let reply = tools::send(
+        &mut session,
+        &policy,
+        json!({"command": "project.save", "params": {"path": target.to_string_lossy()}}),
+    );
+    assert_eq!(reply["error"]["code"], "gate.path_outside", "{reply}");
+    assert!(!target.exists());
+    assert_eq!(session.engine().revision(), before);
+    // Queries run.
+    let reply = tools::send(
+        &mut session,
+        &policy,
+        json!({"command": "library.pinout_schema", "params": {}}),
+    );
+    assert_eq!(reply["ok"], true);
+    Ok(())
+}
+
+#[test]
+fn a_gated_tool_call_comes_back_as_a_tool_result_and_the_run_goes_on() -> Fallible {
+    // Under ask-every-time, applying the pinout is an edit that needs a
+    // person; with no one to ask it is refused, and the model reads why.
+    let dir = tempfile::tempdir()?;
+    // The whole document in one call: 23 rows, under the 40-row limit.
+    let script = vec![
+        tool_turn("t1", "library_pinout_edit", pinout()),
+        tool_turn(
+            "t2",
+            "library_pinout_preview",
+            json!({"target": {"target": "new", "name": "EXR-22"}}),
+        ),
+        tool_turn("t3", "library_pinout_apply", json!({})),
+        tool_turn(
+            "t4",
+            "submit_review",
+            json!({"report": {
+            "part": "EXR-22", "summary": "Not applied: the gate refused it.",
+            "sources": [{"name": "DS", "title": "EXR-22 datasheet", "revision": "1"}],
+            "values": [], "open_questions": ["Apply the pinout by hand."]}}),
+        ),
+    ];
+    let mut backend = anthropic(script);
+    let config = RunConfig {
+        policy: Policy::new(Mode::AskEveryTime, [dir.path().to_path_buf()]),
+        ..RunConfig::default()
+    };
+    let mut session = Session::default();
+    let (outcome, log) = run_with(&config, &mut backend, datasheet(&dir)?, &mut session)?;
+    assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
+    assert_eq!(
+        outcome.facts.request_log[2].tools,
+        vec!["library_pinout_apply!"]
+    );
+    assert!(
+        session.engine().drafts().items.is_empty(),
+        "nothing applied"
+    );
+    let bodies = bodies(&backend);
+    let refused = &bodies[3]["messages"][6]["content"][0];
+    assert_eq!(refused["type"], "tool_result");
+    assert_eq!(refused["is_error"], true);
+    let text = refused["content"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("gate.cannot_ask") && text.contains("no way to ask"),
+        "{text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_pinout_applies_without_a_base_or_with_it_as_text() -> Fallible {
+    // A local model could not copy a 19-digit base: it wrote it as a float.
+    // The base is optional, text is read, and a float is named as the cause.
+    for (base, applies) in [(None, true), (Some("text"), true), (Some("float"), false)] {
+        let mut session = Session::default();
+        let mut workspace = tools::Workspace::default();
+        reply_json(execute_open(
+            &mut session,
+            &mut workspace,
+            "library_pinout_edit",
+            &pinout(),
+        ))?;
+        let plan = reply_json(execute_open(
+            &mut session,
+            &mut workspace,
+            "library_pinout_preview",
+            &json!({"target": {"target": "new", "name": "EXR-22"}}),
+        ))?;
+        let exact = plan["base"].as_u64().ok_or("a base")?;
+        let input = match base {
+            None => json!({}),
+            Some("text") => json!({"base": exact.to_string()}),
+            _ => json!({"base": exact as f64}),
+        };
+        let outcome = execute_open(&mut session, &mut workspace, "library_pinout_apply", &input);
+        match outcome {
+            ToolOutcome::Reply { error, text, .. } => {
+                assert_eq!(!error, applies, "{base:?}: {text}");
+                if !applies && exact > (1u64 << 53) {
+                    assert!(text.contains("Leave base out"), "{text}");
+                }
+            }
+            ToolOutcome::Report(_) => return Err("a reply".into()),
+        }
+    }
     Ok(())
 }
 

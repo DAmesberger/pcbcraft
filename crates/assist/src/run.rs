@@ -10,7 +10,7 @@ use crate::model::{
 use crate::report::{self, RequestFacts, ReviewReport, RunFacts};
 use crate::tools::{self, ToolOutcome};
 use crate::{Error, Event, Goal, Outcome, Result, SYSTEM, Stop};
-use pcbcraft_automation::Session;
+use pcbcraft_automation::{Mode, Policy, Session};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -29,12 +29,15 @@ const CHARS_PER_TOKEN: u64 = 3;
 const ESTIMATE_MARGIN: u64 = 4_000;
 
 /// What a run may use, on which model.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RunConfig {
     pub profile: ModelProfile,
     pub budget: Budget,
     /// Prices of models that may serve instead of the configured one.
     pub prices: PriceTable,
+    /// What the run's tool calls may do: every call goes through the gate
+    /// with it. The hosts give it the output folder as its only folder.
+    pub policy: Policy,
 }
 
 impl Default for RunConfig {
@@ -44,13 +47,27 @@ impl Default for RunConfig {
             profile: ModelProfile::anthropic(crate::DEFAULT_MODEL, &prices),
             budget: Budget::default(),
             prices,
+            policy: Policy::default(),
         }
     }
+}
+
+/// The default policy of a run: edits run inside its turn, files and
+/// publishing are refused (there is no one to ask yet), and the folder the
+/// run writes its project to is the only folder a request may name.
+pub fn output_policy(out: &std::path::Path) -> Result<Policy> {
+    let folder = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let folder = std::path::absolute(&folder)?;
+    Ok(Policy::new(Mode::AutoAllowEdits, [folder]))
 }
 
 /// What tools act on during a run.
 struct ToolContext<'a> {
     session: &'a mut Session,
+    policy: &'a Policy,
     workspace: tools::Workspace,
     pages: PageStore,
     /// Reported in the review: which document's pages the model looked at.
@@ -95,7 +112,13 @@ fn dispatch_tool_call(
             },
         };
     }
-    tools::execute(context.session, &mut context.workspace, name, input)
+    tools::execute(
+        context.session,
+        context.policy,
+        &mut context.workspace,
+        name,
+        input,
+    )
 }
 
 /// The first request's message: datasheets, then the goal. `note` tells a
@@ -170,6 +193,7 @@ pub fn run(
     let mut messages = vec![first_message(goal, &prepared)];
     let mut context = ToolContext {
         session,
+        policy: &config.policy,
         workspace: tools::Workspace::default(),
         pages: std::mem::take(&mut prepared.pages),
         facts: std::mem::take(&mut prepared.facts),

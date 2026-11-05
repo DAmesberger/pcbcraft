@@ -226,6 +226,7 @@ fn parse(args: &[String]) -> Result<Args> {
         return Err("--record and --replay exclude each other".into());
     }
     let connection = configure(flags, &mut config)?;
+    config.policy = pcbcraft_assist::output_policy(&out)?;
     Ok(Args {
         datasheets,
         name,
@@ -395,7 +396,12 @@ mod tests {
     #[test]
     fn the_defaults_are_todays_anthropic_run() -> Result<()> {
         let parsed = parse(&args("--datasheet a.pdf --name X --out x.pcbcraft"))?;
-        assert_eq!(parsed.config, RunConfig::default());
+        let defaults = RunConfig::default();
+        assert_eq!(parsed.config.profile, defaults.profile);
+        assert_eq!(parsed.config.budget, defaults.budget);
+        // The run may name only its output folder.
+        let folder = std::path::absolute(".")?;
+        assert_eq!(parsed.config.policy.folders, vec![folder]);
         assert_eq!(
             parsed.connection.key,
             KeySource::Env("ANTHROPIC_API_KEY".into())

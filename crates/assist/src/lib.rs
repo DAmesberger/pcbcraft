@@ -39,7 +39,7 @@ use std::path::PathBuf;
 
 pub use documents::{MAX_DATASHEET_BYTES, TOKENS_PER_PAGE, pdf_pages};
 pub use prompt::SYSTEM;
-pub use run::{RunConfig, run};
+pub use run::{RunConfig, output_policy, run};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
