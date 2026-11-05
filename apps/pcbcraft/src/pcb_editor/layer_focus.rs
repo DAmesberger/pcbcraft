@@ -50,8 +50,9 @@ impl LayerFocus {
 }
 
 /// How one copper layer is drawn: its tracks and pads `shade` of the way
-/// from the board; its fills solid (the active layer) or `tint`-translucent
-/// with a thin outline, so a pour never hides the copper above it.
+/// from the board; its fills solid (the active layer on the near side) or
+/// `tint`-translucent with a thin outline, so a pour never hides the near
+/// side's copper or another layer's copper above it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Look {
     pub(super) shade: f32,
@@ -72,6 +73,10 @@ pub(super) const FAR_SHADE: f32 = 0.45;
 pub(super) const OTHER_SHADE: f32 = 0.6;
 /// Every other layer's share under Dim others.
 pub(super) const DIM_SHADE: f32 = 0.2;
+/// The opacity of the active layer's fill copper when the active layer is
+/// not the near side (the far side or an inner layer): the near side's
+/// pads and text read through it.
+pub(super) const ACTIVE_FILL_TINT: f32 = 0.45;
 /// The opacity of another layer's fill copper (All layers).
 pub(super) const FILL_TINT: f32 = 0.22;
 /// The opacity of another layer's fill copper under Dim others.
@@ -165,12 +170,20 @@ impl PcbEditor {
         l
     }
 
-    /// How `layer` is drawn now: the active layer at full strength; the
-    /// others by the focus mode, deeper layers darker under All layers;
-    /// `None` when it is not drawn.
+    /// How `layer` is drawn now: the active layer at full strength (its
+    /// pours translucent unless it is the near side); the others by the
+    /// focus mode, deeper layers darker under All layers; `None` when it
+    /// is not drawn.
     pub(super) fn look(&self, layer: CopperLayer, near: Layer) -> Option<Look> {
         if layer == self.layer {
-            return Some(Look::ACTIVE);
+            return Some(if layer == CopperLayer::from(near) {
+                Look::ACTIVE
+            } else {
+                Look {
+                    shade: 1.0,
+                    tint: Some(ACTIVE_FILL_TINT),
+                }
+            });
         }
         match self.focus {
             LayerFocus::Only => None,

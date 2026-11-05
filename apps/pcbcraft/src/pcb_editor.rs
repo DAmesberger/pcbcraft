@@ -426,6 +426,9 @@ pub struct PcbEditor {
     production: Option<production::ProductionDialog>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
+    /// Bounds the next Layout frame shows whole, zooming out past the
+    /// board's fit if need be (Update PCB's staged parts).
+    overview_request: Option<[Point; 2]>,
     /// Instance whose schematic symbol the app should show next.
     show_in_schematic: Option<Id>,
     /// Every Connections row instead of the first eight.
@@ -524,6 +527,7 @@ impl Default for PcbEditor {
             rules: None,
             production: None,
             frame_request: None,
+            overview_request: None,
             show_in_schematic: None,
             connections_all: false,
             net_classes: None,
@@ -998,7 +1002,7 @@ impl PcbEditor {
         }
         match tool {
             "update" => {
-                self.update.begin(engine, Change::SyncPcb {});
+                self.begin_update_pcb(engine);
                 self.end_route();
                 self.cancel_drag();
             }
@@ -1254,6 +1258,25 @@ impl PcbEditor {
         slot
     }
 
+    /// Open the Update PCB review and frame the board with the parts it
+    /// stages beside it, so the preview shows where they go.
+    pub(super) fn begin_update_pcb(&mut self, engine: &Engine) {
+        self.update.begin(engine, Change::SyncPcb {});
+        let board = engine.project().board_size;
+        let ghosts = self.update.marks().map(|m| m.ghosts).unwrap_or_default();
+        if !ghosts.is_empty() {
+            let reach = pcbcraft_core::layout::staging::BOARD_MARGIN_MM;
+            let (lo, hi) = ghosts.iter().fold(([0.0_f64, 0.0], board), |(lo, hi), g| {
+                let p = g.position;
+                (
+                    [lo[0].min(p[0] - reach), lo[1].min(p[1] - reach)],
+                    [hi[0].max(p[0] + reach), hi[1].max(p[1] + reach)],
+                )
+            });
+            self.overview_request = Some([lo, hi]);
+        }
+    }
+
     /// Return the layout view to its fitted scale.
     pub fn fit(&mut self) {
         self.zoom = 1.0;
@@ -1366,6 +1389,9 @@ impl PcbEditor {
         }
         if let Some(bounds) = self.frame_request.take() {
             (self.zoom, self.pan) = frame_view(rect, project.board_size, bounds, self.from_bottom);
+        }
+        if let Some(bounds) = self.overview_request.take() {
+            (self.zoom, self.pan) = overview(rect, project.board_size, bounds, self.from_bottom);
         }
         let view = board_view(
             rect,
@@ -2642,6 +2668,24 @@ const LOCATE_MARGIN_MM: f64 = 2.0;
 /// The zoom and pan that frame `bounds` in the canvas `rect`: centred, the
 /// bounds plus a margin filling about two thirds of the canvas, never
 /// zoomed out past the fitted board nor in past [`LOCATE_MAX_ZOOM`].
+/// The zoom and pan that show `bounds` whole, at most at the board's fit
+/// and as far out as the zoom range allows, centred.
+fn overview(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
+    let fit = fit_scale(rect, board);
+    let size = [
+        (bounds[1][0] - bounds[0][0]).max(1.0) as f32,
+        (bounds[1][1] - bounds[0][1]).max(1.0) as f32,
+    ];
+    let wanted = (rect.width() / size[0]).min(rect.height() / size[1]) * 0.9;
+    let zoom = (wanted / fit).clamp(*ZOOM_RANGE.start(), 1.0);
+    let centre = [
+        (bounds[0][0] + bounds[1][0]) / 2.0,
+        (bounds[0][1] + bounds[1][1]) / 2.0,
+    ];
+    let unpanned = board_view(rect, board, zoom, Vec2::ZERO, from_bottom);
+    (zoom, rect.center() - unpanned.screen(centre))
+}
+
 fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
     let fit = fit_scale(rect, board);
     let size = [

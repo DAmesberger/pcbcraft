@@ -785,10 +785,19 @@ impl Engine {
                 .into(),
             }),
         )?;
-        engine.apply(
-            engine.revision,
-            Operation::Layout(layout::LayoutCommand::Sync),
-        )?;
+        // On the board, where the tests that build on the demo expect them
+        // (Update PCB would stage them beside it).
+        for (instance, position) in [(first, [8.0, 8.0]), (second, [16.0, 8.0])] {
+            engine.apply(
+                engine.revision,
+                Operation::Layout(layout::LayoutCommand::Place {
+                    instance,
+                    position,
+                    rotation_deg: 0.0,
+                    layer: Layer::Top,
+                }),
+            )?;
+        }
         engine.undo.clear();
         engine.redo.clear();
         Ok(engine)

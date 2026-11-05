@@ -57,6 +57,35 @@ pub fn apply(engine: &mut Engine, operation: Operation) -> Result<Outcome> {
     engine.apply(engine.revision(), operation)
 }
 
+/// Update PCB, then move each part it staged beside the board onto the
+/// board, 8 mm apart in rows from (8, 8), for tests that route between
+/// them.
+pub fn sync_onto_board(engine: &mut Engine) -> Result<()> {
+    use crate::layout::LayoutCommand;
+    let before = engine.project().placements.len();
+    apply(engine, Operation::Layout(LayoutCommand::Sync))?;
+    let staged: Vec<_> = engine.project().placements[before..].to_vec();
+    let columns = ((engine.project().board_size[0] - 8.0) / 8.0)
+        .floor()
+        .max(1.0) as usize;
+    for (i, placement) in staged.into_iter().enumerate() {
+        let index = before + i;
+        apply(
+            engine,
+            Operation::Layout(LayoutCommand::Move {
+                instance: placement.instance,
+                position: [
+                    8.0 + (index % columns) as f64 * 8.0,
+                    8.0 + (index / columns) as f64 * 8.0,
+                ],
+                rotation_deg: 0.0,
+                layer: placement.layer,
+            }),
+        )?;
+    }
+    Ok(())
+}
+
 /// Leave one undone step on the redo stack, so a failed operation that
 /// committed or cleared history would be visible.
 pub fn prime_history(engine: &mut Engine) -> Result<()> {

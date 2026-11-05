@@ -92,8 +92,11 @@ fn frame(editor: &mut PcbEditor, engine: &Engine, ctx: &egui::Context) -> egui::
 }
 
 /// With each stackup layer active, seen from the top and from the bottom,
-/// every pixel well inside the active layer's tracks and fill copper is
-/// that layer's full colour: no other layer's track or pour covers it.
+/// every pixel well inside the active layer's tracks is that layer's full
+/// colour, and so is its fill copper when it is the near side: no other
+/// layer's track or pour covers it. (The active layer's pours on the far
+/// side or inside are translucent; `a_far_active_pour_lets_the_near_side_read`
+/// covers them.)
 #[test]
 fn no_other_layer_covers_the_active_layers_copper() -> TestResult {
     let engine = Engine::showcase()?;
@@ -138,7 +141,16 @@ fn no_other_layer_covers_the_active_layers_copper() -> TestResult {
             }
             assert!(checked > 10, "{layer:?}: {checked} track pixels");
             let step = 2.5 / scale;
-            for fill in project.fills.iter().filter(|f| f.layer == layer) {
+            let near = CopperLayer::from(if from_bottom {
+                Layer::Bottom
+            } else {
+                Layer::Top
+            });
+            for fill in project
+                .fills
+                .iter()
+                .filter(|f| f.layer == layer && layer == near)
+            {
                 let Some(mesh) = editor.fill_meshes.mesh(fill.id) else {
                     continue;
                 };
@@ -370,5 +382,116 @@ fn keepouts_show_over_all_copper_in_every_mode() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+/// Whether `p` is clear of every pad, via and track by `margin` mm.
+fn clear_of_copper(editor: &PcbEditor, project: &Project, p: Point, margin: f64) -> bool {
+    !near_drilled(editor, project, p, margin)
+        && project.tracks.iter().all(|t| {
+            pcbcraft_core::geometry::segment_distance(p, t.start, t.end) > t.width / 2.0 + margin
+        })
+}
+
+/// A point well inside fill `mesh` and clear of other copper.
+fn open_pour(
+    editor: &PcbEditor,
+    project: &Project,
+    mesh: &super::fill_paint::FillMesh,
+) -> Option<Point> {
+    let [w, h] = project.board_size;
+    (1..40)
+        .flat_map(|i| (1..40).map(move |j| [w * f64::from(i) / 40.0, h * f64::from(j) / 40.0]))
+        .find(|p| {
+            [[0.0, 0.0], [0.5, 0.0], [-0.5, 0.0], [0.0, 0.5], [0.0, -0.5]]
+                .iter()
+                .all(|d| mesh.contains([p[0] + d[0], p[1] + d[1]]))
+                && clear_of_copper(editor, project, *p, 1.0)
+        })
+}
+
+/// Seen from the top with the bottom layer active (as the Fill tool leaves
+/// it), the bottom pour is translucent: the top pads over it still read as
+/// pads. Highlighting a pour's net outlines it in the selection colour and
+/// leaves its copper as it was, so the board is not flooded.
+#[test]
+fn a_far_active_pour_lets_the_near_side_read() -> TestResult {
+    let engine = Engine::showcase()?;
+    let project = engine.project();
+    let ink = BoardInk::get();
+    let colors = crate::palette::board();
+    let mut editor = bare(&engine);
+    picture(&mut editor, &engine);
+    editor.layer = CopperLayer::Bottom;
+    let plain = picture(&mut editor, &engine);
+    let view = view_of(&editor, &engine);
+    let pour = project
+        .fills
+        .iter()
+        .find(|f| f.layer == CopperLayer::Bottom)
+        .ok_or("a bottom pour")?;
+    let mesh = editor.fill_meshes.mesh(pour.id).ok_or("bottom copper")?;
+    let open = open_pour(&editor, project, mesh).ok_or("open pour")?;
+    let pour_pixel = plain.at(view.screen(open)).ok_or("on screen")?;
+    let full = ink.on_board(colors.copper_layer(CopperLayer::Bottom), 1.0);
+    assert_ne!(pour_pixel, full, "the far pour is not opaque");
+    // Top surface pads over the bottom copper, sampled off their numbers.
+    let mut pads = 0;
+    for pad in &editor.board_pads {
+        let placed = &pad.placed;
+        if placed.layer != Layer::Top || placed.pad.kind.through_hole() {
+            continue;
+        }
+        let b = pad.outline.bounds(0.0);
+        let at = [b.min[0] + 0.2 * (b.max[0] - b.min[0]), b.center()[1]];
+        // Off the active layer's tracks, which lie on top by design.
+        let on_track = project.tracks.iter().any(|t| {
+            pcbcraft_core::geometry::segment_distance(at, t.start, t.end) < t.width / 2.0 + 0.2
+        });
+        if on_track
+            || !pad.contains(at)
+            || !mesh.contains(at)
+            || (b.max[0] - b.min[0]) * f64::from(view.view.scale) < 8.0
+        {
+            continue;
+        }
+        let pixel = plain.at(view.screen(at)).ok_or("on screen")?;
+        assert_ne!(pixel, full, "pad at {at:?} is covered");
+        assert_ne!(pixel, pour_pixel, "pad at {at:?} reads apart from the pour");
+        pads += 1;
+    }
+    assert!(pads > 0, "top pads over the bottom pour");
+
+    // Highlight each pour's net with its layer active: its open copper
+    // keeps its colour, and its outline is in the selection colour.
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let selected = ink.on_board(colors.selected, 1.0);
+    let mut checked = 0;
+    for fill in project.fills.iter().filter(|f| f.net.is_some()) {
+        let Some(mesh) = editor.fill_meshes.mesh(fill.id) else {
+            continue;
+        };
+        let Some(open) = open_pour(&editor, project, mesh) else {
+            continue;
+        };
+        editor.layer = fill.layer;
+        editor.set_selection(None, None, None);
+        let before = picture(&mut editor, &engine);
+        editor.set_selection(None, None, fill.net);
+        let lit = picture(&mut editor, &engine);
+        assert_eq!(
+            lit.at(view.screen(open)),
+            before.at(view.screen(open)),
+            "{:?} pour at {open:?} is not flooded",
+            fill.layer
+        );
+        let outlined = shapes(&frame(&mut editor, &engine, &ctx))
+            .iter()
+            .any(|s| matches!(s, Shape::Path(p) if p.stroke.color == egui::epaint::ColorMode::Solid(selected) && p.closed));
+        assert!(outlined, "{:?} pour outlined", fill.layer);
+        checked += 1;
+    }
+    assert!(checked > 0);
     Ok(())
 }

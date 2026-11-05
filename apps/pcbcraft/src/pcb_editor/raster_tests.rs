@@ -487,3 +487,65 @@ fn layout_pictures() -> TestResult {
     }
     Ok(())
 }
+
+/// Evidence of e2e findings 12 and 18, written only with
+/// `PCBCRAFT_PICTURES` set: the showcase seen from the top with the bottom
+/// layer active (its pour plain and with the pour's net highlighted), and
+/// half its parts staged beside the board by Update PCB.
+#[test]
+fn pour_and_staging_pictures() -> TestResult {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Ok(());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(SCREEN[0], SCREEN[1]));
+    let save = |name: &str, editor: &mut PcbEditor, engine: &Engine| -> TestResult {
+        let png = picture(editor, engine).png().ok_or("png encoding failed")?;
+        std::fs::write(dir.join(format!("{name}.png")), png)?;
+        Ok(())
+    };
+    let engine = Engine::showcase()?;
+    let board = engine.project().board_size;
+    let mut editor = PcbEditor::default();
+    (editor.zoom, editor.pan) = frame_view(rect, board, [[0.0, 0.0], board], false);
+    picture(&mut editor, &engine);
+    for layer in [CopperLayer::Top, CopperLayer::Bottom] {
+        editor.layer = layer;
+        let side = if layer == CopperLayer::Top {
+            "top"
+        } else {
+            "bottom"
+        };
+        editor.set_selection(None, None, None);
+        save(&format!("pour-{side}-active"), &mut editor, &engine)?;
+        let net = engine
+            .project()
+            .fills
+            .iter()
+            .find(|f| f.layer == layer)
+            .and_then(|f| f.net);
+        editor.set_selection(None, None, net);
+        save(&format!("pour-{side}-active-net-lit"), &mut editor, &engine)?;
+    }
+    let mut project = engine.project().clone();
+    project.placements = project.placements.iter().step_by(2).cloned().collect();
+    let staged = with_project(&engine, project)?;
+    let mut staged = staged;
+    staged.apply(
+        staged.revision(),
+        pcbcraft_core::Operation::Layout(layout::LayoutCommand::Sync),
+    )?;
+    let boxes = layout::staging::part_boxes(staged.project());
+    let all = boxes
+        .values()
+        .fold(
+            pcbcraft_core::geometry::Bounds::point([0.0, 0.0]),
+            |a, b| a.union(*b),
+        )
+        .including(board);
+    let mut editor = PcbEditor::default();
+    (editor.zoom, editor.pan) = overview(rect, board, [all.min, all.max], false);
+    save("update-pcb-staged", &mut editor, &staged)?;
+    Ok(())
+}
