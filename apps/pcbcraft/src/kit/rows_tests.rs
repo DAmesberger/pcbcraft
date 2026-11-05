@@ -8,6 +8,8 @@ pub(in crate::kit) struct Harness {
     ctx: egui::Context,
     time: f64,
     size: egui::Vec2,
+    /// egui's font atlas, kept from every frame, for pictures.
+    pub atlas: crate::kit::text::tests::Atlas,
 }
 
 /// One painted text: its string, screen rectangle, ink and clip.
@@ -31,6 +33,7 @@ impl Harness {
             ctx,
             time: 0.0,
             size: vec2(width, height),
+            atlas: Default::default(),
         }
     }
 
@@ -50,7 +53,7 @@ impl Harness {
             },
             |ui| add(ui),
         );
-        output.textures_delta.clear();
+        self.atlas.take(&mut output);
         fn walk(shape: &egui::Shape, clip: Rect, out: &mut Vec<Painted>) {
             match shape {
                 egui::Shape::Text(t) => out.push(Painted {
@@ -75,6 +78,22 @@ impl Harness {
             walk(&shape.shape, shape.clip_rect, &mut out);
         }
         out
+    }
+
+    /// Run one frame with `events` and return egui's whole output.
+    pub fn output(&mut self, events: Vec<Event>, mut add: impl FnMut(&mut Ui)) -> egui::FullOutput {
+        self.time += 0.4;
+        let mut output = self.ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            },
+            |ui| add(ui),
+        );
+        self.atlas.take(&mut output);
+        output
     }
 
     /// Settle, then click at `at` (press and release on separate frames).
@@ -290,7 +309,7 @@ fn a_tool_card_ends_with_done_and_finishes_through_its_footer() {
 }
 
 #[test]
-fn a_summary_row_puts_its_action_at_the_right_and_a_hint_stays_one_line() {
+fn a_summary_row_puts_its_action_at_the_right_and_a_hint_wraps_in_the_column() {
     let mut ui = Harness::new(300.0, 200.0);
     let long = "Click a pad, then points; Esc ends the route and keeps what was placed so far";
     let painted = ui.frame(vec![], |ui| {
@@ -309,7 +328,7 @@ fn a_summary_row_puts_its_action_at_the_right_and_a_hint_stays_one_line() {
     );
     let hint = painted.iter().find(|p| p.text == long);
     assert!(
-        hint.is_some_and(|h| h.rows == 1 && h.rect.right() <= 300.5),
+        hint.is_some_and(|h| h.rows > 1 && !h.elided && h.rect.right() <= 300.5),
         "{hint:?}"
     );
 }

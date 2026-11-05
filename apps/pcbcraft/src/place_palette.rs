@@ -1183,6 +1183,7 @@ fn badges(entry: &CatalogEntry) -> [kit::SearchBadge<'static>; 4] {
     catalog::Badge::ALL.map(|badge| kit::SearchBadge {
         label: badge.label(),
         present: entry.badges.get(badge),
+        tip: "",
     })
 }
 

@@ -17,15 +17,18 @@ pub mod dialog;
 mod form;
 pub mod issues;
 pub mod messages;
+pub mod pick;
 pub mod review;
 mod rows;
 mod search;
 pub mod severity;
+pub mod text;
 pub mod toast;
 mod tree;
 
 pub use form::*;
 pub use issues::{count_badge, issues_bar, issues_list};
+pub use pick::{PickResponse, PickRow, Tick, pick_row};
 pub use rows::*;
 pub use search::*;
 pub use toast::{pill, status_chip};

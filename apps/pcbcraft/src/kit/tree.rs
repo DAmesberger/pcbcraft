@@ -150,7 +150,7 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
     let clip = ui.painter().with_clip_rect(ui.clip_rect().intersect(r));
     let mut secondary_cut = false;
     if !row.secondary.is_empty() {
-        let galley = super::rows::one_line(
+        let galley = super::text::one_line(
             ui,
             row.secondary,
             secondary_font,
@@ -164,7 +164,7 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
             t.text_dim,
         );
     }
-    let galley = super::rows::one_line(ui, row.label, font, ink, split.label + FIT_SLACK);
+    let galley = super::text::one_line(ui, row.label, font, ink, split.label + FIT_SLACK);
     let elided = galley.elided;
     clip.galley(pos2(x, cy - galley.size().y / 2.0), galley, ink);
     response.widget_info(|| {
@@ -233,15 +233,16 @@ fn share(room: f32, label: f32, secondary: Option<f32>, gap: f32) -> Share {
 /// Browser-style card title band: the title, and a dim summary on the right.
 pub fn card_title(ui: &mut Ui, title: &str, summary: &str) {
     let t = Tokens::get();
-    let (rect, _) =
+    let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), TREE_ROW_HEIGHT), Sense::hover());
-    let galley = super::rows::one_line(
+    let galley = super::text::one_line(
         ui,
         title,
         fonts::semibold(t.font_heading),
         t.text,
         (rect.width() - t.space_6 * 2.0).max(0.0),
     );
+    let mut cut = galley.elided;
     let title_right = rect.left() + t.space_6 + galley.size().x;
     ui.painter().galley(
         pos2(
@@ -251,15 +252,14 @@ pub fn card_title(ui: &mut Ui, title: &str, summary: &str) {
         galley,
         t.text,
     );
-    let mut job = egui::text::LayoutJob::simple(
-        summary.to_owned(),
+    let galley = super::text::one_line(
+        ui,
+        summary,
         FontId::proportional(t.font_body),
         t.text_dim,
         (rect.right() - t.space_6 - title_right - t.space_12).max(0.0),
     );
-    job.wrap.max_rows = 1;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let galley = ui.painter().layout_job(job);
+    cut |= galley.elided;
     ui.painter().galley(
         pos2(
             rect.right() - t.space_6 - galley.size().x,
@@ -268,13 +268,19 @@ pub fn card_title(ui: &mut Ui, title: &str, summary: &str) {
         galley,
         t.text_dim,
     );
+    let full = if summary.is_empty() {
+        title.to_owned()
+    } else {
+        format!("{title} · {summary}")
+    };
+    super::text::hover(response, &full, "", cut);
 }
 
 /// Inspector header: icon, the inspected object's name and a kind chip
 /// (upstream `inspector_header` and `workspace_chip`).
 pub fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) {
     let t = Tokens::get();
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), t.form_header_height),
         Sense::hover(),
     );
@@ -303,20 +309,20 @@ pub fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) {
         name_right = chip.left() - t.space_8;
     }
     let left = icon_center.x + t.form_icon_size / 2.0 + t.space_8;
-    let mut job = egui::text::LayoutJob::simple(
-        title.to_owned(),
+    let galley = super::text::one_line(
+        ui,
+        title,
         fonts::semibold(t.font_heading),
         t.form_ink,
         (name_right - left).max(0.0),
     );
-    job.wrap.max_rows = 1;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let galley = ui.painter().layout_job(job);
+    let cut = galley.elided;
     ui.painter().galley(
         pos2(left, rect.center().y - galley.size().y / 2.0),
         galley,
         t.form_ink,
     );
+    super::text::hover(response, title, "", cut);
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
 }
 

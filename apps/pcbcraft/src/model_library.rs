@@ -660,7 +660,8 @@ fn card(ui: &mut Ui, id: egui::Id, hit: &ModelHit, highlighted: bool) -> egui::R
     );
     let label = format!("{} · {}", hit.name, hit_detail(hit));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
-    response.on_hover_text(hit_detail(hit))
+    // The name and detail lines may be cut: the hover has both in full.
+    response.on_hover_text(format!("{}\n{}", hit.name, hit_detail(hit)))
 }
 
 fn clipped(

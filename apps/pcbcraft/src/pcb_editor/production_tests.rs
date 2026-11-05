@@ -1,7 +1,8 @@
 //! Production files…: the dialog opens from its ribbon command, Export
 //! stays disabled while an unwaived error blocks it, Waive… commits one
-//! `fabrication.waive` with its reason, and the export writes the set off
-//! the UI thread.
+//! `fabrication.waive` with its reason, a whole group or a Shift-click run
+//! is waived with one reason in one undo step from a form that opens
+//! under the group, and the export writes the set off the UI thread.
 use super::*;
 use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
@@ -91,6 +92,22 @@ fn click(
         .last()
         .ok_or_else(|| format!("missing {label}"))?;
     Ok(frame(editor, engine, ctx, press(point)).1)
+}
+
+/// Rest the pointer on the painted `label` for a frame (hover actions
+/// show on the next one).
+fn hover(
+    editor: &mut PcbEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    label: &str,
+) -> Result<Pos2, Box<dyn std::error::Error>> {
+    let (output, _) = frame(editor, engine, ctx, vec![]);
+    let point = *positions(&output, label)
+        .last()
+        .ok_or_else(|| format!("missing {label}"))?;
+    frame(editor, engine, ctx, vec![egui::Event::PointerMoved(point)]);
+    Ok(point)
 }
 
 fn context() -> egui::Context {
@@ -189,16 +206,21 @@ fn an_unwaived_error_blocks_export_and_a_waiver_unblocks_it() -> TestResult {
     // Export is disabled: clicking it starts nothing.
     click(&mut editor, &engine, &ctx, "Export")?;
     assert!(!dialog(&mut editor)?.busy());
-    // Waive… asks for a reason; Waive commits it as one edit.
+    // Waive… shows while the row is hovered; it asks for a reason, and
+    // Waive commits it as one edit.
+    hover(
+        &mut editor,
+        &engine,
+        &ctx,
+        "Via on GND too close to via on VCC",
+    )?;
     assert!(click(&mut editor, &engine, &ctx, "Waive…")?.is_none());
-    if let Some((_, reason)) = &mut dialog(&mut editor)?.waiving {
-        "Vias are 0.18 mm apart by design".clone_into(reason);
-    }
-    let op = click(&mut editor, &engine, &ctx, "Waive")?.ok_or("no waiver edit")?;
+    "Vias are 0.18 mm apart by design".clone_into(&mut dialog(&mut editor)?.waiving.reason);
+    let op = click(&mut editor, &engine, &ctx, "Waive 1 finding")?.ok_or("no waiver edit")?;
     assert!(matches!(
         &op,
-        Operation::Fabrication(FabricationCommand::Waive { key, reason })
-            if key == "board.clearance via:1 via:2" && reason == "Vias are 0.18 mm apart by design"
+        Operation::Fabrication(FabricationCommand::Waive { keys, reason })
+            if keys == &["board.clearance via:1 via:2"] && reason == "Vias are 0.18 mm apart by design"
     ));
     let before = engine.revision();
     engine.apply(before, op)?;
@@ -221,6 +243,12 @@ fn an_unwaived_error_blocks_export_and_a_waiver_unblocks_it() -> TestResult {
     let shown = texts(&output);
     assert!(shown.iter().any(|t| t == "1 waived"), "{shown:?}");
     // Restore removes the waiver again.
+    hover(
+        &mut editor,
+        &engine,
+        &ctx,
+        "Via on GND too close to via on VCC",
+    )?;
     let op = click(&mut editor, &engine, &ctx, "Restore")?.ok_or("no restore edit")?;
     assert!(matches!(
         op,
@@ -280,4 +308,224 @@ fn sizes_and_summaries_read_as_words() {
     assert_eq!(size_text(2048), "2.0 KB");
     assert_eq!(size_text(3 * 1024 * 1024), "3.0 MB");
     assert_eq!(report_summary(&PreflightReport::default()), "No issues");
+}
+
+/// A report like the one-hour run's: a clearance error, nine unrouted
+/// nets and twelve parts without a Part, waivers read from the project.
+fn report_like_the_run(engine: &Engine) -> PreflightReport {
+    let item = |key: String, code: &str, severity, title: String, fix: &str| {
+        let waiver = engine.project().production.waiver(&key).cloned();
+        PreflightItem {
+            key,
+            code: code.into(),
+            severity,
+            title,
+            fix: Some(fix.into()),
+            objects: Vec::new(),
+            waiver,
+        }
+    };
+    let mut items = vec![item(
+        "board.clearance via:1 via:2".into(),
+        "board.clearance",
+        Severity::Error,
+        "Via on GND too close to via on VCC".into(),
+        "Move one via",
+    )];
+    for net in [
+        "VBUS", "USB_DP", "USB_DM", "GND", "3V3", "SWDIO", "SWCLK", "SDA", "SCL",
+    ] {
+        items.push(item(
+            format!("board.unrouted net:{net}"),
+            "board.unrouted",
+            Severity::Error,
+            format!("{net}: 2 pads unrouted"),
+            "Route the connection",
+        ));
+    }
+    for n in 1..=12 {
+        items.push(item(
+            format!("purchasing.no_part instance:{n}"),
+            "purchasing.no_part",
+            Severity::Warning,
+            format!("R{n}: no Part"),
+            "Choose a Part with Resolve parts",
+        ));
+    }
+    items.push(item(
+        "fabrication.legend_outside legend:R3".into(),
+        "fabrication.legend_outside",
+        Severity::Warning,
+        "Legend of R3 runs into the board edge cutout near the mounting hole".into(),
+        "Move the legend",
+    ));
+    let blocking = items.iter().filter(|i| i.blocks()).count();
+    let waived = items.iter().filter(|i| i.waiver.is_some()).count();
+    PreflightReport {
+        profile: "Standard 6/6".into(),
+        errors: 10,
+        warnings: 13,
+        waived,
+        blocking,
+        items,
+    }
+}
+
+/// The topmost painted `label`'s centre.
+fn at(output: &egui::FullOutput, label: &str) -> Result<Pos2, Box<dyn std::error::Error>> {
+    Ok(*positions(output, label)
+        .first()
+        .ok_or_else(|| format!("missing {label} in {:?}", texts(output)))?)
+}
+
+#[test]
+fn a_whole_group_is_waived_with_one_reason_in_one_undo_step() -> TestResult {
+    let mut engine = Engine::showcase()?;
+    let mut editor = open(&engine)?;
+    let ctx = context();
+    dialog(&mut editor)?.report = Some((
+        engine.revision(),
+        Pick::Board,
+        Ok(report_like_the_run(&engine)),
+    ));
+    // The findings read as groups: the nine unrouted nets are one row.
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    for label in [
+        "Unrouted connections",
+        "No Part chosen",
+        "Via on GND too close to via on VCC",
+    ] {
+        assert!(shown.iter().any(|t| t == label), "{label} in {shown:?}");
+    }
+    assert!(
+        !shown.iter().any(|t| t == "VBUS: 2 pads unrouted"),
+        "folded"
+    );
+    // Waive all… on the group opens the reason form right under it.
+    let header = hover(&mut editor, &engine, &ctx, "Unrouted connections")?;
+    assert!(click(&mut editor, &engine, &ctx, "Waive all…")?.is_none());
+    assert_eq!(dialog(&mut editor)?.waiving.ticked.len(), 9);
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let reason = at(&output, "Reason")?;
+    let next = at(&output, "No Part chosen")?;
+    assert!(
+        header.y < reason.y && reason.y < next.y,
+        "the form is under its group, before the next: {header:?} {reason:?} {next:?}"
+    );
+    // The reason is required: without one, Waive does nothing.
+    assert!(click(&mut editor, &engine, &ctx, "Waive 9 findings")?.is_none());
+    "prototype".clone_into(&mut dialog(&mut editor)?.waiving.reason);
+    let op = click(&mut editor, &engine, &ctx, "Waive 9 findings")?.ok_or("no waiver edit")?;
+    let Operation::Fabrication(FabricationCommand::Waive { keys, reason }) = &op else {
+        return Err(format!("not a waiver: {op:?}").into());
+    };
+    assert_eq!(keys.len(), 9);
+    assert!(keys.iter().all(|k| k.starts_with("board.unrouted ")));
+    assert_eq!(reason, "prototype");
+    assert!(dialog(&mut editor)?.waiving.at.is_none(), "the form closes");
+    engine.apply(engine.revision(), op)?;
+    assert_eq!(engine.project().production.waivers.len(), 9);
+    engine.undo()?;
+    assert!(
+        engine.project().production.waivers.is_empty(),
+        "one undo step"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_shift_click_ticks_a_run_and_the_form_follows_the_row() -> TestResult {
+    let engine = Engine::showcase()?;
+    let report = report_like_the_run(&engine);
+    let groups = groups(&report);
+    let mut w = Waiving::default();
+    tick_row(&mut w, &groups, "purchasing.no_part instance:2", false);
+    assert_eq!(w.at, Some(At::Row("purchasing.no_part instance:2".into())));
+    tick_row(&mut w, &groups, "purchasing.no_part instance:6", true);
+    assert_eq!(w.ticked.len(), 5, "R2 to R6: {:?}", w.ticked);
+    assert_eq!(w.at, Some(At::Row("purchasing.no_part instance:6".into())));
+    // A plain click unticks one; the last untick closes the form.
+    tick_row(&mut w, &groups, "purchasing.no_part instance:6", false);
+    assert_eq!(w.ticked.len(), 4);
+    for n in 2..=5 {
+        tick_row(
+            &mut w,
+            &groups,
+            &format!("purchasing.no_part instance:{n}"),
+            false,
+        );
+    }
+    assert!(w.ticked.is_empty());
+    assert!(w.at.is_none());
+    // A row of a folded group keeps its form under the group's header.
+    w.ticked.insert("purchasing.no_part instance:12".into());
+    w.at = Some(At::Row("purchasing.no_part instance:12".into()));
+    let lines = entries(&w, &groups);
+    let form = lines.iter().position(|e| matches!(e, Entry::Form));
+    let header = lines
+        .iter()
+        .position(|e| matches!(e, Entry::Header(g) if groups[*g].0 == "purchasing.no_part"));
+    assert_eq!(form, header.map(|h| h + 1));
+    Ok(())
+}
+
+/// The dialog with the run's findings and the unrouted group unfolded.
+fn run_dialog(engine: &Engine) -> Result<PcbEditor, Box<dyn std::error::Error>> {
+    let mut editor = open(engine)?;
+    let d = dialog(&mut editor)?;
+    d.report = Some((
+        engine.revision(),
+        Pick::Board,
+        Ok(report_like_the_run(engine)),
+    ));
+    d.waiving.open.insert("board.unrouted".into());
+    Ok(editor)
+}
+
+/// The dialog in a 320-point column, as in the one-hour run: every text
+/// cut short shows in full on hover. With `PCBCRAFT_TEXT_PICTURES=<dir>`
+/// it writes the grouped list, a hovered row and the group's reason form.
+#[test]
+fn production_check_text_cut_short_shows_in_full_on_hover() -> TestResult {
+    use crate::kit::text::tests::{Screen, cuts_without_hover, tooltips_at_once};
+    let engine = Engine::showcase()?;
+    let mut editor = run_dialog(&engine)?;
+    let screen = Screen::new(egui::vec2(320.0, 1100.0));
+    let run = |editor: &mut PcbEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.subject_slot(ui, &engine);
+        })
+    };
+    run(&mut editor, vec![]);
+    let rest = run(&mut editor, vec![]);
+    screen.picture("production-grouped", &rest, 2.0)?;
+    let (cut, missing) = cuts_without_hover(&screen.ctx, |events| run(&mut editor, events));
+    assert!(cut >= 1, "the narrow column cuts a row: {cut}");
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+    // A hovered row: its action shows, and its title's tooltip.
+    tooltips_at_once(&screen.ctx);
+    let out = run(&mut editor, vec![]);
+    let row = *positions(&out, "VBUS: 2 pads unrouted")
+        .first()
+        .ok_or("no VBUS row")?;
+    run(&mut editor, vec![egui::Event::PointerMoved(row)]);
+    let hovered = run(&mut editor, vec![]);
+    screen.picture("production-row-hover", &hovered, 2.0)?;
+    // Waive all… on the No Part group: the form under its header.
+    let header = *positions(&hovered, "No Part chosen")
+        .first()
+        .ok_or("no No Part group")?;
+    run(&mut editor, vec![egui::Event::PointerMoved(header)]);
+    let out = run(&mut editor, vec![]);
+    let waive = *positions(&out, "Waive all…")
+        .last()
+        .ok_or("no Waive all…")?;
+    run(&mut editor, press(waive));
+    "prototype".clone_into(&mut dialog(&mut editor)?.waiving.reason);
+    run(&mut editor, vec![egui::Event::PointerGone]);
+    let form = run(&mut editor, vec![]);
+    assert!(texts(&form).iter().any(|t| t == "Waive 12 findings"));
+    screen.picture("production-waive-group-form", &form, 2.0)?;
+    Ok(())
 }

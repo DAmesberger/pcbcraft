@@ -480,6 +480,8 @@ pub fn search_chips(ui: &mut Ui, chips: &[String], trailing: &str) {
 pub struct SearchBadge<'a> {
     pub label: &'a str,
     pub present: bool,
+    /// What the badge means, in the row's hover; empty for none.
+    pub tip: &'a str,
 }
 
 /// One result row.
@@ -636,22 +638,44 @@ pub fn search_row_marked(
     job.wrap.max_width = width;
     job.wrap.max_rows = 1;
     let galley = painter.layout_job(job);
+    let mut cut = galley.elided;
     painter.galley(pos2(left, r.top() + t.space_3), galley, t.form_ink);
-    let mut detail = egui::text::LayoutJob::simple_singleline(
-        row.detail.to_owned(),
+    let detail = super::text::one_line(
+        ui,
+        row.detail,
         FontId::proportional(t.font_small),
         t.form_dim,
+        width,
     );
-    detail.wrap.max_width = width;
-    detail.wrap.max_rows = 1;
-    let detail = painter.layout_job(detail);
+    cut |= detail.elided;
     painter.galley(
         pos2(left, r.bottom() - t.space_3 - detail.size().y),
         detail,
         t.form_dim,
     );
+    let tips: Vec<String> = row
+        .badges
+        .iter()
+        .filter(|b| !b.tip.is_empty())
+        .map(|b| format!("{}: {}", b.label, b.tip))
+        .collect();
+    let response = super::text::hover(
+        response,
+        &full_row(row.label, row.detail),
+        &tips.join("\n"),
+        cut,
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.label));
     response
+}
+
+/// A search row's full text for its hover: the name, then the detail.
+fn full_row(label: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        label.to_owned()
+    } else {
+        format!("{label}\n{detail}")
+    }
 }
 
 /// One command palette row (upstream `MenuItem::search_row` with a
@@ -747,15 +771,16 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
     job.wrap.max_width = width;
     job.wrap.max_rows = 1;
     let galley = painter.layout_job(job);
+    let mut cut = galley.elided;
     painter.galley(pos2(left, r.top() + t.space_3), galley, ink);
-    let mut detail = egui::text::LayoutJob::simple_singleline(
-        row.detail.to_owned(),
+    let detail = super::text::one_line(
+        ui,
+        row.detail,
         FontId::proportional(t.font_small),
         dim,
+        width,
     );
-    detail.wrap.max_width = width;
-    detail.wrap.max_rows = 1;
-    let detail = painter.layout_job(detail);
+    cut |= detail.elided;
     painter.galley(
         pos2(left, r.bottom() - t.space_3 - detail.size().y),
         detail,
@@ -765,8 +790,9 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
         egui::WidgetInfo::labeled(egui::WidgetType::Button, row.enabled, row.label)
     });
     if row.enabled {
-        response
+        super::text::hover(response, &full_row(row.label, row.detail), "", cut)
     } else {
+        // A disabled row's reason is its detail: it shows even when it fits.
         response.on_hover_text(row.detail)
     }
 }

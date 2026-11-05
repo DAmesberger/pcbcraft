@@ -552,3 +552,31 @@ fn the_regions_split_body_and_footer() -> TestResult {
     assert_eq!(footer, ["Remove pin"]);
     Ok(())
 }
+
+/// An empty Component workspace's card (the one-hour run's 260-point
+/// column): the hint wraps whole, and any text cut short shows in full on
+/// hover. With `PCBCRAFT_TEXT_PICTURES=<dir>` it writes the card's picture.
+#[test]
+fn the_empty_card_hint_wraps_whole() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::demo()?;
+    let mut editor = PartEditor::default();
+    let screen = crate::kit::text::tests::Screen::new(egui::vec2(260.0, 400.0));
+    let run = |editor: &mut PartEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.inspector(ui, &engine);
+        })
+    };
+    run(&mut editor, vec![]);
+    let rest = run(&mut editor, vec![]);
+    let hint = "Open a component, or start a new one, on the start page";
+    assert!(
+        crate::kit::text::tests::shows_in_full(&rest, hint),
+        "the hint is whole: {:?}",
+        crate::kit::text::tests::cuts(&rest)
+    );
+    screen.picture("component-empty-card", &rest, 2.0)?;
+    let (_, missing) =
+        crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| run(&mut editor, events));
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+    Ok(())
+}

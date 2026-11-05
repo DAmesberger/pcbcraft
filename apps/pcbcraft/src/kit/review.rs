@@ -263,14 +263,16 @@ fn glyph_line(ui: &mut Ui, level: Option<Level>, text: &str, action: Option<&str
     }
     let text_rect =
         Rect::from_min_max(pos2(left, rect.top()), pos2(right.max(left), rect.bottom()));
-    let cut = super::rows::paint_clipped(
+    // The hover covers the text only, so the action keeps its own.
+    super::text::line(
         ui,
+        response.id.with("text"),
         text_rect,
         text,
+        "",
         FontId::proportional(t.font_label),
         t.form_ink,
     );
-    super::rows::line_hover(response, text, "", cut);
     clicked
 }
 
