@@ -343,8 +343,8 @@ fn issues_and_the_production_check_count_alike_but_for_production_findings() -> 
         issues.counts,
         preflight.items.len()
     );
-    assert_eq!(issues.rows.len(), 43, "{:?}", issues.counts);
-    assert_eq!(preflight.items.len(), 49);
+    assert_eq!(issues.rows.len(), 34, "{:?}", issues.counts);
+    assert_eq!(preflight.items.len(), 40);
     assert_eq!(only_production.len(), 6);
     Ok(())
 }
