@@ -412,7 +412,11 @@ fn class_section(
                 ..class.clone()
             });
         }
-        let fields: [(&str, Option<f64>, f64, SetMm); 5] = [
+        let fill_rule = effective.copper.clearance.get(
+            pcbcraft_core::rules::CopperObject::Fill,
+            pcbcraft_core::rules::CopperObject::Track,
+        );
+        let fields: [(&str, Option<f64>, f64, SetMm); 6] = [
             (
                 "Width",
                 class.track_width,
@@ -433,6 +437,12 @@ fn class_section(
                     pcbcraft_core::rules::CopperObject::Track,
                 ),
                 |c, v| c.clearance = v,
+            ),
+            (
+                "Fill clearance",
+                class.fill_clearance,
+                class.clearance.unwrap_or(0.0).max(fill_rule),
+                |c, v| c.fill_clearance = v,
             ),
             (
                 "Via drill",
@@ -900,6 +910,42 @@ mod tests {
         );
         editor.net_classes = None;
         assert_eq!(editor.subject(), kit::card::Subject::Properties);
+        Ok(())
+    }
+
+    #[test]
+    fn the_card_lists_the_fill_clearance_beside_the_clearance() -> TestResult {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut engine = Engine::demo()?;
+        let class = power(&mut engine)?;
+        let mut editor = PcbEditor::default();
+        editor.open_net_classes(Some(class));
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 1600.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = editor.subject_slot(ui, &engine);
+        });
+        output.textures_delta.clear();
+        let mut shown = Vec::new();
+        for clipped in &output.shapes {
+            texts(&clipped.shape, &mut shown);
+        }
+        let row = |label: &str| shown.iter().position(|t| t == label);
+        let (clearance, fill) = (row("Clearance"), row("Fill clearance"));
+        assert!(clearance.is_some() && fill > clearance, "{shown:?}");
         Ok(())
     }
 

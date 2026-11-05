@@ -119,6 +119,7 @@ fn request(head: Point, to: Point, mode: RouteMode) -> RouteStepRequest {
         via_layer: None,
         mode,
         move_vias: true,
+        max_detour: None,
     }
 }
 
