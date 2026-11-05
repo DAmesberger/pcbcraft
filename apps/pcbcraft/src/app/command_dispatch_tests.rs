@@ -155,3 +155,26 @@ fn ribbon_tooltips_include_shortcuts() -> Result<(), Box<dyn std::error::Error>>
     }
     Ok(())
 }
+
+/// Finding 3 of the UI run: ⌘S is `file.save` in every context, the board
+/// shape sketch's exclusive mode included, and runs while a field is
+/// focused or a menu is open.
+#[test]
+fn command_s_saves_everywhere() -> Result<(), String> {
+    let registry = Registry::standard();
+    let save = Chord::cmd(egui::Key::S);
+    for context in Context::ALL {
+        let command = registry
+            .resolve(save, &crate::commands::active_contexts(context))
+            .ok_or_else(|| format!("⌘S does nothing in {context:?}"))?;
+        assert_eq!(command.id, "file.save", "{context:?}");
+        assert_eq!(command.action, Action::App(AppCommand::Save));
+        for (typing, popup) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(
+                dispatchable(command, save, typing, popup),
+                "{context:?} typing {typing} popup {popup}"
+            );
+        }
+    }
+    Ok(())
+}
