@@ -295,11 +295,13 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
     let (_, d) =
         labels::pin_frame(project, before).ok_or_else(|| Error::Invalid("frame".into()))?;
     assert_eq!(d, [-1.0, 0.0]);
+    // In line with pin 1, so its wire runs over no other pin (which would
+    // connect to it).
     run(
         &mut engine,
         C::MoveLabel {
             label: moved,
-            position: [-20.0, 10.0],
+            position: [-20.0, -2.5],
         },
     )?;
     run(
@@ -316,7 +318,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         .label(moved)
         .ok_or_else(|| Error::Invalid("label".into()))?;
     assert!(after.manual);
-    assert_eq!(labels::anchor(project, after), [-20.0, 10.0]);
+    assert_eq!(labels::anchor(project, after), [-20.0, -2.5]);
     assert_eq!(after.rotation, Rotation::R270, "keeps the way it faced");
     let turned_label = project
         .label(turned)
@@ -346,7 +348,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
     let project = engine.project();
     assert_eq!(
         project.label(moved).map(|l| l.position),
-        Some([-20.0, 10.0])
+        Some([-20.0, -2.5])
     );
     assert_eq!(project.label(turned).map(|l| l.position), Some(pin4));
     // The wire from the moved port to its pin is drawn again.

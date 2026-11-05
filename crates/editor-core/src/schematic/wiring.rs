@@ -312,12 +312,13 @@ fn connection_points(project: &Project) -> Vec<(SheetId, Point, WireEnd)> {
             .iter()
             .map(|j| (j.sheet, j.position, WireEnd::junction(j.id))),
     );
-    points.extend(
-        project
-            .labels
-            .iter()
-            .map(|l| (l.sheet, l.position, WireEnd::label(l.id))),
-    );
+    points.extend(project.labels.iter().map(|l| {
+        (
+            l.sheet,
+            super::labels::anchor(project, l),
+            WireEnd::label(l.id),
+        )
+    }));
     for symbol in &project.sheet_symbols {
         for pin in &symbol.pins {
             points.push((

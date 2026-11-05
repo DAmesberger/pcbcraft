@@ -266,6 +266,8 @@ declare_classes!(SchematicCommand {
     UnplaceUnit "symbol.unplace_unit" Edit,
     Connect "schematic.connect" Edit,
     Disconnect "schematic.disconnect" Edit,
+    PlaceJunction "junction.place" Edit,
+    RemoveJunction "junction.remove" Edit,
     RenameNet "schematic.net_rename" Edit,
     MoveUnitToSheet "symbol.move_to_sheet" Edit,
     PlaceLabel "label.place" Edit,
@@ -678,12 +680,22 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
     }
     // The wire must not run over a connection point it does not end on,
     // which would join that point too: route around it, with each bend a
-    // junction point.
+    // junction point. A label's first wire to a pin attaches it: the label
+    // then sits on the pin's end and the wire has no length.
+    let attaches = |label: WireEnd, pin: WireEnd| {
+        label
+            .label_id()
+            .and_then(|id| project.label(id))
+            .is_some_and(|l| !l.manual)
+            && pin.terminal().is_some()
+            && project.wires_at(label).next().is_none()
+    };
     let path = match (
         end_sheet(project, from),
         wiring::end_position(project, from),
         wiring::end_position(project, to),
     ) {
+        _ if attaches(from, to) || attaches(to, from) => Vec::new(),
         (Some(sheet), Some(a), Some(b)) => wiring::clean_route(project, sheet, a, b, [from, to])?
             .into_iter()
             .map(|p| (sheet, p))
