@@ -275,7 +275,7 @@ pub fn execute(
             return reply(json!({"drafts": drafts(&snapshot)}), false, None);
         }
         "submit_review" => {
-            return match serde_json::from_value::<ReviewReport>(input["report"].clone()) {
+            return match serde_json::from_value::<ReviewReport>(report_input(input)) {
                 Ok(report) => {
                     let problems = report.problems();
                     if problems.is_empty() {
@@ -285,7 +285,8 @@ pub fn execute(
                     }
                 }
                 Err(e) => reply(
-                    json!({"refused": format!("not a review report: {e}")}),
+                    json!({"refused": format!("not a review report: {e}"),
+                        "expected_shape": report_example()}),
                     true,
                     None,
                 ),
@@ -341,6 +342,48 @@ pub fn send(session: &mut Session, policy: &Policy, mut request: Value) -> Value
         Decision::Ask(_) => session.respond_gated(policy, request),
         Decision::Refuse(refusal) => refusal.reply(),
     }
+}
+
+/// The report a `submit_review` call carries. Local models often send its
+/// fields without the `report` wrapper, and its lists as JSON text: both
+/// are read as meant, so the model is refused only for what is wrong.
+fn report_input(input: &Value) -> Value {
+    let mut report = if input["report"].is_object() {
+        input["report"].clone()
+    } else if let Some(text) = input["report"].as_str() {
+        serde_json::from_str(text).unwrap_or(Value::Null)
+    } else if input.get("part").is_some() {
+        input.clone()
+    } else {
+        Value::Null
+    };
+    if let Some(fields) = report.as_object_mut() {
+        for key in ["sources", "values", "open_questions"] {
+            let parsed = fields
+                .get(key)
+                .and_then(Value::as_str)
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .filter(Value::is_array);
+            if let Some(list) = parsed {
+                fields.insert(key.to_owned(), list);
+            }
+        }
+    }
+    report
+}
+
+/// A small valid report, shown with a refusal so the model sees every field
+/// name at once instead of one serde error at a time.
+fn report_example() -> Value {
+    json!({"report": {
+        "part": "PART-NAME",
+        "summary": "What was built and what to check first.",
+        "sources": [{"name": "DS", "title": "Datasheet title", "revision": "Rev. C"}],
+        "values": [{"item": "pad pitch", "value": "0.95 mm",
+            "source": {"document": "DS", "page": 35, "location": "Figure 9-2"},
+            "confidence": "high", "note": ""}],
+        "open_questions": ["A question a reviewer must settle."],
+    }})
 }
 
 /// A part-file tool's `values`, an empty object when absent.
@@ -788,6 +831,52 @@ mod tests {
             ),
             ToolOutcome::Reply { error: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_report_without_its_wrapper_or_with_lists_as_text_is_read() {
+        let mut session = Session::default();
+        let mut workspace = Workspace::default();
+        let report = report_example()["report"].clone();
+        let flat_and_stringified = json!({
+            "part": report["part"], "summary": report["summary"],
+            "sources": report["sources"].to_string(),
+            "values": report["values"].to_string(),
+            "open_questions": report["open_questions"].to_string(),
+        });
+        for input in [json!({"report": report.clone()}), flat_and_stringified] {
+            let outcome = execute(
+                &mut session,
+                &Policy::default(),
+                &mut workspace,
+                "submit_review",
+                &input,
+            );
+            assert!(matches!(outcome, ToolOutcome::Report(_)), "{outcome:?}");
+        }
+        // A wrong field name is refused with the whole expected shape.
+        let outcome = execute(
+            &mut session,
+            &Policy::default(),
+            &mut workspace,
+            "submit_review",
+            &json!({"report": {"part": "X", "summary": "s", "sources": [], "values": [{"name": "x"}]}}),
+        );
+        let ToolOutcome::Reply {
+            text, error: true, ..
+        } = outcome
+        else {
+            panic_free_fail();
+            return;
+        };
+        assert!(
+            text.contains("expected_shape") && text.contains("open_questions"),
+            "{text}"
+        );
+    }
+
+    fn panic_free_fail() {
+        assert_eq!("a refusal", "something else");
     }
 
     #[test]

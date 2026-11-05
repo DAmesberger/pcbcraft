@@ -952,5 +952,6 @@ fn a_shrinking_prompt_count_warns_of_truncation() -> Fallible {
 }
 
 mod board;
+mod local_run;
 mod run1;
 mod wroom3_binding;
