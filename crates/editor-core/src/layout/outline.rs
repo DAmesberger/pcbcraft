@@ -222,6 +222,16 @@ pub enum BoardCommand {
     DeleteConstraint { id: Id },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(BoardCommand {
+    SetRectangle "board.set_rectangle" Edit,
+    StartSketch "board.start_sketch" Edit,
+    Edit "board.edit" Edit,
+    Constrain "board.constrain" Edit,
+    EditConstraint "board.constraint_edit" Edit,
+    DeleteConstraint "board.constraint_delete" Edit,
+});
+
 /// What a board command produced for its caller.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum BoardApplied {

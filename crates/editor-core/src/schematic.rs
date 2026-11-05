@@ -239,6 +239,42 @@ pub enum SchematicCommand {
     },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(SchematicCommand {
+    PlaceUnit "symbol.place_unit" Edit,
+    MoveUnit "symbol.move_unit" Edit,
+    OrientUnit "symbol.orient_unit" Edit,
+    UnplaceUnit "symbol.unplace_unit" Edit,
+    Connect "schematic.connect" Edit,
+    Disconnect "schematic.disconnect" Edit,
+    RenameNet "schematic.net_rename" Edit,
+    MoveUnitToSheet "symbol.move_to_sheet" Edit,
+    PlaceLabel "label.place" Edit,
+    MoveLabel "label.move" Edit,
+    EditLabel "label.edit" Edit,
+    RemoveLabel "label.remove" Edit,
+    AddSheet "sheet.add" Edit,
+    RenameSheet "sheet.rename" Edit,
+    SetPage "sheet.set_page" Edit,
+    ReorderSheet "sheet.reorder" Edit,
+    DeleteSheet "sheet.delete" Edit,
+    PlaceSheetSymbol "sheet_symbol.place" Edit,
+    MoveSheetSymbol "sheet_symbol.move" Edit,
+    ResizeSheetSymbol "sheet_symbol.resize" Edit,
+    SetSheetChild "sheet_symbol.set_child" Edit,
+    RemoveSheetSymbol "sheet_symbol.remove" Edit,
+    SyncSheetPins "sheet_symbol.sync_pins" Edit,
+    AddSheetPin "sheet_pin.add" Edit,
+    EditSheetPin "sheet_pin.edit" Edit,
+    RemoveSheetPin "sheet_pin.remove" Edit,
+    AddDrawing "drawing.add" Edit,
+    EditDrawing "drawing.edit" Edit,
+    RemoveDrawing "drawing.remove" Edit,
+    SetProperties "project.set_properties" Edit,
+    RenameProject "project.rename" Edit,
+    Annotate "schematic.annotate" Edit,
+});
+
 /// What a schematic command created or changed, for the engine's outcome.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Applied {

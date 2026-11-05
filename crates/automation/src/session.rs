@@ -3,7 +3,7 @@
 //! File effects never enter undo history.
 use crate::{Error, Result};
 use pcbcraft_core::{
-    DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
+    Class, DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
     catalog::EntryKey,
     erc,
     fabrication::ProfileChoice,
@@ -370,15 +370,145 @@ pub enum Request {
     SetPartFileValues(mechanical_parts::SetPartFileValuesParams),
 }
 
+// A new request chooses its permission class here. `project.apply` and
+// `project.query` take their operation's or query's; a request that names a
+// path needs at least Ask ([`Request::effective_class`]).
+pcbcraft_core::declare_classes!(Request {
+    Apply "project.apply" Edit,
+    Inspect "project.inspect" Read,
+    Schema "project.schema" Read,
+    Query "project.query" Read,
+    Undo "project.undo" Edit,
+    Redo "project.redo" Edit,
+    New "project.new" Ask,
+    Open "project.open" Ask,
+    Save "project.save" Ask,
+    PreviewUpdate "project.preview_update" Read,
+    ApplyUpdate "project.apply_update" Edit,
+    ExportNative "project.export_native" Ask,
+    ExportFabrication "project.export_fabrication" Ask,
+    Sources "library.sources" Read,
+    SourceAdd "library.source.add" Never,
+    SourceCreate "library.source.create" Never,
+    SourceRemove "library.source.remove" Never,
+    SourceEnable "library.source.enable" Never,
+    Rescan "library.rescan" Read,
+    Favourite "library.favourite" Never,
+    Bundle "library.bundle" Read,
+    ImportFrom "library.import_from_folder" Edit,
+    PlaceFrom "library.place_from_folder" Edit,
+    Publish "library.publish_to_folder" Ask,
+    ImportFromProject "library.import_from_project" Ask,
+    ImportSvg "library.import_svg" Ask,
+    OpenPreview "library.open_preview" Read,
+    PinoutSchema "library.pinout_schema" Read,
+    FirmwarePreview "firmware.export_preview" Read,
+    FirmwareExport "firmware.export" Ask,
+    InspectModelFile "library.inspect_model_file" Ask,
+    SetMarking "library.set_marking" Edit,
+    SchematicPdf "schematic.export_pdf" Ask,
+    MarkingSurfaces "library.marking_surfaces" Read,
+    CheckPartFile "library.check_part_file" Read,
+    UsePartFile "library.use_part_file" Edit,
+    SetPartValues "library.set_part_values" Edit,
+    PartFiles "library.part_files" Read,
+    PlacePartFile "layout.place_part_file" Edit,
+    SetPartFileValues "layout.set_part_file_values" Edit,
+});
+
 impl Request {
+    /// The class the gate acts on: the one listed, or the operation's or
+    /// query's for those two requests, and at least Ask once a path is named.
+    pub fn effective_class(&self) -> Class {
+        let own = match self {
+            Self::Apply(params) => params.operation.class(),
+            Self::Query(query) => query.class(),
+            other => other.class(),
+        };
+        if self.paths().is_empty() {
+            own
+        } else {
+            own.max(Class::Ask)
+        }
+    }
+
+    /// What the gate reports as requested: the operation or query inside
+    /// `project.apply` and `project.query`, else the request itself.
+    pub fn subject(&self) -> &'static str {
+        match self {
+            Self::Apply(params) => params.operation.command(),
+            Self::Query(query) => query.command(),
+            other => other.command(),
+        }
+    }
+
+    /// Every file or folder path this request names.
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            Self::Open(params) | Self::ExportNative(params) | Self::SourceRemove(params) => {
+                vec![params.path.as_str()]
+            }
+            Self::Save(params) => params.path.iter().map(String::as_str).collect(),
+            Self::ExportFabrication(params) => vec![params.output.as_str()],
+            Self::SourceAdd(params) => vec![params.path.as_str()],
+            Self::SourceCreate(params) => vec![params.path.as_str()],
+            Self::SourceEnable(params) => vec![params.path.as_str()],
+            Self::ImportFromProject(params) => vec![params.path.as_str()],
+            Self::ImportSvg(params) => vec![params.path.as_str()],
+            Self::FirmwarePreview(params) | Self::FirmwareExport(params) => params
+                .path
+                .iter()
+                .chain(&params.template_file)
+                .map(String::as_str)
+                .collect(),
+            Self::InspectModelFile(params) => vec![params.path.as_str()],
+            Self::SchematicPdf(params) => vec![params.path.as_str()],
+            Self::CheckPartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::Apply(_)
+            | Self::Inspect(_)
+            | Self::Schema(_)
+            | Self::Query(_)
+            | Self::Undo(_)
+            | Self::Redo(_)
+            | Self::New(_)
+            | Self::PreviewUpdate(_)
+            | Self::ApplyUpdate(_)
+            | Self::Sources(_)
+            | Self::Rescan(_)
+            | Self::Favourite(_)
+            | Self::Bundle(_)
+            | Self::ImportFrom(_)
+            | Self::PlaceFrom(_)
+            | Self::Publish(_)
+            | Self::OpenPreview(_)
+            | Self::PinoutSchema(_)
+            | Self::SetMarking(_)
+            | Self::MarkingSurfaces(_)
+            | Self::SetPartValues(_)
+            | Self::PartFiles(_)
+            | Self::SetPartFileValues(_) => Vec::new(),
+        }
+    }
+
     /// Every request ID with its description and parameter schema, generated
     /// from the Rust types the dispatcher deserializes.
     pub fn catalog() -> Vec<CommandInfo> {
         fn info<T: JsonSchema>(id: &'static str, description: &'static str) -> CommandInfo {
+            let params = serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null);
             CommandInfo {
                 id,
                 description,
-                params: serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null),
+                // Unlisted cannot pass the gate's tests; refused until then.
+                class: Request::CLASSES
+                    .iter()
+                    .find(|(name, _)| *name == id)
+                    .map_or(Class::Never, |(_, class)| *class),
+                takes_path: ["path", "output", "template_file"]
+                    .iter()
+                    .any(|name| params["properties"].get(name).is_some()),
+                params,
             }
         }
         vec![
@@ -549,7 +679,26 @@ impl Request {
 pub struct CommandInfo {
     pub id: &'static str,
     pub description: &'static str,
+    pub class: Class,
+    /// Whether it can name a path, which makes it at least Ask.
+    pub takes_path: bool,
     pub params: Value,
+}
+
+impl CommandInfo {
+    /// The sentence a tool description ends with, so a model can see what
+    /// will need asking.
+    pub fn permission_note(&self) -> String {
+        match (self.id, self.class, self.takes_path) {
+            ("project.apply", ..) => {
+                "Permission: edit; project_schema marks the operations that ask.".to_owned()
+            }
+            (_, class @ (Class::Read | Class::Edit), true) => {
+                format!("Permission: {}, or ask with a path.", class.name())
+            }
+            (_, class, _) => format!("Permission: {}.", class.name()),
+        }
+    }
 }
 
 /// A headless editing session: one engine, the current file path and the
@@ -1082,6 +1231,7 @@ pub mod part_files;
 mod pinout;
 mod preview;
 mod reply;
+pub(crate) use reply::take_verbose;
 pub mod sources;
 
 #[cfg(test)]

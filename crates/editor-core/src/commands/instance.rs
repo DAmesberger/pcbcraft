@@ -102,6 +102,23 @@ pub enum InstanceCommand {
     },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(InstanceCommand {
+    Place "component.place" Edit,
+    Remove "component.remove" Edit,
+    SetDesignator "instance.set_designator" Edit,
+    SetProperties "instance.set_properties" Edit,
+    SelectFunctions "instance.select_functions" Edit,
+    SetUnitUnused "instance.set_unit_unused" Edit,
+    SetNoConnect "instance.set_no_connect" Edit,
+    SetPhysical "instance.set_physical" Edit,
+    AssignPart "instance.assign_part" Edit,
+    AssignPeripheral "instance.assign_peripheral" Edit,
+    SetPinConfig "instance.set_pin_config" Edit,
+    SetMarking "instance.set_marking" Edit,
+    SetTextPlacement "instance.set_text_placement" Edit,
+});
+
 impl InstanceCommand {
     /// Whether a valid command would leave the project as it is; a refused
     /// one answers its refusal.

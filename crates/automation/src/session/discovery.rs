@@ -4,6 +4,7 @@
 //! added to the engine is listed and served without changing this module.
 use super::{CommandInfo, Request, SchemaParams};
 use crate::{Error, Result};
+use pcbcraft_core::{Class, Operation, Query};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::OnceLock;
@@ -30,6 +31,21 @@ struct Entry {
     schema: Value,
     /// How to send it, with `<params>` where the schema's value goes.
     send: Option<Value>,
+    /// Its permission class. A missing one reads as Never and fails the
+    /// gate's tests.
+    class: Class,
+    /// A command that can name a path, which makes it at least Ask.
+    takes_path: bool,
+}
+
+fn listed_class(
+    table: impl IntoIterator<Item = &'static (&'static str, Class)>,
+    name: &str,
+) -> Class {
+    table
+        .into_iter()
+        .find(|(listed, _)| *listed == name)
+        .map_or(Class::Never, |(_, class)| *class)
 }
 
 fn entries() -> &'static [Entry] {
@@ -52,6 +68,8 @@ fn build_entries() -> Vec<Entry> {
             root: &info.params,
             schema,
             send: None,
+            class: info.class,
+            takes_path: info.takes_path,
         });
         match info.id {
             "project.apply" => operation_entries(&info.params, &mut entries),
@@ -82,6 +100,8 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
                         editor: Some(editor.to_owned()),
                         root,
                         schema: schema.clone(),
+                        class: listed_class(Operation::classes(), command),
+                        takes_path: false,
                     });
                 }
             }
@@ -97,6 +117,8 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
                 editor: Some(editor.to_owned()),
                 root,
                 schema: content.clone(),
+                class: listed_class(Operation::classes(), &editor.to_lowercase()),
+                takes_path: false,
             }),
         }
     }
@@ -114,6 +136,8 @@ fn query_entries(root: &'static Value, entries: &mut Vec<Entry>) {
             root,
             schema: schema.clone(),
             send: Some(json!({"query": query, "params": "<params>"})),
+            class: listed_class(Query::CLASSES, query),
+            takes_path: false,
         });
     }
 }
@@ -154,7 +178,15 @@ pub(super) fn schema_reply(params: SchemaParams) -> Result<Value> {
 }
 
 fn describe(entry: &Entry) -> Value {
-    let mut out = json!({"kind": entry.kind, "name": entry.name, "schema": entry.schema});
+    let mut out = json!({
+        "kind": entry.kind,
+        "name": entry.name,
+        "class": entry.class,
+        "schema": entry.schema,
+    });
+    if entry.takes_path {
+        out["asks_with_path"] = json!(true);
+    }
     if let Some(editor) = &entry.editor {
         out["editor"] = json!(editor);
     }
@@ -219,9 +251,24 @@ fn def_name(reference: &str) -> Option<&str> {
     reference.strip_prefix("#/$defs/")
 }
 
-/// Every operation, query and command with one line about it.
+/// Every operation, query and command with one line about it. To stay small
+/// a row names its permission class only where `classes` does not cover it.
 fn index() -> Value {
-    let row = |entry: &Entry| json!({"name": entry.name, "summary": summary_of(entry)});
+    let row = |entry: &Entry| {
+        let mut row = json!({"name": entry.name, "summary": summary_of(entry)});
+        let usual = match entry.kind {
+            "operation" => Some(Class::Edit),
+            "query" => Some(Class::Read),
+            _ => None,
+        };
+        if usual != Some(entry.class) {
+            row["class"] = json!(entry.class);
+        }
+        if entry.takes_path {
+            row["asks_with_path"] = json!(true);
+        }
+        row
+    };
     let mut operations = Map::new();
     let mut queries = Vec::new();
     let mut commands = Vec::new();
@@ -240,7 +287,12 @@ fn index() -> Value {
             _ => commands.push(row(entry)),
         }
     }
-    json!({"operations": operations, "queries": queries, "commands": commands})
+    json!({
+        "classes": {"operations": Class::Edit, "queries": Class::Read},
+        "operations": operations,
+        "queries": queries,
+        "commands": commands,
+    })
 }
 
 fn summary_of(entry: &Entry) -> String {
