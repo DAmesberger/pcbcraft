@@ -4,6 +4,11 @@ use crate::ids::{DefinitionId, Endpoint, Id, PadId, UnitId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// The longest one-line message, in characters: an issue title or a
+/// refusal a person reads in a toast or under a field
+/// (`issues::MAX_TITLE`).
+pub const MAX_LINE: usize = 80;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// Malformed or out-of-range input.

@@ -12,6 +12,7 @@ mod fields;
 mod graphics;
 mod high_speed;
 mod junctions;
+mod labels;
 mod library;
 mod library_folders;
 mod mechanical;

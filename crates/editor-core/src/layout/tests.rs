@@ -191,19 +191,28 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
         },
     )?;
     let before = project.clone();
-    assert!(
-        apply(
-            &mut project,
-            LayoutCommand::Move {
-                instance: r1,
-                position: [20.0, 20.0],
-                rotation_deg: 0.0,
-                layer: Layer::Bottom
-            }
-        )
-        .is_err()
+    // The refusal names the part and the way out, and a canvas asking
+    // before a drag gets the same words.
+    let refused = apply(
+        &mut project,
+        LayoutCommand::Move {
+            instance: r1,
+            position: [20.0, 20.0],
+            rotation_deg: 0.0,
+            layer: Layer::Bottom,
+        },
+    )
+    .err()
+    .map(|e| e.to_string());
+    let want = Error::Conflict("R1 is locked; unlock it to move it".into()).to_string();
+    assert_eq!(refused.as_deref(), Some(want.as_str()));
+    assert_eq!(
+        move_refusal(&project, r1, None).map(|e| e.to_string()),
+        Some(want)
     );
     assert_eq!(project, before);
+    let (_, r2) = ids()?;
+    assert!(move_refusal(&project, r2, None).is_none(), "R2 is free");
     apply(&mut project, LayoutCommand::Route { request: request() })?;
     let id = project.tracks[0].id;
     apply(
@@ -226,6 +235,44 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
         .is_err()
     );
     assert_eq!(project, before);
+    Ok(())
+}
+
+/// A board too small for its parts is refused with every part it would
+/// leave outside named, farthest first, and how far out; the refusal fits
+/// one message line and the project is unchanged.
+#[test]
+fn shrinking_the_board_past_parts_names_them_and_how_far() -> Result<()> {
+    let mut project = fixture()?;
+    let (r1, r2) = ids()?;
+    // Only R1 (10, 10) and R2 (25, 10) are placed.
+    project
+        .placements
+        .retain(|p| p.instance == r1 || p.instance == r2);
+    project.tracks.clear();
+    let before = project.clone();
+    let shrink = |project: &mut Project, size: Point| {
+        apply(project, LayoutCommand::SetBoardSize { size })
+            .err()
+            .map(|e| e.to_string())
+    };
+    // 20 mm wide: R2's datum is 5 mm past the right edge.
+    let one = shrink(&mut project, [20.0, 30.0]);
+    let want = Error::Invalid("R2 would be off the board, by 5 mm; move it first".into());
+    assert_eq!(one, Some(want.to_string()));
+    assert_eq!(project, before);
+    // 8 × 8 mm: R2 is at hypot(17, 2) = 17.12 mm (shown rounded up to
+    // 17.2), R1 at hypot(2, 2) = 2.83 mm.
+    let two = shrink(&mut project, [8.0, 8.0]);
+    let text = "R2 and R1 would be off the board, by up to 17.2 mm; move them first";
+    assert_eq!(two, Some(Error::Invalid(text.into()).to_string()));
+    assert!(crate::issues::style::check(text).is_empty());
+    assert_eq!(project, before);
+    // Exactly on the edge is on the board.
+    apply(
+        &mut project,
+        LayoutCommand::SetBoardSize { size: [25.0, 10.0] },
+    )?;
     Ok(())
 }
 

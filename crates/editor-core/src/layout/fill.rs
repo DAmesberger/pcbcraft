@@ -81,6 +81,19 @@ pub enum FillCommand {
     DeleteKeepout { id: Id },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(FillCommand {
+    Add "fill.add" Edit,
+    Edit "fill.edit" Edit,
+    Delete "fill.delete" Edit,
+    Refill "fill.refill" Edit,
+    Store "fill.store" Edit,
+    StoreAll "fill.store_all" Edit,
+    AddKeepout "keepout.add" Edit,
+    EditKeepout "keepout.edit" Edit,
+    DeleteKeepout "keepout.delete" Edit,
+});
+
 /// One fill's computed copper for `fill.store_all`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

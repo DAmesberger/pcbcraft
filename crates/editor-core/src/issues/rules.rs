@@ -66,7 +66,7 @@ pub(super) fn group_title(code: &str) -> String {
         "board.via_drill_size" => "Via drills too small",
         "board.via_aspect_ratio" => "Via aspect ratio too high",
         "board.edge_clearance" => "Too close to the board edge",
-        "board.hole_clearance" => "Mounting holes too close",
+        "board.hole_clearance" => "Too close to a mounting hole",
         "board.courtyard_clearance" => "Courtyards too close",
         "fill.clearance" => "Fill clearance",
         "fill.empty" => "Empty fills",
@@ -354,6 +354,19 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
             }
         }
         "board.unplaced" => format!("{} not placed", list(&names_of(names, findings, |_| true))),
+        // Short enough for the Issues row: the hole and what it is near.
+        "board.hole_clearance" => {
+            let near = names_of(names, findings, |o| !matches!(o, ObjectRef::Board));
+            let what = if message.contains(" overlaps ") {
+                "overlaps"
+            } else {
+                "too close to"
+            };
+            match near.as_slice() {
+                [] => line(message),
+                _ => format!("Hole {what} {}", list(&near)),
+            }
+        }
         "instance.unit_unplaced" => format!(
             "{} is neither placed nor marked unused",
             names_of(names, findings, |_| true).join(", ")

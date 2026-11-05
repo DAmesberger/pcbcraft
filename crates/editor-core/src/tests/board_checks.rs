@@ -742,6 +742,127 @@ fn courtyard_clearance_is_reported_only_when_the_rule_asks() -> Result<()> {
     Ok(())
 }
 
+/// A 3.2 mm mounting hole at (30, 20) on the demo board with no parts and
+/// one 0.25 mm track on `net` along y = `y` from x 25 to 35. The hole's
+/// edge is 1.6 mm from its centre and the track's 0.125 mm from its
+/// centre line, so the gap is `y - 20 - 1.725` mm.
+fn hole_and_track(y: f64) -> Result<(Project, Id)> {
+    let (mut project, net, _) = board()?;
+    project.placements.clear();
+    project.tracks.clear();
+    project.vias.clear();
+    with_hole(&mut project, [30.0, 20.0]);
+    let id = project.allocate()?;
+    project
+        .tracks
+        .push(track(id, net, [25.0, y], [35.0, y], 0.25));
+    Ok((project, net))
+}
+
+/// Make `project`'s board a solved sketch of its rectangle with one 3.2 mm
+/// mounting hole at `at`.
+fn with_hole(project: &mut Project, at: Point) {
+    use crate::model::board::SolvedMountingHole;
+    let mut solved = SolvedBoard::rectangle(project.board_size);
+    solved.holes.push(SolvedMountingHole {
+        id: BoardFeatureId(1),
+        at,
+        drill: 3.2,
+        plated: false,
+        pad_diameter: None,
+    });
+    project.board_shape = BoardShape::Sketch(Box::new(BoardSketch {
+        evaluator: Default::default(),
+        sketch: Default::default(),
+        parameters: Vec::new(),
+        outline: Vec::new(),
+        cutouts: Vec::new(),
+        holes: Vec::new(),
+        edges: Vec::new(),
+        next_feature: 2,
+        solve: Default::default(),
+        solved,
+    }));
+}
+
+/// Mounting-hole clearance measures the gap from the drilled edge to the
+/// copper's edge (hand-derived from the fixture), says "overlaps" rather
+/// than "0 mm", and its Issues row names the copper in a short title.
+#[test]
+fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
+    // 0.3 mm apart: over the 0.25 mm hole-to-copper default, no finding.
+    let (clear, _) = hole_and_track(20.0 + 1.725 + 0.3)?;
+    assert!(found(&clear, "board.hole_clearance").is_empty());
+    // 0.128 mm apart, as the end-to-end run reported: a finding that
+    // gives the gap within the hole polygon's chord tolerance.
+    let (close, net) = hole_and_track(20.0 + 1.725 + 0.128)?;
+    let findings = found(&close, "board.hole_clearance");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let name = close.net_name(net).to_owned();
+    let message = &findings[0].message;
+    let prefix = "A mounting hole is ";
+    let gap: f64 = message
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.split_once(" mm from a track on "))
+        .and_then(|(gap, rest)| rest.starts_with(&name).then_some(gap))
+        .and_then(|gap| gap.parse().ok())
+        .ok_or_else(|| Error::Invalid(format!("unexpected message {message}")))?;
+    assert!(
+        (gap - 0.128).abs() <= crate::library::PAD_ARC_TOLERANCE_MM,
+        "{message}"
+    );
+    assert!(
+        message.ends_with("needs 0.25 mm (Pcbcraft default: track to hole clearance)"),
+        "{message}"
+    );
+    // Copper over the hole overlaps it: no "0 mm".
+    let (over, _) = hole_and_track(20.5)?;
+    let findings = found(&over, "board.hole_clearance");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(
+        findings[0]
+            .message
+            .starts_with(&format!("A mounting hole overlaps a track on {name}; ")),
+        "{}",
+        findings[0].message
+    );
+    // The Issues row: a short title that names the copper, in its group.
+    let report =
+        crate::issues::report(&close, &Default::default(), &crate::issues::IssueScope::All)?;
+    let row = report
+        .rows
+        .iter()
+        .find(|r| r.group.code == "board.hole_clearance")
+        .ok_or_else(|| Error::Invalid("no hole row".into()))?;
+    assert_eq!(row.title, format!("Hole too close to track on {name}"));
+    assert_eq!(row.group.title, "Too close to a mounting hole");
+    // A hole drilled through a pad names the part and the pad number.
+    let (mut project, _, _) = board()?;
+    project.tracks.clear();
+    project.vias.clear();
+    let pad = crate::layout::placed_pads(&project)
+        .into_iter()
+        .find(|p| {
+            p.pad.number == "1"
+                && project
+                    .instance(p.instance)
+                    .is_some_and(|i| i.designator == "R1")
+        })
+        .ok_or_else(|| Error::NotFound("R1 pad 1".into()))?;
+    with_hole(&mut project, pad.center());
+    let findings = found(&project, "board.hole_clearance");
+    let message = findings
+        .iter()
+        .map(|f| f.message.as_str())
+        .find(|m| m.contains("R1 pad 1"))
+        .ok_or_else(|| Error::Invalid(format!("no R1 pad 1 finding: {findings:?}")))?;
+    assert!(
+        message.starts_with("A mounting hole overlaps R1 pad 1 on "),
+        "{message}"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_default_rules_keep_every_former_verdict() -> Result<()> {
     // The showcase and demo boards check exactly as with the former

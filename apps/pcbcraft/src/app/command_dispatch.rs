@@ -232,6 +232,8 @@ impl App {
                 self.pcb.set_3d(!three_d);
             }
             AppCommand::View3d(view) => self.view_3d(view),
+            // The same request as the window's close button.
+            AppCommand::Quit => self.files.request(file_ui::Action::Close),
         }
     }
 

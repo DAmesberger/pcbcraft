@@ -193,6 +193,35 @@ pub enum LayoutCommand {
     RemovePart { instance: Id },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(LayoutCommand {
+    Sync "layout.sync" Edit,
+    Place "layout.place" Edit,
+    Move "layout.move" Edit,
+    SetPlacementLock "layout.placement_lock" Edit,
+    Route "layout.route" Edit,
+    ApplyRoute "layout.route_apply" Edit,
+    DeleteTrack "layout.track_delete" Edit,
+    SetTrackLock "layout.track_lock" Edit,
+    SetTrack "layout.track_set" Edit,
+    SetFabrication "layout.set_fabrication" Edit,
+    SetStackup "layout.set_stackup" Edit,
+    EditStackup "layout.edit_stackup" Edit,
+    AddVia "layout.add_via" Edit,
+    MoveVia "layout.via_move" Edit,
+    DeleteVia "layout.via_delete" Edit,
+    SetViaTented "layout.via_tent" Edit,
+    SetViaLock "layout.via_lock" Edit,
+    RouteLayerChange "layout.route_layer_change" Edit,
+    SetBoardSize "layout.set_board_size" Edit,
+    RoutePair "layout.route_pair" Edit,
+    TuneLength "layout.tune_length" Edit,
+    RouteStep "layout.route_step" Edit,
+    PlacePart "layout.place_part" Edit,
+    SetPart "layout.set_part" Edit,
+    RemovePart "layout.remove_part" Edit,
+});
+
 impl LayoutCommand {
     /// Whether the command places or re-points a mechanical part (its
     /// outcome is `Outcome::PartPlaced`).
@@ -493,6 +522,31 @@ pub fn apply(project: &mut Project, command: LayoutCommand) -> Result<()> {
     Ok(())
 }
 
+/// The refusal for a locked part: "J2 is locked; unlock it to move it".
+/// `verb` is what was refused ("move", "change", "remove").
+pub(crate) fn locked(project: &Project, instance: Id, verb: &str) -> Error {
+    Error::Conflict(format!(
+        "{} is locked; unlock it to {verb} it",
+        outline::part_name(project, instance)
+    ))
+}
+
+/// Why a hand move of the placed part `instance` is refused, in the words
+/// the engine refuses `layout.move` with: it is locked, or an edge
+/// constraint holds it (see [`outline::held`]). `None` for a free part, so
+/// a canvas can refuse a drag before it starts and say why.
+pub fn move_refusal(
+    project: &Project,
+    instance: Id,
+    evaluator: Option<&dyn outline::BoardShapeEvaluator>,
+) -> Option<Error> {
+    let placement = project.placement_of(instance)?;
+    if placement.locked {
+        return Some(locked(project, instance, "move"));
+    }
+    outline::held(project, instance, evaluator)
+}
+
 /// Apply to a candidate the caller discards on failure. Returns the via a
 /// `layout.add_via` created.
 pub(crate) fn apply_staged(candidate: &mut Project, command: LayoutCommand) -> Result<Option<Id>> {
@@ -553,14 +607,14 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             rotation_deg,
             layer,
         } => {
+            if project.placement_of(instance).is_some_and(|p| p.locked) {
+                return Err(locked(project, instance, "move"));
+            }
             let placement = project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
                 .ok_or_else(|| Error::NotFound("unknown placement".into()))?;
-            if placement.locked {
-                return Err(Error::Conflict("placement is locked".into()));
-            }
             placement.position = position;
             placement.rotation_deg = rotation_deg;
             placement.layer = layer;
@@ -1109,6 +1163,8 @@ pub fn validate(project: &Project) -> Result<()> {
     }
     instances::text::check(project)?;
     let mut placed = BTreeSet::new();
+    // Parts whose datum the board leaves outside, and by how much (mm).
+    let mut off_board: Vec<(f64, Id)> = Vec::new();
     let mut pad_count = 0usize;
     let mut graphic_vertices = 0usize;
     for placement in &project.placements {
@@ -1141,10 +1197,16 @@ pub fn validate(project: &Project) -> Result<()> {
         if !point_valid(placement.position)
             || !placement.rotation_deg.is_finite()
             || placement.rotation_deg.abs() > 360_000.0
-            || !inside_board(project, placement.position)
         {
             return invalid("placement datum must lie inside the board with a finite rotation");
         }
+        let outside = outside_board(project, placement.position);
+        if outside > 0.0 {
+            off_board.push((outside, placement.instance));
+        }
+    }
+    if !off_board.is_empty() {
+        return Err(Error::Invalid(off_board_message(project, off_board)));
     }
     project.stackup.check()?;
     fill::validate(project)?;
@@ -1180,11 +1242,51 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-fn inside_board(project: &Project, point: Point) -> bool {
-    point[0] >= -EPS
-        && point[1] >= -EPS
-        && point[0] <= project.board_size[0] + EPS
-        && point[1] <= project.board_size[1] + EPS
+/// How far `point` lies outside the board's bounds, mm (0 inside).
+fn outside_board(project: &Project, point: Point) -> f64 {
+    let [w, h] = project.board_size;
+    let dx = (-point[0]).max(point[0] - w).max(0.0);
+    let dy = (-point[1]).max(point[1] - h).max(0.0);
+    let d = dx.hypot(dy);
+    if d > EPS { d } else { 0.0 }
+}
+
+/// The refusal for parts the board would leave outside: "J1, U3 and D1
+/// would be off the board, by up to 14 mm; move them first". Farthest
+/// first; past three parts the rest are counted.
+fn off_board_message(project: &Project, mut parts: Vec<(f64, Id)>) -> String {
+    parts.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let far = parts.first().map_or(0.0, |p| p.0);
+    let names: Vec<String> = parts
+        .iter()
+        .map(|(_, id)| outline::part_name(project, *id))
+        .collect();
+    let listed = match names.as_slice() {
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, c] => format!("{a}, {b} and {c}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
+        [] => "Parts".to_owned(),
+    };
+    // Rounded up to 0.1 mm, so a part just outside never reads "0 mm".
+    let far = limits::mm(((far * 10.0).ceil() / 10.0).max(0.1));
+    let message = if names.len() == 1 {
+        format!("{listed} would be off the board, by {far} mm; move it first")
+    } else {
+        format!("{listed} would be off the board, by up to {far} mm; move them first")
+    };
+    // Long designators: the count stands in for the names, so the line
+    // still says how far and what to do.
+    if message.chars().count() <= crate::diagnostics::MAX_LINE {
+        message
+    } else if names.len() == 1 {
+        format!("A part would be off the board, by {far} mm; move it first")
+    } else {
+        format!(
+            "{} parts would be off the board, by up to {far} mm; move them first",
+            names.len()
+        )
+    }
 }
 
 /// A track's copper: the stadium a round aperture of its width sweeps from

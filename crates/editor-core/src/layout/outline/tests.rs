@@ -153,9 +153,25 @@ fn a_constrained_part_follows_the_board_edge() -> Fallible<()> {
     assert!(close(at, [75.0, 10.0]), "{at:?}");
 
     // Moving or turning it away from its constraint is refused unchanged.
+    // The refusal says why and what to do, in the one message style, and
+    // the canvas's early refusal of a drag uses the same words.
     let rev = engine.revision();
     let before = engine.to_file();
-    for (position, rotation_deg) in [([20.0, 20.0], 90.0), ([75.0, 10.0], 0.0)] {
+    let name = engine
+        .project()
+        .instance(part)
+        .map(|i| i.designator.clone())
+        .ok_or("no designator")?;
+    let held = format!("{name} is held 5 mm from the right edge; edit or remove its constraint");
+    assert_eq!(
+        crate::layout::move_refusal(engine.project(), part, None).map(|e| e.to_string()),
+        Some(Error::Conflict(format!("{held} to move it")).to_string())
+    );
+    for (position, rotation_deg, verb) in
+        [([20.0, 20.0], 90.0, "move"), ([75.0, 10.0], 0.0, "turn")]
+    {
+        let want = format!("{held} to {verb} it");
+        assert!(crate::issues::style::check(&want).is_empty(), "{want}");
         let moved = engine.apply(
             rev,
             Operation::Layout(LayoutCommand::Move {
@@ -166,10 +182,7 @@ fn a_constrained_part_follows_the_board_edge() -> Fallible<()> {
             }),
         );
         let err = moved.err().ok_or("the move was accepted")?;
-        assert!(
-            matches!(&err, Error::Conflict(t) if t.starts_with("board.constrained:")),
-            "{err:?}"
-        );
+        assert!(matches!(&err, Error::Conflict(t) if *t == want), "{err:?}");
         assert_eq!(engine.revision(), rev);
         assert_eq!(engine.to_file(), before);
     }
@@ -355,4 +368,46 @@ fn near_side_alignment_puts_the_part_extent_on_the_offset() -> Fallible<()> {
     assert!(min_y.abs() < 1e-9, "the extent touches the edge: {min_y}");
     assert!(((min_x + max_x) / 2.0 - 20.0).abs() < 1e-9);
     Ok(())
+}
+
+/// The held refusal reads as a sentence about the part and its edge, in
+/// one message line however long the names: the distance goes first, then
+/// the edge, never the way out.
+#[test]
+fn the_held_refusal_fits_one_line_and_keeps_the_way_out() {
+    let right = EdgeName("right".into());
+    let way_out = |verb: &str| format!("; edit or remove its constraint to {verb} it");
+    assert_eq!(
+        held_message("J1", &right, Some(2.0), "move"),
+        format!("J1 is held 2 mm from the right edge{}", way_out("move"))
+    );
+    assert_eq!(
+        held_message("J1", &right, Some(0.0), "move"),
+        format!("J1 is held on the right edge{}", way_out("move"))
+    );
+    assert_eq!(
+        held_message("J10", &right, Some(-1.5), "move"),
+        format!("J10 is held 1.5 mm past the right edge{}", way_out("move"))
+    );
+    assert_eq!(
+        held_message("J1", &EdgeName("USB edge".into()), None, "move"),
+        format!("J1 is held to the USB edge{}", way_out("move"))
+    );
+    // "CONN12 is held 12.25 mm from the bottom edge; …" is 86 characters:
+    // the distance goes, the edge and the way out stay.
+    assert_eq!(
+        held_message("CONN12", &EdgeName("bottom".into()), Some(12.25), "turn"),
+        format!("CONN12 is held to the bottom edge{}", way_out("turn"))
+    );
+    let long = held_message(
+        "CONNECTOR_LONG_NAME_7",
+        &EdgeName("a very long edge name indeed".into()),
+        Some(12.25),
+        "move",
+    );
+    assert!(long.ends_with(&way_out("move")), "{long}");
+    for text in [long, held_message("J1", &right, Some(2.0), "turn")] {
+        assert!(text.chars().count() <= crate::issues::MAX_TITLE, "{text}");
+        assert!(crate::issues::style::check(&text).is_empty(), "{text}");
+    }
 }

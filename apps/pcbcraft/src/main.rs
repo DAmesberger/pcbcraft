@@ -12,6 +12,8 @@ mod library_sources;
 mod lighting;
 mod model_library;
 mod model_scene;
+#[cfg(target_os = "macos")]
+mod native_menu;
 mod navigation;
 mod palette;
 mod part_chooser;

@@ -95,6 +95,9 @@ impl Default for ShapeMode {
     }
 }
 
+/// A refused parameter, why, and the board's key when it was refused.
+type Refused = (ParamName, String, Option<(u64, usize)>);
+
 /// The parameters section's text buffers.
 #[derive(Default)]
 pub(super) struct ParamRows {
@@ -105,6 +108,10 @@ pub(super) struct ParamRows {
     new_expr: String,
     /// A refused row (`None`: the add row) and why.
     error: Option<(Option<ParamName>, String)>,
+    /// A parameter whose committed value the engine refused: the row went
+    /// back to the stored value, and the whole reason shows under it until
+    /// the row is edited or the document changes (the board's key then).
+    refused: Option<Refused>,
     /// The row whose commit was sent last, to claim its refusal.
     sent: Option<Option<ParamName>>,
 }
@@ -973,6 +980,16 @@ impl PcbEditor {
                 .map(|p| (p.name.clone(), p.expr.0.clone()))
                 .collect();
         }
+        // A refusal is about the value that was refused: it goes when the
+        // document changes or its row is edited again.
+        if let Some((name, _, at)) = &rows.refused
+            && (*at != key
+                || board.parameters.iter().any(|p| {
+                    p.name == *name && rows.exprs.get(name).is_some_and(|t| t.trim() != p.expr.0)
+                }))
+        {
+            rows.refused = None;
+        }
         let mut operation = None;
         let mut sent = None;
         kit::section(
@@ -1039,9 +1056,17 @@ impl PcbEditor {
                             Err(why) => rows.error = Some((Some(param.name.clone()), why)),
                         }
                     }
+                    let refused = rows
+                        .refused
+                        .as_ref()
+                        .filter(|(n, _, _)| *n == param.name)
+                        .map(|(_, why, _)| why.clone());
                     match (&rows.error, values.iter().find(|v| v.name == param.name)) {
                         (Some((Some(n), why)), _) if *n == param.name => {
                             kit::field_error(ui, &field, why, true);
+                        }
+                        _ if refused.is_some() => {
+                            kit::field_refused(ui, &field, refused.as_deref().unwrap_or_default());
                         }
                         (_, Some(ParamEvaluation { value: Ok(v), .. })) => {
                             kit::note(ui, &format!("= {}", footprint_params::value_text(*v)));
@@ -1195,7 +1220,25 @@ impl PcbEditor {
         if let Some(row) = self.shape.params.sent.clone()
             && let Some(text) = refusal::claim(ctx, Origin::Field(field_id(row.as_ref())))
         {
-            self.shape.params.error = Some((row, text));
+            let rows = &mut self.shape.params;
+            match row {
+                // A refused parameter keeps its stored, valid value: the
+                // row reloads it, and the reason shows in full.
+                Some(name) => {
+                    let key = self.shape.loaded.as_ref().map(|l| l.key);
+                    rows.refused = Some((name.clone(), text, key));
+                    if rows
+                        .error
+                        .as_ref()
+                        .is_some_and(|(n, _)| n.as_ref() == Some(&name))
+                    {
+                        rows.error = None;
+                    }
+                    rows.key = None;
+                }
+                None => rows.error = Some((None, text)),
+            }
+            rows.sent = None;
         }
     }
 }

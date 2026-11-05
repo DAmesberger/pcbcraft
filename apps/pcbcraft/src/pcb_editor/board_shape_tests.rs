@@ -879,3 +879,70 @@ fn the_host_evaluator_solves_a_cutout_gesture_on_the_engine() -> Fallible {
     assert!(engine.project().board().cutouts.is_empty());
     Ok(())
 }
+
+/// Finding 3 of the UI run: after a card edit in the board shape sketch,
+/// with a field still focused, ⌘S passes the card and the canvas untouched,
+/// so the app's dispatcher (which runs after them) sees it and saves.
+#[test]
+fn the_shape_mode_leaves_command_s_for_the_dispatcher() -> Fallible {
+    let engine = sketch_engine(Vec::new())?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.shape.evaluator = Some(&HOST);
+    let _ = editor.on_tool("board-shape", &engine);
+    assert!(editor.shape.active);
+    assert_eq!(
+        editor.shortcut_context(),
+        crate::commands::Context::BoardShape
+    );
+    let mut value = "inset = 4".to_owned();
+    let field = egui::Id::new("card-field");
+    let save = egui::Event::Key {
+        key: egui::Key::S,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    let mut left = None;
+    for (round, events) in [vec![], vec![save]].into_iter().enumerate() {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.add(egui::TextEdit::singleline(&mut value).id(field));
+                if round == 0 {
+                    response.request_focus();
+                }
+                let _ = editor.subject_slot(ui, &engine);
+                let _ = editor.canvas(ui, &engine);
+                let _ = refusal::take_mark(ui.ctx());
+                let typing = ui.ctx().egui_wants_keyboard_input();
+                let kept = ui.input(|i| {
+                    i.events.iter().any(|e| {
+                        matches!(
+                            e,
+                            egui::Event::Key {
+                                key: egui::Key::S,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if modifiers.command
+                        )
+                    })
+                });
+                left = Some((typing, kept));
+            },
+        );
+        output.textures_delta.clear();
+    }
+    assert_eq!(left, Some((true, true)), "(typing, ⌘S still there)");
+    Ok(())
+}

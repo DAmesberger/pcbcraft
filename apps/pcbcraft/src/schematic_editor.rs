@@ -1436,6 +1436,10 @@ impl SchematicEditor {
             if let Some((a, b)) = schematic::wire_ends(project, wire) {
                 let a = self.preview_end(project, wire.from, a);
                 let b = self.preview_end(project, wire.to, b);
+                // A label sitting on its pin's end leaves its wire no length.
+                if a == b {
+                    continue;
+                }
                 let points = schematic::wire_route(a, b).map(screen);
                 let active = wire_active(wire.id);
                 painter.add(egui::Shape::line(

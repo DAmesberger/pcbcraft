@@ -211,7 +211,7 @@ fn start_new(ui: &mut Ui, assist: &mut super::datasheet_assist::DatasheetAssist)
             .on_hover_text("Search package rows by name, size code, pins, pitch or body")
             .clicked();
         if ui_kit::button(ui, "Create from datasheet…", Button::Normal)
-            .on_hover_text("Draft a part from its datasheets with Claude (needs ANTHROPIC_API_KEY)")
+            .on_hover_text("Draft a part from its datasheets with a model you configure: Claude or any OpenAI-compatible endpoint, local or hosted")
             .clicked()
         {
             assist.open = true;
