@@ -2895,12 +2895,13 @@ mod draft_tests {
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        // The designator placeholder reads prefix + "?"; the shown field
-        // reads its name (no default). A two-terminal passive hides its pin
-        // numbers.
-        for text in ["R?", "Resistor", "Resistance"] {
+        // The designator placeholder reads prefix + "?"; the value slot
+        // reads the shown field's name (no default), never the component
+        // name. A two-terminal passive hides its pin numbers.
+        for text in ["R?", "Resistance"] {
             assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
         }
+        assert!(!shown.iter().any(|t| t == "Resistor"), "{shown:?}");
         assert!(!shown.iter().any(|t| t == "1" || t == "2"), "{shown:?}");
         // The view fits the drawn bounds about the origin (3 mm margin).
         let set = editor.draft.as_ref().ok_or("no draft")?;

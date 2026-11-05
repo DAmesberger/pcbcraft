@@ -15,7 +15,7 @@ use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_dis
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
-use crate::library::graphics::{SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
+use crate::library::graphics::{TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
@@ -1000,6 +1000,11 @@ struct Resolution<'a> {
     designator: String,
     component_name: &'a str,
     fields: Vec<ShownField>,
+    /// The instance's value from its shown fields
+    /// ([`instances::value_text`]).
+    value: Option<String>,
+    /// The chosen Part's manufacturer part number.
+    mpn: Option<String>,
     /// Binding and package supplying pin numbers; none hides them.
     physical: Option<(&'a BindingDefinition, &'a PackageDefinition)>,
 }
@@ -1066,6 +1071,21 @@ fn draw(
         mirrored: false,
         line_spacing: TEXT_LINE_SPACING,
     };
+    // The value slot (a `ComponentName` text) shows the instance's value
+    // (`instances::value_text`, the value the BOM shows too), else the
+    // Part's MPN, else the component name, which identifies an IC
+    // ("AP2112K-3.3") or a rail symbol ("GND"). A two-terminal part without
+    // a value shows none: its component name ("Chip capacitor 0603") is a
+    // description, never a value.
+    let value = r
+        .value
+        .clone()
+        .or_else(|| r.mpn.clone().filter(|m| !m.trim().is_empty()))
+        .or_else(|| (component.terminals.len() != 2).then(|| r.component_name.to_owned()));
+    // Turned a quarter, the symbol keeps its designator and value upright
+    // and beside the body, reading outward from it, instead of along the
+    // pins where they would run over neighbouring pins and labels.
+    let sideways = (t.rotation_deg.rem_euclid(180.0) - 90.0).abs() < 1e-9;
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
     let mut drawn_fields = BTreeSet::new();
@@ -1084,10 +1104,26 @@ fn draw(
                 if !text.visible {
                     continue;
                 }
+                let mut height = text.height;
                 let content = match &text.content {
                     TextContent::Literal(s) => s.clone(),
                     TextContent::Designator => r.designator.clone(),
-                    TextContent::ComponentName => r.component_name.to_owned(),
+                    TextContent::ComponentName => {
+                        let Some(value) = &value else {
+                            continue;
+                        };
+                        // The shown fields are the value: not stacked again.
+                        if r.value.is_some() {
+                            drawn_fields.extend(
+                                r.fields
+                                    .iter()
+                                    .filter(|f| f.shown && !f.text.trim().is_empty())
+                                    .map(|f| f.lineage),
+                            );
+                        }
+                        height = height.min(VALUE_TEXT_HEIGHT_MM);
+                        value.clone()
+                    }
                     TextContent::UnitLabel => unit.label.clone(),
                     TextContent::Field(lineage) => r
                         .fields
@@ -1096,17 +1132,39 @@ fn draw(
                         .map(|f| f.text.clone())
                         .unwrap_or_default(),
                 };
-                texts.push(PlacedText {
+                let mut placed = PlacedText {
                     line_spacing: text.line_spacing,
                     ..place(
                         Some(graphic.id),
                         content,
                         text.at,
-                        text.height,
+                        height,
                         text.rotation.degrees(),
                         text.justify,
                     )
-                });
+                };
+                if sideways
+                    && matches!(
+                        text.content,
+                        TextContent::Designator
+                            | TextContent::ComponentName
+                            | TextContent::Field(_)
+                    )
+                {
+                    let dx = placed.at[0] - t.translate[0];
+                    placed.rotation_deg = 0.0;
+                    placed.justify = Justify {
+                        h: if dx < -1e-9 {
+                            HAlign::Right
+                        } else if dx > 1e-9 {
+                            HAlign::Left
+                        } else {
+                            HAlign::Center
+                        },
+                        v: VAlign::Middle,
+                    };
+                }
+                texts.push(placed);
             }
         }
     }
@@ -1169,7 +1227,7 @@ fn draw(
             graphic: None,
             text: field.text.clone(),
             at: [below.center()[0], y],
-            height: SYMBOL_TEXT_HEIGHT_MM,
+            height: VALUE_TEXT_HEIGHT_MM,
             rotation_deg: 0.0,
             justify: Justify {
                 h: HAlign::Center,
@@ -1178,7 +1236,7 @@ fn draw(
             mirrored: false,
             line_spacing: TEXT_LINE_SPACING,
         });
-        y -= SYMBOL_TEXT_HEIGHT_MM + FIELD_GAP_MM;
+        y -= VALUE_TEXT_HEIGHT_MM + FIELD_GAP_MM;
     }
     placed
 }
@@ -1210,6 +1268,11 @@ pub fn placed_unit(project: &Project, occurrence: Id) -> Result<PlacedUnit> {
         designator: instances::display_label(project, instance, unit.id),
         component_name: &resolved.component.meta.name,
         fields,
+        value: instances::value_text(&project.library, instance)?,
+        mpn: instance
+            .part
+            .and_then(|p| project.library.part(p))
+            .map(|p| p.definition.mpn.clone()),
         physical: resolved
             .physical
             .map(|p| (&p.binding.definition, &p.package.definition)),
@@ -1250,7 +1313,7 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
         designator.push_str(&unit.label);
     }
     // A field shows its default, or its name when it has none.
-    let fields = instances::default_fields(library, d.component)?
+    let fields: Vec<ShownField> = instances::default_fields(library, d.component)?
         .into_iter()
         .map(|f| ShownField {
             lineage: f.field.id,
@@ -1258,10 +1321,18 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
             shown: f.show_on_symbol,
         })
         .collect();
+    // No instance yet: the value slot shows the shown fields' placeholders.
+    let shown: Vec<&str> = fields
+        .iter()
+        .filter(|f| f.shown && !f.text.trim().is_empty())
+        .map(|f| f.text.as_str())
+        .collect();
     let resolution = Resolution {
         designator,
         component_name: d.component_name,
+        value: (!shown.is_empty()).then(|| shown.join(" ")),
         fields,
+        mpn: None,
         physical: d.physical,
     };
     Ok(draw(

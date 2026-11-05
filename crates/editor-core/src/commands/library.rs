@@ -379,18 +379,28 @@ fn restyle_symbol(
             current.meta.name
         )));
     };
-    let owned: Vec<TerminalId> = match document.drafts.get(symbol.component) {
+    let named: Vec<(TerminalId, String)> = match document.drafts.get(symbol.component) {
         Some(library::Draft {
             definition: Definition::Component(component),
             ..
-        }) => component.terminals.iter().map(|t| t.id).collect(),
+        }) => component
+            .terminals
+            .iter()
+            .map(|t| (t.id, t.name.clone()))
+            .collect(),
         _ => document
             .project
             .library
             .latest_components()
             .into_iter()
             .find(|c| c.id == symbol.component)
-            .map(|c| c.definition.terminals.iter().map(|t| t.id).collect())
+            .map(|c| {
+                c.definition
+                    .terminals
+                    .iter()
+                    .map(|t| (t.id, t.name.clone()))
+                    .collect()
+            })
             .ok_or_else(|| {
                 Error::NotFound(format!(
                     "The component of the symbol ‘{}’ is not in the project",
@@ -398,6 +408,7 @@ fn restyle_symbol(
                 ))
             })?,
     };
+    let owned: Vec<TerminalId> = named.iter().map(|(id, _)| *id).collect();
     let order = match terminals {
         None => owned,
         Some(order) => {
@@ -414,7 +425,16 @@ fn restyle_symbol(
         }
     };
     let conventions = document.drafts.symbols;
-    let definition = library::symbol_style::restyle(symbol, kind, conventions, &order)?;
+    let mut definition = library::symbol_style::restyle(symbol, kind, conventions, &order)?;
+    if kind == library::symbol_style::SymbolKind::IcBox {
+        // The box is as wide as its pin names need.
+        library::samples::fit_pin_names(&mut definition, |terminal| {
+            named
+                .iter()
+                .find(|(id, _)| *id == terminal)
+                .map(|(_, name)| name.clone())
+        });
+    }
     let edit = DraftEdit {
         id: draft,
         meta: current.meta.clone(),

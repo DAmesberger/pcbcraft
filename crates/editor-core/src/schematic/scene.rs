@@ -508,6 +508,71 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                 }
             }
         }
+        // No room along the pin (another label or port faces it across a
+        // short gap): step aside, a module at a time either way, on a
+        // leader that runs a little beyond the pin's end and turns, so it
+        // never runs along the row of pin ends. The turn comes at a fifth,
+        // a half or four fifths of a module, so the leaders of neighbouring
+        // labels that both step aside pass each other.
+        if best.as_ref().is_some_and(|(h, _)| *h > 0) {
+            let across = [-d[1], d[0]];
+            // A ground steps down first and a supply up, so a turned port
+            // still points the usual way where it can.
+            let up = match l.kind {
+                LabelKind::Power {
+                    style: PowerStyle::Ground,
+                } => -1.0,
+                LabelKind::Power { .. } => 1.0,
+                _ => 0.0,
+            };
+            let sides = if across[1] * up < 0.0 {
+                [-1.0, 1.0]
+            } else {
+                [1.0, -1.0]
+            };
+            'aside: for step in 1..=MAX_LEADER_STEPS {
+                for side in sides {
+                    for turn in [0.5, 0.2, 0.8] {
+                        let out = start[i] + turn * LEADER_STEP_MM;
+                        let bend = [end[0] + d[0] * out, end[1] + d[1] * out];
+                        let by = side * step as f64 * LEADER_STEP_MM;
+                        let corner = [bend[0] + across[0] * by, bend[1] + across[1] * by];
+                        for upright in names {
+                            let mut candidate = match l.kind {
+                                // A port turns with its leader: its stem
+                                // runs aside and its symbol ends it.
+                                LabelKind::Power { .. } => label_at(
+                                    l,
+                                    bend,
+                                    labels::auto_rotation(
+                                        l.kind,
+                                        [across[0] * side, across[1] * side],
+                                    ),
+                                    (step - 1) as f64 * LEADER_STEP_MM,
+                                    *upright,
+                                ),
+                                _ => {
+                                    let mut flag = label_at(l, corner, rotation, 0.0, *upright);
+                                    flag.line(bend, corner, WIRE_MM);
+                                    flag
+                                }
+                            };
+                            candidate.line(end, bend, WIRE_MM);
+                            let hits: usize = ink_boxes(&candidate, m)
+                                .iter()
+                                .map(|b| others(&b.inflated(LABEL_CLEARANCE_MM)))
+                                .sum();
+                            if best.as_ref().is_none_or(|(h, _)| hits < *h) {
+                                best = Some((hits, candidate));
+                            }
+                            if hits == 0 {
+                                break 'aside;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if let Some((_, d)) = best {
             taken.extend(ink_boxes(&d, m));
             drawn[i] = Some(d);

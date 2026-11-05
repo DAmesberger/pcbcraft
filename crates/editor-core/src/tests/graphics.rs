@@ -688,10 +688,7 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
         .iter()
         .map(|t| (t.text.as_str(), t.at))
         .collect();
-    assert_eq!(
-        texts,
-        vec![("R1", [-12.0, 1.5]), ("Resistor", [-12.0, -1.5])]
-    );
+    assert_eq!(texts, vec![("R1", [-12.0, 1.5]), ("10 kΩ", [-12.0, -1.5])]);
     let pin = &placed.pins[0];
     assert_eq!(pin.terminal, TerminalId(1));
     assert_eq!(pin.end, [-17.0, 0.0]);
@@ -827,8 +824,11 @@ fn a_pin_name_equal_to_its_number_is_drawn_once() -> Result<()> {
     Ok(())
 }
 
+/// e2e UX finding 4: the slot under the body shows the instance's value at
+/// the value text size, never the component name, and the value is not
+/// drawn a second time below it.
 #[test]
-fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
+fn the_value_slot_shows_the_value_never_the_component_name() -> Result<()> {
     let engine = Engine::demo()?;
     let r1 = by_designator(&engine, "R1")?;
     let occurrence = engine
@@ -838,16 +838,129 @@ fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
         .map(|o| o.id)
         .ok_or_else(|| Error::NotFound("occurrence".into()))?;
     let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    let texts: Vec<(&str, f64)> = placed
+        .texts
+        .iter()
+        .map(|t| (t.text.as_str(), t.height))
+        .collect();
+    assert_eq!(
+        texts,
+        vec![
+            ("R1", graphics::SYMBOL_TEXT_HEIGHT_MM),
+            ("10 kΩ", graphics::VALUE_TEXT_HEIGHT_MM)
+        ]
+    );
+    assert!(placed.fields.is_empty(), "{:?}", placed.fields);
+    let instance = engine
+        .project()
+        .instance(r1)
+        .ok_or_else(|| Error::NotFound("R1".into()))?;
+    assert_eq!(
+        crate::instances::value_text(&engine.project().library, instance)?,
+        Some("10 kΩ".into())
+    );
+    Ok(())
+}
+
+/// Draft `spec` with a component-name text under its body, and publish.
+fn named_part(engine: &mut Engine, spec: &Spec<'_>) -> Result<Fixture> {
+    let fixture = draft(engine, spec)?;
+    with(engine, fixture.symbol, symbol_body, |s| {
+        let id = GraphicId(s.next_local);
+        s.next_local += 1;
+        s.units[0].graphics.push(graphics::text(
+            id,
+            TextContent::ComponentName,
+            [0.0, -2.0],
+            Justify::default(),
+        ));
+    })?;
+    publish(engine, fixture.all())?;
+    Ok(fixture)
+}
+
+/// A two-terminal part with no value shows no value text; one of more
+/// terminals (an IC) is named by its component.
+#[test]
+fn without_a_value_only_a_multi_terminal_part_shows_its_name() -> Result<()> {
+    let mut engine = Engine::default();
+    let fixture = named_part(&mut engine, &two("Chip capacitor 0603 (1608 metric)"))?;
+    let (_, occurrence) = place(&mut engine, &fixture, "C1", 1, [0.0, 0.0])?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    assert!(
+        placed.texts.iter().all(|t| !t.text.contains("capacitor")),
+        "{:?}",
+        placed.texts
+    );
+
+    let mut engine = Engine::default();
+    let spec = Spec {
+        terminals: vec![
+            (1, "A", passive()),
+            (2, "B", passive()),
+            (3, "C", passive()),
+        ],
+        units: vec![(
+            1,
+            "A",
+            vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0]), (3, [5.0, 2.5])],
+        )],
+        package: vec![(1, "1"), (2, "2"), (3, "3")],
+        mapping: vec![(1, 1), (2, 2), (3, 3)],
+        ..two("AP2112K-3.3")
+    };
+    let fixture = named_part(&mut engine, &spec)?;
+    let (_, occurrence) = place(&mut engine, &fixture, "U1", 1, [0.0, 0.0])?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
+    let name = placed
+        .texts
+        .iter()
+        .find(|t| t.text == "AP2112K-3.3")
+        .ok_or_else(|| Error::NotFound(format!("{:?}", placed.texts)))?;
+    assert_eq!(name.height, graphics::VALUE_TEXT_HEIGHT_MM);
+    Ok(())
+}
+
+#[test]
+fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let f = demo_fixture(&engine)?;
+    let r1 = by_designator(&engine, "R1")?;
+    // A symbol with no value slot: the component-name text is hidden.
+    let target = cascade(&mut engine, &f, |e| {
+        with(e, f.symbol, symbol_body, |s| {
+            if let Item::Text(t) = &mut s.units[0].graphics[2].item {
+                t.visible = false;
+            }
+        })
+    })?;
+    engine.apply_update(
+        engine.revision(),
+        crate::updates::Change::ComponentRevision {
+            instances: vec![r1],
+            target,
+            resolutions: Default::default(),
+        },
+        false,
+    )?;
+    let occurrence = engine
+        .project()
+        .occurrences_of(r1)
+        .next()
+        .map(|o| o.id)
+        .ok_or_else(|| Error::NotFound("occurrence".into()))?;
+    let placed = schematic::placed_unit(engine.project(), occurrence)?;
     assert_eq!(placed.occurrence, Some(occurrence));
-    // The demo shows resistance on the symbol and draws no Field text: the
-    // value sits centred 0.5 mm below the name's bottom edge at −2.75 mm.
+    // The demo shows resistance on the symbol and now draws no text for
+    // it: the value sits centred 0.5 mm below the body's stroke at
+    // −1.125 mm, at the value text size.
     let [value] = placed.fields.as_slice() else {
         return Err(Error::Invalid(format!("{:?}", placed.fields)));
     };
     assert_eq!(value.text, "10 kΩ");
     assert!((value.at[0] + 12.0).abs() < 1e-9, "{:?}", value.at);
-    assert!((value.at[1] + 3.25).abs() < 1e-9, "{:?}", value.at);
-    assert_eq!(value.height, 1.25);
+    assert!((value.at[1] + 1.625).abs() < 1e-9, "{:?}", value.at);
+    assert_eq!(value.height, graphics::VALUE_TEXT_HEIGHT_MM);
     assert_eq!(
         value.justify,
         Justify {
@@ -864,7 +977,7 @@ fn shown_field_values_without_field_text_stack_below_the_unit() -> Result<()> {
         let b = text.bounds(m);
         assert!(bounds.contains(b.min) && bounds.contains(b.max), "{text:?}");
     }
-    assert_eq!(bounds.min[1], -3.25 - 1.25);
+    assert!((bounds.min[1] + 1.625 + graphics::VALUE_TEXT_HEIGHT_MM).abs() < 1e-9);
     assert_eq!([bounds.min[0], bounds.max[0]], [-17.0, -7.0]);
     Ok(())
 }
@@ -882,12 +995,12 @@ fn placed_units_pick_what_they_draw() -> Result<()> {
     let placed = schematic::placed_unit(engine.project(), occurrence)?;
     let m = TextMetric::default();
     let tol = 0.2;
-    // The end of the resolved component name, wider than the four
-    // characters a placeholder is assumed to have in the definition.
+    // The end of the resolved value, wider than the four characters a
+    // placeholder is assumed to have in the definition.
     let name = placed
         .texts
         .iter()
-        .find(|t| t.text == "Resistor")
+        .find(|t| t.text == "10 kΩ")
         .ok_or_else(|| Error::NotFound("name".into()))?;
     let b = name.bounds(m);
     let end = [b.max[0] - 0.05, (b.min[1] + b.max[1]) / 2.0];
@@ -902,13 +1015,10 @@ fn placed_units_pick_what_they_draw() -> Result<()> {
         placed.hit(end, tol, m),
         name.graphic.map(SymbolHit::Graphic)
     );
-    // The stacked value below the body.
-    let [value] = placed.fields.as_slice() else {
-        return Err(Error::Invalid(format!("{:?}", placed.fields)));
-    };
-    let v = value.bounds(m);
+    // The value is drawn once, in its slot: nothing is stacked.
+    assert!(placed.fields.is_empty());
+    let v = name.bounds(m);
     let inside = [(v.min[0] + v.max[0]) / 2.0, (v.min[1] + v.max[1]) / 2.0];
-    assert_eq!(placed.hit(inside, tol, m), Some(SymbolHit::Field));
     // Pins and the body, in sheet coordinates; empty sheet misses.
     assert_eq!(
         placed.hit([-16.0, 0.1], tol, m),
@@ -965,7 +1075,8 @@ fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()
     // Drawn in the definition frame, untransformed.
     assert_eq!(drawn.shapes[0].shape, Shape::rect([-2.5, -1.0], [2.5, 1.0]));
     let texts: Vec<&str> = drawn.texts.iter().map(|t| t.text.as_str()).collect();
-    assert_eq!(texts, vec!["R?", "Resistor"]);
+    // The value slot shows the shown field: its default, else its name.
+    assert_eq!(texts, vec!["R?", "Resistance"]);
     let numbers: Vec<Option<&str>> = drawn
         .pins
         .iter()
@@ -973,9 +1084,9 @@ fn definition_units_draw_placeholders_and_working_binding_numbers() -> Result<()
         .collect();
     assert_eq!(numbers, vec![Some("1"), Some("2")]);
     assert_eq!(drawn.pins[0].end, [-5.0, 0.0]);
-    // The demo component sets no default, so the shown field reads its name.
-    let fields: Vec<&str> = drawn.fields.iter().map(|t| t.text.as_str()).collect();
-    assert_eq!(fields, vec!["Resistance"]);
+    // The demo component sets no default, so the shown field reads its
+    // name, once, in the slot.
+    assert!(drawn.fields.is_empty());
 
     // Without a working binding numbers are hidden, never guessed; an
     // unknown unit is refused.
@@ -1201,5 +1312,95 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
         typical_bytes * 50 < format::MAX_FILE_BYTES,
         "{typical_bytes}"
     );
+    Ok(())
+}
+
+/// The SOIC-14 MCU of the e2e UX run (finding 5): left pins 1–7 and right
+/// pins 8–14 face each other in pairs (pin 6 RESET opposite pin 9 USB_DM).
+const MCU_PINS: [&str; 14] = [
+    "PA05", "PA08", "PA09", "PA14", "PA15", "RESET", "SWCLK", "SWDIO", "USB_DM", "USB_DP", "GND",
+    "VDD", "SDA", "SCL",
+];
+
+/// On every row the left and the right pin names, measured as printed,
+/// lie inside the body and keep at least a millimetre between them.
+fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) -> Result<()> {
+    let m = crate::schematic::scene::LABEL_METRIC;
+    let unit = &symbol.units[0];
+    let Some(body) = unit.graphics.iter().find_map(|g| match &g.item {
+        Item::Shape {
+            shape: Shape::Rect { a, b, .. },
+            ..
+        } => Bounds::of([*a, *b]),
+        _ => None,
+    }) else {
+        return Err(Error::NotFound("no body".into()));
+    };
+    let boxes: Vec<(f64, Bounds)> = unit
+        .pins
+        .iter()
+        .map(|pin| {
+            let name = names[pin.terminal.0 as usize - 1];
+            let (at, rotation, justify) = pin.name_anchor();
+            let b = m.bounds(
+                at,
+                symbol.pin_text_height,
+                rotation,
+                justify,
+                TextSize::of(name, 1.6),
+            );
+            (pin.position[1], b)
+        })
+        .collect();
+    for (y, b) in &boxes {
+        assert!(
+            b.min[0] >= body.min[0] && b.max[0] <= body.max[0],
+            "{b:?} {body:?}"
+        );
+        for (y2, other) in &boxes {
+            if (y - y2).abs() < 1e-9 && b.min[0] < other.min[0] {
+                assert!(other.min[0] - b.max[0] >= 1.0, "{b:?} {other:?}");
+            }
+        }
+    }
+    for pin in &unit.pins {
+        for c in pin.position {
+            let k = c / graphics::SYMBOL_MODULE_MM;
+            assert!((k - k.round()).abs() < 1e-9, "off grid {c}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_generated_ic_box_is_as_wide_as_its_pin_names() -> Result<()> {
+    let terminals: Vec<(TerminalId, &str)> = MCU_PINS
+        .iter()
+        .enumerate()
+        .map(|(k, name)| (TerminalId(k as u32 + 1), *name))
+        .collect();
+    let symbol = samples::named_block_symbol(DefinitionId(7), &terminals);
+    assert_names_fit(&symbol, &MCU_PINS)
+}
+
+#[test]
+fn an_existing_narrow_box_widens_when_its_pins_are_renamed() -> Result<()> {
+    // Drawn while the pins were named by number, as a package template
+    // draws it, then renamed by a pin table.
+    let ids: Vec<TerminalId> = (1..=14).map(TerminalId).collect();
+    let mut symbol = samples::block_symbol(DefinitionId(7), &ids);
+    let before = symbol.clone();
+    let name = |t: TerminalId| MCU_PINS.get(t.0 as usize - 1).map(|n| (*n).to_owned());
+    assert!(samples::fit_pin_names(&mut symbol, name));
+    assert_names_fit(&symbol, &MCU_PINS)?;
+    // Rows, pin lengths and graphics IDs are kept: only the width changed.
+    for (a, b) in symbol.units[0].pins.iter().zip(&before.units[0].pins) {
+        assert_eq!(
+            (a.terminal, a.position[1], a.length),
+            (b.terminal, b.position[1], b.length)
+        );
+    }
+    // Fitting again changes nothing.
+    assert!(!samples::fit_pin_names(&mut symbol, name));
     Ok(())
 }

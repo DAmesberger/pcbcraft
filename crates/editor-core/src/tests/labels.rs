@@ -395,3 +395,51 @@ fn a_self_placing_label_follows_its_pin_and_undo_restores_it() -> Result<()> {
     assert!(!label.manual);
     Ok(())
 }
+
+/// e2e UX finding 11: a label and a power port on facing pins with too
+/// little room between them for both ("SWCLKGND"). Neither may lie over
+/// the other, a body or a pin; the one that cannot stand off along its
+/// pin steps aside on a bent leader.
+#[test]
+fn facing_labels_without_room_between_them_do_not_overlap() -> Result<()> {
+    for gap in [4.0, 6.0, 9.0] {
+        let mut engine = Engine::default();
+        let f = four_sides(&mut engine)?;
+        // U1's right pins end at x = 5, U2's left pins at x = 5 + gap.
+        let u1 = place(&mut engine, &f, "U1", [0.0, 0.0])?;
+        let u2 = place(&mut engine, &f, "U2", [10.0 + gap, 0.0])?;
+        let ground = LabelKind::Power {
+            style: PowerStyle::Ground,
+        };
+        attach(&mut engine, "GND", ground, u1, 5)?;
+        attach(&mut engine, "SWCLK", LabelKind::Local, u2, 2)?;
+        attach(&mut engine, "SWDIO", LabelKind::Local, u2, 1)?;
+        let project = engine.project();
+        let sheet = project.sheets.first();
+        let overlaps = label_overlaps(project, sheet);
+        assert!(overlaps.is_empty(), "gap {gap}: {overlaps:#?}");
+        // No label's ink lies on another pin's stub or end.
+        let m = scene::LABEL_METRIC;
+        let drawn = scene::sheet_labels(project, sheet);
+        for o in &project.occurrences {
+            let unit = placed_unit(project, o.id)?;
+            for pin in &unit.pins {
+                let stub = Bounds::point(pin.end).including(pin.body_end);
+                for (id, d) in &drawn {
+                    let label = project
+                        .label(*id)
+                        .ok_or_else(|| Error::Invalid("label".into()))?;
+                    if labels::anchor(project, label) == pin.end {
+                        continue;
+                    }
+                    assert!(
+                        !ink(d, m).iter().any(|b| overlap(b, &stub)),
+                        "gap {gap}: {} over a pin",
+                        label.name
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}

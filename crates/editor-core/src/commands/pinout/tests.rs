@@ -434,7 +434,10 @@ fn reimporting_into_the_draft_keeps_terminals_by_number() -> Fallible<()> {
         plan.base,
         PinoutAccept::All,
     )?;
-    assert_eq!(applied.drafts, vec![id]);
+    // The component, then its symbol when the longer name widened its box.
+    assert_eq!(applied.drafts.first(), Some(&id));
+    let symbols: Vec<_> = first.representations.iter().map(|r| r.id).collect();
+    assert!(applied.drafts[1..].iter().all(|d| symbols.contains(d)));
     assert_eq!(applied.unreviewed, vec!["r11".to_owned()]);
     let after = component(&engine, id)?;
     assert_eq!(terminal_named(&after, "P0_2X")?, kept);
