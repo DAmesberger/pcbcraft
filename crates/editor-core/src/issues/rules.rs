@@ -51,7 +51,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
 }
 
 /// The group header of a code: "Clearance", "Unrouted connections".
-pub(super) fn group_title(code: &str) -> String {
+pub fn group_title(code: &str) -> String {
     let known = match code {
         "board.clearance" => "Clearance",
         "board.courtyard_overlap" => "Courtyards overlap",

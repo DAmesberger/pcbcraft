@@ -16,7 +16,6 @@
 //! keeps these crate-private, so the geometry is reproduced here on the
 //! public tokens and fonts.
 use super::severity::{Level, severity_glyph};
-use egui::text::{LayoutJob, TextWrapping};
 use egui::{
     Align, Color32, CursorIcon, FontId, Galley, Layout, Rect, Response, RichText, Sense, Stroke,
     Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
@@ -264,11 +263,13 @@ fn object_chips(ui: &mut Ui, id: egui::Id, objects: &[String]) -> Option<usize> 
                 ui.available_width().max(t.space_24) - t.space_16,
             );
             let size = vec2(text.size().x + t.space_16, t.space_16 + t.space_4);
+            let cut = text.elided;
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let response = ui
                 .interact(rect, id.with(("object", i)), Sense::click())
                 .union(response)
                 .on_hover_cursor(CursorIcon::PointingHand);
+            let response = super::text::hover(response, name, "", cut);
             let fill = if response.hovered() {
                 t.hover
             } else {
@@ -738,11 +739,9 @@ fn galley(ui: &Ui, text: &str, font: FontId, color: Color32) -> Arc<Galley> {
 }
 
 /// One line clipped to `width` with an ellipsis; `elided` says whether it
-/// was cut.
+/// was cut (`kit::text`).
 fn clipped(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
-    let mut job = LayoutJob::simple_singleline(text.to_owned(), font, color);
-    job.wrap = TextWrapping::truncate_at_width(width.max(0.0));
-    ui.painter().layout_job(job)
+    super::text::one_line(ui, text, font, color, width.max(0.0))
 }
 
 #[cfg(test)]

@@ -216,8 +216,8 @@ pub fn summary(hit: &TemplateHit, form: &PackageForm) -> Vec<(&'static str, Stri
     let mut rows = Vec::new();
     if let Some([l, w, h]) = form.envelope() {
         rows.push((
-            "Body L × W × H",
-            format!("{} × {} × {} mm", mm(l), mm(w), mm(h)),
+            "Body",
+            format!("{} × {} × {} mm (L × W × H)", mm(l), mm(w), mm(h)),
         ));
     }
     let leads = form.lead_count();
@@ -249,6 +249,18 @@ pub fn basis(hit: &TemplateHit) -> &'static str {
         (false, true, true) => "cited",
         (false, true, false) => "cited (unverified)",
         (false, false, _) => "estimated",
+    }
+}
+
+/// What a row's badge means, for its hover.
+fn badge_tip(hit: &TemplateHit) -> &'static str {
+    match (hit.is_custom(), hit.cited, hit.citation_checked) {
+        (true, _, _) => "values changed from the template",
+        (false, true, true) => "values cited from a drawing, its revision and page recorded",
+        (false, true, false) => {
+            "values cited from a drawing; its revision and page are not recorded"
+        }
+        (false, false, _) => "estimated template defaults, not from a drawing",
     }
 }
 
@@ -1162,6 +1174,7 @@ impl TemplateGallery {
                                                         "est."
                                                     },
                                                     present: h.cited || h.is_custom(),
+                                                    tip: badge_tip(h),
                                                 }];
                                                 let row = kit::SearchRow {
                                                     icon: "component",
@@ -2164,6 +2177,42 @@ mod tests {
                 bundle: Box::new(bundle)
             }
         );
+        Ok(())
+    }
+
+    /// The gallery as the one-hour run saw it (SOIC-14, a 1380-point
+    /// window): the preview's labels are whole, and every text cut short,
+    /// a result row's detail among them, shows in full on hover. With
+    /// `PCBCRAFT_TEXT_PICTURES=<dir>` it also writes the sheet's picture.
+    #[test]
+    fn the_gallery_text_is_whole_or_shows_in_full_on_hover() -> TestResult {
+        let engine = Engine::demo()?;
+        let mut gallery = TemplateGallery::default();
+        gallery.open_new(None);
+        if let Some(open) = gallery.open.as_mut() {
+            open.query = "soic pins:14".into();
+        }
+        let screen = crate::kit::text::tests::Screen::new(vec2(1380.0, 900.0));
+        let run = |gallery: &mut TemplateGallery, events: Vec<egui::Event>| {
+            screen.run(events, |ui| {
+                gallery.show(ui.ctx(), &engine);
+            })
+        };
+        for _ in 0..4 {
+            run(&mut gallery, vec![]);
+        }
+        let rest = run(&mut gallery, vec![]);
+        for label in ["Body", "Terminals"] {
+            assert!(
+                crate::kit::text::tests::shows_in_full(&rest, label),
+                "{label} is whole"
+            );
+        }
+        screen.picture("template-gallery", &rest, 1.0)?;
+        let (_, missing) = crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| {
+            run(&mut gallery, events)
+        });
+        assert!(missing.is_empty(), "cut without a hover: {missing:?}");
         Ok(())
     }
 }

@@ -17,7 +17,7 @@ pub mod style;
 #[cfg(test)]
 mod tests;
 
-pub use rules::KNOWN_CODES;
+pub use rules::{KNOWN_CODES, group_title};
 
 use crate::completeness;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};

@@ -251,10 +251,12 @@ impl ComponentDefinition {
                 if !pinned.contains(&terminal.id) {
                     out.push(issue(
                         "component.pin_missing",
+                        // The terminal first: the rows of one symbol
+                        // differ at their start.
                         format!(
-                            "{} has no pin for terminal ‘{}’.",
-                            named(r.erased()),
-                            terminal.name
+                            "Terminal ‘{}’ has no pin in {}.",
+                            terminal.name,
+                            library.describe(r.erased())
                         ),
                         vec![
                             object(id, terminal.id.0),

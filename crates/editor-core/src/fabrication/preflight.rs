@@ -27,10 +27,12 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum FabricationCommand {
-    /// Accept a pre-flight finding for fabrication, by its key, with a
-    /// reason (required). Replaces an earlier waiver of the same key.
+    /// Accept pre-flight findings for fabrication, by their keys, with one
+    /// reason (required), as one undo step. Replaces earlier waivers of the
+    /// same keys. Refused whole, changing nothing, when any key or the
+    /// reason is empty, too long or not printable.
     #[serde(rename = "fabrication.waive")]
-    Waive { key: String, reason: String },
+    Waive { keys: Vec<String>, reason: String },
     /// Remove the waiver of a key.
     #[serde(rename = "fabrication.unwaive")]
     Unwaive { key: String },
@@ -42,35 +44,49 @@ declare_classes!(FabricationCommand {
     Unwaive "fabrication.unwaive" Edit,
 });
 
-/// Apply one waiver command.
+/// Apply one waiver command. A refused command leaves `production`
+/// unchanged.
 pub fn apply(production: &mut Production, command: FabricationCommand) -> Result<()> {
     let waivers = &mut production.waivers;
     match command {
-        FabricationCommand::Waive { key, reason } => {
-            let key = key.trim().to_string();
+        FabricationCommand::Waive { keys, reason } => {
             let reason = reason.trim().to_string();
-            if key.is_empty() || reason.is_empty() {
+            let keys: BTreeSet<String> = keys.iter().map(|k| k.trim().to_string()).collect();
+            if keys.is_empty() || keys.contains("") || reason.is_empty() {
                 return Err(Error::Invalid(
                     "fabrication.waiver_reason: a waiver needs a finding key and a reason".into(),
                 ));
             }
-            if key.len() > MAX_WAIVER_TEXT
+            if keys.len() > MAX_WAIVERS
                 || reason.len() > MAX_WAIVER_TEXT
-                || key.chars().chain(reason.chars()).any(char::is_control)
+                || reason.chars().any(char::is_control)
+                || keys
+                    .iter()
+                    .any(|k| k.len() > MAX_WAIVER_TEXT || k.chars().any(char::is_control))
             {
                 return Err(Error::Invalid(format!(
                     "fabrication.waiver_bounds: keys and reasons are printable, at most {MAX_WAIVER_TEXT} bytes"
                 )));
             }
-            match waivers.binary_search_by(|w| w.key.as_str().cmp(&key)) {
-                Ok(i) => waivers[i].reason = reason,
-                Err(i) => {
-                    if waivers.len() >= MAX_WAIVERS {
-                        return Err(Error::Limit(format!(
-                            "fabrication.waiver_limit: at most {MAX_WAIVERS} waivers"
-                        )));
-                    }
-                    waivers.insert(i, Waiver { key, reason });
+            let added = keys
+                .iter()
+                .filter(|k| waivers.binary_search_by(|w| w.key.as_str().cmp(k)).is_err())
+                .count();
+            if waivers.len().saturating_add(added) > MAX_WAIVERS {
+                return Err(Error::Limit(format!(
+                    "fabrication.waiver_limit: at most {MAX_WAIVERS} waivers"
+                )));
+            }
+            for key in keys {
+                match waivers.binary_search_by(|w| w.key.as_str().cmp(&key)) {
+                    Ok(i) => waivers[i].reason.clone_from(&reason),
+                    Err(i) => waivers.insert(
+                        i,
+                        Waiver {
+                            key,
+                            reason: reason.clone(),
+                        },
+                    ),
                 }
             }
         }

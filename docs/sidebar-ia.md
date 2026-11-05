@@ -53,7 +53,7 @@ These are rules for every slice. [pcbcraft-ui](../skills/pcbcraft-ui/SKILL.md) c
 7. **Every issue locates.** A click selects and frames every referenced object, for every `ObjectRef` kind, across workspaces and tabs. A Fix button appears only when a typed command, or a dialog that issues one, resolves the issue.
 8. **Core decides severity.** Error (×) is the only red; then Warning (!), To do (○) and Info (i).
 9. **Feedback is transient and single-channel.** Toasts carry command results and gesture refusals. The Messages window holds the history. Pills show persistent modes. The editor `notice` string is retired.
-10. **Help on demand.** Use one clipped hint line with a tooltip, control tooltips, the canvas hint or an empty-state box. Never repeat the canvas hint.
+10. **Help on demand.** Use one hint sentence (it wraps to the card), control tooltips, the canvas hint or an empty-state box. Never repeat the canvas hint.
 11. **Bounded everywhere.** The card fills the column. A list longer than 8 rows goes into a bounded frame with "Show all". Nothing is silently capped. No scroller nests inside another, except a bounded list frame. **Target** (until measured): every default state fits one screen at 860×1081 pt.
 12. **Stable layout.** Nothing is inserted above the control being edited. Footers are pinned and the issue slot is reserved. The scroll offset resets when the subject or mode changes and is kept while editing.
 13. **One commit model in the card: live, per field.** A field commits on Enter or focus loss, as one typed command and one undo step. Paired values (position x/y, size w×h) commit together. Invalid input never commits and is marked; Esc reverts. Staged multi-field commits exist only in dialogs.

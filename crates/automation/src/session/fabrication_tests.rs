@@ -232,22 +232,33 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
     let unreasoned = session.dispatch(json!({"command": "project.apply", "params": {
         "expected_revision": revision,
         "operation": {"editor": "Fabrication", "operation": {
-            "command": "fabrication.waive", "params": {"key": blocking[0], "reason": " "}}},
+            "command": "fabrication.waive", "params": {"keys": [blocking[0]], "reason": " "}}},
     }}));
     assert_eq!(unreasoned["ok"], false);
     assert_eq!(session.engine().revision(), revision);
-    for key in &blocking {
-        let revision = session.engine().revision();
-        ok(
-            &mut session,
-            json!({"command": "project.apply", "params": {
-                "expected_revision": revision,
-                "operation": {"editor": "Fabrication", "operation": {
-                    "command": "fabrication.waive",
-                    "params": {"key": key, "reason": "fabricator refills planes"}}},
-            }}),
-        )?;
-    }
+    // One key that is not printable refuses the whole list.
+    let revision = session.engine().revision();
+    let mut bad = blocking.clone();
+    bad.push("bad\u{7}key".into());
+    let refused = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision,
+        "operation": {"editor": "Fabrication", "operation": {
+            "command": "fabrication.waive", "params": {"keys": bad, "reason": "prototype"}}},
+    }}));
+    assert_eq!(refused["ok"], false);
+    assert_eq!(session.engine().revision(), revision);
+    assert!(session.engine().project().production.waivers.is_empty());
+    // Every blocking finding is waived with one reason in one command.
+    let revision = session.engine().revision();
+    ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive",
+                "params": {"keys": blocking, "reason": "fabricator refills planes"}}},
+        }}),
+    )?;
     let result = ok(&mut session, export(&out, false, Some("std-6-6")))?;
     assert_eq!(result["preflight"]["blocking"], 0);
     assert_eq!(result["preflight"]["waived"], blocking.len());
@@ -266,13 +277,11 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         reopened.engine().project().production.waivers.len(),
         blocking.len()
     );
-    // Each waiver was one undo step.
-    for _ in 0..blocking.len() {
-        ok(
-            &mut session,
-            json!({"command": "project.undo", "params": {}}),
-        )?;
-    }
+    // The waivers were one undo step.
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
     assert!(session.engine().project().production.waivers.is_empty());
     // An unknown profile is refused.
     let unknown = session.dispatch(export(

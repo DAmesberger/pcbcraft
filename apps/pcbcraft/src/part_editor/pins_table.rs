@@ -245,18 +245,26 @@ pub fn widths(width: f32) -> [f32; 7] {
     out
 }
 
+/// One cell's text on one line, cut with "…" and then shown in full on
+/// hover (`kit::text`).
 fn paint_cell(ui: &Ui, rect: Rect, text: &str, font: FontId, ink: Color32) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, ink, rect.width().max(1.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let galley = painter.layout_job(job);
+    let galley = crate::kit::text::one_line(ui, text, font, ink, rect.width());
+    let cut = galley.elided;
     painter.galley(
         pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
         galley,
         ink,
     );
+    if cut {
+        let id = ui.id().with((
+            "pin-cell",
+            text,
+            rect.left().to_bits(),
+            rect.top().to_bits(),
+        ));
+        ui.interact(rect, id, Sense::hover()).on_hover_text(text);
+    }
 }
 
 /// The pin table over `rows` (indices into the terminals), with a header
