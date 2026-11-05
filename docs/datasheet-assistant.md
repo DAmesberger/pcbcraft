@@ -60,9 +60,33 @@ pcbcraft-cli design-part --provider openai --base-url http://localhost:11434/v1 
   --notes "SOT-23-5 (DBV) package only" --record tlv757.recording.jsonl
 ```
 
-Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--prices FILE.json`, `--request-timeout SECONDS`; the caps `--max-usd`, `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens, seconds and spend go to stderr. `pcbcraft-cli llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it.
+Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--prices FILE.json`, `--request-timeout SECONDS`; the caps `--max-usd`, `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--profile NAME` (the [run profile](#run-profiles); chosen by the model id when not given); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens, seconds and spend go to stderr. `pcbcraft-cli llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it. `pcbcraft-cli llm-profile list` lists the run profiles, and `llm-profile copy NAME` copies a built-in one into the config folder to edit.
 
 In the desktop app, the Component workspace start page has **Create from datasheet…** under New: datasheets (one path or URL per line), part name, output file, then provider (Anthropic, or OpenAI-compatible), endpoint, model, API key (masked; stored in the system keychain for that endpoint when the run starts, then cleared from the form), and for an OpenAI-compatible model its context size and whether it takes images or reads PDFs; the cost cap for Anthropic. The run goes on a background thread with progress, tokens, spend and Cancel (taking effect after the current request; requests are not streamed). It writes a new project and its review; the open project is not touched. A full settings page belongs to the assistant panel (LLM integration slice 3).
+
+## Run profiles
+
+5 November 2026. How a run talks to one model: plain data, separate from the model's declared capabilities (`ModelProfile`), which say what it can do; a run profile says what it is told and how the loop reacts (`crates/assist/src/profile.rs`).
+
+```json
+{
+  "format": 1,
+  "name": "qwen3.8-flash-next",
+  "models": ["RadixArk/Qwen3.8-Flash-Next-NVFP4"],
+  "system": {"add": ["paragraph", "paragraph"]},
+  "omit_tools": [],
+  "harness": {"repeat_limit": 3}
+}
+```
+
+- `system`: `"base"` (the base prompt, `prompt.rs`), `{"add": [...]}` (the base prompt, then these paragraphs) or `{"replace": [...]}` (these paragraphs instead). Paragraphs are joined by blank lines, at most 64 KiB.
+- `omit_tools`: tools the model isn't offered (never `submit_review`).
+- `harness.repeat_limit` (2–20, default 3): the same refused call (same tool, same input) this many times ends the run with `stopped a repeating call` and the call named. From the second time, the refusal tells the model it is repeating itself.
+- `models`: exact model ids the profile is chosen for when none is named.
+
+**Built in** (`crates/assist/profiles/`): `claude` (the Claude ids; base prompt, every tool: today's request, unchanged), `qwen3.8-flash-next` ([tuned below](#tuning-qwen38-flash-next)) and `default` (base prompt), which any model without a profile gets. **Selection:** `--profile NAME`, else the first profile listing the model id, user files first, else `default`. The desktop form selects by its model field and logs the profile; the review report names it. **Editing:** `pcbcraft-cli llm-profile copy NAME` writes the built-in to `<config>/assist-profiles/NAME.json` (`PCBCRAFT_CONFIG_DIR`, else the platform config folder under `pcbcraft`), never over an existing file; a user file of a built-in's name takes its place. Every file is checked when read: unknown fields, another format, a name that isn't the file's, an unknown or required tool left out, an empty replacement or a limit out of range is refused with the file and reason, and the run doesn't start. There is no editor in the app yet.
+
+**Harness fixes for every model** (found in the `qwen3.8:27b` run, measured below): repeated refused calls (above); every integer beyond 2^53 in a tool result goes to the model as text, so a 19-digit preview `base` can't be rounded (`library_pinout_apply` takes it as text or a number; in every recording in the repository and the tuning runs the base is the only such number a model copied back, and the conversion covers any other that appears); an array or object argument that arrives as JSON text is read as meant, and text that isn't valid JSON is refused with where it broke instead of serde's "expected a sequence". The report's shape fixes of the earlier run stay.
 
 ## MCP gaps closed
 
@@ -130,5 +154,5 @@ What went wrong, and what changed:
 - **Live runs per backend.** Anthropic: one live run ([run 1](datasheet-assistant-run1.md)) before the model layer, now replayed through it; no paid call was made since, so the Anthropic HTTP path is verified by a byte-for-byte request test, recordings and a loopback HTTP test, not live. OpenAI-compatible: the two local runs above, through Ollama only; LM Studio, `llama-server`, OpenAI and OpenRouter are untested live.
 - **Keychain.** Storing and reading a key goes through `keyring`; the tests cover refusals and redaction but don't touch the real keychain, and the desktop key field needs a check in the app.
 - **Rendered pages** cost about 2 000 tokens each and stay in the conversation; a run may view at most 24. Text extraction loses table layout, and scanned PDFs need vision.
-- **Repeated refusals.** A model that repeats the same refused call is stopped only by the request cap; the runner doesn't yet notice the repetition.
+- **Repeated refusals** are caught only when the call is identical; a model that varies a hopeless call slightly is still bounded only by the request cap.
 - **Marking anchors.** A marking item sits at the centre, the pin-1 corner or an end; the WROOM-3 can's Ø0.5 mark at its −x/−y corner cannot be placed yet.
