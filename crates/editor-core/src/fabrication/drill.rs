@@ -85,7 +85,9 @@ pub struct DrillHole {
 }
 
 /// One tool: holes of one diameter, plating, kind (hit or slot) and
-/// function. `number` counts from 1 within its file (plated or not).
+/// function. `number` counts from 1 across the board, plated tools first,
+/// so one number names one tool in the drill table, the drill map and both
+/// Excellon files.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct DrillTool {
     pub number: u32,
@@ -276,8 +278,9 @@ pub fn stadium(outline: &Outline) -> Option<HoleFeature> {
 }
 
 /// The tool table of `holes`: plated tools first, then non-plated, each by
-/// diameter, then hits before slots, then function; numbered from 1 per
-/// plating.
+/// diameter, then hits before slots, then function; numbered from 1
+/// across both, so the non-plated file continues where the plated one
+/// stops (T1–T3 plated, T4 non-plated).
 pub fn table(holes: &[DrillHole]) -> DrillTable {
     let mut counts: std::collections::BTreeMap<(bool, i64, bool, HoleFunction), (f64, usize)> =
         Default::default();
@@ -291,12 +294,11 @@ pub fn table(holes: &[DrillHole]) -> DrillTable {
     // Plated (true) first.
     keys.sort_by_key(|((plated, d, slot, f), _)| (!*plated, *d, *slot, *f));
     let mut tools = Vec::with_capacity(keys.len());
-    let (mut plated_n, mut other_n) = (0u32, 0u32);
+    let mut n = 0u32;
     for ((plated, d, slot, function), (_, count)) in keys {
-        let n = if plated { &mut plated_n } else { &mut other_n };
-        *n = n.saturating_add(1);
+        n = n.saturating_add(1);
         tools.push(DrillTool {
-            number: *n,
+            number: n,
             diameter: d as f64 * TOOL_RESOLUTION_MM,
             plated,
             slot,
