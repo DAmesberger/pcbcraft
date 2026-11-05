@@ -795,7 +795,11 @@ impl Engine {
                 commands::apply_library(&mut candidate, command, evaluator)?
             }
             Operation::Instance(command) => {
-                commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                if command.restates(&candidate.project)? {
+                    Outcome::None
+                } else {
+                    commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                }
             }
             Operation::Schematic(command) => {
                 match schematic::apply(

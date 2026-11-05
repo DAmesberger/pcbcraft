@@ -743,6 +743,40 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     Ok(())
 }
 
+/// Under each built-in profile, unchanged, a whole-board fill stays that
+/// profile's edge clearance inside the rectangle. Under the first default
+/// (0) the same fill reached the edge and the production check passed.
+#[test]
+fn the_fill_keeps_the_profile_edge() -> Fallible<()> {
+    for profile in crate::rules::builtin::all() {
+        let edge = profile
+            .rules
+            .copper
+            .clearance
+            .get(CopperObject::Fill, CopperObject::BoardEdge);
+        assert!(edge > 0.0, "{}", profile.id);
+        let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
+        let mut p = engine.project().clone();
+        let [w, h] = p.board_size;
+        crate::rules::apply(
+            &mut p.rules,
+            crate::rules::RulesCommand::SetProfile {
+                profile: Box::new(profile.clone()),
+                keep_overrides: false,
+            },
+        )?;
+        let c = super::compute(&p, id)?;
+        let mut f = fill(&p, id)?.clone();
+        f.computed = Some(c);
+        assert!(!edges(&f).is_empty(), "{}", profile.id);
+        for (a, _) in edges(&f) {
+            let gap = a[0].min(a[1]).min(w - a[0]).min(h - a[1]);
+            assert!(gap >= edge - 1e-6, "{}: {a:?} is {gap}", profile.id);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn the_cache_key_ignores_edits_out_of_reach() -> Fallible<()> {
     let mut engine = showcase()?;

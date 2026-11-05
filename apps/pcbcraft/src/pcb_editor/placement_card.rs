@@ -57,6 +57,7 @@ impl PcbEditor {
     ) -> Option<Operation> {
         let locked = placement.locked;
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        self.card_escape = escape;
         // A refusal belongs to the value that was refused: editing the
         // field again clears it.
         if self.sent.get(&Field::Position) != Some(&self.position) {

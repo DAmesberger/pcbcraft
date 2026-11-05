@@ -751,7 +751,7 @@ The "Component catalog, templates, pin functions and 3D library" design note of 
 | Library command | `library.edit_copy`, `library.draft_closure` | import and draft a folder item's working set; draft a published one, each one step | libui |
 | Library command | `library.pinout_apply` | a previewed pinout document, one step | [pins](#pin-functions-peripherals-rules-pinout-import-and-firmware-c1c7-as-built) |
 | Library command | `library.import_model`, `library.pack_artwork` | a Model draft; marking artwork | [models](#3d-model-library-project-container-and-markings-d0d6-as-built) |
-| Instance command | `instance.assign_peripheral`, `instance.set_pin_config`, `instance.set_marking` | one step each | pins, models |
+| Instance command | `instance.assign_peripheral`, `instance.set_pin_config`, `instance.set_marking`, `instance.set_text_placement` | one step each | pins, models |
 | Query | `library.templates`, `library.package_plan` | template hits; what `package_from_template` would change | libui |
 | Query | `library.models` | model hits ranked by fit to a package draft | models |
 | Query | `library.pinout_preview`, `functions.suggest`, `project.pin_report`, `project.pin_config` | the import plan; ranked assignments; per-pin facts; the firmware IR | pins |

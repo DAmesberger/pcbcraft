@@ -174,6 +174,44 @@ fn appended_defaults_equal_the_estimator_constants() {
     assert_eq!(r.land.chip_gap_min, 0.2);
 }
 
+/// Every built-in keeps copper off the edge, and a fill computed under one
+/// stays that far inside (`the_fill_keeps_the_profile_edge`).
+/// The values are this project's estimates, in the 0.25–0.3 mm range routed
+/// boards generally need; a zero here would mean "not checked".
+#[test]
+fn every_builtin_profile_keeps_copper_off_the_board_edge() {
+    let expected = [
+        ("pcbcraft-default", 0.3),
+        ("std-6-6", 0.3),
+        ("fine-4-4", 0.25),
+        ("hdi-3-3", 0.25),
+    ];
+    let all = builtin::all();
+    assert_eq!(all.len(), expected.len());
+    for (profile, (id, edge)) in all.iter().zip(expected) {
+        assert_eq!(profile.id, id);
+        assert_eq!(profile.provenance.basis, ProfileBasis::Estimated, "{id}");
+        assert!(profile.provenance.notes.contains("stimated"), "{id}");
+        for object in [
+            CopperObject::Track,
+            CopperObject::Pad,
+            CopperObject::Via,
+            CopperObject::Fill,
+            CopperObject::Hole,
+        ] {
+            assert_eq!(
+                profile
+                    .rules
+                    .copper
+                    .clearance
+                    .get(object, CopperObject::BoardEdge),
+                edge,
+                "{id} {object:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn builtin_classes_tighten_in_order_and_fit_their_aspect_ratio() {
     let [_, std, fine, hdi] = [

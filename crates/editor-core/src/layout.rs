@@ -459,7 +459,10 @@ pub fn set_physical(
             "This instance is on the board. Preview the change with project.preview_update (Change::Instance) to review its copper impact.".into(),
         ));
     }
-    instances::instance_mut(project, instance)?.physical = choice;
+    let target = instances::instance_mut(project, instance)?;
+    let old_footprint = target.physical.map(|p| p.footprint);
+    target.physical = choice;
+    instances::text::follow_footprint(project, instance, old_footprint);
     if choice.is_none() {
         project.placements.retain(|p| p.instance != instance);
     }
@@ -1089,6 +1092,7 @@ pub fn validate(project: &Project) -> Result<()> {
     if project.tracks.len() > MAX_TRACKS {
         return invalid("prototype supports at most 2000 track segments");
     }
+    instances::text::check(project)?;
     let mut placed = BTreeSet::new();
     let mut pad_count = 0usize;
     let mut graphic_vertices = 0usize;

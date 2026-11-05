@@ -22,3 +22,4 @@ mod publish_sets;
 mod sheets;
 mod staged;
 pub(crate) mod support;
+mod text_placement;

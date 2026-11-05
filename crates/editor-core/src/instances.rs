@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod part;
 pub mod pins;
+pub mod text;
 pub use part::{MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, requirements};
 
 pub const MAX_INSTANCES: usize = 4096;
@@ -636,6 +637,7 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         part: None,
         pin_config: Default::default(),
         marking: Default::default(),
+        text_placements: Default::default(),
     });
     let sheet = request.sheet.unwrap_or_else(|| project.sheets.first());
     let occurrence = add_occurrence(project, id, request.unit, request.position, sheet)?;
@@ -690,6 +692,7 @@ pub fn place_off_sheet(
         part: None,
         pin_config: Default::default(),
         marking: Default::default(),
+        text_placements: Default::default(),
     });
     check_instance(project, id)?;
     check_designators(project)?;
@@ -798,6 +801,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
         }
     }
     let instance = instance_mut(project, id)?;
+    let old_footprint = instance.physical.map(|p| p.footprint);
     instance.component = target.component;
     instance.representation = target.representation;
     instance.physical = target.physical;
@@ -806,6 +810,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
     instance.pin_config = pins::carry_pin_config(&instance.pin_config, &component);
+    text::follow_footprint(project, id, old_footprint);
     Ok(())
 }
 
