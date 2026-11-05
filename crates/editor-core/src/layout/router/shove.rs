@@ -17,7 +17,8 @@
 //! that clears the pusher, and the chains ending on it follow with a 45°
 //! elbow. Pads, keepouts, the board edge, locked tracks and vias, the
 //! routed nets' own copper, and vias when via shoving is off never move;
-//! a push into them fails, and the whole shove with it.
+//! a push into them fails, and the whole shove with it. A differential
+//! pair moves as one unit or not at all ([`pair`]).
 use super::clean::{has_acute, length, posture_of, simplify};
 use super::hull::{DIRS, Facets, Hull};
 use super::world::{Ctx, Hit, Line, MovedVia, Piece, State, Target};
@@ -25,6 +26,8 @@ use crate::geometry::{Point, distance};
 use crate::layout::posture::{self, Posture};
 use crate::rules::CopperObject;
 use std::collections::VecDeque;
+
+mod pair;
 
 /// Most generations of pushes (the step pushes, the pushed push, …).
 pub(super) const MAX_DEPTH: usize = 8;
@@ -80,9 +83,15 @@ pub(super) fn shove(ctx: &Ctx<'_>, state: &mut State) -> Result<(), Hit> {
                 break;
             };
             k += 1;
+            // A pair's moved halves are laid together: neither pushes the
+            // other.
+            let partner = matches!(pusher, Pusher::Line(_))
+                .then(|| ctx.pair_of(piece.net).and_then(|p| p.partner(piece.net)))
+                .flatten();
+            let own = [piece.net, partner.unwrap_or(piece.net)];
             let mut settled = false;
             for _ in 0..12 {
-                let hits = ctx.hits(state, &piece, &[piece.net]);
+                let hits = ctx.hits(state, &piece, &own);
                 let Some(hit) = hits
                     .iter()
                     .find(|h| !ctx.movable(state, h.target))
@@ -97,6 +106,7 @@ pub(super) fn shove(ctx: &Ctx<'_>, state: &mut State) -> Result<(), Hit> {
                     || budget == 0
                     || ctx.probes.get() > stop
                 {
+                    note_held_via(ctx, &hit);
                     return Err(hit);
                 }
                 budget -= 1;
@@ -108,7 +118,7 @@ pub(super) fn shove(ctx: &Ctx<'_>, state: &mut State) -> Result<(), Hit> {
                 }
             }
             if !settled {
-                let hits = ctx.hits(state, &piece, &[piece.net]);
+                let hits = ctx.hits(state, &piece, &own);
                 if let Some(hit) = hits.first() {
                     return Err(*hit);
                 }
@@ -118,14 +128,42 @@ pub(super) fn shove(ctx: &Ctx<'_>, state: &mut State) -> Result<(), Hit> {
     Ok(())
 }
 
+/// A pair's via stopped the shove: pair vias never move.
+fn note_held_via(ctx: &Ctx<'_>, hit: &Hit) {
+    if let Target::Base(k) = hit.target
+        && let Some(pair) = ctx.base_via(k).and_then(|v| ctx.pair_of(v.net))
+    {
+        ctx.held.set(Some(pair.id));
+    }
+}
+
+/// Move chain `l` out of `pusher`'s way, with its partner when it is a
+/// pair's half; the pushers that moved.
+fn push_chain(ctx: &Ctx<'_>, state: &mut State, l: usize, pusher: &Piece) -> Option<Vec<Pusher>> {
+    let net = state.lines.get(l)?.net;
+    let Some(held) = ctx.pair_of(net) else {
+        push_line(ctx, state, l, pusher)?;
+        return Some(vec![Pusher::Line(l)]);
+    };
+    let moved = pair::push(ctx, state, l, held, pusher);
+    if moved.is_none() {
+        ctx.held.set(Some(held.id));
+    }
+    moved
+}
+
 /// Move `hit` out of `pusher`'s way; the pushers that moved.
 fn push(ctx: &Ctx<'_>, state: &mut State, hit: Hit, pusher: &Piece) -> Option<Vec<Pusher>> {
     match hit.target {
         Target::Base(k) => {
-            if ctx.base_track(k).is_some() {
-                let l = adopt_line(ctx, state, k)?;
-                push_line(ctx, state, l, pusher)?;
-                Some(vec![Pusher::Line(l)])
+            if let Some(track) = ctx.base_track(k) {
+                let Some(l) = adopt_line(ctx, state, k) else {
+                    if let Some(pair) = ctx.pair_of(track.net) {
+                        ctx.held.set(Some(pair.id));
+                    }
+                    return None;
+                };
+                push_chain(ctx, state, l, pusher)
             } else {
                 let via = ctx.base_via(k)?.clone();
                 state.hidden.insert(k);
@@ -136,10 +174,7 @@ fn push(ctx: &Ctx<'_>, state: &mut State, hit: Hit, pusher: &Piece) -> Option<Ve
                 push_via(ctx, state, state.vias.len() - 1, pusher)
             }
         }
-        Target::Line(l, _) => {
-            push_line(ctx, state, l, pusher)?;
-            Some(vec![Pusher::Line(l)])
-        }
+        Target::Line(l, _) => push_chain(ctx, state, l, pusher),
         Target::Via(m) => push_via(ctx, state, m, pusher),
         _ => None,
     }

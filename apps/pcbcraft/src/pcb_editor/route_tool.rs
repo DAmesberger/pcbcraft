@@ -164,6 +164,14 @@ impl Planned {
         }
     }
 
+    /// A pair in the way that could not be shoved as one unit.
+    pub(super) fn note(&self) -> Option<&str> {
+        match self {
+            Planned::Single(plan) => plan.note.as_deref(),
+            Planned::Pair(plan) => plan.note.as_deref(),
+        }
+    }
+
     /// Where the head stops.
     pub(super) fn end(&self) -> Point {
         match self {
@@ -507,6 +515,15 @@ impl PcbEditor {
             let stop = screen(plan.end());
             painter.circle_stroke(stop, 5.0, Stroke::new(1.5, t.warning));
             painter.line_segment([stop, screen(end)], Stroke::new(1.0, t.warning));
+        }
+        if let Some(note) = plan.note() {
+            painter.text(
+                screen(end) + egui::vec2(12.0, -12.0),
+                egui::Align2::LEFT_BOTTOM,
+                note,
+                egui::FontId::proportional(t.font_label),
+                t.warning,
+            );
         }
     }
 

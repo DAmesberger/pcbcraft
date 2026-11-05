@@ -8,6 +8,11 @@
 //! joins are not counted. For a two-pin net this is the pad-to-pad path
 //! length; for a branched net it is the total copper length.
 //!
+//! **Pair halves** are measured along their signal path instead, the copper
+//! between the pair's endpoints ([`path`]), and the branches off it are
+//! listed as stubs. Skew, uncoupled length, a half's tuning target and its
+//! length in a group all read that length ([`signal_length`]).
+//!
 //! **Coupling.** Two segments of a pair's halves on one layer run coupled
 //! where they are parallel and their edge gap is the pair gap within
 //! [`gap_tolerance`]; the rest of each half (pad fan-out included) is
@@ -23,6 +28,10 @@ use crate::rules::signal::{DiffPair, DiffPairId, LengthGroupId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+pub mod path;
+
+pub use path::{PairMeasure, PairMeasured, PairStub};
 
 /// The most length one tuning adds, mm.
 pub const MAX_TUNE_MM: f64 = 1000.0;
@@ -91,6 +100,59 @@ pub fn net_lengths(project: &Project) -> BTreeMap<Id, NetLength> {
 /// One net's routed length.
 pub fn net_length(project: &Project, net: Id) -> NetLength {
     net_lengths(project).get(&net).copied().unwrap_or_default()
+}
+
+/// The lengths the checks compare: each net's copper and, for a pair's
+/// halves, their signal paths.
+struct Measured {
+    copper: BTreeMap<Id, NetLength>,
+    pairs: BTreeMap<DiffPairId, PairMeasure>,
+    paths: BTreeMap<Id, f64>,
+}
+
+impl Measured {
+    fn of(project: &Project) -> Self {
+        let mut out = Self {
+            copper: net_lengths(project),
+            pairs: BTreeMap::new(),
+            paths: BTreeMap::new(),
+        };
+        for pair in &project.rules.diff_pairs {
+            let measure = path::measure(project, pair);
+            if let Some([p, n]) = &measure.halves {
+                out.paths.insert(pair.positive, p.total());
+                out.paths.insert(pair.negative, n.total());
+            }
+            out.pairs.insert(pair.id, measure);
+        }
+        out
+    }
+
+    /// The length of `net` the checks compare.
+    fn length(&self, net: Id) -> f64 {
+        self.paths
+            .get(&net)
+            .copied()
+            .or_else(|| self.copper.get(&net).map(|l| l.total))
+            .unwrap_or(0.0)
+    }
+
+    /// Each half's uncoupled length.
+    fn uncoupled(&self, pair: DiffPairId, coupling: &PairCoupling) -> [f64; 2] {
+        match self.pairs.get(&pair).and_then(|m| m.halves.as_ref()) {
+            Some([p, n]) => [coupling.uncoupled_on(0, p), coupling.uncoupled_on(1, n)],
+            None => coupling.coupling.uncoupled,
+        }
+    }
+}
+
+/// The length of `net` its pair, group and tuning targets compare: a pair
+/// half's signal path, otherwise its total copper.
+pub fn signal_length(project: &Project, net: Id) -> f64 {
+    match project.rules.pair_of(net) {
+        Some(_) => Measured::of(project).length(net),
+        None => net_length(project, net).total,
+    }
 }
 
 /// How far a coupled stretch's gap may stray from the pair gap, mm.
@@ -163,8 +225,43 @@ fn overlap(track: &Track, other: &Track) -> Option<(f64, f64)> {
     (hi - lo > 1e-9).then_some((lo, hi))
 }
 
+/// A pair's coupling with where on each half's tracks it holds.
+struct PairCoupling {
+    coupling: Coupling,
+    /// Coupled intervals per `[positive, negative]` track, as distances
+    /// from its start.
+    intervals: [BTreeMap<Id, Vec<(f64, f64)>>; 2],
+}
+
+impl PairCoupling {
+    /// How much of half `side`'s signal path runs uncoupled.
+    fn uncoupled_on(&self, side: usize, path: &path::HalfPath) -> f64 {
+        let mut coupled = 0.0;
+        for (track, spans) in &path.spans {
+            let Some(intervals) = self.intervals.get(side).and_then(|m| m.get(track)) else {
+                continue;
+            };
+            let within: Vec<(f64, f64)> = intervals
+                .iter()
+                .flat_map(|(a, b)| {
+                    spans
+                        .iter()
+                        .map(move |(lo, hi)| (a.max(*lo), b.min(*hi)))
+                        .filter(|(x, y)| y > x)
+                })
+                .collect();
+            coupled += covered(within);
+        }
+        (path.tracks - coupled).max(0.0)
+    }
+}
+
 /// Where the halves of `pair` run coupled at the gap their layers give.
 pub fn coupling(project: &Project, pair: &DiffPair) -> Coupling {
+    pair_coupling(project, pair).coupling
+}
+
+fn pair_coupling(project: &Project, pair: &DiffPair) -> PairCoupling {
     let halves = [pair.positive, pair.negative];
     let tracks: [Vec<&Track>; 2] =
         halves.map(|net| project.tracks.iter().filter(|t| t.net == net).collect());
@@ -220,7 +317,10 @@ pub fn coupling(project: &Project, pair: &DiffPair) -> Coupling {
             *u = (total - coupled).max(0.0);
         }
     }
-    out
+    PairCoupling {
+        coupling: out,
+        intervals,
+    }
 }
 
 /// One net in the length report.
@@ -229,6 +329,10 @@ pub struct NetRow {
     pub net: Id,
     pub name: String,
     pub length: NetLength,
+    /// A pair half's signal path, which its target and delta compare; the
+    /// rest of `length` is its stubs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<f64>,
     /// The length it must reach (its group's, or its pair partner's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<f64>,
@@ -247,6 +351,14 @@ pub struct NetRow {
 pub struct PairRow {
     pub pair: DiffPairId,
     pub name: String,
+    /// How the lengths below were measured.
+    #[serde(default)]
+    pub measured: PairMeasured,
+    /// The signal paths' pads, `[positive, negative]`, unless measured by
+    /// total copper.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<[PairPath; 2]>,
+    /// Each half's measured length, mm.
     pub positive: f64,
     pub negative: f64,
     pub skew: f64,
@@ -256,6 +368,16 @@ pub struct PairRow {
     pub uncoupled: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_uncoupled: Option<f64>,
+    /// Copper off the signal paths, left out of skew and uncoupled length.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<PairStub>,
+}
+
+/// The pads one half's signal path joins ("J1.B6" to "U1.43").
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PairPath {
+    pub from: String,
+    pub to: String,
 }
 
 /// One length group in the report.
@@ -291,14 +413,14 @@ fn window(target: f64, explicit: bool, tolerance: f64) -> (f64, f64) {
     }
 }
 
-fn group_rows(project: &Project, lengths: &BTreeMap<Id, NetLength>) -> Vec<GroupRow> {
+fn group_rows(project: &Project, lengths: &Measured) -> Vec<GroupRow> {
     let rules = &project.rules;
     rules
         .length_groups
         .iter()
         .map(|g| {
             let members = g.member_nets(rules);
-            let len = |n: &Id| lengths.get(n).map_or(0.0, |l| l.total);
+            let len = |n: &Id| lengths.length(*n);
             let longest = members.iter().map(len).fold(0.0, f64::max);
             let (target, explicit) = match g.target {
                 Some(t) => (t, true),
@@ -329,15 +451,10 @@ fn group_rows(project: &Project, lengths: &BTreeMap<Id, NetLength>) -> Vec<Group
 /// its groups' targets and, when its pair has a skew limit, its longer
 /// partner's length. `None` when nothing sets one.
 pub fn tune_target(project: &Project, net: Id) -> Option<(f64, f64)> {
-    let lengths = net_lengths(project);
-    tune_target_with(project, &lengths, net)
+    tune_target_with(project, &Measured::of(project), net)
 }
 
-fn tune_target_with(
-    project: &Project,
-    lengths: &BTreeMap<Id, NetLength>,
-    net: Id,
-) -> Option<(f64, f64)> {
+fn tune_target_with(project: &Project, lengths: &Measured, net: Id) -> Option<(f64, f64)> {
     let rules = &project.rules;
     let mut best: Option<(f64, f64)> = None;
     let mut consider = |target: f64, tolerance: f64| {
@@ -355,7 +472,7 @@ fn tune_target_with(
     {
         let class = super::net_class(project, pair.positive);
         if let Some(skew) = rules.signal(class).pair_max_skew {
-            let other = lengths.get(&partner).map_or(0.0, |l| l.total);
+            let other = lengths.length(partner);
             if other > 0.0 {
                 consider(other, skew);
             }
@@ -366,9 +483,9 @@ fn tune_target_with(
 
 /// `layout.length_report`.
 pub fn report(project: &Project) -> LengthReport {
-    let lengths = net_lengths(project);
+    let lengths = Measured::of(project);
     let rules = &project.rules;
-    let mut wanted: BTreeSet<Id> = lengths.keys().copied().collect();
+    let mut wanted: BTreeSet<Id> = lengths.copper.keys().copied().collect();
     wanted.extend(
         rules
             .diff_pairs
@@ -382,17 +499,19 @@ pub fn report(project: &Project) -> LengthReport {
         .into_iter()
         .filter(|n| project.net(*n).is_some())
         .map(|net| {
-            let length = lengths.get(&net).copied().unwrap_or_default();
+            let length = lengths.copper.get(&net).copied().unwrap_or_default();
             let target = tune_target_with(project, &lengths, net);
-            let delta = target.map(|(t, _)| length.total - t);
+            let measured = lengths.length(net);
+            let delta = target.map(|(t, _)| measured - t);
             NetRow {
                 net,
                 name: project.net_name(net).to_owned(),
                 length,
+                path: lengths.paths.get(&net).copied(),
                 target: target.map(|t| t.0),
                 tolerance: target.map(|t| t.1),
                 delta,
-                ok: target.map(|(t, tol)| (length.total - t).abs() <= tol + 1e-6),
+                ok: target.map(|(t, tol)| (measured - t).abs() <= tol + 1e-6),
             }
         })
         .collect();
@@ -401,18 +520,29 @@ pub fn report(project: &Project) -> LengthReport {
         .diff_pairs
         .iter()
         .map(|p| {
-            let len = |n: Id| lengths.get(&n).map_or(0.0, |l| l.total);
-            let (a, b) = (len(p.positive), len(p.negative));
+            let (a, b) = (lengths.length(p.positive), lengths.length(p.negative));
             let signal = rules.signal(super::net_class(project, p.positive));
-            let c = coupling(project, p);
+            let uncoupled = lengths.uncoupled(p.id, &pair_coupling(project, p));
+            let measure = lengths.pairs.get(&p.id);
+            let halves = measure.and_then(|m| m.halves.as_ref());
             PairRow {
                 pair: p.id,
                 name: p.name.clone(),
+                measured: measure.map_or(PairMeasured::Copper, |m| m.measured),
+                paths: halves.map(|hs| {
+                    hs.each_ref().map(|h| PairPath {
+                        from: h.from.clone(),
+                        to: h.to.clone(),
+                    })
+                }),
+                stubs: halves.map_or_else(Vec::new, |hs| {
+                    hs.iter().flat_map(|h| h.stubs.iter().cloned()).collect()
+                }),
                 positive: a,
                 negative: b,
                 skew: (a - b).abs(),
                 max_skew: signal.pair_max_skew,
-                uncoupled: c.uncoupled[0].max(c.uncoupled[1]),
+                uncoupled: uncoupled[0].max(uncoupled[1]),
                 max_uncoupled: signal.pair_max_uncoupled,
             }
         })
@@ -436,8 +566,8 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     if rules.diff_pairs.is_empty() && rules.length_groups.is_empty() && !has_targets {
         return findings;
     }
-    let lengths = net_lengths(project);
-    let len = |n: Id| lengths.get(&n).map_or(0.0, |l| l.total);
+    let lengths = Measured::of(project);
+    let len = |n: Id| lengths.length(n);
     let net = |id: Id| ObjectRef::Net { id };
     for pair in &rules.diff_pairs {
         let class = super::net_class(project, pair.positive);
@@ -463,9 +593,11 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 objects.clone(),
             ));
         }
-        let c = coupling(project, pair);
+        let coupled = pair_coupling(project, pair);
+        let uncoupled = lengths.uncoupled(pair.id, &coupled);
+        let c = coupled.coupling;
         if let Some(max) = signal.pair_max_uncoupled {
-            let worst = c.uncoupled[0].max(c.uncoupled[1]);
+            let worst = uncoupled[0].max(uncoupled[1]);
             if worst > max + 1e-6 && (a > 0.0 || b > 0.0) {
                 findings.push(Finding::new(
                     "pair.uncoupled",
@@ -684,7 +816,10 @@ fn impedance_of_runs(
 pub fn check_command_nets(project: &Project, command: &RulesCommand) -> Result<()> {
     let nets: Vec<Id> = match command {
         RulesCommand::AddDiffPair { pair } => vec![pair.positive, pair.negative],
-        RulesCommand::EditDiffPair { pair } => vec![pair.positive, pair.negative],
+        RulesCommand::EditDiffPair { pair } => {
+            check_endpoints(project, pair)?;
+            vec![pair.positive, pair.negative]
+        }
         RulesCommand::AddLengthGroup { group } => group.nets.clone(),
         RulesCommand::EditLengthGroup { group } => group.nets.clone(),
         _ => return Ok(()),
@@ -693,6 +828,27 @@ pub fn check_command_nets(project: &Project, command: &RulesCommand) -> Result<(
         return Err(Error::NotFound(
             "diff_pair.net_missing: a chosen net no longer exists".into(),
         ));
+    }
+    Ok(())
+}
+
+/// A pair's set endpoints are two different terminals of each half's net.
+fn check_endpoints(project: &Project, pair: &DiffPair) -> Result<()> {
+    let Some(ends) = pair.endpoints else {
+        return Ok(());
+    };
+    for (net, [start, end]) in [
+        (pair.positive, ends.positive),
+        (pair.negative, ends.negative),
+    ] {
+        let on_net = |e| project.net(net).is_some_and(|n| n.terminals.contains(&e));
+        if start == end || !on_net(start) || !on_net(end) {
+            return Err(Error::Invalid(format!(
+                "diff_pair.endpoints: pair {} needs two different pads on {}",
+                pair.name,
+                project.net_name(net)
+            )));
+        }
     }
     Ok(())
 }

@@ -341,7 +341,7 @@ pub fn wanted(project: &Project, track: &Track, amount: TuneAmount) -> Result<f6
             if !mm.is_finite() {
                 return Err(Error::Invalid("Target length must be a number".into()));
             }
-            mm - super::length::net_length(project, track.net).total
+            mm - super::length::signal_length(project, track.net)
         }
     };
     if !want.is_finite() || want > super::length::MAX_TUNE_MM {
