@@ -490,10 +490,25 @@ fn sketched_demo() -> Fallible<Engine> {
 
 /// A refused board parameter goes back to its stored value at once, is not
 /// marked invalid (what it shows is valid), and shows the engine's whole
-/// reason (which parts, how far) under it until the document changes.
+/// reason under it until the document changes. Parts may sit off the
+/// board, but track copper may not, so a track 20–30 mm in refuses an
+/// 8 mm wide board.
 #[test]
 fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fallible {
     let mut engine = sketched_demo()?;
+    let net = engine.project().nets.first().map(|n| n.id).ok_or("a net")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: pcbcraft_core::layout::RouteRequest {
+                net,
+                start: [20.0, 30.0],
+                end: [30.0, 30.0],
+                width: 0.3,
+                layer: pcbcraft_core::Layer::Top.into(),
+            },
+        }),
+    )?;
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut editor = PcbEditor::default();
@@ -579,11 +594,11 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
             },
         )
         .err()
-        .ok_or("an 8 mm board took the parts")?;
+        .ok_or("an 8 mm board took the track")?;
     assert_eq!(engine.revision(), revision);
     let reason = refusal::shown_error(&error);
     assert!(
-        reason.contains("would be off the board, by ") && reason.ends_with(" first"),
+        reason.to_lowercase().contains("track copper lies outside"),
         "{reason}"
     );
     // The app hands the refusal back to the field on the next frame.

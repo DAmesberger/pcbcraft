@@ -19,6 +19,12 @@ const EPS: f64 = 1e-8;
 const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
+/// Where a part's datum may lie, mm, on both axes: the working area. A
+/// part may sit off the board (the board's surroundings are its staging
+/// area); DRC reports its copper past the edge. Every board lies within
+/// 0–1000 mm, so the area leaves at least one largest board's width free
+/// on every side, and no board size or outline edit can strand a part.
+pub const WORKING_AREA_MM: [f64; 2] = [-1000.0, 2000.0];
 
 pub mod board_edge;
 mod copper;
@@ -1163,8 +1169,6 @@ pub fn validate(project: &Project) -> Result<()> {
     }
     instances::text::check(project)?;
     let mut placed = BTreeSet::new();
-    // Parts whose datum the board leaves outside, and by how much (mm).
-    let mut off_board: Vec<(f64, Id)> = Vec::new();
     let mut pad_count = 0usize;
     let mut graphic_vertices = 0usize;
     for placement in &project.placements {
@@ -1194,19 +1198,17 @@ pub fn validate(project: &Project) -> Result<()> {
         if graphic_vertices > MAX_PLACED_GRAPHIC_VERTICES {
             return invalid("prototype supports at most 262144 placed footprint graphic vertices");
         }
-        if !point_valid(placement.position)
-            || !placement.rotation_deg.is_finite()
-            || placement.rotation_deg.abs() > 360_000.0
-        {
-            return invalid("placement datum must lie inside the board with a finite rotation");
+        if !in_working_area(placement.position) {
+            return Err(Error::Invalid(format!(
+                "{} must stay within {} to {} mm on each axis",
+                outline::part_name(project, placement.instance),
+                limits::mm(WORKING_AREA_MM[0]),
+                limits::mm(WORKING_AREA_MM[1])
+            )));
         }
-        let outside = outside_board(project, placement.position);
-        if outside > 0.0 {
-            off_board.push((outside, placement.instance));
+        if !placement.rotation_deg.is_finite() || placement.rotation_deg.abs() > 360_000.0 {
+            return invalid("placement rotation must be finite");
         }
-    }
-    if !off_board.is_empty() {
-        return Err(Error::Invalid(off_board_message(project, off_board)));
     }
     project.stackup.check()?;
     fill::validate(project)?;
@@ -1242,51 +1244,10 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-/// How far `point` lies outside the board's bounds, mm (0 inside).
-fn outside_board(project: &Project, point: Point) -> f64 {
-    let [w, h] = project.board_size;
-    let dx = (-point[0]).max(point[0] - w).max(0.0);
-    let dy = (-point[1]).max(point[1] - h).max(0.0);
-    let d = dx.hypot(dy);
-    if d > EPS { d } else { 0.0 }
-}
-
-/// The refusal for parts the board would leave outside: "J1, U3 and D1
-/// would be off the board, by up to 14 mm; move them first". Farthest
-/// first; past three parts the rest are counted.
-fn off_board_message(project: &Project, mut parts: Vec<(f64, Id)>) -> String {
-    parts.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let far = parts.first().map_or(0.0, |p| p.0);
-    let names: Vec<String> = parts
-        .iter()
-        .map(|(_, id)| outline::part_name(project, *id))
-        .collect();
-    let listed = match names.as_slice() {
-        [one] => one.clone(),
-        [a, b] => format!("{a} and {b}"),
-        [a, b, c] => format!("{a}, {b} and {c}"),
-        [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
-        [] => "Parts".to_owned(),
-    };
-    // Rounded up to 0.1 mm, so a part just outside never reads "0 mm".
-    let far = limits::mm(((far * 10.0).ceil() / 10.0).max(0.1));
-    let message = if names.len() == 1 {
-        format!("{listed} would be off the board, by {far} mm; move it first")
-    } else {
-        format!("{listed} would be off the board, by up to {far} mm; move them first")
-    };
-    // Long designators: the count stands in for the names, so the line
-    // still says how far and what to do.
-    if message.chars().count() <= crate::diagnostics::MAX_LINE {
-        message
-    } else if names.len() == 1 {
-        format!("A part would be off the board, by {far} mm; move it first")
-    } else {
-        format!(
-            "{} parts would be off the board, by up to {far} mm; move them first",
-            names.len()
-        )
-    }
+/// Whether `point` lies in the [`WORKING_AREA_MM`] square.
+pub fn in_working_area(point: Point) -> bool {
+    let [lo, hi] = WORKING_AREA_MM;
+    point.iter().all(|v| v.is_finite() && (lo..=hi).contains(v))
 }
 
 /// A track's copper: the stadium a round aperture of its width sweeps from
