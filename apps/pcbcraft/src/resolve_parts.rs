@@ -755,7 +755,10 @@ pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRe
     };
     engine.apply(
         engine.revision(),
-        Operation::Library(LibraryCommand::Publish { drafts: vec![id] }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        }),
     )?;
     Ok(PartRef::new(id, pcbcraft_core::Revision::FIRST))
 }

@@ -2019,6 +2019,7 @@ mod tests {
             &mut author,
             Operation::Library(LibraryCommand::Publish {
                 drafts: vec![component.id],
+                close: false,
             }),
         )?
         else {

@@ -106,6 +106,10 @@ pub struct SourceCreateParams {
     pub path: String,
     /// The library's display name, stored in its manifest.
     pub name: String,
+    /// The library id; drawn at random when omitted. A recorded session
+    /// passes the one it recorded, so its replay reproduces the folder.
+    #[serde(default)]
+    pub library: Option<LibraryId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -167,6 +171,23 @@ pub struct PublishParams {
     pub root: DefinitionRef,
     /// A writable library source.
     pub library: LibraryId,
+    /// Lineage ids for lineages new to the library, consumed in closure
+    /// order (fewer than it needs refuses, unused ones are ignored); drawn
+    /// at random when omitted. A recorded session passes the ones it
+    /// recorded, so its replay reproduces the folder and the origins.
+    #[serde(default)]
+    pub fresh: Option<Vec<SourceLineageId>>,
+}
+
+/// Import one exact revision and its closure from another project file.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportFromProjectParams {
+    pub expected_revision: u64,
+    /// The `.pcbcraft` file to read. It is not changed.
+    pub path: String,
+    /// A published revision in that file.
+    pub root: DefinitionRef,
 }
 
 /// Write the production files of the open project.
@@ -270,6 +291,10 @@ pub enum Request {
     /// bundle, then record the origins with `library.promote`.
     #[serde(rename = "library.publish_to_folder")]
     Publish(PublishParams),
+    /// Read another project file and apply `library.import` with one exact
+    /// revision and its closure: one undo step.
+    #[serde(rename = "library.import_from_project")]
+    ImportFromProject(ImportFromProjectParams),
     /// Read an SVG file and add its drawing to a draft through
     /// `library.edit_graphics`: one atomic undo step.
     #[serde(rename = "library.import_svg")]
@@ -379,7 +404,7 @@ impl Request {
             ),
             info::<SourceCreateParams>(
                 "library.source.create",
-                "Create an empty library folder with a new random library id and add it as a writable source.",
+                "Create an empty library folder and add it as a writable source. Its library id is random unless library supplies one (a recorded session passes the id it recorded, so a replay reproduces the folder).",
             ),
             info::<PathParams>(
                 "library.source.remove",
@@ -405,13 +430,17 @@ impl Request {
                 "library.import_from_folder",
                 "Read a folder bundle and apply library.import with it at the expected revision: the closure is copied into the project under fresh project lineages, or appended as the next project revision of a lineage already imported from the same source; an equal origin is reused. One undo step; places nothing. Follow with project.preview_update to move instances to the new revision.",
             ),
+            info::<ImportFromProjectParams>(
+                "library.import_from_project",
+                "Read another .pcbcraft file (never changed) and copy one published revision (root, with its kind, id and revision in that file) and its complete closure into this project, packed assets included, as one library.import at expected_revision: one undo step, nothing placed. Each copy records its origin with the exact source revision and content hash, and every pin keeps naming the exact revision it names there. The project numbers its copies in import order. Ids are derived from the file's content, so a replay is reproducible and importing again reuses the copies (no undo step); a newer revision of a copied lineage becomes its next project revision. A draft in that file cannot be imported: publish it there first. An unknown root lists what the file holds. Refused without changes on a stale revision, a dangling reference, a model that may not be redistributed, or a revision that differs from the copy already held (library.source_modified).",
+            ),
             info::<PlaceFromParams>(
                 "library.place_from_folder",
                 "Read a folder bundle of a component lineage and apply library.place_from with it: import if needed, then place, as one transaction and one undo step. When the project holds another revision of that lineage, other_revision refuse (default) fails with code library.other_revision and keep_both imports the folder revision beside it.",
             ),
             info::<PublishParams>(
                 "library.publish_to_folder",
-                "Promote a published project revision and its closure to a writable library source: compute library.promote_preview with fresh random lineage ids, write the records and assets to the folder (an existing rNNNN.json with other content refuses the write before anything is written), then apply library.promote, which records the origins as one undo step. Returns the written and unchanged record paths.",
+                "Promote a published project revision and its closure to a writable library source: compute library.promote_preview with fresh lineage ids (random unless fresh supplies them, as a recorded session does so that a replay reproduces the folder and origins; too few refuses before anything is written), write the records and assets to the folder (an existing rNNNN.json with other content refuses the write before anything is written), then apply library.promote, which records the origins as one undo step. Returns the written and unchanged record paths.",
             ),
             info::<ImportSvgParams>(
                 "library.import_svg",
@@ -615,7 +644,13 @@ impl Session {
                 return Ok(json!({"added": added, "sources": self.sources.list()}));
             }
             Request::SourceCreate(params) => {
-                let created = self.sources.create(Path::new(&params.path), &params.name)?;
+                let created = match params.library {
+                    Some(library) => {
+                        self.sources
+                            .create_as(Path::new(&params.path), &params.name, library)?
+                    }
+                    None => self.sources.create(Path::new(&params.path), &params.name)?,
+                };
                 return Ok(json!({"created": created, "sources": self.sources.list()}));
             }
             Request::SourceRemove(params) => {
@@ -673,6 +708,7 @@ impl Session {
                 }
                 return Ok(reply);
             }
+            Request::ImportFromProject(params) => return self.import_from_project(params),
             Request::Publish(params) => return self.publish(params),
             Request::ImportSvg(params) => return self.import_svg(params),
             Request::OpenPreview(params) => return self.open_preview(params),
@@ -714,6 +750,41 @@ impl Session {
         Ok(snapshot)
     }
 
+    /// `library.import_from_project`: read the file, take the exact closure
+    /// from it and apply one `library.import` with that bundle inline.
+    fn import_from_project(&mut self, params: ImportFromProjectParams) -> Result<Value> {
+        let path = Path::new(&params.path);
+        let file = pcbcraft_io::read_project(path)?;
+        let library = &file.project.library;
+        if library.definition(params.root).is_none() {
+            let held = held_revisions(&file);
+            let message = match file.drafts.get(params.root.id) {
+                Some(draft) => format!(
+                    "{} holds ‘{}’ as an unpublished draft. Only a published revision is immutable: open that project, publish it and save, then import it.",
+                    params.path, draft.meta.name
+                ),
+                None => format!(
+                    "{} does not hold {} {} of lineage {}. It holds: {held}",
+                    params.path,
+                    pcbcraft_core::library::names::noun(params.root.kind),
+                    params.root.revision,
+                    params.root.id
+                ),
+            };
+            return Err(pcbcraft_core::Error::NotFound(message).into());
+        }
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| stem.len() <= pcbcraft_core::ids::MAX_LABEL)
+            .unwrap_or("another project");
+        let bundle = pcbcraft_core::library::import::project_bundle(library, params.root, name)?;
+        let operation = Operation::Library(LibraryCommand::Import {
+            bundle: Box::new(bundle),
+        });
+        self.apply(params.expected_revision, operation)
+    }
+
     fn list_sources(&self) -> Result<Value> {
         Ok(json!({"sources": self.sources.list()}))
     }
@@ -734,9 +805,12 @@ impl Session {
         let folder = self.sources.writable(params.library)?.clone();
         let members =
             pcbcraft_core::library::bundle::closure(&self.engine.project().library, params.root)?;
-        let fresh = (0..members.len())
-            .map(|_| pcbcraft_io::library_folder::new_lineage_id())
-            .collect::<pcbcraft_io::Result<Vec<_>>>()?;
+        let fresh = match params.fresh {
+            Some(fresh) => fresh,
+            None => (0..members.len())
+                .map(|_| pcbcraft_io::library_folder::new_lineage_id())
+                .collect::<pcbcraft_io::Result<Vec<_>>>()?,
+        };
         let name = folder.manifest.name.clone();
         let plan = match self.engine.query(Query::PromotePreview {
             root: params.root,
@@ -882,6 +956,7 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
     let created = session.execute(Request::SourceCreate(SourceCreateParams {
         path: path.into(),
         name: name.into(),
+        library: None,
     }))?;
     let id: LibraryId = serde_json::from_value(created["created"]["library"].clone())?;
     let mut written = Vec::new();
@@ -890,6 +965,7 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
             expected_revision: session.engine().revision(),
             root,
             library: id,
+            fresh: None,
         }))?;
         if let Some(records) = reply["written"]["records"].as_array() {
             written.extend(records.iter().cloned());
@@ -900,6 +976,35 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
         "records_written": written,
         "sources": session.sources.list(),
     }))
+}
+
+/// What a project file holds that is worth importing, for a refusal: its
+/// latest Parts and components by kind, id, revision and name.
+fn held_revisions(file: &EditorFile) -> String {
+    const SHOWN: usize = 16;
+    let library = &file.project.library;
+    let parts = library
+        .latest_parts()
+        .into_iter()
+        .map(|p| ("part", p.id, p.revision, p.meta.name.clone()));
+    let components = library
+        .latest_components()
+        .into_iter()
+        .map(|c| ("component", c.id, c.revision, c.meta.name.clone()));
+    let all: Vec<String> = parts
+        .chain(components)
+        .map(|(kind, id, revision, name)| format!("{kind} {} {revision} ‘{name}’", id.0))
+        .collect();
+    if all.is_empty() {
+        return "no published Part or component.".into();
+    }
+    let more = all.len().saturating_sub(SHOWN);
+    let shown = all.into_iter().take(SHOWN).collect::<Vec<_>>().join(", ");
+    if more > 0 {
+        format!("{shown} and {more} more.")
+    } else {
+        format!("{shown}.")
+    }
 }
 
 /// Request, document and diagnostic schemas for discovery.
@@ -939,6 +1044,8 @@ mod package_tests;
 mod parts_tests;
 #[cfg(test)]
 mod pinout_tests;
+#[cfg(test)]
+mod project_import_tests;
 #[cfg(test)]
 mod svg_tests;
 #[cfg(test)]

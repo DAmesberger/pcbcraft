@@ -1816,6 +1816,7 @@ mod tests {
                         refs.footprint.id,
                         refs.binding.id,
                     ],
+                    close: false,
                 }),
             )?;
         }

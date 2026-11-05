@@ -175,7 +175,7 @@ fn native_export_writes_a_new_solidcraft_file_only() -> TestResult {
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();
-    assert_eq!(catalog.len(), 38);
+    assert_eq!(catalog.len(), 39);
     let schema = serde_json::to_string(&schemas())?;
     for command in &catalog {
         assert!(
@@ -684,6 +684,7 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
     let publish = session.dispatch(apply(
         &Operation::Library(LibraryCommand::Publish {
             drafts: vec![package_id, DefinitionId(draft)],
+            close: false,
         }),
         session.engine().revision(),
     ));

@@ -824,6 +824,7 @@ fn a_generated_package_model_round_trips_through_a_folder() -> TestResult {
         engine.revision(),
         Operation::Library(LibraryCommand::Publish {
             drafts: drafts.to_vec(),
+            close: false,
         }),
     )?;
     let authored = engine

@@ -693,6 +693,7 @@ impl PartProps {
         self.awaiting = true;
         Some(Operation::Library(LibraryCommand::Publish {
             drafts: vec![id],
+            close: false,
         }))
     }
 
@@ -722,6 +723,7 @@ impl PartProps {
             self.awaiting = true;
             return Some(Operation::Library(LibraryCommand::Publish {
                 drafts: vec![id],
+                close: false,
             }));
         }
         self.publish_next = true;
@@ -1676,7 +1678,7 @@ mod tests {
             .publish_alone(&engine, set.ids.component, &pins);
         assert!(matches!(
             &operation,
-            Some(Operation::Library(LibraryCommand::Publish { drafts })) if drafts.len() == 1
+            Some(Operation::Library(LibraryCommand::Publish { drafts, close: false })) if drafts.len() == 1
         ));
         apply(&mut engine, operation)?;
         let parts = engine.project().library.latest_parts();
@@ -1734,7 +1736,7 @@ mod tests {
         )));
         apply(&mut engine, operation)?;
         let operation = editor.commit(&ctx, &engine);
-        let Some(Operation::Library(LibraryCommand::Publish { drafts })) = &operation else {
+        let Some(Operation::Library(LibraryCommand::Publish { drafts, .. })) = &operation else {
             return Err(format!("expected the publish set, got {operation:?}").into());
         };
         assert_eq!(drafts.len(), 6, "five drafts and the Part");
@@ -2002,7 +2004,7 @@ mod tests {
         assert!(
             matches!(
                 &publish,
-                Some(Operation::Library(LibraryCommand::Publish { drafts })) if drafts.len() == 1
+                Some(Operation::Library(LibraryCommand::Publish { drafts, close: false })) if drafts.len() == 1
             ),
             "{publish:?}"
         );
@@ -2135,6 +2137,7 @@ mod tests {
             &mut engine,
             Some(Operation::Library(LibraryCommand::Publish {
                 drafts: vec![id],
+                close: false,
             })),
         )?;
         // Publishing keeps a draft equal to the revision; without one the

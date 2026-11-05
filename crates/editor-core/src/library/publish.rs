@@ -1,5 +1,6 @@
 //! Publication: the per-kind rules, aggregated once, and the atomic publish
 //! of a draft set in dependency order.
+use super::bundle::{RefSite, references};
 use super::drafts::{Draft, Drafts};
 use super::{Definition, Library, check_bounds, printable, publish_rank};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
@@ -260,10 +261,82 @@ pub fn candidate(
     Ok((staged, set.into_iter().map(|(r, _)| r).collect()))
 }
 
+/// The drafts one `library.publish` of `id` must also list: every draft it
+/// reaches through a reference the snapshot cannot satisfy on its own (an
+/// exact reference to a draft's pending revision that is not stored yet, or
+/// a lineage reference to a draft whose lineage has no published revision).
+/// Excludes `id`, follows drafts transitively and lists dependencies first.
+/// A reference to a stored revision needs nothing, even when that lineage
+/// also has a draft: exact pins never move.
+pub fn publish_set(library: &Library, drafts: &Drafts, id: DefinitionId) -> Vec<DefinitionRef> {
+    let mut seen = BTreeSet::from([id]);
+    let mut stack = vec![id];
+    let mut out = Vec::new();
+    while let Some(current) = stack.pop() {
+        let Some(draft) = drafts.get(current) else {
+            continue;
+        };
+        for site in references(&draft.definition).unwrap_or_default() {
+            let (kind, target, exact) = match site {
+                RefSite::Exact { target } if library.definition(target).is_none() => {
+                    (target.kind, target.id, Some(target.revision))
+                }
+                RefSite::Lineage { kind, id } if library.latest(id).is_none() => (kind, id, None),
+                _ => continue,
+            };
+            let Some(needed) = drafts.get(target) else {
+                continue;
+            };
+            let Some(pending) = needed.pending() else {
+                continue;
+            };
+            if needed.definition.kind() != kind
+                || exact.is_some_and(|r| r != pending)
+                || !seen.insert(target)
+            {
+                continue;
+            }
+            stack.push(target);
+            out.push(DefinitionRef {
+                kind,
+                id: target,
+                revision: pending,
+            });
+        }
+    }
+    out.sort_by_key(|r| (publish_rank(r.kind), r.id));
+    out
+}
+
+/// A sentence naming the drafts `ids` need but do not list, or nothing.
+fn missing_from_set(library: &Library, drafts: &Drafts, ids: &[DefinitionId]) -> Option<String> {
+    let mut missing: Vec<DefinitionRef> = ids
+        .iter()
+        .flat_map(|id| publish_set(library, drafts, *id))
+        .filter(|r| !ids.contains(&r.id))
+        .collect();
+    missing.sort_by_key(|r| (publish_rank(r.kind), r.id));
+    missing.dedup();
+    if missing.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = missing
+        .iter()
+        .filter_map(|r| drafts.get(r.id))
+        .map(|d| format!("the draft {} ({})", draft_name(d), d.id))
+        .collect();
+    Some(format!(
+        "This set needs drafts it does not list; publish them together: {}.",
+        names.join(", ")
+    ))
+}
+
 /// Publish a set of drafts as one transaction, in dependency order. References
 /// may name stored revisions or other drafts' pending revisions in the set.
 /// Any blocking finding, stale base or unsatisfied reference publishes
-/// nothing. Each published draft then becomes a draft of its new revision.
+/// nothing, and the refusal names any draft the set needs but does not list.
+/// Each published draft then becomes a draft of its new revision;
+/// `library.publish` closes it unless asked to keep it open.
 pub fn publish(
     library: &mut Library,
     drafts: &mut Drafts,
@@ -300,6 +373,10 @@ pub fn publish(
         );
         if blocking.len() > shown {
             message.push_str(&format!(" ({} more findings)", blocking.len() - shown));
+        }
+        if let Some(hint) = missing_from_set(library, drafts, ids) {
+            message.push(' ');
+            message.push_str(&hint);
         }
         return Err(Error::Conflict(message));
     }

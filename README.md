@@ -59,7 +59,7 @@ ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-
 
 Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
 
-Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder.
+Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder. `library.import_from_project` copies one published revision and its closure from another `.pcbcraft` file, as one undo step.
 
 ## Scripting integration proof
 

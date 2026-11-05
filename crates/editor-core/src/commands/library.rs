@@ -55,9 +55,16 @@ pub enum LibraryCommand {
     /// Drop a draft. A reserved new-lineage identity stays allocated.
     #[serde(rename = "library.discard_draft")]
     DiscardDraft { id: DefinitionId },
-    /// Publish 1–32 drafts together, in dependency order.
+    /// Publish 1–32 drafts together, in dependency order. `close` (the
+    /// default) drops the drafts it published, in the same undo step, so a
+    /// library's parts do not fill the project's 64 draft slots; with
+    /// `close: false` each stays open as a draft of its new revision.
     #[serde(rename = "library.publish")]
-    Publish { drafts: Vec<DefinitionId> },
+    Publish {
+        drafts: Vec<DefinitionId>,
+        #[serde(default = "close_by_default")]
+        close: bool,
+    },
     /// Regenerate a footprint draft's existing pads with a bounded script.
     /// Pad IDs and package-terminal associations are preserved.
     #[serde(rename = "library.generate_pads")]
@@ -218,6 +225,10 @@ pub enum LibraryCommand {
         edits: Vec<DraftEdit>,
         artwork: Vec<library::PackedAsset>,
     },
+}
+
+fn close_by_default() -> bool {
+    true
 }
 
 fn package_draft(
@@ -572,7 +583,10 @@ pub(crate) fn apply_library(
             super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
-        LibraryCommand::Publish { drafts } => {
+        LibraryCommand::Publish {
+            drafts: published,
+            close,
+        } => {
             // The pure publish rules run first, so their findings are
             // reported even without an evaluator; the candidate document
             // is discarded if the freshness check below then refuses.
@@ -580,9 +594,9 @@ pub(crate) fn apply_library(
             let revisions = library::publish(
                 &mut project.library,
                 Arc::make_mut(&mut document.drafts),
-                &drafts,
+                &published,
             )?;
-            for id in &drafts {
+            for id in &published {
                 if let Some(library::Draft {
                     definition: Definition::Footprint(footprint),
                     ..
@@ -592,6 +606,9 @@ pub(crate) fn apply_library(
                     let package = package_of(document, footprint)?;
                     footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
                 }
+            }
+            if close {
+                drafts::close(Arc::make_mut(&mut document.drafts), &published);
             }
             Ok(Outcome::Published { revisions })
         }

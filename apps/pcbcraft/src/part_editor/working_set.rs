@@ -324,6 +324,7 @@ impl WorkingSet {
     pub fn publish(&self) -> Operation {
         Operation::Library(LibraryCommand::Publish {
             drafts: self.ids.all(),
+            close: false,
         })
     }
 }

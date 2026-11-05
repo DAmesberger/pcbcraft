@@ -196,7 +196,10 @@ fn fixture(engine: &mut Engine) -> Result<Ids, Box<dyn std::error::Error>> {
     )?;
     engine.apply(
         engine.revision(),
-        Operation::Library(LibraryCommand::Publish { drafts: vec![id] }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        }),
     )?;
     let r2 = ComponentRef::new(id, Revision(2));
     let library = &engine.project().library;

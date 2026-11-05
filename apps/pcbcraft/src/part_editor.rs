@@ -1121,7 +1121,7 @@ impl PartEditor {
     fn publish_set(&self, engine: &Engine) -> Option<Operation> {
         let set = self.draft.as_ref()?;
         let mut publish = set.publish();
-        if let Operation::Library(LibraryCommand::Publish { drafts }) = &mut publish {
+        if let Operation::Library(LibraryCommand::Publish { drafts, .. }) = &mut publish {
             drafts.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
         }
         Some(publish)

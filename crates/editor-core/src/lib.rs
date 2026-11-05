@@ -407,6 +407,7 @@ impl Engine {
                         lineages.footprint.id,
                         lineages.binding.id,
                     ],
+                    close: false,
                 }),
             )?;
             refs.push(lineages);
@@ -606,6 +607,7 @@ impl Engine {
                     kind,
                     field,
                 ],
+                close: false,
             }),
         )?;
         let mut placed = Vec::new();

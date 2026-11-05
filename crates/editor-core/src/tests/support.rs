@@ -142,7 +142,10 @@ pub fn edit(engine: &mut Engine, edits: Vec<DraftEdit>) -> Result<()> {
 pub fn publish(engine: &mut Engine, drafts: Vec<DefinitionId>) -> Result<Vec<DefinitionRef>> {
     match apply(
         engine,
-        Operation::Library(LibraryCommand::Publish { drafts }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts,
+            close: false,
+        }),
     )? {
         Outcome::Published { revisions } => Ok(revisions),
         other => Err(Error::Invalid(format!("unexpected outcome {other:?}"))),
