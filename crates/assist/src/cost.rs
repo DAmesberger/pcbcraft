@@ -1,5 +1,5 @@
-//! Spend accounting: a configurable price table and the usage the Messages
-//! API reports, so every run has a hard cost cap computed from the
+//! Spend accounting: a configurable price table and the usage a model
+//! reports, so a run on a priced model has a hard cost cap computed from the
 //! responses themselves, not from an estimate after the fact.
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -17,13 +17,21 @@ pub struct Price {
 }
 
 impl Price {
+    /// A model with no price: nothing is booked, and the review says so.
+    pub const FREE: Self = Self {
+        input: 0.0,
+        output: 0.0,
+        cache_write: 0.0,
+        cache_read: 0.0,
+    };
+
     /// The cost of one response's usage, USD.
     pub fn cost(&self, usage: &Usage) -> f64 {
         let m = 1e-6;
         usage.input_tokens as f64 * self.input * m
             + usage.output_tokens as f64 * self.output * m
-            + usage.cache_creation_input_tokens as f64 * self.cache_write * m
-            + usage.cache_read_input_tokens as f64 * self.cache_read * m
+            + usage.cache_write_tokens as f64 * self.cache_write * m
+            + usage.cache_read_tokens as f64 * self.cache_read * m
     }
 
     /// The dearest rate a prompt token can cost (an uncached write).
@@ -85,7 +93,7 @@ impl PriceTable {
     }
 }
 
-/// Token counts of one response (`usage`).
+/// Token counts of one response, in neutral names.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Usage {
     #[serde(default)]
@@ -93,39 +101,28 @@ pub struct Usage {
     #[serde(default)]
     pub output_tokens: u64,
     #[serde(default)]
-    pub cache_creation_input_tokens: u64,
+    pub cache_write_tokens: u64,
     #[serde(default)]
-    pub cache_read_input_tokens: u64,
+    pub cache_read_tokens: u64,
 }
 
 impl Usage {
-    /// Read the counts of a response's `usage`; absent fields are 0.
-    pub fn of(response: &serde_json::Value) -> Self {
-        let n = |k: &str| response["usage"][k].as_u64().unwrap_or(0);
-        Self {
-            input_tokens: n("input_tokens"),
-            output_tokens: n("output_tokens"),
-            cache_creation_input_tokens: n("cache_creation_input_tokens"),
-            cache_read_input_tokens: n("cache_read_input_tokens"),
-        }
-    }
-
     /// The whole prompt: uncached, written and read.
     pub fn prompt(&self) -> u64 {
         self.input_tokens
-            .saturating_add(self.cache_creation_input_tokens)
-            .saturating_add(self.cache_read_input_tokens)
+            .saturating_add(self.cache_write_tokens)
+            .saturating_add(self.cache_read_tokens)
     }
 
     pub fn add(&mut self, other: &Self) {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
-        self.cache_creation_input_tokens = self
-            .cache_creation_input_tokens
-            .saturating_add(other.cache_creation_input_tokens);
-        self.cache_read_input_tokens = self
-            .cache_read_input_tokens
-            .saturating_add(other.cache_read_input_tokens);
+        self.cache_write_tokens = self
+            .cache_write_tokens
+            .saturating_add(other.cache_write_tokens);
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(other.cache_read_tokens);
     }
 }
 
@@ -167,8 +164,8 @@ mod tests {
         let usage = Usage {
             input_tokens: 1_000,
             output_tokens: 2_000,
-            cache_creation_input_tokens: 100_000,
-            cache_read_input_tokens: 1_000_000,
+            cache_write_tokens: 100_000,
+            cache_read_tokens: 1_000_000,
         };
         // 0.004 + 0.04 + 0.5 + 0.2
         assert!((price.cost(&usage) - 0.744).abs() < 1e-9);

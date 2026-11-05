@@ -1,6 +1,6 @@
 //! The tools an assisted run offers the model: the Pcbcraft MCP contract
 //! narrowed to authoring one part, executed in-process against an
-//! automation [`Session`] through [`Session::dispatch`] (the same request
+//! automation [`Session`] through the gate ([`send`]: the same request
 //! types and command engine the MCP server and CLI use). Each tool names
 //! the MCP command it runs. The runner fills `expected_revision` from the
 //! session, so the model never handles revisions, and compacts replies:
@@ -17,8 +17,9 @@
 //! What is deliberately absent: `library.publish`, publishing to folders,
 //! saving, opening, file exports and library sources. A run only ever
 //! creates drafts; publishing stays with a person (the import review gate).
+use crate::model::ToolSpec;
 use crate::report::ReviewReport;
-use pcbcraft_automation::Session;
+use pcbcraft_automation::{Decision, Policy, Session};
 use pcbcraft_core::library::pinout::{
     MAX_PINOUT_PERIPHERALS, MAX_PINOUT_PINS, MAX_PINOUT_RULES, MAX_PINOUT_VARIANTS,
 };
@@ -45,6 +46,8 @@ pub enum ToolOutcome {
         text: String,
         error: bool,
         step: Option<String>,
+        /// Images that go with the text (a rendered datasheet page).
+        images: Vec<crate::model::Image>,
     },
     /// The model submitted its review report: the run is complete.
     Report(Box<ReviewReport>),
@@ -63,21 +66,21 @@ pub struct Workspace {
     pub applied: Option<Value>,
 }
 
-fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "input_schema": {
+fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> ToolSpec {
+    ToolSpec {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        input_schema: json!({
             "type": "object",
             "properties": properties,
             "required": required,
             "additionalProperties": false,
-        },
-    })
+        }),
+    }
 }
 
 /// The tool definitions, in a fixed order so the prompt prefix caches.
-pub fn definitions() -> Vec<Value> {
+pub fn definitions() -> Vec<ToolSpec> {
     let object = json!({"type": "object"});
     let objects = json!({"type": "array", "items": {"type": "object"}});
     let strings = json!({"type": "array", "items": {"type": "string"}});
@@ -113,9 +116,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "library_pinout_apply",
-            "MCP project_apply library.pinout_apply: import exactly the document last previewed, with that plan's base (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
+            "MCP project_apply library.pinout_apply: import exactly the document last previewed. base is optional: leave it out to apply the last preview, or give the plan's base exactly (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
             json!({"base": {"type": "integer"}, "accept": object, "target": object, "document": object}),
-            &["base"],
+            &[],
         ),
         tool(
             "library_package_schema",
@@ -195,6 +198,7 @@ pub fn definitions() -> Vec<Value> {
 /// Run one tool call against `session`.
 pub fn execute(
     session: &mut Session,
+    policy: &Policy,
     workspace: &mut Workspace,
     name: &str,
     input: &Value,
@@ -210,9 +214,9 @@ pub fn execute(
     let request = match name {
         "library_pinout_schema" => json!({"command": "library.pinout_schema", "params": {}}),
         "library_pinout_edit" => return edit(workspace, input),
-        "library_pinout_preview" => return preview(session, workspace, input),
+        "library_pinout_preview" => return preview(session, policy, workspace, input),
         "library_pinout_apply" => {
-            let (target, document) = match apply_inputs(workspace, input) {
+            let (target, document, base) = match apply_inputs(workspace, input) {
                 Ok(inputs) => inputs,
                 Err(why) => return reply(json!({"refused": why}), true, None),
             };
@@ -224,7 +228,7 @@ pub fn execute(
             workspace.applied = Some(document.clone());
             library(
                 "library.pinout_apply",
-                json!({"target": target, "document": document, "base": input["base"], "accept": accept}),
+                json!({"target": target, "document": document, "base": base, "accept": accept}),
             )
         }
         "library_package_schema" => return reply(package_schema(), false, None),
@@ -245,8 +249,12 @@ pub fn execute(
             "expected_revision": revision, "draft": input["draft"], "marking": input["marking"],
         }}),
         "library_check_part_file" => {
-            let response = session.dispatch(json!({"command": "library.check_part_file",
-                "params": {"builtin": input["builtin"], "values": values(input)}}));
+            let response = send(
+                session,
+                policy,
+                json!({"command": "library.check_part_file",
+                "params": {"builtin": input["builtin"], "values": values(input)}}),
+            );
             return if response["ok"] == true {
                 reply(response["result"]["report"].clone(), false, None)
             } else {
@@ -267,7 +275,7 @@ pub fn execute(
             return reply(json!({"drafts": drafts(&snapshot)}), false, None);
         }
         "submit_review" => {
-            return match serde_json::from_value::<ReviewReport>(input["report"].clone()) {
+            return match serde_json::from_value::<ReviewReport>(report_input(input)) {
                 Ok(report) => {
                     let problems = report.problems();
                     if problems.is_empty() {
@@ -277,7 +285,8 @@ pub fn execute(
                     }
                 }
                 Err(e) => reply(
-                    json!({"refused": format!("not a review report: {e}")}),
+                    json!({"refused": format!("not a review report: {e}"),
+                        "expected_shape": report_example()}),
                     true,
                     None,
                 ),
@@ -293,7 +302,7 @@ pub fn execute(
     };
     let mutation =
         request["command"] != "project.query" && request["command"] != "library.pinout_schema";
-    let response = session.dispatch(request);
+    let response = send(session, policy, request);
     if response["ok"] != true {
         if name == "library_pinout_apply" {
             workspace.applied = None;
@@ -320,6 +329,61 @@ pub fn execute(
         // Query results come tagged (`{"query": …, "result": …}`).
         reply(result.get("result").unwrap_or(result).clone(), false, None)
     }
+}
+
+/// Every request a tool sends to the session goes through the gate. The
+/// runner reads full results (each draft's findings), so it asks for them.
+pub fn send(session: &mut Session, policy: &Policy, mut request: Value) -> Value {
+    request["verbose"] = json!(true);
+    match session.check_request(policy, &request) {
+        Decision::Run => session.respond(request),
+        // There is no one to ask in a run yet: Ask is refused, with a reason
+        // the model can read.
+        Decision::Ask(_) => session.respond_gated(policy, request),
+        Decision::Refuse(refusal) => refusal.reply(),
+    }
+}
+
+/// The report a `submit_review` call carries. Local models often send its
+/// fields without the `report` wrapper, and its lists as JSON text: both
+/// are read as meant, so the model is refused only for what is wrong.
+fn report_input(input: &Value) -> Value {
+    let mut report = if input["report"].is_object() {
+        input["report"].clone()
+    } else if let Some(text) = input["report"].as_str() {
+        serde_json::from_str(text).unwrap_or(Value::Null)
+    } else if input.get("part").is_some() {
+        input.clone()
+    } else {
+        Value::Null
+    };
+    if let Some(fields) = report.as_object_mut() {
+        for key in ["sources", "values", "open_questions"] {
+            let parsed = fields
+                .get(key)
+                .and_then(Value::as_str)
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .filter(Value::is_array);
+            if let Some(list) = parsed {
+                fields.insert(key.to_owned(), list);
+            }
+        }
+    }
+    report
+}
+
+/// A small valid report, shown with a refusal so the model sees every field
+/// name at once instead of one serde error at a time.
+fn report_example() -> Value {
+    json!({"report": {
+        "part": "PART-NAME",
+        "summary": "What was built and what to check first.",
+        "sources": [{"name": "DS", "title": "Datasheet title", "revision": "Rev. C"}],
+        "values": [{"item": "pad pitch", "value": "0.95 mm",
+            "source": {"document": "DS", "page": 35, "location": "Figure 9-2"},
+            "confidence": "high", "note": ""}],
+        "open_questions": ["A question a reviewer must settle."],
+    }})
 }
 
 /// A part-file tool's `values`, an empty object when absent.
@@ -516,7 +580,12 @@ fn ranges(numbers: &[u64]) -> String {
 
 /// `library_pinout_preview`: the working document (or the given one,
 /// which replaces it) through `library.pinout_preview`, compacted.
-fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> ToolOutcome {
+fn preview(
+    session: &mut Session,
+    policy: &Policy,
+    workspace: &mut Workspace,
+    input: &Value,
+) -> ToolOutcome {
     if let Some(document) = input["document"].as_object() {
         workspace.pinout = document.clone();
     }
@@ -528,10 +597,14 @@ fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> T
         );
     }
     let document = Value::Object(workspace.pinout.clone());
-    let response = session.dispatch(json!({"command": "project.query", "params": {
-        "query": "library.pinout_preview",
-        "params": {"target": input["target"], "document": document},
-    }}));
+    let response = send(
+        session,
+        policy,
+        json!({"command": "project.query", "params": {
+            "query": "library.pinout_preview",
+            "params": {"target": input["target"], "document": document},
+        }}),
+    );
     if response["ok"] != true {
         workspace.previewed = None;
         return reply(response["error"].clone(), true, None);
@@ -544,9 +617,13 @@ fn preview(session: &mut Session, workspace: &mut Workspace, input: &Value) -> T
 
 /// The target and document `library_pinout_apply` imports: the given
 /// ones, or the last preview's, refusing a working document changed since.
-fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), String> {
+fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value, Value), String> {
     if input["document"].is_object() {
-        return Ok((input["target"].clone(), input["document"].clone()));
+        return Ok((
+            input["target"].clone(),
+            input["document"].clone(),
+            input["base"].clone(),
+        ));
     }
     let Some((target, base, document)) = &workspace.previewed else {
         return Err("preview the pinout first (library_pinout_preview)".into());
@@ -554,10 +631,20 @@ fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), 
     if *document != Value::Object(workspace.pinout.clone()) {
         return Err("the working document changed since the last preview; preview it again".into());
     }
-    if input["base"] != *base {
+    let given = &input["base"];
+    let same = match given {
+        Value::Null => true,
+        Value::String(text) => text.trim().parse::<u64>().ok() == base.as_u64(),
+        other => other == base,
+    };
+    if !same {
+        let float = if given.is_f64() {
+            " (it arrived as a rounded number: an integer this long loses digits as a float)"
+        } else {
+            ""
+        };
         return Err(format!(
-            "base {} is not the last preview's base {base}",
-            input["base"]
+            "base {given} is not the last preview's base {base}{float}. Leave base out to apply exactly what was last previewed"
         ));
     }
     let target = if input["target"].is_object() {
@@ -565,7 +652,7 @@ fn apply_inputs(workspace: &Workspace, input: &Value) -> Result<(Value, Value), 
     } else {
         target.clone()
     };
-    Ok((target, document.clone()))
+    Ok((target, document.clone(), base.clone()))
 }
 
 /// A pinout plan without per-object detail: change counts (the changes
@@ -622,7 +709,12 @@ fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
         text.truncate(end);
         text.push_str("… [cut: the result exceeded the tool reply limit; ask for a narrower view]");
     }
-    ToolOutcome::Reply { text, error, step }
+    ToolOutcome::Reply {
+        text,
+        error,
+        step,
+        images: Vec::new(),
+    }
 }
 
 /// A short description of an outcome for the run log: its keys, and how
@@ -703,9 +795,9 @@ mod tests {
         let tools = definitions();
         let mut names = std::collections::BTreeSet::new();
         for t in &tools {
-            assert!(names.insert(t["name"].as_str().unwrap_or_default().to_owned()));
-            assert_eq!(t["input_schema"]["type"], "object");
-            assert_eq!(t["input_schema"]["additionalProperties"], false);
+            assert!(names.insert(t.name.clone()));
+            assert_eq!(t.input_schema["type"], "object");
+            assert_eq!(t.input_schema["additionalProperties"], false);
         }
         // Nothing that publishes, saves or touches files.
         for name in &names {
@@ -720,18 +812,71 @@ mod tests {
         let mut session = Session::default();
         let mut workspace = Workspace::default();
         assert!(matches!(
-            execute(&mut session, &mut workspace, "library_publish", &json!({})),
+            execute(
+                &mut session,
+                &Policy::default(),
+                &mut workspace,
+                "library_publish",
+                &json!({})
+            ),
             ToolOutcome::Reply { error: true, .. }
         ));
         assert!(matches!(
             execute(
                 &mut session,
+                &Policy::default(),
                 &mut workspace,
                 "submit_review",
                 &json!({"report": {"part": "x"}})
             ),
             ToolOutcome::Reply { error: true, .. }
         ));
+    }
+
+    #[test]
+    fn a_report_without_its_wrapper_or_with_lists_as_text_is_read() {
+        let mut session = Session::default();
+        let mut workspace = Workspace::default();
+        let report = report_example()["report"].clone();
+        let flat_and_stringified = json!({
+            "part": report["part"], "summary": report["summary"],
+            "sources": report["sources"].to_string(),
+            "values": report["values"].to_string(),
+            "open_questions": report["open_questions"].to_string(),
+        });
+        for input in [json!({"report": report.clone()}), flat_and_stringified] {
+            let outcome = execute(
+                &mut session,
+                &Policy::default(),
+                &mut workspace,
+                "submit_review",
+                &input,
+            );
+            assert!(matches!(outcome, ToolOutcome::Report(_)), "{outcome:?}");
+        }
+        // A wrong field name is refused with the whole expected shape.
+        let outcome = execute(
+            &mut session,
+            &Policy::default(),
+            &mut workspace,
+            "submit_review",
+            &json!({"report": {"part": "X", "summary": "s", "sources": [], "values": [{"name": "x"}]}}),
+        );
+        let ToolOutcome::Reply {
+            text, error: true, ..
+        } = outcome
+        else {
+            panic_free_fail();
+            return;
+        };
+        assert!(
+            text.contains("expected_shape") && text.contains("open_questions"),
+            "{text}"
+        );
+    }
+
+    fn panic_free_fail() {
+        assert_eq!("a refusal", "something else");
     }
 
     #[test]
