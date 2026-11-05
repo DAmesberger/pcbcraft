@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 /// The longest issue title, in characters. Titles are designed for about 56
 /// characters at the smallest supported column width and clipped there.
-pub const MAX_TITLE: usize = 80;
+pub const MAX_TITLE: usize = crate::diagnostics::MAX_LINE;
 
 /// The most objects a `selection` scope may name.
 pub const MAX_SCOPE_OBJECTS: usize = 4096;

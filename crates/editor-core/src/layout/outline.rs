@@ -12,7 +12,9 @@
 //! board, the constraints or a constrained target changed, every target is
 //! placed where its constraint puts it, so parts move with the board's
 //! parameters. A command that moves a constrained part elsewhere is refused
-//! (`board.constrained`); a constraint whose edge or target is gone stays
+//! with [`held_message`] ("J1 is held 2 mm from the right edge; edit or
+//! remove its constraint to move it"), and [`held`] gives a client the same
+//! words before it tries; a constraint whose edge or target is gone stays
 //! stored and is reported by [`checks`] (`board.constraint_unresolved`).
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Bounds, Point, point_valid};
@@ -956,9 +958,9 @@ fn same_angle(a: f64, b: f64) -> bool {
 
 /// Place every constrained target where its constraint puts it, after an
 /// operation took the project from `before` to `project`. A constraint
-/// whose edge or target is gone is left for [`checks`]. Refuses
-/// (`board.constrained`) an operation that moved a constrained part away
-/// from its constrained pose, and expressions that do not evaluate.
+/// whose edge or target is gone is left for [`checks`]. Refuses, in the
+/// words of [`held_message`], an operation that moved a constrained part
+/// away from its constrained pose, and expressions that do not evaluate.
 pub fn follow(
     before: &Project,
     project: &mut Project,
@@ -1045,13 +1047,13 @@ pub fn follow(
                             commanded,
                         )
                 {
-                    let name = project
-                        .instance(id)
-                        .map_or_else(|| id.to_string(), |i| i.designator.clone());
-                    return Err(Error::Conflict(format!(
-                        "board.constrained: {name} is placed by edge constraint {} (edge `{}`); \
-                         edit or delete the constraint to move it",
-                        c.id, c.edge.0
+                    let verb = if moved && !lands { "move" } else { "turn" };
+                    let offset = values.get(&c.id).map(|v| v.1);
+                    return Err(Error::Conflict(held_message(
+                        &part_name(project, id),
+                        &c.edge,
+                        offset,
+                        verb,
                     )));
                 }
                 if !lands {
@@ -1071,6 +1073,84 @@ pub fn follow(
         }
     }
     Ok(())
+}
+
+/// A part's name in a message: its designator.
+pub(crate) fn part_name(project: &Project, instance: Id) -> String {
+    project
+        .instance(instance)
+        .map_or_else(|| "The part".to_owned(), |i| i.designator.clone())
+}
+
+/// "the right edge" for the edge named `right`; a name that already says
+/// "edge" is not doubled.
+fn edge_words(edge: &EdgeName) -> String {
+    let name = edge.0.trim();
+    if name.to_lowercase().ends_with("edge") {
+        format!("the {name}")
+    } else {
+        format!("the {name} edge")
+    }
+}
+
+/// Where an edge constraint holds a part, as words: "2 mm from the right
+/// edge", "on the right edge", "1.5 mm past the right edge", or "to the
+/// right edge" when `offset` (the solved distance off the edge, mm) is not
+/// known.
+pub fn held_at(edge: &EdgeName, offset: Option<f64>) -> String {
+    let edge = edge_words(edge);
+    match offset {
+        Some(o) if o.abs() <= 5e-4 => format!("on {edge}"),
+        Some(o) if o < 0.0 => format!("{} mm past {edge}", super::limits::mm(-o)),
+        Some(o) => format!("{} mm from {edge}", super::limits::mm(o)),
+        None => format!("to {edge}"),
+    }
+}
+
+/// The refusal for a part an edge constraint holds, as one message line:
+/// "J1 is held 2 mm from the right edge; edit or remove its constraint to
+/// move it". `offset` is the constraint's solved distance off the edge;
+/// `verb` is what was refused ("move", "turn"). Too long a line drops the
+/// distance, then the edge, so the way out always shows.
+pub fn held_message(name: &str, edge: &EdgeName, offset: Option<f64>, verb: &str) -> String {
+    let way_out = format!("edit or remove its constraint to {verb} it");
+    [
+        format!("{name} is held {}; {way_out}", held_at(edge, offset)),
+        format!("{name} is held {}; {way_out}", held_at(edge, None)),
+        format!("{name} is held to a board edge; {way_out}"),
+        format!("It is held to a board edge; {way_out}"),
+    ]
+    .into_iter()
+    .find(|m| m.chars().count() <= crate::diagnostics::MAX_LINE)
+    .unwrap_or_else(|| format!("Held to a board edge; {way_out}"))
+}
+
+/// Why no operation may move or turn `instance` away from where an edge
+/// constraint puts it, in the words [`follow`] refuses with; `None` for a
+/// part no resolvable constraint holds. The distance shows when the
+/// constraint's expressions evaluate (plain lengths always do; expressions
+/// need `evaluator`).
+pub fn held(
+    project: &Project,
+    instance: Id,
+    evaluator: Option<&dyn BoardShapeEvaluator>,
+) -> Option<Error> {
+    let c = project
+        .edge_constraints
+        .iter()
+        .find(|c| c.target == ConstraintTarget::Placement(instance))?;
+    project.board().edge(&c.edge)?;
+    let offset = plain_mm(&c.offset).or_else(|| {
+        values(project, evaluator)
+            .ok()
+            .and_then(|v| v.get(&c.id).map(|v| v.1))
+    });
+    Some(Error::Conflict(held_message(
+        &part_name(project, instance),
+        &c.edge,
+        offset,
+        "move",
+    )))
 }
 
 /// Translate an outline so its reference point (its start for

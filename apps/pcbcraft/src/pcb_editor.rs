@@ -47,6 +47,9 @@ mod fill_paint;
 #[cfg(test)]
 mod fill_tests;
 mod fill_tool;
+mod hold_mark;
+#[cfg(test)]
+mod hold_tests;
 mod impedance_view;
 mod layer_focus;
 #[cfg(test)]
@@ -1472,10 +1475,18 @@ impl PcbEditor {
                 let at = world(start);
                 if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
                     self.set_selection(Some(id), None, None);
-                    if let Some(placement) = project
-                        .placements
-                        .iter()
-                        .find(|p| p.instance == id && !p.locked)
+                    // A locked or edge-held part does not follow the
+                    // pointer: the engine says why, in the words it would
+                    // refuse the move with, before anything moves.
+                    if let Some(error) = layout::move_refusal(project, id, self.shape.evaluator) {
+                        crate::kit::toast::post(
+                            ui.ctx(),
+                            refusal::level(&error),
+                            refusal::shown_error(&error),
+                            Vec::new(),
+                        );
+                    } else if let Some(placement) =
+                        project.placements.iter().find(|p| p.instance == id)
                     {
                         self.drag = Some((placement.clone(), at));
                     }
@@ -1537,6 +1548,7 @@ impl PcbEditor {
         self.paint_board(&painter, view, project);
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
+        hold_mark::paint_marks(&painter, &view, project);
         self.paint_edge_constraints(&painter, &view, project);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {

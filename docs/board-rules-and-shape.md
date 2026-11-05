@@ -88,13 +88,14 @@ Four founder requests are built here: configurable manufacturing parameters with
   - The edit is refused when the shape is unsolved, over-constrained, open or out of range.
 - **Edge constraints** resolve after every operation (`layout::outline::follow`).
   - A placement, fill or keepout lands at its named edge, straight or arc. Its position is set by an anchor, `along` and `offset` expressions over board parameters, an alignment (origin, near side, or the centre of the courtyard or pads), and an optional rotation that follows the edge. Parts move when board parameters change.
-  - Moving a constrained part elsewhere is refused.
+  - Moving a constrained part elsewhere is refused with the reason and the way out: "J1 is held 2 mm from the right edge; edit or remove its constraint to move it" (`outline::held_message`). A locked part's move is refused as "J2 is locked; unlock it to move it". `layout::move_refusal` gives a client either text before it tries, so Layout refuses a drag of either part at once, in the engine's words.
   - A constraint whose edge or target is gone is reported as `board.constraint_unresolved`. A stored sketch that no longer solves is reported as `board.shape_unsolved`.
 - **3D.** Every laminate slab is extruded from the solved outline with its cutouts, slots and mounting holes as holes (no Boolean); a sketched board's slabs do not follow `board_width` and `board_depth`. The display-only mask films follow the solved outline (inset 0.03 mm) and open over every cutout, slot and mounting hole; the edge bands line the outline and each cutout and slot (`the_mask_and_edge_bands_follow_the_sketched_shape`). Fill computation and board-edge checks read the same shape.
 - **Desktop** (`board_shape.rs`, `board_shape_ui.rs`, `edge_card.rs`):
   - Layout's Shape button opens the Board shape mode on the footprint editor's sketch view.
   - The tools are Line (L), Arc (A), Circle (C), Rectangle (R, with a parametric corner radius), Fillet (F), Dimension (D, bound to board parameters), Cutout (U), Slot (Shift+H), Mounting hole (H) and Name edge (E). X toggles construction geometry. Every gesture is one `board.edit`.
-  - The Placement card's Board edge section has "Constrain to edge", which ties the part to the nearest named edge in place. Its edge, anchor, expressions, alignment and turn-with-edge commit live, and the canvas draws the constraint as dimensions.
+  - The Placement section opens with the part's state: "Free · nearest: right" with "Constrain to edge", which ties the part to the nearest named edge in place; "Held 2 mm from the right edge" with "Free part"; or "Locked in place". A constrained part's Board edge section edits its edge, anchor, expressions, alignment and turn-with-edge live, and the canvas draws the constraint as dimensions while it is selected.
+  - Unselected, a constrained part carries Solidcraft's Dimension glyph with a `dimension` rim and a locked part the Fix glyph with a `sketch_locked` rim, just outside the top-right corner of its envelope (`pcb_editor/hold_mark.rs`). Free parts carry nothing. The glyph keeps its screen size and becomes a dot of the same colour when the part is smaller on screen than the glyph.
   - The Board card shows the shape and edits the board parameters.
 
 ## Limits
