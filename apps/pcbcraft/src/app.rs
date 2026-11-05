@@ -106,10 +106,12 @@ impl App {
         if let Some(path) = std::env::args_os()
             .skip(1)
             .map(PathBuf::from)
-            .find(|p| p.extension().is_some_and(|e| e == "pcbcraft"))
+            .find(|p| crate::open_documents::is_project(p))
         {
             files.request(file_ui::Action::OpenPath(path));
         }
+        // Files opened from Finder wake the UI (src/open_documents.rs).
+        crate::open_documents::set_ui(&cc.egui_ctx);
         let sources = LibrarySources::from_env(&cc.egui_ctx);
         // The user's keymap over the defaults; what cannot apply is
         // reported and kept.
@@ -817,6 +819,31 @@ impl App {
         }
         if let Some((level, status)) = self.files.take_status() {
             self.say(level, status);
+        }
+        self.opened_documents();
+    }
+
+    /// Files opened from Finder or the Dock go through File › Open's path,
+    /// which asks about unsaved work first. They wait while a file operation
+    /// or a file question is open, so none is dropped.
+    fn opened_documents(&mut self) {
+        if self.closing || self.files.busy() || self.files.prompting() {
+            return;
+        }
+        let arrivals = crate::open_documents::sort(crate::open_documents::take());
+        for path in arrivals.skipped {
+            let why = if crate::open_documents::is_project(&path) {
+                "another project opened at the same time"
+            } else {
+                "Pcbcraft opens .pcbcraft projects"
+            };
+            self.say(
+                Level::Warning,
+                format!("Not opened: {} ({why})", path.display()),
+            );
+        }
+        if let Some(path) = arrivals.open {
+            self.files.request(file_ui::Action::OpenPath(path));
         }
     }
 
