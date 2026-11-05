@@ -234,6 +234,7 @@ fn across(p: &Project, head: [f64; 2], to: [f64; 2], width: f64) -> Fallible<Rou
         via_layer: None,
         mode: RouteMode::Shove,
         move_vias: true,
+        max_detour: None,
     })
 }
 

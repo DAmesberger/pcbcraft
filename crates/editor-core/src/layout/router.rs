@@ -343,6 +343,7 @@ fn too_long(request: &RouteStepRequest, factor: f64, max: f64) -> RoutePlan {
              the limit is {max:.2}"
         )),
         detour_factor: factor,
+        note: None,
     }
 }
 
