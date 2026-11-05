@@ -588,7 +588,12 @@ fn the_pinout_applies_without_a_base_or_with_it_as_text() -> Fallible {
             "library_pinout_preview",
             &json!({"target": {"target": "new", "name": "EXR-22"}}),
         ))?;
-        let exact = plan["base"].as_u64().ok_or("a base")?;
+        // A base a double would round reaches the model as text.
+        let exact = match &plan["base"] {
+            Value::String(text) => text.parse::<u64>()?,
+            other => other.as_u64().ok_or("a base")?,
+        };
+        assert_eq!(plan["base"].is_string(), exact > (1u64 << 53));
         let input = match base {
             None => json!({}),
             Some("text") => json!({"base": exact.to_string()}),
@@ -952,6 +957,8 @@ fn a_shrinking_prompt_count_warns_of_truncation() -> Fallible {
 }
 
 mod board;
+mod flash_next;
 mod local_run;
+mod profiles;
 mod run1;
 mod wroom3_binding;

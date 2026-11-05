@@ -127,6 +127,9 @@ pub struct RunFacts {
     /// spend is not real).
     #[serde(default)]
     pub transport: String,
+    /// The run profile the model ran with ([`crate::profile`]).
+    #[serde(default)]
+    pub run_profile: String,
     pub spent_usd: f64,
     /// `None` when the model has no price: spend is unknown, and the token,
     /// time and request caps are what bound the run.
@@ -281,6 +284,9 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     );
     if !facts.capabilities.is_empty() {
         let _ = writeln!(s, "Declared for this model: {}.\n", facts.capabilities);
+    }
+    if !facts.run_profile.is_empty() {
+        let _ = writeln!(s, "Run profile: `{}`.\n", facts.run_profile);
     }
     for warning in &facts.warnings {
         let _ = writeln!(s, "**Warning:** {warning}\n");

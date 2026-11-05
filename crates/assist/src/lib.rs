@@ -27,6 +27,7 @@ pub mod cost;
 pub mod documents;
 pub mod model;
 pub mod pins;
+pub mod profile;
 mod prompt;
 pub mod report;
 mod run;
@@ -136,6 +137,8 @@ pub enum Stop {
     Refused(String),
     /// The model ended without a report.
     Ended,
+    /// The model kept sending a call that was refused, unchanged.
+    Repeated(String),
     /// The API or transport failed.
     Failed(String),
 }
@@ -149,6 +152,7 @@ impl std::fmt::Display for Stop {
             Self::Cancelled => write!(f, "cancelled"),
             Self::Refused(why) => write!(f, "the model declined: {why}"),
             Self::Ended => write!(f, "the model ended without a report"),
+            Self::Repeated(why) => write!(f, "stopped a repeating call: {why}"),
             Self::Failed(why) => write!(f, "failed: {why}"),
         }
     }
@@ -216,7 +220,7 @@ pub fn write_outputs(
 }
 
 /// Create `path` with `bytes`, refusing an existing file.
-fn write_new(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_new(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write as _;
     let mut file = std::fs::OpenOptions::new()
         .write(true)

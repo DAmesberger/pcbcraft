@@ -7,11 +7,13 @@ use crate::model::{
     Budget, Image, Message, ModelBackend, ModelProfile, ModelRequest, Part, Role, StopReason,
     appended_chars,
 };
+use crate::profile::RunProfile;
 use crate::report::{self, RequestFacts, ReviewReport, RunFacts};
 use crate::tools::{self, ToolOutcome};
-use crate::{Error, Event, Goal, Outcome, Result, SYSTEM, Stop};
+use crate::{Error, Event, Goal, Outcome, Result, Stop};
 use pcbcraft_automation::{Mode, Policy, Session};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -32,6 +34,8 @@ const ESTIMATE_MARGIN: u64 = 4_000;
 #[derive(Clone, Debug)]
 pub struct RunConfig {
     pub profile: ModelProfile,
+    /// What the model is told and how the loop reacts ([`crate::profile`]).
+    pub run_profile: RunProfile,
     pub budget: Budget,
     /// Prices of models that may serve instead of the configured one.
     pub prices: PriceTable,
@@ -45,6 +49,9 @@ impl Default for RunConfig {
         let prices = PriceTable::default();
         Self {
             profile: ModelProfile::anthropic(crate::DEFAULT_MODEL, &prices),
+            // Claude's built-in profile: the base prompt and tools as they are.
+            run_profile: crate::profile::select(None, crate::DEFAULT_MODEL, None)
+                .unwrap_or_default(),
             budget: Budget::default(),
             prices,
             policy: Policy::default(),
@@ -179,15 +186,18 @@ pub fn run(
     let budget = &config.budget;
     let price = profile.capabilities.price;
     let mut prepared = documents::prepare(&goal.datasheets, &profile.capabilities)?;
+    let run_profile = &config.run_profile;
+    let system = run_profile.system_prompt();
     let mut specs = tools::definitions();
     if prepared.pages.available() {
         specs.push(prepared.pages.tool());
     }
+    specs.retain(|t| !run_profile.omit_tools.contains(&t.name));
     let tool_chars = serde_json::to_string(&specs)?.len() as u64;
     // Without a count: the documents, the tools and the system prompt.
     let first_estimate = prepared
         .tokens
-        .saturating_add((tool_chars + SYSTEM.len() as u64) / CHARS_PER_TOKEN)
+        .saturating_add((tool_chars + system.len() as u64) / CHARS_PER_TOKEN)
         .saturating_add(ESTIMATE_MARGIN);
     preflight(config, &prepared, first_estimate)?;
     let mut messages = vec![first_message(goal, &prepared)];
@@ -204,6 +214,7 @@ pub fn run(
         provider: profile.provider.label().to_owned(),
         capabilities: profile.declared(),
         transport: backend.label(),
+        run_profile: run_profile.name.clone(),
         cap_usd: price.map(|_| budget.max_usd),
         ..RunFacts::default()
     };
@@ -214,6 +225,10 @@ pub fn run(
     let mut cuts = 0;
     let mut last_prompt = 0u64;
     let mut appended = 0u64;
+    // Refused calls by tool and exact input since the last call that
+    // succeeded, to notice a model repeating one.
+    let mut refused: HashMap<(String, String), u32> = HashMap::new();
+    let mut repeated: Option<String> = None;
     let stop = loop {
         if cancel.load(Ordering::Relaxed) {
             break Stop::Cancelled;
@@ -235,7 +250,7 @@ pub fn run(
             break Stop::Budget(format!("{} output tokens", budget.max_output_tokens));
         }
         let mut request = ModelRequest {
-            system: SYSTEM,
+            system: &system,
             tools: &specs,
             messages: &messages,
             max_output_tokens: limit,
@@ -432,11 +447,32 @@ pub fn run(
                     results.push(result(id, "Report received.", false, Vec::new()));
                 }
                 ToolOutcome::Reply {
-                    text,
+                    mut text,
                     error,
                     step,
                     images,
                 } => {
+                    if !error {
+                        // Something may have changed (a preview refused, the
+                        // document edited, the same preview fine): only
+                        // refusals with nothing succeeding between count.
+                        refused.clear();
+                    } else {
+                        let seen = refused
+                            .entry((name.clone(), input.to_string()))
+                            .or_insert(0);
+                        *seen += 1;
+                        if *seen > 1 {
+                            text.push_str(&format!(
+                                "\n\nThis exact call, with the same input, was refused {seen} times. Sending it again will not change the answer: change what the refusal names, or take another step."
+                            ));
+                        }
+                        if *seen >= run_profile.harness.repeat_limit && repeated.is_none() {
+                            repeated = Some(format!(
+                                "the model sent the same refused {name} call {seen} times"
+                            ));
+                        }
+                    }
                     if let Some(step) = &step {
                         facts.steps.push(step.clone());
                     }
@@ -456,6 +492,9 @@ pub fn run(
         });
         if report.is_some() {
             break Stop::Submitted;
+        }
+        if let Some(why) = repeated.take() {
+            break Stop::Repeated(why);
         }
     };
     facts.elapsed_seconds = started.elapsed().as_secs_f64();

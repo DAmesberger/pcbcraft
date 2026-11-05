@@ -18,6 +18,7 @@ use pcbcraft_assist::model::{
     self, Connection, Endpoint, KeySource, ModelBackend, ModelProfile, OutputLimits, Provider,
     Secret, keys,
 };
+use pcbcraft_assist::profile as run_profile;
 use pcbcraft_assist::{Datasheet, Event, Goal, RunConfig};
 use pcbcraft_core::Engine;
 use std::io::Read as _;
@@ -30,12 +31,13 @@ pub const USAGE: &str = "design-part --datasheet PDF|URL [--datasheet …] --nam
               [--context-tokens N] [--max-output-tokens N] [--vision yes|no] [--native-pdf yes|no]
               [--tools yes|no] [--effort LEVEL] [--prices FILE.json] [--request-timeout SECONDS]
               [--max-usd N] [--max-requests N] [--max-tokens N] [--max-seconds N]
-              [--notes TEXT] [--record FILE.jsonl | --replay FILE.jsonl]
+              [--profile NAME] [--notes TEXT] [--record FILE.jsonl | --replay FILE.jsonl]
                                    draft a part from datasheets with a configured model;
                                    writes the project and its .review.md/.review.json, publishes nothing
   llm-key set|delete|status --base-url URL
                                    keep a model API key (read from stdin) in the system keychain,
-                                   for that endpoint only";
+                                   for that endpoint only
+  llm-profile list | copy NAME     list run profiles, or copy a built-in one to the config folder to edit";
 
 struct Args {
     datasheets: Vec<Datasheet>,
@@ -63,6 +65,7 @@ struct Flags {
     effort: Option<String>,
     prices: Option<PriceTable>,
     request_timeout: Option<u64>,
+    profile: Option<String>,
 }
 
 fn yes_no(flag: &str, value: &str) -> Result<bool> {
@@ -155,6 +158,11 @@ fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
     if let Some(seconds) = flags.request_timeout {
         profile.request_timeout = Duration::from_secs(seconds);
     }
+    config.run_profile = run_profile::select(
+        flags.profile.as_deref(),
+        &profile.model,
+        user_profiles().as_deref(),
+    )?;
     config.profile = profile;
     config.prices = prices;
     let key = match flags.key {
@@ -200,6 +208,7 @@ fn parse(args: &[String]) -> Result<Args> {
                 flags.prices = Some(PriceTable::parse(&text)?);
             }
             "--request-timeout" => flags.request_timeout = Some(count(f, &value)?),
+            "--profile" => flags.profile = Some(value),
             "--max-usd" => {
                 config.budget.max_usd = value
                     .parse::<f64>()
@@ -314,6 +323,46 @@ pub fn run(args: &[String]) -> Result<()> {
     );
     if outcome.report.is_none() {
         return Err(format!("no review report: {}", outcome.stop).into());
+    }
+    Ok(())
+}
+
+/// The user's run-profile folder, when the user directories are known.
+fn user_profiles() -> Option<PathBuf> {
+    pcbcraft_io::settings::UserDirs::from_env()
+        .ok()
+        .map(|dirs| run_profile::user_folder(&dirs.config))
+}
+
+/// `llm-profile list | copy NAME`.
+pub fn profile(args: &[String]) -> Result<()> {
+    let folder = user_profiles().ok_or("no config folder: set PCBCRAFT_CONFIG_DIR or HOME")?;
+    match args {
+        [action] if action == "list" => {
+            for name in run_profile::built_in_names() {
+                let p = run_profile::built_in(name).ok_or("listed")??;
+                println!("{name} (built in) {}", p.models.join(", "));
+            }
+            if let Ok(entries) = std::fs::read_dir(&folder) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    match run_profile::read_file(&path) {
+                        Ok(p) => {
+                            println!("{} ({}) {}", p.name, path.display(), p.models.join(", "))
+                        }
+                        Err(e) => println!("broken: {e}"),
+                    }
+                }
+            }
+        }
+        [action, name] if action == "copy" => {
+            let path = run_profile::copy_to_user(name, &folder)?;
+            eprintln!(
+                "copied to {}; edit it, and it takes the built-in's place",
+                path.display()
+            );
+        }
+        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
     }
     Ok(())
 }

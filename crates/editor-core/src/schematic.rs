@@ -1000,6 +1000,9 @@ struct Resolution<'a> {
     designator: String,
     component_name: &'a str,
     fields: Vec<ShownField>,
+    /// The instance's value from its shown fields
+    /// ([`instances::value_text`]).
+    value: Option<String>,
     /// The chosen Part's manufacturer part number.
     mpn: Option<String>,
     /// Binding and package supplying pin numbers; none hides them.
@@ -1068,18 +1071,15 @@ fn draw(
         mirrored: false,
         line_spacing: TEXT_LINE_SPACING,
     };
-    // The value slot (a `ComponentName` text) shows the instance's value:
-    // the first shown field with a value (`instances::value_text`), else
-    // the Part's MPN, else, for a part of more than two terminals (an IC,
-    // whose name is its identity), the component name. A two-terminal part
+    // The value slot (a `ComponentName` text) shows the instance's value
+    // (`instances::value_text`, the value the BOM shows too), else the
+    // Part's MPN, else, for a part of more than two terminals (an IC, whose
+    // name is its identity), the component name. A two-terminal part
     // without a value shows none: its component name ("Chip capacitor
     // 0603") is a description, never a value.
-    let value_field = r
-        .fields
-        .iter()
-        .find(|f| f.shown && !f.text.trim().is_empty());
-    let value = value_field
-        .map(|f| f.text.clone())
+    let value = r
+        .value
+        .clone()
         .or_else(|| r.mpn.clone().filter(|m| !m.trim().is_empty()))
         .or_else(|| (component.terminals.len() > 2).then(|| r.component_name.to_owned()));
     // Turned a quarter, the symbol keeps its designator and value upright
@@ -1112,8 +1112,14 @@ fn draw(
                         let Some(value) = &value else {
                             continue;
                         };
-                        if let Some(f) = value_field {
-                            drawn_fields.insert(f.lineage);
+                        // The shown fields are the value: not stacked again.
+                        if r.value.is_some() {
+                            drawn_fields.extend(
+                                r.fields
+                                    .iter()
+                                    .filter(|f| f.shown && !f.text.trim().is_empty())
+                                    .map(|f| f.lineage),
+                            );
                         }
                         height = height.min(VALUE_TEXT_HEIGHT_MM);
                         value.clone()
@@ -1262,6 +1268,7 @@ pub fn placed_unit(project: &Project, occurrence: Id) -> Result<PlacedUnit> {
         designator: instances::display_label(project, instance, unit.id),
         component_name: &resolved.component.meta.name,
         fields,
+        value: instances::value_text(&project.library, instance)?,
         mpn: instance
             .part
             .and_then(|p| project.library.part(p))
@@ -1306,7 +1313,7 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
         designator.push_str(&unit.label);
     }
     // A field shows its default, or its name when it has none.
-    let fields = instances::default_fields(library, d.component)?
+    let fields: Vec<ShownField> = instances::default_fields(library, d.component)?
         .into_iter()
         .map(|f| ShownField {
             lineage: f.field.id,
@@ -1314,9 +1321,16 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
             shown: f.show_on_symbol,
         })
         .collect();
+    // No instance yet: the value slot shows the shown fields' placeholders.
+    let shown: Vec<&str> = fields
+        .iter()
+        .filter(|f| f.shown && !f.text.trim().is_empty())
+        .map(|f| f.text.as_str())
+        .collect();
     let resolution = Resolution {
         designator,
         component_name: d.component_name,
+        value: (!shown.is_empty()).then(|| shown.join(" ")),
         fields,
         mpn: None,
         physical: d.physical,

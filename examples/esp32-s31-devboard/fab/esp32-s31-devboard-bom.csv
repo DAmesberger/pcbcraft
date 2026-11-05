@@ -1,12 +1,12 @@
 Line,Quantity,Designators,Value,Package,Manufacturer,MPN,Status
-1,1,C1,10 µF 16 V,Capacitor 0805 package,Murata,GRM21BR61C106KE15L,resolved
-2,1,C2,22 µF 10 V,Capacitor 0805 package,Murata,GRM21BR61A226ME51L,resolved
-3,1,C3,100 nF 16 V,Capacitor 0603 package,Murata,GRM188R71C104KA01D,resolved
-4,1,C4,1 µF 16 V,Capacitor 0603 package,Murata,GRM188R61C105KA93D,resolved
+1,1,C1,10 µF,Capacitor 0805 package,Murata,GRM21BR61C106KE15L,resolved
+2,1,C2,22 µF,Capacitor 0805 package,Murata,GRM21BR61A226ME51L,resolved
+3,1,C3,100 nF,Capacitor 0603 package,Murata,GRM188R71C104KA01D,resolved
+4,1,C4,1 µF,Capacitor 0603 package,Murata,GRM188R61C105KA93D,resolved
 5,2,D1 D2,APT1608SGC,APT1608SGC package,Kingbright,APT1608SGC,resolved
 6,1,J1,USB4105-GF-A,USB4105-GF-A USB4105,GCT,USB4105-GF-A,resolved
-7,2,J2 J3,Pin header 1x12 2.54 mm,Pin header 1x12 2.54 mm package,Samtec,TSW-112-07-G-S,resolved
-8,1,J4,Pin header 1x4 2.54 mm,Pin header 1x4 2.54 mm package,Samtec,TSW-104-07-G-S,resolved
+7,2,J2 J3,TSW-112-07-G-S,Pin header 1x12 2.54 mm package,Samtec,TSW-112-07-G-S,resolved
+8,1,J4,TSW-104-07-G-S,Pin header 1x4 2.54 mm package,Samtec,TSW-104-07-G-S,resolved
 9,1,R1,10 kΩ,Resistor 0603 package,Yageo,RC0603FR-0710KL,resolved
 10,2,R2 R3,470 Ω,Resistor 0603 package,Yageo,RC0603FR-07470RL,resolved
 11,2,R4 R5,5.1 kΩ,Resistor 0603 package,Yageo,RC0603FR-075K1L,resolved

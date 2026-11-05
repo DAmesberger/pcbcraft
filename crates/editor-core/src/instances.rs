@@ -448,14 +448,17 @@ pub fn effective_fields(
         .collect()
 }
 
-/// The instance's value: the first field the component shows on the
-/// symbol that has a value (100 nF, 10 kΩ). Never the component name. The
-/// schematic value text and the BOM's value column read this.
+/// An instance's value text: the effective text of the first field its
+/// component selects with `show_on_symbol` and a value ("100 nF"), the
+/// value the schematic and the BOM show. `None` when no shown field has
+/// one; never the component name.
 pub fn value_text(library: &Library, instance: &ComponentInstance) -> Result<Option<String>> {
     Ok(effective_fields(library, instance)?
         .into_iter()
         .filter(|f| f.show_on_symbol)
-        .find_map(|f| f.text.filter(|t| !t.trim().is_empty())))
+        .filter_map(|f| f.text)
+        .map(|t| t.trim().to_owned())
+        .find(|t| !t.is_empty()))
 }
 
 /// The effective value of every field `component` selects when nothing is
