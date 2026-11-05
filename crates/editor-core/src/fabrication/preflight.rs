@@ -367,25 +367,23 @@ impl LegendFault {
 
 /// The name a legend finding gives an item: at most `MAX_LEGEND_NAME`
 /// characters of its own text.
-fn legend_name(item: &PlacedItem, designator: &str) -> String {
-    match item {
-        PlacedItem::Text(text) if text.text == designator => format!("Designator {designator}"),
-        PlacedItem::Text(text) => {
-            let line = text.text.lines().next().unwrap_or_default();
-            let short: String = line.chars().take(MAX_LEGEND_NAME).collect();
-            let more = if short.len() < line.len() { "…" } else { "" };
-            format!("Legend text {short}{more} of {designator}")
-        }
-        PlacedItem::Shape { .. } => format!("Legend line of {designator}"),
+fn legend_name(text: &str, designator: &str) -> String {
+    if text == designator {
+        return format!("Designator {designator}");
     }
+    let line = text.lines().next().unwrap_or_default();
+    let short: String = line.chars().take(MAX_LEGEND_NAME).collect();
+    let more = if short.len() < line.len() { "…" } else { "" };
+    format!("Legend text {short}{more} of {designator}")
 }
 
-/// Legend ink past the board's outline or over a cutout or slot: the
-/// fabricator trims it, so the text or line is lost. With a silkscreen edge
-/// clearance in the rules, ink closer than that to an edge is reported too.
-/// One finding per legend item on the printed sides.
+/// Legend text past the board's outline or over a cutout or slot: the
+/// fabricator trims it, so the text can't be read. With a silkscreen edge
+/// clearance in the rules, text closer than that to an edge is reported too.
+/// One finding per text on the printed sides. Legend lines may run past an
+/// edge: a part that overhangs the board, such as a module's antenna end,
+/// draws its outline there, and a trimmed line loses nothing.
 fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
-    let tol = 0.01;
     let limit = project.rules.effective().silkscreen.edge_clearance;
     let edges = BoardEdges::of(project);
     let names: BTreeMap<Id, &str> = project
@@ -404,23 +402,12 @@ fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
         if !printed {
             continue;
         }
-        let strokes: Vec<(Vec<Point>, f64)> = match &graphic.item {
-            PlacedItem::Shape { shape, width, .. } => {
-                let mut ring = shape.flatten(tol);
-                if shape.is_closed()
-                    && let Some(first) = ring.first().copied()
-                {
-                    ring.push(first);
-                }
-                vec![(ring, *width)]
-            }
-            PlacedItem::Text(text) => {
-                let s = layout::legend::text_strokes(text);
-                s.strokes.into_iter().map(|p| (p, s.width)).collect()
-            }
+        let PlacedItem::Text(text) = &graphic.item else {
+            continue;
         };
+        let strokes = layout::legend::text_strokes(text);
         let mut worst: Option<LegendFault> = None;
-        for (points, width) in &strokes {
+        for points in &strokes.strokes {
             let single = points.first().map(|p| [*p, *p]);
             let pairs = points
                 .windows(2)
@@ -432,7 +419,7 @@ fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
                     net: Id::default(),
                     start,
                     end,
-                    width: *width,
+                    width: strokes.width,
                     layer: CopperLayer::from(side),
                     locked: false,
                 });
@@ -459,7 +446,7 @@ fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
             continue;
         };
         let designator = names.get(&graphic.instance).copied().unwrap_or("a part");
-        let name = legend_name(&graphic.item, designator);
+        let name = legend_name(&text.text, designator);
         let (code, title) = match fault {
             LegendFault::Outside => (
                 "fabrication.legend_outside",
@@ -477,16 +464,11 @@ fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
                 ),
             ),
         };
-        let fix = if matches!(&graphic.item, PlacedItem::Text(_)) {
-            "Move the text on the part's Placement card, or move the part"
-        } else {
-            "Move the part, or edit the legend of its footprint"
-        };
         let mut finding = item(
             code,
             Severity::Warning,
             title,
-            Some(fix.into()),
+            Some("Move the text on the part's Placement card, or move the part".into()),
             vec![ObjectRef::Instance {
                 id: graphic.instance,
             }],

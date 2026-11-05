@@ -456,6 +456,47 @@ fn a_legend_over_a_cutout_is_reported_as_one() -> Result<()> {
     Ok(())
 }
 
+/// A part may overhang the board, so its legend lines may run past the edge.
+#[test]
+fn a_legend_line_past_the_board_edge_is_not_reported() -> Result<()> {
+    use crate::fabrication::preflight;
+    use crate::layout::{self, BoardDrawing, PlacedItem};
+    let mut project = Engine::showcase()?.project().clone();
+    let (instance, x) = layout::placed_graphics(&project)
+        .into_iter()
+        .filter(|g| matches!(g.layer, BoardDrawing::Silkscreen(_)))
+        .find_map(|g| match &g.item {
+            PlacedItem::Shape { shape, .. } => {
+                shape.flatten(0.01).first().map(|p| (g.instance, p[0]))
+            }
+            PlacedItem::Text(_) => None,
+        })
+        .ok_or_else(|| Error::NotFound("a legend line".into()))?;
+    // That line's first point half a millimetre past x = 0.
+    for placement in &mut project.placements {
+        if placement.instance == instance {
+            placement.position[0] -= x + 0.5;
+        }
+    }
+    let crosses = layout::placed_graphics(&project)
+        .into_iter()
+        .filter(|g| g.instance == instance)
+        .any(|g| match &g.item {
+            PlacedItem::Shape { shape, .. } => shape.flatten(0.01).iter().any(|p| p[0] < 0.0),
+            PlacedItem::Text(_) => false,
+        });
+    assert!(crosses, "the line should run past the edge");
+    let report = preflight::report(&project, &Default::default(), None)?;
+    let lines: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|i| i.title.contains("Legend line"))
+        .map(|i| i.title.as_str())
+        .collect();
+    assert!(lines.is_empty(), "{lines:#?}");
+    Ok(())
+}
+
 /// A new project's profile keeps copper off the edge: copper an edge rule
 /// of 0 used to accept is reported, by the rule that says so.
 #[test]

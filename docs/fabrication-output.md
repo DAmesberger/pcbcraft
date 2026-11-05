@@ -33,8 +33,8 @@ The check reports every project issue under the chosen fabrication profile. Over
 - parts with only an envelope 3D model;
 - parts whose definitions have unpublished draft changes (the review gate for library changes);
 - legend over a pad's mask opening;
-- legend past the board outline or over a cutout or slot (`fabrication.legend_outside`), one finding per legend item, naming it ("Designator J2 runs outside the board");
-- legend closer to those edges than the rules' silkscreen edge clearance, when one is set (`fabrication.legend_edge`). Mounting holes are not edges for either check;
+- legend text past the board outline or over a cutout or slot (`fabrication.legend_outside`), one finding per text, naming it ("Designator J2 runs outside the board");
+- legend text closer to those edges than the rules' silkscreen edge clearance, when one is set (`fabrication.legend_edge`). Mounting holes are not edges for either check. Legend lines are not checked: a part may overhang the board and draw its outline past the edge;
 - purchasing to-dos such as a missing Part;
 - component-area findings.
 
