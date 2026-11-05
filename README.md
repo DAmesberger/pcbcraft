@@ -51,6 +51,8 @@ ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-
 
 `stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.
 
+Replies on both are compact: a mutation answers with `revision`, `outcome`, `changes` (added, changed and removed stable ids by collection, such as `{"added":{"vias":[644]}}`), `findings` (the new ones, resolved counts per code, the open total) and the changed `drafts`. `project.inspect` answers with counts, drafts and findings per code, and with `at` (a JSON pointer such as `/project/nets`) reads one piece of the document. `verbose: true`, beside `command` or inside `params`, returns the whole snapshot instead. In MCP, `tools/list` names every operation and query, and `project_schema {name}` (`project.schema`) returns one's exact schema and how to send it.
+
 `project.query` also answers the parts catalog ([design and query language](docs/parts-library.md)): `library.search` ranks the project's component lineages for a one-line query, `library.facets` lists the fields, packages and badges the matches carry, and `library.inspect` reports one revision. For example:
 
 ```json

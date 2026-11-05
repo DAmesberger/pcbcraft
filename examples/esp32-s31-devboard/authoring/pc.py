@@ -27,7 +27,10 @@ class Session:
     def raw(self, command, params=None, note=None, ok_required=True):
         req = {"command": command, "params": params if params is not None else {}}
         line = json.dumps(req, separators=(",", ":"))
-        self.p.stdin.write(line + "\n")
+        # This client reads the document from project.inspect, so it asks for
+        # the snapshot; the recorded request is the plain one.
+        sent = json.dumps(dict(req, verbose=True), separators=(",", ":")) if command == "project.inspect" else line
+        self.p.stdin.write(sent + "\n")
         self.p.stdin.flush()
         reply = json.loads(self.p.stdout.readline())
         if reply.get("ok"):

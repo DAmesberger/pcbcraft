@@ -132,7 +132,9 @@ but Linux and Windows have not been checked as products yet.
 `pcbcraft-cli mcp` serves the engine as a Model Context Protocol server on stdio: the same typed
 operations as the UI (`project_apply` with an expected revision), queries (`project_query`: library
 search, component checks, BOM, pin reports, the production pre-flight), undo and redo, save and the
-exports. `pcbcraft-cli commands` prints every schema, generated from the Rust types.
+exports. Replies are compact (the outcome, the ids that changed, new findings) and `verbose: true`
+returns the whole document; `project_schema` serves each operation's exact schema on demand, and
+`pcbcraft-cli commands` prints every schema, generated from the Rust types.
 
 Build the CLI once, then register it with your MCP client. For Claude Code:
 

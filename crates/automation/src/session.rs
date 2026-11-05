@@ -34,6 +34,29 @@ pub struct ApplyParams {
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
 
+/// What `project.inspect` returns.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectParams {
+    /// A JSON pointer into the snapshot, such as `/project/vias` or
+    /// `/project/nets`: just what it names is returned.
+    #[serde(default)]
+    pub at: Option<String>,
+}
+
+/// Which schema `project.schema` returns.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaParams {
+    /// An operation command (`layout.add_via`), a query (`library.search`)
+    /// or a command or tool name. Without it, the index of all of them.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// One definition `name`'s reply lists under `more_defs`.
+    #[serde(default)]
+    pub def: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PathParams {
@@ -222,7 +245,10 @@ pub enum Request {
     Apply(ApplyParams),
     /// Return the document, drafts with their findings and design checks.
     #[serde(rename = "project.inspect")]
-    Inspect(NoParams),
+    Inspect(InspectParams),
+    /// The exact schema of one operation, query or command, or the index.
+    #[serde(rename = "project.schema")]
+    Schema(SchemaParams),
     /// Answer one read-only core query (`component.inspect`,
     /// `component.check`, `component.check_drafts`, `library.search`,
     /// `library.facets`, `library.inspect`, `project.bom`,
@@ -359,9 +385,13 @@ impl Request {
                 "project.apply",
                 "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup, layout.edit_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
-            info::<NoParams>(
+            info::<InspectParams>(
                 "project.inspect",
-                "Return the revision, project, drafts with their publish findings, ERC and board-check findings.",
+                "Return the revision, object counts, each draft's state and open findings by code. verbose: true returns the whole snapshot (project, drafts with their publish findings, ERC and board-check findings; about 0.5 MB on a small board); at: a JSON pointer into it (/project/vias, /project/nets) returns just what it names.",
+            ),
+            info::<SchemaParams>(
+                "project.schema",
+                "The exact JSON schema of one project.apply operation (layout.add_via), project.query query (library.search) or command, with how to send it; large definitions come separately through def. Without a name, the index of all of them with one line each. Not a document change.",
             ),
             info::<Query>(
                 "project.query",
@@ -480,11 +510,11 @@ impl Request {
             ),
             info::<part_files::UsePartFileParams>(
                 "library.use_part_file",
-                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the snapshot and the check report.",
+                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the outcome and the check report.",
             ),
             info::<part_files::SetPartValuesParams>(
                 "library.set_part_values",
-                "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the snapshot and the check report.",
+                "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the outcome and the check report.",
             ),
             info::<NoParams>(
                 "library.part_files",
@@ -492,7 +522,7 @@ impl Request {
             ),
             info::<mechanical_parts::PlacePartFileParams>(
                 "layout.place_part_file",
-                "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the snapshot, the outcome (PartPlaced: instance, designator, component, created) and the check report.",
+                "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the outcome (PartPlaced: instance, designator, component, created) and the check report.",
             ),
             info::<mechanical_parts::SetPartFileValuesParams>(
                 "layout.set_part_file_values",
@@ -503,6 +533,14 @@ impl Request {
                 "Read a STEP AP214/242, GLB or .solidcraft model file and report its bodies (keys, source colours, glTF materials), bounds and whether it has textures, for the import wizard's explicit mapping. Not a document change.",
             ),
         ]
+    }
+}
+
+impl Request {
+    /// [`Request::catalog`], generated once.
+    pub fn catalog_shared() -> &'static [CommandInfo] {
+        static CATALOG: std::sync::OnceLock<Vec<CommandInfo>> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(Request::catalog)
     }
 }
 
@@ -520,14 +558,17 @@ pub struct Session {
     engine: Engine,
     path: Option<PathBuf>,
     sources: sources::Sources,
+    /// Set while [`Session::respond`] runs a request: mutations answer
+    /// without building the snapshot.
+    compact: bool,
+    baseline: Option<reply::Baseline>,
 }
 
 impl Session {
     pub fn new(engine: Engine) -> Self {
         Self {
             engine,
-            path: None,
-            sources: sources::Sources::default(),
+            ..Self::default()
         }
     }
     /// A session with the given library sources, e.g.
@@ -535,8 +576,8 @@ impl Session {
     pub fn with_sources(engine: Engine, sources: sources::Sources) -> Self {
         Self {
             engine,
-            path: None,
             sources,
+            ..Self::default()
         }
     }
     pub fn sources(&self) -> &sources::Sources {
@@ -558,11 +599,12 @@ impl Session {
                     params.operation,
                     hosted(),
                 )?;
-                let mut snapshot = self.snapshot();
-                snapshot["outcome"] = serde_json::to_value(outcome)?;
-                return Ok(snapshot);
+                let mut reply = self.document_reply();
+                reply["outcome"] = serde_json::to_value(outcome)?;
+                return Ok(reply);
             }
-            Request::Inspect(_) => {}
+            Request::Inspect(params) => return self.inspect(params),
+            Request::Schema(params) => return discovery::schema_reply(params),
             Request::Query(query) => {
                 return Ok(serde_json::to_value(self.engine.query_using(
                     query,
@@ -737,17 +779,17 @@ impl Session {
             Request::PlacePartFile(params) => return self.place_part_file(*params),
             Request::SetPartFileValues(params) => return self.set_part_file_values(params),
         }
-        Ok(self.snapshot())
+        Ok(self.document_reply())
     }
 
-    /// Apply one operation and return the snapshot with its outcome.
+    /// Apply one operation and return the document state with its outcome.
     fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Value> {
         let outcome = self
             .engine
             .apply_hosted(expected_revision, operation, hosted())?;
-        let mut snapshot = self.snapshot();
-        snapshot["outcome"] = serde_json::to_value(outcome)?;
-        Ok(snapshot)
+        let mut reply = self.document_reply();
+        reply["outcome"] = serde_json::to_value(outcome)?;
+        Ok(reply)
     }
 
     /// `library.import_from_project`: read the file, take the exact closure
@@ -868,13 +910,14 @@ impl Session {
             }),
             &pcbcraft_solidcraft::footprint::SketchEvaluator,
         )?;
-        let mut snapshot = self.snapshot();
-        snapshot["outcome"] = serde_json::to_value(outcome)?;
-        snapshot["import"] = json!({"size": artwork.size, "notes": artwork.notes});
-        Ok(snapshot)
+        let mut reply = self.document_reply();
+        reply["outcome"] = serde_json::to_value(outcome)?;
+        reply["import"] = json!({"size": artwork.size, "notes": artwork.notes});
+        Ok(reply)
     }
 
-    /// The document state every mutation and inspection returns. Each draft
+    /// The whole document state, returned to in-process callers and to
+    /// `verbose` requests. Each draft
     /// carries the core's `component.check` report, from one staged
     /// `component.check_drafts` query.
     pub fn snapshot(&self) -> Value {
@@ -1017,6 +1060,7 @@ pub fn schemas() -> Value {
     })
 }
 
+pub mod discovery;
 mod firmware;
 mod marking;
 pub mod mechanical_parts;
@@ -1024,6 +1068,7 @@ mod models;
 pub mod part_files;
 mod pinout;
 mod preview;
+mod reply;
 pub mod sources;
 
 #[cfg(test)]
@@ -1046,6 +1091,8 @@ mod parts_tests;
 mod pinout_tests;
 #[cfg(test)]
 mod project_import_tests;
+#[cfg(test)]
+mod reply_tests;
 #[cfg(test)]
 mod svg_tests;
 #[cfg(test)]
