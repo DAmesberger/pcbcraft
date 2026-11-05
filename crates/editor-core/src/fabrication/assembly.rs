@@ -166,8 +166,8 @@ fn line_index(report: &completeness::BomReport) -> BTreeMap<Id, &BomLine> {
 }
 
 /// The Value of an instance in the BOM and pick-and-place files: its value
-/// text ([`instances::value_text`], what the schematic shows, "100 nF"),
-/// else the chosen Part's MPN, else the component name for a component of
+/// text ([`instances::value_text`], every typed value field as the
+/// instance shows it, "10 µF 16 V"), else the chosen Part's MPN, else the component name for a component of
 /// more than two terminals (an IC, whose name is its identity), else empty.
 /// A two-terminal part's name is a package description ("Chip capacitor
 /// 0603 (1608 metric)") the Package column already carries, so a passive
