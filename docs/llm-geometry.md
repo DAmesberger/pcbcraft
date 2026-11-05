@@ -125,12 +125,12 @@ The engine does the grading, with no LLM judge and no judgement calls in the num
 
   | Kind | Grade | Needs |
   |---|---|---|
-  | Point to point | Detour and layer changes | Nothing new |
+  | Point to point | Detour and avoidable layer changes: a change needed because source and target are on different layers doesn't count | Nothing new |
   | Bus or multi-drop (SPI) | For each source and sink: length, layer changes, stubs off the path, and skew across the bus | Source and sinks per net: from function directions where known, otherwise set by the user |
   | Power and ground | Resistance from the source to each load. Inductance comes later, because it needs the return path | Net marked as power; source and loads; a resistance solver for tracks, vias and pours |
   | Differential pair | Skew and coupling, already reported | Nothing new |
 
-  These stay separate numbers per kind, not one score;
+  These stay separate numbers per kind, not one score. **The power row's solver is a future idea (founder, 5 November 2026):** the end-to-end PCB design process comes first. Until then, power and ground are graded on connectivity and DRC. Likely approach when it comes: a conductance grid over the copper, solved with `faer` (MIT);
 - pair skew and coupled length on T3;
 - input, cached and output tokens, cost, tool calls and time.
 
