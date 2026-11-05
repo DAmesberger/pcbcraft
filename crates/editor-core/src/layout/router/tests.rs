@@ -64,6 +64,7 @@ fn request(net: Id, head: Point, to: Point, mode: RouteMode) -> RouteStepRequest
         via_layer: None,
         mode,
         move_vias: true,
+        max_detour: None,
     }
 }
 
@@ -767,5 +768,234 @@ fn ignore_proposes_the_plain_step() -> Fallible {
         )
         .is_err()
     );
+    Ok(())
+}
+
+fn stepped(outcome: crate::Outcome) -> Fallible<(Point, CopperLayer, bool, f64)> {
+    match outcome {
+        crate::Outcome::RouteStepped {
+            end,
+            end_layer,
+            reached,
+            detour_factor,
+        } => Ok((end, end_layer, reached, detour_factor)),
+        other => Err(format!("unexpected {other:?}").into()),
+    }
+}
+
+fn path_length(points: &[Point]) -> f64 {
+    points.windows(2).map(|w| distance(w[0], w[1])).sum()
+}
+
+/// Hand-derived factors: a straight step is 1; a 10 × 5 mm 45° step is
+/// (5 + 5√2) / √125; a via is a waypoint, not a detour.
+#[test]
+fn the_detour_factor_is_the_path_over_the_straight_line() -> Fallible {
+    let p = board()?;
+    let straight = run(
+        &p,
+        &request(A, [25.0, 20.0], [35.0, 20.0], RouteMode::Ignore),
+    );
+    assert_eq!(straight.detour_factor, 1.0);
+    let walked = run(
+        &p,
+        &request(A, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround),
+    );
+    assert_eq!(walked.detour_factor, 1.0);
+
+    let corner = run(
+        &p,
+        &request(A, [25.0, 20.0], [35.0, 25.0], RouteMode::Ignore),
+    );
+    let expected = (5.0 + 5.0 * 2f64.sqrt()) / 125f64.sqrt();
+    assert!((corner.detour_factor - expected).abs() < 1e-9, "{corner:?}");
+    let shoved = run(
+        &p,
+        &request(A, [25.0, 20.0], [35.0, 25.0], RouteMode::Shove),
+    );
+    assert!((shoved.detour_factor - expected).abs() < 1e-9, "{shoved:?}");
+
+    // Through a via at the corner of an L: 5 + 5 mm, against 5 + 5 mm.
+    let through = RouteStepRequest {
+        via: Some(ViaRequest::through(A, [30.0, 20.0])),
+        via_layer: Some(CopperLayer::Bottom),
+        ..request(A, [25.0, 20.0], [30.0, 25.0], RouteMode::Ignore)
+    };
+    assert_eq!(run(&p, &through).detour_factor, 1.0);
+    Ok(())
+}
+
+#[test]
+fn a_walkaround_reports_its_detour_and_the_request_can_bound_it() -> Fallible {
+    let mut engine = Engine::demo()?;
+    let layout = Operation::Layout;
+    // A wall of vias across the straight line: width + clearance rule out
+    // anything nearer than 0.65 mm to their centres.
+    for y in [16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0] {
+        engine.apply(
+            engine.revision(),
+            layout(LayoutCommand::AddVia {
+                via: ViaRequest::through(C, [30.0, y]),
+            }),
+        )?;
+    }
+    let r = request(A, [28.5, 20.0], [31.5, 20.0], RouteMode::Walkaround);
+    let QueryResult::RoutePreview(free) =
+        engine.query(Query::RoutePreview { request: r.clone() })?
+    else {
+        return Err("no preview".into());
+    };
+    assert!(free.reached, "{free:?}");
+    let points = head_points(&free, A);
+    // The factor is measured on the copper the plan adds.
+    let expected = path_length(&points) / 3.0;
+    assert!((free.detour_factor - expected).abs() < 1e-9, "{free:?}");
+    // Round the wall's end at y 24 + 0.65 or y 16 − 0.65: at least 4.65 mm
+    // up and the same back, so the factor is over 3.
+    assert!(free.detour_factor > 3.0, "{}", free.detour_factor);
+
+    // Over the bound: the preview proposes nothing and says why.
+    let bound = RouteStepRequest {
+        max_detour: Some(1.5),
+        ..r.clone()
+    };
+    let QueryResult::RoutePreview(over) = engine.query(Query::RoutePreview {
+        request: bound.clone(),
+    })?
+    else {
+        return Err("no preview".into());
+    };
+    assert!(over.edits.add.is_empty() && over.edits.vias.is_empty());
+    assert!(!over.reached);
+    assert_eq!(over.end, r.head);
+    assert_eq!(over.detour_factor, free.detour_factor);
+    let why = over.blocked.ok_or("no reason")?;
+    assert!(why.starts_with("route.detour:"), "{why}");
+
+    // The step itself is refused and the document does not move.
+    let revision = engine.revision();
+    let file = engine.to_file();
+    let refused = engine.apply(
+        revision,
+        layout(LayoutCommand::RouteStep {
+            request: bound.clone(),
+        }),
+    );
+    assert!(
+        matches!(&refused, Err(crate::Error::Conflict(m)) if m.starts_with("route.detour:")),
+        "{refused:?}"
+    );
+    assert_eq!(engine.revision(), revision);
+    assert_eq!(engine.to_file(), file);
+
+    // A limit it meets lets the same step through, one undo step, and the
+    // outcome carries the same figures as the preview.
+    let (end, end_layer, reached, factor) = stepped(engine.apply(
+        revision,
+        layout(LayoutCommand::RouteStep {
+            request: RouteStepRequest {
+                max_detour: Some(free.detour_factor + 0.01),
+                ..r.clone()
+            },
+        }),
+    )?)?;
+    assert_eq!((end, end_layer, reached), (free.end, free.end_layer, true));
+    assert_eq!(factor, free.detour_factor);
+    assert_eq!(engine.revision(), revision + 1);
+    assert!(engine.project().tracks.len() > file.project.tracks.len());
+    engine.undo()?;
+    assert_eq!(engine.project().tracks, file.project.tracks);
+
+    // No bound: as before, it routes whatever the detour, and says so.
+    let (.., factor) = stepped(engine.apply(
+        engine.revision(),
+        layout(LayoutCommand::RouteStep { request: r }),
+    )?)?;
+    assert!(factor > 3.0);
+    Ok(())
+}
+
+#[test]
+fn a_shove_that_falls_back_to_walking_is_bound_too() -> Fallible {
+    let mut p = board()?;
+    let wall = |p: &mut Project| -> Fallible {
+        for y in [16.0, 17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0] {
+            let id = via(p, C, [30.0, y])?;
+            apply(p, LayoutCommand::SetViaLock { id, locked: true })?;
+        }
+        Ok(())
+    };
+    wall(&mut p)?;
+    let r = request(A, [28.5, 20.0], [31.5, 20.0], RouteMode::Shove);
+    let free = run(&p, &r);
+    assert!(free.reached && free.detour_factor > 3.0, "{free:?}");
+    let over = run(
+        &p,
+        &RouteStepRequest {
+            max_detour: Some(2.0),
+            ..r
+        },
+    );
+    assert!(
+        over.edits.add.is_empty() && over.shoved.is_empty(),
+        "{over:?}"
+    );
+    assert!(over.edits.move_vias.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_limit_below_one_or_malformed_is_refused() -> Fallible {
+    let mut engine = Engine::demo()?;
+    let revision = engine.revision();
+    for bad in [0.99, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let r = RouteStepRequest {
+            max_detour: Some(bad),
+            ..request(A, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround)
+        };
+        assert!(
+            matches!(
+                engine.query(Query::RoutePreview { request: r.clone() }),
+                Err(crate::Error::Invalid(_))
+            ),
+            "{bad}"
+        );
+        assert!(
+            matches!(
+                engine.apply(
+                    revision,
+                    Operation::Layout(LayoutCommand::RouteStep { request: r }),
+                ),
+                Err(crate::Error::Invalid(_))
+            ),
+            "{bad}"
+        );
+        assert_eq!(engine.revision(), revision);
+    }
+    // Exactly 1 is a real limit: a straight step meets it.
+    let straight = RouteStepRequest {
+        max_detour: Some(1.0),
+        ..request(A, [25.0, 20.0], [35.0, 20.0], RouteMode::Walkaround)
+    };
+    stepped(engine.apply(
+        revision,
+        Operation::Layout(LayoutCommand::RouteStep { request: straight }),
+    )?)?;
+    // The wire form: the field is optional, and typed.
+    let wire = serde_json::json!({
+        "net": A, "width": WIDTH, "layer": "Top", "head": [25.0, 22.0], "to": [35.0, 22.0],
+    });
+    let parsed: RouteStepRequest = serde_json::from_value(wire.clone())?;
+    assert_eq!(parsed.max_detour, None);
+    assert!(
+        !serde_json::to_value(&parsed)?
+            .as_object()
+            .ok_or("object")?
+            .contains_key("max_detour"),
+        "an unset limit stays out of recorded requests"
+    );
+    let mut bad = wire;
+    bad["max_detour"] = serde_json::json!("long");
+    assert!(serde_json::from_value::<RouteStepRequest>(bad).is_err());
     Ok(())
 }

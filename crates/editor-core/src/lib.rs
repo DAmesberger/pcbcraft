@@ -820,6 +820,17 @@ impl Engine {
             {
                 Outcome::None
             }
+            Operation::Layout(layout::LayoutCommand::RouteStep { request }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let plan = layout::route_step(project, &request)?;
+                layout::validate(project)?;
+                Outcome::RouteStepped {
+                    end: plan.end,
+                    end_layer: plan.end_layer,
+                    reached: plan.reached,
+                    detour_factor: plan.detour_factor,
+                }
+            }
             Operation::Layout(command) => {
                 let part = command.places_part();
                 let before = candidate.project.library.components.len();
@@ -876,8 +887,13 @@ impl Engine {
             Operation::Board(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
                 match layout::outline::apply(project, command, evaluators.board)? {
-                    Some(constraint) => Outcome::EdgeConstraintAdded { constraint },
-                    None => Outcome::None,
+                    layout::outline::BoardApplied::Constraint(constraint) => {
+                        Outcome::EdgeConstraintAdded { constraint }
+                    }
+                    layout::outline::BoardApplied::Edited { created } => {
+                        Outcome::BoardEdited { created }
+                    }
+                    layout::outline::BoardApplied::Nothing => Outcome::None,
                 }
             }
             Operation::Fabrication(command) => {
@@ -1131,6 +1147,7 @@ impl Engine {
                 layout::length::report(&self.document.project),
             ))),
             Query::RoutePreview { request } => {
+                request.check()?;
                 let project = &self.document.project;
                 let index = layout::router::RouteIndex::of(project);
                 Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(

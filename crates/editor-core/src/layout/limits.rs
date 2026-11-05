@@ -146,7 +146,11 @@ impl<'a> BoardRules<'a> {
     /// how far apart the board checks look for a pair to compare.
     pub fn max_clearance(&self) -> f64 {
         let pairs = self.pairs.iter().flatten().copied();
-        let classes = self.project.net_classes.iter().filter_map(|c| c.clearance);
+        let classes = self
+            .project
+            .net_classes
+            .iter()
+            .flat_map(|c| c.clearance.into_iter().chain(c.fill_clearance));
         let class_pairs = self.project.class_clearances.iter().map(|p| p.mm);
         pairs
             .chain(classes)
@@ -199,12 +203,13 @@ impl<'a> BoardRules<'a> {
         }
         let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
         let (ca, cb) = (self.class_of(an), self.class_of(bn));
+        let fill = a == CopperObject::Fill || b == CopperObject::Fill;
         let mut best = base;
         for (object, class) in [(a, ca), (b, cb)] {
             if copper(object)
                 && let Some(mm) = class
                     .and_then(|c| self.project.class(c))
-                    .and_then(|c| c.clearance)
+                    .and_then(|c| c.clearance_for(fill))
             {
                 best = best.max(mm);
             }
@@ -266,6 +271,7 @@ mod tests {
             track_width: None,
             track_width_min: None,
             clearance,
+            fill_clearance: None,
             via_drill: None,
             via_diameter: None,
             diff_pair_width: None,
@@ -294,7 +300,13 @@ mod tests {
             },
             value: RuleValue::Length(0.4),
         });
-        project.rules.net_classes = vec![class(1, "Power", Some(0.3)), class(2, "Signal", None)];
+        project.rules.net_classes = vec![
+            class(1, "Power", Some(0.3)),
+            NetClass {
+                fill_clearance: Some(0.35),
+                ..class(2, "Signal", None)
+            },
+        ];
         project.rules.assignments = vec![
             NetClassAssignment {
                 net: 2,

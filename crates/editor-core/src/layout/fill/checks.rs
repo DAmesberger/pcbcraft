@@ -14,12 +14,12 @@ use super::FILL_CHORD_MM;
 use super::compute::{Ctx, pad_on};
 use super::geom::{self, Region, RegionIndex};
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{Point, polygons_overlap};
-use crate::ids::Id;
-use crate::model::fill::{FillJoin, IslandRemoval};
+use crate::geometry::{Point, polygon_contains, polygons_overlap};
+use crate::ids::{Id, PadId};
+use crate::model::fill::{FillJoin, FilledCopper, IslandRemoval};
 use crate::model::{Fill, Project};
 use crate::rules::{CopperObject, PadConnection};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How a fill is named in messages: its name, else its net and layer.
 pub fn fill_label(project: &Project, fill: &Fill) -> String {
@@ -139,6 +139,7 @@ pub fn findings(project: &Project) -> Vec<Finding> {
             .thermal
             .unwrap_or(ctx.rules.fill.thermal)
             .spoke_count;
+        let mut pad_rings: Option<Vec<Vec<Point>>> = None;
         for join in &copper.joins {
             let (object, connection, spokes, name) = match *join {
                 FillJoin::Pad {
@@ -167,6 +168,17 @@ pub fn findings(project: &Project) -> Vec<Finding> {
                 FillJoin::Track { .. } => continue,
             };
             if connection == PadConnection::Thermal && spokes < wanted {
+                // A via in a pad this fill joins reaches the fill through
+                // the pad, and the pad answers for its own connection.
+                if let FillJoin::Via { via, .. } = *join
+                    && let Some(v) = project.via(via)
+                    && pad_rings
+                        .get_or_insert_with(|| joined_pad_rings(&ctx, copper))
+                        .iter()
+                        .any(|ring| polygon_contains(ring, v.position))
+                {
+                    continue;
+                }
                 out.push(Finding::new(
                     "fill.thermal_starved",
                     format!("Starved thermal: {name} has {spokes} of {wanted} spokes in {label}"),
@@ -196,6 +208,25 @@ pub fn findings(project: &Project) -> Vec<Finding> {
     }
     keepouts(&ctx, &mut out);
     out
+}
+
+/// The outlines of the pads a fill's copper actually reaches.
+fn joined_pad_rings(ctx: &Ctx<'_>, copper: &FilledCopper) -> Vec<Vec<Point>> {
+    let joined: BTreeSet<(Id, PadId)> = copper
+        .joins
+        .iter()
+        .filter_map(|j| match *j {
+            FillJoin::Pad { instance, pad, .. } if j.joined_region().is_some() => {
+                Some((instance, pad))
+            }
+            _ => None,
+        })
+        .collect();
+    ctx.pads
+        .iter()
+        .filter(|p| joined.contains(&(p.instance, p.pad.id)))
+        .map(|p| p.outline().flatten(FILL_CHORD_MM))
+        .collect()
 }
 
 /// Other-net copper on a fill's layer that overlaps its stale copper.

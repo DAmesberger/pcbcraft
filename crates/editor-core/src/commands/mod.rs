@@ -147,6 +147,19 @@ pub enum Outcome {
     EdgeConstraintAdded {
         constraint: Id,
     },
+    /// The sketch points, curves and constraints a `board.edit` created
+    /// and kept, in the order its edits made them.
+    BoardEdited {
+        created: Vec<crate::library::footprint_source::SketchRef>,
+    },
+    /// Where a `layout.route_step` left the head, and how long its path
+    /// is against the straight line (`RoutePlan::detour_factor`).
+    RouteStepped {
+        end: crate::geometry::Point,
+        end_layer: crate::model::CopperLayer,
+        reached: bool,
+        detour_factor: f64,
+    },
     /// The label or power port `label.place` created.
     LabelPlaced {
         label: Id,

@@ -1014,7 +1014,8 @@ impl ProjectRules {
 
     /// The clearance between two objects of different nets: the largest
     /// of the effective object-pair value, each side's class clearance
-    /// (copper objects only) and the class-pair matrix entry.
+    /// (copper objects only; its fill clearance, when set, if either
+    /// object is a fill) and the class-pair matrix entry.
     pub fn clearance(&self, a: ClearanceSide, b: ClearanceSide) -> Resolved<f64> {
         let key = RuleKey::Clearance {
             a: a.object,
@@ -1025,12 +1026,13 @@ impl ProjectRules {
             source: self.source_of(key),
         };
         let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
+        let fill = a.object == CopperObject::Fill || b.object == CopperObject::Fill;
         for side in [a, b] {
             if !copper(side.object) {
                 continue;
             }
             if let Some(class) = side.class.and_then(|c| self.class(c))
-                && let Some(mm) = class.clearance
+                && let Some(mm) = class.clearance_for(fill)
                 && mm > best.value
             {
                 best = Resolved {
