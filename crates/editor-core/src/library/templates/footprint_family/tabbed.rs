@@ -69,17 +69,26 @@ impl TabbedTemplate {
         let excess = e(super::TEMPLATE_COURTYARD_EXCESS);
         if let PackageForm::Tabbed(f) = &package.form {
             let flange = f.tab.is_some_and(|t| t.flange.is_some());
+            // A datasheet land pattern in the form replaces each estimate.
+            let (pad_w, pad_l) = match f.lands.size {
+                Some(_) => (e("pkg_land_x"), e("pkg_land_y")),
+                None => (e("pkg_b + 0.2"), e("pkg_Lf + 0.6")),
+            };
+            let (tab_w, tab_l) = match f.lands.tab_size {
+                Some(_) => (e("pkg_tab_land_x"), e("pkg_tab_land_y")),
+                None if flange => (e("pkg_b2 + 0.2"), e("pkg_L2 + 0.4")),
+                None => (e("pkg_b2 + 0.2"), e("pkg_L2 + 0.6")),
+            };
             return Self {
                 pitch: e("pkg_e"),
-                row_span: e("pkg_E - pkg_Lf + 0.2"),
-                pad_l: e("pkg_Lf + 0.6"),
-                pad_w: e("pkg_b + 0.2"),
-                tab_l: if flange {
-                    e("pkg_L2 + 0.4")
-                } else {
-                    e("pkg_L2 + 0.6")
+                row_span: match f.lands.span {
+                    Some(_) => e("pkg_land_span"),
+                    None => e("pkg_E - pkg_Lf + 0.2"),
                 },
-                tab_w: e("pkg_b2 + 0.2"),
+                pad_l,
+                pad_w,
+                tab_l,
+                tab_w,
                 courtyard_excess: excess,
                 leads_per_side: f.leads_per_side,
                 lead_step: f.lead_step,

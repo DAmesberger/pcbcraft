@@ -518,6 +518,7 @@ impl BoardCopper {
         }
         issues.extend(super::via::findings(self, project));
         issues.extend(courtyard::findings(project));
+        issues.extend(super::body_outline::findings(project));
         issues
     }
 

@@ -671,6 +671,94 @@ fn copper_must_stay_out_of_cutouts_notches_and_their_clearance() -> Result<()> {
     Ok(())
 }
 
+/// The first placed part with a 10 × 4 body, its copper unchanged, at `x`
+/// mid-board in y.
+fn with_large_body(project: &mut Project, x: f64, rotation: f64) -> Result<String> {
+    let placement = project
+        .placements
+        .first_mut()
+        .ok_or_else(|| Error::NotFound("a placement".into()))?;
+    let id = placement.instance;
+    placement.position = [x, 25.0];
+    placement.rotation_deg = rotation;
+    let instance = project
+        .instance(id)
+        .ok_or_else(|| Error::NotFound("the instance".into()))?;
+    let designator = instance.designator.clone();
+    let physical = crate::instances::resolve(&project.library, instance)?
+        .physical
+        .ok_or_else(|| Error::NotFound("a footprint".into()))?;
+    let package = physical.package.id;
+    project.board_size = [50.0, 50.0];
+    for published in &mut project.library.packages {
+        if published.id == package {
+            published.definition.envelope = [10.0, 4.0, 1.0];
+        }
+    }
+    Ok(designator)
+}
+
+#[test]
+fn a_body_past_the_outline_is_a_warning_whatever_its_copper_does() -> Result<()> {
+    use crate::layout::body_outline::{BODY_OUTSIDE_OUTLINE, findings};
+    let (mut project, _, _) = board()?;
+    project.tracks.clear();
+    project.vias.clear();
+    // The body is x ±5 about the placement: at x = 6 it starts at 1.
+    let name = with_large_body(&mut project, 6.0, 0.0)?;
+    assert!(findings(&project).is_empty(), "{:#?}", findings(&project));
+    // At x = 4 it starts at −1, while the 0805's copper stays on the board.
+    with_large_body(&mut project, 4.0, 0.0)?;
+    let past = findings(&project);
+    assert_eq!(past.len(), 1, "{past:#?}");
+    assert_eq!(past[0].code, BODY_OUTSIDE_OUTLINE);
+    assert_eq!(past[0].blocks, None, "a warning, never a block");
+    assert_eq!(
+        past[0].message,
+        format!("The body of {name} extends past the board outline")
+    );
+    assert!(
+        !found(&project, "board.outside_outline")
+            .iter()
+            .any(|f| f.objects.contains(&past[0].objects[0])),
+        "the copper itself is inside"
+    );
+    // It is in the board checks with the other findings.
+    assert_eq!(found(&project, BODY_OUTSIDE_OUTLINE).len(), 1);
+    // Turned a quarter, the body is x ±2 about the placement: at 4 it starts
+    // at 2, clear.
+    with_large_body(&mut project, 4.0, 90.0)?;
+    assert!(findings(&project).is_empty());
+    // Touching the edge exactly is not past it: x = 5.
+    with_large_body(&mut project, 5.0, 0.0)?;
+    assert!(findings(&project).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_sketched_outline_judges_the_body_too_but_not_over_a_cutout() -> Result<()> {
+    use crate::layout::body_outline::findings;
+    let (mut project, _, _) = board()?;
+    let name = with_large_body(&mut project, 25.0, 0.0)?;
+    sketched(&mut project, false);
+    assert!(
+        !findings(&project).iter().any(|f| f.message.contains(&name)),
+        "mid-board: {:#?}",
+        findings(&project)
+    );
+    if let Some(p) = project.placements.first_mut() {
+        p.position = [-3.0, 25.0];
+    }
+    assert_eq!(
+        findings(&project)
+            .iter()
+            .filter(|f| f.message.contains(&name))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
 #[test]
 fn courtyard_clearance_is_reported_only_when_the_rule_asks() -> Result<()> {
     let (mut project, _, _) = board()?;

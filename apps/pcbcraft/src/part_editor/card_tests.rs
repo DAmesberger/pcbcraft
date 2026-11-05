@@ -115,6 +115,62 @@ impl Harness {
 
 const COMPONENT_SECTIONS: [&str; 5] = ["DEFINITION", "FIELDS", "PARTS", "LIBRARY", "PROVENANCE"];
 
+/// The Details card offers the built-in fields until the project has them;
+/// the click is one `library.import_standard_fields`.
+#[test]
+fn add_standard_fields_imports_them_once() -> TestResult {
+    let mut h = Harness::new()?;
+    let operation = h.click("Add standard fields")?;
+    assert!(
+        matches!(
+            operation,
+            Some(Operation::Library(LibraryCommand::ImportStandardFields {}))
+        ),
+        "{operation:?}"
+    );
+    let revision = h.engine.revision();
+    if let Some(operation) = operation {
+        h.engine.apply(revision, operation)?;
+    }
+    assert_eq!(h.engine.revision(), revision + 1, "one undo step");
+    assert!(!h.texts().iter().any(|t| t == "Add standard fields"));
+    Ok(())
+}
+
+/// The Symbol card's *Redraw as* lists the kinds that fit and sends one
+/// `library.restyle_symbol` for the drawn symbol.
+#[test]
+fn redraw_as_sends_one_restyle_of_the_open_symbol() -> TestResult {
+    let mut h = Harness::new()?;
+    h.editor.on_tab("symbol");
+    assert!(h.texts().iter().any(|t| t == "Redraw as"));
+    h.click("Choose a kind")?;
+    let symbol = h.set()?.ids.symbol;
+    let pins = h.set()?.component.terminals.len();
+    let operation = h.click("IC box")?;
+    let Some(Operation::Library(LibraryCommand::RestyleSymbol {
+        draft,
+        kind,
+        terminals,
+    })) = operation.clone()
+    else {
+        return Err(format!("{operation:?}").into());
+    };
+    assert_eq!(draft, symbol);
+    assert_eq!(
+        kind,
+        pcbcraft_core::library::symbol_style::SymbolKind::IcBox
+    );
+    assert_eq!(terminals, None);
+    if let Some(operation) = operation {
+        h.engine.apply(h.engine.revision(), operation)?;
+    }
+    h.editor.commit(&h.ctx, &h.engine);
+    let drawn: usize = h.set()?.symbol.units.iter().map(|u| u.pins.len()).sum();
+    assert_eq!(drawn, pins, "the working copy reloads the redrawn symbol");
+    Ok(())
+}
+
 /// Details is the first tab and the one a component opens on; it holds
 /// the component-level sections in order, and no geometry tab repeats any
 /// of them.

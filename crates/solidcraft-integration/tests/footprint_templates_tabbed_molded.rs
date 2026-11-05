@@ -92,6 +92,7 @@ fn sot23_3() -> TabbedForm {
         foot_length: 0.4,
         tab: None,
         lead_step: [2, 1],
+        lands: Default::default(),
     }
 }
 
@@ -113,6 +114,7 @@ fn sot223() -> TabbedForm {
             flange: None,
         }),
         lead_step: [1, 1],
+        lands: Default::default(),
     }
 }
 
@@ -134,6 +136,7 @@ fn dpak() -> TabbedForm {
             flange: Some(1.0),
         }),
         lead_step: [2, 1],
+        lands: Default::default(),
     }
 }
 
@@ -184,6 +187,28 @@ fn sot23_5_lands_skip_the_middle_of_the_top_row_and_follow_the_pitch() -> Result
     )?;
     check(&def, "3", [1.0, -y], [0.6, 1.0])?;
     check(&def, "5", [-1.0, y], [0.6, 1.0])?;
+    Ok(())
+}
+
+/// The datasheet's lands go through the same path as the estimates: the
+/// template's defaults name the form's values, and the pads solve to them.
+#[test]
+fn a_datasheet_land_pattern_drives_the_template() -> Result<()> {
+    let mut f = sot23_3();
+    f.lands.size = Some([0.6, 1.3]);
+    f.lands.span = Some(2.1);
+    let pkg = tabbed(f);
+    let def = built(&pkg, TemplateKind::Tabbed)?;
+    check(&def, "1", [-0.95, -1.05], [0.6, 1.3])?;
+    check(&def, "2", [0.95, -1.05], [0.6, 1.3])?;
+    check(&def, "3", [0.0, 1.05], [0.6, 1.3])?;
+
+    let mut s = sot223();
+    s.lands.tab_size = Some([3.5, 2.0]);
+    let def = built(&tabbed(s), TemplateKind::Tabbed)?;
+    // The rows keep their estimates; the tab land takes the datasheet's.
+    check(&def, "1", [-2.3, -(7.0 - 0.9 + 0.2) / 2.0], [0.9, 1.5])?;
+    check(&def, "4", [0.0, 3.15], [3.5, 2.0])?;
     Ok(())
 }
 
