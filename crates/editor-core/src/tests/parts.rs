@@ -699,7 +699,11 @@ fn bom_and_resolve_groups_follow_requirements_footprint_and_parts() -> Result<()
     let group = &report.groups[0];
     assert_eq!(group.requirements.len(), 3);
     assert_eq!(
-        group.query, "kind:part Resistance:10kΩ Rated:16V Tolerance:±1%",
+        group.query,
+        format!(
+            "kind:part implements:{}/1 Resistance:10kΩ Rated:16V Tolerance:±1%",
+            s.fixture.component.0
+        ),
         "keys resolve to one field each; values are single tokens"
     );
     // The query finds exactly the Part that satisfies the group.

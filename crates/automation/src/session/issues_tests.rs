@@ -61,10 +61,14 @@ fn mcp_issues_of_the_demo_match_the_golden_file() -> Fallible<()> {
         }))
         .ok_or("no reply")?;
     assert_eq!(reply["result"]["isError"], false, "{reply}");
-    let content = &reply["result"]["structuredContent"];
+    let content: Value = serde_json::from_str(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .ok_or("no text")?,
+    )?;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
     let expected: Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    assert_eq!(content, &expected);
+    assert_eq!(content, expected);
     Ok(())
 }
 

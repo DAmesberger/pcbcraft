@@ -222,19 +222,29 @@ pub enum BoardCommand {
     DeleteConstraint { id: Id },
 }
 
-/// Apply a board command to a candidate; returns the constraint id
-/// `board.constrain` allocated. Constrained targets are placed by
+/// What a board command produced for its caller.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum BoardApplied {
+    #[default]
+    Nothing,
+    /// The constraint `board.constrain` allocated.
+    Constraint(Id),
+    /// The sketch entities a `board.edit` created and kept.
+    Edited { created: Vec<SketchRef> },
+}
+
+/// Apply a board command to a candidate. Constrained targets are placed by
 /// [`follow`], which the engine runs after every operation.
 pub fn apply(
     project: &mut Project,
     command: BoardCommand,
     evaluator: Option<&dyn BoardShapeEvaluator>,
-) -> Result<Option<Id>> {
+) -> Result<BoardApplied> {
     match command {
         BoardCommand::SetRectangle { size } => {
             project.board_shape = BoardShape::Rectangle;
             super::apply_staged(project, super::LayoutCommand::SetBoardSize { size })?;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::StartSketch => {
             let evaluator = needs(evaluator)?;
@@ -245,7 +255,7 @@ pub fn apply(
             }
             let sketch = evaluator.rectangle(project.board_size)?;
             commit(project, sketch, evaluator)?;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::Edit { edits } => {
             let evaluator = needs(evaluator)?;
@@ -260,13 +270,17 @@ pub fn apply(
                 ));
             };
             let mut sketch = (**sketch).clone();
+            let mut created = Vec::new();
             let mut deleted = BTreeSet::new();
             for edit in edits {
-                deleted.extend(edit_one(&mut sketch, edit, evaluator)?);
+                let changed = edit_one(&mut sketch, edit, evaluator)?;
+                created.extend(changed.created);
+                deleted.extend(changed.deleted);
             }
             retire(&mut sketch, &deleted)?;
             commit(project, sketch, evaluator)?;
-            Ok(None)
+            created.retain(|c| !deleted.contains(c));
+            Ok(BoardApplied::Edited { created })
         }
         BoardCommand::Constrain { constraint } => {
             check_spec(project, &constraint)?;
@@ -288,7 +302,7 @@ pub fn apply(
             project
                 .edge_constraints
                 .push(EdgeConstraint::from_spec(id, constraint));
-            Ok(Some(id))
+            Ok(BoardApplied::Constraint(id))
         }
         BoardCommand::EditConstraint { constraint } => {
             check_spec(project, &spec_of(&constraint))?;
@@ -307,7 +321,7 @@ pub fn apply(
                 .find(|c| c.id == constraint.id)
                 .ok_or_else(|| missing(constraint.id))?;
             *slot = constraint;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::DeleteConstraint { id } => {
             let before = project.edge_constraints.len();
@@ -315,7 +329,7 @@ pub fn apply(
             if project.edge_constraints.len() == before {
                 return Err(missing(id));
             }
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
     }
 }
@@ -459,18 +473,37 @@ fn add_cutout(
     Ok(())
 }
 
+/// The sketch entities one edit created and deleted.
+#[derive(Default)]
+struct SketchChanges {
+    created: Vec<SketchRef>,
+    deleted: Vec<SketchRef>,
+}
+
+impl SketchChanges {
+    fn of(outcome: SketchOutcome) -> (SketchBlob, Self) {
+        (
+            outcome.sketch,
+            Self {
+                created: outcome.created,
+                deleted: outcome.deleted,
+            },
+        )
+    }
+}
+
 /// Apply one edit to the candidate sketch; returns the sketch entities it
-/// deleted.
+/// created and deleted.
 fn edit_one(
     sketch: &mut BoardSketch,
     edit: BoardEdit,
     evaluator: &dyn BoardShapeEvaluator,
-) -> Result<Vec<SketchRef>> {
+) -> Result<SketchChanges> {
     match edit {
         BoardEdit::Sketch { edit } => {
-            let outcome = evaluator.apply_sketch(&sketch.sketch, &edit)?;
-            sketch.sketch = outcome.sketch;
-            return Ok(outcome.deleted);
+            let (blob, changes) = SketchChanges::of(evaluator.apply_sketch(&sketch.sketch, &edit)?);
+            sketch.sketch = blob;
+            return Ok(changes);
         }
         BoardEdit::SetParameter { param } => {
             if !param.name.valid() || param.name.is_package() || !param.expr.valid() {
@@ -584,7 +617,8 @@ fn edit_one(
         }
         BoardEdit::Fillet { corners, radius } => {
             let drawn = evaluator.fillet(sketch, &corners, &radius)?;
-            sketch.sketch = drawn.outcome.sketch;
+            let (blob, changes) = SketchChanges::of(drawn.outcome);
+            sketch.sketch = blob;
             for (arc, beside) in drawn.arcs {
                 if sketch.outline.contains(&beside) {
                     sketch.outline.push(arc);
@@ -596,7 +630,7 @@ fn edit_one(
                     c.curves.push(arc);
                 }
             }
-            return Ok(drawn.outcome.deleted);
+            return Ok(changes);
         }
         BoardEdit::AddSlot {
             a,
@@ -608,12 +642,13 @@ fn edit_one(
                 return Err(Error::Invalid("board.slot: slot ends out of range".into()));
             }
             let drawn = evaluator.slot(sketch, a, b, &width)?;
-            sketch.sketch = drawn.outcome.sketch;
+            let (blob, changes) = SketchChanges::of(drawn.outcome);
+            sketch.sketch = blob;
             add_cutout(sketch, CutoutKind::Slot { plated }, drawn.curves)?;
-            return Ok(drawn.outcome.deleted);
+            return Ok(changes);
         }
     }
-    Ok(Vec::new())
+    Ok(SketchChanges::default())
 }
 
 /// Roles that name deleted sketch entities: a cutout, mounting hole or

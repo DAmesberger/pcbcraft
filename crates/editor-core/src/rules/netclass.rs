@@ -46,6 +46,12 @@ pub struct NetClassSpec {
     /// Least gap from this class's copper to any other net's copper.
     #[serde(default)]
     pub clearance: Option<f64>,
+    /// Least gap between this class's copper and another net's fill, in
+    /// place of `clearance`; unset, `clearance` applies to fills too.
+    /// Tracks and pads never read it. The effective rule's fill clearances
+    /// remain the floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_clearance: Option<f64>,
     #[serde(default)]
     pub via_drill: Option<f64>,
     #[serde(default)]
@@ -77,6 +83,8 @@ pub struct NetClass {
     pub track_width_min: Option<f64>,
     #[serde(default)]
     pub clearance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_clearance: Option<f64>,
     #[serde(default)]
     pub via_drill: Option<f64>,
     #[serde(default)]
@@ -99,12 +107,23 @@ impl NetClass {
             track_width: s.track_width,
             track_width_min: s.track_width_min,
             clearance: s.clearance,
+            fill_clearance: s.fill_clearance,
             via_drill: s.via_drill,
             via_diameter: s.via_diameter,
             diff_pair_width: s.diff_pair_width,
             diff_pair_gap: s.diff_pair_gap,
             fill_connection: s.fill_connection,
             signal: s.signal,
+        }
+    }
+
+    /// This class's own clearance for a pair of objects: its fill
+    /// clearance, when set, if either object is a fill.
+    pub fn clearance_for(&self, against_fill: bool) -> Option<f64> {
+        if against_fill {
+            self.fill_clearance.or(self.clearance)
+        } else {
+            self.clearance
         }
     }
 }
@@ -187,6 +206,7 @@ fn class_problem(c: &NetClass) -> Option<String> {
     if !(mm_ok(c.track_width, true)
         && mm_ok(c.track_width_min, true)
         && mm_ok(c.clearance, false)
+        && mm_ok(c.fill_clearance, false)
         && mm_ok(c.via_drill, true)
         && mm_ok(c.via_diameter, true)
         && mm_ok(c.diff_pair_width, true)
@@ -424,6 +444,8 @@ pub struct NetClassRow {
     pub via: Resolved<(f64, f64)>,
     /// Track-to-track clearance to an unclassed net.
     pub clearance: Resolved<f64>,
+    /// This class's tracks to an unclassed net's fill.
+    pub fill_clearance: Resolved<f64>,
 }
 
 /// `net_class.list`: every class with its resolved values, every net with
@@ -477,6 +499,13 @@ pub fn report<'a>(
             track_width_min: rules.track_width_min(Some(c.id)),
             via: rules.via_size(Some(c.id)),
             clearance: rules.clearance(side(Some(c.id)), side(None)),
+            fill_clearance: rules.clearance(
+                side(Some(c.id)),
+                ClearanceSide {
+                    object: CopperObject::Fill,
+                    class: None,
+                },
+            ),
         })
         .collect();
     NetClassReport {

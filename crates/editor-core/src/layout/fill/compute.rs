@@ -8,7 +8,8 @@
 //!    mounting holes, keepouts that forbid fills on `L`, other-net and
 //!    unconnected pads, vias and tracks on `L` grown by the effective
 //!    clearance (object pair, net classes, class pair and the fill rule's
-//!    own gap, whichever is largest), every drilled hole grown by the hole
+//!    own gap, whichever is largest; a class's fill clearance stands in
+//!    for its clearance here), every drilled hole grown by the hole
 //!    clearance, and the copper of higher-ranking fills of other nets.
 //!    Same-net pads and vias get their connection style: solid (nothing
 //!    cleared), thermal (a relief gap crossed by spokes) or none (cleared
@@ -201,6 +202,7 @@ impl<'a> Ctx<'a> {
         }
         for c in &r.net_classes {
             most = most.max(c.clearance.unwrap_or(0.0));
+            most = most.max(c.fill_clearance.unwrap_or(0.0));
         }
         for p in &r.class_clearances {
             most = most.max(p.mm);

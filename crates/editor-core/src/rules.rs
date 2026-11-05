@@ -288,9 +288,13 @@ pub struct DesignRules {
 }
 
 impl Default for DesignRules {
-    /// Exactly today's prototype values (estimated, not a fabricator
-    /// qualification): 0.2 mm copper clearance, copper anywhere inside the
-    /// board, 0.25 mm drill to copper and hole to hole, 0.1 mm annular
+    /// The prototype values (estimated, not a fabricator qualification),
+    /// which equal the limits from before rules were configurable except
+    /// where a change was chosen: 0.2 mm copper clearance, copper at least
+    /// 0.3 mm from the board edge (it was unchecked, which let fill copper
+    /// reach 5 µm from the edge and still pass the production check, so a
+    /// new project could not be fabricated as shipped), 0.25 mm drill to
+    /// copper and hole to hole, 0.1 mm annular
     /// ring and drill, 0.05 mm mask expansion, 0.1 mm mask web and silk
     /// width, 0.6 mm silk text, 0.3/0.6 mm vias, tented, and the land
     /// estimators' margins (`library::samples`, `package_form::tht`).
@@ -299,7 +303,7 @@ impl Default for DesignRules {
             copper: CopperRules {
                 track_width_min: 0.05,
                 track_width_default: 0.3,
-                clearance: ClearanceMatrix::uniform(0.2, 0.25, 0.25, 0.0),
+                clearance: ClearanceMatrix::uniform(0.2, 0.25, 0.25, 0.3),
             },
             holes: HoleRules {
                 drill_min: 0.1,
@@ -1014,7 +1018,8 @@ impl ProjectRules {
 
     /// The clearance between two objects of different nets: the largest
     /// of the effective object-pair value, each side's class clearance
-    /// (copper objects only) and the class-pair matrix entry.
+    /// (copper objects only; its fill clearance, when set, if either
+    /// object is a fill) and the class-pair matrix entry.
     pub fn clearance(&self, a: ClearanceSide, b: ClearanceSide) -> Resolved<f64> {
         let key = RuleKey::Clearance {
             a: a.object,
@@ -1025,12 +1030,13 @@ impl ProjectRules {
             source: self.source_of(key),
         };
         let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
+        let fill = a.object == CopperObject::Fill || b.object == CopperObject::Fill;
         for side in [a, b] {
             if !copper(side.object) {
                 continue;
             }
             if let Some(class) = side.class.and_then(|c| self.class(c))
-                && let Some(mm) = class.clearance
+                && let Some(mm) = class.clearance_for(fill)
                 && mm > best.value
             {
                 best = Resolved {

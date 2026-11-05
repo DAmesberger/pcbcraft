@@ -623,6 +623,155 @@ fn bundle_validation_refuses_dangling_noncanonical_and_unpacked_content() -> Res
     Ok(())
 }
 
+/// `library.import_from_project`'s bundle: deterministic, and in the copy
+/// every reference names exactly the copy of the revision the source names,
+/// as read back from the origins (ids derived independently of the import).
+#[test]
+fn a_project_bundle_keeps_every_pin_exact_and_packs_its_assets() -> Result<()> {
+    for seed in [3, 5, 7, 11, 13] {
+        let library = generated(seed)?;
+        for part in library.latest_parts() {
+            let root = DefinitionRef {
+                kind: DefinitionKind::Part,
+                id: part.id,
+                revision: part.revision,
+            };
+            let one = import::project_bundle(&library, root, "source")?;
+            assert_eq!(one, import::project_bundle(&library, root, "source")?);
+            assert_eq!(one.library, import::PROJECT_FILES);
+            let members = bundle::closure(&library, root)?;
+            assert_eq!(one.records.len(), members.len());
+
+            let mut target = Library::default();
+            import::import(&mut target, &one, &mut counter(100_000))?;
+            bundle::validate_snapshot(&target)?;
+            assert!(bundle::asset_findings(&target).is_empty());
+            let copy_of = |kind, id, revision| -> Result<DefinitionRef> {
+                let lineage = import::project_lineage_id(&library, kind, id)?;
+                target
+                    .origins
+                    .iter()
+                    .find(|o| o.origin.lineage == lineage && o.origin.revision == revision)
+                    .map(|o| o.local)
+                    .ok_or_else(|| Error::NotFound(format!("no copy of {id} {revision}")))
+            };
+            for member in &members {
+                let local = copy_of(member.kind, member.id, member.revision)?;
+                let (meta, ours) = target
+                    .definition(local)
+                    .ok_or_else(|| Error::NotFound("the copy".into()))?;
+                let (held, theirs) = library
+                    .definition(*member)
+                    .ok_or_else(|| Error::NotFound("the source".into()))?;
+                assert_eq!(meta, held);
+                let (ours, theirs) = (references(&ours)?, references(&theirs)?);
+                assert_eq!(ours.len(), theirs.len());
+                for (our, their) in ours.iter().zip(&theirs) {
+                    match (our, their) {
+                        (RefSite::Exact { target: a }, RefSite::Exact { target: b }) => {
+                            assert_eq!(*a, copy_of(b.kind, b.id, b.revision)?);
+                        }
+                        (
+                            RefSite::Lineage { kind, id },
+                            RefSite::Lineage {
+                                kind: k,
+                                id: source,
+                            },
+                        ) => {
+                            assert_eq!(kind, k);
+                            let lineage = import::project_lineage_id(&library, *k, *source)?;
+                            let copy = target
+                                .origins
+                                .iter()
+                                .find(|o| o.origin.lineage == lineage)
+                                .map(|o| o.local.id);
+                            assert_eq!(Some(*id), copy);
+                        }
+                        other => {
+                            return Err(Error::Invalid(format!(
+                                "reference sites differ: {other:?}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_project_lineage_id_depends_on_its_first_revision_and_id_only() -> Result<()> {
+    let library = generated(5)?;
+    let component = library
+        .latest_components()
+        .first()
+        .map(|c| c.id)
+        .ok_or_else(|| Error::NotFound("a component".into()))?;
+    let kind = DefinitionKind::Component;
+    let id = import::project_lineage_id(&library, kind, component)?;
+
+    // Other content of the project, or a later revision, changes nothing.
+    let mut other = library.clone();
+    other.parts.clear();
+    assert_eq!(id, import::project_lineage_id(&other, kind, component)?);
+
+    // The first revision is the identity: another one is another lineage.
+    let mut edited = library.clone();
+    if let Some(first) = edited
+        .components
+        .iter_mut()
+        .find(|c| c.id == component && c.revision == Revision::FIRST)
+    {
+        first.meta.description = "Another part altogether".into();
+    }
+    assert_ne!(id, import::project_lineage_id(&edited, kind, component)?);
+
+    // A kind or id the library does not hold is not found.
+    let missing = import::project_lineage_id(&library, kind, DefinitionId(u64::MAX));
+    assert_eq!(missing.err().map(|e| e.code()), Some("not_found"));
+    Ok(())
+}
+
+#[test]
+fn a_project_bundle_refuses_what_may_not_travel() -> Result<()> {
+    let library = generated(3)?;
+    let part = library
+        .latest_parts()
+        .first()
+        .map(|p| DefinitionRef {
+            kind: DefinitionKind::Part,
+            id: p.id,
+            revision: p.revision,
+        })
+        .ok_or_else(|| Error::NotFound("a part".into()))?;
+
+    // A dangling root.
+    let missing = DefinitionRef {
+        revision: Revision(77),
+        ..part
+    };
+    let error = import::project_bundle(&library, missing, "source").err();
+    assert_eq!(error.map(|e| e.code()), Some("not_found"));
+
+    // A symbol alone: its owner is not in the closure.
+    let symbol = library
+        .symbols
+        .first()
+        .map(|s| DefinitionRef {
+            kind: DefinitionKind::Symbol,
+            id: s.id,
+            revision: s.revision,
+        })
+        .ok_or_else(|| Error::NotFound("a symbol".into()))?;
+    let error = import::project_bundle(&library, symbol, "source").err();
+    assert!(
+        error.is_some_and(|e| e.to_string().contains("import the item that owns it")),
+        "owner refused"
+    );
+    Ok(())
+}
+
 #[test]
 fn packed_assets_travel_by_hash_and_unpacked_ones_are_reported() -> Result<()> {
     let mut library = generated(11)?;

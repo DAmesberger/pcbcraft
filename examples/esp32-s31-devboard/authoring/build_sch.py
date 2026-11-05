@@ -156,10 +156,6 @@ def build(s, L):
     for g in groups["result"]["groups"]:
         hits = s.query("library.search", {"query": g["query"], "limit": 100})["result"]["results"]
         parts = [h["entry"] for h in hits if h["entry"]["kind"] == "part"]
-        # The group query names fields only: a component without fields gets
-        # "kind:part", which matches every Part. Keep the ones for this component.
-        out.setdefault("unfiltered_hits", {})[",".join(g["designators"])] = [h["mpn"] for h in parts]
-        parts = [h for h in parts if h["implements"]["id"] == g["component"]["id"]]
         out["groups"].append({"query": g["query"], "designators": g["designators"], "hits": [h["mpn"] for h in parts]})
         if parts:
             ref = {"id": parts[0]["lineage"], "revision": parts[0]["revision"]}

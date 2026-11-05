@@ -551,7 +551,10 @@ fn refusals_name_objects_by_their_names() -> Fallible<()> {
         engine
             .apply(
                 engine.revision() + 5,
-                Operation::Library(crate::LibraryCommand::Publish { drafts: f.all() }),
+                Operation::Library(crate::LibraryCommand::Publish {
+                    drafts: f.all(),
+                    close: false,
+                }),
             )
             .err()
             .ok_or("stale apply")?,

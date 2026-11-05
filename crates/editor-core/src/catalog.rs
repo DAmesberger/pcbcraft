@@ -1071,6 +1071,18 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                 }
                 None
             }
+            Term::Implements {
+                component,
+                revision,
+            } => {
+                let pinned = entry.implements.filter(|_| entry.source == Source::Project);
+                if !pinned
+                    .is_some_and(|c| c.id == *component && revision.is_none_or(|r| c.revision == r))
+                {
+                    return None;
+                }
+                None
+            }
             Term::Pins { .. } | Term::Pitch { .. } | Term::Body { .. } => {
                 if !entry.shapes.iter().any(|s| s.meets(term)) {
                     return None;

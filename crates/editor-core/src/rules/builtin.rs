@@ -27,8 +27,9 @@ fn estimated(id: &str, name: &str, notes: &str, rules: DesignRules) -> RuleProfi
     }
 }
 
-/// Pcbcraft's prototype defaults: exactly the values the checks used
-/// before rules were configurable ([`DesignRules::default`]).
+/// Pcbcraft's prototype defaults ([`DesignRules::default`]): the values the
+/// checks used before rules were configurable, with copper now kept 0.3 mm
+/// from the board edge, the same as the coarsest class.
 pub fn default_profile() -> RuleProfile {
     estimated(
         DEFAULT_PROFILE_ID,
@@ -144,7 +145,7 @@ pub fn hdi() -> RuleProfile {
             ring: 0.1,
             via_drill: 0.15,
             hole_gap: 0.15,
-            edge: 0.2,
+            edge: 0.25,
             aspect: 12.0,
             fill_clearance: 0.15,
             mask_expansion: 0.035,

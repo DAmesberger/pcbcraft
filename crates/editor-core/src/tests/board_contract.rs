@@ -33,7 +33,9 @@ fn default_rules_equal_the_former_hardcoded_limits() {
             assert_eq!(c.get(a, b), layout::CLEARANCE_MM);
         }
         assert_eq!(c.get(a, CopperObject::Hole), layout::DRILL_TO_COPPER_MM);
-        assert_eq!(c.get(a, CopperObject::BoardEdge), 0.0);
+        // The one limit that moved on purpose: 0 let fill copper reach
+        // 5 µm from the edge and pass (docs/e2e-esp32-devboard.md, gap 6).
+        assert_eq!(c.get(a, CopperObject::BoardEdge), 0.3);
     }
     assert_eq!(
         c.get(CopperObject::Hole, CopperObject::Hole),

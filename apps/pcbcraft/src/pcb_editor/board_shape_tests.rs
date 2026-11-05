@@ -723,6 +723,58 @@ fn the_board_card_edits_a_board_parameter() -> Fallible {
 }
 
 #[test]
+fn the_placement_card_moves_and_resets_the_designator_in_one_step_each() -> Fallible {
+    use pcbcraft_core::InstanceCommand;
+    let mut engine = Engine::demo()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    let id = engine
+        .project()
+        .placements
+        .first()
+        .map(|p| p.instance)
+        .ok_or("the demo has no placement")?;
+    editor.set_selection(Some(id), None, None);
+    let (output, op) = slot(&mut editor, &engine, &ctx, vec![]);
+    assert!(op.is_none());
+    let shown = painted(&output);
+    assert!(shown.iter().any(|(t, _)| t == "DESIGNATOR"), "{shown:?}");
+    assert!(
+        !shown.iter().any(|(t, _)| t == "Reset"),
+        "nothing moved yet"
+    );
+    // A typed offset commits once, as one command.
+    editor.text_offset = [1.5, -0.5];
+    let (_, op) = slot(&mut editor, &engine, &ctx, vec![]);
+    let Some(op @ Operation::Instance(InstanceCommand::SetTextPlacement { .. })) = op else {
+        return Err(format!("no text placement: {op:?}").into());
+    };
+    let (_, again) = slot(&mut editor, &engine, &ctx, vec![]);
+    assert!(again.is_none(), "sent twice: {again:?}");
+    let revision = engine.revision();
+    engine.apply(revision, op)?;
+    assert_eq!(engine.revision(), revision + 1);
+    let stored = |engine: &Engine| {
+        engine
+            .project()
+            .instance(id)
+            .map(|i| i.text_placements.values().next().map(|p| p.offset))
+    };
+    assert_eq!(stored(&engine), Some(Some([1.5, -0.5])));
+    // The card shows the stored value and offers Reset.
+    let op = click_text(&mut editor, &engine, &ctx, "Reset")?.ok_or("no reset")?;
+    engine.apply(engine.revision(), op)?;
+    assert_eq!(stored(&engine), Some(None));
+    assert_eq!(engine.revision(), revision + 2);
+    // Undo brings the moved text back, and the card follows the document.
+    engine.undo()?;
+    slot(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(editor.text_offset, [1.5, -0.5]);
+    Ok(())
+}
+
+#[test]
 fn the_placement_card_constrains_a_part_to_its_nearest_edge_in_place() -> Fallible {
     let mut engine = Engine::demo()?;
     let ctx = egui::Context::default();

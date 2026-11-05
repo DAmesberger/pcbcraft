@@ -560,12 +560,17 @@ fn new_library_commands_fail_atomically() -> Result<()> {
         },
         LibraryCommand::Edit { edits: vec![] },
         LibraryCommand::DiscardDraft { id: unknown },
-        LibraryCommand::Publish { drafts: vec![] },
+        LibraryCommand::Publish {
+            drafts: vec![],
+            close: false,
+        },
         LibraryCommand::Publish {
             drafts: vec![unknown],
+            close: false,
         },
         LibraryCommand::Publish {
             drafts: vec![f.package, f.package],
+            close: false,
         },
         LibraryCommand::GeneratePads {
             draft: unknown,
@@ -1404,6 +1409,7 @@ fn layout_validate_bounds_placed_footprint_graphic_vertices() -> Result<()> {
         let id = project.next_id;
         project.next_id += 1;
         project.instances.push(crate::model::ComponentInstance {
+            text_placements: Default::default(),
             id,
             ..instance.clone()
         });

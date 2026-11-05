@@ -282,6 +282,23 @@ impl PlacePalette {
         &self.query
     }
 
+    /// The text searched. Assign mode reads a group's `implements:id/rev`
+    /// as the whole lineage, so a Part for a newer revision stays listed:
+    /// its row is flagged and offers the reviewed update-and-assign.
+    fn search_text(&self) -> String {
+        if !matches!(self.mode, Mode::Assign { .. }) {
+            return self.query.clone();
+        }
+        self.query
+            .split(' ')
+            .map(|term| match term.split_once('/') {
+                Some((lineage, _)) if lineage.starts_with("implements:") => lineage,
+                _ => term,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn reopen(&mut self, query: String) {
         self.open = true;
         self.query = query;
@@ -376,7 +393,7 @@ impl PlacePalette {
         let kept = self.hits().get(self.highlighted).map(|h| h.entry.key());
         let report = match engine.query_with(
             Query::Search {
-                query: self.query.clone(),
+                query: self.search_text(),
                 limit: Some(ROWS),
                 include_drafts: false,
             },
@@ -1854,6 +1871,43 @@ mod tests {
         assert_eq!(component, r1.component.id);
         assert!(!values.is_empty());
         assert!(!palette.is_open());
+        Ok(())
+    }
+
+    /// A group's query names its exact component revision, and assign mode
+    /// still lists that lineage's Part for another revision, so the flagged
+    /// row and its reviewed update stay reachable from Choose…. Place mode
+    /// searches the text as typed.
+    #[test]
+    fn assign_mode_searches_a_groups_implements_as_its_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
+        let body = engine.project().library.part(part).ok_or("the Part")?;
+        let lineage = body.definition.component.id.0;
+        let exact = format!("kind:part implements:{lineage}/99 \"two words\"");
+        let mut palette = PlacePalette::default();
+        palette.open_assign(exact.clone(), vec![]);
+        assert_eq!(palette.query(), exact, "the group's text stays as written");
+        assert_eq!(
+            palette.search_text(),
+            format!("kind:part implements:{lineage} \"two words\"")
+        );
+        let search = |query: String| match engine.query(Query::Search {
+            query,
+            limit: None,
+            include_drafts: false,
+        }) {
+            Ok(QueryResult::Search(report)) => Ok(report.results.len()),
+            other => Err(format!("{other:?}")),
+        };
+        let text = format!("kind:part implements:{lineage}/99");
+        assert_eq!(search(text.clone())?, 0, "no Part pins that revision");
+        palette.open_assign(text.clone(), vec![]);
+        assert_eq!(search(palette.search_text())?, 1, "listed, then flagged");
+        palette.open();
+        palette.query = text.clone();
+        assert_eq!(palette.search_text(), text, "Place mode is literal");
         Ok(())
     }
 

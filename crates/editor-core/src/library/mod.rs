@@ -60,7 +60,9 @@ pub use part::{
     Basis, DistributorOffer, MAX_OFFERS, MAX_REFERENCES, MAX_URL, Origin, PartDefinition,
     Provenance, Reference, ReferenceKind,
 };
-pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
+pub use publish::{
+    MAX_PUBLISH_SET, candidate, pending_revision, publish, publish_findings, publish_set, stageable,
+};
 pub use symbol::{SymbolDefinition, Unit};
 pub use templates::catalog::PackageRowDefinition;
 

@@ -9,7 +9,7 @@
 //! unit set.
 use crate::diagnostics::{Error, Result};
 use crate::fields::{self, FieldValue, QuantityKind, ValueType};
-use crate::ids::{ChoiceId, DefinitionId};
+use crate::ids::{ChoiceId, DefinitionId, Revision};
 use crate::library::Library;
 use crate::quantity::{self, SI_PREFIXES, UnitSet};
 use schemars::JsonSchema;
@@ -298,6 +298,13 @@ pub enum Term {
     /// `mpn:` — a case-folded text match on the manufacturer part number
     /// only.
     Mpn { text: String },
+    /// `implements:12/3` or `implements:12`: project Parts pinning that
+    /// exact component revision, or any revision of that lineage. Identity,
+    /// never a name; a folder entry's ids are catalog-local and never match.
+    Implements {
+        component: DefinitionId,
+        revision: Option<Revision>,
+    },
     /// `pins:14`, `pins>=8`: the package's lead count (an exposed pad is
     /// not a lead).
     Pins { op: Op, count: u32 },
@@ -368,6 +375,13 @@ impl Term {
             Self::Components => "components".into(),
             Self::Parts => "Parts".into(),
             Self::Mpn { text } => format!("MPN: {text}"),
+            Self::Implements {
+                component,
+                revision,
+            } => match revision {
+                Some(revision) => format!("implements {component} {revision}"),
+                None => format!("implements {component}"),
+            },
             Self::Pins { op, count } => format!("pins {} {count}", op_text(*op)),
             Self::Pitch { op, mm } => format!("pitch {} {} mm", op_text(*op), short(*mm)),
             Self::Body { size } => format!(
@@ -430,7 +444,19 @@ pub fn fold(text: &str) -> String {
 /// Reserved filter keys, checked before field names and units: a field
 /// named like one of them is reached through a shorter prefix (`kin:`).
 pub const RESERVED: &[&str] = &[
-    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life", "pins", "pitch", "body",
+    "pkg",
+    "has",
+    "missing",
+    "src",
+    "kind",
+    "tag",
+    "shelf",
+    "mpn",
+    "life",
+    "pins",
+    "pitch",
+    "body",
+    "implements",
 ];
 /// Reserved keys that name data arriving with library labels and
 /// lifecycle records.
@@ -629,6 +655,14 @@ fn predicate(
         "mpn" => {
             filter_op()?;
             return Ok(Term::Mpn { text: fold(value) });
+        }
+        "implements" => {
+            filter_op()?;
+            return implements_term(value).ok_or_else(|| {
+                format!(
+                    "implements: takes a component id, or id/revision, such as 12 or 12/3 (is ‘{value}’)"
+                )
+            });
         }
         reserved if LATER.contains(&reserved) => {
             return Err(format!(
@@ -873,6 +907,19 @@ fn quantity_value(
 
 /// A positive length in mm from `0.5`, `0.5mm`, `50mil`, `0.05in` or
 /// `500um`; `None` otherwise.
+/// `12` or `12/3`: a component lineage, or one exact revision of it. Ids
+/// and revisions start at 1.
+fn implements_term(value: &str) -> Option<Term> {
+    let (id, revision) = match value.split_once('/') {
+        Some((id, revision)) => (id, Some(revision.parse::<u32>().ok().filter(|r| *r > 0)?)),
+        None => (value, None),
+    };
+    Some(Term::Implements {
+        component: DefinitionId(id.parse::<u64>().ok().filter(|id| *id > 0)?),
+        revision: revision.map(Revision),
+    })
+}
+
 fn length_mm(text: &str) -> Option<f64> {
     let (number, unit) = split_number(text.trim())?;
     let scale = match fold(unit).as_str() {

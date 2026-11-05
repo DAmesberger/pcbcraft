@@ -475,3 +475,87 @@ fn the_cards_show_derived_impedance_pairs_and_lengths() -> TestResult {
     assert!(texts.iter().any(|t| t.contains("pair 90.0 Ω")), "{texts:?}");
     Ok(())
 }
+
+/// The High speed card shows what a selected pair's lengths measure: its
+/// path's pads and each stub on a line of its own.
+#[test]
+fn the_high_speed_card_lists_the_path_and_the_stubs() -> TestResult {
+    let Usb {
+        mut engine,
+        nets,
+        start,
+        end,
+    } = usb()?;
+    let pair = engine.project().rules.diff_pairs.first().ok_or("pair")?.id;
+    let middle = [
+        0.25 * (start[0][0] + start[1][0] + end[0][0] + end[1][0]),
+        0.25 * (start[0][1] + start[1][1] + end[0][1] + end[1][1]),
+    ];
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::RoutePair {
+            request: layout::pair::PairRouteRequest {
+                pair,
+                start,
+                legs: vec![layout::pair::PairLeg {
+                    layer: CopperLayer::Top,
+                    points: vec![
+                        [0.5 * (start[0][0] + start[1][0]), middle[1]],
+                        [0.5 * (end[0][0] + end[1][0]), middle[1]],
+                    ],
+                }],
+                end: Some(end),
+                width: None,
+                gap: None,
+            },
+        }),
+    )?;
+    let track = engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.net == nets[0])
+        .max_by(|a, b| {
+            pcbcraft_core::geometry::distance(a.start, a.end)
+                .total_cmp(&pcbcraft_core::geometry::distance(b.start, b.end))
+        })
+        .cloned()
+        .ok_or("track")?;
+    let at = [
+        0.5 * (track.start[0] + track.end[0]),
+        0.5 * (track.start[1] + track.end[1]),
+    ];
+    let side = if at[1] > middle[1] { 3.0 } else { -3.0 };
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net: nets[0],
+                start: at,
+                end: [at[0], at[1] + side],
+                width: 0.2,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.open_signals();
+    if let Some(card) = &mut editor.signals {
+        card.select_pair(pair);
+    }
+    let texts = card_texts(&mut editor, &engine, &ctx);
+    for wanted in ["Between the farthest shared parts", "Set endpoints"] {
+        assert!(texts.iter().any(|t| t == wanted), "{wanted}: {texts:?}");
+    }
+    assert!(
+        texts.iter().any(|t| t.contains("R3.1 to R4.1")),
+        "{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("USB_D+ 3 mm to open")),
+        "{texts:?}"
+    );
+    Ok(())
+}

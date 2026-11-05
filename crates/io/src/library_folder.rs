@@ -376,6 +376,19 @@ pub fn open_folder(root: &Path) -> Result<Folder> {
 /// Create an empty folder library (manifest only) at `root`, which must
 /// not already hold a manifest. The library id is drawn at random (D1).
 pub fn create_folder(root: &Path, name: &str) -> Result<Folder> {
+    create_folder_as(root, name, new_library_id()?)
+}
+
+/// [`create_folder`] under an id the caller supplies, so a recorded session
+/// replays to equal ids. Uniqueness is then the caller's: registering a
+/// second folder of one id is refused as for any copied folder. The id that
+/// names project files as a source is refused.
+pub fn create_folder_as(root: &Path, name: &str, library: LibraryId) -> Result<Folder> {
+    if library == pcbcraft_core::library::import::PROJECT_FILES {
+        return Err(Error::Invalid(
+            "that library id names project files as a source".into(),
+        ));
+    }
     if !printable(name) {
         return Err(Error::Invalid(
             "a library name must be printable text of at most 256 bytes".into(),
@@ -390,7 +403,7 @@ pub fn create_folder(root: &Path, name: &str) -> Result<Folder> {
     }
     let manifest = Manifest {
         format: FOLDER_FORMAT,
-        library: new_library_id()?,
+        library,
         name: name.to_owned(),
         required_features: Vec::new(),
         default_licence: None,

@@ -33,6 +33,8 @@ The check reports every project issue under the chosen fabrication profile. Over
 - parts with only an envelope 3D model;
 - parts whose definitions have unpublished draft changes (the review gate for library changes);
 - legend over a pad's mask opening;
+- legend text past the board outline or over a cutout or slot (`fabrication.legend_outside`), one finding per text, naming it ("Designator J2 runs outside the board");
+- legend text closer to those edges than the rules' silkscreen edge clearance, when one is set (`fabrication.legend_edge`). Mounting holes are not edges for either check. Legend lines are not checked: a part may overhang the board and draw its outline past the edge;
 - purchasing to-dos such as a missing Part;
 - component-area findings.
 
@@ -84,6 +86,7 @@ The check reports every project issue under the chosen fabrication profile. Over
   - Footprint silkscreen strokes are drawn with a round pen, with exact arcs; filled shapes are regions.
   - Text uses Pcbcraft's stroke font (`layout::legend`, now shared with the 3D silkscreen films).
   - The legend is not clipped at mask openings; the check warns instead.
+  - Text an instance moved (`instance.set_text_placement`) prints where it was moved. The offset is in the footprint's own axes, so it turns and flips with the part; the turn is added in quarter turns. An offset is at most 1000 mm. The placement stays with the instance through new revisions of the same footprint, and goes when its footprint or text does.
 
 ### Excellon conventions
 
@@ -137,7 +140,7 @@ Format tests check attributes, polarities, D-code reuse, macro text, escapes, de
 
 - **Out of scope:** IPC-2581 and ODB++ are follow-ups.
 - **Holes:** blind and buried vias are not modelled, so there are no drill-pair files. A plated board slot that is not straight is refused by the check.
-- **Legend:** it is not clipped at mask openings (the fabricator clips; the check warns).
+- **Legend:** it is not clipped at mask openings or the outline (the fabricator clips; the check warns). The desktop's Designator section moves the silkscreen designator only; the command takes any footprint text.
 - **Assembly variants:** there are no DNP flags or variants in the model; every part is fitted.
 - **Profile check:** the check compares profiles only by id. A changed user profile file is read fresh at each export.
 - **Drawings:** text widths use Helvetica's metrics; bold text is measured with the regular widths.

@@ -34,6 +34,7 @@ use self::world::{Ctx, Hit, Piece, State};
 use super::pair::{self, PairStep, PairStepRequest};
 use super::posture::{self, Posture, StepRequest};
 use super::{RouteEditSet, RouteRequest, ViaMove, ViaRequest};
+use crate::diagnostics::{Error, Result};
 use crate::geometry::{Point, distance};
 use crate::ids::Id;
 use crate::model::{CopperLayer, Project, Track, Via};
@@ -112,6 +113,12 @@ pub struct RouteStepRequest {
     /// Whether a shove may move vias (locked vias never move).
     #[serde(default = "yes")]
     pub move_vias: bool,
+    /// The largest `RoutePlan::detour_factor` to accept, at least 1. A
+    /// longer path proposes nothing, and `layout.route_step` is refused.
+    /// A posture's own corners count: an unobstructed 45° step can reach
+    /// 1.083 and a 90° step 1.415.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_detour: Option<f64>,
 }
 
 impl RouteStepRequest {
@@ -129,6 +136,17 @@ impl RouteStepRequest {
             via_layer: step.via.map(|(_, l)| l),
             mode,
             move_vias,
+            max_detour: None,
+        }
+    }
+
+    /// Refuses a `max_detour` no path can meet.
+    pub fn check(&self) -> Result<()> {
+        match self.max_detour {
+            Some(max) if !(max.is_finite() && max >= 1.0) => Err(Error::Invalid(format!(
+                "route.max_detour: the limit is a factor of at least 1, not {max}"
+            ))),
+            _ => Ok(()),
         }
     }
 
@@ -173,6 +191,14 @@ pub struct RoutePlan {
     pub undo: RouteEditSet,
     /// Why the head stopped short, when it did.
     pub blocked: Option<String>,
+    /// The head's path length over the straight line to where it ends
+    /// (through the via, when the step places one): 1 for a straight
+    /// step. Shoved copper does not count.
+    pub detour_factor: f64,
+    /// A differential pair in the way could not be shoved as one unit, so
+    /// it stayed where it is and the step went round or stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A step's head copper: a polyline on the step's layer, and after a
@@ -262,6 +288,21 @@ impl Head {
         pieces
     }
 
+    /// [`RoutePlan::detour_factor`] of this head. An end too near its start
+    /// to measure counts as one shortest segment, so a loop back to the
+    /// start still shows.
+    fn detour_factor(&self, request: &RouteStepRequest) -> f64 {
+        let (end, _) = self.end(request);
+        let (length, straight) = match &self.via {
+            Some(via) => (
+                clean::length(&self.first) + clean::length(&self.second),
+                distance(request.head, via.position) + distance(via.position, end),
+            ),
+            None => (clean::length(&self.first), distance(request.head, end)),
+        };
+        (length / straight.max(posture::MIN_SEGMENT_MM)).max(1.0)
+    }
+
     fn end(&self, request: &RouteStepRequest) -> (Point, CopperLayer) {
         match (&self.via, self.second.last()) {
             (Some(_), Some(p)) => (*p, self.second_layer(request)),
@@ -278,6 +319,35 @@ impl Head {
 /// `index`, built from the same revision).
 pub fn plan(project: &Project, index: &RouteIndex, request: &RouteStepRequest) -> RoutePlan {
     let ctx = Ctx::new(project, index);
+    let plan = proposal(&ctx, request);
+    match request.max_detour {
+        Some(max) if plan.detour_factor > max => too_long(request, plan.detour_factor, max),
+        _ => plan,
+    }
+}
+
+/// The plan for a step whose path exceeds `max_detour`: nothing moves.
+fn too_long(request: &RouteStepRequest, factor: f64, max: f64) -> RoutePlan {
+    RoutePlan {
+        edits: RouteEditSet::default(),
+        end: request.head,
+        end_layer: request.layer,
+        reached: false,
+        via_placed: false,
+        used: request.mode,
+        shoved: Vec::new(),
+        moved_vias: Vec::new(),
+        undo: RouteEditSet::default(),
+        blocked: Some(format!(
+            "route.detour: the path is {factor:.2} times the straight line; \
+             the limit is {max:.2}"
+        )),
+        detour_factor: factor,
+        note: None,
+    }
+}
+
+fn proposal(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
     match request.mode {
         RouteMode::Ignore => {
             let edits = posture::step(&request.step());
@@ -293,13 +363,15 @@ pub fn plan(project: &Project, index: &RouteIndex, request: &RouteStepRequest) -
                 moved_vias: Vec::new(),
                 undo: RouteEditSet::default(),
                 blocked: None,
+                detour_factor: Head::straight(request).detour_factor(request),
+                note: None,
             }
         }
         RouteMode::Walkaround => {
             let state = State::default();
-            let (head, reached, blocker) = walk_head(&ctx, &state, request, &|_| true);
+            let (head, reached, blocker) = walk_head(ctx, &state, request, &|_| true);
             finish(
-                &ctx,
+                ctx,
                 request,
                 &head,
                 &state,
@@ -308,7 +380,7 @@ pub fn plan(project: &Project, index: &RouteIndex, request: &RouteStepRequest) -
                 blocker,
             )
         }
-        RouteMode::Shove => shove_plan(&ctx, request),
+        RouteMode::Shove => shove_plan(ctx, request),
     }
 }
 
@@ -595,9 +667,18 @@ fn finish(
         blocked: if reached {
             None
         } else {
-            Some(blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h)))
+            Some(stopped_by(ctx, state, blocker))
         },
+        detour_factor: head.detour_factor(request),
+        note: ctx.held_note(state),
     }
+}
+
+/// Why a head stopped short: the pair it could not shove, else what it hit.
+fn stopped_by(ctx: &Ctx<'_>, state: &State, blocker: Option<Hit>) -> String {
+    ctx.held_note(state).unwrap_or_else(|| {
+        blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h))
+    })
 }
 
 /// A pair step with its shove: the step (head and edits, the shoved
@@ -611,6 +692,8 @@ pub struct PairPlan {
     pub moved_vias: Vec<Id>,
     pub undo: RouteEditSet,
     pub blocked: Option<String>,
+    /// Another pair in the way could not be shoved as one unit.
+    pub note: Option<String>,
 }
 
 /// The overlay holding a pair step's copper: its tracks and vias fixed,
@@ -678,8 +761,9 @@ pub fn pair_plan(
             blocked: if reached {
                 None
             } else {
-                Some(blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h)))
+                Some(stopped_by(&ctx, state, blocker))
             },
+            note: ctx.held_note(state),
         }
     };
     let empty = State::default();

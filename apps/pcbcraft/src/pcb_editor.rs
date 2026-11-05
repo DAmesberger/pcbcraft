@@ -72,6 +72,7 @@ mod rules_panel;
 mod shove_tests;
 mod signal_card;
 mod stackup_panel;
+mod text_card;
 mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
@@ -276,15 +277,17 @@ enum Field {
     Side,
     TrackWidth,
     TrackLayer,
+    TextOffset,
 }
 
 impl Field {
-    const ALL: [Field; 5] = [
+    const ALL: [Field; 6] = [
         Field::Position,
         Field::Rotation,
         Field::Side,
         Field::TrackWidth,
         Field::TrackLayer,
+        Field::TextOffset,
     ];
     fn id(self) -> egui::Id {
         egui::Id::new(("pcb-field", self))
@@ -394,6 +397,10 @@ pub struct PcbEditor {
     /// The staged values last sent, so a refused commit is not resent
     /// every frame while the field still shows it.
     sent: std::collections::BTreeMap<Field, [f64; 2]>,
+    /// The Designator section's Offset being edited.
+    text_offset: Point,
+    /// Esc this frame, for the Placement card's sections below its own.
+    card_escape: bool,
     errors: FieldErrors,
     /// The Board setup dialog while it is open.
     setup: Option<board_card::BoardSetup>,
@@ -499,6 +506,8 @@ impl Default for PcbEditor {
             track_width: 0.0,
             editing: None,
             sent: Default::default(),
+            text_offset: [0.0, 0.0],
+            card_escape: false,
             errors: FieldErrors::default(),
             setup: None,
             part_chooser: Default::default(),
@@ -772,6 +781,14 @@ impl PcbEditor {
                 self.position = p.position;
                 self.rotation = p.rotation_deg;
                 self.placement_layer = p.layer;
+                self.text_offset = engine
+                    .project()
+                    .instance(p.instance)
+                    .and_then(|instance| {
+                        let text = target_text(engine.project(), p.instance)?;
+                        instance.text_placements.get(&text).map(|t| t.offset)
+                    })
+                    .unwrap_or_default();
             }
             self.property_key = Some(key);
         }
@@ -1249,8 +1266,9 @@ impl PcbEditor {
             Inspected::Placement(id) => {
                 let placement = project.placements.iter().find(|p| p.instance == id)?;
                 let moved = self.placement_section(ui, project, placement);
+                let text = self.text_section(ui, project, id);
                 let part = self.part_section(ui, engine, id);
-                moved.or(part)
+                moved.or(text).or(part)
             }
             Inspected::Unplaced(_) => {
                 self.unplaced_section(ui, engine);
@@ -2395,6 +2413,11 @@ fn opposite(layer: Layer) -> Layer {
     }
 }
 /// The board sides by their names.
+/// The silkscreen designator the Designator section edits.
+fn target_text(project: &Project, instance: Id) -> Option<pcbcraft_core::ids::GraphicId> {
+    pcbcraft_core::instances::text::target(project, instance, None).ok()
+}
+
 fn layer_options() -> [(Layer, String); 2] {
     [(Layer::Top, "Top"), (Layer::Bottom, "Bottom")].map(|(layer, name)| (layer, name.to_owned()))
 }

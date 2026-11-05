@@ -27,7 +27,7 @@ The Route tool cycles the router with **M** (⇧M backwards). The Route card's *
 
 - **Desktop.** The preview recomputes the plan from the committed board on each pointer move; it is cached per revision and input, so a still pointer costs nothing. The click sends the same plan's edit set as one `layout.route_apply`. That is one engine transaction and one undo step, and it includes every shoved item. The board draws shoved tracks and vias at their new places only. The preview outlines shoved copper in the accent colour. A head that stops short gets a warning ring and a line to the pointer.
 - **Spring-back.** The preview always starts from the committed board, so shoved copper returns as soon as the head moves away within the gesture (`shoved_copper_springs_back`).
-- **CLI and MCP.** `layout.route_step { request }` runs the same `plan` inside the engine and applies it as one undo step. A step that cannot move the head is refused with the blocking reason, and nothing changes. `layout.route_preview { request }` returns the `RoutePlan` without applying it. The request has the net, width, layer, head, target, posture, flip, optional via and via layer, `mode` (default `shove`) and `move_vias` (default true).
+- **CLI and MCP.** `layout.route_step { request }` runs the same `plan` inside the engine and applies it as one undo step. A step that cannot move the head is refused with the blocking reason, and nothing changes. Its outcome (`route_stepped`) gives the head's end, whether it reached the target and its `detour_factor`: the path over the straight line, through the via if the step places one, not counting shoved copper. A request's `max_detour` (at least 1) refuses a longer path; `layout.route_preview` then returns a plan with no edits and the reason. Desktop steps set no limit, and pair steps have neither field. `layout.route_preview { request }` returns the `RoutePlan` without applying it. The request has the net, width, layer, head, target, posture, flip, optional via and via layer, `mode` (default `shove`) and `move_vias` (default true).
 - **Backspace** unwinds a step with one `layout.route_apply`. It removes the step's new tracks and via, puts shoved tracks back with their identities (`replace`, and `restore` for segments a shove merged away) and moves vias back (`move_vias`). `RouteEditSet` gained `restore` and `move_vias` for this. The engine checks both: a restored identity must be free and issued before, a locked via refuses the edit, and moved vias are clearance-checked once the tracks are in place.
 
 The engine's `layout.route_apply` checks remain the authority. The router's collision queries use the same copper rings (`CopperRing`) and the same rules (`limits::BoardRules`, net-class and class-pair clearances, the pair-halves exception), so whatever the router finds clear, the engine accepts. The router is stricter than the engine in two places: it also keeps out of track keepouts and keeps the board-edge clearance from the outline and cutouts.
@@ -68,6 +68,22 @@ No branch returns copper that collides.
 
 **Differential pairs** (`router::pair_plan`). In Shove, both halves' tracks and vias are the fixed copper of one shove, and both nets are frozen. The fallbacks are a pair walkaround, then the longest pushable prefix. Pair walkaround walks the centre line as one envelope of 2 × width + gap and lays both halves along it with `pair::step_along`. It tries both elbow senses, plus a lead straight out of the head for two pitches so halves leaving pads fan out before the first bend. The halves are checked as the engine checks them, the gap between them at the pair rule. A layer change keeps its straight legs and is cut back short of the vias when it collides.
 
+### Differential pairs as the pushed copper
+
+A pair is pushed as one unit or not at all (`router/shove/pair.rs`). Pushing each half as its own chain, as Shove did before, let the halves take separate sides and bumps: a track across the ESP32 board's USB pair took its coupled length from 21.96 mm to 2.30 mm.
+
+**The choice: move whole, else refuse.** Refusing alone would be safe, but a pair could never give way, so a dense board would stop at every pair. Moving whole needs no separate geometry because the single-chain push already works on one polyline:
+
+1. The coupled window round the pushed segment is found: segment by segment, the halves run parallel in one direction at one distance, within the coupling check's gap tolerance.
+2. Its centre line bends round a hull grown by half the pair's whole width, as one chain, with the same sides, merges and cleanup as a single chain. The window's ends keep their direction for one pitch, so the halves join their fan-outs where they left them.
+3. Both halves are laid back along the new centre line at their old distance, with mitred corners. Coupling and gap hold by construction. Both halves are then checked at the exact clearances, and pushed copper pushes on as usual.
+
+On a 45° grid the halves' extra lengths cancel across a bend's opposite corners, so skew does not change. Off the grid they cancel only roughly, and one push may add at most half the class's max skew (half of 0.05 mm when the class sets none).
+
+**Refused, with the pair left where it was:** a pusher reaching a stretch where the halves do not run coupled (a fan-out, a meander, a half with no partner yet), the window's end inside the pusher's hull, a bend tighter than the pitch, a locked track, a partner being routed on its own, or any via of a pair. The usual fallbacks then apply: walk round, or stop at the last legal point. `RoutePlan.note` and `PairPlan.note` say "Pair USB can't move as one here, so it stays put"; `layout.route_preview` returns it, `blocked` repeats it when the head stops short, and the desktop paints it at the pointer in the warning colour.
+
+Shove of copper that belongs to no pair takes the same code path as before and its results do not change.
+
 ## Keys
 
 The Route tool's keys (`ROUTE_KEYS`, registry commands in the Route context read through `crate::keys`) gain two: `route.router-mode-next` (**M**: Shove → Walkaround → Ignore) and `route.router-mode-previous` (**⇧M**), one command per cycle direction like the other Route cycles. Both are rebindable in Settings and listed in the ⌘/ sheet and the hold-⌘ panel. Neither M nor ⇧M is bound in the Layout or global contexts, so they shadow nothing. *Shove vias* has no key; it is a Route card check.
@@ -85,6 +101,7 @@ Core (`layout/router/tests.rs`, `hull.rs`, `clean.rs`). Every proposal goes thro
 - posture cleanup: a 90° chain stays on the axes with no collinear neighbours; a 45° chain keeps 45° multiples with no acute corner;
 - clearance always honoured over 30 random fields of vias and 45° tracks, in both modes (at least 100 steps; at least half arrive);
 - a coupled pair shoving a track and walking round a via;
+- a pair pushed as one unit (`tests/pair_shove.rs`): a track ending between the halves, a sweep of 240 heads across the pair, a pushed track passing the push on, a pair that cannot bend held with a message, a pair via that stays where another net's would move, and a half being routed that leaves its partner alone. On the real board, `crates/io/tests/esp32_pair.rs` sweeps 240 steps across the USB pair;
 - `layout.route_step` as one transaction: one revision, undo and redo restore every shoved track and via exactly, the preview query agrees, the plan's undo edits restore the board, and a step that cannot move is refused without change;
 - Ignore proposes exactly `posture::step`.
 
@@ -122,6 +139,7 @@ The seam (`Line`, `State`, `shove`, the undo edits) is in place.
 - **Convex hulls.** Merged obstacles become one convex hull, so walkaround does not thread between close obstacles whose merged hull swallows the gap. On the dense via grid, walking across the track-filled channels mostly stops short: 6 of 400 positions arrive, against 90 for Shove. A visibility search over hull corners would route through such gaps.
 - **Board outline.** A concave outer outline is not hugged; the head stops at it. Cutouts and keepouts are hulled convexly.
 - **Fills.** Fills are not obstacles and never move; a refill flows round the new copper, as before.
+- **Pair moved as a unit.** A pair moves only inside its coupled window; the window's fan-outs, its vias and any meander on it stay. A push has no length limit beyond the rules: a head far past the pair drags it along in the preview, coupled, and a length group warns if that breaks its target. `layout.route_step`'s outcome does not carry the note; `layout.route_preview` does.
 - **Shove scope.** A chain's ends never move, so a pusher reaching a chain's end at a pad or via fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
 - **Stateless preview.** Each move plans from the committed board. A head swept along a long track re-decides the push side each frame from geometry; the shorter clear side wins, which is stable in practice but not hysteretic.
 - **Pairs.** The pair router commits through `layout.route_apply` with the plan's edits. There is no serialisable `layout.route_pair_step` for CLI and MCP yet; `layout.route_pair` routes a whole pair without shove. The fan-out limits of [high-speed routing](high-speed-routing.md#limits-and-follow-ups) remain.

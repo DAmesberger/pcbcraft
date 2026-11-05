@@ -97,7 +97,7 @@ impl PcbEditor {
         match self.tune.net_target {
             Some((r, cached)) if r == revision && cached.0 == net => Some(cached),
             _ => {
-                let length = length::net_length(project, net).total;
+                let length = length::signal_length(project, net);
                 let target = length::tune_target(project, net);
                 let cached = (net, length, target);
                 self.tune.net_target = Some((revision, cached));

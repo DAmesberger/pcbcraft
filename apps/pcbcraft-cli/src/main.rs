@@ -203,7 +203,7 @@ fn stdio(mut session: Session) -> Result<()> {
         let reply = match line {
             lines::Line::Text(text) if text.trim().is_empty() => continue,
             lines::Line::Text(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(request) => session.dispatch(request),
+                Ok(request) => session.respond(request),
                 Err(error) => failure("malformed_request", &error.to_string()),
             },
             lines::Line::TooLarge => failure("limit_exceeded", "request exceeds 4 MiB"),

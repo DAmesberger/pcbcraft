@@ -408,6 +408,7 @@ impl Engine {
                         lineages.footprint.id,
                         lineages.binding.id,
                     ],
+                    close: false,
                 }),
             )?;
             refs.push(lineages);
@@ -607,6 +608,7 @@ impl Engine {
                     kind,
                     field,
                 ],
+                close: false,
             }),
         )?;
         let mut placed = Vec::new();
@@ -794,7 +796,11 @@ impl Engine {
                 commands::apply_library(&mut candidate, command, evaluator)?
             }
             Operation::Instance(command) => {
-                commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                if command.restates(&candidate.project)? {
+                    Outcome::None
+                } else {
+                    commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                }
             }
             // The project's own name again: no change and no undo step.
             Operation::Schematic(schematic::SchematicCommand::RenameProject { name })
@@ -826,6 +832,17 @@ impl Engine {
                 if fabrication == candidate.project.fabrication =>
             {
                 Outcome::None
+            }
+            Operation::Layout(layout::LayoutCommand::RouteStep { request }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let plan = layout::route_step(project, &request)?;
+                layout::validate(project)?;
+                Outcome::RouteStepped {
+                    end: plan.end,
+                    end_layer: plan.end_layer,
+                    reached: plan.reached,
+                    detour_factor: plan.detour_factor,
+                }
             }
             Operation::Layout(command) => {
                 let part = command.places_part();
@@ -883,8 +900,13 @@ impl Engine {
             Operation::Board(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
                 match layout::outline::apply(project, command, evaluators.board)? {
-                    Some(constraint) => Outcome::EdgeConstraintAdded { constraint },
-                    None => Outcome::None,
+                    layout::outline::BoardApplied::Constraint(constraint) => {
+                        Outcome::EdgeConstraintAdded { constraint }
+                    }
+                    layout::outline::BoardApplied::Edited { created } => {
+                        Outcome::BoardEdited { created }
+                    }
+                    layout::outline::BoardApplied::Nothing => Outcome::None,
                 }
             }
             Operation::Fabrication(command) => {
@@ -1143,6 +1165,7 @@ impl Engine {
                 layout::length::report(&self.document.project),
             ))),
             Query::RoutePreview { request } => {
+                request.check()?;
                 let project = &self.document.project;
                 let index = layout::router::RouteIndex::of(project);
                 Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(

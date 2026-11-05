@@ -3,11 +3,11 @@ use crate::diagnostics::Result;
 use crate::fields::PropertyEdit;
 use crate::functions::FunctionEdit;
 use crate::functions::pin_config::PinConfigEdit;
-use crate::ids::{Id, PartRef, TerminalId, UnitId};
+use crate::ids::{GraphicId, Id, PartRef, TerminalId, UnitId};
 use crate::instances::pins::AssignPeripheral;
 use crate::instances::{self, NewInstance};
 use crate::library::marking::InstanceMarking;
-use crate::model::{EditPolicy, PhysicalChoice, Project};
+use crate::model::{EditPolicy, PhysicalChoice, Project, TextPlacement};
 use crate::updates::{self, InstanceChange};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,34 @@ pub enum InstanceCommand {
         instance: Id,
         marking: InstanceMarking,
     },
+    /// Move or turn one footprint text on this instance only, such as a
+    /// designator a rotated part prints off the board. `graphic` is the
+    /// footprint's text, by default its silkscreen designator. Without a
+    /// `placement` the text returns to where its footprint prints it.
+    /// Restating the current placement is not an undo step.
+    #[serde(rename = "instance.set_text_placement")]
+    SetTextPlacement {
+        instance: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        graphic: Option<GraphicId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        placement: Option<TextPlacement>,
+    },
+}
+
+impl InstanceCommand {
+    /// Whether a valid command would leave the project as it is; a refused
+    /// one answers its refusal.
+    pub(crate) fn restates(&self, project: &Project) -> Result<bool> {
+        match self {
+            Self::SetTextPlacement {
+                instance,
+                graphic,
+                placement,
+            } => instances::text::restated(project, *instance, *graphic, *placement),
+            _ => Ok(false),
+        }
+    }
 }
 
 pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) -> Result<Outcome> {
@@ -148,6 +176,11 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
         InstanceCommand::SetMarking { instance, marking } => {
             return super::marking::set_marking(project, instance, marking);
         }
+        InstanceCommand::SetTextPlacement {
+            instance,
+            graphic,
+            placement,
+        } => instances::text::set(project, instance, graphic, placement)?,
     }
     Ok(Outcome::None)
 }

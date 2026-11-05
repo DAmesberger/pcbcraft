@@ -158,7 +158,10 @@ pub enum LayoutCommand {
     /// default) pushes their tracks and vias aside. One undo step with
     /// every shoved track and via; the head stops at the last legal point
     /// when no way exists, and a step that cannot move it at all is
-    /// refused. `layout.route_preview` returns the same plan unapplied.
+    /// refused. `max_detour` bounds the path against the straight line;
+    /// the outcome reports where the head ended and its `detour_factor`
+    /// (`Outcome::RouteStepped`). `layout.route_preview` returns the same
+    /// plan unapplied.
     #[serde(rename = "layout.route_step")]
     RouteStep { request: router::RouteStepRequest },
     /// Find or make the variant of a mechanical part spec (its component,
@@ -459,7 +462,10 @@ pub fn set_physical(
             "This instance is on the board. Preview the change with project.preview_update (Change::Instance) to review its copper impact.".into(),
         ));
     }
-    instances::instance_mut(project, instance)?.physical = choice;
+    let target = instances::instance_mut(project, instance)?;
+    let old_footprint = target.physical.map(|p| p.footprint);
+    target.physical = choice;
+    instances::text::follow_footprint(project, instance, old_footprint);
     if choice.is_none() {
         project.placements.retain(|p| p.instance != instance);
     }
@@ -637,14 +643,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             apply_routes(project, edits)?;
         }
         LayoutCommand::RouteStep { request } => {
-            let index = router::RouteIndex::of(project);
-            let plan = router::plan(project, &index, &request);
-            if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
-                return Err(Error::Conflict(
-                    plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
-                ));
-            }
-            apply_routes(project, plan.edits)?;
+            route_step(project, &request)?;
         }
         LayoutCommand::TuneLength { request } => {
             let obstacles = obstacles::Obstacles::of(project);
@@ -673,6 +672,25 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
     }
     Ok(None)
+}
+
+/// `layout.route_step` on a candidate: applies the plan and returns it,
+/// its edit set spent. Refused when the head cannot move or the path
+/// exceeds the request's `max_detour`.
+pub(crate) fn route_step(
+    project: &mut Project,
+    request: &router::RouteStepRequest,
+) -> Result<router::RoutePlan> {
+    request.check()?;
+    let index = router::RouteIndex::of(project);
+    let mut plan = router::plan(project, &index, request);
+    if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
+        return Err(Error::Conflict(
+            plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
+        ));
+    }
+    apply_routes(project, std::mem::take(&mut plan.edits))?;
+    Ok(plan)
 }
 
 fn invalid<T>(message: &str) -> Result<T> {
@@ -1089,6 +1107,7 @@ pub fn validate(project: &Project) -> Result<()> {
     if project.tracks.len() > MAX_TRACKS {
         return invalid("prototype supports at most 2000 track segments");
     }
+    instances::text::check(project)?;
     let mut placed = BTreeSet::new();
     let mut pad_count = 0usize;
     let mut graphic_vertices = 0usize;

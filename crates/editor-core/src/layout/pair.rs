@@ -113,7 +113,7 @@ fn unit(a: Point, b: Point) -> Option<Point> {
     (l > 1e-12).then(|| [(b[0] - a[0]) / l, (b[1] - a[1]) / l])
 }
 
-fn left(d: Point) -> Point {
+pub(super) fn left(d: Point) -> Point {
     [-d[1], d[0]]
 }
 
@@ -131,7 +131,7 @@ fn dot(a: Point, b: Point) -> f64 {
 
 /// The mitre offset direction at a corner from `d_in` to `d_out`: offset
 /// lines `h` to the left meet at `corner + h · mitre`.
-fn mitre(d_in: Point, d_out: Point) -> Point {
+pub(super) fn mitre(d_in: Point, d_out: Point) -> Point {
     let (a, b) = (left(d_in), left(d_out));
     let k = 1.0 + dot(a, b);
     if k < 1e-6 {
