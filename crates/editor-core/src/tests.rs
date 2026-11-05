@@ -21,3 +21,4 @@ mod parts;
 mod sheets;
 mod staged;
 pub(crate) mod support;
+mod text_placement;

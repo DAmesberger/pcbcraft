@@ -73,6 +73,24 @@ pub struct ComponentInstance {
         skip_serializing_if = "crate::library::marking::InstanceMarking::is_default"
     )]
     pub marking: crate::library::marking::InstanceMarking,
+    /// Footprint texts this instance prints elsewhere, by graphic
+    /// (`instance.set_text_placement`). A text not listed prints where its
+    /// footprint does.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub text_placements: std::collections::BTreeMap<crate::ids::GraphicId, TextPlacement>,
+}
+
+/// Where one instance prints a text of its footprint, relative to where the
+/// footprint prints it. It belongs to the part: it turns and flips with the
+/// placement.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TextPlacement {
+    /// Added to the text's position, in the footprint's own axes, mm.
+    pub offset: Point,
+    /// Quarter turns added to the text's rotation.
+    #[serde(default)]
+    pub turn: crate::library::graphics::Rotation,
 }
 
 /// One unit of one instance drawn on the sheet. Each (instance, unit) has at

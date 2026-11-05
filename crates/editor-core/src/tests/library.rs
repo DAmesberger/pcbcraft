@@ -1404,6 +1404,7 @@ fn layout_validate_bounds_placed_footprint_graphic_vertices() -> Result<()> {
         let id = project.next_id;
         project.next_id += 1;
         project.instances.push(crate::model::ComponentInstance {
+            text_placements: Default::default(),
             id,
             ..instance.clone()
         });

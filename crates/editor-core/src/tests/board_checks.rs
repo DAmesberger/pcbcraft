@@ -358,14 +358,15 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
 fn board_edge_clearance_flips_with_the_profile_and_previews() -> Result<()> {
     let mut engine = Engine::demo()?;
     let net = engine.project().nets.first().map(|n| n.id).unwrap_or(0);
-    // Copper edge 0.25 mm above the bottom edge.
+    // Copper edge 0.35 mm above the bottom edge: clear of the default
+    // profile's 0.3 mm.
     engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::Route {
             request: RouteRequest {
                 net,
-                start: [20.0, 0.4],
-                end: [30.0, 0.4],
+                start: [20.0, 0.5],
+                end: [30.0, 0.5],
                 width: 0.3,
                 layer: CopperLayer::Top,
             },
@@ -388,7 +389,7 @@ fn board_edge_clearance_flips_with_the_profile_and_previews() -> Result<()> {
         impact
             .new_issues
             .iter()
-            .any(|t| t.contains("is 0.25 mm from the board edge")),
+            .any(|t| t.contains("is 0.35 mm from the board edge")),
         "{impact:#?}"
     );
     assert!(impact.resolved_issues.is_empty(), "{impact:#?}");
@@ -403,7 +404,7 @@ fn board_edge_clearance_flips_with_the_profile_and_previews() -> Result<()> {
     assert_eq!(hits.len(), 1, "{hits:#?}");
     assert!(
         hits[0].message.ends_with(
-            "is 0.25 mm from the board edge; needs 0.5 mm (Edge Test: track to board edge clearance)"
+            "is 0.35 mm from the board edge; needs 0.5 mm (Edge Test: track to board edge clearance)"
         ),
         "{}",
         hits[0].message
@@ -411,6 +412,78 @@ fn board_edge_clearance_flips_with_the_profile_and_previews() -> Result<()> {
     // The profile is one undo step.
     engine.undo()?;
     assert!(found(engine.project(), "board.edge_clearance").is_empty());
+    Ok(())
+}
+
+/// A legend text over a cutout is named with the loop it runs into.
+#[test]
+fn a_legend_over_a_cutout_is_reported_as_one() -> Result<()> {
+    use crate::fabrication::preflight;
+    use crate::layout::{self, PlacedItem};
+    let (mut project, _, _) = board()?;
+    sketched(&mut project, false);
+    let instance = project
+        .placements
+        .iter()
+        .map(|p| p.instance)
+        .find(|id| crate::instances::text::target(&project, *id, None).is_ok())
+        .ok_or_else(|| Error::NotFound("a designator".into()))?;
+    let graphic = crate::instances::text::target(&project, instance, None)?;
+    let (at, name) = layout::placed_graphics(&project)
+        .into_iter()
+        .filter(|g| g.instance == instance && g.graphic == graphic)
+        .find_map(|g| match g.item {
+            PlacedItem::Text(t) => Some((t.at, t.text)),
+            PlacedItem::Shape { .. } => None,
+        })
+        .ok_or_else(|| Error::NotFound("the placed designator".into()))?;
+    // Its centre to the middle of the 4 × 4 mm cutout at (20, 20).
+    for placement in &mut project.placements {
+        if placement.instance == instance {
+            placement.position[0] += 22.0 - at[0];
+            placement.position[1] += 22.0 - at[1];
+        }
+    }
+    let report = preflight::report(&project, &Default::default(), None)?;
+    let titles: Vec<&str> = report
+        .items
+        .iter()
+        .filter(|i| i.code == "fabrication.legend_outside")
+        .map(|i| i.title.as_str())
+        .collect();
+    let expected = format!("Designator {name} runs into a cutout");
+    assert!(titles.contains(&expected.as_str()), "{titles:#?}");
+    Ok(())
+}
+
+/// A new project's profile keeps copper off the edge: copper an edge rule
+/// of 0 used to accept is reported, by the rule that says so.
+#[test]
+fn the_default_profile_reports_copper_at_the_board_edge() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let net = engine.project().nets.first().map(|n| n.id).unwrap_or(0);
+    // Copper edge 0.25 mm above the bottom edge (0.4 less half of 0.3).
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: RouteRequest {
+                net,
+                start: [20.0, 0.4],
+                end: [30.0, 0.4],
+                width: 0.3,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    let hits = found(engine.project(), "board.edge_clearance");
+    assert_eq!(hits.len(), 1, "{hits:#?}");
+    assert!(
+        hits[0].message.ends_with(
+            "is 0.25 mm from the board edge; needs 0.3 mm (Pcbcraft default: track to board edge clearance)"
+        ),
+        "{}",
+        hits[0].message
+    );
     Ok(())
 }
 
@@ -481,6 +554,15 @@ fn sketched(project: &mut Project, slot: bool) {
 fn copper_must_stay_out_of_cutouts_notches_and_their_clearance() -> Result<()> {
     let (mut project, a, _) = board()?;
     sketched(&mut project, false);
+    // First with no edge clearance asked of tracks: only crossings count.
+    override_mm(
+        &mut project,
+        RuleKey::Clearance {
+            a: CopperObject::Track,
+            b: CopperObject::BoardEdge,
+        },
+        0.0,
+    )?;
     let base = project.next_id + 10;
     project.next_id = base + 10;
     // Through the notch (y 30–40 between x 40 and 50) at y = 35.
