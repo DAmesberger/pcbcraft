@@ -560,12 +560,17 @@ fn new_library_commands_fail_atomically() -> Result<()> {
         },
         LibraryCommand::Edit { edits: vec![] },
         LibraryCommand::DiscardDraft { id: unknown },
-        LibraryCommand::Publish { drafts: vec![] },
+        LibraryCommand::Publish {
+            drafts: vec![],
+            close: false,
+        },
         LibraryCommand::Publish {
             drafts: vec![unknown],
+            close: false,
         },
         LibraryCommand::Publish {
             drafts: vec![f.package, f.package],
+            close: false,
         },
         LibraryCommand::GeneratePads {
             draft: unknown,

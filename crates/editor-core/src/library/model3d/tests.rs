@@ -374,7 +374,10 @@ fn an_incomplete_model_cannot_publish() -> Fallible<()> {
     let revision = engine.revision();
     let result = engine.apply(
         revision,
-        Operation::Library(LibraryCommand::Publish { drafts: vec![id] }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        }),
     );
     let Err(Error::Conflict(message)) = result else {
         return Err(format!("refused as a conflict: {result:?}").into());
@@ -556,6 +559,7 @@ fn a_dangling_or_oversized_library_model_is_refused_or_reported() -> Fallible<()
         revision,
         Operation::Library(LibraryCommand::Publish {
             drafts: fixture.all(),
+            close: false,
         }),
     );
     let message = result.err().map(|e| e.to_string()).unwrap_or_default();

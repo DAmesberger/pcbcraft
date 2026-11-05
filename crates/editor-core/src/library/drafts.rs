@@ -180,6 +180,12 @@ pub fn discard(drafts: &mut Drafts, id: DefinitionId) -> Result<()> {
     Ok(())
 }
 
+/// Remove the drafts of revisions just published. A closed lineage stays
+/// published; `library.draft_from` opens it again.
+pub(crate) fn close(drafts: &mut Drafts, ids: &[DefinitionId]) {
+    drafts.items.retain(|d| !ids.contains(&d.id));
+}
+
 /// Bounds, unique lineages and kind/base consistency with the snapshot.
 pub fn validate(drafts: &Drafts, library: &Library) -> Result<()> {
     if drafts.items.len() > MAX_DRAFTS {

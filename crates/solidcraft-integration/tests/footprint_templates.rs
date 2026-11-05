@@ -612,6 +612,7 @@ fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
         engine.revision(),
         Operation::Library(LibraryCommand::Publish {
             drafts: vec![package_id, footprint],
+            close: false,
         }),
         &EV,
     )?;

@@ -419,6 +419,12 @@ impl Sources {
         library_folder::create_folder(path, name)?;
         self.add(path, true)
     }
+
+    /// [`Self::create`] under a library id the caller supplies.
+    pub fn create_as(&mut self, path: &Path, name: &str, library: LibraryId) -> Result<SourceInfo> {
+        library_folder::create_folder_as(path, name, library)?;
+        self.add(path, true)
+    }
 }
 
 fn describe(loaded: &Loaded) -> SourceInfo {

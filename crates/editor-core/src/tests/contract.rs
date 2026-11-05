@@ -22,6 +22,7 @@ fn model_and_empty_row_drafts_cannot_publish() -> Fallible<()> {
             revision,
             Operation::Library(crate::LibraryCommand::Publish {
                 drafts: vec![draft],
+                close: false,
             }),
         );
         assert!(published.is_err(), "{kind:?}");

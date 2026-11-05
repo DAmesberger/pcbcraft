@@ -352,7 +352,8 @@ impl Candidate {
                 | Term::Has { .. }
                 | Term::Components
                 | Term::Parts
-                | Term::Mpn { .. } => return None,
+                | Term::Mpn { .. }
+                | Term::Implements { .. } => return None,
             }
         }
         Some(worst.unwrap_or(MatchTier::Filter))
@@ -368,6 +369,7 @@ fn check_terms(terms: &[Term]) -> Result<()> {
             Term::Has { present: false, .. } => "missing",
             Term::Components | Term::Parts => "kind",
             Term::Mpn { .. } => "mpn",
+            Term::Implements { .. } => "implements",
             _ => continue,
         };
         return Err(Error::Invalid(format!(

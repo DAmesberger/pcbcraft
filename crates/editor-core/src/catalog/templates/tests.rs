@@ -84,7 +84,13 @@ fn publish_row(
     else {
         return Err("a draft".into());
     };
-    apply(engine, LibraryCommand::Publish { drafts: vec![id] })?;
+    apply(
+        engine,
+        LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        },
+    )?;
     Ok(PackageRowRef::new(id, crate::ids::Revision::FIRST))
 }
 
@@ -256,6 +262,7 @@ fn template_queries_refuse_component_filters_and_bad_values() -> Fallible<()> {
         "kind:part",
         "has:mpn",
         "mpn:abc",
+        "implements:12/1",
         "pins:many",
         "pitch:fast",
         "body:5",
@@ -449,7 +456,13 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
         "{}",
         component.meta.provenance
     );
-    apply(&mut engine, LibraryCommand::Publish { drafts: ids })?;
+    apply(
+        &mut engine,
+        LibraryCommand::Publish {
+            drafts: ids,
+            close: false,
+        },
+    )?;
     engine.undo()?;
     engine.undo()?;
     assert_eq!(
@@ -481,6 +494,7 @@ fn every_custom_family_builds_a_publishable_component() -> Fallible<()> {
             &mut engine,
             LibraryCommand::Publish {
                 drafts: ids.clone(),
+                close: false,
             },
         );
         assert!(published.is_ok(), "{family:?}: {published:?}");
@@ -792,7 +806,13 @@ fn a_package_row_is_saved_as_a_draft_and_publishes() -> Fallible<()> {
         })
     );
     assert!(saved.citation.is_none(), "estimated until cited");
-    apply(&mut engine, LibraryCommand::Publish { drafts: vec![id] })?;
+    apply(
+        &mut engine,
+        LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        },
+    )?;
     assert_eq!(names(&templates(&engine, "my qfn")?), ["My QFN-16"]);
     // Generic values cannot be a row.
     let generic = apply(
@@ -870,7 +890,16 @@ fn row_publish_findings_name_each_problem() -> Fallible<()> {
         return Err("draft".into());
     };
     let revision = engine.revision();
-    assert!(apply(&mut engine, LibraryCommand::Publish { drafts: vec![id] }).is_err());
+    assert!(
+        apply(
+            &mut engine,
+            LibraryCommand::Publish {
+                drafts: vec![id],
+                close: false
+            }
+        )
+        .is_err()
+    );
     assert_eq!(engine.revision(), revision);
     Ok(())
 }
@@ -1124,7 +1153,13 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
         let preview = samples::template_lands(&package.form, &terminals, lands)
             .ok_or(format!("{name}: preview lands"))?;
         assert_eq!(&preview, pads, "{name}: the preview is what Create builds");
-        let published = apply(&mut engine, LibraryCommand::Publish { drafts: ids });
+        let published = apply(
+            &mut engine,
+            LibraryCommand::Publish {
+                drafts: ids,
+                close: false,
+            },
+        );
         assert!(published.is_ok(), "{name}: {published:?}");
     }
     Ok(())
@@ -1528,7 +1563,13 @@ fn a_missing_footprint_is_created_and_bound_in_one_step() -> Fallible<()> {
     // The working set publishes as it is: the created footprint is valid.
     let mut set = ids.clone();
     set[3] = created;
-    apply(&mut engine, LibraryCommand::Publish { drafts: set })?;
+    apply(
+        &mut engine,
+        LibraryCommand::Publish {
+            drafts: set,
+            close: false,
+        },
+    )?;
     engine.undo()?;
     engine.undo()?;
     assert_eq!(engine.to_file(), before, "one undo takes it all back");
@@ -1688,6 +1729,7 @@ fn package_from_template_allocates_valid_ids_from_any_counter() -> Fallible<()> 
         &mut engine,
         LibraryCommand::Publish {
             drafts: ids.clone(),
+            close: false,
         },
     )?;
 

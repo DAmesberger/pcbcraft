@@ -309,6 +309,7 @@ fn uncertain_rows_block_publishing_until_a_person_clears_them() -> Fallible<()> 
         engine.revision(),
         Operation::Library(LibraryCommand::Publish {
             drafts: applied.drafts.clone(),
+            close: false,
         }),
     );
     assert!(published.is_err(), "an uncertain row must not publish");
@@ -370,7 +371,10 @@ fn uncertain_rows_block_publishing_until_a_person_clears_them() -> Fallible<()> 
         .collect();
     engine.apply(
         engine.revision(),
-        Operation::Library(LibraryCommand::Publish { drafts: logical }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: logical,
+            close: false,
+        }),
     )?;
     let published = engine
         .project()

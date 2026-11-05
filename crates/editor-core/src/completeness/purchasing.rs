@@ -268,9 +268,10 @@ pub struct ResolveGroup {
     /// In designator order.
     pub instances: Vec<Id>,
     pub designators: Vec<String>,
-    /// A `library.search` query that finds Parts for the group: `kind:part`
-    /// plus the requirements as field predicates. Pre-fills the Place
-    /// palette's Choose….
+    /// A `library.search` query that finds Parts for the group: `kind:part`,
+    /// `implements:` the group's exact component revision, and the
+    /// requirements as field predicates. Pre-fills the Place palette's
+    /// Choose….
     pub query: String,
 }
 
@@ -306,7 +307,11 @@ pub fn resolve_groups(project: &Project) -> Result<ResolveReport> {
                 component: first.instance.component,
                 physical: first.instance.physical,
                 footprint: first.footprint,
-                query: requirement_query(&project.library, &first.requirements),
+                query: requirement_query(
+                    &project.library,
+                    first.instance.component,
+                    &first.requirements,
+                ),
                 requirements: first.requirements.clone(),
                 instances: members.iter().map(|m| m.instance.id).collect(),
                 designators: members
@@ -322,7 +327,19 @@ pub fn resolve_groups(project: &Project) -> Result<ResolveReport> {
 /// Reserved catalog filter keys. They mirror `catalog::RESERVED`, which this
 /// module may not name; a catalog test keeps the two equal.
 const RESERVED_KEYS: &[&str] = &[
-    "pkg", "has", "missing", "src", "kind", "tag", "shelf", "mpn", "life", "pins", "pitch", "body",
+    "pkg",
+    "has",
+    "missing",
+    "src",
+    "kind",
+    "tag",
+    "shelf",
+    "mpn",
+    "life",
+    "pins",
+    "pitch",
+    "body",
+    "implements",
 ];
 /// Terms and bytes of one catalog query (`catalog::MAX_TERMS`, `MAX_QUERY`).
 const QUERY_TERMS: usize = 16;
@@ -333,16 +350,25 @@ fn fold(text: &str) -> String {
     text.to_lowercase().replace('\u{b5}', "\u{3bc}")
 }
 
-/// A `library.search` query for Parts meeting `requirements`: `kind:part`
-/// and one `key:value` predicate per requirement whose field the query can
-/// name unambiguously and whose value it can write as one token. On a Part,
-/// `key:value` means the rated value meets the value (catalog search reads
-/// it through the spec's meaning). A requirement that cannot be written is
-/// left out, so the query may find more Parts than satisfy; assignment
-/// still checks every requirement.
-pub fn requirement_query(library: &Library, requirements: &[Requirement]) -> String {
-    let mut query = String::from("kind:part");
-    let mut terms = 1;
+/// A `library.search` query for Parts of `component` meeting `requirements`:
+/// `kind:part`, `implements:` the exact component revision (by identity, so
+/// a component without fields never matches every Part) and one `key:value`
+/// predicate per requirement whose field the query can name unambiguously
+/// and whose value it can write as one token. On a Part, `key:value` means
+/// the rated value meets the value (catalog search reads it through the
+/// spec's meaning). A requirement that cannot be written is left out, so the
+/// query may find more Parts than satisfy; assignment still checks every
+/// requirement.
+pub fn requirement_query(
+    library: &Library,
+    component: ComponentRef,
+    requirements: &[Requirement],
+) -> String {
+    let mut query = format!(
+        "kind:part implements:{}/{}",
+        component.id.0, component.revision.0
+    );
+    let mut terms = 2;
     for requirement in requirements {
         let Some(predicate) = predicate(library, requirement) else {
             continue;

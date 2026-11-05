@@ -2879,7 +2879,10 @@ mod tests {
         )?;
         engine.apply(
             engine.revision(),
-            Operation::Library(LibraryCommand::Publish { drafts: vec![id] }),
+            Operation::Library(LibraryCommand::Publish {
+                drafts: vec![id],
+                close: false,
+            }),
         )?;
         let r2 = ComponentRef::new(id, pcbcraft_core::Revision(2));
         let (request, _) = first_choices(engine.project(), r2).ok_or("no r2 choices")?;

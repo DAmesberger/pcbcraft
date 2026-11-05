@@ -74,11 +74,9 @@ def set_graphics(s, fp, keep_text=True, extra=()):
 
 
 def publish_and_close(s, ids, note):
-    """Publish, then discard the drafts: published drafts stay open and count
-    against the project's 64-draft limit."""
+    """Publish; library.publish closes the drafts it published by default,
+    so they do not count against the project's 64-draft limit."""
     s.op("library.publish", {"drafts": ids}, note)
-    for i in ids:
-        s.op("library.discard_draft", {"id": i}, f"discard draft {i}")
 
 
 def drafts_name(s, i):
