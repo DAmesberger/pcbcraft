@@ -312,7 +312,7 @@ fn malformed_references_and_routed_connectivity_changes_leave_state_unchanged() 
         assert_eq!(engine.revision(), revision);
     }
     connect(&mut engine, ep(a, 2), ep(b, 1))?;
-    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     let net = net_of(&engine, ep(a, 2))?;
     let pad = crate::layout::pads(engine.project())
         .into_iter()

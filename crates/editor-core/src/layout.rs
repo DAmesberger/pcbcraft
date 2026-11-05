@@ -45,6 +45,7 @@ pub mod posture;
 pub mod restack;
 pub mod router;
 pub mod showcase;
+pub mod staging;
 pub mod via;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
@@ -565,22 +566,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
     match command {
         LayoutCommand::Sync => {
             let missing = sync_preview(project);
-            let columns = ((project.board_size[0] - 8.0) / 8.0).floor().max(1.0) as usize;
-            let offset = project.placements.len();
-            for (i, instance) in missing.into_iter().enumerate() {
-                let index = offset + i;
-                let position = [
-                    8.0 + (index % columns) as f64 * 8.0,
-                    8.0 + (index / columns) as f64 * 8.0,
-                ];
-                project.placements.push(Placement {
-                    instance,
-                    position,
-                    rotation_deg: 0.0,
-                    layer: Layer::Top,
-                    locked: false,
-                });
-            }
+            staging::stage(project, missing)?;
         }
         LayoutCommand::Place {
             instance,

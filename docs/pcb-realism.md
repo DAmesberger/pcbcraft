@@ -256,7 +256,9 @@ These are never saved:
      tracks and surface pads, dimmed;
   3. the near side's assembly drawing;
   4. the through-hole pads, in the active layer's colour;
-  5. the active layer: fills, tracks and surface pads at full strength;
+  5. the active layer: fills, tracks and surface pads at full strength (its fills opaque
+     only when it is the near side; on the far side or inside they are a 45 % tint with
+     their outline, `ACTIVE_FILL_TINT`, so the near side's pads read through);
   6. the other layers' selected and highlighted copper again, so a selection stays on top;
   7. vias and holes;
   8. keepouts;
@@ -270,6 +272,8 @@ These are never saved:
   their tracks: a 22 % translucent tint with a thin outline, or its hatching or outline when
   the Fills row says so. A large pour on another layer therefore never hides the active
   layer's copper, nor the tracks under it.
+- **Selected and highlighted pours** keep their copper colour and get a 2-point outline in
+  the selection colour, so lighting a board-wide net (GND) never floods the board.
 - **Layer focus** (`pcb.layer-focus`, ⇧L, or the view popover's Focus row) cycles
   All layers → Dim others → Active only. Dim others keeps 20 % of the other layers' colour
   and an 8 % fill tint. Active only draws and picks the active layer's copper alone, with

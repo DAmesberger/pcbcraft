@@ -13,7 +13,7 @@ use crate::kit::{self, severity::Level};
 use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::{self, LayoutCommand, outline::BoardCommand};
-use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project, updates::Change};
+use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project};
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
@@ -43,7 +43,7 @@ impl PcbEditor {
             update = kit::summary_row(ui, "Not on the board yet", Some("Update PCB…"));
         });
         if update {
-            self.update.begin(engine, Change::SyncPcb {});
+            self.begin_update_pcb(engine);
             self.tool = Tool::Select;
             self.route_start = None;
             self.cancel_drag();

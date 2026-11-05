@@ -946,3 +946,40 @@ fn the_shape_mode_leaves_command_s_for_the_dispatcher() -> Fallible {
     assert_eq!(left, Some((true, true)), "(typing, ⌘S still there)");
     Ok(())
 }
+
+/// Edge names sit at the middle of their edge, outside the outline, apart
+/// from each other; a name whose place is taken (a dimension label, a part)
+/// slides clear of it.
+#[test]
+fn edge_names_centre_outside_their_edges_and_keep_clear() {
+    use crate::pcb_editor::board_shape_ui::edge_name_rect;
+    use egui::Rect;
+    // A 300 × 200 point board on screen, y down.
+    let [a, b, c, d] = [
+        Pos2::new(100.0, 300.0),
+        Pos2::new(400.0, 300.0),
+        Pos2::new(400.0, 100.0),
+        Pos2::new(100.0, 100.0),
+    ];
+    let centre = Pos2::new(250.0, 200.0);
+    let size = egui::vec2(36.0, 12.0);
+    let edges = [[a, b], [b, c], [c, d], [d, a]];
+    let board = Rect::from_two_pos(a, c);
+    let mut taken: Vec<Rect> = Vec::new();
+    for (k, edge) in edges.iter().enumerate() {
+        let r = edge_name_rect(edge, centre, size, 4.0, &taken);
+        assert!(r.is_some(), "edge {k}");
+        let Some(r) = r else { continue };
+        let mid = edge[0] + (edge[1] - edge[0]) / 2.0;
+        // Centred on the edge's middle along it, outside the board.
+        let along = (edge[1] - edge[0]).normalized();
+        assert!((r.center() - mid).dot(along).abs() < 0.5, "edge {k}: {r:?}");
+        assert!(!board.shrink(0.5).intersects(r), "edge {k} outside: {r:?}");
+        assert!(taken.iter().all(|o| !o.intersects(r)));
+        taken.push(r);
+    }
+    // A dimension label over the right edge's middle pushes its name off.
+    let label = Rect::from_center_size(Pos2::new(430.0, 200.0), egui::vec2(80.0, 16.0));
+    let r = edge_name_rect(&[b, c], centre, size, 4.0, &[label]);
+    assert!(r.is_some_and(|r| !r.intersects(label) && !board.shrink(0.5).intersects(r)));
+}

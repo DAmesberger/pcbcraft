@@ -1333,7 +1333,7 @@ fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -
     let m = draft_mcu(&mut engine)?;
     publish(&mut engine, m.all())?;
     let u1 = place_mcu(&mut engine, &m, "U1", 0.0)?;
-    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     // Terminal 21 is one electrical terminal on one net with three lands,
     // pads 21–23 at y = −1, 0, +1 mm.
     let lands: Vec<_> = crate::layout::pads(engine.project())

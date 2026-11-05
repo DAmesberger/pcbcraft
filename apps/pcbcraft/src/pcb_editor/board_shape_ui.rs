@@ -608,22 +608,6 @@ impl PcbEditor {
                 painter.add(Shape::line(line, Stroke::new(width, color)));
             }
         }
-        // Named edges: the name at the edge's middle, inside.
-        for edge in &board.edges {
-            let Some(curve) = drawn.curve(&edge.curve) else {
-                continue;
-            };
-            let points = polyline(&curve.geometry);
-            if let Some(mid) = points.get(points.len() / 2) {
-                painter.text(
-                    view.screen(*mid) + vec2(0.0, -t.space_8),
-                    Align2::CENTER_BOTTOM,
-                    &edge.name.0,
-                    fonts::medium(t.font_small),
-                    t.sketch_accent,
-                );
-            }
-        }
         for point in drawn.points.iter().filter(|p| p.id.0 != "origin") {
             let r = SketchRef::Point(point.id.clone());
             let free = report.is_some_and(|rep| rep.free_points.contains(&point.id));
@@ -711,6 +695,38 @@ impl PcbEditor {
             painter.rect_filled(r, 2.0, t.panel);
             painter.text(centre, Align2::CENTER_CENTER, text, font.clone(), color);
             rects.push((layout.id.clone(), r));
+        }
+        // Named edges: each name centred on its edge just outside the
+        // outline, slid along or away from the edge to stay clear of the
+        // dimension labels, the other names and the parts' pads.
+        let mut taken: Vec<Rect> = rects.iter().map(|(_, r)| *r).collect();
+        taken.extend(self.board_pads.iter().map(|p| {
+            let b = p.outline.bounds(0.0);
+            Rect::from_two_pos(view.screen(b.min), view.screen(b.max))
+        }));
+        let edge_lines: Vec<(&str, Vec<Pos2>)> = board
+            .edges
+            .iter()
+            .filter_map(|edge| {
+                let curve = drawn.curve(&edge.curve)?;
+                let line: Vec<Pos2> = polyline(&curve.geometry)
+                    .into_iter()
+                    .map(|p| view.screen(p))
+                    .collect();
+                (line.len() >= 2).then_some((edge.name.0.as_str(), line))
+            })
+            .collect();
+        let all: Vec<Pos2> = edge_lines
+            .iter()
+            .flat_map(|(_, l)| l.iter().copied())
+            .collect();
+        let centre = all.iter().fold(Pos2::ZERO, |c, p| c + p.to_vec2()) / all.len().max(1) as f32;
+        for (name, line) in &edge_lines {
+            let galley = painter.layout_no_wrap((*name).to_owned(), font.clone(), t.sketch_accent);
+            if let Some(r) = edge_name_rect(line, centre, galley.size(), t.space_4, &taken) {
+                painter.galley(r.min, galley, t.sketch_accent);
+                taken.push(r);
+            }
         }
         self.shape.labels = rects;
         // The gesture's preview: clicked points and a rubber band.
@@ -1247,6 +1263,53 @@ fn bump_name(name: &str) -> String {
     let digits = name.trim_end_matches(|c: char| c.is_ascii_digit());
     let n: u32 = name[digits.len()..].parse().unwrap_or(1);
     format!("{digits}{}", n.saturating_add(1))
+}
+
+/// Where an edge's name goes on screen: centred on the edge `line` just
+/// outside it (away from the outline's `centre`), `gap` points off; when
+/// that box meets one of `taken`, the first free box slid along the edge
+/// or farther out. `None` for a degenerate edge.
+pub(super) fn edge_name_rect(
+    line: &[Pos2],
+    centre: Pos2,
+    size: egui::Vec2,
+    gap: f32,
+    taken: &[Rect],
+) -> Option<Rect> {
+    let length: f32 = line.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if length <= 1e-3 {
+        return None;
+    }
+    // The point and direction a fraction `f` along the line.
+    let at = |f: f32| -> (Pos2, egui::Vec2) {
+        let mut left = f.clamp(0.0, 1.0) * length;
+        for w in line.windows(2) {
+            let d = w[0].distance(w[1]);
+            if left <= d && d > 0.0 {
+                return (w[0] + (w[1] - w[0]) * (left / d), (w[1] - w[0]) / d);
+            }
+            left -= d;
+        }
+        let n = line.len();
+        (line[n - 1], (line[n - 1] - line[n - 2]).normalized())
+    };
+    let boxed = |f: f32, out: f32| {
+        let (p, dir) = at(f);
+        let mut n = egui::vec2(-dir.y, dir.x);
+        if (p - centre).dot(n) < 0.0 {
+            n = -n;
+        }
+        let reach = n.x.abs() * size.x / 2.0 + n.y.abs() * size.y / 2.0 + gap + out;
+        Rect::from_center_size(p + n * reach, size)
+    };
+    let free = |r: &Rect| !taken.iter().any(|o| o.intersects(*r));
+    let along = [0.5, 0.35, 0.65, 0.2, 0.8];
+    [0.0, size.y + gap, 2.0 * (size.y + gap)]
+        .iter()
+        .flat_map(|out| along.iter().map(move |f| (*f, *out)))
+        .map(|(f, out)| boxed(f, out))
+        .find(free)
+        .or_else(|| Some(boxed(0.5, 0.0)))
 }
 
 /// The drill of a hole expression in mm (`"3.2 mm"`), for drawing.

@@ -171,7 +171,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             choice: Some(q.physical()),
         }),
     )?;
-    step(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     let placements: Vec<_> = engine
         .project()
         .placements
