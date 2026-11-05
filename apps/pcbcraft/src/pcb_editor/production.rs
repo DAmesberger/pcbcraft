@@ -1064,8 +1064,7 @@ fn tick_row(w: &mut Waiving, groups: &[(&str, Vec<&PreflightItem>)], key: &str, 
 }
 
 /// The reason form under the row or group it was opened from: the reason,
-/// then Cancel and "Waive n". Enter in the reason waives too. Returns
-/// (waive, cancel).
+/// then Cancel and "Waive n". Returns (waive, cancel).
 fn reason_form(ui: &mut Ui, reason: &mut String, count: usize, reveal: bool) -> (bool, bool) {
     let t = Tokens::get();
     let top = ui.cursor().top();
@@ -1080,8 +1079,7 @@ fn reason_form(ui: &mut Ui, reason: &mut String, count: usize, reveal: bool) -> 
         )
     });
     let ready = !reason.trim().is_empty();
-    let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    let mut out = (ready && entered, false);
+    let mut out = (false, false);
     let label = if count == 1 {
         "Waive 1 finding".to_owned()
     } else {
