@@ -305,3 +305,260 @@ fn write_canvas_pictures() -> TestResult {
     std::fs::write(dir.join("sheet.pdf"), pdf)?;
     Ok(())
 }
+
+/// The readability fixes of the e2e UX run (findings 4, 5, 10, 11) as one
+/// sheet: the SOIC-14 MCU from a pin table, a resistor turned beside it
+/// with its value, a GND port facing a label across a short gap, and a
+/// junction point placed on a wire. Written to
+/// `target/schematic-pictures/readability-*.png` and `readability.pdf`.
+#[test]
+#[ignore = "writes schematic canvas pictures"]
+fn write_readability_pictures() -> TestResult {
+    use pcbcraft_core::library::pinout::{PinoutAccept, PinoutApply, PinoutDocument, PinoutTarget};
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/schematic-pictures");
+    std::fs::create_dir_all(&dir)?;
+    let mut engine = Engine::demo()?;
+    // The MCU of finding 5, from a pin table as the e2e run pasted it.
+    let names = [
+        "PA05", "PA08", "PA09", "PA14", "PA15", "RESET", "SWCLK", "SWDIO", "USB_DM", "USB_DP",
+        "GND", "VDD", "SDA", "SCL",
+    ];
+    let pins: Vec<serde_json::Value> = names
+        .iter()
+        .enumerate()
+        .map(|(k, name)| {
+            serde_json::json!({
+                "row": format!("r{}", k + 1),
+                "number": {"SOIC-14": (k + 1).to_string()},
+                "name": name,
+                "class": "electrical",
+                "functions": [{"label": name.to_lowercase(), "direction": "passive", "signal": "analog"}],
+            })
+        })
+        .collect();
+    let document: PinoutDocument = serde_json::from_value(serde_json::json!({
+        "format": 1,
+        "device": {"name": "MCU ATSAMD11C14A", "reference": {"title": "fixture"}},
+        "variants": [{"name": "SOIC-14", "terminal_count": 14}],
+        "pins": pins,
+    }))?;
+    let target = PinoutTarget::New {
+        name: "MCU ATSAMD11C14A".into(),
+        row: None,
+    };
+    let base = match engine.query(pcbcraft_core::Query::PinoutPreview {
+        target: target.clone(),
+        document: Box::new(document.clone()),
+    })? {
+        pcbcraft_core::QueryResult::PinoutPlan(plan) => plan.base,
+        other => return Err(format!("unexpected {other:?}").into()),
+    };
+    engine.apply(
+        engine.revision(),
+        Operation::Library(pcbcraft_core::LibraryCommand::PinoutApply(Box::new(
+            PinoutApply {
+                target,
+                document,
+                base,
+                accept: PinoutAccept::All,
+            },
+        ))),
+    )?;
+    // The component and its symbol: the schematic needs no package.
+    let edits: Vec<_> = engine
+        .drafts()
+        .items
+        .iter()
+        .filter_map(|d| match &d.definition {
+            pcbcraft_core::library::Definition::Component(c) => {
+                let mut c = c.clone();
+                c.implementations.clear();
+                Some(pcbcraft_core::library::DraftEdit {
+                    id: d.id,
+                    meta: d.meta.clone(),
+                    definition: pcbcraft_core::library::Definition::Component(c),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    engine.apply(
+        engine.revision(),
+        Operation::Library(pcbcraft_core::LibraryCommand::Edit { edits }),
+    )?;
+    let drafts: Vec<_> = engine
+        .drafts()
+        .items
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.definition,
+                pcbcraft_core::library::Definition::Component(_)
+                    | pcbcraft_core::library::Definition::Symbol(_)
+            )
+        })
+        .map(|d| d.id)
+        .collect();
+    engine.apply(
+        engine.revision(),
+        Operation::Library(pcbcraft_core::LibraryCommand::Publish {
+            drafts,
+            close: false,
+        }),
+    )?;
+    let mcu = engine
+        .project()
+        .library
+        .latest_components()
+        .into_iter()
+        .find(|c| c.meta.name == "MCU ATSAMD11C14A")
+        .ok_or("mcu")?;
+    let mcu_ref = pcbcraft_core::ComponentRef::new(mcu.id, mcu.revision);
+    let symbol = *mcu.definition.representations.first().ok_or("symbol")?;
+    let terminal = |name: &str| {
+        mcu.definition
+            .terminals
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| t.id)
+            .unwrap_or(pcbcraft_core::TerminalId(0))
+    };
+    let (swclk, swdio) = (terminal("SWCLK"), terminal("SWDIO"));
+    let resistor = engine.project().instances[0].clone();
+    let place = |engine: &mut Engine,
+                 component,
+                 representation,
+                 properties: Vec<pcbcraft_core::fields::PropertyEdit>,
+                 name: &str,
+                 at: Point|
+     -> Result<Id, Box<dyn std::error::Error>> {
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
+                component,
+                designator: Some(name.into()),
+                properties,
+                representation,
+                unit: pcbcraft_core::UnitId(1),
+                position: at,
+                physical: None,
+            })),
+        )?;
+        Ok(engine
+            .project()
+            .instance_by_designator(name)
+            .map(|i| i.id)
+            .ok_or("placed")?)
+    };
+    let u2 = place(&mut engine, mcu_ref, symbol.id, vec![], "U2", [40.0, -40.0])?;
+    let value =
+        resistor
+            .properties
+            .iter()
+            .map(|(field, value)| pcbcraft_core::fields::PropertyEdit {
+                field: *field,
+                input: match value {
+                    pcbcraft_core::fields::FieldOverride::Assigned(v) => {
+                        pcbcraft_core::fields::PropertyInput::Value(v.clone())
+                    }
+                    _ => pcbcraft_core::fields::PropertyInput::Inherit,
+                },
+            });
+    let properties: Vec<_> = value.collect();
+    // Finding 4: a resistor turned a quarter beside the MCU's left pins.
+    let r3 = place(
+        &mut engine,
+        resistor.component,
+        resistor.representation,
+        properties.clone(),
+        "R3",
+        [20.0, -35.0],
+    )?;
+    let occurrence = engine
+        .project()
+        .occurrences_of(r3)
+        .next()
+        .map(|o| o.id)
+        .ok_or("R3")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::OrientUnit {
+            occurrence,
+            rotation: pcbcraft_core::library::Rotation::R90,
+            mirror: false,
+        }),
+    )?;
+    // Finding 11: a resistor whose right pin ends 5 mm from U2 pin 7.
+    let pin7 = schematic::pin_position(
+        engine.project(),
+        Endpoint {
+            instance: u2,
+            terminal: swclk,
+        },
+    )
+    .ok_or("pin 7")?;
+    let r4 = place(
+        &mut engine,
+        resistor.component,
+        resistor.representation,
+        properties,
+        "R4",
+        [pin7[0] - 10.0, pin7[1]],
+    )?;
+    for (name, kind, instance, terminal) in [
+        (
+            "GND",
+            pcbcraft_core::model::LabelKind::Power {
+                style: pcbcraft_core::model::PowerStyle::Ground,
+            },
+            r4,
+            pcbcraft_core::TerminalId(2),
+        ),
+        ("SWCLK", pcbcraft_core::model::LabelKind::Local, u2, swclk),
+        ("SWDIO", pcbcraft_core::model::LabelKind::Local, u2, swdio),
+    ] {
+        let at = schematic::pin_position(engine.project(), Endpoint { instance, terminal })
+            .ok_or("pin")?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceLabel {
+                sheet: None,
+                name: name.into(),
+                kind,
+                position: at,
+                rotation: Default::default(),
+                attach: Some(WireTarget::Terminal(Endpoint { instance, terminal })),
+            }),
+        )?;
+    }
+    // Finding 10: a junction point placed on the demo's wire.
+    let wire = engine.project().wires.first().cloned().ok_or("wire")?;
+    let a = schematic::end_position(engine.project(), wire.from).ok_or("end")?;
+    let b = schematic::end_position(engine.project(), wire.to).ok_or("end")?;
+    let mid = [((a[0] + b[0]) / 2.0 / 2.5).round() * 2.5, a[1]];
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::PlaceJunction {
+            sheet: None,
+            position: mid,
+        }),
+    )?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut textures = HashMap::new();
+    for (centre, scale, name) in [([35.0, -40.0], 7.0, "mcu"), ([0.0, 0.0], 12.0, "junction")] {
+        let mut editor = SchematicEditor {
+            scale,
+            pan: vec2(-(centre[0] as f32) * scale, centre[1] as f32 * scale),
+            ..Default::default()
+        };
+        let _ = picture(&mut editor, &engine, &ctx, &mut textures, vec![], 2.0, &[])?;
+        let png = picture(&mut editor, &engine, &ctx, &mut textures, vec![], 2.0, &[])?;
+        std::fs::write(dir.join(format!("readability-{name}.png")), png)?;
+    }
+    let pdf = pcbcraft_io::schematic_pdf::schematic_pdf(engine.project(), &[])?;
+    std::fs::write(dir.join("readability.pdf"), pdf)?;
+    Ok(())
+}

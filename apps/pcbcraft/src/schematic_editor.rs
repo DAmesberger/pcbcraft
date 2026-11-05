@@ -25,7 +25,7 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, ObjectRef, Operation,
     PhysicalChoice, Point, Project, Query, QueryResult, WireEnd,
     schematic::{self, SchematicCommand, WirePoint, WireTarget},
-    updates::{Change, InstanceChange},
+    updates::{ApplyUpdate, Change, InstanceChange},
 };
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -114,6 +114,10 @@ fn pin_marks(project: &Project) -> BTreeMap<Endpoint, PinMark> {
 }
 
 /// The junction dot radius on screen at `scale` pixels per millimetre.
+/// The Junction tool's toast for a click on no wire.
+const JUNCTION_MISS: &str =
+    "No wire there: click on a wire or a crossing to place a junction point";
+
 fn dot_radius(scale: f32) -> f32 {
     (DOT_RADIUS_MM * scale).clamp(DOT_RADIUS_PX.0, DOT_RADIUS_PX.1)
 }
@@ -239,6 +243,10 @@ pub struct SchematicEditor {
     /// A property commit on this instance while its purchasing was in this
     /// state: the next frame says so when the commit left it unresolved.
     purchasing_watch: Option<(Id, PurchasingState)>,
+    /// A wire that joined nets was applied directly at this revision: the
+    /// status line to say once the engine took it, and the frame it was
+    /// sent on.
+    join_watch: Option<(u64, String, Option<u64>)>,
     /// The subject's issue slot at one document (revision and project).
     slot: Option<(u64, usize, Subject, Option<IssueSlot>)>,
     /// Sheet bounds a locate asked the canvas to bring into view.
@@ -318,6 +326,7 @@ impl Default for SchematicEditor {
             pin_marks: BTreeMap::new(),
             refused: None,
             purchasing_watch: None,
+            join_watch: None,
             slot: None,
             frame_request: None,
             all_members: false,
@@ -590,6 +599,109 @@ impl SchematicEditor {
         self.drag = None;
         self.preview = None;
         None
+    }
+
+    /// The net a wire end would join, from this revision's connectivity.
+    fn target_net(&self, project: &Project, target: WireTarget) -> Option<Id> {
+        match target {
+            WireTarget::Terminal(e) => self
+                .nets
+                .iter()
+                .find(|n| n.terminals.contains(&e))
+                .map(|n| n.id),
+            WireTarget::Junction(j) => project
+                .wires_at(WireEnd::Junction(j))
+                .find_map(|w| self.wire_nets.get(&w.id).copied()),
+            WireTarget::Label(l) => self.point_nets.get(&WireEnd::Label(l)).copied(),
+            WireTarget::SheetPin(p) => self.point_nets.get(&WireEnd::SheetPin(p)).copied(),
+            WireTarget::OnWire(p) => self.wire_nets.get(&p.wire).copied(),
+        }
+    }
+
+    /// A wire drawn from `from` to `to`. An ordinary join applies at once,
+    /// one undo step, and says what changed in a status toast. The review
+    /// opens only when the join is risky: it touches routed copper (the
+    /// plan has blockers or conflicting tracks or vias), or it merges two
+    /// nets that both carry a name a person gave (a label or power port,
+    /// or a rename), such as VBUS and GND.
+    fn connect(&mut self, engine: &Engine, from: WireTarget, to: WireTarget) -> Option<Operation> {
+        let change = Change::Schematic {
+            command: SchematicCommand::Connect { from, to },
+        };
+        let plan = engine.preview_update(change.clone());
+        let routed = !plan.blockers.is_empty()
+            || !plan.conflicting_tracks.is_empty()
+            || !plan.conflicting_vias.is_empty();
+        if routed || self.joins_named_nets(engine.project(), from, to) {
+            return self.stage_update(engine, change);
+        }
+        self.join_watch = Some((
+            engine.revision(),
+            crate::update_preview::applied_line(&plan),
+            None,
+        ));
+        Some(Operation::Update(Box::new(ApplyUpdate {
+            expected_revision: plan.revision,
+            change,
+            remove_conflicting_tracks: false,
+        })))
+    }
+
+    /// Whether a wire from `from` to `to` merges two differently named
+    /// nets. A net is named when its name is not the automatic `N<id>`; a
+    /// label not yet on a net is named by its own name, which it joins.
+    fn joins_named_nets(&self, project: &Project, from: WireTarget, to: WireTarget) -> bool {
+        let names = pcbcraft_core::nets::names(project);
+        let side = |target: WireTarget| {
+            let net = self.target_net(project, target);
+            let name = net
+                .and_then(|n| {
+                    names
+                        .get(&n)
+                        .filter(|name| **name != pcbcraft_core::nets::default_name(n))
+                        .cloned()
+                })
+                .or_else(|| match target {
+                    WireTarget::Label(l) => project
+                        .labels
+                        .iter()
+                        .find(|x| x.id == l.label)
+                        .map(|x| x.name.clone()),
+                    _ => None,
+                });
+            (net, name)
+        };
+        let ((a_net, a), (b_net, b)) = (side(from), side(to));
+        match (a, b) {
+            (Some(a), Some(b)) => {
+                !(a_net.is_some() && a_net == b_net) && !a.eq_ignore_ascii_case(&b)
+            }
+            _ => false,
+        }
+    }
+
+    /// Say a directly applied join once the engine took it.
+    fn say_join(&mut self, ctx: &egui::Context, engine: &Engine) {
+        let Some((revision, text, seen)) = self.join_watch.take() else {
+            return;
+        };
+        let frame = ctx.cumulative_frame_nr();
+        let Some(seen) = seen else {
+            self.join_watch = Some((revision, text, Some(frame)));
+            return;
+        };
+        if frame == seen {
+            self.join_watch = Some((revision, text, Some(seen)));
+            return;
+        }
+        if engine.revision() != revision {
+            kit::toast::post(
+                ctx,
+                kit::severity::Level::Ok,
+                text,
+                vec![kit::toast::ToastAction::Undo],
+            );
+        }
     }
 
     fn refresh_connectivity(&mut self, engine: &Engine) {
@@ -870,6 +982,9 @@ impl SchematicEditor {
                     .and_then(|id| project.net(id))
                     .map_or_else(|| "Wire".to_owned(), |n| n.name.clone());
                 Header::new("line", name, "Net")
+            }
+            Subject::Wiring if self.tool == Tool::Junction => {
+                Header::new("point", "Junction point", "Tool")
             }
             Subject::Wiring => Header::new("line", "Wire", "Tool"),
             Subject::Item(item) => items_card::header(project, item),
@@ -1230,6 +1345,7 @@ impl SchematicEditor {
     pub fn canvas(&mut self, ui: &mut egui::Ui, engine: &Engine) -> Option<Operation> {
         self.refresh_connectivity(engine);
         self.say_notices(ui.ctx(), engine);
+        self.say_join(ui.ctx(), engine);
         self.resolve_window(ui.ctx(), engine);
         let project = engine.project();
         let t = Tokens::get();
@@ -1410,17 +1526,7 @@ impl SchematicEditor {
         let mut hit_wire = None;
         // The net being wired from or the selected wire's net.
         let selected_net: Option<Id> = match self.wire_from {
-            Some(WireTarget::Terminal(e)) => self
-                .nets
-                .iter()
-                .find(|n| n.terminals.contains(&e))
-                .map(|n| n.id),
-            Some(WireTarget::Junction(j)) => project
-                .wires_at(WireEnd::Junction(j))
-                .find_map(|w| self.wire_nets.get(&w.id).copied()),
-            Some(WireTarget::Label(l)) => self.point_nets.get(&WireEnd::Label(l)).copied(),
-            Some(WireTarget::SheetPin(p)) => self.point_nets.get(&WireEnd::SheetPin(p)).copied(),
-            Some(WireTarget::OnWire(p)) => self.wire_nets.get(&p.wire).copied(),
+            Some(target) => self.target_net(project, target),
             None => self.highlighted_net(),
         };
         let wire_active = |id: Id| {
@@ -1748,18 +1854,21 @@ impl SchematicEditor {
                             sheet: Some(self.sheet),
                             position: point.at,
                         }));
+                    } else {
+                        // A miss says why nothing happened.
+                        kit::toast::post(
+                            ui.ctx(),
+                            kit::severity::Level::Info,
+                            JUNCTION_MISS,
+                            Vec::new(),
+                        );
                     }
                 }
                 Tool::Wire => {
                     if let Some((to, _)) = target_at(pointer) {
                         if let Some(from) = self.wire_from.take() {
                             if from != to {
-                                output = self.stage_update(
-                                    engine,
-                                    Change::Schematic {
-                                        command: SchematicCommand::Connect { from, to },
-                                    },
-                                );
+                                output = self.connect(engine, from, to);
                             }
                         } else {
                             self.wire_from = Some(to);
@@ -2229,6 +2338,16 @@ impl SchematicEditor {
 
     /// The Wire tool's card: where the wire starts, and one hint line.
     fn wiring_section(&mut self, ui: &mut egui::Ui, project: &Project) {
+        if self.tool == Tool::Junction {
+            kit::section(ui, "junction-tool", "Junction point", true, None, |ui| {
+                kit::hint(
+                    ui,
+                    "Joins every wire at the point",
+                    "A dot marks it. On a crossing it joins both wires; a wire may then end on it.",
+                );
+            });
+            return;
+        }
         kit::section(ui, "wiring", "Wire", true, None, |ui| {
             let start = self
                 .wire_from
@@ -2501,12 +2620,20 @@ mod tests {
 
     /// Shown field values the instance's drawn symbol carries (the demo
     /// symbol draws no Field text), as core resolved them for the canvas.
+    /// The values a symbol shows: its texts but the designator, and any
+    /// stacked fields.
     fn symbol_values(editor: &SchematicEditor, engine: &Engine, instance: Id) -> Vec<String> {
+        let designator = engine
+            .project()
+            .instance(instance)
+            .map(|i| i.designator.clone())
+            .unwrap_or_default();
         engine
             .project()
             .occurrences_of(instance)
             .filter_map(|o| editor.placed.get(&o.id))
-            .flat_map(|p| p.fields.iter().map(|t| t.text.clone()))
+            .flat_map(|p| p.texts.iter().chain(&p.fields).map(|t| t.text.clone()))
+            .filter(|t| *t != designator)
             .collect()
     }
 
@@ -3521,9 +3648,11 @@ mod tests {
             .filter(|(t, p)| !frame.iter().any(|(f, q)| f == t && q.distance(*p) < 3.0))
             .map(|(t, _)| t)
             .collect();
-        for text in ["R1", "R2", "Resistor", "10 kΩ"] {
+        for text in ["R1", "R2", "10 kΩ"] {
             assert!(canvas.iter().any(|t| t == text), "{text} in {canvas:?}");
         }
+        // The value slot shows the value, never the component's name.
+        assert!(!canvas.iter().any(|t| t == "Resistor"), "{canvas:?}");
         // Two-terminal passives hide their pin numbers.
         assert!(!canvas.iter().any(|t| t == "1" || t == "2"), "{canvas:?}");
         // 12 px/mm about the canvas centre (400, 400): R1 sits at (−12, 0).
@@ -3535,22 +3664,21 @@ mod tests {
         // The designator above the body (bottom at 1.5 mm) picks it too.
         click_at(&mut editor, &engine, &ctx, r1_body + vec2(0.0, -2.2 * 12.0));
         assert_eq!(editor.selected_instance(), Some(r1));
-        // What is drawn is what is picked: the end of the resolved name
-        // (wider than the body) and the value stacked below the body.
+        // What is drawn is what is picked: both ends of the value in the
+        // slot below the body.
         let occurrence = engine.project().occurrences_of(r1).next().ok_or("R1")?.id;
         let placed = schematic::placed_unit(engine.project(), occurrence)?;
         let m = TextMetric::default();
-        let name = placed
+        let value = placed
             .texts
             .iter()
-            .find(|t| t.text == "Resistor")
-            .ok_or("name")?
+            .find(|t| t.text == "10 kΩ")
+            .ok_or("value")?
             .bounds(m);
-        let value = placed.fields.first().ok_or("stacked value")?.bounds(m);
         let sheet = |p: Point| pos2(400.0 + p[0] as f32 * 12.0, 400.0 - p[1] as f32 * 12.0);
         for p in [
-            [name.min[0] + 0.1, (name.min[1] + name.max[1]) / 2.0],
-            [name.max[0] - 0.1, (name.min[1] + name.max[1]) / 2.0],
+            [value.min[0] + 0.1, (value.min[1] + value.max[1]) / 2.0],
+            [value.max[0] - 0.1, (value.min[1] + value.max[1]) / 2.0],
             [-12.0, (value.min[1] + value.max[1]) / 2.0],
         ] {
             click_at(&mut editor, &engine, &ctx, pos2(600.0, 650.0));

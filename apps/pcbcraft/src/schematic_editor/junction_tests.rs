@@ -237,27 +237,9 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
     );
     // Slightly off the wire: the click still lands on it, snapped to the grid.
     let end = screen(&editor, at) + vec2(0.4, 2.0);
-    for p in [start, end] {
-        let button = |pressed| egui::Event::PointerButton {
-            pos: p,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        for events in [
-            vec![egui::Event::PointerMoved(p)],
-            vec![button(true)],
-            vec![button(false)],
-        ] {
-            canvas_frame(&mut editor, &engine, &ctx, events);
-        }
-    }
-    let Some(Change::Schematic {
-        command: SchematicCommand::Connect { from, to },
-    }) = editor.update.change().cloned()
-    else {
-        return Err(format!("no connect under review: {:?}", editor.update.change()).into());
-    };
+    click(&mut editor, &engine, &ctx, start);
+    let operation = click(&mut editor, &engine, &ctx, end);
+    let (from, to) = connect_of(operation)?;
     assert_eq!(from, WireTarget::Terminal(ep(r92, 1)));
     let WireTarget::OnWire(point) = to else {
         return Err(format!("not on the wire: {to:?}").into());
@@ -283,21 +265,47 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
     Ok(())
 }
 
-/// Click the Wire tool at `p` (move, press, release).
-fn click(editor: &mut SchematicEditor, engine: &Engine, ctx: &egui::Context, p: Pos2) {
+/// Click the Wire tool at `p` (move, press, release); the operation the
+/// click sent, if any.
+fn click(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    p: Pos2,
+) -> Option<Operation> {
     let button = |pressed| egui::Event::PointerButton {
         pos: p,
         button: egui::PointerButton::Primary,
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
+    let mut sent = None;
     for events in [
         vec![egui::Event::PointerMoved(p)],
         vec![button(true)],
         vec![button(false)],
     ] {
-        canvas_frame(editor, engine, ctx, events);
+        sent = canvas_frame(editor, engine, ctx, events).1.or(sent);
     }
+    sent
+}
+
+/// The ends of the wire an ordinary join applied directly: one
+/// `ApplyUpdate` of a Connect, with no review opened.
+fn connect_of(
+    operation: Option<Operation>,
+) -> Result<(WireTarget, WireTarget), Box<dyn std::error::Error>> {
+    let Some(Operation::Update(update)) = operation else {
+        return Err(format!("no direct join: {operation:?}").into());
+    };
+    let Change::Schematic {
+        command: SchematicCommand::Connect { from, to },
+    } = update.change
+    else {
+        return Err(format!("not a connect: {:?}", update.change).into());
+    };
+    assert!(!update.remove_conflicting_tracks);
+    Ok((from, to))
 }
 
 #[test]
@@ -342,7 +350,7 @@ fn the_wire_tool_snaps_to_pin_ends_and_pin_lines_with_a_marker() -> TestResult {
             .any(|c| c.distance(screen(&editor, start)) < 1e-3),
         "{markers:?}"
     );
-    click(&mut editor, &engine, &ctx, near);
+    assert!(click(&mut editor, &engine, &ctx, near).is_none());
     assert_eq!(editor.wire_from, Some(WireTarget::Terminal(ep(r92, 2))));
     // Halfway along R93.1's drawn line, well away from its end: the wire
     // still lands on the connection end.
@@ -355,14 +363,139 @@ fn the_wire_tool_snaps_to_pin_ends_and_pin_lines_with_a_marker() -> TestResult {
         p.distance(screen(&editor, pin.end)) > SNAP_PX,
         "the pin is long enough"
     );
-    click(&mut editor, &engine, &ctx, p);
-    let Some(Change::Schematic {
-        command: SchematicCommand::Connect { from, to },
-    }) = editor.update.change().cloned()
-    else {
-        return Err(format!("no connect under review: {:?}", editor.update.change()).into());
-    };
+    let (from, to) = connect_of(click(&mut editor, &engine, &ctx, p))?;
     assert_eq!(from, WireTarget::Terminal(ep(r92, 2)));
     assert_eq!(to, WireTarget::Terminal(ep(r93, 1)));
+    Ok(())
+}
+
+/// e2e UX finding 9: an ordinary wire that joins two nets applies at once,
+/// as one undo step, keeps the Wire tool, opens no review and says what
+/// it changed in a toast once the engine took it.
+#[test]
+fn an_ordinary_join_applies_directly_with_a_status_toast() -> TestResult {
+    let (mut engine, [_, _, r92, r93], _) = engine()?;
+    let project = engine.project();
+    let start = schematic::pin_position(project, ep(r92, 2)).ok_or("pin")?;
+    let end = schematic::pin_position(project, ep(r93, 1)).ok_or("pin")?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = centred(start, 12.0);
+    editor.on_tool("wire", &engine);
+    let a = screen(&editor, start);
+    let b = screen(&editor, end);
+    assert!(click(&mut editor, &engine, &ctx, a).is_none());
+    let operation = click(&mut editor, &engine, &ctx, b).ok_or("nothing sent")?;
+    assert!(!editor.update.is_open());
+    assert_eq!(editor.tool, Tool::Wire);
+    let before = engine.project().clone();
+    engine.apply(engine.revision(), operation)?;
+    assert_eq!(
+        engine.project().net_of(ep(r92, 2)).map(|n| n.id),
+        engine.project().net_of(ep(r93, 1)).map(|n| n.id)
+    );
+    crate::kit::toast::take_posted(&ctx);
+    for _ in 0..2 {
+        canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    }
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text.starts_with("Connected pins")
+            && p.actions == vec![crate::kit::toast::ToastAction::Undo]),
+        "{:?}",
+        posted.iter().map(|p| &p.text).collect::<Vec<_>>()
+    );
+    engine.undo()?;
+    assert_eq!(engine.project(), &before);
+    Ok(())
+}
+
+/// A wire that would merge two nets a person named (VBUS and GND) still
+/// opens the review, and applies nothing until Apply.
+#[test]
+fn merging_two_named_nets_opens_the_review() -> TestResult {
+    let (mut engine, [_, _, r92, r93], _) = engine()?;
+    for (instance, name) in [(r92, "VBUS"), (r93, "GND")] {
+        let at = schematic::pin_position(engine.project(), ep(instance, 2)).ok_or("pin")?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceLabel {
+                sheet: None,
+                name: name.into(),
+                kind: pcbcraft_core::model::LabelKind::Local,
+                position: at,
+                rotation: Default::default(),
+                attach: Some(WireTarget::Terminal(ep(instance, 2))),
+            }),
+        )?;
+    }
+    let project = engine.project();
+    let start = schematic::pin_position(project, ep(r92, 2)).ok_or("pin")?;
+    let end = schematic::pin_position(project, ep(r93, 2)).ok_or("pin")?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mid = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
+    let mut editor = centred(mid, 8.0);
+    editor.on_tool("wire", &engine);
+    // R92.2 carries the VBUS label, R93.2 the GND label.
+    let a = screen(&editor, start);
+    let b = screen(&editor, end);
+    let revision = engine.revision();
+    assert!(click(&mut editor, &engine, &ctx, a).is_none());
+    assert!(editor.wire_from.is_some(), "not started");
+    assert!(click(&mut editor, &engine, &ctx, b).is_none());
+    assert!(editor.update.is_open());
+    assert!(matches!(
+        editor.update.change(),
+        Some(Change::Schematic {
+            command: SchematicCommand::Connect { .. }
+        })
+    ));
+    assert_eq!(engine.revision(), revision);
+    Ok(())
+}
+
+/// e2e UX finding 10: J arms the Junction tool (its own card, not the
+/// Wire card); a click on a wire places a junction point drawn as a dot;
+/// a click on no wire says so.
+#[test]
+fn j_places_a_visible_junction_dot_and_a_miss_says_so() -> TestResult {
+    let registry = crate::commands::Registry::standard();
+    let command = registry
+        .resolve(
+            crate::commands::Chord::key(egui::Key::J),
+            &crate::commands::active_contexts(crate::commands::Context::Schematic),
+        )
+        .ok_or("J is unbound")?;
+    assert_eq!(command.id, "schematic.junction");
+    let (mut engine, _, wire) = engine()?;
+    let at = middle(&engine, wire)?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = centred(at, 12.0);
+    editor.on_tool("junction", &engine);
+    assert_eq!(editor.tool, Tool::Junction);
+    assert_eq!(editor.header(&engine).title, "Junction point");
+    let on_wire = screen(&editor, at) + vec2(0.4, 2.0);
+    let operation = click(&mut editor, &engine, &ctx, on_wire).ok_or("nothing placed")?;
+    let Operation::Schematic(SchematicCommand::PlaceJunction { position, .. }) = &operation else {
+        return Err(format!("not a junction: {operation:?}").into());
+    };
+    let placed = *position;
+    engine.apply(engine.revision(), operation)?;
+    let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let dots = circles(&shapes, dot_radius(12.0), true);
+    assert!(near(&dots, screen(&editor, placed)), "{dots:?}");
+    // Well off every wire: nothing is sent, and a toast says why.
+    crate::kit::toast::take_posted(&ctx);
+    let off = screen(&editor, [at[0], at[1] + 12.5]);
+    assert!(click(&mut editor, &engine, &ctx, off).is_none());
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text == JUNCTION_MISS),
+        "{:?}",
+        posted.iter().map(|p| &p.text).collect::<Vec<_>>()
+    );
+    assert!(pcbcraft_core::issues::style::check(JUNCTION_MISS).is_empty());
     Ok(())
 }

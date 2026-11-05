@@ -417,7 +417,7 @@ fn title(change: &Change, project: &Project) -> String {
 }
 
 /// The success toast: "Updated PCB: adds 2 placements".
-fn applied_line(plan: &UpdatePlan) -> String {
+pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
     use pcbcraft_core::schematic::SchematicCommand;
     let done = match &plan.change {
         Change::SyncPcb {} => "Updated PCB",

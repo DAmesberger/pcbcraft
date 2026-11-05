@@ -1254,8 +1254,13 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
         footprint.graphics.clear();
         footprint.next_local = first_graphic;
     }
+    let named: Vec<(TerminalId, &str)> = terminals
+        .iter()
+        .zip(&designations)
+        .map(|(id, name)| (*id, name.as_str()))
+        .collect();
     let symbol = match spec.symbol {
-        SymbolStyle::Block => block_symbol(refs.component, &terminals),
+        SymbolStyle::Block => named_block_symbol(refs.component, &named),
         SymbolStyle::Drawn(kind) => {
             symbol_style::generate(kind, spec.conventions, refs.component, &terminals)
                 .unwrap_or_else(|_| block_symbol(refs.component, &terminals))
@@ -1423,7 +1428,7 @@ fn trim_pads(pads: &mut [Pad], mm: f64) {
 /// the rest up its right side, on the default symbol grid
 /// ([`graphics::SYMBOL_MODULE_MM`]), with the designator above and the
 /// name below.
-pub(super) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let left = terminals.len().div_ceil(2);
     let rows = left.max(1) as f64;
@@ -1477,6 +1482,131 @@ pub(super) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) ->
             pins,
         }],
     }
+}
+
+/// [`block_symbol`] wide enough for `terminals`' names (see
+/// [`fit_pin_names`]).
+pub(crate) fn named_block_symbol(
+    component: DefinitionId,
+    terminals: &[(TerminalId, &str)],
+) -> SymbolDefinition {
+    let ids: Vec<TerminalId> = terminals.iter().map(|(id, _)| *id).collect();
+    let mut symbol = block_symbol(component, &ids);
+    fit_pin_names(&mut symbol, |id| {
+        terminals
+            .iter()
+            .find(|(t, _)| *t == id)
+            .map(|(_, name)| (*name).to_owned())
+    });
+    symbol
+}
+
+/// Width of one pin-name character in pin text heights: printed capitals,
+/// as `schematic::scene::LABEL_METRIC` measures them, wider than the core
+/// metric's average, so the fit holds in the PDF.
+const PIN_NAME_EM: f64 = 0.95;
+/// The least space between a left and a right pin name on one row, mm.
+const PIN_NAME_GAP_MM: f64 = graphics::SYMBOL_MODULE_MM / 2.0;
+
+/// Widen every unit's rectangular body so the names of its left and right
+/// pins fit inside without meeting: on each row the two names, their
+/// offsets from the edges and a half-module gap; a name alone reaches no
+/// closer than the gap to the far edge. The body grows by whole modules on
+/// both sides and the side pins move out with its edges, so connection
+/// ends stay on the grid and the drawing stays centred. A unit without a
+/// rectangle, or one already wide enough, is left as it is. Returns whether
+/// anything moved. `name` gives a terminal's name (`None` hides nothing:
+/// the pin is treated as unnamed).
+pub(crate) fn fit_pin_names(
+    symbol: &mut SymbolDefinition,
+    name: impl Fn(TerminalId) -> Option<String>,
+) -> bool {
+    const STEP: f64 = graphics::SYMBOL_MODULE_MM;
+    let em = PIN_NAME_EM * symbol.pin_text_height;
+    let mut changed = false;
+    for unit in &mut symbol.units {
+        let Some((index, body)) =
+            unit.graphics
+                .iter()
+                .enumerate()
+                .find_map(|(i, g)| match &g.item {
+                    super::Item::Shape {
+                        shape: crate::geometry::Shape::Rect { a, b, .. },
+                        ..
+                    } => Some((i, Bounds::of([*a, *b])?)),
+                    _ => None,
+                })
+        else {
+            continue;
+        };
+        // Name width plus its offset from the edge, per side, per row.
+        let mut rows: Vec<(f64, f64, f64)> = Vec::new();
+        for pin in &unit.pins {
+            let left = pin.direction == graphics::PinDirection::Right
+                && pin.position[0] <= body.min[0] + 1e-9;
+            let right = pin.direction == graphics::PinDirection::Left
+                && pin.position[0] >= body.max[0] - 1e-9;
+            if !(left || right) || !pin.name.visible {
+                continue;
+            }
+            let Some(text) = name(pin.terminal) else {
+                continue;
+            };
+            let width = text.chars().count() as f64 * em + pin.name.offset.max(0.0);
+            let y = pin.position[1];
+            let row = match rows.iter_mut().find(|r| (r.0 - y).abs() < 1e-9) {
+                Some(row) => row,
+                None => {
+                    rows.push((y, 0.0, 0.0));
+                    let Some(row) = rows.last_mut() else {
+                        continue;
+                    };
+                    row
+                }
+            };
+            if left {
+                row.1 = row.1.max(width);
+            } else {
+                row.2 = row.2.max(width);
+            }
+        }
+        let need = rows
+            .iter()
+            .map(|(_, l, r)| l + r + PIN_NAME_GAP_MM)
+            .fold(0.0, f64::max);
+        let width = body.max[0] - body.min[0];
+        if need <= width + 1e-9 {
+            continue;
+        }
+        let grow = (((need - width) / 2.0) / STEP).ceil() * STEP;
+        if !grow.is_finite() || grow <= 0.0 || grow > 100.0 * STEP {
+            continue;
+        }
+        let (min_x, max_x) = (body.min[0], body.max[0]);
+        if let Some(graphic) = unit.graphics.get_mut(index)
+            && let super::Item::Shape {
+                shape: crate::geometry::Shape::Rect { a, b, .. },
+                ..
+            } = &mut graphic.item
+        {
+            for corner in [a, b] {
+                corner[0] += if corner[0] <= min_x + 1e-9 {
+                    -grow
+                } else {
+                    grow
+                };
+            }
+        }
+        for pin in &mut unit.pins {
+            if pin.position[0] <= min_x + 1e-9 {
+                pin.position[0] -= grow;
+            } else if pin.position[0] >= max_x - 1e-9 {
+                pin.position[0] += grow;
+            }
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// A narrow body with every terminal down its left side in package order,
