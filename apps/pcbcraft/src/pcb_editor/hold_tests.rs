@@ -311,6 +311,30 @@ fn short_card(
     (output, command)
 }
 
+/// Whether `label` is painted whole: inside its clip rect and not cut
+/// short with "…".
+fn painted_whole(output: &egui::FullOutput, label: &str) -> bool {
+    fn walk(shape: &Shape, clip: Rect, label: &str) -> bool {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().any(|s| walk(s, clip, label)),
+            Shape::Text(text) if text.galley.job.text == label => {
+                let rect = text.galley.rect.translate(text.pos.to_vec2());
+                let cut = text
+                    .galley
+                    .rows
+                    .iter()
+                    .any(|r| r.glyphs.iter().any(|g| g.chr == '…'));
+                !cut && rect.right() <= clip.right() + 0.5
+            }
+            _ => false,
+        }
+    }
+    output
+        .shapes
+        .iter()
+        .any(|c| walk(&c.shape, c.clip_rect, label))
+}
+
 /// Texts painted inside the card's visible height, by centre.
 fn visible_texts(output: &egui::FullOutput) -> Vec<(String, Pos2)> {
     fn walk(shape: &Shape, clip: Rect, out: &mut Vec<(String, Pos2)>) {
@@ -392,6 +416,7 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
         let (output, _) = short_card(&mut editor, &engine, &ctx, vec![]);
         let shown = visible_texts(&output);
         assert!(shown.iter().any(|(t, _)| t == words), "{words}: {shown:?}");
+        assert!(painted_whole(&output, words), "{words} is cut short");
         if let Some(action) = action {
             assert!(
                 shown.iter().any(|(t, _)| t == action),
@@ -415,6 +440,12 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
         shown.iter().any(|(t, _)| t.starts_with("Free · nearest: ")),
         "{shown:?}"
     );
+    let free = shown
+        .iter()
+        .map(|(t, _)| t.as_str())
+        .find(|t| t.starts_with("Free · "))
+        .ok_or("no free state")?;
+    assert!(painted_whole(&output, free), "{free} is cut short");
     let op = click(&mut editor, &engine, &ctx, "Constrain to edge")?;
     let Some(op @ Operation::Board(BoardCommand::Constrain { .. })) = op else {
         return Err(format!("no board.constrain: {op:?}").into());

@@ -207,18 +207,27 @@ impl PcbEditor {
                 nearest.map(|_| "Constrain to edge"),
             ),
         };
-        let mut clicked = false;
-        ui.horizontal(|ui| {
+        // The words wrap rather than clip, so the state reads in full in
+        // any column width; the action sits on its own line under them.
+        ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = t.space_4;
             if let Some(hold) = hold {
                 let (r, _) = ui.allocate_exact_size(
-                    egui::vec2(hold_mark::GLYPH, t.control_height),
+                    egui::vec2(hold_mark::GLYPH, t.font_label * 1.4),
                     egui::Sense::hover(),
                 );
                 hold_mark::paint_glyph(ui.painter(), r.center(), hold_mark::GLYPH, hold);
             }
-            clicked = kit::summary_row(ui, &words, action);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&words)
+                        .size(t.font_label)
+                        .color(t.form_ink),
+                )
+                .wrap(),
+            );
         });
+        let clicked = action.is_some_and(|action| kit::summary_row(ui, "", Some(action)));
         if !clicked {
             return None;
         }
