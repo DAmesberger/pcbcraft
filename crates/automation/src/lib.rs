@@ -4,10 +4,12 @@
 //! automation needs (open, save, native export). The CLI's JSON-lines
 //! transport and the MCP server are thin adapters over [`Session::execute`],
 //! so every transport reaches the same typed operations and error codes.
+pub mod gate;
 pub mod lines;
 pub mod mcp;
 pub mod session;
 
+pub use gate::{Decision, Mode, Policy, Question, Refusal};
 pub use session::{Request, Session, part_files};
 
 #[derive(Debug, thiserror::Error)]

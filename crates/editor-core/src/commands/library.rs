@@ -258,6 +258,39 @@ pub enum LibraryCommand {
     },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(LibraryCommand {
+    NewDraft "library.new_draft" Edit,
+    DraftFrom "library.draft_from" Edit,
+    DraftClosure "library.draft_closure" Edit,
+    EditCopy "library.edit_copy" Edit,
+    Edit "library.edit" Edit,
+    DiscardDraft "library.discard_draft" Edit,
+    Publish "library.publish" Ask,
+    GeneratePads "library.generate_pads" Edit,
+    SetGrid "library.set_grid" Edit,
+    SetSymbolConventions "library.set_symbol_conventions" Edit,
+    RestyleSymbol "library.restyle_symbol" Edit,
+    EditGraphics "library.edit_graphics" Edit,
+    EditFootprint "library.edit_footprint" Edit,
+    FootprintFromTemplate "library.footprint_from_template" Edit,
+    FootprintFromPads "library.footprint_from_pads" Edit,
+    AssignTerminals "library.assign_terminals" Edit,
+    Import "library.import" Edit,
+    ImportStandardFields "library.import_standard_fields" Edit,
+    PlaceFrom "library.place_from" Edit,
+    Promote "library.promote" Ask,
+    Duplicate "library.duplicate" Edit,
+    EditPackage "library.edit_package" Edit,
+    FitLeads "library.fit_leads" Edit,
+    NewFromTemplate "library.new_from_template" Edit,
+    PackageFromTemplate "library.package_from_template" Edit,
+    SavePackageRow "library.save_package_row" Edit,
+    PinoutApply "library.pinout_apply" Edit,
+    ImportModel "library.import_model" Edit,
+    PackArtwork "library.pack_artwork" Edit,
+});
+
 fn close_by_default() -> bool {
     true
 }

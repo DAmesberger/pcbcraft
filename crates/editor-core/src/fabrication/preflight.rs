@@ -36,6 +36,12 @@ pub enum FabricationCommand {
     Unwaive { key: String },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(FabricationCommand {
+    Waive "fabrication.waive" Ask,
+    Unwaive "fabrication.unwaive" Edit,
+});
+
 /// Apply one waiver command.
 pub fn apply(production: &mut Production, command: FabricationCommand) -> Result<()> {
     let waivers = &mut production.waivers;

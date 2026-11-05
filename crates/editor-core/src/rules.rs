@@ -1212,6 +1212,25 @@ pub enum RulesCommand {
     DeleteLengthGroup { group: signal::LengthGroupId },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(RulesCommand {
+    SetProfile "rules.set_profile" Edit,
+    SetOverride "rules.set_override" Edit,
+    ClearOverride "rules.clear_override" Edit,
+    AddNetClass "net_class.add" Edit,
+    EditNetClass "net_class.edit" Edit,
+    DeleteNetClass "net_class.delete" Edit,
+    AssignNets "net_class.assign" Edit,
+    SetPatterns "net_class.set_patterns" Edit,
+    SetClassClearance "net_class.set_clearance" Edit,
+    AddDiffPair "diff_pair.add" Edit,
+    EditDiffPair "diff_pair.edit" Edit,
+    DeleteDiffPair "diff_pair.delete" Edit,
+    AddLengthGroup "length_group.add" Edit,
+    EditLengthGroup "length_group.edit" Edit,
+    DeleteLengthGroup "length_group.delete" Edit,
+});
+
 /// Apply one rules command. On failure `rules` is unchanged. Net
 /// existence of `AssignNets` is the caller's check (the engine's, which
 /// sees nets). Returns the class `AddNetClass` created; see

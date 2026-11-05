@@ -193,6 +193,35 @@ pub enum LayoutCommand {
     RemovePart { instance: Id },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(LayoutCommand {
+    Sync "layout.sync" Edit,
+    Place "layout.place" Edit,
+    Move "layout.move" Edit,
+    SetPlacementLock "layout.placement_lock" Edit,
+    Route "layout.route" Edit,
+    ApplyRoute "layout.route_apply" Edit,
+    DeleteTrack "layout.track_delete" Edit,
+    SetTrackLock "layout.track_lock" Edit,
+    SetTrack "layout.track_set" Edit,
+    SetFabrication "layout.set_fabrication" Edit,
+    SetStackup "layout.set_stackup" Edit,
+    EditStackup "layout.edit_stackup" Edit,
+    AddVia "layout.add_via" Edit,
+    MoveVia "layout.via_move" Edit,
+    DeleteVia "layout.via_delete" Edit,
+    SetViaTented "layout.via_tent" Edit,
+    SetViaLock "layout.via_lock" Edit,
+    RouteLayerChange "layout.route_layer_change" Edit,
+    SetBoardSize "layout.set_board_size" Edit,
+    RoutePair "layout.route_pair" Edit,
+    TuneLength "layout.tune_length" Edit,
+    RouteStep "layout.route_step" Edit,
+    PlacePart "layout.place_part" Edit,
+    SetPart "layout.set_part" Edit,
+    RemovePart "layout.remove_part" Edit,
+});
+
 impl LayoutCommand {
     /// Whether the command places or re-points a mechanical part (its
     /// outcome is `Outcome::PartPlaced`).

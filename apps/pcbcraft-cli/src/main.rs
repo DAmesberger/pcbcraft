@@ -9,7 +9,7 @@ mod review_diff;
 mod rules_profile;
 mod sample_packages;
 
-use pcbcraft_automation::{Session, lines, mcp, session};
+use pcbcraft_automation::{Mode, Policy, Session, lines, mcp, session};
 use pcbcraft_core::Engine;
 use serde_json::{Value, json};
 use std::io::{self, Write};
@@ -21,7 +21,11 @@ const MAX_REQUEST: usize = 4 * 1024 * 1024;
 const USAGE: &str = "usage: pcbcraft-cli <command>
   commands                         print request, document and diagnostic schemas
   stdio [FILE.pcbcraft]            JSON-lines requests on stdin, replies on stdout
-  mcp [FILE.pcbcraft]              Model Context Protocol server on stdio
+  mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
+                                   Model Context Protocol server on stdio; a mode
+                                   (ask-every-time, auto-allow-edits, allow-all) turns
+                                   on the permission gate, limited to the given folders
+                                   and FILE's, and refuses what would need asking
   demo NEW_FILE.pcbcraft           write the two-component demo project
   showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
@@ -103,13 +107,72 @@ fn open(path: Option<&String>) -> Result<Session> {
     Ok(session)
 }
 
+/// The `mcp` command's arguments. Without a mode the server is ungated, as
+/// the user who starts it has already chosen to trust its client.
+#[derive(Debug, Default, PartialEq)]
+struct McpOptions {
+    mode: Option<Mode>,
+    folders: Vec<String>,
+    project: Option<String>,
+}
+
+impl McpOptions {
+    fn parse(args: &[String]) -> Result<Self> {
+        let mut options = Self::default();
+        let mut args = args.iter();
+        while let Some(arg) = args.next() {
+            let mut value = |flag: &str| {
+                args.next()
+                    .ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))
+            };
+            match arg.as_str() {
+                "--permission-mode" => {
+                    options.mode = Some(value("--permission-mode")?.parse::<Mode>()?);
+                }
+                "--allow-folder" => options.folders.push(value("--allow-folder")?.clone()),
+                other if other.starts_with("--") || options.project.is_some() => {
+                    return Err(format!("unexpected argument {other}\n{USAGE}").into());
+                }
+                _ => options.project = Some(arg.clone()),
+            }
+        }
+        if options.mode.is_none() && !options.folders.is_empty() {
+            return Err(format!("--allow-folder needs --permission-mode\n{USAGE}").into());
+        }
+        Ok(options)
+    }
+
+    /// The gate's policy; the folder of a project named here is allowed, as
+    /// the user just chose that file.
+    fn policy(&self) -> Result<Option<Policy>> {
+        let Some(mode) = self.mode else {
+            return Ok(None);
+        };
+        let mut folders = Vec::new();
+        for folder in &self.folders {
+            folders.push(std::path::absolute(folder)?);
+        }
+        if let Some(project) = &self.project
+            && let Some(folder) = std::path::absolute(project)?.parent()
+        {
+            folders.push(folder.to_path_buf());
+        }
+        Ok(Some(Policy::new(mode, folders)))
+    }
+}
+
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),
         [command, rest @ ..] if command == "stdio" && rest.len() <= 1 => stdio(open(rest.first())?),
-        [command, rest @ ..] if command == "mcp" && rest.len() <= 1 => {
-            let mut server = mcp::Server::new(open(rest.first())?);
+        [command, rest @ ..] if command == "mcp" => {
+            let options = McpOptions::parse(rest)?;
+            let session = open(options.project.as_ref())?;
+            let mut server = match options.policy()? {
+                Some(policy) => mcp::Server::gated(session, policy),
+                None => mcp::Server::new(session),
+            };
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
         [command, path] if ["demo", "showcase", "parts"].contains(&command.as_str()) => {
@@ -219,4 +282,51 @@ fn stdio(mut session: Session) -> Result<()> {
 
 fn failure(code: &str, message: &str) -> Value {
     json!({"ok": false, "error": {"code": code, "message": message}})
+}
+
+#[cfg(test)]
+mod mcp_option_tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<McpOptions> {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        McpOptions::parse(&args)
+    }
+
+    #[test]
+    fn without_a_mode_the_server_is_ungated() -> Result<()> {
+        assert!(parse(&[])?.policy()?.is_none());
+        assert!(parse(&["board.pcbcraft"])?.policy()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_mode_gates_within_the_named_folders_and_the_projects() -> Result<()> {
+        let options = parse(&[
+            "--permission-mode",
+            "allow-all",
+            "--allow-folder",
+            "/work/out",
+            "/work/board/x.pcbcraft",
+        ])?;
+        let policy = options.policy()?.ok_or("gated")?;
+        assert_eq!(policy.mode, Mode::AllowAll);
+        assert_eq!(
+            policy.folders,
+            [
+                std::path::PathBuf::from("/work/out"),
+                std::path::PathBuf::from("/work/board")
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bad_arguments_are_refused() {
+        assert!(parse(&["--permission-mode", "yolo"]).is_err());
+        assert!(parse(&["--permission-mode"]).is_err());
+        assert!(parse(&["--allow-folder", "/x"]).is_err());
+        assert!(parse(&["a.pcbcraft", "b.pcbcraft"]).is_err());
+        assert!(parse(&["--gate"]).is_err());
+    }
 }

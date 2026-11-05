@@ -3,6 +3,10 @@
 //! This crate is pure and wasm-compatible: no files, threads, windows or
 //! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
+// First: its `declare_classes!` is in textual scope for every module below.
+#[macro_use]
+pub mod permission;
+
 pub mod catalog;
 pub mod commands;
 pub mod completeness;
@@ -39,6 +43,7 @@ pub use ids::*;
 use library::samples::{self, SampleRefs};
 use library::{Definition, DefinitionMeta, Drafts};
 pub use model::*;
+pub use permission::Class;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -62,6 +67,56 @@ pub enum Operation {
     /// Pre-flight waivers for fabrication output (`fabrication.*`).
     Fabrication(fabrication::FabricationCommand),
     Update(Box<updates::ApplyUpdate>),
+}
+
+impl Operation {
+    /// This operation's permission class, chosen beside its command enum.
+    pub const fn class(&self) -> Class {
+        match self {
+            Self::Library(command) => command.class(),
+            Self::Instance(command) => command.class(),
+            Self::Schematic(command) => command.class(),
+            Self::Layout(command) => command.class(),
+            Self::Rules(command) => command.class(),
+            Self::Fill(command) => command.class(),
+            Self::Board(command) => command.class(),
+            Self::Fabrication(command) => command.class(),
+            Self::Update(_) => Class::Edit,
+        }
+    }
+
+    /// This operation's wire name; `update` for an applied update.
+    pub const fn command(&self) -> &'static str {
+        match self {
+            Self::Library(command) => command.command(),
+            Self::Instance(command) => command.command(),
+            Self::Schematic(command) => command.command(),
+            Self::Layout(command) => command.command(),
+            Self::Rules(command) => command.command(),
+            Self::Fill(command) => command.command(),
+            Self::Board(command) => command.command(),
+            Self::Fabrication(command) => command.command(),
+            Self::Update(_) => "update",
+        }
+    }
+
+    /// Every operation by wire name with its class, for discovery.
+    pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
+        const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
+        [
+            LibraryCommand::CLASSES,
+            InstanceCommand::CLASSES,
+            schematic::SchematicCommand::CLASSES,
+            layout::LayoutCommand::CLASSES,
+            rules::RulesCommand::CLASSES,
+            layout::fill::FillCommand::CLASSES,
+            layout::outline::BoardCommand::CLASSES,
+            fabrication::FabricationCommand::CLASSES,
+            UPDATE,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// Every read-only report. Queries never change the document, its revision
@@ -290,6 +345,48 @@ pub enum Query {
         profile: Option<fabrication::ProfileChoice>,
     },
 }
+
+// A new command chooses its permission class here.
+declare_classes!(Query {
+    InspectInstance "component.inspect" Read,
+    CheckDefinition "component.check" Read,
+    CheckDrafts "component.check_drafts" Read,
+    Search "library.search" Read,
+    Facets "library.facets" Read,
+    InspectLineage "library.inspect" Read,
+    Bom "project.bom" Read,
+    ResolveGroups "library.resolve_groups" Read,
+    FootprintPreview "library.footprint_preview" Read,
+    UpdatesAvailable "library.updates_available" Read,
+    PromotePreview "library.promote_preview" Read,
+    Issues "project.issues" Read,
+    Templates "library.templates" Read,
+    StandardFields "library.standard_fields" Read,
+    PackagePlan "library.package_plan" Read,
+    Models "library.models" Read,
+    PinoutPreview "library.pinout_preview" Read,
+    SuggestPins "functions.suggest" Read,
+    PinReport "project.pin_report" Read,
+    PinConfig "project.pin_config" Read,
+    Marking "instance.marking" Read,
+    RulesEffective "rules.effective" Read,
+    RuleProfiles "rules.profiles" Read,
+    PreviewProfile "rules.preview_profile" Read,
+    NetClasses "net_class.list" Read,
+    PreviewNetClassPatterns "net_class.preview_patterns" Read,
+    BoardShape "board.shape" Read,
+    FillStatus "fill.status" Read,
+    Sheets "schematic.sheets" Read,
+    NetPlaces "schematic.net_places" Read,
+    SheetScene "schematic.scene" Read,
+    ImpedanceCalculate "impedance.calculate" Read,
+    ImpedanceTable "impedance.table" Read,
+    SuggestPairs "diff_pair.suggest" Read,
+    LengthReport "layout.length_report" Read,
+    RoutePreview "layout.route_preview" Read,
+    TunePreview "layout.tune_preview" Read,
+    Preflight "fabrication.preflight" Read,
+});
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "report", content = "result", rename_all = "snake_case")]

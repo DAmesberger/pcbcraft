@@ -223,7 +223,7 @@ impl Session {
 
 /// Remove `verbose` from a request and from its parameters; true when either
 /// asked for the snapshot.
-fn take_verbose(request: &mut Value) -> bool {
+pub(crate) fn take_verbose(request: &mut Value) -> bool {
     fn take(value: &mut Value) -> bool {
         value
             .as_object_mut()
