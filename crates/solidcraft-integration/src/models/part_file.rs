@@ -391,7 +391,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         param.expr = value.expression();
     }
     let clock = std::time::Instant::now();
-    let session = Session::new(doc);
+    let session = Session::opened_validating(doc, None, crate::native::build_validation());
     let evaluate_ms = clock.elapsed().as_secs_f64() * 1e3;
     let doc = Arc::clone(&session.doc);
     let mut findings = Vec::new();

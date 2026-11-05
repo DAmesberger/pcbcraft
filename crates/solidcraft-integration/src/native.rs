@@ -185,8 +185,21 @@ pub struct Native {
 mod replay;
 use replay::Log;
 
+/// MEASUREMENT SWITCH (repin-smlib): when SMLib's full check runs on Pcbcraft's native builds.
+/// Off by default on this branch, Solidcraft's `Validation::Off`; set
+/// `PCBCRAFT_NATIVE_VALIDATION` to `each_feature` or `each_step` to run the check on demand. A
+/// value it does not know runs Solidcraft's default check rather than skipping it.
+pub(crate) fn build_validation() -> solidcraft_engine::kernel::Validation {
+    use solidcraft_engine::kernel::Validation;
+    match std::env::var("PCBCRAFT_NATIVE_VALIDATION") {
+        Ok(mode) => Validation::parse(&mode).unwrap_or_default(),
+        Err(_) => Validation::Off,
+    }
+}
+
 impl Native {
-    fn with(session: Session) -> Self {
+    fn with(mut session: Session) -> Self {
+        session.set_validation(build_validation());
         let mut native = Self {
             session,
             cancel: None,
@@ -881,7 +894,11 @@ impl Native {
                 "output exists; choose a new .solidcraft filename".into(),
             ));
         }
-        let mut copy = Self::with(Session::new((*self.session.doc).clone()));
+        let mut copy = Self::with(Session::opened_validating(
+            (*self.session.doc).clone(),
+            None,
+            build_validation(),
+        ));
         copy.call(
             "file.save_as",
             json!({"path": path, "format": "container", "cache": false, "preview": false}),

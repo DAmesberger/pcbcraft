@@ -161,7 +161,8 @@ fn material_of(
 fn read_design(bytes: &[u8], frame: &SourceFrame) -> Result<ModelInspection> {
     let doc = solidcraft_engine::io::read_design(bytes)
         .map_err(|e| Error::Invalid(format!("model.asset: {e}")))?;
-    let session = solidcraft_engine::Session::new(doc);
+    let session =
+        solidcraft_engine::Session::opened_validating(doc, None, crate::native::build_validation());
     let mut warnings: Vec<String> = session
         .model
         .results
