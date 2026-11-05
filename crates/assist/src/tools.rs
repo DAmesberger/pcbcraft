@@ -117,7 +117,7 @@ pub fn definitions() -> Vec<ToolSpec> {
         tool(
             "library_pinout_apply",
             "MCP project_apply library.pinout_apply: import exactly the document last previewed. base is optional: leave it out to apply the last preview, or give the plan's base exactly (accept {\"accept\": \"all\"} unless rows are excluded). Do not send the document again. Creates component, symbol, package and binding drafts whose imported rows are all unreviewed (the review gate); rows flagged uncertain block publishing until a person clears them. Returns the outcome and each draft's findings.",
-            json!({"base": {"type": "integer"}, "accept": object, "target": object, "document": object}),
+            json!({"base": {"type": ["string", "integer"]}, "accept": object, "target": object, "document": object}),
             &[],
         ),
         tool(
@@ -203,6 +203,11 @@ pub fn execute(
     name: &str,
     input: &Value,
 ) -> ToolOutcome {
+    let unpacked = match unpack_text_arguments(name, input) {
+        Ok(unpacked) => unpacked,
+        Err(why) => return reply(json!({"refused": why}), true, None),
+    };
+    let input = unpacked.as_ref().unwrap_or(input);
     let revision = session.engine().revision();
     let library = |command: &str, params: Value| {
         json!({"command": "project.apply", "params": {
@@ -342,6 +347,64 @@ pub fn send(session: &mut Session, policy: &Policy, mut request: Value) -> Value
         Decision::Ask(_) => session.respond_gated(policy, request),
         Decision::Refuse(refusal) => refusal.reply(),
     }
+}
+
+/// `input` with each argument the tool declares as an array or object, but
+/// that arrived as JSON text, read as meant: some models send long arrays
+/// as strings (a 4 000-character `edits` list was refused nine times for
+/// it). `Ok(None)` when nothing needed reading. Text that should be an
+/// array or object but is not valid JSON is refused with where it broke: a
+/// server's tool parser leaves a long call with unbalanced brackets as text,
+/// and the model needs that, not "expected a sequence", to fix it.
+fn unpack_text_arguments(name: &str, input: &Value) -> Result<Option<Value>, String> {
+    let (Some(fields), Some(spec)) = (
+        input.as_object(),
+        definitions().into_iter().find(|t| t.name == name),
+    ) else {
+        return Ok(None);
+    };
+    let mut out = fields.clone();
+    let mut changed = false;
+    for (key, value) in fields {
+        let (Some(text), Some(kind)) = (
+            value.as_str(),
+            spec.input_schema["properties"][key]["type"].as_str(),
+        ) else {
+            continue;
+        };
+        if kind != "array" && kind != "object" {
+            continue;
+        }
+        let trimmed = text.trim_start();
+        if !trimmed.starts_with('[') && !trimmed.starts_with('{') {
+            continue;
+        }
+        let parsed = serde_json::from_str::<Value>(text).map_err(|e| {
+            let before: usize = text
+                .split_inclusive('\n')
+                .take(e.line().saturating_sub(1))
+                .map(str::len)
+                .sum();
+            let at = (before + e.column().saturating_sub(1)).min(text.len());
+            let from = (at.saturating_sub(60)..=at)
+                .find(|i| text.is_char_boundary(*i))
+                .unwrap_or(0);
+            let to = (at..=text.len().min(at + 20))
+                .rev()
+                .find(|i| text.is_char_boundary(*i))
+                .unwrap_or(at);
+            format!(
+                "{key} arrived as text that is not valid JSON ({e}, near …{}⟨here⟩{}…). Count the brackets and send {key} as a JSON {kind}, not a string; a smaller call is easier to get right",
+                &text[from..at],
+                &text[at..to]
+            )
+        })?;
+        if (kind == "array") == parsed.is_array() && (kind == "object") == parsed.is_object() {
+            out.insert(key.clone(), parsed);
+            changed = true;
+        }
+    }
+    Ok(changed.then_some(Value::Object(out)))
 }
 
 /// The report a `submit_review` call carries. Local models often send its
@@ -699,7 +762,8 @@ pub fn compact_plan(plan: &Value) -> Value {
     out
 }
 
-fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
+fn reply(mut value: Value, error: bool, step: Option<String>) -> ToolOutcome {
+    integers_as_text(&mut value);
     let mut text = value.to_string();
     if text.len() > MAX_RESULT_CHARS {
         let mut end = MAX_RESULT_CHARS;
@@ -714,6 +778,28 @@ fn reply(value: Value, error: bool, step: Option<String>) -> ToolOutcome {
         error,
         step,
         images: Vec::new(),
+    }
+}
+
+/// Largest integer a JSON reader that parses numbers as doubles keeps exact.
+const MAX_EXACT_INTEGER: u64 = 1 << 53;
+
+/// Integers beyond [`MAX_EXACT_INTEGER`] as text, so a model (or a server
+/// that parses JSON numbers as doubles) can't round them: a model once
+/// copied a preview's 19-digit base as a float and was refused 54 times.
+fn integers_as_text(value: &mut Value) {
+    match value {
+        Value::Number(n) => {
+            let big = n.as_u64().is_some_and(|v| v > MAX_EXACT_INTEGER)
+                || n.as_i64()
+                    .is_some_and(|v| v.unsigned_abs() > MAX_EXACT_INTEGER);
+            if big {
+                *value = Value::String(n.to_string());
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(integers_as_text),
+        Value::Object(map) => map.values_mut().for_each(integers_as_text),
+        _ => {}
     }
 }
 
@@ -877,6 +963,49 @@ mod tests {
 
     fn panic_free_fail() {
         assert_eq!("a refusal", "something else");
+    }
+
+    #[test]
+    fn arrays_and_objects_sent_as_text_are_read_as_meant() {
+        let input = json!({"edits": "[{\"id\": 5}]", "other": "x"});
+        assert_eq!(
+            unpack_text_arguments("library_edit", &input),
+            Ok(Some(json!({"edits": [{"id": 5}], "other": "x"})))
+        );
+        // Text that is not the declared kind stays as it came.
+        assert_eq!(
+            unpack_text_arguments("library_edit", &json!({"edits": "{}"})),
+            Ok(None)
+        );
+        assert_eq!(
+            unpack_text_arguments("library_templates", &json!({"query": "[1]"})),
+            Ok(None)
+        );
+        // Unbalanced brackets, as a server's parser leaves a long call: the
+        // refusal shows where it broke.
+        let broken = json!({"edits": "[{\"id\": 5, \"pads\": [{\"size\": [0.6, 1.1]}}]"});
+        let why = unpack_text_arguments("library_edit", &broken)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            why.contains("not valid JSON") && why.contains("[0.6, 1.1]}⟨here⟩}]"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn integers_a_double_would_round_reach_the_model_as_text() {
+        let ToolOutcome::Reply { text, .. } = reply(
+            json!({"base": 2_049_172_786_040_315_623_u64, "ids": [3, -9_007_199_254_740_993_i64], "pitch": 0.95}),
+            false,
+            None,
+        ) else {
+            return;
+        };
+        assert_eq!(
+            text,
+            r#"{"base":"2049172786040315623","ids":[3,"-9007199254740993"],"pitch":0.95}"#
+        );
     }
 
     #[test]

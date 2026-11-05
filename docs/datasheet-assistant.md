@@ -60,9 +60,33 @@ pcbcraft-cli design-part --provider openai --base-url http://localhost:11434/v1 
   --notes "SOT-23-5 (DBV) package only" --record tlv757.recording.jsonl
 ```
 
-Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--prices FILE.json`, `--request-timeout SECONDS`; the caps `--max-usd`, `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens, seconds and spend go to stderr. `pcbcraft-cli llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it.
+Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--prices FILE.json`, `--request-timeout SECONDS`; the caps `--max-usd`, `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--profile NAME` (the [run profile](#run-profiles); chosen by the model id when not given); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens, seconds and spend go to stderr. `pcbcraft-cli llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it. `pcbcraft-cli llm-profile list` lists the run profiles, and `llm-profile copy NAME` copies a built-in one into the config folder to edit.
 
 In the desktop app, the Component workspace start page has **Create from datasheet…** under New: datasheets (one path or URL per line), part name, output file, then provider (Anthropic, or OpenAI-compatible), endpoint, model, API key (masked; stored in the system keychain for that endpoint when the run starts, then cleared from the form), and for an OpenAI-compatible model its context size and whether it takes images or reads PDFs; the cost cap for Anthropic. The run goes on a background thread with progress, tokens, spend and Cancel (taking effect after the current request; requests are not streamed). It writes a new project and its review; the open project is not touched. A full settings page belongs to the assistant panel (LLM integration slice 3).
+
+## Run profiles
+
+5 November 2026. How a run talks to one model: plain data, separate from the model's declared capabilities (`ModelProfile`), which say what it can do; a run profile says what it is told and how the loop reacts (`crates/assist/src/profile.rs`).
+
+```json
+{
+  "format": 1,
+  "name": "qwen3.8-flash-next",
+  "models": ["RadixArk/Qwen3.8-Flash-Next-NVFP4"],
+  "system": {"add": ["paragraph", "paragraph"]},
+  "omit_tools": [],
+  "harness": {"repeat_limit": 3}
+}
+```
+
+- `system`: `"base"` (the base prompt, `prompt.rs`), `{"add": [...]}` (the base prompt, then these paragraphs) or `{"replace": [...]}` (these paragraphs instead). Paragraphs are joined by blank lines, at most 64 KiB.
+- `omit_tools`: tools the model isn't offered (never `submit_review`).
+- `harness.repeat_limit` (2–20, default 3): the same refused call (same tool, same input) this many times, with no call succeeding in between, ends the run with `stopped a repeating call` and the call named. From the second time, the refusal tells the model it is repeating itself.
+- `models`: exact model ids the profile is chosen for when none is named.
+
+**Built in** (`crates/assist/profiles/`): `claude` (the Claude ids; base prompt, every tool: today's request, unchanged), `qwen3.8-flash-next` ([tuned below](#tuning-qwen38-flash-next)) and `default` (base prompt), which any model without a profile gets. **Selection:** `--profile NAME`, else the first profile listing the model id, user files first, else `default`. The desktop form selects by its model field and logs the profile; the review report names it. **Editing:** `pcbcraft-cli llm-profile copy NAME` writes the built-in to `<config>/assist-profiles/NAME.json` (`PCBCRAFT_CONFIG_DIR`, else the platform config folder under `pcbcraft`), never over an existing file; a user file of a built-in's name takes its place. Every file is checked when read: unknown fields, another format, a name that isn't the file's, an unknown or required tool left out, an empty replacement or a limit out of range is refused with the file and reason, and the run doesn't start. There is no editor in the app yet.
+
+**Harness fixes for every model** (found in the `qwen3.8:27b` run, measured below): repeated refused calls (above); every integer beyond 2^53 in a tool result goes to the model as text, so a 19-digit preview `base` can't be rounded (`library_pinout_apply` takes it as text or a number; in every recording in the repository and the tuning runs the base is the only such number a model copied back, and the conversion covers any other that appears); an array or object argument that arrives as JSON text is read as meant, and text that isn't valid JSON is refused with where it broke instead of serde's "expected a sequence". The report's shape fixes of the earlier run stay.
 
 ## MCP gaps closed
 
@@ -118,6 +142,26 @@ What went wrong, and what changed:
 - **Footprint values.** It understood the drawing and said so, but kept the starter row's values. The run is an honest draft with the right pins and a footprint a reviewer must fix. That is weaker than Opus 5.5, which read the land pattern into the footprint.
 - **The loop held.** Parallel tool calls, reasoning under `reasoning`, page views, Ollama's prompt cache (1.35 M of 1.42 M prompt tokens read from it) and the caps all behaved as designed, and no reply was cut off at 32 000 output tokens. The first attempt's request time was 2 427 s against 4 343 s of wall-clock time; the gap was not reproduced in the second attempt (2 648 s against 2 650 s), so it is probably the machine sleeping.
 
+## Tuning: Qwen3.8 Flash Next
+
+5 November 2026: `RadixArk/Qwen3.8-Flash-Next-NVFP4` through vLLM (OpenAI-compatible, the founder's server on a private network; 262 144 tokens of context, vision declared, no native PDF, no cost; reasoning in a `reasoning` field). Two parts, so the tuning doesn't fit one datasheet: TLV75733PDBVR (TI TLV757P, SBVS322C, SOT-23-5 DBV, as in the run above) and TPD2E009DBZR (TI TPD2E009, SLVS953B, SOT-23-3 DBZ; its datasheet also has the DRT package). Graded by a script against the datasheets, 8 points a part: report submitted; pinout (TLV 1 IN, 2 GND, 3 EN, 4 NC, 5 OUT; TPD 1 D+, 2 D−, 3 GND); the tabbed package family (not the module form); every pad's size (DBV0005A 0.6 × 1.1 mm, DBZ0003A 0.6 × 1.3 mm); the rows' land span (2.6, 2.1 mm); the 0.95 mm pitch; which pads share a row; the report accepted on the first try. One run per step and part, so a difference of a few requests is within the noise (S6 and its repeat S6b show how much).
+
+| Step | Change (one at a time) | TLV: score, requests, refused calls, output tokens, s | TPD: score, requests, refused, output tokens, s | Kept |
+|---|---|---|---|---|
+| S0 | Baseline: today's prompt and harness | 8, 42, 21, 92 k, 728 | 7 (module form for a SOT-23), 26, 10, 76 k, 580 | — |
+| S1 | Harness: repeat stop, integers as text, arguments sent as JSON text read | 7 (report on the 2nd try), 37, 17, 88 k, 662 | 8, 34, 11, 168 k, 1 295 | Yes (needed fixes; no gain alone) |
+| S2 | Profile: plain packages from a starter row, `values.lands` from the land pattern | 8, 26, 5, 58 k, 463 | 7 (report 2nd try), 21, 5, 61 k, 469 | Yes |
+| S3 | Harness: invalid JSON text refused with where it broke | 7 (report 2nd try), 23, 9, 53 k, 417 | 8, 14, 2, 58 k, 454 | Yes (clearer; within noise) |
+| S4 | Profile: no `library_edit` for wording; the marking item's shape | 8, 20, 3, 48 k, 385 | 8, 17, 5, 51 k, 403 | Yes |
+| S5 | Profile: the row's exact fields; tabbed `span` is tip to tip, and the bend-room rule | 0: stopped at request 9 by the repeat stop | 7 (report 2nd try), 13, 2, 48 k, 365 | Yes, with S6 |
+| S6 | Harness: a call that succeeds between refusals starts the count again (S5 had stopped a run that fixed its document between two identical previews) | 8, 16, 1, 30 k, 230 | 8, 11, 1, 54 k, 413 | Yes: **the built-in profile** |
+| S6b | S6 again | 8, 14, 3, 36 k, 273 | 8, 13, 2, 97 k, 761 | — |
+| S7 | Profile: the report's exact shape | 8, 16, 3, 47 k, 362 | 8, 12, 0, 42 k, 324 | No: within S6's noise, and S6 already sent its reports right first time. Tuning stopped here |
+
+**Result.** With its profile, Flash Next builds both parts right on every graded point (pins, TI's land pattern, tabbed form, report on the first try) in 11–16 requests and 4–13 minutes, against 26–42 requests and 10–12 minutes before. Opus 5.5 (e2e run, effort medium) took 13 requests and $1.06 for the TLV75733 with the correct land; Flash Next now matches it on that part's graded result and request count at no cost, on a smaller sample (two parts, one or two runs each). Not graded: the pin rules, the values table and the 3D body; where the drawing gives a range (lead span, foot length, standoff) it picked values inside it, which a reviewer should check against the report. The base prompt, and so Claude's run, is unchanged; the Flash Next additions live in its profile only ([`crates/assist/profiles/qwen3.8-flash-next.json`](../crates/assist/profiles/qwen3.8-flash-next.json)). Recordings and reviews: [`examples/qwen3.8-flash-next/`](../examples/qwen3.8-flash-next/), replayed by `tests/flash_next.rs`.
+
+**Opus with these changes.** No paid call was made, so by reasoning: its prompt and tool list are byte for byte today's (a test checks the first request's system text and tool names), and the profile additions don't reach it. The harness changes touch it only in cases it doesn't produce: it never sent arguments as JSON text, and run 1's recording has no call repeated with the same input; the 19-digit base now reaches it as text, which `library_pinout_apply` takes, and the base's schema now admits text. Run 1 and the reference replay still pass unchanged.
+
 ## Known limits
 
 - **GPIO matrix.** Peripherals that reach pins only through the ESP32 GPIO matrix are not listed per pin; a terminal has at most 32 functions. A "routable peripheral" (roles assignable to any pin of a set) would model it without enumeration; not built.
@@ -127,8 +171,8 @@ What went wrong, and what changed:
 - **Terminal matching.** `library.package_from_template` carries the package's terminals, and so the binding's mappings, over by number (`terminals: by_number`, the default). The second live run, made before this, got its terminals reused by list order after importing the pinout rows out of pin order, and had to re-key all 99 mappings with `library.edit`; the replay test `wroom3_binding` reproduces that case.
 - **No streaming.** Requests are non-streaming (30 minutes for Anthropic, 90 for an OpenAI-compatible endpoint, never past the run's time cap), so Cancel takes effect after the current request. A local model at about 17 tokens a second can keep Cancel waiting for minutes.
 - **One live run.** The HTTP transport has made one live run ([run 1](datasheet-assistant-run1.md)); its recording replays in the tests. The chunked pinout flow, the rule evaluation in the loop and the 64 000-token retry after a cut-off are tested only by replay so far.
-- **Live runs per backend.** Anthropic: one live run ([run 1](datasheet-assistant-run1.md)) before the model layer, now replayed through it; no paid call was made since, so the Anthropic HTTP path is verified by a byte-for-byte request test, recordings and a loopback HTTP test, not live. OpenAI-compatible: the two local runs above, through Ollama only; LM Studio, `llama-server`, OpenAI and OpenRouter are untested live.
+- **Live runs per backend.** Anthropic: one live run ([run 1](datasheet-assistant-run1.md)) before the model layer, now replayed through it; no paid call was made since, so the Anthropic HTTP path is verified by a byte-for-byte request test, recordings and a loopback HTTP test, not live. OpenAI-compatible: the two local runs above through Ollama, and the 16 tuning runs through vLLM; LM Studio, `llama-server`, OpenAI and OpenRouter are untested live.
 - **Keychain.** Storing and reading a key goes through `keyring`; the tests cover refusals and redaction but don't touch the real keychain, and the desktop key field needs a check in the app.
 - **Rendered pages** cost about 2 000 tokens each and stay in the conversation; a run may view at most 24. Text extraction loses table layout, and scanned PDFs need vision.
-- **Repeated refusals.** A model that repeats the same refused call is stopped only by the request cap; the runner doesn't yet notice the repetition.
+- **Repeated refusals** are caught only when the call is identical and nothing succeeds in between (a successful call may have changed what the refusal was about); a model that varies a hopeless call slightly is still bounded only by the request cap.
 - **Marking anchors.** A marking item sits at the centre, the pin-1 corner or an end; the WROOM-3 can's Ø0.5 mark at its −x/−y corner cannot be placed yet.

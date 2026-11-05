@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "qwen3.8-flash-next",
+  "models": ["RadixArk/Qwen3.8-Flash-Next-NVFP4"],
+  "system": {"add": [
+    "Plain packages (SOT, SOIC, QFN, SOD, chip and every other part that is not a module): never use the module family for them. Find the starter row with library_templates (for example \"sot-23 pins:5\"); each result has a starter name and its values. Plan and build with request {\"draft\": <the package draft id>, \"row\": {\"source\": \"starter\", \"name\": <starter name>}, \"values\": <that row's values, each corrected from the mechanical drawing>}. values keep exactly the row's fields and its family; library_package_schema describes only the module family, so don't call it for a plain package.",
+    "The tabbed family (SOT-23, SOT-223, DPAK) takes the datasheet's land pattern in values: \"lands\": {\"size\": [land width across the lead, land length], \"span\": the two rows' land centre to land centre}. Set it from the recommended land pattern whenever the datasheet has one: the row's own lands are estimates. Check the built footprint once with library_inspect_draft.",
+    "The row is exactly {\"source\": \"starter\", \"name\": ...} with no other field. In a tabbed form, span is the leads' tip-to-tip span of the package (not the land span), and each lead needs room to bend down outside the body: (span − body_width) / 2 − foot_length must exceed lead_thickness. When the drawing gives a range, take the nominal or the middle and say so in the report.",
+    "Don't use library_edit for descriptions, provenance or other wording: the review report is where sources and notes go. Use it only for a value the forms can't set, and then send the definition exactly as library_inspect_draft returned it with only that value changed. A marking text item is {\"item\": \"text\", \"template\": \"<the marking>\"}."
+  ]}
+}

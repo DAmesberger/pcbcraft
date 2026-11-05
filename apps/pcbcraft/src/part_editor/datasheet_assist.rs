@@ -19,6 +19,7 @@ use pcbcraft_assist::model::profile::ANTHROPIC_BASE_URL;
 use pcbcraft_assist::model::{
     self, Budget, Connection, Endpoint, KeySource, ModelProfile, Provider, Secret, keys,
 };
+use pcbcraft_assist::profile as run_profile;
 use pcbcraft_assist::{Datasheet, Event, Goal, RunConfig};
 use pcbcraft_automation::Session;
 use pcbcraft_core::Engine;
@@ -302,8 +303,16 @@ impl DatasheetAssist {
                 p
             }
         };
+        // The model selects its run profile: the user's file listing it,
+        // else a built-in one, else the default.
+        let folder = pcbcraft_io::settings::UserDirs::from_env()
+            .ok()
+            .map(|dirs| run_profile::user_folder(&dirs.config));
+        let run_profile = run_profile::select(None, &profile.model, folder.as_deref())
+            .map_err(|e| e.to_string())?;
         let config = RunConfig {
             profile,
+            run_profile,
             budget: Budget {
                 max_usd: self.max_usd,
                 ..Budget::default()
@@ -397,6 +406,10 @@ fn work(
     let mut backend =
         model::connect(&plan.config.profile, &connection).map_err(|e| e.to_string())?;
     let mut session = Session::new(Engine::default());
+    let _ = tx.send(Message::Line(format!(
+        "Run profile {}",
+        plan.config.run_profile.name
+    )));
     let outcome = pcbcraft_assist::run(
         &plan.goal,
         &plan.config,
