@@ -10,7 +10,7 @@ use crate::geometry::{Bounds, Point, Shape, Transform2};
 use crate::ids::Id;
 use crate::ids::SheetId;
 use crate::library::Rotation;
-use crate::library::graphics::{SYMBOL_MODULE_MM, SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
+use crate::library::graphics::{PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, TEXT_LINE_SPACING};
 use crate::library::{HAlign, Justify, TextMetric, VAlign};
 use crate::model::{
     Label, LabelKind, PortShape, PowerStyle, Project, SheetItem, SheetSide, SheetSymbol,
@@ -19,13 +19,18 @@ pub use crate::schematic::PlacedText;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Label, power-port and sheet-pin text height, mm: the symbol text height
-/// (designator and value), half the 2.5 mm symbol module, so a net name
-/// reads beside the values it connects and a label fits a pin pitch.
-pub const LABEL_TEXT_MM: f64 = SYMBOL_TEXT_HEIGHT_MM;
-/// Half the height of a global label's flag, mm: the flag is 2 mm tall and
-/// fits a 2.5 mm pin pitch.
-const FLAG_HALF_MM: f64 = 0.8 * LABEL_TEXT_MM;
+/// Label, power-port and sheet-pin text height, mm: the pin name and
+/// number height, so a net name reads as one with the pins it labels and
+/// its outline fits a pin pitch.
+pub const LABEL_TEXT_MM: f64 = PIN_TEXT_HEIGHT_MM;
+/// Half the height of a label's outline (a global label's flag, a local
+/// label's tag), mm: 2 mm tall, so outlines on adjacent 2.5 mm pins keep a
+/// gap, and the name's underscores clear the edge.
+const FLAG_HALF_MM: f64 = 0.4 * SYMBOL_MODULE_MM;
+/// A local label's tag: space either side of the name, and its corner
+/// radius, mm.
+const TAG_PAD_MM: f64 = 0.6;
+const TAG_RADIUS_MM: f64 = 0.5;
 /// The steps a label that places itself may stand off its pin, along a
 /// leader, to clear what is drawn there: a symbol module each.
 const LEADER_STEP_MM: f64 = SYMBOL_MODULE_MM;
@@ -239,32 +244,22 @@ fn label_at(
     let h = LABEL_TEXT_MM;
     match label.kind {
         LabelKind::Local => {
-            // Text sits just above (or beside) the wire, reading away.
-            let horizontal = dir[0].abs() >= dir[1].abs();
-            let at = if horizontal {
-                [origin[0], origin[1] + 0.4]
-            } else {
-                [origin[0] - 0.4, origin[1]]
-            };
-            let mut j = away(dir);
-            j.v = VAlign::Bottom;
-            if !horizontal {
-                j.h = if dir[1] >= 0.0 {
-                    HAlign::Left
-                } else {
-                    HAlign::Right
-                };
-            }
-            d.texts.push(PlacedText {
-                graphic: None,
-                text: label.name.clone(),
-                at,
-                height: h,
-                rotation_deg: if horizontal { 0.0 } else { 90.0 },
-                justify: j,
-                mirrored: false,
-                line_spacing: TEXT_LINE_SPACING,
+            // A tag with rounded corners, square to the wire, set apart
+            // from a global label's pointed flag; the name runs along it.
+            let half = FLAG_HALF_MM;
+            let length = text_width(&label.name, h) + 2.0 * TAG_PAD_MM;
+            let corners = [[0.0, half], [length, half], [length, -half], [0.0, -half]];
+            d.strokes.push(Stroke {
+                shape: Shape::Polygon {
+                    points: corners.into_iter().map(|p| t.apply(p)).collect(),
+                    radii: vec![TAG_RADIUS_MM; 4],
+                },
+                width: LINE_MM,
+                filled: false,
             });
+            let mut text = along(label.name.clone(), t.apply([length / 2.0, 0.0]), dir);
+            text.justify.h = HAlign::Center;
+            d.texts.push(text);
         }
         LabelKind::Global { shape } => {
             let half = FLAG_HALF_MM;
@@ -413,6 +408,9 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
     let mut drawn: Vec<Option<Drawing>> = vec![None; on_sheet.len()];
     // Where each self-placing label's pin ends and which way it faces.
     let mut auto: Vec<(usize, Point, Point)> = Vec::new();
+    // How far past its pin's end each label starts: clear of a pin name
+    // or number that runs beyond the end (a long number on a short pin).
+    let mut start = vec![0.0; on_sheet.len()];
     for (i, l) in on_sheet.iter().enumerate() {
         let frame = labels::attached_pin(project, l).and_then(|e| {
             units.iter().find_map(|u| {
@@ -421,11 +419,25 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                     return None;
                 }
                 let pin = u.pins.iter().find(|p| p.terminal == e.terminal)?;
-                Some((pin.end, labels::outward(u, e.terminal)?))
+                let d = labels::outward(u, e.terminal)?;
+                let reach = |p: Point| (p[0] - pin.end[0]) * d[0] + (p[1] - pin.end[1]) * d[1];
+                let past = pin
+                    .name
+                    .iter()
+                    .chain(&pin.number)
+                    .flat_map(|t| t.bounds(m).corners())
+                    .map(reach)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                Some((pin.end, d, past))
             })
         });
         match frame {
-            Some((end, d)) => auto.push((i, end, d)),
+            Some((end, d, past)) => {
+                if past > -LABEL_CLEARANCE_MM {
+                    start[i] = past + 2.0 * LABEL_CLEARANCE_MM;
+                }
+                auto.push((i, end, d));
+            }
             None => {
                 let d = label(l);
                 taken.extend(ink_boxes(&d, m));
@@ -482,7 +494,7 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
         let mut best: Option<(usize, Drawing)> = None;
         'search: for step in 0..=MAX_LEADER_STEPS {
             for upright in names {
-                let leader = step as f64 * LEADER_STEP_MM;
+                let leader = start[i] + step as f64 * LEADER_STEP_MM;
                 let candidate = label_at(l, end, rotation, leader, *upright);
                 let hits: usize = ink_boxes(&candidate, m)
                     .iter()
