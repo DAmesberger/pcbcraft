@@ -98,8 +98,7 @@ The board in the desktop app: PCB 2D (top copper and the top pour; 0 airwires), 
 
 - **USB pair.** It runs from the ESD diodes to the module as one coupled 90 Ω pair on top, routed by `layout.route_pair`. Between the receptacle and the ESD diodes the halves run 1.5 mm apart.
   - The plug orientations are joined at the receptacle: A6 to B6 by a short top track, and A7 to B7 by two vias and a bottom track under the receptacle. The vias are tented, under the connector body.
-  - Pcbcraft's pair check counts every copper segment of each net, branches included, so it reports a skew of 4.735 mm.
-  - Measured by hand along the receptacle-to-module paths, both halves are 23.575 mm long, so the real skew is 0. The design is not tuned to the check, because a meander would create real skew. See the log.
+  - The pair check measures each half along its signal path, J1.B6 to U1.43 and J1.B7 to U1.42: 29.865 mm each, so the skew is 0. The length report lists the plug-orientation joins as stubs: 2.245 mm to J1.A6 and 6.98 mm to J1.A7. See the log.
 - **GPIO buses.** They run on the bottom layer, so no part sits in their way. The header order follows the module's pin order (J2 pin 4 = IO12 … pin 12 = IO4), so the buses route without crossings.
 - **EPAD.** Each of its nine squares has a via to the GND plane. The datasheet makes soldering the EPAD optional and recommends a moderate amount of paste. The paste follows the footprint's default.
 - **3D models.** The LED, the switches and the USB-C receptacle use envelope boxes; the production check warns about this. The module uses its parametric part file. The passives, the SOT parts and the headers use generated models.

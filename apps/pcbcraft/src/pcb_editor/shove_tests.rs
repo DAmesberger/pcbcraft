@@ -172,3 +172,33 @@ fn walkaround_stops_short_and_ignore_is_refused() -> TestResult {
     assert_eq!(engine.revision(), revision);
     Ok(())
 }
+
+/// A push reaching a pair where its halves do not run coupled cannot keep it
+/// whole: the pair's track stays, and the plan names the pair for the
+/// message the preview paints.
+#[test]
+fn a_held_pair_stays_and_the_preview_says_so() -> TestResult {
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let (mut engine, track) = setup(&mut canvas, &mut editor)?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(pcbcraft_core::rules::RulesCommand::AddDiffPair {
+            pair: pcbcraft_core::rules::signal::DiffPairSpec {
+                name: "USB".into(),
+                positive: OTHER,
+                negative: 1,
+            },
+        }),
+    )?;
+    // The rules change ended the route: start it again.
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, R1_2).is_none());
+    let step = canvas.click(&mut editor, &engine, [12.0, 10.5]);
+    let sent = edits(&step)?;
+    assert!(sent.replace.iter().all(|t| t.id != track.id), "{sent:?}");
+    let (_, planned) = editor.route.planned.as_ref().ok_or("no plan")?;
+    let note = planned.note().ok_or("no message")?;
+    assert!(note.contains("USB"), "{note}");
+    Ok(())
+}

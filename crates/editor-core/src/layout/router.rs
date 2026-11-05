@@ -195,6 +195,10 @@ pub struct RoutePlan {
     /// (through the via, when the step places one): 1 for a straight
     /// step. Shoved copper does not count.
     pub detour_factor: f64,
+    /// A differential pair in the way could not be shoved as one unit, so
+    /// it stayed where it is and the step went round or stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// A step's head copper: a polyline on the step's layer, and after a
@@ -359,6 +363,7 @@ fn proposal(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
                 undo: RouteEditSet::default(),
                 blocked: None,
                 detour_factor: Head::straight(request).detour_factor(request),
+                note: None,
             }
         }
         RouteMode::Walkaround => {
@@ -661,10 +666,18 @@ fn finish(
         blocked: if reached {
             None
         } else {
-            Some(blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h)))
+            Some(stopped_by(ctx, state, blocker))
         },
         detour_factor: head.detour_factor(request),
+        note: ctx.held_note(state),
     }
+}
+
+/// Why a head stopped short: the pair it could not shove, else what it hit.
+fn stopped_by(ctx: &Ctx<'_>, state: &State, blocker: Option<Hit>) -> String {
+    ctx.held_note(state).unwrap_or_else(|| {
+        blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h))
+    })
 }
 
 /// A pair step with its shove: the step (head and edits, the shoved
@@ -678,6 +691,8 @@ pub struct PairPlan {
     pub moved_vias: Vec<Id>,
     pub undo: RouteEditSet,
     pub blocked: Option<String>,
+    /// Another pair in the way could not be shoved as one unit.
+    pub note: Option<String>,
 }
 
 /// The overlay holding a pair step's copper: its tracks and vias fixed,
@@ -745,8 +760,9 @@ pub fn pair_plan(
             blocked: if reached {
                 None
             } else {
-                Some(blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h)))
+                Some(stopped_by(&ctx, state, blocker))
             },
+            note: ctx.held_note(state),
         }
     };
     let empty = State::default();

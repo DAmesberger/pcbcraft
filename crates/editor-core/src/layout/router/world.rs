@@ -13,6 +13,7 @@ use crate::layout::posture::Posture;
 use crate::layout::{CURVE_SLACK_MM, CopperRing, placed_keepouts};
 use crate::model::{BoardShape, CopperLayer, Keepout, Project, Track, Via};
 use crate::rules::CopperObject;
+use crate::rules::signal::{DiffPair, DiffPairId};
 use std::collections::BTreeSet;
 
 /// How far past the rule a hull is grown, mm: room for rounding and for
@@ -212,6 +213,9 @@ pub(super) struct Ctx<'a> {
     /// Collision queries made so far: the plan's work budget, counted
     /// rather than timed so a preview and its commit decide alike.
     pub probes: std::cell::Cell<usize>,
+    /// A differential pair a shove could not move as one unit (the last
+    /// such; the plan's message names it).
+    pub held: std::cell::Cell<Option<DiffPairId>>,
 }
 
 fn shares(a: &[CopperLayer], b: &[CopperLayer]) -> bool {
@@ -226,6 +230,7 @@ impl<'a> Ctx<'a> {
             rules: BoardRules::of(project),
             stack: project.stackup.layers(),
             probes: std::cell::Cell::new(0),
+            held: std::cell::Cell::new(None),
         }
     }
 
@@ -491,7 +496,10 @@ impl<'a> Ctx<'a> {
                 if let Some(t) = self.base_track(k) {
                     !t.locked && !state.frozen.contains(&t.net)
                 } else if let Some(v) = self.base_via(k) {
-                    state.move_vias && !v.locked && !state.frozen.contains(&v.net)
+                    state.move_vias
+                        && !v.locked
+                        && !state.frozen.contains(&v.net)
+                        && self.pair_of(v.net).is_none()
                 } else {
                     false
                 }
@@ -500,6 +508,29 @@ impl<'a> Ctx<'a> {
             Target::Via(_) => state.move_vias,
             _ => false,
         }
+    }
+
+    /// The differential pair `net` is a half of.
+    pub fn pair_of(&self, net: Id) -> Option<&'a DiffPair> {
+        self.project.rules.pair_of(net)
+    }
+
+    /// Why the head could not pass a pair it could not shove, when one
+    /// held and the overlay `state` (the plan's result) leaves it unmoved:
+    /// a later attempt may have found a way that moves it whole after all.
+    pub fn held_note(&self, state: &State) -> Option<String> {
+        let pair = self.project.rules.diff_pair(self.held.get()?)?;
+        if state
+            .lines
+            .iter()
+            .any(|l| pair.has(l.net) && l.points != l.original)
+        {
+            return None;
+        }
+        Some(format!(
+            "Pair {} can't move as one here, so it stays put",
+            pair.name
+        ))
     }
 
     /// Board tracks of `net` on `layer` with an end at `p` (within a
