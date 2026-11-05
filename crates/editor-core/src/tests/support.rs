@@ -545,6 +545,30 @@ pub fn connect(engine: &mut Engine, from: Endpoint, to: Endpoint) -> Result<()> 
     .map(|_| ())
 }
 
+/// The wires of the run that leaves `from`: its first wire and, through
+/// every two-wire junction (a routed wire's bends), the rest, sorted.
+pub fn wire_run(engine: &Engine, from: Endpoint) -> Vec<Id> {
+    let project = engine.project();
+    let mut run = Vec::new();
+    let mut at = WireEnd::from(from);
+    let mut next = project.wires_at(at).next();
+    while let Some(wire) = next {
+        if run.contains(&wire.id) {
+            break;
+        }
+        run.push(wire.id);
+        at = if wire.from == at { wire.to } else { wire.from };
+        next = match at {
+            WireEnd::Junction(_) if project.wires_at(at).count() == 2 => {
+                project.wires_at(at).find(|w| w.id != wire.id)
+            }
+            _ => None,
+        };
+    }
+    run.sort_unstable();
+    run
+}
+
 pub fn wire_between(engine: &Engine, a: Endpoint, b: Endpoint) -> Result<Id> {
     engine
         .project()

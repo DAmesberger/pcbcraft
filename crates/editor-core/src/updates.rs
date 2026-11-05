@@ -823,7 +823,7 @@ fn stage_change(project: &Project, change: &Change) -> Result<Project> {
         }
         Change::SyncPcb {} => layout::apply(&mut next, layout::LayoutCommand::Sync)?,
     }
-    schematic::tidy(&mut next);
+    schematic::tidy(&mut next)?;
     nets::reconcile(&mut next)?;
     Ok(next)
 }

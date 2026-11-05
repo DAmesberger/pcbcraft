@@ -67,6 +67,12 @@ const HIT_PX: f32 = 6.0;
 /// Pick radius of a pin end or junction, and of a wire's path, in pixels.
 const PIN_HIT_PX: f32 = 9.0;
 const WIRE_HIT_PX: f32 = 6.0;
+/// How near, in pixels, a Wire tool pointer snaps to a connection point
+/// (pin end, junction, label, sheet pin): screen space, so it works the
+/// same at every zoom and for pins off the grid.
+const SNAP_PX: f32 = 12.0;
+/// The radius of the Wire tool's snap marker ring, in pixels.
+const SNAP_MARKER_PX: f32 = 7.0;
 /// The junction dot's radius in sheet millimetres, and its on-screen bounds
 /// in pixels so it stays visible zoomed out and tidy zoomed in.
 const DOT_RADIUS_MM: f32 = 0.3;
@@ -147,6 +153,8 @@ enum Tool {
     Select,
     Place,
     Wire,
+    /// Put junction points on wires and crossings, or remove them.
+    Junction,
     Label(LabelTool),
     SheetSymbol,
     Draw(DrawTool),
@@ -656,6 +664,10 @@ impl SchematicEditor {
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Wire)
                             .tip("Connect two terminals"),
+                        Button::new("junction", "point", "Junction")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::Junction)
+                            .tip("Join wires at a point, or remove a junction point"),
                         Button::family(
                             Button::new("label", "point", "Label")
                                 .enabled(!reviewing)
@@ -744,6 +756,7 @@ impl SchematicEditor {
             "select" => Tool::Select,
             "place" => Tool::Place,
             "wire" => Tool::Wire,
+            "junction" => Tool::Junction,
             "label" => Tool::Label(LabelTool::Local),
             "global-label" => Tool::Label(LabelTool::Global),
             "hierarchical-label" => Tool::Label(LabelTool::Hierarchical),
@@ -822,7 +835,7 @@ impl SchematicEditor {
         }
         match self.tool {
             Tool::Place => Subject::Place,
-            Tool::Wire => Subject::Wiring,
+            Tool::Wire | Tool::Junction => Subject::Wiring,
             Tool::Label(tool) => Subject::LabelTool(tool),
             Tool::SheetSymbol => Subject::SheetTool,
             Tool::Draw(tool) => Subject::DrawTool(tool),
@@ -1390,6 +1403,8 @@ impl SchematicEditor {
         self.paint_scene(&painter, view, project);
 
         let mut pin_hits = Vec::new();
+        // Each pin's drawn line on screen: (terminal, connection end, line end).
+        let mut pin_lines: Vec<(Endpoint, Pos2, Pos2)> = Vec::new();
         let mut body_hits = Vec::new();
         let removing = self.update.marks().map(|m| m.removed).unwrap_or_default();
         let mut hit_wire = None;
@@ -1537,7 +1552,8 @@ impl SchematicEditor {
                 } else {
                     paint_pin_mark(
                         &painter,
-                        p,
+                        view,
+                        pin,
                         self.pin_marks
                             .get(&endpoint)
                             .copied()
@@ -1546,6 +1562,7 @@ impl SchematicEditor {
                     );
                 }
                 pin_hits.push((endpoint, p));
+                pin_lines.push((endpoint, p, view.screen(pin.line_end)));
             }
         }
         // The topmost occurrence whose drawing core hits under `p`.
@@ -1565,56 +1582,90 @@ impl SchematicEditor {
         // Where a Wire tool click at `pointer` lands: a pin end, then a
         // junction, then a point on a wire's path (snapped to the grid when
         // that stays on the wire), with its screen position.
-        let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
-            let nearest = |hits: &[(WireTarget, Pos2)]| {
-                hits.iter()
-                    .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
-                    .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
-                    .copied()
-            };
-            let pins: Vec<(WireTarget, Pos2)> = pin_hits
+        // A point on the nearest wire's path under `pointer`, snapped to the
+        // grid when that stays on the wire.
+        let wire_point_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
+            let (wire, _) = wire_paths
                 .iter()
-                .map(|(e, p)| (WireTarget::Terminal(*e), *p))
-                .collect();
-            let junctions: Vec<(WireTarget, Pos2)> = junction_hits
-                .iter()
-                .map(|(e, p)| (WireTarget::from(*e), *p))
-                .collect();
-            nearest(&pins)
-                .or_else(|| nearest(&junctions))
-                .or_else(|| nearest(&point_hits))
-                .or_else(|| {
-                    let (wire, _) = wire_paths
-                        .iter()
-                        .map(|(id, path)| {
-                            let d = path
-                                .windows(2)
-                                .map(|s| segment_distance(pointer, s[0], s[1]))
-                                .fold(f32::INFINITY, f32::min);
-                            (*id, d)
-                        })
-                        .filter(|(_, d)| *d < WIRE_HIT_PX)
-                        .min_by(|a, b| a.1.total_cmp(&b.1))?;
-                    let here = view.world(pointer);
-                    let on = schematic::nearest_on_wire(project, wire, here)?;
-                    let snapped = snap(on, grid);
-                    let at = schematic::nearest_on_wire(project, wire, snapped)
-                        .filter(|p| {
-                            (p[0] - snapped[0]).hypot(p[1] - snapped[1])
-                                <= schematic::JUNCTION_TOLERANCE_MM
-                        })
-                        .map_or(on, |_| snapped);
-                    Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
+                .map(|(id, path)| {
+                    let d = path
+                        .windows(2)
+                        .map(|s| segment_distance(pointer, s[0], s[1]))
+                        .fold(f32::INFINITY, f32::min);
+                    (*id, d)
                 })
+                .filter(|(_, d)| *d < WIRE_HIT_PX)
+                .min_by(|a, b| a.1.total_cmp(&b.1))?;
+            let here = view.world(pointer);
+            let on = schematic::nearest_on_wire(project, wire, here)?;
+            let snapped = snap(on, grid);
+            let at = schematic::nearest_on_wire(project, wire, snapped)
+                .filter(|p| {
+                    (p[0] - snapped[0]).hypot(p[1] - snapped[1]) <= schematic::JUNCTION_TOLERANCE_MM
+                })
+                .map_or(on, |_| snapped);
+            Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
+        };
+        // The junction point under `pointer`, for the Junction tool.
+        let junction_at = |pointer: Pos2| {
+            junction_hits
+                .iter()
+                .filter(|(_, p)| p.distance(pointer) < SNAP_PX)
+                .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
+                .and_then(|(e, p)| Some((e.junction_id()?, *p)))
+        };
+        let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
+            // The nearest connection point within the snap radius, a pin
+            // end winning a tie; else a pin whose drawn line is under the
+            // pointer, landing on its connection end.
+            let points = pin_hits
+                .iter()
+                .map(|(e, p)| (WireTarget::Terminal(*e), *p, 0))
+                .chain(
+                    junction_hits
+                        .iter()
+                        .map(|(e, p)| (WireTarget::from(*e), *p, 1)),
+                )
+                .chain(point_hits.iter().map(|(target, p)| (*target, *p, 1)));
+            points
+                .filter(|(_, p, _)| p.distance(pointer) < SNAP_PX)
+                .min_by(|a, b| {
+                    a.1.distance(pointer)
+                        .total_cmp(&b.1.distance(pointer))
+                        .then(a.2.cmp(&b.2))
+                })
+                .map(|(target, p, _)| (target, p))
+                .or_else(|| {
+                    pin_lines
+                        .iter()
+                        .map(|(e, end, line_end)| {
+                            (e, end, segment_distance(pointer, *end, *line_end))
+                        })
+                        .filter(|(_, _, d)| *d < WIRE_HIT_PX)
+                        .min_by(|a, b| a.2.total_cmp(&b.2))
+                        .map(|(e, end, _)| (WireTarget::Terminal(*e), *end))
+                })
+                .or_else(|| wire_point_at(pointer))
         };
         if let Some(pointer) = response.hover_pos() {
             let hit = pin_hits
                 .iter()
                 .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)));
-            let landing = if wiring { target_at(pointer) } else { None };
+            let landing = if wiring {
+                target_at(pointer)
+            } else if self.tool == Tool::Junction {
+                junction_at(pointer)
+                    .map(|(j, p)| (WireTarget::from(WireEnd::junction(j)), p))
+                    .or_else(|| wire_point_at(pointer))
+            } else {
+                None
+            };
             if let Some((_, p)) = landing {
-                painter.circle_stroke(p, 7.0, Stroke::new(1.0, t.accent));
+                // The snap marker: a ring around, and a dot on, exactly
+                // where the wire end will land.
+                painter.circle_stroke(p, SNAP_MARKER_PX, Stroke::new(1.5, t.accent));
+                painter.circle_filled(p, 2.0, t.accent);
             } else if let Some((_, p)) = hit {
                 painter.circle_stroke(*p, 7.0, Stroke::new(1.0, t.accent));
             }
@@ -1684,6 +1735,20 @@ impl SchematicEditor {
                 }
                 Tool::SheetSymbol | Tool::Draw(_) => {
                     output = self.tool_click(world(pointer), None);
+                }
+                // A click on a junction point removes it; on a wire, or
+                // where wires cross, it puts one there.
+                Tool::Junction => {
+                    if let Some((junction, _)) = junction_at(pointer) {
+                        output = Some(Operation::Schematic(SchematicCommand::RemoveJunction {
+                            junction,
+                        }));
+                    } else if let Some((WireTarget::OnWire(point), _)) = wire_point_at(pointer) {
+                        output = Some(Operation::Schematic(SchematicCommand::PlaceJunction {
+                            sheet: Some(self.sheet),
+                            position: point.at,
+                        }));
+                    }
                 }
                 Tool::Wire => {
                     if let Some((to, _)) = target_at(pointer) {
@@ -2006,6 +2071,10 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
             "Click a terminal or wire to end · Esc cancels".to_owned()
         }
         Tool::Wire => "Click a terminal or wire to start a wire".to_owned(),
+        Tool::Junction => {
+            "Click a wire or a crossing to join there · click a junction point to remove it · Esc ends"
+                .to_owned()
+        }
         Tool::Place => match editor.component.and_then(|c| project.library.component(c)) {
             Some(component) => format!("Click to place {} · Esc ends", component.meta.name),
             None => "Publish a component to place it".to_owned(),
@@ -2249,25 +2318,50 @@ fn focus_left(ui: &egui::Ui, key: egui::Id, rect: Rect) -> Option<bool> {
     (was && !inside).then(|| ui.input(|i| i.key_pressed(egui::Key::Escape)))
 }
 
+/// On-screen bounds of the pin marks in pixels: visible zoomed out, never
+/// larger than the pin text zoomed in (the size comes from core's
+/// [`schematic::PIN_RING_MM`] and [`schematic::NO_CONNECT_MM`]).
+const PIN_MARK_PX: (f32, f32) = (2.0, 12.0);
+/// The pin-mark stroke in sheet millimetres (thinner than the pin line).
+const PIN_MARK_STROKE_MM: f32 = 0.15;
+
+/// The to-do ring's on-screen radius and stroke width at `scale`.
+fn pin_ring(scale: f32) -> (f32, f32) {
+    let radius = (schematic::PIN_RING_MM as f32 * scale).clamp(PIN_MARK_PX.0, PIN_MARK_PX.1);
+    (radius, (PIN_MARK_STROKE_MM * scale).clamp(1.0, 2.0))
+}
+
+/// Where the to-do ring of `pin` is centred on screen: just outside the
+/// connection end, so the pin line stops at the ring's edge.
+fn pin_ring_centre(view: symbol_view::View, pin: &schematic::PlacedPin) -> Pos2 {
+    let (radius, width) = pin_ring(view.scale);
+    let o = pin.outward();
+    view.screen(pin.end) + egui::vec2(o[0] as f32, -(o[1] as f32)) * (radius + 0.5 * width)
+}
+
 /// Paint a pin end's mark: nothing for a wired end, the Issues to-do ring
 /// for one still needing a decision, a cross for a decided no-connect.
 fn paint_pin_mark(
     painter: &egui::Painter,
-    p: Pos2,
+    view: symbol_view::View,
+    pin: &schematic::PlacedPin,
     mark: PinMark,
     dim: impl Fn(egui::Color32) -> egui::Color32,
 ) {
     let t = Tokens::get();
+    let p = view.screen(pin.end);
     match mark {
         PinMark::Wired => {}
         PinMark::ToDo => {
             let ink = dim(kit::severity::ink(kit::severity::Level::ToDo));
-            painter.circle_stroke(p, 3.5, Stroke::new(1.5, ink));
+            let (radius, width) = pin_ring(view.scale);
+            painter.circle_stroke(pin_ring_centre(view, pin), radius, Stroke::new(width, ink));
         }
         PinMark::NoConnect => {
             let ink = dim(t.text_dim);
-            let h = 3.0;
-            let stroke = Stroke::new(1.5, ink);
+            let h =
+                (schematic::NO_CONNECT_MM as f32 * view.scale).clamp(PIN_MARK_PX.0, PIN_MARK_PX.1);
+            let stroke = Stroke::new((PIN_MARK_STROKE_MM * view.scale).clamp(1.0, 2.0), ink);
             painter.line_segment([p + egui::vec2(-h, -h), p + egui::vec2(h, h)], stroke);
             painter.line_segment([p + egui::vec2(-h, h), p + egui::vec2(h, -h)], stroke);
         }
@@ -2333,6 +2427,8 @@ fn endpoint_label(project: &Project, endpoint: Endpoint) -> String {
     format!("{} pin {name}", instance.designator)
 }
 
+#[cfg(test)]
+mod canvas_pictures;
 #[cfg(test)]
 mod junction_tests;
 #[cfg(test)]

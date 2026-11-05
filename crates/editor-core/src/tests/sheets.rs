@@ -395,7 +395,14 @@ fn renaming_a_labelled_net_renames_its_labels_and_keeps_its_id() -> Result<()> {
     assert!(matches!(refused, Err(Error::Conflict(_))), "{refused:?}");
     kept.assert_kept(&engine, "rename onto another net");
     // Renaming one label onto another net's name joins them deliberately.
-    label(&mut engine, s1, "SCL", global(), [0.0, 0.0], at(ep(u3, 1)))?;
+    label(
+        &mut engine,
+        s1,
+        "SCL",
+        global(),
+        [10.0, -10.0],
+        at(ep(u3, 1)),
+    )?;
     run(
         &mut engine,
         C::EditLabel {
@@ -1105,7 +1112,8 @@ fn hundreds_of_labels_across_sheets_stay_consistent() -> Result<()> {
             sheet,
             &format!("S{}", k % 60),
             global(),
-            at_,
+            // Beside each pin: labels at one point would connect.
+            [at_[0] - 7.5, at_[1]],
             at(ep(id, 1)),
         )?;
         label(
@@ -1113,7 +1121,7 @@ fn hundreds_of_labels_across_sheets_stay_consistent() -> Result<()> {
             sheet,
             "GND",
             power(PowerStyle::Ground),
-            at_,
+            [at_[0] + 7.5, at_[1]],
             at(ep(id, 2)),
         )?;
         parts.push(id);

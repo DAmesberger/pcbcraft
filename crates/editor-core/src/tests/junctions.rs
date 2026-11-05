@@ -125,12 +125,26 @@ fn a_wire_ending_on_a_segment_splits_it_at_a_junction_and_joins_the_net() -> Res
 
 #[test]
 fn a_t_on_the_vertical_leg_of_a_bent_wire_keeps_its_path() -> Result<()> {
-    let Sheet { mut engine, u, .. } = sheet()?;
-    // U1.1 (-5, 0) → U3.2 (20, 20): along x to (20, 0), then up.
-    connect(&mut engine, ep(u[0], 1), ep(u[2], 2))?;
-    let bent = wire_between(&engine, ep(u[0], 1), ep(u[2], 2))?;
-    let path = schematic::wire_route([-5.0, 0.0], [20.0, 20.0]);
-    connect_to(&mut engine, ep(u[3], 2).into(), on(bent, [20.0, 10.0]))?;
+    let Sheet { mut engine, .. } = sheet()?;
+    // Away from the others (whose pins a new wire must not run over):
+    // U5.2 (-15, 30) → U6.1 (25, 50), along x to (25, 30), then up; U7.1
+    // (40, 40) lands on that vertical leg.
+    let fixture = resistor(&mut engine)?;
+    let mut u = [0; 3];
+    for (i, (name, at)) in [
+        ("U5", [-20.0, 30.0]),
+        ("U6", [30.0, 50.0]),
+        ("U7", [45.0, 40.0]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        u[i] = place(&mut engine, &fixture, name, 1, at)?.0;
+    }
+    connect(&mut engine, ep(u[0], 2), ep(u[1], 1))?;
+    let bent = wire_between(&engine, ep(u[0], 2), ep(u[1], 1))?;
+    let path = schematic::wire_route([-15.0, 30.0], [25.0, 50.0]);
+    connect_to(&mut engine, ep(u[2], 1).into(), on(bent, [25.0, 40.0]))?;
     let project = engine.project();
     let junction = WireEnd::junction(project.junctions[0].id);
     let halves: Vec<[Point; 3]> = project
@@ -143,11 +157,11 @@ fn a_t_on_the_vertical_leg_of_a_bent_wire_keeps_its_path() -> Result<()> {
     assert_eq!(
         halves,
         vec![
-            [path[0], path[1], [20.0, 10.0]],
-            [[20.0, 10.0], [20.0, 10.0], path[2]]
+            [path[0], path[1], [25.0, 40.0]],
+            [[25.0, 40.0], [25.0, 40.0], path[2]]
         ]
     );
-    assert_eq!(net_of(&engine, ep(u[3], 2))?, net_of(&engine, ep(u[0], 1))?);
+    assert_eq!(net_of(&engine, ep(u[2], 1))?, net_of(&engine, ep(u[0], 2))?);
     Ok(())
 }
 
@@ -171,19 +185,20 @@ fn ends_on_one_terminal_or_junction_meet_and_three_conductors_get_a_dot() -> Res
         wire,
     } = sheet()?;
     // A point at a wire's end is that end: no junction, a second wire on
-    // U2.1, and a dot there (the pin plus two wires).
-    connect_to(&mut engine, ep(u[3], 1).into(), on(wire, [25.0, 0.0]))?;
+    // U2.1, and a dot there (the pin plus two wires). The wires below come
+    // from pins whose horizontal-first L runs over no other pin.
+    connect_to(&mut engine, ep(u[2], 2).into(), on(wire, [25.0, 0.0]))?;
     assert!(engine.project().junctions.is_empty());
     assert_eq!(engine.project().wires_at(ep(u[1], 1)).count(), 2);
     assert_eq!(dots(&engine), vec![[25.0, 0.0]]);
-    assert_eq!(net_of(&engine, ep(u[3], 1))?, net_of(&engine, ep(u[0], 2))?);
-    // A two-wire bend junction has no dot until a third wire lands on it.
+    assert_eq!(net_of(&engine, ep(u[2], 2))?, net_of(&engine, ep(u[0], 2))?);
+    // A T makes a junction with a dot; a fourth wire lands on it too.
     connect_to(&mut engine, ep(u[2], 1).into(), on(wire, [15.0, 0.0]))?;
     let junction = engine.project().junctions[0].id;
     assert_eq!(dots(&engine).len(), 2);
     connect_to(
         &mut engine,
-        ep(u[2], 2).into(),
+        ep(u[3], 2).into(),
         WireEnd::junction(junction).into(),
     )?;
     assert_eq!(
@@ -193,7 +208,7 @@ fn ends_on_one_terminal_or_junction_meet_and_three_conductors_get_a_dot() -> Res
             .count(),
         4
     );
-    assert_eq!(net_of(&engine, ep(u[2], 2))?, net_of(&engine, ep(u[0], 2))?);
+    assert_eq!(net_of(&engine, ep(u[3], 2))?, net_of(&engine, ep(u[0], 2))?);
     Ok(())
 }
 

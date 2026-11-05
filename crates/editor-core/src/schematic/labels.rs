@@ -313,6 +313,7 @@ pub(super) fn detach_point(
         id: junction,
         sheet,
         position,
+        placed: false,
     });
     let to = WireEnd::junction(junction);
     for wire in &mut project.wires {

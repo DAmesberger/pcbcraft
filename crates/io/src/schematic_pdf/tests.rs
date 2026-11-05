@@ -243,7 +243,7 @@ fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
             .chain(printed.no_connects.iter().map(|p| {
                 (
                     "a no-connect cross".to_owned(),
-                    Bounds::point(*p).inflated(CROSS_MM),
+                    Bounds::point(*p).inflated(pcbcraft_core::schematic::NO_CONNECT_MM),
                     [MARK_GAP_MM, MARK_GAP_MM],
                 )
             }))

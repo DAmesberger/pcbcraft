@@ -117,7 +117,8 @@ pub struct SymbolOccurrence {
 /// A wire between two connection points. It is drawn as the
 /// horizontal-first route `schematic::wire_route` gives. Crossing another
 /// wire never connects; a wire joins another only through a shared
-/// [`Junction`] or terminal.
+/// [`Junction`], terminal, label or sheet pin. `schematic::tidy` keeps it
+/// so: a connection point lying on a wire's path splits the wire there.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Wire {
@@ -213,9 +214,11 @@ impl From<Endpoint> for WireEnd {
 }
 
 /// A connection point on the sheet where wires meet away from a terminal:
-/// made where a wire end lands on another wire's segment. It carries
-/// connectivity, not drawing; the junction dot is derived where three or
-/// more conductors meet. A junction always has at least two wires.
+/// made where a wire end lands on another wire's segment, at the bends of
+/// a routed wire, or put on a wire or crossing with `junction.place`. Any
+/// wire running over it connects to it. The dot is derived where three or
+/// more conductors meet, and always drawn for a placed junction point. A
+/// junction always has at least two wires.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Junction {
@@ -223,6 +226,10 @@ pub struct Junction {
     #[serde(default, skip_serializing_if = "SheetId::is_first")]
     pub sheet: SheetId,
     pub position: Point,
+    /// Put there as a junction point (`junction.place`), so it shows as a
+    /// dot even where only two wires pass through it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub placed: bool,
 }
 
 /// A persistent electrical net. Its ID survives renaming, unrelated edits and
