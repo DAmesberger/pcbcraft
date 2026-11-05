@@ -15,7 +15,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
 /// An RGBA picture, unpremultiplied bytes, row-major from the top left.
-pub(super) struct Picture {
+pub(crate) struct Picture {
     pub(super) width: usize,
     pub(super) height: usize,
     pixels: Vec<[f32; 4]>,
@@ -36,7 +36,7 @@ impl Picture {
         Some(Color32::from_rgb(byte(r), byte(g), byte(b)))
     }
 
-    pub(super) fn png(&self) -> Option<Vec<u8>> {
+    pub(crate) fn png(&self) -> Option<Vec<u8>> {
         let bytes: Vec<u8> = self
             .pixels
             .iter()
@@ -163,6 +163,15 @@ fn rasterize(
 
 /// Draw the canvas twice (the first frame uploads the fonts) and fill it.
 pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
+    render(|ui| {
+        editor.canvas(ui, engine);
+    })
+}
+
+/// Draw `ui` twice on the test screen (the first frame uploads the fonts)
+/// and fill it over the viewport background. The schematic canvas uses it
+/// too.
+pub(crate) fn render(mut draw: impl FnMut(&mut egui::Ui)) -> Picture {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut textures = Textures::default();
@@ -176,9 +185,7 @@ pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
                 )),
                 ..Default::default()
             },
-            |ui| {
-                editor.canvas(ui, engine);
-            },
+            |ui| draw(ui),
         );
         textures.apply(&frame.textures_delta);
         frame.textures_delta.clear();

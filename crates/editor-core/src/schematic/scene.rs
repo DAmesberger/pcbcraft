@@ -5,10 +5,12 @@
 //! the screen and the print agree. Original geometry; the power port
 //! shapes repeat the ground and supply drawings of
 //! `library::symbol_style`.
-use super::{PlacedUnit, junction_dots, placed_unit, wire_ends, wire_route, wiring};
+use super::{PlacedUnit, junction_dots, labels, placed_unit, wire_ends, wire_route, wiring};
 use crate::geometry::{Bounds, Point, Shape, Transform2};
+use crate::ids::Id;
 use crate::ids::SheetId;
-use crate::library::graphics::TEXT_LINE_SPACING;
+use crate::library::Rotation;
+use crate::library::graphics::{SYMBOL_MODULE_MM, SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
 use crate::library::{HAlign, Justify, TextMetric, VAlign};
 use crate::model::{
     Label, LabelKind, PortShape, PowerStyle, Project, SheetItem, SheetSide, SheetSymbol,
@@ -17,8 +19,24 @@ pub use crate::schematic::PlacedText;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Label and sheet-pin text height, mm.
-pub const LABEL_TEXT_MM: f64 = 1.5;
+/// Label, power-port and sheet-pin text height, mm: the symbol text height
+/// (designator and value), half the 2.5 mm symbol module, so a net name
+/// reads beside the values it connects and a label fits a pin pitch.
+pub const LABEL_TEXT_MM: f64 = SYMBOL_TEXT_HEIGHT_MM;
+/// Half the height of a global label's flag, mm: the flag is 2 mm tall and
+/// fits a 2.5 mm pin pitch.
+const FLAG_HALF_MM: f64 = 0.8 * LABEL_TEXT_MM;
+/// The steps a label that places itself may stand off its pin, along a
+/// leader, to clear what is drawn there: a symbol module each.
+const LEADER_STEP_MM: f64 = SYMBOL_MODULE_MM;
+const MAX_LEADER_STEPS: usize = 6;
+/// How wide label text is measured, per cap height: net names are mostly
+/// capitals and digits, which print at about 0.68 em in Helvetica against
+/// its 0.718 em cap height, so the core metric's 0.6 is too narrow for
+/// them. Flags are sized and labels kept apart by it.
+pub const LABEL_METRIC: TextMetric = TextMetric { advance: 0.95 };
+/// The gap a label that places itself keeps from other drawing, mm.
+const LABEL_CLEARANCE_MM: f64 = 0.2;
 /// Stroke widths, mm.
 pub const LINE_MM: f64 = 0.2;
 pub const WIRE_MM: f64 = 0.25;
@@ -133,7 +151,7 @@ fn away(d: Point) -> Justify {
 }
 
 fn text_width(text: &str, height: f64) -> f64 {
-    TextMetric::default().advance * height * text.chars().count() as f64
+    LABEL_METRIC.advance * height * text.chars().count() as f64
 }
 
 /// A flag outline along +x from the origin, `length` long and `2 * half`
@@ -167,32 +185,66 @@ fn flag(shape: PortShape, length: f64, half: f64) -> Vec<Point> {
     }
 }
 
-fn frame_of(label: &Label) -> Transform2 {
-    Transform2 {
-        translate: label.position,
-        rotation_deg: label.rotation.degrees(),
-        mirror: false,
-    }
+/// What a label or power port draws where a person put it: at its stored
+/// position and rotation. A label that places itself is drawn by
+/// [`sheet_labels`].
+pub fn label(label: &Label) -> Drawing {
+    label_at(label, label.position, label.rotation, 0.0, false)
 }
 
-/// What a label or power port draws.
-pub fn label(label: &Label) -> Drawing {
-    let t = frame_of(label);
+/// What a label draws with its connection point at `at`, turned by
+/// `rotation`, standing `leader` mm off that point along its facing on a
+/// wire-width leader. With `upright_name`, a power port's name reads
+/// along its stem rather than across, so ports pointing up or down from a
+/// dense row of pins fit the pitch.
+fn label_at(
+    label: &Label,
+    at: Point,
+    rotation: Rotation,
+    leader: f64,
+    upright_name: bool,
+) -> Drawing {
+    let turn = Transform2 {
+        translate: [0.0, 0.0],
+        rotation_deg: rotation.degrees(),
+        mirror: false,
+    };
+    // The way the drawing faces: along +x for flags and text, up for a
+    // supply port, down for a ground.
+    let facing = match label.kind {
+        LabelKind::Power {
+            style: PowerStyle::Ground,
+        } => [0.0, -1.0],
+        LabelKind::Power { .. } => [0.0, 1.0],
+        _ => [1.0, 0.0],
+    };
+    let out = turn.apply(facing);
+    let mut d = Drawing::default();
+    let origin = if leader > 0.0 {
+        let end = [at[0] + out[0] * leader, at[1] + out[1] * leader];
+        d.line(at, end, WIRE_MM);
+        end
+    } else {
+        at
+    };
+    let t = Transform2 {
+        translate: origin,
+        ..turn
+    };
     let dir = {
         let o = t.apply([0.0, 0.0]);
         let x = t.apply([1.0, 0.0]);
         [x[0] - o[0], x[1] - o[1]]
     };
     let h = LABEL_TEXT_MM;
-    let mut d = Drawing::default();
     match label.kind {
         LabelKind::Local => {
             // Text sits just above (or beside) the wire, reading away.
             let horizontal = dir[0].abs() >= dir[1].abs();
             let at = if horizontal {
-                [label.position[0], label.position[1] + 0.4]
+                [origin[0], origin[1] + 0.4]
             } else {
-                [label.position[0] - 0.4, label.position[1]]
+                [origin[0] - 0.4, origin[1]]
             };
             let mut j = away(dir);
             j.v = VAlign::Bottom;
@@ -215,19 +267,17 @@ pub fn label(label: &Label) -> Drawing {
             });
         }
         LabelKind::Global { shape } => {
-            let half = h;
+            let half = FLAG_HALF_MM;
             let length = text_width(&label.name, h) + 2.0 * half + 1.0;
             let outline = flag(shape, length, half)
                 .into_iter()
                 .map(|p| t.apply(p))
                 .collect();
             d.polygon(outline, false);
-            d.text(
-                label.name.clone(),
-                t.apply([length / 2.0, 0.0]),
-                h,
-                justify(HAlign::Center, VAlign::Middle),
-            );
+            // The name runs along the flag: across, or up a standing flag.
+            let mut text = along(label.name.clone(), t.apply([length / 2.0, 0.0]), dir);
+            text.justify.h = HAlign::Center;
+            d.texts.push(text);
         }
         LabelKind::Hierarchical { shape } => {
             let half = h * 0.6;
@@ -237,12 +287,8 @@ pub fn label(label: &Label) -> Drawing {
                 .map(|p| t.apply(p))
                 .collect();
             d.polygon(outline, false);
-            d.text(
-                label.name.clone(),
-                t.apply([length + 0.6, 0.0]),
-                h,
-                away(dir),
-            );
+            d.texts
+                .push(along(label.name.clone(), t.apply([length + 0.6, 0.0]), dir));
         }
         LabelKind::Power { style } => {
             let up = {
@@ -251,28 +297,215 @@ pub fn label(label: &Label) -> Drawing {
                 [y[0] - o[0], y[1] - o[1]]
             };
             let p = |x: f64, y: f64| t.apply([x, y]);
-            match style {
+            let (name_at, facing) = match style {
                 PowerStyle::Ground => {
                     d.line(p(0.0, 0.0), p(0.0, -2.5), LINE_MM);
                     d.line(p(-1.5, -2.5), p(1.5, -2.5), LINE_MM);
                     d.line(p(-1.0, -3.1), p(1.0, -3.1), LINE_MM);
                     d.line(p(-0.5, -3.7), p(0.5, -3.7), LINE_MM);
-                    d.text(label.name.clone(), p(0.0, -4.3), h, away([-up[0], -up[1]]));
+                    (p(0.0, -4.3), [-up[0], -up[1]])
                 }
                 PowerStyle::Bar => {
                     d.line(p(0.0, 0.0), p(0.0, 2.5), LINE_MM);
                     d.line(p(-1.5, 2.5), p(1.5, 2.5), LINE_MM);
-                    d.text(label.name.clone(), p(0.0, 3.1), h, away(up));
+                    (p(0.0, 3.1), up)
                 }
                 PowerStyle::Arrow => {
                     d.line(p(0.0, 0.0), p(0.0, 1.5), LINE_MM);
                     d.polygon(vec![p(-1.0, 1.5), p(1.0, 1.5), p(0.0, 3.0)], true);
-                    d.text(label.name.clone(), p(0.0, 3.6), h, away(up));
+                    (p(0.0, 3.6), up)
                 }
+            };
+            if upright_name {
+                d.texts.push(along(label.name.clone(), name_at, facing));
+            } else {
+                d.text(label.name.clone(), name_at, h, away(facing));
             }
         }
     }
     d
+}
+
+/// Label text starting at `at` and reading along the axis `dir`: across
+/// for a horizontal axis, bottom to top for a vertical one (the upright
+/// rule turns text facing left or down).
+fn along(text: String, at: Point, dir: Point) -> PlacedText {
+    let rotation_deg = if dir[0].abs() >= dir[1].abs() {
+        if dir[0] >= 0.0 { 0.0 } else { 180.0 }
+    } else if dir[1] >= 0.0 {
+        90.0
+    } else {
+        270.0
+    };
+    PlacedText {
+        graphic: None,
+        text,
+        at,
+        height: LABEL_TEXT_MM,
+        rotation_deg,
+        justify: justify(HAlign::Left, VAlign::Middle),
+        mirrored: false,
+        line_spacing: TEXT_LINE_SPACING,
+    }
+}
+
+/// Boxes of everything a drawing inks, one per stroke and text.
+fn ink_boxes(d: &Drawing, m: TextMetric) -> Vec<Bounds> {
+    d.strokes
+        .iter()
+        .map(|s| s.shape.bounds(s.width))
+        .chain(d.texts.iter().map(|t| t.bounds(m)))
+        .collect()
+}
+
+/// Whether two boxes overlap by more than touching.
+fn overlap(a: &Bounds, b: &Bounds) -> bool {
+    a.min[0] < b.max[0] && b.min[0] < a.max[0] && a.min[1] < b.max[1] && b.min[1] < a.max[1]
+}
+
+/// What the symbols of a sheet ink, as boxes a label must stay clear of:
+/// body shapes, texts and fields, pin names and numbers, and pin stubs
+/// with the end each stub's pin connects at.
+fn unit_obstacles(units: &[PlacedUnit], m: TextMetric) -> (Vec<Bounds>, Vec<(Point, Bounds)>) {
+    let mut boxes = Vec::new();
+    let mut stubs = Vec::new();
+    for unit in units {
+        boxes.extend(unit.shapes.iter().map(|s| s.shape.bounds(s.width)));
+        boxes.extend(unit.texts.iter().chain(&unit.fields).map(|t| t.bounds(m)));
+        for pin in &unit.pins {
+            boxes.extend(pin.name.iter().chain(&pin.number).map(|t| t.bounds(m)));
+            boxes.extend(pin.decorations.iter().map(|d| d.bounds(LINE_MM)));
+            stubs.push((
+                pin.end,
+                Bounds::point(pin.end)
+                    .including(pin.body_end)
+                    .inflated(LINE_MM / 2.0),
+            ));
+        }
+    }
+    (boxes, stubs)
+}
+
+/// Every label and power port of a sheet with what it draws, in the
+/// project's order: the one placement the canvas, the PDF and previews
+/// share.
+///
+/// A label a person placed (or one not attached to a pin) is drawn where
+/// it was put. A label that places itself ([`labels::attached_pin`]) sits
+/// on its pin's end facing away from the symbol, and stands off along a
+/// leader, a module at a time, until it clears every symbol's body, text
+/// and pins and every label drawn before it. Labels are placed down each
+/// row of pins in turn, so a dense row alternates between two depths.
+pub fn sheet_labels(project: &Project, sheet: SheetId) -> Vec<(Id, Drawing)> {
+    let units: Vec<PlacedUnit> = project
+        .occurrences
+        .iter()
+        .filter(|o| o.sheet == sheet)
+        .filter_map(|o| placed_unit(project, o.id).ok())
+        .collect();
+    labels_on(project, sheet, &units)
+}
+
+fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id, Drawing)> {
+    let m = LABEL_METRIC;
+    let (mut taken, stubs) = unit_obstacles(units, m);
+    let on_sheet: Vec<&Label> = project.labels.iter().filter(|l| l.sheet == sheet).collect();
+    let mut drawn: Vec<Option<Drawing>> = vec![None; on_sheet.len()];
+    // Where each self-placing label's pin ends and which way it faces.
+    let mut auto: Vec<(usize, Point, Point)> = Vec::new();
+    for (i, l) in on_sheet.iter().enumerate() {
+        let frame = labels::attached_pin(project, l).and_then(|e| {
+            units.iter().find_map(|u| {
+                let occurrence = project.occurrence(u.occurrence?)?;
+                if occurrence.instance != e.instance {
+                    return None;
+                }
+                let pin = u.pins.iter().find(|p| p.terminal == e.terminal)?;
+                Some((pin.end, labels::outward(u, e.terminal)?))
+            })
+        });
+        match frame {
+            Some((end, d)) => auto.push((i, end, d)),
+            None => {
+                let d = label(l);
+                taken.extend(ink_boxes(&d, m));
+                drawn[i] = Some(d);
+            }
+        }
+    }
+    // Row by row: by facing, then across the row, then along it.
+    let key = |p: Point, d: Point| {
+        let side = (d[0] * 2.0 + d[1]) as i64;
+        let (across, along) = if d[0] != 0.0 {
+            (p[0], -p[1])
+        } else {
+            (p[1], p[0])
+        };
+        (
+            side,
+            (across * 1000.0).round() as i64,
+            (along * 1000.0).round() as i64,
+        )
+    };
+    auto.sort_by_key(|(i, p, d)| (key(*p, *d), *i));
+    // Each self-placing label's pin end, facing and name width.
+    let rows: Vec<(Point, Point, f64)> = auto
+        .iter()
+        .filter_map(|(i, p, d)| Some((*p, *d, text_width(&on_sheet.get(*i)?.name, LABEL_TEXT_MM))))
+        .collect();
+    for (i, end, d) in auto {
+        let Some(l) = on_sheet.get(i) else {
+            continue;
+        };
+        let rotation = labels::auto_rotation(l.kind, d);
+        let others = |b: &Bounds| {
+            taken.iter().filter(|t| overlap(b, t)).count()
+                + stubs
+                    .iter()
+                    .filter(|(at, s)| *at != end && overlap(b, s))
+                    .count()
+        };
+        // A power port's name may also read along its stem, and does so
+        // from the start when it would reach across a neighbouring label
+        // on the same row (a port pointing up or down from a pin row).
+        let crowded = rows.iter().any(|(p, e, width)| {
+            *e == d && (p[0] - end[0]) * d[0] + (p[1] - end[1]) * d[1] == 0.0 && {
+                let gap = ((p[0] - end[0]) * d[1]).abs() + ((p[1] - end[1]) * d[0]).abs();
+                gap > 1e-9 && gap < (width + text_width(&l.name, LABEL_TEXT_MM)) / 2.0 + 0.5
+            }
+        });
+        let names: &[bool] = match l.kind {
+            LabelKind::Power { .. } if crowded && d[1] != 0.0 => &[true],
+            LabelKind::Power { .. } => &[false, true],
+            _ => &[false],
+        };
+        let mut best: Option<(usize, Drawing)> = None;
+        'search: for step in 0..=MAX_LEADER_STEPS {
+            for upright in names {
+                let leader = step as f64 * LEADER_STEP_MM;
+                let candidate = label_at(l, end, rotation, leader, *upright);
+                let hits: usize = ink_boxes(&candidate, m)
+                    .iter()
+                    .map(|b| others(&b.inflated(LABEL_CLEARANCE_MM)))
+                    .sum();
+                if best.as_ref().is_none_or(|(h, _)| hits < *h) {
+                    best = Some((hits, candidate));
+                }
+                if hits == 0 {
+                    break 'search;
+                }
+            }
+        }
+        if let Some((_, d)) = best {
+            taken.extend(ink_boxes(&d, m));
+            drawn[i] = Some(d);
+        }
+    }
+    on_sheet
+        .iter()
+        .zip(drawn)
+        .filter_map(|(l, d)| Some((l.id, d?)))
+        .collect()
 }
 
 /// The direction from a side of a sheet symbol into its box.
@@ -516,25 +749,27 @@ pub fn sheet_scene(project: &Project, sheet: SheetId) -> SheetScene {
     for symbol in project.sheet_symbols.iter().filter(|s| s.sheet == sheet) {
         items.extend(sheet_symbol(project, symbol));
     }
-    for l in project.labels.iter().filter(|l| l.sheet == sheet) {
-        items.extend(label(l));
-    }
-    let wires = project
-        .wires
-        .iter()
-        .filter(|w| wiring::wire_sheet(project, w) == Some(sheet))
-        .filter_map(|w| wire_ends(project, w).map(|(a, b)| wire_route(a, b)))
-        .collect();
-    let dots = junction_dots(project)
-        .into_iter()
-        .filter(|(end, _)| wiring::end_sheet(project, *end) == Some(sheet))
-        .map(|(_, p)| p)
-        .collect();
     let units: Vec<PlacedUnit> = project
         .occurrences
         .iter()
         .filter(|o| o.sheet == sheet)
         .filter_map(|o| placed_unit(project, o.id).ok())
+        .collect();
+    for (_, drawing) in labels_on(project, sheet, &units) {
+        items.extend(drawing);
+    }
+    // A label sitting on its pin's end leaves its wire no length to draw.
+    let wires = project
+        .wires
+        .iter()
+        .filter(|w| wiring::wire_sheet(project, w) == Some(sheet))
+        .filter_map(|w| wire_ends(project, w).filter(|(a, b)| a != b))
+        .map(|(a, b)| wire_route(a, b))
+        .collect();
+    let dots = junction_dots(project)
+        .into_iter()
+        .filter(|(end, _)| wiring::end_sheet(project, *end) == Some(sheet))
+        .map(|(_, p)| p)
         .collect();
     let mut no_connects = Vec::new();
     for o in project.occurrences.iter().filter(|o| o.sheet == sheet) {

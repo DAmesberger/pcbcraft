@@ -611,3 +611,37 @@ fn a_framed_sheet_keeps_the_users_view_afterwards() -> TestResult {
     assert_eq!((editor.scale, editor.pan), (9.0, vec2(120.0, -80.0)));
     Ok(())
 }
+
+/// Pictures of the ESP32 board's labels on the canvas, for evidence: run
+/// with `PCBCRAFT_PICTURES=<dir>`. Each is the canvas's own egui output,
+/// filled by the CPU rasterizer of the layout tests.
+#[test]
+fn write_label_pictures() -> TestResult {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Ok(());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let engine = esp32_board()?;
+    let project = engine.project();
+    let first = project.sheets.list[0].id;
+    let second = project.sheets.list[1].id;
+    let views: [(&str, SheetId, Point, f32); 6] = [
+        ("labels-sheet1-usb", first, [40.0, -55.0], 9.0),
+        ("labels-sheet1-ldo", first, [150.0, -55.0], 9.0),
+        ("labels-sheet2-module", second, [110.0, -135.0], 4.0),
+        ("labels-sheet2-module-gnd", second, [128.0, -125.0], 12.0),
+        ("labels-sheet2-module-io", second, [102.0, -125.0], 12.0),
+        ("labels-sheet2-headers", second, [315.0, -80.0], 7.0),
+    ];
+    for (name, sheet, at, scale) in views {
+        let mut editor = centred(at, scale);
+        editor.switch_sheet(Some(sheet), project);
+        let picture = crate::pcb_editor::raster_tests::render(|ui| {
+            editor.canvas(ui, &engine);
+        });
+        let png = picture.png().ok_or("png")?;
+        std::fs::write(dir.join(format!("{name}.png")), png)?;
+    }
+    Ok(())
+}
