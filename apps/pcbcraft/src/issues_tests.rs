@@ -700,3 +700,90 @@ fn a_two_part_issue_selects_and_frames_both() -> Fallible<()> {
     assert!(pcb.is_located(r2), "the second part is selected too");
     Ok(())
 }
+
+/// e2e UX run 2 finding 1: an unconnected pin's row offers Mark no-connect,
+/// one typed `instance.set_no_connect` that clears the issue and one undo
+/// restores; a wired no-connect pin's row offers Clear no-connect.
+#[test]
+fn an_unconnected_pin_row_marks_it_no_connect_with_one_undo() -> Fallible<()> {
+    use pcbcraft_core::instances::NewInstance;
+    use pcbcraft_core::schematic::SchematicCommand;
+    use pcbcraft_core::{Endpoint, InstanceCommand, UnitId};
+    let mut engine = Engine::demo()?;
+    let first = engine.project().instances[0].clone();
+    let place = |engine: &mut Engine, name: &str, at: [f64; 2]| -> Fallible<Id> {
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
+                component: first.component,
+                designator: Some(name.into()),
+                properties: vec![],
+                representation: first.representation,
+                unit: UnitId(1),
+                position: at,
+                physical: None,
+            })),
+        )?;
+        Ok(engine
+            .project()
+            .instance_by_designator(name)
+            .map(|i| i.id)
+            .ok_or("placed")?)
+    };
+    let r90 = place(&mut engine, "R90", [0.0, -400.0])?;
+    let pin = |id, t| Endpoint {
+        instance: id,
+        terminal: TerminalId(t),
+    };
+    let row_of = |engine: &Engine, code: &str| -> Fallible<Option<IssueRow>> {
+        Ok(report(engine, IssueScope::All)?
+            .rows
+            .iter()
+            .find(|r| {
+                r.group.code == code
+                    && r.objects().any(
+                        |o| matches!(o, ObjectRef::Terminal { endpoint } if *endpoint == pin(r90, 1)),
+                    )
+            })
+            .cloned())
+    };
+    let row = row_of(&engine, "instance.terminal_unaccounted")?.ok_or("no unconnected row")?;
+    let Some(Fix::Apply {
+        label, operation, ..
+    }) = fix(&row)
+    else {
+        return Err("no Mark no-connect".into());
+    };
+    assert_eq!(label, "Mark no-connect");
+    let before = engine.document().clone();
+    engine.apply(engine.revision(), *operation)?;
+    assert!(row_of(&engine, "instance.terminal_unaccounted")?.is_none());
+    engine.undo()?;
+    assert_eq!(engine.document(), &before);
+
+    // Marked, then wired: the row clears the mark.
+    let Some(Fix::Apply { operation, .. }) = fix(&row) else {
+        return Err("no fix".into());
+    };
+    engine.apply(engine.revision(), *operation)?;
+    let r91 = place(&mut engine, "R91", [40.0, -400.0])?;
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::Connect {
+            from: pin(r90, 1).into(),
+            to: pin(r91, 2).into(),
+        }),
+    )?;
+    let row = row_of(&engine, "instance.no_connect_connected")?.ok_or("no connected row")?;
+    let Some(Fix::Apply {
+        label, operation, ..
+    }) = fix(&row)
+    else {
+        return Err("no Clear no-connect".into());
+    };
+    assert_eq!(label, "Clear no-connect");
+    engine.apply(engine.revision(), *operation)?;
+    assert!(row_of(&engine, "instance.no_connect_connected")?.is_none());
+    Ok(())
+}

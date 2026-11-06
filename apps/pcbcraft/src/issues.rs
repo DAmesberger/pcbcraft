@@ -54,10 +54,11 @@ pub enum FixDialog {
 /// dialog that issues one, resolves get a Fix.
 #[derive(Clone, Debug)]
 pub enum Fix {
-    /// Apply this operation through the one command engine.
-    #[allow(dead_code, reason = "no issue is resolved by one fixed command yet")]
+    /// Apply this operation through the one command engine; `done` is the
+    /// toast that offers Undo once it applied.
     Apply {
         label: &'static str,
+        done: &'static str,
         operation: Box<Operation>,
     },
     /// Open a dialog whose primary issues the operation.
@@ -101,6 +102,41 @@ const FIXES: &[(&str, &str, FixDialog)] = &[
 
 /// The Fix for `row`, if it has one.
 pub fn fix(row: &IssueRow) -> Option<Fix> {
+    no_connect_fix(row).or_else(|| dialog_fix(row))
+}
+
+/// An unconnected terminal's Fix marks it no-connect; a connected
+/// no-connect terminal's clears the mark. One `instance.set_no_connect`
+/// over the row's terminals, when they are of one instance.
+fn no_connect_fix(row: &IssueRow) -> Option<Fix> {
+    let (label, done, no_connect) = match row.group.code.as_str() {
+        "instance.terminal_unaccounted" => ("Mark no-connect", "Marked no-connect", true),
+        "instance.no_connect_connected" => ("Clear no-connect", "Cleared no-connect", false),
+        _ => return None,
+    };
+    let mut instance = None;
+    let mut terminals = BTreeSet::new();
+    for object in row.objects() {
+        if let ObjectRef::Terminal { endpoint } = object {
+            if *instance.get_or_insert(endpoint.instance) != endpoint.instance {
+                return None;
+            }
+            terminals.insert(endpoint.terminal);
+        }
+    }
+    let operation = Operation::Instance(pcbcraft_core::InstanceCommand::SetNoConnect {
+        instance: instance?,
+        terminals: terminals.into_iter().collect(),
+        no_connect,
+    });
+    Some(Fix::Apply {
+        label,
+        done,
+        operation: Box::new(operation),
+    })
+}
+
+fn dialog_fix(row: &IssueRow) -> Option<Fix> {
     FIXES
         .iter()
         .find(|(code, _, _)| *code == row.group.code)
