@@ -145,7 +145,7 @@ fn distance(a: Point, b: Point) -> f64 {
 
 /// The point of a path nearest `p` and the index of its segment (from
 /// vertex `index` to `index + 1`); the first segment wins a tie.
-fn nearest_on_path(path: &[Point], p: Point) -> Option<(Point, usize)> {
+pub(super) fn nearest_on_path(path: &[Point], p: Point) -> Option<(Point, usize)> {
     path.windows(2)
         .enumerate()
         .map(|(i, s)| (nearest_on_segment(p, s[0], s[1]), i))
@@ -219,6 +219,20 @@ pub(super) fn resolve(project: &mut Project, target: WireTarget) -> Result<WireE
         WireTarget::OnWire(point) => split(project, point, None),
         WireTarget::Free(free) => Ok(WireEnd::Free(free)),
     }
+}
+
+/// What a drawn wire's target stands for: a label placing itself on a pin
+/// is that pin, so the wire leaves it on its pin (a second wire on the label
+/// itself would end its self-placing and pull it off the pin).
+pub(super) fn on_its_pin(project: &Project, target: WireTarget) -> WireTarget {
+    if let WireTarget::Label(l) = target
+        && let Some(pin) = project
+            .label(l.label)
+            .and_then(|label| super::labels::attached_pin(project, label))
+    {
+        return WireTarget::Terminal(pin);
+    }
+    target
 }
 
 /// Where a point on a wire lies on its path: the path point, the segment

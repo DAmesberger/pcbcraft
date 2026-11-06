@@ -26,6 +26,7 @@ use crate::kit::toast::{ToastAction, post};
 use crate::kit::{self, DialogPanel, Tone, dialog::DialogAction, dialog::PrimaryKind};
 use crate::refusal::{self, Origin};
 use egui::Ui;
+use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::library::footprint_edit::{self, AssignRule, TerminalChange};
 use pcbcraft_core::library::footprint_source::{Expr, NumberingScheme};
 use pcbcraft_core::library::templates::catalog::FamilyKind;
@@ -33,7 +34,7 @@ use pcbcraft_core::library::templates::footprint_family::{
     self, ExposedPad, ExposedVias, FootprintTemplate, MAX_PASTE_GRID, TemplateKind,
 };
 use pcbcraft_core::library::{FootprintDefinition, PackageDefinition, Pad, PadKind};
-use pcbcraft_core::{DefinitionId, LibraryCommand, Operation};
+use pcbcraft_core::{ComponentRef, DefinitionId, Engine, LibraryCommand, Operation};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 
 /// The template dialog's panel id (also its refusal origin).
@@ -496,6 +497,23 @@ impl PartEditor {
     /// page's New from template… open it.
     pub(super) fn open_template_gallery(&mut self) {
         self.gallery.open_new(Some(super::model_body::form_rows));
+    }
+
+    /// The gallery on `hit` for the Schematic's Place palette: its primary
+    /// continues to placement ([`Self::take_template_to_place`]).
+    pub fn open_template_to_place(&mut self, hit: &TemplateHit, query: String) {
+        self.gallery
+            .open_on(hit, query, true, Some(super::model_body::form_rows));
+    }
+
+    /// The gallery sheet where the Component workspace is not drawing it.
+    pub fn template_sheet(&mut self, ctx: &egui::Context, engine: &Engine) -> Option<Operation> {
+        self.gallery.show(ctx, engine)
+    }
+
+    /// The component the gallery created for placement, once.
+    pub fn take_template_to_place(&mut self) -> Option<ComponentRef> {
+        self.gallery.take_to_place()
     }
 
     /// The footprint-only "Footprint from template" dialog (named

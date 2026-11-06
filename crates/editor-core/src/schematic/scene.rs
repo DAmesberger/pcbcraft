@@ -18,6 +18,7 @@ use crate::model::{
 pub use crate::schematic::PlacedText;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Label, power-port and sheet-pin text height, mm: the pin name and
 /// number height, so a net name reads as one with the pins it labels and
@@ -407,6 +408,16 @@ pub fn sheet_labels(project: &Project, sheet: SheetId) -> Vec<(Id, Drawing)> {
 }
 
 fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id, Drawing)> {
+    placed_labels(project, sheet, units).0
+}
+
+/// [`sheet_labels`] with the rotation each self-placing label settled on.
+fn placed_labels(
+    project: &Project,
+    sheet: SheetId,
+    units: &[PlacedUnit],
+) -> (Vec<(Id, Drawing)>, BTreeMap<Id, Rotation>) {
+    let mut turns = BTreeMap::new();
     let m = LABEL_METRIC;
     let (mut taken, stubs) = unit_obstacles(units, m);
     let on_sheet: Vec<&Label> = project.labels.iter().filter(|l| l.sheet == sheet).collect();
@@ -496,8 +507,27 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
             LabelKind::Power { .. } => &[false, true],
             _ => &[false],
         };
-        let mut best: Option<(usize, Drawing)> = None;
+        let mut best: Option<(usize, Drawing, Rotation)> = None;
+        // A power port on a horizontal pin stands upright on the pin's end
+        // (a ground down, a supply up) where that is clear. A stem further
+        // out would cross the neighbours' wires, so on a dense row it faces
+        // along its pin as below.
+        if matches!(l.kind, LabelKind::Power { .. }) && d[0] != 0.0 {
+            for upright in names {
+                let candidate = label_at(l, end, Rotation::R0, 0.0, *upright);
+                let clear = ink_boxes(&candidate, m)
+                    .iter()
+                    .all(|b| others(&b.inflated(LABEL_CLEARANCE_MM)) == 0);
+                if clear {
+                    best = Some((0, candidate, Rotation::R0));
+                    break;
+                }
+            }
+        }
         'search: for step in 0..=MAX_LEADER_STEPS {
+            if best.as_ref().is_some_and(|(h, ..)| *h == 0) {
+                break;
+            }
             for upright in names {
                 let leader = start[i] + step as f64 * LEADER_STEP_MM;
                 let candidate = label_at(l, end, rotation, leader, *upright);
@@ -505,8 +535,8 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                     .iter()
                     .map(|b| others(&b.inflated(LABEL_CLEARANCE_MM)))
                     .sum();
-                if best.as_ref().is_none_or(|(h, _)| hits < *h) {
-                    best = Some((hits, candidate));
+                if best.as_ref().is_none_or(|(h, ..)| hits < *h) {
+                    best = Some((hits, candidate, rotation));
                 }
                 if hits == 0 {
                     break 'search;
@@ -519,7 +549,7 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
         // never runs along the row of pin ends. The turn comes at a fifth,
         // a half or four fifths of a module, so the leaders of neighbouring
         // labels that both step aside pass each other.
-        if best.as_ref().is_some_and(|(h, _)| *h > 0) {
+        if best.as_ref().is_some_and(|(h, ..)| *h > 0) {
             let across = [-d[1], d[0]];
             // A ground steps down first and a supply up, so a turned port
             // still points the usual way where it can.
@@ -543,23 +573,21 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                         let by = side * step as f64 * LEADER_STEP_MM;
                         let corner = [bend[0] + across[0] * by, bend[1] + across[1] * by];
                         for upright in names {
-                            let mut candidate = match l.kind {
+                            let (mut candidate, turned) = match l.kind {
                                 // A port turns with its leader: its stem
                                 // runs aside and its symbol ends it.
-                                LabelKind::Power { .. } => label_at(
-                                    l,
-                                    bend,
-                                    labels::auto_rotation(
+                                LabelKind::Power { .. } => {
+                                    let turned = labels::auto_rotation(
                                         l.kind,
                                         [across[0] * side, across[1] * side],
-                                    ),
-                                    (step - 1) as f64 * LEADER_STEP_MM,
-                                    *upright,
-                                ),
+                                    );
+                                    let leader = (step - 1) as f64 * LEADER_STEP_MM;
+                                    (label_at(l, bend, turned, leader, *upright), turned)
+                                }
                                 _ => {
                                     let mut flag = label_at(l, corner, rotation, 0.0, *upright);
                                     flag.line(bend, corner, WIRE_MM);
-                                    flag
+                                    (flag, rotation)
                                 }
                             };
                             candidate.line(end, bend, WIRE_MM);
@@ -567,8 +595,8 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                                 .iter()
                                 .map(|b| others(&b.inflated(LABEL_CLEARANCE_MM)))
                                 .sum();
-                            if best.as_ref().is_none_or(|(h, _)| hits < *h) {
-                                best = Some((hits, candidate));
+                            if best.as_ref().is_none_or(|(h, ..)| hits < *h) {
+                                best = Some((hits, candidate, turned));
                             }
                             if hits == 0 {
                                 break 'aside;
@@ -578,16 +606,33 @@ fn labels_on(project: &Project, sheet: SheetId, units: &[PlacedUnit]) -> Vec<(Id
                 }
             }
         }
-        if let Some((_, d)) = best {
+        if let Some((_, d, turned)) = best {
             taken.extend(ink_boxes(&d, m));
             drawn[i] = Some(d);
+            turns.insert(l.id, turned);
         }
     }
-    on_sheet
+    let drawings = on_sheet
         .iter()
         .zip(drawn)
         .filter_map(|(l, d)| Some((l.id, d?)))
-        .collect()
+        .collect();
+    (drawings, turns)
+}
+
+/// The rotation a self-placing label is drawn with: what its placement
+/// settled on, so a turn starts from what the sheet shows.
+pub(super) fn drawn_rotation(project: &Project, label: &Label) -> Option<Rotation> {
+    let units: Vec<PlacedUnit> = project
+        .occurrences
+        .iter()
+        .filter(|o| o.sheet == label.sheet)
+        .filter_map(|o| placed_unit(project, o.id).ok())
+        .collect();
+    placed_labels(project, label.sheet, &units)
+        .1
+        .get(&label.id)
+        .copied()
 }
 
 /// The direction from a side of a sheet symbol into its box.

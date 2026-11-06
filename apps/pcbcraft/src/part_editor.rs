@@ -1481,6 +1481,11 @@ impl PartEditor {
         }
     }
 
+    /// The docked update review, for the app's Esc.
+    pub fn review_mut(&mut self) -> &mut crate::update_preview::UpdatePreview {
+        &mut self.update
+    }
+
     /// A subject that fills the slot without a Properties card: `Some`
     /// with the operation it sends this frame, `None` for the card.
     fn slot_subject(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Option<Operation>> {
@@ -1822,7 +1827,7 @@ impl PartEditor {
         // The identity bar is drawn above every view by the app
         // ([`Self::identity_strip`]), the 3D view included.
         if self.draft.is_none() && self.start_page(ui, engine) {
-            return None;
+            return self.start.take_outgoing();
         }
         if self.is_read_only() {
             // A library item: its views show, nothing on them edits.

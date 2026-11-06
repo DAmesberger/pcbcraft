@@ -1,9 +1,8 @@
 //! Cut, copy and paste on the sheet. The buffer lives here as what the
 //! `schematic.copy` query answered; pasting sends one `schematic.paste`.
-//! The sheet selects one object at a time, so that one object is what is
-//! copied.
+//! What is copied is the selection: one object or the whole group.
 use super::{Item, SchematicEditor, sheet_ui};
-use pcbcraft_core::schematic::{ClipObject, Pasted, SchematicCommand, SheetClip};
+use pcbcraft_core::schematic::{ClipObject, SchematicCommand, SheetClip};
 use pcbcraft_core::updates::{Change, InstanceChange};
 use pcbcraft_core::{Engine, Operation, Point, Project, Query, QueryResult, Result};
 
@@ -19,7 +18,7 @@ const NUDGE_STEPS: f64 = 2.0;
 impl SchematicEditor {
     /// The selected object, as the copy query names it; `Err` says why
     /// there is none to copy.
-    fn clip_object(&self, project: &Project) -> std::result::Result<ClipObject, String> {
+    pub(super) fn clip_object(&self, project: &Project) -> std::result::Result<ClipObject, String> {
         if let Some(id) = self.selected.filter(|id| project.instance(*id).is_some()) {
             return if project.occurrences_of(id).any(|o| o.sheet == self.sheet) {
                 Ok(ClipObject::Instance { id })
@@ -40,8 +39,17 @@ impl SchematicEditor {
         }
     }
 
+    /// The selection, as the copy query names it.
+    fn clip_objects(&self, project: &Project) -> std::result::Result<Vec<ClipObject>, String> {
+        if self.group.is_empty() {
+            self.clip_object(project).map(|object| vec![object])
+        } else {
+            Ok(self.group.objects())
+        }
+    }
+
     pub fn can_copy(&self, project: &Project) -> std::result::Result<(), String> {
-        self.clip_object(project).map(|_| ())
+        self.clip_objects(project).map(|_| ())
     }
 
     pub fn can_cut(&self, project: &Project) -> std::result::Result<(), String> {
@@ -61,16 +69,16 @@ impl SchematicEditor {
         }
     }
 
-    /// Put the selected object in the buffer. Its name also goes to the
-    /// system clipboard, which is how a field or another app sees a copy.
+    /// Put the selection in the buffer. Its name also goes to the system
+    /// clipboard, which is how a field or another app sees a copy.
     pub fn copy_selection(&mut self, ctx: &egui::Context, engine: &Engine) -> Result<()> {
         let project = engine.project();
-        let object = self
-            .clip_object(project)
+        let objects = self
+            .clip_objects(project)
             .map_err(pcbcraft_core::Error::Invalid)?;
         let QueryResult::SheetClip(clip) = engine.query(Query::SheetCopy {
             sheet: Some(self.sheet),
-            objects: vec![object],
+            objects: objects.clone(),
         })?
         else {
             return Err(pcbcraft_core::Error::Invalid(
@@ -78,19 +86,25 @@ impl SchematicEditor {
             ));
         };
         let last = clip.anchor().unwrap_or_default();
-        ctx.copy_text(shown(project, object));
+        ctx.copy_text(match objects[..] {
+            [object] => shown(project, object),
+            _ => self.group.summary(project),
+        });
         self.clipboard = Some(Clipboard { clip: *clip, last });
         Ok(())
     }
 
-    /// Copy the selected object, then remove it as Delete or its menu row
-    /// would: a symbol or wire through the review, so `None` until accepted.
+    /// Copy the selection, then remove it as Delete or its menu row would:
+    /// a symbol, wire or group through the review, so `None` until accepted.
     pub fn cut_selection(
         &mut self,
         ctx: &egui::Context,
         engine: &Engine,
     ) -> Result<Option<Operation>> {
         self.copy_selection(ctx, engine)?;
+        if !self.group.is_empty() {
+            return Ok(self.remove_group(engine));
+        }
         let project = engine.project();
         let object = self
             .clip_object(project)
@@ -145,21 +159,6 @@ impl SchematicEditor {
     /// The pointer on the canvas, snapped to the grid.
     pub fn paste_at_pointer(&mut self, engine: &Engine) -> Option<Operation> {
         self.paste_at(engine, self.pointer)
-    }
-
-    /// Leave what a paste created selected: its first object, since the
-    /// sheet selects one at a time.
-    pub fn select_pasted(&mut self, project: &Project, pasted: &Pasted) {
-        if let Some(symbol) = pasted.symbols.first() {
-            self.select(Some(symbol.instance), Some(symbol.occurrence), project);
-        } else if let Some(label) = pasted.labels.first() {
-            self.select_item(Some(Item::Label(*label)), project);
-        } else if let Some(drawing) = pasted.drawings.first() {
-            self.select_item(Some(Item::Drawing(*drawing)), project);
-        } else if let Some(wire) = pasted.wires.first() {
-            self.select(None, None, project);
-            self.selected_wire = Some(*wire);
-        }
     }
 }
 

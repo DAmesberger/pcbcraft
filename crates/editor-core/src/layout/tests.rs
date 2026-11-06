@@ -390,7 +390,12 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
             },
         },
     )?;
-    assert!(checks(&project).is_empty());
+    // No clearance finding; the track's start, held off the land, is open.
+    let found = checks(&project);
+    assert!(
+        found.iter().all(|f| f.code == "board.track_dangling"),
+        "{found:?}"
+    );
     Ok(())
 }
 

@@ -5,6 +5,7 @@
 //! is one undo step, and it works on the engine's candidate document, so a
 //! refusal leaves the document unchanged.
 use super::Outcome;
+use crate::catalog::generic as catalog_generic;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{
     BindingRef, DefinitionId, FootprintRef, PackageRef, PackageTerminalId, PadId, Revision,
@@ -18,8 +19,9 @@ use crate::library::templates::catalog::{
 };
 use crate::library::templates::footprint;
 use crate::library::templates::footprint_family;
+use crate::library::templates::generic::{self, GenericState};
 use crate::library::{
-    ChipKind, Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
+    Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
     ModelPlacement, PackageDefinition, PackageForm, PackageModel, PackageTerminal, drafts,
     standard_fields,
 };
@@ -28,10 +30,11 @@ use std::sync::Arc;
 
 /// `library.new_from_template`: five drafts in one undo step
 /// (`Outcome::DraftsCreated`, component first). The drafts are new
-/// lineages and nothing is published. A chip LED's component selects the
-/// standard `Colour` and `Forward voltage` fields, importing the standard
-/// fields in the same step when the project lacks them; nothing else is
-/// imported.
+/// lineages and nothing is published. A chip component selects its standard
+/// fields (a passive's value, rating and tolerance; an LED's `Colour` and
+/// `Forward voltage`), importing the standard fields in the same step when
+/// the project lacks them, unless the request says `without_fields`;
+/// nothing else is imported.
 pub(crate) fn new_from_template(
     document: &mut Document,
     request: NewFromTemplate,
@@ -58,17 +61,33 @@ pub(crate) fn new_from_template(
         &rules,
         document.drafts.symbols,
     )?;
-    let led = edits.iter().any(|edit| {
-        matches!(&edit.definition, Definition::Package(p)
-            if matches!(&p.form, PackageForm::Chip(c) if c.kind == ChipKind::Led))
+    let chip = edits.iter().find_map(|edit| match &edit.definition {
+        Definition::Package(PackageDefinition {
+            form: PackageForm::Chip(c),
+            ..
+        }) => Some(c.kind),
+        _ => None,
     });
-    if led {
+    if let Some(kind) = chip.filter(|_| !request.without_fields) {
         super::library::import_bundle(document, &standard_fields::bundle()?)?;
-        let selections = standard_fields::led_fields(&document.project.library)?;
+        let selections = standard_fields::chip_fields(&document.project.library, kind)?;
         for edit in &mut edits {
             if let Definition::Component(body) = &mut edit.definition {
                 body.fields.clone_from(&selections);
             }
+        }
+    }
+    // A request that amounts to a generic part records it, once: a second
+    // one asked for by hand stays an ordinary component.
+    let spec = edits.iter().find_map(|edit| match &edit.definition {
+        Definition::Package(p) => generic::recognise(&request, &p.form).filter(|spec| {
+            generic::existing(&document.project.library, &document.drafts, spec, &p.form).is_none()
+        }),
+        _ => None,
+    });
+    for edit in &mut edits {
+        if let Definition::Component(body) = &mut edit.definition {
+            body.generic = spec.clone().map(Box::new);
         }
     }
     let project = &document.project;
@@ -84,6 +103,77 @@ pub(crate) fn new_from_template(
         )?;
     }
     Ok(Outcome::DraftsCreated { ids: ids.to_vec() })
+}
+
+/// `library.find_or_create` (`Outcome::GenericPart`): the part `query`
+/// reads as, built and published when the project lacks it.
+pub(crate) fn find_or_create(
+    document: &mut Document,
+    query: &str,
+    index: Option<usize>,
+    evaluator: Option<&dyn FootprintEvaluator>,
+) -> Result<Outcome> {
+    let mut found = catalog_generic::search(&document.project, &document.drafts, query).candidates;
+    let chosen = match (index, found.len()) {
+        (_, 0) => {
+            return Err(Error::NotFound(format!(
+                "generic.no_match: ‘{query}’ reads as no generic part; library.generic_parts takes the same text"
+            )));
+        }
+        (None, 1) => found.remove(0),
+        (None, _) => {
+            let names: Vec<String> = found
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{i}: {}", c.name))
+                .collect();
+            return Err(Error::Invalid(format!(
+                "generic.ambiguous: ‘{query}’ reads as several parts; name a candidate ({})",
+                names.join(", ")
+            )));
+        }
+        (Some(i), n) if i >= n => {
+            return Err(Error::Invalid(format!(
+                "generic.ambiguous: candidate {i} is not one of the {n} this text reads as"
+            )));
+        }
+        (Some(i), _) => found.swap_remove(i),
+    };
+    let created = match &chosen.state {
+        GenericState::Existing { .. } => false,
+        GenericState::NotCreated => true,
+        GenericState::Draft { id } => {
+            return Err(Error::Invalid(format!(
+                "generic.draft: this part is draft {id}; publish that draft instead"
+            )));
+        }
+        GenericState::Refused { reason } => {
+            return Err(Error::Invalid(format!("generic.refused: {reason}")));
+        }
+    };
+    if let Some(request) = chosen.would_create {
+        super::library::apply_library(
+            document,
+            super::library::LibraryCommand::PublishFromTemplate(Box::new(request)),
+            evaluator,
+        )?;
+    }
+    let plan = chosen.spec.plan().map_err(Error::Invalid)?;
+    let Some(GenericState::Existing { component }) = generic::existing(
+        &document.project.library,
+        &document.drafts,
+        &chosen.spec,
+        &plan.form,
+    ) else {
+        return Err(Error::NotFound(
+            "generic.missing: the part was not found after it was built".into(),
+        ));
+    };
+    Ok(Outcome::GenericPart {
+        component,
+        created,
+        properties: generic::properties(&document.project.library, component, &chosen.values),
+    })
 }
 
 /// `library.package_from_template` (`Outcome::PackageReplaced`): the

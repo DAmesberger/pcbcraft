@@ -35,6 +35,7 @@ pub const MAX_WIRES: usize = 16384;
 pub const MAX_CORNERS: usize = 256;
 
 pub mod annotate;
+pub mod arrange;
 pub mod clipboard;
 pub mod labels;
 pub mod scene;
@@ -42,6 +43,7 @@ pub mod sheets;
 pub mod wire_edit;
 mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
+pub use arrange::Arrangement;
 pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
     JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
@@ -67,6 +69,18 @@ pub enum SchematicCommand {
     /// horizontal or vertical. A pin moved onto a wire connects to it.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
+    /// Move, turn or mirror several sheet objects together, as one undo step.
+    /// A wire with both ends in the group keeps its shape and a wire with one
+    /// rubber-bands. A symbol brings all its units on the sheet; a named
+    /// wire brings its free ends and the junctions it ends on.
+    #[serde(rename = "schematic.arrange")]
+    Arrange {
+        /// The first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        objects: Vec<ClipObject>,
+        action: Arrangement,
+    },
     /// Set an occurrence's orientation about its origin: `mirror` reflects
     /// the unit across its local x-axis, then `rotation` turns it
     /// counter-clockwise. Presentation only; wires follow their pins.
@@ -100,6 +114,56 @@ pub enum SchematicCommand {
         from: WireTarget,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         corners: Vec<Corner>,
+        to: WireTarget,
+    },
+    /// Replace a wire's geometry: its corners and, when given, either end
+    /// (a target or a free end). Points it then runs over join it.
+    #[serde(rename = "wire.set_path")]
+    SetWirePath {
+        wire: Id,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        corners: Vec<Corner>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<WireTarget>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<WireTarget>,
+    },
+    /// Move corner `index` (from 0, counted from the wire's `from` end) to
+    /// `to`. Its two segments keep their directions: their far vertices come
+    /// along, and an attached end gets a new corner so the segment steps.
+    /// `free` moves the corner alone, so its segments may slant.
+    #[serde(rename = "wire.move_corner")]
+    MoveWireCorner {
+        wire: Id,
+        index: usize,
+        to: Point,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        free: bool,
+    },
+    /// Move segment `index` (from vertex `index` to `index + 1`; 0 starts at
+    /// the `from` end) along its normal by `offset` mm: +y for a horizontal
+    /// segment, +x for a vertical one, and the side of +x for a slanted one.
+    /// Its neighbours stretch; on an attached end a short perpendicular
+    /// segment is added.
+    #[serde(rename = "wire.move_segment")]
+    MoveWireSegment { wire: Id, index: usize, offset: f64 },
+    /// Add a corner at `at`, a point on the wire, without changing its shape.
+    #[serde(rename = "wire.insert_corner")]
+    InsertWireCorner { wire: Id, at: Point },
+    /// Remove corner `index`, merging its two segments; the result may slant.
+    #[serde(rename = "wire.remove_corner")]
+    RemoveWireCorner { wire: Id, index: usize },
+    /// Remove segment `index`: the wire splits in two, with free ends at the
+    /// gap. A segment at the end of the wire shortens it instead.
+    #[serde(rename = "wire.remove_segment")]
+    RemoveWireSegment { wire: Id, index: usize },
+    /// Move or re-attach the wire's `from` or `to` end, rubber-banding its
+    /// path. `to` is a target or a free end; a free end on another free end
+    /// joins the two wires into one.
+    #[serde(rename = "wire.move_end")]
+    MoveWireEnd {
+        wire: Id,
+        end: wire_edit::WireSide,
         to: WireTarget,
     },
     #[serde(rename = "schematic.disconnect")]
@@ -299,10 +363,18 @@ pub enum SchematicCommand {
 declare_classes!(SchematicCommand {
     PlaceUnit "symbol.place_unit" Edit,
     MoveUnit "symbol.move_unit" Edit,
+    Arrange "schematic.arrange" Edit,
     OrientUnit "symbol.orient_unit" Edit,
     UnplaceUnit "symbol.unplace_unit" Edit,
     Connect "schematic.connect" Edit,
     DrawWire "wire.draw" Edit,
+    SetWirePath "wire.set_path" Edit,
+    MoveWireCorner "wire.move_corner" Edit,
+    MoveWireSegment "wire.move_segment" Edit,
+    InsertWireCorner "wire.insert_corner" Edit,
+    RemoveWireCorner "wire.remove_corner" Edit,
+    RemoveWireSegment "wire.remove_segment" Edit,
+    MoveWireEnd "wire.move_end" Edit,
     Disconnect "schematic.disconnect" Edit,
     PlaceJunction "junction.place" Edit,
     RemoveJunction "junction.remove" Edit,
@@ -411,6 +483,16 @@ fn apply_command(
             occurrence,
             position,
         } => none(move_unit(project, occurrence, position)),
+        C::Arrange {
+            sheet,
+            objects,
+            action,
+        } => none(arrange::arrange(
+            project,
+            sheet.unwrap_or(first),
+            &objects,
+            action,
+        )),
         C::OrientUnit {
             occurrence,
             rotation,
@@ -424,6 +506,31 @@ fn apply_command(
             corners,
             to,
         } => draw_wire(project, sheet, from, corners, to).map(|_| Applied::None),
+        C::SetWirePath {
+            wire,
+            corners,
+            from,
+            to,
+        } => none(wire_edit::set_path(project, wire, corners, from, to)),
+        C::MoveWireCorner {
+            wire,
+            index,
+            to,
+            free,
+        } => none(wire_edit::apply_move_corner(project, wire, index, to, free)),
+        C::MoveWireSegment {
+            wire,
+            index,
+            offset,
+        } => none(wire_edit::apply_move_segment(project, wire, index, offset)),
+        C::InsertWireCorner { wire, at } => none(wire_edit::apply_insert_corner(project, wire, at)),
+        C::RemoveWireCorner { wire, index } => {
+            none(wire_edit::apply_remove_corner(project, wire, index))
+        }
+        C::RemoveWireSegment { wire, index } => {
+            none(wire_edit::remove_segment(project, wire, index))
+        }
+        C::MoveWireEnd { wire, end, to } => none(wire_edit::apply_move_end(project, wire, end, to)),
         C::Disconnect { wire } => none(disconnect(project, wire)),
         C::PlaceJunction { sheet, position } => {
             wiring::place_junction(project, sheet.unwrap_or(first), position).map(Applied::Junction)
@@ -846,8 +953,8 @@ pub fn draw_wire(
     {
         return Err(invalid("A wire cannot join two points of the same wire."));
     }
-    let from = wiring::resolve(project, from)?;
-    let to = wiring::resolve(project, to)?;
+    let from = wiring::resolve(project, wiring::on_its_pin(project, from))?;
+    let to = wiring::resolve(project, wiring::on_its_pin(project, to))?;
     let mut sheets = [from, to]
         .into_iter()
         .filter_map(|end| end_sheet(project, end))
@@ -1311,7 +1418,9 @@ fn draw(
                 .and_then(|(binding, package)| pin_numbers(binding, package, pin.terminal))
                 .filter(|_| pin.number.visible)
                 .map(|text| {
-                    let (at, rotation, justify) = pin.number_anchor();
+                    let width =
+                        text.chars().count() as f64 * TextMetric::default().advance * height;
+                    let (at, rotation, justify) = pin.number_anchor(width);
                     place(None, text, at, height, rotation, justify)
                 });
             // A name that only repeats the number ("1" on pin 1) says

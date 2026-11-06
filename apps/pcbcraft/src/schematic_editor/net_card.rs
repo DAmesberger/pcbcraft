@@ -77,6 +77,7 @@ impl SchematicEditor {
         kit::section(ui, "wire", "Wire", true, None, |ui| {
             kit::value_row(ui, "From", &end_label(project, wire.from));
             kit::value_row(ui, "To", &end_label(project, wire.to));
+            kit::value_row(ui, "Corners", &wire.corners.len().to_string());
         });
         if let Some(instance) = select {
             self.select_instance(Some(instance), project);

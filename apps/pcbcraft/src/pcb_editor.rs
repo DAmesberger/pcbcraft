@@ -1298,6 +1298,11 @@ impl PcbEditor {
         self.pan = Vec2::ZERO;
     }
 
+    /// The docked update review, for the app's Esc.
+    pub fn review_mut(&mut self) -> &mut crate::update_preview::UpdatePreview {
+        &mut self.update
+    }
+
     /// Properties card body. The card header already names the selection, so
     /// the body starts with its first section.
     pub fn inspector(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1490,7 +1495,7 @@ impl PcbEditor {
         // through.
         self.hover_at = None;
         if self.tool == Tool::Route && response.hovered() {
-            let at = cursor.map(|at| self.route_point(at, scale));
+            let at = cursor.map(|at| self.route_point(project, at, scale));
             self.hover_at = at;
             if let Some(back) = self.route_keys(ui, project, engine.revision(), at) {
                 operation = Some(back);
@@ -1613,6 +1618,9 @@ impl PcbEditor {
             } else if self.tool == Tool::Route {
                 if !double {
                     operation = self.route_click(project, engine.revision(), at, scale);
+                    if let Some(why) = self.route.refused.take() {
+                        kit::toast::post(ui.ctx(), kit::severity::Level::Warning, why, Vec::new());
+                    }
                 }
             } else if self.fill_handle_at(project, view, screen(at)).is_none() {
                 // A click on a handle of the selected fill keeps it
@@ -1625,9 +1633,9 @@ impl PcbEditor {
         // drawn so the copper it shoves is drawn at its new place only.
         let route_end = match (self.route_start, cursor) {
             (Some(_), Some(at)) => Some(
-                self.route_snap(at, scale)
+                self.route_pad(project, at, scale)
                     .map(PlacedPad::center)
-                    .unwrap_or_else(|| self.route_point(at, scale)),
+                    .unwrap_or_else(|| self.route_point(project, at, scale)),
             ),
             _ => None,
         };
@@ -1755,6 +1763,10 @@ impl PcbEditor {
     fn route_snap(&self, at: Point, scale: f32) -> Option<&PlacedPad> {
         let reach = f64::from(8.0 / scale);
         let seen = self.seen();
+        // During a route, a pad of the routed net beats a nearer one of
+        // another net.
+        let routed = self.route_start.and(self.net);
+        let other = |p: &PlacedPad| routed.is_some_and(|n| p.net != Some(n));
         self.board_pads
             .iter()
             .filter(|b| {
@@ -1769,15 +1781,33 @@ impl PcbEditor {
                 )
             })
             .filter(|(_, edge, _)| *edge < reach)
-            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.2.total_cmp(&b.2)))
+            .min_by(|a, b| {
+                other(&a.0.placed)
+                    .cmp(&other(&b.0.placed))
+                    .then(a.1.total_cmp(&b.1))
+                    .then(a.2.total_cmp(&b.2))
+            })
             .map(|(b, _, _)| &b.placed)
     }
 
+    /// The pad a route step at `at` snaps to: not another net's pad while
+    /// copper of the routed net is just as close.
+    fn route_pad(&self, project: &Project, at: Point, scale: f32) -> Option<&PlacedPad> {
+        self.route_snap(at, scale).filter(|pad| {
+            self.route_start.is_none()
+                || pad.net == self.net
+                || (self.track_end(at, scale, self.net).is_none()
+                    && self.net_track_point(project, at, scale).is_none())
+        })
+    }
+
     /// Where a route click or V at `at` lands: the end of a track of the
-    /// routed net within 8 pixels, else the 0.5 mm grid. A layer change
-    /// at a track end continues that track through a via.
-    fn route_point(&self, at: Point, scale: f32) -> Point {
+    /// routed net within 8 pixels, else the nearest point of such a track
+    /// on the routing layer during a route, else the 0.5 mm grid. A layer
+    /// change at a track end continues that track through a via.
+    fn route_point(&self, project: &Project, at: Point, scale: f32) -> Point {
         self.track_end(at, scale, self.net)
+            .or_else(|| self.net_track_point(project, at, scale))
             .unwrap_or_else(|| snap(at))
     }
 

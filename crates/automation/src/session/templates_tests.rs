@@ -35,6 +35,46 @@ fn the_template_queries_answer_on_the_wire() -> Fallible<()> {
     Ok(())
 }
 
+/// A small model never fills a form: the same text reads, then finds or builds.
+#[test]
+fn generic_parts_answer_on_the_wire() -> Fallible<()> {
+    let mut session = Session::new(Engine::demo()?);
+    let reply = session.dispatch(json!({"command": "project.query",
+        "params": {"query": "library.generic_parts", "params": {"query": "header 5x2"}}}));
+    assert_eq!(refused(&reply), None, "{reply}");
+    let found = &reply["result"]["result"]["candidates"][0];
+    assert_eq!(found["name"], "Pin header 5×2 2.54 mm", "{reply}");
+    assert_eq!(found["state"]["state"], "not_created", "{reply}");
+    assert_eq!(found["spec"]["rows"], 5, "{reply}");
+    assert_eq!(found["badges"][0]["label"], "rows × columns", "{reply}");
+    assert_eq!(found["would_create"]["row"]["source"], "starter", "{reply}");
+
+    let apply = |session: &mut Session, text: &str| {
+        let revision = session.engine().revision();
+        session.dispatch(json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": library_op("library.find_or_create", json!({"query": text})),
+        }}))
+    };
+    let first = apply(&mut session, "header 5x2");
+    assert_eq!(refused(&first), None, "{first}");
+    let component = first["result"]["outcome"]["component"].clone();
+    assert!(component.is_object(), "{first}");
+    assert_eq!(first["result"]["outcome"]["created"], true, "{first}");
+
+    let again = apply(&mut session, "header 5x2");
+    assert_eq!(refused(&again), None, "{again}");
+    assert_eq!(
+        again["result"]["outcome"]["component"], component,
+        "{again}"
+    );
+    assert_eq!(again["result"]["outcome"]["created"], false, "{again}");
+
+    let reply = apply(&mut session, "header 1x9999");
+    assert_eq!(refused(&reply).as_deref(), Some("invalid_input"), "{reply}");
+    Ok(())
+}
+
 #[test]
 fn the_exm48_package_is_found_among_the_no_lead_templates() -> Fallible<()> {
     let mut s = Scenario::demo()?;

@@ -439,6 +439,7 @@ impl SchematicEditor {
                 _ => false,
             });
             let selected = self.item == Some(*item)
+                || self.group.contains_item(*item)
                 || matches!((self.item, item), (Some(Item::SheetPin(pin)), Item::SheetSymbol(s))
                     if project.sheet_pin(pin).is_some_and(|(sym, _)| sym.id == *s));
             let ink = if selected || on_net { t.accent } else { t.text };
@@ -448,7 +449,8 @@ impl SchematicEditor {
                 .and_then(|(i, to)| {
                     let from = anchor(project, i)?;
                     Some([to[0] - from[0], to[1] - from[1]])
-                });
+                })
+                .or_else(|| self.group_item_delta(*item));
             let view = match delta {
                 Some(d) => View {
                     origin: view.screen(d),
@@ -563,17 +565,18 @@ impl SchematicEditor {
         }))
     }
 
-    /// Turn the selected label a quarter counter-clockwise.
+    /// Turn the selected label a quarter counter-clockwise from the way it
+    /// is drawn (a port on a pin faces by itself until it is first turned).
     pub(super) fn rotated_item(&self, project: &Project) -> Option<Operation> {
         let Some(Item::Label(id)) = self.item else {
             return None;
         };
-        let label = project.label(id)?;
+        let rotation = pcbcraft_core::schematic::labels::current_rotation(project, id).ok()?;
         Some(Operation::Schematic(SchematicCommand::EditLabel {
             label: id,
             name: None,
             kind: None,
-            rotation: Some(label.rotation.turned(1)),
+            rotation: Some(rotation.turned(1)),
         }))
     }
 

@@ -11,8 +11,8 @@
 //! stays with the tool. While Settings records a key, no item takes one.
 //!
 //! A chosen item ([`choose`]) runs its registry command, or, for the keys
-//! a focused field owns (Undo, Redo, Cut, Copy and Paste while typing, and
-//! Select All) and the canvas's own Delete, hands the key back to egui:
+//! a focused field owns (Undo, Redo, Cut, Copy, Paste and Select All while
+//! typing) and the canvas's own Delete, hands the key back to egui:
 //! the same input the field or canvas would have had without the menu,
 //! never a second run of a command.
 #![cfg_attr(
@@ -211,12 +211,12 @@ enum TextEdit {
     SelectAll,
 }
 
-/// Cut, Copy or Paste: while typing they are the field's own; otherwise
-/// they run where the command is available.
+/// Cut, Copy, Paste or Select All: while typing they are the field's own;
+/// otherwise they run where the command is available.
 fn clipboard(command: &Command) -> bool {
     matches!(
         command.action,
-        Action::App(AppCommand::Cut | AppCommand::Copy | AppCommand::Paste)
+        Action::App(AppCommand::Cut | AppCommand::Copy | AppCommand::Paste | AppCommand::SelectAll)
     )
 }
 
@@ -302,8 +302,6 @@ pub fn state(now: &Now, entry: Entry) -> Option<State> {
             };
             let enabled = if clipboard(command) {
                 now.typing || (now.available)(command)
-            } else if text_edit(id).is_some() {
-                now.typing
             } else if history(command).is_some() && now.typing {
                 true
             } else {

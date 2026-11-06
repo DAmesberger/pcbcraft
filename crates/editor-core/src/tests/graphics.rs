@@ -1404,3 +1404,41 @@ fn an_existing_narrow_box_widens_when_its_pins_are_renamed() -> Result<()> {
     assert!(!samples::fit_pin_names(&mut symbol, name));
     Ok(())
 }
+
+/// Run 3, finding 10: a pin number longer than its stub ("A4B9,B4A9" on a
+/// USB-C VBUS pin) starts at the body and runs outward on every side, so it
+/// never reaches the name inside the body; a short one stays centred.
+#[test]
+fn a_long_pin_number_stays_clear_of_the_body() {
+    let m = TextMetric::default();
+    let height = 1.0;
+    let text = "A4B9,B4A9";
+    let width = text.len() as f64 * m.advance * height;
+    let body = [0.0, 0.0];
+    for (direction, position) in [
+        (PinDirection::Right, [-2.54, 0.0]),
+        (PinDirection::Left, [2.54, 0.0]),
+        (PinDirection::Up, [0.0, -2.54]),
+        (PinDirection::Down, [0.0, 2.54]),
+    ] {
+        let pin = Pin::new(TerminalId(1), position, direction, 2.54);
+        assert_eq!(pin.body_end(), body);
+        let (at, rotation, justify) = pin.number_anchor(width);
+        let d = direction.vector();
+        // Along the pin's axis the text's box runs from the body outward.
+        let along = |p: [f64; 2]| p[0] * d[0] + p[1] * d[1];
+        assert!(along(at).abs() < 1e-9, "{direction:?} starts at the body");
+        let runs_out = match (rotation == 0.0, justify.h) {
+            (true, HAlign::Right) | (false, HAlign::Right) => {
+                matches!(direction, PinDirection::Right | PinDirection::Up)
+            }
+            (_, HAlign::Left) => {
+                matches!(direction, PinDirection::Left | PinDirection::Down)
+            }
+            _ => false,
+        };
+        assert!(runs_out, "{direction:?}: {justify:?}");
+        let (_, _, short) = pin.number_anchor(0.6);
+        assert_eq!(short.h, HAlign::Center);
+    }
+}

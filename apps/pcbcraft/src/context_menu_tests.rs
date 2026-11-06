@@ -42,6 +42,7 @@ fn frame(
 ) -> (egui::FullOutput, Option<Run<Act>>) {
     let mut chosen = None;
     let out = screen.run(events, |ui| {
+        hold_keys(ui.ctx());
         let rows = rows(ui.ctx());
         chosen = state.show(ui.ctx(), &rows);
     });
@@ -268,4 +269,68 @@ fn the_menu_closes_on_esc_a_press_outside_and_when_not_drawn() {
     for (text, rect, ..) in painted(&out) {
         assert!(screen_rect.contains_rect(rect), "{text} at {rect:?}");
     }
+}
+
+/// Run 3, finding 6: a canvas runs before its menu in a frame and takes Esc
+/// as its own cancel, which is why the menu never saw it. With the app's
+/// `hold_keys` first, Esc closes the menu and nothing underneath hears it,
+/// and ⌘Z does nothing underneath an open menu.
+#[test]
+fn an_open_menu_takes_esc_and_shortcuts_from_what_is_underneath() {
+    let screen = Screen::new(egui::vec2(400.0, 320.0));
+    let key = |key, modifiers| Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    let mut state = State::default();
+    let run = |state: &mut State<()>, events: Vec<Event>, hold: bool| {
+        let mut heard = Vec::new();
+        screen.run(events, |ui| {
+            if hold {
+                hold_keys(ui.ctx());
+            }
+            // A canvas: it takes its keys before the menu draws.
+            for k in [egui::Key::Escape, egui::Key::Z] {
+                let press = ui.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, k)
+                        || i.consume_key(egui::Modifiers::COMMAND, k)
+                });
+                if press {
+                    heard.push(k);
+                }
+            }
+            let rows = rows(ui.ctx());
+            let _ = state.show(ui.ctx(), &rows);
+        });
+        heard
+    };
+    let esc = || vec![key(egui::Key::Escape, egui::Modifiers::NONE)];
+    // The bug: without the hold the canvas takes Esc and the menu stays.
+    state.open(pos2(20.0, 20.0), ());
+    run(&mut state, vec![], false);
+    assert_eq!(run(&mut state, esc(), false), [egui::Key::Escape]);
+    assert!(state.is_open());
+    state.close();
+    run(&mut state, vec![], true);
+
+    state.open(pos2(20.0, 20.0), ());
+    run(&mut state, vec![], true);
+    let undo = vec![key(egui::Key::Z, egui::Modifiers::COMMAND)];
+    assert_eq!(
+        run(&mut state, undo, true),
+        [],
+        "⌘Z acts on nothing underneath"
+    );
+    assert!(state.is_open(), "⌘Z leaves the menu open");
+    assert_eq!(
+        run(&mut state, esc(), true),
+        [],
+        "Esc reaches nothing underneath"
+    );
+    assert!(!state.is_open(), "Esc closes it");
+    // Closed: the keys go through again.
+    assert_eq!(run(&mut state, esc(), true), [egui::Key::Escape]);
 }

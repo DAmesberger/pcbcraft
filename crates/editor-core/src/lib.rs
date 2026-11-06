@@ -214,6 +214,12 @@ pub enum Query {
         #[serde(default)]
         limit: Option<usize>,
     },
+    /// On-demand generic parts a text reads as, under the families' declared
+    /// patterns ("header 1x4", "10k 0603"): how it was read, whether the part
+    /// already exists, and what `library.find_or_create` would make. Empty
+    /// when it reads as none.
+    #[serde(rename = "library.generic_parts")]
+    GenericParts { query: String },
     /// The built-in standard fields as a bundle `library.import` takes
     /// (`library.import_standard_fields` does both in one step).
     #[serde(rename = "library.standard_fields")]
@@ -364,6 +370,7 @@ declare_classes!(Query {
     CheckDefinition "component.check" Read,
     CheckDrafts "component.check_drafts" Read,
     Search "library.search" Read,
+    GenericParts "library.generic_parts" Read,
     Facets "library.facets" Read,
     InspectLineage "library.inspect" Read,
     Bom "project.bom" Read,
@@ -419,6 +426,7 @@ pub enum QueryResult {
     StandardFields(Box<library::Bundle>),
     Issues(issues::IssueReport),
     Templates(catalog::templates::TemplateReport),
+    GenericParts(catalog::generic::GenericReport),
     PackagePlan(library::templates::catalog::PackagePlan),
     Models(catalog::models::ModelReport),
     PinoutPlan(Box<library::pinout::PinoutPlan>),
@@ -1375,6 +1383,9 @@ impl Engine {
                         .min(catalog::templates::MAX_TEMPLATE_HITS),
                 )?))
             }
+            Query::GenericParts { query } => Ok(QueryResult::GenericParts(
+                catalog::generic::search(&self.document.project, &self.document.drafts, &query),
+            )),
             Query::PackagePlan { request } => Ok(QueryResult::PackagePlan(
                 commands::templates::package_plan(&self.document, &request, evaluator)?,
             )),

@@ -426,6 +426,8 @@ pub enum AppCommand {
     Cut,
     Copy,
     Paste,
+    /// Everything on the sheet or, while typing, the field's own text.
+    SelectAll,
     ToggleBrowser,
     ToggleIssues,
     Messages,
@@ -1160,9 +1162,10 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::V))
             .icon("paste")
             .keywords("clipboard text field schematic duplicate"),
-        key("edit.select-all", "Select all", C::Global, Chord::cmd(K::A))
+        app("edit.select-all", "Select all", A::SelectAll)
+            .chord(Chord::cmd(K::A))
             .icon("select")
-            .keywords("text field"),
+            .keywords("text field sheet schematic everything group"),
         app("view.browser", "Show or hide the Browser", A::ToggleBrowser)
             .chord(Chord::cmd(K::B))
             .icon("list")
@@ -1477,11 +1480,18 @@ fn defaults() -> Vec<Command> {
         .keywords("renumber reference designator"),
         key(
             "schematic.delete",
-            "Delete the selected part, label, sheet symbol or drawing",
+            "Delete the selected part, wire, wire corner, label, sheet symbol or drawing",
             C::Schematic,
             Chord::key(K::Delete),
         )
         .also(&[Chord::key(K::Backspace)]),
+        key(
+            "schematic.split-wire",
+            "Split the selected wire at the segment under the pointer",
+            C::Schematic,
+            Chord::key(K::Delete).with_shift(),
+        )
+        .also(&[Chord::key(K::Backspace).with_shift()]),
         key(
             "schematic.cancel",
             "Cancel the tool",

@@ -19,8 +19,10 @@ use crate::library::{
     PinDirection, PinText, SymbolDefinition, Terminal, TerminalClass,
 };
 use crate::model::{
-    ComponentInstance, EditPolicy, PhysicalChoice, Project, SymbolOccurrence, WireEnd,
+    ComponentInstance, EditPolicy, LabelKind, PhysicalChoice, Project, SheetItem, SymbolOccurrence,
+    WireEnd,
 };
+use crate::schematic::ClipObject;
 use crate::{erc, layout, nets, schematic, validate};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -55,6 +57,11 @@ pub enum Change {
     /// A consequential schematic edit, e.g. unplacing a wired unit.
     Schematic {
         command: schematic::SchematicCommand,
+    },
+    /// Remove several sheet objects together: symbols with their wires,
+    /// labels, drawings and wires.
+    RemoveObjects {
+        objects: Vec<schematic::ClipObject>,
     },
     SyncPcb {},
 }
@@ -371,6 +378,15 @@ fn change_refs(change: &Change) -> Vec<ObjectRef> {
         Change::Instance {
             edit: InstanceChange::Remove { instance } | InstanceChange::SetPhysical { instance, .. },
         } => vec![ObjectRef::Instance { id: *instance }],
+        Change::RemoveObjects { objects } => objects
+            .iter()
+            .filter_map(|object| match *object {
+                ClipObject::Instance { id } => Some(ObjectRef::Instance { id }),
+                ClipObject::Label { id } => Some(ObjectRef::Label { id }),
+                ClipObject::Wire { id } => Some(ObjectRef::Wire { id }),
+                ClipObject::Drawing { .. } => None,
+            })
+            .collect(),
         Change::Schematic { .. } | Change::SyncPcb {} => vec![],
     }
 }
@@ -822,6 +838,12 @@ fn stage_change(project: &Project, change: &Change) -> Result<Project> {
         Change::Instance { edit } => stage(&mut next, edit, EditPolicy::Consequential)?,
         Change::Schematic { command } => {
             schematic::apply(&mut next, command.clone(), EditPolicy::Consequential)?;
+        }
+        Change::RemoveObjects { objects } => {
+            for instance in schematic::arrange::remove_objects(&mut next, objects)? {
+                let edit = InstanceChange::Remove { instance };
+                stage(&mut next, &edit, EditPolicy::Consequential)?;
+            }
         }
         Change::SyncPcb {} => layout::apply(&mut next, layout::LayoutCommand::Sync)?,
     }
@@ -2317,10 +2339,12 @@ fn findings(project: &Project) -> Vec<Finding> {
     out
 }
 
-/// [`findings`] of `next` without the copper past the board edge of the
-/// parts the update stages beside the board (placed in `next`, not in
-/// `project`): off the board is their staging area, not news of the
-/// update. The board checks still report them until they are placed.
+/// [`findings`] of `next` without what merely follows from the parts the
+/// update stages beside the board (placed in `next`, not in `project`):
+/// their copper past the board edge, which is their staging area, and the
+/// other pads of a net they join, which report unrouted only because a
+/// staged pad is not connected yet (a routed GND listed every pad for one
+/// new capacitor). The board checks still report them until they are placed.
 fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
     let staged: BTreeSet<Id> = next
         .placements
@@ -2338,13 +2362,75 @@ fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
                 _ => false,
             })
     };
-    findings(next)
-        .into_iter()
-        .filter(|f| !off_board(f))
+    let all = findings(next);
+    let staged_pad = |f: &Finding| {
+        f.objects
+            .iter()
+            .any(|o| matches!(o, ObjectRef::Pad { instance, .. } if staged.contains(instance)))
+    };
+    let net_of = |f: &Finding| {
+        f.objects.iter().find_map(|o| match o {
+            ObjectRef::Net { id } => Some(*id),
+            _ => None,
+        })
+    };
+    let staged_nets: BTreeSet<Id> = all
+        .iter()
+        .filter(|f| f.code == "board.unrouted" && staged_pad(f))
+        .filter_map(net_of)
+        .collect();
+    let follows = |f: &Finding| {
+        f.code == "board.unrouted"
+            && !staged_pad(f)
+            && net_of(f).is_some_and(|n| staged_nets.contains(&n))
+    };
+    all.into_iter()
+        .filter(|f| !off_board(f) && !follows(f))
         .collect()
 }
 
 /// Preview never mutates the source. Apply recomputes this plan at its bound revision.
+/// The labels, power ports and drawings the update removes, by name.
+fn removed_sheet_objects(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    for label in &project.labels {
+        if next.label(label.id).is_none() {
+            let kind = match label.kind {
+                LabelKind::Power { .. } => "power port",
+                _ => "label",
+            };
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Remove,
+                    O::Label,
+                    vec![ObjectRef::Label { id: label.id }],
+                    format!("Removes {kind} {}", label.name),
+                ),
+                format!("Remove {kind} {} (ID {}).", label.name, label.id),
+            );
+        }
+    }
+    for drawing in &project.drawings {
+        if next.drawing(drawing.id).is_none() {
+            let kind = match drawing.item {
+                SheetItem::Text { .. } => "note",
+                SheetItem::Line { .. } => "line",
+                SheetItem::Rect { .. } => "rectangle",
+            };
+            plan.detail(
+                head(
+                    A::Schematic,
+                    K::Remove,
+                    O::Drawing,
+                    Vec::new(),
+                    format!("Removes a {kind}"),
+                ),
+                format!("Remove {kind} {}.", drawing.id),
+            );
+        }
+    }
+}
+
 pub(crate) fn preview(
     project: &Project,
     revision: u64,
@@ -2584,6 +2670,7 @@ pub(crate) fn preview(
             );
         }
     }
+    removed_sheet_objects(&mut plan, project, &next);
     for placement in &project.placements {
         let replacement = next
             .placements

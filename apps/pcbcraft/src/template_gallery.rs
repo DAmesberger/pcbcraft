@@ -39,6 +39,16 @@
 //! sheet's refusal line (`refusal::Origin::Dialog`), success closes the
 //! sheet with an Undo toast. A created component is offered to the host to
 //! open explicitly ([`TemplateGallery::take_created`]).
+//!
+//! The Open component page and the Place palette list the same rows below
+//! real components ([`find`], [`search_row`]). Choosing one opens this form
+//! on that row; from the Place palette the primary creates and publishes the
+//! component ([`publish_request`]) so the host can arm placement of it
+//! ([`TemplateGallery::take_to_place`]).
+//!
+//! The same lists also show the on-demand generic parts a text reads as
+//! ([`find_generic`], [`generic_row`]): the part itself when the project holds
+//! it, else a "not yet created" row that needs no form.
 use crate::kit::severity::Level;
 use crate::kit::toast::{ToastAction, post};
 use crate::kit::{self, Tone};
@@ -46,6 +56,7 @@ use crate::library_sources::FolderPick;
 use crate::refusal::{self, Origin};
 use crate::symbol_view::{self, View};
 use egui::{Align, Layout, Rect, Sense, Stroke, Ui, pos2, vec2};
+use pcbcraft_core::catalog::generic::GenericCandidate;
 use pcbcraft_core::catalog::templates::{TemplateHit, TemplateReport};
 use pcbcraft_core::catalog::{CatalogContext, MAX_QUERY, Source};
 use pcbcraft_core::library::footprint_source::ParamValue;
@@ -55,12 +66,14 @@ use pcbcraft_core::library::templates::catalog::{
     self, FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
     RowFrom, RowSource, SavePackageRow, SkeletonHint, TerminalMatch,
 };
+use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::library::{
     Bundle, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
     PackageTerminal, Pad, PadKind, Provenance,
 };
 use pcbcraft_core::{
-    DefinitionId, Engine, LibraryCommand, Operation, PackageTerminalId, Query, QueryResult,
+    ComponentRef, DefinitionId, Engine, LibraryCommand, Operation, PackageTerminalId, Query,
+    QueryResult,
 };
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -79,6 +92,7 @@ const MAX_BUNDLES: usize = 16;
 const MAX_SAVE_ALIASES: usize = 16;
 /// Key hints along the sheet's bottom edge.
 const KEYS_NEW: &str = "↑↓ move   ⏎ create   ⇥ edit values   esc close";
+const KEYS_PLACE: &str = "↑↓ move   ⏎ create and place   ⇥ edit values   esc close";
 const KEYS_PACKAGE: &str = "↑↓ move   ⏎ apply   ⇥ edit values   esc close";
 const KEYS_EDIT: &str = "esc back to the rows";
 
@@ -152,6 +166,161 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Tht => "THT",
         FamilyKind::Module => "Modules",
         FamilyKind::UsbC => "USB-C",
+    }
+}
+
+/// A search list's group of template rows, below its real components.
+pub const SEARCH_HEADING: &str = "From template";
+/// What a template row's badge in a search list means.
+const CREATE_TIP: &str = "not a component yet: choosing it creates one from this template";
+
+/// Template rows a component search also found, and how many more match.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    pub hits: Vec<TemplateHit>,
+    pub more: usize,
+}
+
+/// `library.templates` for the text of a component search. An empty text
+/// lists nothing, and a text in the component search's own grammar that
+/// `library.templates` refuses simply finds no template.
+pub fn find(engine: &Engine, query: &str, limit: usize, context: &CatalogContext) -> Found {
+    if query.trim().is_empty() {
+        return Found::default();
+    }
+    let request = Query::Templates {
+        query: query.to_owned(),
+        limit: Some(limit),
+    };
+    match engine.query_with(request, context) {
+        Ok(QueryResult::Templates(report)) => Found {
+            hits: report.hits,
+            more: report.more,
+        },
+        _ => Found::default(),
+    }
+}
+
+/// `library.generic_parts` for the text of a component search.
+pub fn find_generic(engine: &Engine, query: &str) -> Vec<GenericCandidate> {
+    let request = Query::GenericParts {
+        query: query.to_owned(),
+    };
+    match engine.query(request) {
+        Ok(QueryResult::GenericParts(report)) => report.candidates,
+        _ => Vec::new(),
+    }
+}
+
+/// A text that reads as the part of a template row lists it once.
+pub fn drop_covered(found: &mut Found, candidates: &[GenericCandidate]) {
+    found.hits.retain(|hit| {
+        !candidates
+            .iter()
+            .any(|c| c.covers_row.is_some() && c.covers_row == hit.starter)
+    });
+}
+
+/// The operation that creates a generic part that is not yet created.
+pub fn generic_request(candidate: &GenericCandidate) -> Option<Operation> {
+    let request = candidate.would_create.clone()?;
+    Some(Operation::Library(LibraryCommand::PublishFromTemplate(
+        Box::new(request),
+    )))
+}
+
+/// One generic part of a component search list: its name, its detail (or why
+/// its family refuses it), badges saying how the text was read, and a chip
+/// saying where it stands.
+pub fn generic_row(
+    ui: &mut Ui,
+    id: egui::Id,
+    candidate: &GenericCandidate,
+    query: &str,
+    highlighted: bool,
+) -> egui::Response {
+    let badges: Vec<kit::SearchBadge<'_>> = candidate
+        .badges
+        .iter()
+        .map(|b| kit::SearchBadge {
+            label: &b.label,
+            present: true,
+            tip: &b.tip,
+        })
+        .collect();
+    let chip = match candidate.state {
+        GenericState::Existing { .. } => None,
+        GenericState::NotCreated => Some(kit::RowChip {
+            label: "not yet created",
+            warning: false,
+        }),
+        GenericState::Draft { .. } => Some(kit::RowChip {
+            label: "draft",
+            warning: true,
+        }),
+        GenericState::Refused { .. } => Some(kit::RowChip {
+            label: "cannot be made",
+            warning: true,
+        }),
+    };
+    kit::search_row_marked(
+        ui,
+        id,
+        &kit::SearchRow {
+            icon: if candidate.component().is_some() {
+                "component"
+            } else {
+                "new"
+            },
+            label: &candidate.name,
+            query,
+            detail: &candidate.detail,
+            badges: &badges,
+            highlighted,
+        },
+        kit::RowMarks { star: false, chip },
+    )
+}
+
+/// One template row of a component search list: the row's name and detail,
+/// with a Create badge that says it is not a component yet.
+pub fn search_row(
+    ui: &mut Ui,
+    id: egui::Id,
+    hit: &TemplateHit,
+    query: &str,
+    highlighted: bool,
+    source: &str,
+) -> egui::Response {
+    let line = detail(hit, source);
+    let badges = [kit::SearchBadge {
+        label: "Create",
+        present: true,
+        tip: CREATE_TIP,
+    }];
+    kit::search_row(
+        ui,
+        id,
+        &kit::SearchRow {
+            icon: "new",
+            label: &hit.name,
+            query,
+            detail: &line,
+            badges: &badges,
+            highlighted,
+        },
+    )
+}
+
+/// Where a row comes from, in its detail line.
+pub fn source_label(
+    hit: &TemplateHit,
+    library: impl Fn(pcbcraft_core::LibraryId) -> String,
+) -> String {
+    match &hit.source {
+        Source::Project if hit.is_starter() || hit.is_custom() => "Built-in".to_owned(),
+        Source::Project => "This project".to_owned(),
+        Source::Library(id) => library(*id),
     }
 }
 
@@ -332,6 +501,27 @@ fn request_values(hit: &TemplateHit, edited: Option<&PackageForm>) -> Option<Pac
     }
 }
 
+/// What a primary asks the core to build.
+fn template_request(
+    row: RowSource,
+    hit: &TemplateHit,
+    edited: Option<&PackageForm>,
+    skeleton: SkeletonHint,
+    name: &str,
+    prefix: &str,
+) -> Box<NewFromTemplate> {
+    let prefix = prefix.trim();
+    Box::new(NewFromTemplate {
+        row,
+        values: request_values(hit, edited),
+        skeleton,
+        name: name.trim().to_owned(),
+        designator_prefix: (!prefix.is_empty()).then(|| prefix.to_owned()),
+        symbol: None,
+        without_fields: false,
+    })
+}
+
 /// The one `library.new_from_template` the primary sends.
 pub fn new_request(
     row: RowSource,
@@ -341,15 +531,40 @@ pub fn new_request(
     name: &str,
     prefix: &str,
 ) -> Operation {
-    let prefix = prefix.trim();
-    Operation::Library(LibraryCommand::NewFromTemplate(Box::new(NewFromTemplate {
+    let request = template_request(row, hit, edited, skeleton, name, prefix);
+    Operation::Library(LibraryCommand::NewFromTemplate(request))
+}
+
+/// The one `library.publish_from_template` that makes a placeable component.
+pub fn publish_request(
+    row: RowSource,
+    hit: &TemplateHit,
+    edited: Option<&PackageForm>,
+    skeleton: SkeletonHint,
+    name: &str,
+    prefix: &str,
+) -> Operation {
+    let request = template_request(row, hit, edited, skeleton, name, prefix);
+    Operation::Library(LibraryCommand::PublishFromTemplate(request))
+}
+
+/// The request for a row that needs no choices, with the form's defaults.
+/// `None` for a family's custom entry, whose values are still to enter, and
+/// a folder row, whose bundle is still to read: those take the form.
+pub fn ready_request(hit: &TemplateHit) -> Option<Operation> {
+    if hit.is_custom() {
+        return None;
+    }
+    let row = direct_source(hit)?;
+    let prefix = default_prefix(&hit.values, hit.skeleton, hit.symbol);
+    Some(publish_request(
         row,
-        values: request_values(hit, edited),
-        skeleton,
-        name: name.trim().to_owned(),
-        designator_prefix: (!prefix.is_empty()).then(|| prefix.to_owned()),
-        symbol: None,
-    })))
+        hit,
+        None,
+        hit.skeleton,
+        &hit.name,
+        prefix,
+    ))
 }
 
 /// The `library.package_from_template` request for the package scope.
@@ -439,6 +654,28 @@ fn component_drafts(engine: &Engine) -> Vec<DefinitionId> {
         .collect()
 }
 
+/// The component lineages the project has published.
+pub fn published_components(engine: &Engine) -> Vec<DefinitionId> {
+    engine
+        .project()
+        .library
+        .components
+        .iter()
+        .map(|c| c.id)
+        .collect()
+}
+
+/// The latest revision of a component lineage not in `before`.
+pub fn new_component(engine: &Engine, before: &[DefinitionId]) -> Option<ComponentRef> {
+    engine
+        .project()
+        .library
+        .components
+        .iter()
+        .rfind(|c| !before.contains(&c.id))
+        .map(|c| ComponentRef::new(c.id, c.revision))
+}
+
 /// The search results at one document revision and context.
 #[derive(Clone, Debug)]
 struct Results {
@@ -468,9 +705,15 @@ struct PlanPreview {
 /// What a submit was.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Sent {
-    Create { name: String },
+    Create {
+        name: String,
+    },
+    /// Created and published for the host to arm placement.
+    CreateToPlace,
     Package,
-    SaveRow { name: String },
+    SaveRow {
+        name: String,
+    },
 }
 
 /// A submitted operation waiting for the engine's answer.
@@ -480,6 +723,7 @@ struct Submitted {
     revision: u64,
     frame: u64,
     drafts: Vec<DefinitionId>,
+    components: Vec<DefinitionId>,
 }
 
 /// What the primary does once a folder row's bundle arrives.
@@ -499,6 +743,8 @@ struct SaveForm {
 #[derive(Clone, Debug)]
 struct Open {
     scope: Scope,
+    /// The Place palette opened it: the primary continues to placement.
+    to_place: bool,
     form_rows: Option<FormRows>,
     query: String,
     chip: Chip,
@@ -527,6 +773,7 @@ impl Open {
     fn new(scope: Scope, form_rows: Option<FormRows>, query: String) -> Self {
         Self {
             scope,
+            to_place: false,
             form_rows,
             query,
             chip: Chip::All,
@@ -596,6 +843,8 @@ pub struct TemplateGallery {
     bundles: Vec<(FolderPick, Bundle)>,
     /// The component a create made, for the host to open.
     created: Option<DefinitionId>,
+    /// The component a create for placement published.
+    to_place: Option<ComponentRef>,
 }
 
 impl TemplateGallery {
@@ -672,6 +921,29 @@ impl TemplateGallery {
         }
     }
 
+    /// Open for a new component on `hit`, a row the search `query` listed.
+    /// With `to_place` the primary continues to placement.
+    pub fn open_on(
+        &mut self,
+        hit: &TemplateHit,
+        query: String,
+        to_place: bool,
+        form_rows: Option<FormRows>,
+    ) {
+        let mut open = Open::new(Scope::NewComponent, form_rows, query);
+        open.to_place = to_place;
+        open.kept = Some((hit.family, hit.name.clone()));
+        open.name.clone_from(&hit.name);
+        open.scroll = true;
+        self.open = Some(open);
+    }
+
+    /// The component a create for placement published, once: the host arms
+    /// placement of it.
+    pub fn take_to_place(&mut self) -> Option<ComponentRef> {
+        self.to_place.take()
+    }
+
     /// The component draft the last create made, once: the host opens it
     /// explicitly in the Component workspace.
     pub fn take_created(&mut self) -> Option<DefinitionId> {
@@ -697,11 +969,12 @@ impl TemplateGallery {
         let Some(open) = &mut self.open else {
             return;
         };
-        let fresh = open.results.as_ref().is_some_and(|r| {
-            r.revision == engine.revision()
-                && r.context == self.context_generation
-                && r.query == open.query
-        });
+        // New text starts at the new best match, never the old row.
+        let retyped = field_changed(open);
+        let fresh = !retyped
+            && open.results.as_ref().is_some_and(|r| {
+                r.revision == engine.revision() && r.context == self.context_generation
+            });
         if fresh {
             return;
         }
@@ -722,7 +995,7 @@ impl TemplateGallery {
             query: open.query.clone(),
             report,
         });
-        let kept = open.kept.clone();
+        let kept = open.kept.clone().filter(|_| !retyped);
         let index = kept.and_then(|(family, name)| {
             open.shown()
                 .iter()
@@ -767,6 +1040,10 @@ impl TemplateGallery {
                         ),
                         vec![ToastAction::Undo],
                     );
+                    self.open = None;
+                }
+                Sent::CreateToPlace => {
+                    self.to_place = new_component(engine, &sent.components);
                     self.open = None;
                 }
                 Sent::Package => {
@@ -916,6 +1193,11 @@ impl TemplateGallery {
                     default_prefix(&hit.values, skeleton, hit.symbol).to_owned()
                 });
                 let name = open.name.trim().to_owned();
+                if open.to_place {
+                    let operation =
+                        publish_request(source, &hit, edited.as_ref(), skeleton, &name, &prefix);
+                    return self.submit(ctx, engine, Sent::CreateToPlace, operation);
+                }
                 let operation =
                     new_request(source, &hit, edited.as_ref(), skeleton, &name, &prefix);
                 self.submit(ctx, engine, Sent::Create { name }, operation)
@@ -945,6 +1227,7 @@ impl TemplateGallery {
             revision: engine.revision(),
             frame: ctx.cumulative_frame_nr(),
             drafts: component_drafts(engine),
+            components: published_components(engine),
         });
         Some(operation)
     }
@@ -1076,6 +1359,8 @@ impl TemplateGallery {
         };
         let footer = if open.edited.is_some() || open.save.is_some() {
             KEYS_EDIT
+        } else if open.to_place {
+            KEYS_PLACE
         } else if matches!(open.scope, Scope::NewComponent) {
             KEYS_NEW
         } else {
@@ -1088,13 +1373,13 @@ impl TemplateGallery {
         let mut picked = None;
         let mut moved_chip = false;
         let scroll = std::mem::take(&mut open.scroll);
-        let source_name = |h: &TemplateHit| match &h.source {
-            Source::Project if h.is_starter() || h.is_custom() => "Built-in".to_owned(),
-            Source::Project => "This project".to_owned(),
-            Source::Library(id) => names
-                .iter()
-                .find(|(l, _)| l == id)
-                .map_or_else(|| "Library".to_owned(), |(_, n)| n.clone()),
+        let source_name = |h: &TemplateHit| {
+            source_label(h, |id| {
+                names
+                    .iter()
+                    .find(|(l, _)| *l == id)
+                    .map_or_else(|| "Library".to_owned(), |(_, n)| n.clone())
+            })
         };
         kit::search_sheet(ctx, GALLERY, top, width, footer, |ui| {
             let invalid = matches!(open.results.as_ref().map(|r| &r.report), Some(Err(_)));
@@ -1486,6 +1771,7 @@ fn preview(
         kit::refusal(ui, why);
     }
     let label = match &open.scope {
+        Scope::NewComponent if open.to_place => "Create and place",
         Scope::NewComponent => "Create component",
         Scope::Package { pads: 0, .. } => "Use package",
         Scope::Package { .. } => "Replace package",
@@ -1961,6 +2247,42 @@ mod tests {
         assert!(gallery.is_open());
         frame(&ctx, &mut gallery, &engine, vec![key(egui::Key::Escape)]);
         assert!(!gallery.is_open(), "Esc closes");
+        Ok(())
+    }
+
+    /// Run 3, finding 1: typing on from "resistor" to "resistor 0603" moves
+    /// the highlight to the new top row, the one Enter creates, even though
+    /// the old top row (an 0201, "0603 metric") still matches.
+    #[test]
+    fn new_text_highlights_the_new_best_match() -> TestResult {
+        let ctx = context();
+        let engine = Engine::demo()?;
+        for (first, then, expected) in [
+            (
+                "resistor",
+                "resistor 0603",
+                "Chip resistor 0603 (1608 metric)",
+            ),
+            ("header 1x", "header 1x4", "Pin header 1×4 2.54 mm"),
+        ] {
+            let mut gallery = TemplateGallery::default();
+            gallery.open_new(None);
+            frame(&ctx, &mut gallery, &engine, vec![]);
+            for query in [first, then] {
+                gallery.open.as_mut().ok_or("open")?.query = query.into();
+                frame(&ctx, &mut gallery, &engine, vec![]);
+                frame(&ctx, &mut gallery, &engine, vec![]);
+            }
+            let open = gallery.open.as_ref().ok_or("open")?;
+            assert_eq!(open.highlighted, 0, "{then}");
+            assert_eq!(open.hit().ok_or("a hit")?.name, expected);
+            let Some(Operation::Library(LibraryCommand::NewFromTemplate(request))) =
+                frame(&ctx, &mut gallery, &engine, vec![key(egui::Key::Enter)])
+            else {
+                return Err("Enter creates".into());
+            };
+            assert_eq!(request.name, expected);
+        }
         Ok(())
     }
 

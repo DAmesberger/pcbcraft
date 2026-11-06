@@ -550,6 +550,10 @@ pub struct NewFromTemplate {
     /// terminal count must match the package's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<SymbolKind>,
+    /// Leave out the standard fields a chip row otherwise selects and
+    /// imports: for a client that defines its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub without_fields: bool,
 }
 
 /// The `library.package_from_template` request.

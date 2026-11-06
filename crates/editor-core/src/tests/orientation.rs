@@ -308,7 +308,7 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
                     assert_upright(name, expected, &format!("{what}: pin name"));
                 }
                 if let Some(number) = &pin.number {
-                    let (at, r, justify) = local.number_anchor();
+                    let (at, r, justify) = local.number_anchor(0.0);
                     let expected = image(&t, at, height, r, justify, &number.text);
                     assert_upright(number, expected, &format!("{what}: pin number"));
                 }

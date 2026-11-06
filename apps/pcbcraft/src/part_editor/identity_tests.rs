@@ -336,3 +336,158 @@ fn state_chips_are_legible_and_do_not_look_selected() {
         }
     }
 }
+
+/// The Open page lists template rows below the components; choosing one
+/// opens the New from template form on it, whose Esc changes nothing and
+/// whose primary makes the drafts and opens them.
+#[test]
+fn the_open_page_finds_templates_and_opens_the_form() -> TestResult {
+    let ctx = context();
+    let mut engine = Engine::default();
+    let mut editor = PartEditor::default();
+    create(&mut editor, &mut engine, &ctx, Template::TwoTerminal)?;
+    let lineage = editor.lineage().ok_or("a component")?;
+    editor.show_start();
+    assert_eq!(
+        engine.drafts().get(lineage).ok_or("draft")?.meta.name,
+        "Resistor"
+    );
+
+    let run = |editor: &mut PartEditor, engine: &Engine, events: Vec<egui::Event>| {
+        let mut sent = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| sent = editor.canvas(ui, engine),
+        );
+        output.textures_delta.clear();
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((
+                    text.galley.job.text.clone(),
+                    text.pos + text.galley.size() * 0.5,
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            walk(&shape.shape, &mut texts);
+        }
+        (texts, sent)
+    };
+    let typed = |text: &str| vec![egui::Event::Text(text.to_owned())];
+
+    run(&mut editor, &engine, vec![]);
+    run(&mut editor, &engine, vec![]);
+    let (texts, _) = run(&mut editor, &engine, typed("led"));
+    let chip = |texts: &[(String, Pos2)]| {
+        texts
+            .iter()
+            .find(|(t, _)| t.starts_with("Chip LED 0603"))
+            .map(|(_, at)| *at)
+    };
+    assert!(chip(&texts).is_some(), "led finds the row: {texts:?}");
+    assert!(texts.iter().any(|(t, _)| t.starts_with("FROM TEMPLATE")));
+    // Nothing else is called "led" here, so the group stands alone.
+    assert!(!texts.iter().any(|(t, _)| t.starts_with("COMPONENTS")));
+
+    // "resistor" matches the component and chip rows: the component first.
+    let erase = vec![egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    }];
+    run(&mut editor, &engine, erase);
+    let (texts, _) = run(&mut editor, &engine, typed("resistor"));
+    let y = |texts: &[(String, Pos2)], text: &str| {
+        texts
+            .iter()
+            .find(|(t, _)| t.starts_with(text))
+            .map(|(_, at)| at.y)
+    };
+    let group = y(&texts, "FROM TEMPLATE").ok_or("the template group")?;
+    let components = y(&texts, "COMPONENTS").ok_or("the component group")?;
+    let component = y(&texts, "Resistor").ok_or("the component row")?;
+    assert!(components < component && component < group, "{texts:?}");
+
+    // "usb" and choosing its row.
+    let erase = vec![egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    }];
+    run(&mut editor, &engine, erase);
+    let (texts, _) = run(&mut editor, &engine, typed("usb"));
+    let row = texts
+        .iter()
+        .find(|(t, _)| t.starts_with("USB-C receptacle"))
+        .map(|(_, at)| *at)
+        .ok_or_else(|| format!("usb finds the row: {texts:?}"))?;
+    let click = |pressed| egui::Event::PointerButton {
+        pos: row,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run(&mut editor, &engine, vec![egui::Event::PointerMoved(row)]);
+    run(&mut editor, &engine, vec![click(true)]);
+    run(&mut editor, &engine, vec![click(false)]);
+    run(&mut editor, &engine, vec![]);
+    assert_eq!(
+        editor.gallery.scope(),
+        Some(&crate::template_gallery::Scope::NewComponent)
+    );
+    let (texts, _) = run(&mut editor, &engine, vec![]);
+    assert!(
+        texts.iter().any(|(t, _)| t == "Create component"),
+        "{texts:?}"
+    );
+
+    // Esc: nothing was made.
+    let before = engine.revision();
+    let esc = egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run(&mut editor, &engine, vec![esc]);
+    assert!(!editor.gallery.is_open());
+    assert_eq!(engine.revision(), before);
+    Ok(())
+}
+
+/// The Open page's template rows, in one picture, show in full on hover.
+#[test]
+fn the_open_page_rows_show_in_full_on_hover() -> TestResult {
+    let ctx = context();
+    let mut engine = Engine::default();
+    let mut editor = PartEditor::default();
+    create(&mut editor, &mut engine, &ctx, Template::TwoTerminal)?;
+    editor.show_start();
+    let screen = crate::kit::text::tests::Screen::new(egui::vec2(1000.0, 800.0));
+    let run = |editor: &mut PartEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.canvas(ui, &engine);
+        })
+    };
+    run(&mut editor, vec![]);
+    run(&mut editor, vec![]);
+    run(&mut editor, vec![egui::Event::Text("resistor".into())]);
+    let drawn = run(&mut editor, vec![]);
+    screen.picture("open-page-templates", &drawn, 1.0)?;
+    let (_, missing) =
+        crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| run(&mut editor, events));
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+    Ok(())
+}

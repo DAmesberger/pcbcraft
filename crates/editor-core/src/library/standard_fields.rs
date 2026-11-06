@@ -11,6 +11,7 @@
 //! No temperature field: a unit here is a scale of the SI unit, and a Celsius
 //! reading needs an offset.
 use super::bundle::{self, Bundle, SourceRevision, to_record};
+use super::package_form::ChipKind;
 use super::{Definition, DefinitionMeta, Library};
 use crate::diagnostics::{Error, Result};
 use crate::fields::{
@@ -45,7 +46,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Resistance",
         kind_lineage: "a1c37e5490d24b6f8e12c9037bd6f418",
         field_name: "Resistance",
-        field_lineage: "6be14d0ac2f7493d9b05e8a13c72d690",
+        field_lineage: RESISTANCE_LINEAGE,
         dimension: [2, 1, -3, -2, 0, 0, 0],
         symbol: "Ω",
         aliases: &["ohm", "R"],
@@ -54,7 +55,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Capacitance",
         kind_lineage: "d4802f6be91a47c3a57d30c8ee16b295",
         field_name: "Capacitance",
-        field_lineage: "17ac95e3f06b4d28b3e4d172a9c05f86",
+        field_lineage: CAPACITANCE_LINEAGE,
         dimension: [-2, -1, 4, 2, 0, 0, 0],
         symbol: "F",
         aliases: &[],
@@ -63,7 +64,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Inductance",
         kind_lineage: "38f6b1d07ca54e92b6c1a2e4907d3f5b",
         field_name: "Inductance",
-        field_lineage: "c02e7a941db8436fa86f15d3b07e92c4",
+        field_lineage: INDUCTANCE_LINEAGE,
         dimension: [2, 1, -2, -2, 0, 0, 0],
         symbol: "H",
         aliases: &[],
@@ -72,7 +73,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Voltage",
         kind_lineage: VOLTAGE_KIND_LINEAGE,
         field_name: "Rated voltage",
-        field_lineage: "e7304bc6185f4a9dbc72f09ad1e563b8",
+        field_lineage: RATED_VOLTAGE_LINEAGE,
         dimension: [2, 1, -3, -1, 0, 0, 0],
         symbol: "V",
         aliases: &[],
@@ -81,7 +82,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Current",
         kind_lineage: "4c7ea92816d34fb09a65d8c3f1072eb6",
         field_name: "Rated current",
-        field_lineage: "0fb86d21e5c74a3899d4c7e06a13f25d",
+        field_lineage: RATED_CURRENT_LINEAGE,
         dimension: [0, 0, 0, 1, 0, 0, 0],
         symbol: "A",
         aliases: &[],
@@ -110,6 +111,11 @@ const TOLERANCE_LINEAGE: &str = "58c3f7e16a0d4b929e47b1d30ca2f685";
 const VOLTAGE_KIND_LINEAGE: &str = "92d5c04e7ab1486d8f39e6b10c47da23";
 const FORWARD_VOLTAGE_LINEAGE: &str = "0eeb669094bf434ab801ff44513db708";
 const COLOUR_LINEAGE: &str = "b2387bbf96b94b0495552e4d79c1645a";
+const RESISTANCE_LINEAGE: &str = "6be14d0ac2f7493d9b05e8a13c72d690";
+const CAPACITANCE_LINEAGE: &str = "17ac95e3f06b4d28b3e4d172a9c05f86";
+const INDUCTANCE_LINEAGE: &str = "c02e7a941db8436fa86f15d3b07e92c4";
+const RATED_VOLTAGE_LINEAGE: &str = "e7304bc6185f4a9dbc72f09ad1e563b8";
+const RATED_CURRENT_LINEAGE: &str = "0fb86d21e5c74a3899d4c7e06a13f25d";
 
 /// The colours the `Colour` field offers: the emitted colours of indicator
 /// LEDs. Choice IDs count from 1 and are never reused.
@@ -123,6 +129,26 @@ pub const LED_COLOURS: [&str; 8] = [
     "Blue",
     "White",
 ];
+
+/// The units of a standard quantity field, by its name.
+pub fn units(field: &str) -> Option<UnitSet> {
+    STANDARD
+        .iter()
+        .find(|s| s.field_name == field)
+        .map(unit_set)
+}
+
+fn unit_set(s: &Standard) -> UnitSet {
+    UnitSet {
+        dimension: s.dimension,
+        units: vec![UnitOfMeasure {
+            symbol: s.symbol.into(),
+            aliases: s.aliases.iter().map(|a| (*a).into()).collect(),
+            scale: 1.0,
+            si_prefixes: true,
+        }],
+    }
+}
 
 /// The built-in source's identity, as origins of imported copies record it.
 pub fn library_id() -> Option<LibraryId> {
@@ -149,14 +175,27 @@ fn first(lineage: SourceLineageId) -> SourceRevision {
     }
 }
 
-/// The selections an LED component starts with: `Colour`, then `Forward
-/// voltage`, both shown on the symbol, from the project's imported copies
-/// of the standard fields. `NotFound` when they were not imported.
-pub fn led_fields(library: &Library) -> Result<Vec<FieldSelection>> {
+/// The selections a chip component starts with, all shown on the symbol
+/// (so the instance card can set them), from the project's imported copies
+/// of the standard fields: the passive's value, rating and tolerance, or an
+/// LED's `Colour` and `Forward voltage`. `NotFound` when they were not
+/// imported.
+pub fn chip_fields(library: &Library, kind: ChipKind) -> Result<Vec<FieldSelection>> {
     let source = library_id()
         .ok_or_else(|| Error::Invalid("the built-in library identity is malformed".into()))?;
-    [COLOUR_LINEAGE, FORWARD_VOLTAGE_LINEAGE]
+    let lineages: [&str; 3] = match kind {
+        ChipKind::Resistor => [RESISTANCE_LINEAGE, RATED_VOLTAGE_LINEAGE, TOLERANCE_LINEAGE],
+        ChipKind::Capacitor => [
+            CAPACITANCE_LINEAGE,
+            RATED_VOLTAGE_LINEAGE,
+            TOLERANCE_LINEAGE,
+        ],
+        ChipKind::Inductor => [INDUCTANCE_LINEAGE, RATED_CURRENT_LINEAGE, TOLERANCE_LINEAGE],
+        ChipKind::Led => [COLOUR_LINEAGE, FORWARD_VOLTAGE_LINEAGE, ""],
+    };
+    lineages
         .into_iter()
+        .filter(|lineage| !lineage.is_empty())
         .map(|lineage| {
             let lineage = parsed(lineage)?;
             let local = library
@@ -165,7 +204,7 @@ pub fn led_fields(library: &Library) -> Result<Vec<FieldSelection>> {
                 .find(|o| o.origin.library == source && o.origin.lineage == lineage)
                 .map(|o| o.local)
                 .filter(|local| local.kind == DefinitionKind::Field)
-                .ok_or_else(|| Error::NotFound("a standard LED field is not imported".into()))?;
+                .ok_or_else(|| Error::NotFound("a standard field is not imported".into()))?;
             Ok(FieldSelection {
                 field: FieldRef::new(local.id, local.revision),
                 default: None,
@@ -182,15 +221,7 @@ pub fn bundle() -> Result<Bundle> {
     let mut records = Vec::with_capacity(2 * STANDARD.len() + 1);
     for s in &STANDARD {
         let kind = QuantityKind {
-            units: UnitSet {
-                dimension: s.dimension,
-                units: vec![UnitOfMeasure {
-                    symbol: s.symbol.into(),
-                    aliases: s.aliases.iter().map(|a| (*a).into()).collect(),
-                    scale: 1.0,
-                    si_prefixes: true,
-                }],
-            },
+            units: unit_set(s),
             default_unit: s.symbol.into(),
         };
         records.push(to_record(

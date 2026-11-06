@@ -65,8 +65,7 @@ fn every_item_is_a_registry_command_with_its_key() -> TestResult {
             "{id}: the menu takes the registry's ⌘ key"
         );
         assert_eq!(shown.shown, registry.menu_shortcut(command), "{id}");
-        // Select All waits for a focused field.
-        assert_eq!(shown.enabled, id != "edit.select-all", "{id}");
+        assert!(shown.enabled, "{id}");
     }
     for (id, key) in [
         ("app.settings", Chord::cmd(K::Comma)),
@@ -178,8 +177,7 @@ fn no_two_items_take_the_same_key() {
 
 /// Enabled follows the command's availability; Undo and Redo stay
 /// enabled while typing (they are the field's then); Cut, Copy and Paste
-/// while typing or where they can run; Select All only while typing; Delete
-/// only where a canvas deletes and nothing is being typed. A disabled item
+/// and Select All while typing or where they can run; Delete only where a canvas deletes and nothing is being typed. A disabled item
 /// keeps showing its key.
 #[test]
 fn enabled_follows_availability() -> TestResult {
@@ -188,7 +186,7 @@ fn enabled_follows_availability() -> TestResult {
     let busy = |c: &Command| {
         !matches!(
             c.id.as_str(),
-            "file.save" | "edit.undo" | "edit.cut" | "edit.copy" | "edit.paste"
+            "file.save" | "edit.undo" | "edit.cut" | "edit.copy" | "edit.paste" | "edit.select-all"
         )
     };
     let idle = now(&registry, &active, false, &busy);
@@ -207,13 +205,11 @@ fn enabled_follows_availability() -> TestResult {
         assert!(item(&typing, id)?.enabled, "{id} in a field");
     }
     assert!(state(&typing, Entry::Delete).is_some_and(|s| !s.enabled));
-    // Where the sheet can cut, copy or paste, off a field; Select All stays
-    // the field's alone.
+    // Where the sheet can cut, copy, paste or select all, off a field.
     let sheet = now(&registry, &active, false, &all);
-    for id in ["edit.cut", "edit.copy", "edit.paste"] {
+    for id in ["edit.cut", "edit.copy", "edit.paste", "edit.select-all"] {
         assert!(item(&sheet, id)?.enabled, "{id} on the sheet");
     }
-    assert!(!item(&sheet, "edit.select-all")?.enabled);
     // With nothing to delete it is greyed, whatever the keyboard.
     let empty = now(&registry, &active, false, &|_| false);
     assert!(state(&empty, Entry::Delete).is_some_and(|s| !s.enabled));
@@ -335,7 +331,7 @@ fn choosing_an_item_runs_its_command_or_hands_the_key_back() {
     );
     assert_eq!(
         choose(&idle, C("edit.select-all", "Select All")),
-        Choice::Nothing
+        Choice::Run("edit.select-all".into())
     );
     let none = |_: &Command| false;
     let off = now(&registry, &active, false, &none);

@@ -749,13 +749,15 @@ The "Component catalog, templates, pin functions and 3D library" design note of 
 
 | Kind | ID | Payload → result | Section |
 | --- | --- | --- | --- |
-| Library command | `library.new_from_template`, `library.package_from_template`, `library.save_package_row` | five drafts in one step; package, lands and generated model of a working set; a package-row draft | [libui](#component-workspace-catalog-and-package-templates-libui-as-built) |
+| Library command | `library.new_from_template`, `library.publish_from_template`, `library.package_from_template`, `library.save_package_row` | five drafts in one step; package, lands and generated model of a working set; a package-row draft | [libui](#component-workspace-catalog-and-package-templates-libui-as-built) |
+| Library command | `library.find_or_create` | the generic part a text reads as: the project's, else built and published, one step ([grammar](../crates/editor-core/src/catalog/generic.rs)) | libui |
 | Library command | `library.edit_copy`, `library.draft_closure` | import and draft a folder item's working set; draft a published one, each one step | libui |
 | Library command | `library.footprint_from_pads`, `library.restyle_symbol`, `library.import_standard_fields` | a footprint from a pad table; a symbol redrawn as a kind; the built-in fields, one step each | [part authoring](#part-authoring-from-tables-and-datasheets) |
 | Library command | `library.pinout_apply` | a previewed pinout document, one step | [pins](#pin-functions-peripherals-rules-pinout-import-and-firmware-c1c7-as-built) |
 | Library command | `library.import_model`, `library.pack_artwork` | a Model draft; marking artwork | [models](#3d-model-library-project-container-and-markings-d0d6-as-built) |
 | Instance command | `instance.assign_peripheral`, `instance.set_pin_config`, `instance.set_marking`, `instance.set_text_placement` | one step each | pins, models |
 | Query | `library.templates`, `library.package_plan` | template hits; what `package_from_template` would change | libui |
+| Query | `library.generic_parts` | how a text reads as generic parts: badges, whether each exists, what would be created | libui |
 | Query | `library.standard_fields` | the built-in fields as a bundle for `library.import` | part authoring |
 | Query | `library.models` | model hits ranked by fit to a package draft | models |
 | Query | `library.pinout_preview`, `functions.suggest`, `project.pin_report`, `project.pin_config` | the import plan; ranked assignments; per-pin facts; the firmware IR | pins |

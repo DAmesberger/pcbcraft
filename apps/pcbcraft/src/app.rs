@@ -1011,11 +1011,30 @@ impl App {
         let Some(key) = self.model_key() else {
             let operation = match self.workspace {
                 Workspace::Part => self.part.canvas(ui, &self.engine),
-                Workspace::Schematic => self.schematic.canvas(ui, &self.engine),
+                Workspace::Schematic => {
+                    // The Place palette's template rows: the same form,
+                    // drawn over the sheet.
+                    let ctx = ui.ctx().clone();
+                    if let Some((hit, query)) = self.schematic.take_template_form() {
+                        self.part.open_template_to_place(&hit, query);
+                    }
+                    let sheet = self.part.template_sheet(&ctx, &self.engine);
+                    if let Some(component) = self.part.take_template_to_place() {
+                        self.schematic.arm_created(&ctx, &self.engine, component);
+                    }
+                    let canvas = self.schematic.canvas(ui, &self.engine);
+                    sheet.or(canvas)
+                }
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
             let ctx = ui.ctx().clone();
             self.apply(&ctx, Origin::Canvas, operation);
+            if let Some(revision) = self.schematic.take_template_undo()
+                && revision == self.engine.revision()
+                && self.engine.undo().is_ok()
+            {
+                self.say(Level::Info, "Cancelled: the component was not kept");
+            }
             self.canvas_menu_requests(&ctx);
             return;
         };
@@ -1127,9 +1146,16 @@ impl App {
     fn native_menu(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "macos")]
         {
-            for id in std::mem::take(&mut self.menu_runs) {
-                if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
-                    self.run_command(ctx, &id);
+            let runs = std::mem::take(&mut self.menu_runs);
+            // A menu-bar key (⌘Z) with a right-click menu open only closes
+            // the menu; nothing acts underneath it.
+            if !runs.is_empty() && crate::context_menu::is_open(ctx) {
+                crate::context_menu::close_all(ctx);
+            } else {
+                for id in runs {
+                    if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
+                        self.run_command(ctx, &id);
+                    }
                 }
             }
             if let Some(mut menu) = self.native_menu.take() {
@@ -1139,6 +1165,25 @@ impl App {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = ctx;
+    }
+
+    /// Esc closes the shown workspace's review card, before a canvas sees
+    /// it. A window, popup or field over the review keeps its own Esc.
+    fn escape_review(&mut self, ctx: &egui::Context) {
+        if self.palette.is_open()
+            || self.settings_window.is_open()
+            || self.shortcut_sheet.is_open()
+            || ctx.any_popup_open()
+            || ctx.egui_wants_keyboard_input()
+        {
+            return;
+        }
+        let review = match self.workspace {
+            Workspace::Part => self.part.review_mut(),
+            Workspace::Schematic => self.schematic.review_mut(),
+            Workspace::Pcb => self.pcb.review_mut(),
+        };
+        review.escape(ctx);
     }
 
     /// What the menus depend on now.
@@ -1196,6 +1241,8 @@ impl eframe::App for App {
         follow_system_theme(&ctx, false);
         self.system_fonts(&ctx);
         crate::kit::text::fit_tooltips(&ctx);
+        // An open right-click menu owns the keys; before anyone reads them.
+        crate::context_menu::hold_keys(&ctx);
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
         self.scene.receive();
@@ -1214,6 +1261,7 @@ impl eframe::App for App {
         self.early_keys(&ctx);
         self.command_palette(&ctx);
         self.system_windows(&ctx);
+        self.escape_review(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -1353,7 +1401,51 @@ mod font_tests {
         let sans = egui::FontId::proportional(13.0);
         let mono = egui::FontId::monospace(13.0);
         assert!(!draws(&ctx, &sans), "the bundled faces lack CJK");
-        fonts::load_system_fonts_in_background(&ctx);
+        install_system_fonts(&ctx);
+        frame(&ctx);
+        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+    }
+
+    /// Hiragino's ⇧ stands half as tall again as a capital; the status line
+    /// and menus show it beside letters, so it must keep to their size, with
+    /// one point for rounding. Measured on the glyphs as rasterized, for each
+    /// family that shows shortcuts.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_shift_glyph_stays_the_size_of_a_capital_with_the_system_fonts() {
+        let ctx = egui::Context::default();
+        install_system_fonts(&ctx);
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear();
+        for font in [
+            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(11.0),
+            fonts::semibold(13.0),
+            egui::FontId::monospace(13.0),
+        ] {
+            let galley = ctx.fonts_mut(|f| {
+                f.layout_no_wrap("L⇧".to_owned(), font.clone(), egui::Color32::WHITE)
+            });
+            let heights: Vec<f32> = galley.rows[0]
+                .row
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.uv_rect.size.y)
+                .collect();
+            assert_eq!(heights.len(), 2, "{font:?}");
+            let (capital, shift) = (heights[0], heights[1]);
+            assert!(
+                capital > 0.0 && shift <= capital + 1.0,
+                "{font:?}: ⇧ is {shift} tall beside L at {capital}"
+            );
+        }
+    }
+
+    /// The system's fallback fonts in `ctx`, once the search found them.
+    #[cfg(target_os = "macos")]
+    fn install_system_fonts(ctx: &egui::Context) {
+        fonts::load_system_fonts_in_background(ctx);
         for _ in 0..600 {
             if fonts::system_fonts_ready() {
                 break;
@@ -1361,9 +1453,7 @@ mod font_tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(fonts::system_fonts_ready(), "the search finished");
-        fonts::setup_fonts_without_waiting(&ctx, "en", "");
-        frame(&ctx);
-        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+        fonts::setup_fonts_without_waiting(ctx, "en", "");
     }
 }
 

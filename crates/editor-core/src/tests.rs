@@ -1,4 +1,5 @@
 //! Engine-level behaviour through public commands and queries.
+mod arrange;
 mod board_checks;
 mod board_contract;
 mod ce04;
@@ -28,3 +29,4 @@ mod staged;
 pub(crate) mod support;
 mod text_placement;
 mod touching;
+mod wire_commands;

@@ -10,6 +10,13 @@
 //! lineage the sheet offers Keep both / Update project copy / Cancel
 //! inline. Cmd+D marks the highlighted row a favourite; favourites and
 //! recents rank after the match tier and are kept per user by the app.
+//! Below every component, "From template" lists the template rows the same
+//! text finds (`template_gallery::find`); choosing one asks the editor to
+//! create the component and arm its placement. A text that reads as an
+//! on-demand generic part (`template_gallery::find_generic`) lists that part
+//! too: first when the project holds it, else after the project's components,
+//! "not yet created". Choosing one needs no form. Library folder rows follow
+//! everything the project can make itself.
 //!
 //! In *assign mode* the same search chooses a manufacturer part for one or
 //! more instances, as the docked Choose part dialog
@@ -24,7 +31,10 @@ use crate::kit::toast::ToastAction;
 use crate::kit::{self, Tone};
 use crate::library_sources::FolderPick;
 use crate::refusal::{self, Origin};
+use crate::template_gallery::{self, Found};
 use egui::{Rect, Ui, pos2};
+use pcbcraft_core::catalog::generic::GenericCandidate;
+use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::catalog::{
     self, CatalogContext, CatalogEntry, EntryKey, Hit, ItemReport, MAX_CONTEXT, MAX_QUERY,
     SearchReport, Source, UpdateAvailable,
@@ -32,6 +42,7 @@ use pcbcraft_core::catalog::{
 use pcbcraft_core::ids::{LibraryId, SourceLineageId};
 use pcbcraft_core::issues::MAX_TITLE;
 use pcbcraft_core::library::import::OtherRevision;
+use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
 };
@@ -47,6 +58,13 @@ const KEYS: &str = "↑↓ move   Enter place   Shift+Enter place & keep open   
 /// a folder Part places its component with the Part assigned.
 const KEYS_FOLDER: &str =
     "↑↓ move   Enter place   Shift+Enter place & keep open   Cmd+D favourite   Esc close";
+/// The footer on a template row.
+const KEYS_TEMPLATE: &str = "↑↓ move   Enter create and place   click pick   Esc close";
+/// The footer on a generic part that is not yet created, and on one that is.
+const KEYS_GENERIC_NEW: &str = "↑↓ move   Enter create and place   click pick   Esc close";
+const KEYS_GENERIC: &str = "↑↓ move   Enter place   click pick   Esc close";
+/// The heading of the generic parts not yet in the project.
+const GENERIC_HEADING: &str = "Generic parts";
 /// The footer while the other-revision choice is open.
 const KEYS_CHOICE: &str = "Enter update project copy   Esc cancel";
 /// The footer while nothing can be placed.
@@ -74,7 +92,7 @@ pub enum Mode {
 }
 
 /// What the user chose in the palette.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PaletteAction {
     /// Place this revision now; keep the palette open with Shift+Enter.
     Place {
@@ -93,6 +111,15 @@ pub enum PaletteAction {
         part: PartRef,
         target: ComponentRef,
     },
+    /// A template row: create the component from it, then arm placement.
+    /// `query` is the search that found it, for the form if it takes one.
+    FromTemplate {
+        hit: Box<TemplateHit>,
+        query: String,
+    },
+    /// A generic part: arm its placement, creating it first if needed, and
+    /// give each placed instance the values the text named.
+    Generic(Box<GenericCandidate>),
     /// Esc: the palette closed without a choice.
     Close,
 }
@@ -177,6 +204,63 @@ struct Results {
     context: (u64, u64),
     query: String,
     report: Result<SearchReport, String>,
+    /// Place mode: the template rows below the components.
+    templates: Found,
+    /// Place mode: the generic parts the text reads as.
+    generic: Vec<GenericCandidate>,
+    /// The rows the highlight moves over, top to bottom.
+    order: Vec<Slot>,
+}
+
+/// One row of the result list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    Hit(usize),
+    Generic(usize),
+    Template(usize),
+}
+
+/// The captioned groups of the result list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+    /// The project's (0) or the `i`th folder's (`i + 1`) entries.
+    Entries(usize),
+    Generic,
+    Template,
+}
+
+/// The list's order: the project's parts (a generic part it holds first), the
+/// generic parts it could make, the template rows, then library folders.
+fn row_order(
+    hits: &[Hit],
+    generic: &[GenericCandidate],
+    templates: &[TemplateHit],
+    context: &CatalogContext,
+) -> Vec<Slot> {
+    let held = |c: &GenericCandidate| c.component().is_some();
+    let in_project = |h: &&Hit| group_of(&h.entry, context) == 0;
+    let index_of = |g: &[GenericCandidate], keep: &dyn Fn(&GenericCandidate) -> bool| {
+        (0..g.len())
+            .filter(|i| g.get(*i).is_some_and(keep))
+            .map(Slot::Generic)
+            .collect::<Vec<_>>()
+    };
+    let mut order = index_of(generic, &held);
+    order.extend(
+        hits.iter()
+            .enumerate()
+            .filter(|(_, h)| in_project(h))
+            .map(|(i, _)| Slot::Hit(i)),
+    );
+    order.extend(index_of(generic, &|c| !held(c)));
+    order.extend((0..templates.len()).map(Slot::Template));
+    order.extend(
+        hits.iter()
+            .enumerate()
+            .filter(|(_, h)| !in_project(h))
+            .map(|(i, _)| Slot::Hit(i)),
+    );
+    order
 }
 
 #[derive(Default)]
@@ -390,7 +474,7 @@ impl PlacePalette {
         if fresh {
             return;
         }
-        let kept = self.hits().get(self.highlighted).map(|h| h.entry.key());
+        let kept = self.highlighted_hit().map(|h| h.entry.key());
         let report = match engine.query_with(
             Query::Search {
                 query: self.search_text(),
@@ -441,12 +525,6 @@ impl PlacePalette {
             }
             report
         });
-        if !new_text
-            && let (Some(key), Ok(report)) = (kept, &report)
-            && let Some(at) = report.results.iter().position(|h| h.entry.key() == key)
-        {
-            self.highlighted = at;
-        }
         self.targets = match &self.mode {
             Mode::Assign { instances } => instances
                 .iter()
@@ -456,19 +534,105 @@ impl PlacePalette {
             Mode::Place => Vec::new(),
         };
         self.rows = RowContext::of(engine.project(), &self.context);
+        let (mut templates, generic) = match &self.mode {
+            Mode::Place => (
+                template_gallery::find(engine, &self.query, ROWS, &self.context),
+                template_gallery::find_generic(engine, &self.query),
+            ),
+            Mode::Assign { .. } => (Found::default(), Vec::new()),
+        };
+        template_gallery::drop_covered(&mut templates, &generic);
+        // A text this grammar reads need not be one the search can: "10 kΩ
+        // 0603" still finds its generic part. A part the project holds lists
+        // once, as that part.
+        let report = report
+            .or_else(|error| {
+                if generic.is_empty() {
+                    Err(error)
+                } else {
+                    Ok(SearchReport::default())
+                }
+            })
+            .map(|mut report| {
+                let before = report.results.len();
+                report.results.retain(|h| {
+                    h.entry.source != Source::Project
+                        || !generic
+                            .iter()
+                            .any(|c| c.component().is_some_and(|r| r.id == h.entry.lineage))
+                });
+                report.total = report.total.saturating_sub(before - report.results.len());
+                report
+            });
+        let hits = report.as_ref().map_or(&[][..], |r| &r.results[..]);
+        let order = row_order(hits, &generic, &templates.hits, &self.context);
+        if !new_text
+            && let Some(key) = kept
+            && let Some(at) = order.iter().position(
+                |s| matches!(s, Slot::Hit(i) if hits.get(*i).is_some_and(|h| h.entry.key() == key)),
+            )
+        {
+            self.highlighted = at;
+        }
         self.results = Some(Results {
             revision: engine.revision(),
             context: generations,
             query: self.query.clone(),
             report,
+            templates,
+            generic,
+            order,
         });
     }
 
     /// The highlighted folder component, if the highlighted row is one.
     pub fn highlighted_folder(&self) -> Option<FolderPick> {
-        self.hits()
-            .get(self.highlighted)
+        self.highlighted_hit()
             .and_then(|h| FolderPick::of(&h.entry))
+    }
+
+    /// The highlighted row.
+    fn slot(&self) -> Option<Slot> {
+        self.results.as_ref()?.order.get(self.highlighted).copied()
+    }
+
+    /// The highlighted search result, if the highlight is on one.
+    fn highlighted_hit(&self) -> Option<&Hit> {
+        match self.slot()? {
+            Slot::Hit(i) => self.hits().get(i),
+            _ => None,
+        }
+    }
+
+    /// The highlighted generic part, if the highlight is on one.
+    fn highlighted_generic(&self) -> Option<&GenericCandidate> {
+        match self.slot()? {
+            Slot::Generic(i) => self.results.as_ref()?.generic.get(i),
+            _ => None,
+        }
+    }
+
+    /// The action of choosing the highlighted generic part; closes the sheet.
+    /// One its family refuses, or a draft, stays with the reason.
+    fn choose_generic(&mut self) -> Option<PaletteAction> {
+        let candidate = self.highlighted_generic()?.clone();
+        match &candidate.state {
+            GenericState::Refused { reason } => {
+                self.notice = Some(reason.clone());
+                None
+            }
+            GenericState::Draft { .. } => {
+                self.notice = Some(format!(
+                    "{} is a draft: publish it in the Component workspace, then place it.",
+                    candidate.name
+                ));
+                None
+            }
+            GenericState::Existing { .. } | GenericState::NotCreated => {
+                self.close();
+                Some(PaletteAction::Generic(Box::new(candidate)))
+            }
+        }
     }
 
     /// Assign mode: the revision a Part's component is newer than every
@@ -484,19 +648,42 @@ impl PlacePalette {
         }
     }
 
+    /// The template rows below the components.
+    fn templates(&self) -> &[TemplateHit] {
+        self.results.as_ref().map_or(&[], |r| &r.templates.hits)
+    }
+
+    /// Rows the highlight moves over.
+    fn row_count(&self) -> usize {
+        self.results.as_ref().map_or(0, |r| r.order.len())
+    }
+
+    /// The highlighted template row, if the highlight is on one.
+    fn highlighted_template(&self) -> Option<&TemplateHit> {
+        match self.slot()? {
+            Slot::Template(i) => self.templates().get(i),
+            _ => None,
+        }
+    }
+
+    /// The action of choosing the highlighted template row; closes the sheet.
+    fn choose_template(&mut self) -> Option<PaletteAction> {
+        let hit = Box::new(self.highlighted_template()?.clone());
+        let query = self.query.clone();
+        self.close();
+        Some(PaletteAction::FromTemplate { hit, query })
+    }
+
     /// The highlighted result's exact revision.
     pub fn highlighted(&self) -> Option<ComponentRef> {
-        self.hits()
-            .get(self.highlighted)
+        self.highlighted_hit()
             .filter(|h| h.entry.kind == DefinitionKind::Component)
             .and_then(|h| h.entry.component())
     }
 
     /// The highlighted result's exact Part revision.
     pub fn highlighted_part(&self) -> Option<PartRef> {
-        self.hits()
-            .get(self.highlighted)
-            .and_then(|h| part_of(&h.entry))
+        self.highlighted_hit().and_then(|h| part_of(&h.entry))
     }
 
     /// Assign mode: the highlighted Part for the instances, or a notice.
@@ -505,7 +692,7 @@ impl PlacePalette {
             return None;
         };
         let instances = instances.clone();
-        let hit = self.hits().get(self.highlighted)?;
+        let hit = self.highlighted_hit()?;
         let name = hit.entry.name.clone();
         let newer = self.newer_target(&hit.entry);
         match part_of(&hit.entry) {
@@ -530,7 +717,7 @@ impl PlacePalette {
     /// The highlighted revision if `placeable` accepts it; otherwise the
     /// reason is kept as the palette's notice and nothing is returned.
     fn choose(&mut self, placeable: &dyn Fn(ComponentRef) -> bool) -> Option<ComponentRef> {
-        let hit = self.hits().get(self.highlighted)?;
+        let hit = self.highlighted_hit()?;
         let name = hit.entry.name.clone();
         if hit.entry.kind == DefinitionKind::Part {
             self.notice = Some(PART_NOT_PLACED.into());
@@ -589,14 +776,13 @@ impl PlacePalette {
                 egui::Key::D,
             ))
         }) && let Some(key) = self
-            .hits()
-            .get(self.highlighted)
+            .highlighted_hit()
             .map(|h| h.entry.user_key().unwrap_or_else(|| h.entry.key()))
         {
             self.toggle_favourite(key);
             self.refresh(engine);
         }
-        let count = self.hits().len();
+        let count = self.row_count();
         if keys.down && count > 0 {
             self.highlighted = (self.highlighted + 1).min(count - 1);
             self.scroll = true;
@@ -609,7 +795,11 @@ impl PlacePalette {
         }
         self.highlighted = self.highlighted.min(count.saturating_sub(1));
         let mut action = None;
-        if keys.enter && self.highlighted_folder().is_some() {
+        if keys.enter && self.highlighted_generic().is_some() {
+            action = self.choose_generic();
+        } else if keys.enter && self.highlighted_template().is_some() {
+            action = self.choose_template();
+        } else if keys.enter && self.highlighted_folder().is_some() {
             action = self.place_folder(keys.keep);
         } else if keys.enter
             && let Some(component) = self.choose(placeable)
@@ -630,9 +820,17 @@ impl PlacePalette {
         let mut picked = None;
         let mut focused = false;
         let generation = self.generation;
-        let highlighted_entry = self.hits().get(self.highlighted).map(|h| &h.entry);
+        let highlighted_entry = self.highlighted_hit().map(|h| &h.entry);
         let footer = if self.choice.is_some() {
             KEYS_CHOICE
+        } else if let Some(candidate) = self.highlighted_generic() {
+            match candidate.state {
+                GenericState::Existing { .. } => KEYS_GENERIC,
+                GenericState::NotCreated => KEYS_GENERIC_NEW,
+                _ => KEYS_IDLE,
+            }
+        } else if self.highlighted_template().is_some() {
+            KEYS_TEMPLATE
         } else if self.highlighted_folder().is_some() {
             KEYS_FOLDER
         } else if self.highlighted().is_some_and(placeable) {
@@ -646,8 +844,10 @@ impl PlacePalette {
             "Find a component: 10k 0603, res>=10k, tol<=1%",
             if self.loading {
                 "Searching…"
+            } else if self.query.trim().is_empty() {
+                "Type to find a component or a template"
             } else {
-                "No component matches"
+                "No component or template matches"
             },
             "In this project",
         );
@@ -688,7 +888,12 @@ impl PlacePalette {
                         .map(|h| format!("{} hidden ({})", h.count, h.reason))
                         .collect();
                     kit::search_chips(ui, &report.chips, &hidden.join(", "));
-                    if report.results.is_empty() {
+                    let found = self.results.as_ref().map(|r| &r.templates);
+                    let templates = found.map_or(&[][..], |f| &f.hits);
+                    let more = found.map_or(0, |f| f.more);
+                    let generic = self.results.as_ref().map_or(&[][..], |r| &r.generic[..]);
+                    let order = self.results.as_ref().map_or(&[][..], |r| &r.order[..]);
+                    if order.is_empty() {
                         kit::search_message(ui, empty, false);
                     } else {
                         // One caption per group; a lone project group keeps
@@ -700,40 +905,113 @@ impl PlacePalette {
                             .max_height(list_height)
                             .auto_shrink([false, true])
                             .show(ui, |ui| {
+                                let held = generic.iter().filter(|c| c.component().is_some());
+                                let held = held.count();
                                 let mut shown = None;
-                                for (i, hit) in report.results.iter().enumerate() {
-                                    let g = group(hit);
-                                    if shown != Some(g) {
-                                        shown = Some(g);
-                                        let count = if only_project {
-                                            report.total
-                                        } else {
-                                            report.results.iter().filter(|h| group(h) == g).count()
-                                        };
-                                        let label = match g {
-                                            0 => heading.to_owned(),
-                                            _ => groups.get(g - 1).map_or_else(
-                                                || "Library".to_owned(),
-                                                |name| format!("Library · {name}"),
+                                for (at, slot) in order.iter().enumerate() {
+                                    let lit = at == self.highlighted;
+                                    let caption = match *slot {
+                                        Slot::Hit(i) => {
+                                            report.results.get(i).map_or(Group::Entries(0), |h| {
+                                                Group::Entries(group(h))
+                                            })
+                                        }
+                                        Slot::Generic(i)
+                                            if generic
+                                                .get(i)
+                                                .is_some_and(|c| c.component().is_some()) =>
+                                        {
+                                            Group::Entries(0)
+                                        }
+                                        Slot::Generic(_) => Group::Generic,
+                                        Slot::Template(_) => Group::Template,
+                                    };
+                                    if shown != Some(caption) {
+                                        shown = Some(caption);
+                                        let (label, count) = match caption {
+                                            Group::Entries(0) => (
+                                                heading.to_owned(),
+                                                held + if only_project {
+                                                    report.total
+                                                } else {
+                                                    report
+                                                        .results
+                                                        .iter()
+                                                        .filter(|h| group(h) == 0)
+                                                        .count()
+                                                },
+                                            ),
+                                            Group::Entries(g) => (
+                                                groups.get(g - 1).map_or_else(
+                                                    || "Library".to_owned(),
+                                                    |name| format!("Library · {name}"),
+                                                ),
+                                                report
+                                                    .results
+                                                    .iter()
+                                                    .filter(|h| group(h) == g)
+                                                    .count(),
+                                            ),
+                                            Group::Generic => {
+                                                (GENERIC_HEADING.to_owned(), generic.len() - held)
+                                            }
+                                            Group::Template => (
+                                                template_gallery::SEARCH_HEADING.to_owned(),
+                                                templates.len() + more,
                                             ),
                                         };
                                         kit::search_heading(ui, &label, count);
                                     }
-                                    let favourite = hit.entry.named_by(&self.context.favourites);
-                                    let response = row(
-                                        ui,
-                                        hit,
-                                        &self.query,
-                                        i == self.highlighted,
-                                        &self.targets,
-                                        favourite,
-                                        &self.rows,
-                                    );
-                                    if scroll && i == self.highlighted {
-                                        response.scroll_to_me(None);
+                                    let response = match *slot {
+                                        Slot::Hit(i) => report.results.get(i).map(|hit| {
+                                            let favourite =
+                                                hit.entry.named_by(&self.context.favourites);
+                                            row(
+                                                ui,
+                                                hit,
+                                                &self.query,
+                                                lit,
+                                                &self.targets,
+                                                favourite,
+                                                &self.rows,
+                                            )
+                                        }),
+                                        Slot::Generic(i) => generic.get(i).map(|candidate| {
+                                            template_gallery::generic_row(
+                                                ui,
+                                                egui::Id::unique("place-palette-generic").with(i),
+                                                candidate,
+                                                &self.query,
+                                                lit,
+                                            )
+                                        }),
+                                        Slot::Template(i) => templates.get(i).map(|hit| {
+                                            let source =
+                                                template_gallery::source_label(hit, |library| {
+                                                    self.rows.name(library)
+                                                });
+                                            template_gallery::search_row(
+                                                ui,
+                                                egui::Id::unique("place-palette-template").with(i),
+                                                hit,
+                                                &self.query,
+                                                lit,
+                                                &source,
+                                            )
+                                        }),
+                                    };
+                                    if let Some(response) = response {
+                                        if scroll && lit {
+                                            response.scroll_to_me(None);
+                                        }
+                                        if response.clicked() {
+                                            picked = Some(at);
+                                        }
                                     }
-                                    if response.clicked() {
-                                        picked = Some(i);
+                                    let last_template = matches!(slot, Slot::Template(_))
+                                        && !matches!(order.get(at + 1), Some(Slot::Template(_)));
+                                    if last_template && more > 0 {
+                                        kit::note(ui, &format!("{more} more: narrow the search"));
                                     }
                                 }
                             });
@@ -760,7 +1038,11 @@ impl PlacePalette {
             && self.choice.is_none()
         {
             self.highlighted = i;
-            if self.highlighted_folder().is_some() {
+            if self.highlighted_generic().is_some() {
+                action = self.choose_generic();
+            } else if self.highlighted_template().is_some() {
+                action = self.choose_template();
+            } else if self.highlighted_folder().is_some() {
                 action = self.place_folder(false);
             } else if let Some(component) = self.choose(placeable) {
                 action = Some(PaletteAction::Pick(component));
@@ -783,7 +1065,7 @@ impl PlacePalette {
             Some(Choice::Cancel) => self.choice = None,
             None => {}
         }
-        let entry = self.hits().get(self.highlighted).map(|h| h.entry.clone());
+        let entry = self.highlighted_hit().map(|h| h.entry.clone());
         match action {
             Some(PaletteAction::Place { keep_open, .. }) => {
                 if let Some(entry) = &entry {
@@ -1064,7 +1346,7 @@ impl PlacePalette {
     /// `library.place_from`. Without Shift the sheet closes; a refusal
     /// reopens it (see [`Self::offer_choice`]).
     fn place_folder(&mut self, keep_open: bool) -> Option<PaletteAction> {
-        let hit = self.hits().get(self.highlighted)?;
+        let hit = self.highlighted_hit()?;
         let key = hit.entry.key();
         let pick = FolderPick::of(&hit.entry)?;
         self.notice = None;
@@ -1101,9 +1383,16 @@ impl PlacePalette {
         if matches!(self.mode, Mode::Assign { .. }) {
             return None;
         }
+        if let Some(candidate) = self.highlighted_generic() {
+            generic_preview(ui, candidate);
+            return None;
+        }
+        if let Some(hit) = self.highlighted_template() {
+            template_preview(ui, hit);
+            return None;
+        }
         if let Some(hit) = self
-            .hits()
-            .get(self.highlighted)
+            .highlighted_hit()
             .filter(|h| h.entry.source != Source::Project)
         {
             let source = self
@@ -1125,8 +1414,7 @@ impl PlacePalette {
             return None;
         };
         let update = self
-            .hits()
-            .get(self.highlighted)
+            .highlighted_hit()
             .and_then(|h| h.entry.update.clone().map(|u| (u, h.entry.name.clone())));
         self.component_preview(ui, engine, component, update);
         None
@@ -1176,6 +1464,44 @@ impl PlacePalette {
             self.close();
         }
     }
+}
+
+/// What choosing the highlighted generic part does.
+fn generic_preview(ui: &mut Ui, candidate: &GenericCandidate) {
+    kit::section(ui, "palette-generic", "Generic part", true, None, |ui| {
+        kit::value_row(ui, "Part", &candidate.name);
+        if let GenericState::Refused { reason } = &candidate.state {
+            kit::refusal(ui, reason);
+            return;
+        }
+        for badge in &candidate.badges {
+            kit::hint(ui, &badge.label, &badge.tip);
+        }
+        kit::value_row(ui, "Values", &candidate.detail);
+        if matches!(candidate.state, GenericState::NotCreated) {
+            kit::hint(
+                ui,
+                "Not a component yet: choosing it creates one, then you place it",
+                "It starts with no manufacturer part; choose one per instance when you know it.",
+            );
+        }
+    });
+}
+
+/// What choosing the highlighted template row makes.
+fn template_preview(ui: &mut Ui, hit: &TemplateHit) {
+    kit::section(ui, "palette-template", "From template", true, None, |ui| {
+        kit::value_row(ui, "Template", &hit.name);
+        for (label, value) in template_gallery::summary(hit, &hit.values) {
+            kit::value_row(ui, label, &value);
+        }
+        kit::value_row(ui, "Values", template_gallery::basis(hit));
+        kit::hint(
+            ui,
+            "Not a component yet: choosing it creates one, then you place it",
+            "",
+        );
+    });
 }
 
 /// The badges a row shows, always all four.
@@ -1735,7 +2061,10 @@ mod tests {
             revision: engine.revision(),
             context: (0, 0),
             query: palette.query.clone(),
+            generic: Vec::new(),
+            order: (0..report.results.len()).map(Slot::Hit).collect(),
             report: Ok(report),
+            templates: Found::default(),
         });
         // The canvas sheet is not drawn in assign mode.
         let mut sheet = None;
@@ -1950,7 +2279,10 @@ mod tests {
                 revision: engine.revision(),
                 context: (0, 0),
                 query: palette.query.clone(),
+                generic: Vec::new(),
+                order: (0..report.results.len()).map(Slot::Hit).collect(),
                 report: Ok(report.clone()),
+                templates: Found::default(),
             });
         };
         let instance = engine.project().instances.first().ok_or("an instance")?.id;
@@ -2063,6 +2395,60 @@ mod tests {
             entries,
             ..Default::default()
         })
+    }
+
+    /// The project's parts, then the generic parts it could make, then the
+    /// template rows, and library folders last, whatever the search ranked.
+    #[test]
+    fn the_list_keeps_its_order() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::default();
+        let found = template_gallery::find_generic(&engine, "resistor 0603");
+        let request = found.first().and_then(|c| c.would_create.clone());
+        let request = request.ok_or("a request")?;
+        // Another prefix makes it a part of its own, not the generic one.
+        let own = pcbcraft_core::library::templates::catalog::NewFromTemplate {
+            name: "Resistor 0603 house".into(),
+            designator_prefix: Some("RH".into()),
+            ..request
+        };
+        engine.apply_hosted(
+            engine.revision(),
+            pcbcraft_core::Operation::Library(pcbcraft_core::LibraryCommand::PublishFromTemplate(
+                Box::new(own),
+            )),
+            pcbcraft_core::Evaluators::default(),
+        )?;
+        let library = pcbcraft_core::ids::LibraryId(0xabc);
+        let mut folder = folder_catalog(library, "Team parts", 1)?;
+        for entry in &mut folder.entries {
+            entry.name = "Resistor 0603 team".into();
+        }
+        let mut palette = PlacePalette::default();
+        palette.set_context(1, || CatalogContext {
+            sources: vec![std::sync::Arc::new(folder)],
+            ..Default::default()
+        });
+        palette.open();
+        palette.query = "resistor 0603".into();
+        palette.refresh(&engine);
+        let results = palette.results.as_ref().ok_or("results")?;
+        let mut kinds: Vec<&str> = results
+            .order
+            .iter()
+            .map(|slot| match slot {
+                Slot::Hit(i) => {
+                    match results.report.as_ref().ok().and_then(|r| r.results.get(*i)) {
+                        Some(hit) if hit.entry.source == Source::Project => "project",
+                        _ => "folder",
+                    }
+                }
+                Slot::Generic(_) => "generic",
+                Slot::Template(_) => "template",
+            })
+            .collect();
+        kinds.dedup();
+        assert_eq!(kinds, ["project", "generic", "template", "folder"]);
+        Ok(())
     }
 
     /// Folder rows follow the project's under a `LIBRARY · <name>` caption;

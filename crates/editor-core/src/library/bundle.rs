@@ -325,6 +325,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 pin_rules: _,
                 marking,
                 review: _,
+                generic: _,
             } = component;
             if let Some(marking) = marking {
                 marking_refs(marking, map)?;

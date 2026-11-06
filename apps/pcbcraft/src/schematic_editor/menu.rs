@@ -5,7 +5,7 @@
 //! card button sends, or runs a registry command.
 use super::{Arrange, Item, SchematicEditor, no_connect, sheet_ui, wire_tool::WireDraft};
 use crate::context_menu::{Entry, Rows};
-use pcbcraft_core::schematic::{SchematicCommand, WireTarget};
+use pcbcraft_core::schematic::{ClipObject, SchematicCommand, WireTarget};
 use pcbcraft_core::updates::{Change, InstanceChange};
 use pcbcraft_core::{DefinitionId, Endpoint, Engine, Id, Operation, Point, Project};
 
@@ -28,6 +28,8 @@ pub(super) enum Target {
     Sheet {
         at: Point,
     },
+    /// The group selection, right-clicked on one of its objects.
+    Group,
 }
 
 /// A sheet menu row's own action.
@@ -47,6 +49,7 @@ pub(super) enum Act {
     RotateItem,
     RemoveItem(Item),
     Paste(Point),
+    RemoveGroup,
 }
 
 /// What the app does for a sheet menu row it runs itself.
@@ -59,6 +62,23 @@ pub enum Request {
 }
 
 impl SchematicEditor {
+    /// A right-click on an object of the group is about the group, which
+    /// stays selected.
+    pub(super) fn group_target(&self, target: Target) -> Target {
+        let object = match target {
+            Target::Symbol { instance, .. } => Some(ClipObject::Instance { id: instance }),
+            Target::Pin(pin) => Some(ClipObject::Instance { id: pin.instance }),
+            Target::Wire { wire, .. } => Some(ClipObject::Wire { id: wire }),
+            Target::Item(item) => super::group::item_object(item),
+            Target::Sheet { .. } | Target::Group => None,
+        };
+        if object.is_some_and(|o| self.group.contains(o)) {
+            Target::Group
+        } else {
+            target
+        }
+    }
+
     /// Select what a right-click on `target` is about, unless it already is.
     pub(super) fn menu_select(&mut self, project: &Project, target: Target) {
         match target {
@@ -86,7 +106,7 @@ impl SchematicEditor {
                     self.select_item(Some(item), project);
                 }
             }
-            Target::Sheet { .. } => {}
+            Target::Sheet { .. } | Target::Group => {}
         }
     }
 
@@ -100,6 +120,45 @@ impl SchematicEditor {
         let project = engine.project();
         let reviewing = self.update.is_open();
         match target {
+            Target::Group => {
+                if self.group.is_empty() {
+                    return Vec::new();
+                }
+                let arrangeable = self.can_arrange(project);
+                vec![
+                    Some(
+                        Entry::act("Rotate", "spin", Act::Arrange(Arrange::Rotate), arrangeable)
+                            .key_of(ctx, "schematic.rotate"),
+                    ),
+                    Some(
+                        Entry::act(
+                            "Mirror",
+                            "mirror",
+                            Act::Arrange(Arrange::Mirror),
+                            arrangeable,
+                        )
+                        .key_of(ctx, "schematic.mirror"),
+                    ),
+                    None,
+                    Some(Entry::command(
+                        ctx,
+                        "edit.cut",
+                        "Cut",
+                        self.can_cut(project).is_ok(),
+                    )),
+                    Some(Entry::command(
+                        ctx,
+                        "edit.copy",
+                        "Copy",
+                        self.can_copy(project).is_ok(),
+                    )),
+                    None,
+                    Some(
+                        Entry::act("Delete…", "delete", Act::RemoveGroup, !reviewing)
+                            .key_of(ctx, "schematic.delete"),
+                    ),
+                ]
+            }
             Target::Symbol {
                 instance,
                 occurrence,
@@ -209,13 +268,8 @@ impl SchematicEditor {
                 vec![
                     Some(Entry::act("Edit", "edit", Act::EditItem(item), label)),
                     Some(
-                        Entry::act(
-                            "Rotate",
-                            "spin",
-                            Act::RotateItem,
-                            self.rotated_item(project).is_some(),
-                        )
-                        .key_of(ctx, "schematic.rotate"),
+                        Entry::act("Rotate", "spin", Act::RotateItem, label)
+                            .key_of(ctx, "schematic.rotate"),
                     ),
                     None,
                     Some(
@@ -271,7 +325,7 @@ impl SchematicEditor {
     pub(super) fn menu_act(&mut self, engine: &Engine, act: Act) -> Option<Operation> {
         let project = engine.project();
         match act {
-            Act::Arrange(arrange) => self.arranged(project, arrange),
+            Act::Arrange(arrange) => self.arranged_selection(engine, arrange),
             Act::EditComponent(id) => {
                 self.menu_request = Some(Request::EditComponent(id));
                 None
@@ -326,6 +380,7 @@ impl SchematicEditor {
             Act::RotateItem => self.rotated_item(project),
             Act::RemoveItem(item) => self.remove_item(engine, item),
             Act::Paste(at) => self.paste_at(engine, Some(at)),
+            Act::RemoveGroup => self.remove_group(engine),
         }
     }
 

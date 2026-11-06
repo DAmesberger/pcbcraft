@@ -32,10 +32,10 @@ pub mod geom {
 #[cfg(test)]
 mod fixtures;
 
-/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-via2`
+/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-font-order`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
-/// opt-in product look and via scaling).
-pub const SOLIDCRAFT_REVISION: &str = "d53b131e3d1cf0b9489e9c048c60af787b14cc47";
+/// opt-in product look, via scaling and a font-order fix).
+pub const SOLIDCRAFT_REVISION: &str = "17a92306d8f096d39d0807c7733e394e80e8a8cb";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
