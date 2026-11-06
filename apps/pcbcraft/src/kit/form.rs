@@ -140,8 +140,34 @@ pub fn text_field(
     if invalid {
         not_stored(response)
     } else {
-        response
+        shortened(ui, response, value)
     }
+}
+
+/// A field not being edited whose text does not fit ends in "…" and
+/// shows its whole text on hover, as every cut text does (`kit::text`);
+/// editing shows it all again.
+fn shortened(ui: &Ui, response: Response, value: &str) -> Response {
+    if response.has_focus() || value.is_empty() {
+        return response;
+    }
+    let t = Tokens::get();
+    // The cell editor's text: monospace at the label size, inset.
+    let font = egui::FontId::monospace(t.font_label);
+    let inner = response.rect.shrink2(vec2(t.form_inset, 1.0));
+    let width = ui
+        .painter()
+        .layout_no_wrap(value.to_owned(), font.clone(), t.form_ink)
+        .size()
+        .x;
+    if width <= inner.width() {
+        return response;
+    }
+    if ui.is_enabled() {
+        ui.painter().rect_filled(inner, 0.0, t.input_fill());
+        super::text::paint_line(ui, inner, value, font, t.form_ink);
+    }
+    response.on_hover_text(value)
 }
 
 /// The hover text of a field whose text is invalid: what it shows is not

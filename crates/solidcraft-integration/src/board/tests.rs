@@ -376,6 +376,24 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
     Ok(())
 }
 
+/// A size the sketch cannot take is refused naming the dimension that
+/// drives it, never by the solver's constraint ids (k1, k2, …).
+#[test]
+fn an_unsolvable_size_names_its_dimension() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let error = edit(&mut engine, vec![set("width", "-5 mm")])
+        .err()
+        .ok_or("refused")?
+        .to_string();
+    assert!(error.contains("‘width’"), "{error}");
+    assert!(error.contains("cannot be satisfied"), "{error}");
+    let ids = error
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w.len() > 1 && w.starts_with('k') && w[1..].chars().all(|c| c.is_ascii_digit()));
+    assert!(!ids, "no constraint ids: {error}");
+    Ok(())
+}
+
 #[test]
 fn parts_follow_named_edges_when_board_parameters_change() -> Fallible<()> {
     let mut engine = sketched()?;

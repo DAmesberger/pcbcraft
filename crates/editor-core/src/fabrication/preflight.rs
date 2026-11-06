@@ -201,8 +201,7 @@ const MAX_LEGEND_NAME: usize = 16;
 
 /// The waiver key of a finding: its code and the objects it names.
 pub fn key(code: &str, objects: &[ObjectRef]) -> String {
-    let objects = serde_json::to_string(objects).unwrap_or_default();
-    format!("{code} {objects}")
+    crate::model::production::waiver_key(code, objects)
 }
 
 /// Pre-flight severity of an issue row: unrouted connections, unplaced
@@ -261,7 +260,7 @@ pub fn report(
         _ => Cow::Borrowed(project),
     };
     let p: &Project = &checked;
-    let issues = crate::issues::report(p, drafts, &IssueScope::All)?;
+    let issues = crate::issues::report_with(p, drafts, &IssueScope::All, true)?;
     for row in &issues.rows {
         let Some(severity) = severity(row) else {
             continue;

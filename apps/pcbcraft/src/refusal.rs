@@ -86,6 +86,8 @@ pub fn shown_error(error: &Error) -> String {
 /// style; `None` when it names IDs, codes or Debug output.
 pub fn presentable(text: &str) -> Option<String> {
     let line = text.lines().next().unwrap_or_default().trim();
+    let line = quoted(without_code(line));
+    let line = line.as_str();
     let sentence = match line.find(". ") {
         Some(end) => &line[..end],
         None => line,
@@ -93,6 +95,38 @@ pub fn presentable(text: &str) -> Option<String> {
     let sentence = sentence.trim_end().trim_end_matches('.').trim_end();
     let shown = clip(sentence, MAX_TITLE);
     style::check(&shown).is_empty().then_some(shown)
+}
+
+/// `line` without the rule code engine text leads with
+/// (`board.shape_unsolved: …`): the code is for tools and Messages.
+fn without_code(line: &str) -> &str {
+    let Some((head, rest)) = line.split_once(": ") else {
+        return line;
+    };
+    let part = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+    if head.split('.').count() > 1 && head.split('.').all(part) {
+        rest.trim_start()
+    } else {
+        line
+    }
+}
+
+/// `line` with names quoted in backticks (`width`) quoted as the app
+/// quotes them (‘width’); an unpaired backtick stays.
+fn quoted(line: &str) -> String {
+    if !line.matches('`').count().is_multiple_of(2) {
+        return line.to_owned();
+    }
+    let mut open = true;
+    line.chars()
+        .map(|c| match c {
+            '`' => {
+                open = !open;
+                if open { '’' } else { '‘' }
+            }
+            c => c,
+        })
+        .collect()
 }
 
 /// `text` within `max` characters, cut at a word and ending in "…".
@@ -285,6 +319,25 @@ mod tests {
         assert_eq!(
             shown_error(&Error::History("Nothing to undo".into())),
             "Nothing to undo"
+        );
+        // A refusal names the problem: the rule code goes and names keep
+        // their quotes, so the field says more than "not accepted".
+        assert_eq!(
+            shown_error(&Error::Invalid(
+                "board.shape_unsolved: board parameters: `width` = 1000000 mm is out of range"
+                    .into()
+            )),
+            "board parameters: ‘width’ = 1000000 mm is out of range"
+        );
+        assert_eq!(
+            shown_error(&Error::Invalid(
+                "footprint.solve_failed: the dimension ‘width’ cannot be satisfied".into()
+            )),
+            "the dimension ‘width’ cannot be satisfied"
+        );
+        assert_eq!(
+            shown_error(&Error::Invalid("an odd ` stays".into())),
+            "That value is not accepted"
         );
         let long = shown_error(&Error::Invalid("word ".repeat(40)));
         assert!(long.ends_with('…') && long.chars().count() <= MAX_TITLE);

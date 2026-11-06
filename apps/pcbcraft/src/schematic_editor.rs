@@ -180,6 +180,8 @@ pub struct SchematicEditor {
     /// Two-finger scrolling across frames.
     trackpad: crate::navigation::Trackpad,
     tool: Tool,
+    /// The label kind armed last: Label ▾'s upper part arms it again.
+    label_kind: LabelTool,
     /// The sheet the canvas shows.
     sheet: pcbcraft_core::SheetId,
     /// What the active sheet draws besides symbols and wires.
@@ -296,6 +298,7 @@ impl Default for SchematicEditor {
         Self {
             trackpad: Default::default(),
             tool: Tool::Select,
+            label_kind: LabelTool::Local,
             sheet: pcbcraft_core::SheetId::FIRST,
             scene: None,
             item: None,
@@ -798,10 +801,21 @@ impl SchematicEditor {
                             .selected(self.tool == Tool::NoConnect)
                             .tip("Mark a pin intentionally unused, or clear the mark"),
                         Button::family(
-                            Button::new("label", "point", "Label")
-                                .enabled(!reviewing)
-                                .selected(self.tool == Tool::Label(LabelTool::Local))
-                                .tip("Name a net with a label"),
+                            Button::new(
+                                match self.label_kind {
+                                    LabelTool::Global => "global-label",
+                                    LabelTool::Hierarchical => "hierarchical-label",
+                                    LabelTool::Local | LabelTool::Power => "label",
+                                },
+                                "point",
+                                "Label",
+                            )
+                            .enabled(!reviewing)
+                            .tip(match self.label_kind {
+                                LabelTool::Global => "Place a global label",
+                                LabelTool::Hierarchical => "Place a hierarchical label",
+                                LabelTool::Local | LabelTool::Power => "Place a net label",
+                            }),
                             vec![
                                 Button::new("label", "point", "Net label")
                                     .enabled(!reviewing)
@@ -933,6 +947,12 @@ impl SchematicEditor {
             self.palette.open();
         } else {
             self.palette.close();
+        }
+        if let Tool::Label(
+            kind @ (LabelTool::Local | LabelTool::Global | LabelTool::Hierarchical),
+        ) = next
+        {
+            self.label_kind = kind;
         }
         self.tool = next;
         self.wire_from = None;

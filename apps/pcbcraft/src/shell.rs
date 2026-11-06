@@ -429,17 +429,19 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
         true,
         t.text_dim,
     );
+    // As Solidcraft names a family's parts: the upper part by the variant
+    // it runs ("Net label"), the label with ▾ by the family ("Label"),
+    // which opens the variants.
     let label = tool.label;
+    let shown = tool
+        .menu
+        .iter()
+        .find(|v| v.id == tool.id)
+        .map_or(label, |v| v.label);
     run.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, tool.enabled, tool.selected, label)
+        egui::WidgetInfo::selected(egui::WidgetType::Button, tool.enabled, tool.selected, shown)
     });
-    arrow.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            tool.enabled,
-            format!("{label} options"),
-        )
-    });
+    arrow.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, tool.enabled, label));
     let mut clicked = None;
     let run = tool_tooltip(run, tool);
     if run.clicked() && tool.enabled {

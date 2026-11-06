@@ -20,7 +20,11 @@ struct Harness {
 
 impl Harness {
     fn new() -> Fallible<Self> {
-        let dir = tempfile::tempdir()?;
+        Self::in_dir(tempfile::tempdir()?)
+    }
+
+    /// A session whose recovery folder is `dir`'s, as left by earlier ones.
+    fn in_dir(dir: tempfile::TempDir) -> Fallible<Self> {
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
@@ -182,6 +186,43 @@ fn texts(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
 
 fn shows(painted: &[(String, egui::Pos2)], text: &str) -> bool {
     painted.iter().any(|(t, _)| t == text)
+}
+
+/// A restored session has no file of its own yet: Save proposes the name
+/// and folder of the file it was restored from, not "untitled" at home.
+#[test]
+fn save_after_a_restore_proposes_the_original_file() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let original = dir.path().join("prec").join("board.pcbcraft");
+    let engine = Engine::demo()?;
+    RecoveryStore::new(&dir.path().join("recovery"))?.write(
+        &EditorFile::from_document(engine.document()),
+        Some(&original),
+    )?;
+    let mut h = Harness::in_dir(dir)?;
+    h.until("the recovery question", |h| !h.files.recoveries.is_empty())?;
+    h.click("Restore")?;
+    h.until("the restored document", |h| {
+        h.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::Replace {
+                    recovered: true,
+                    ..
+                }
+            )
+        })
+    })?;
+    // The app adopts it as an unsaved document without a path.
+    h.files.adopt(&h.engine, None, true)?;
+    let (folder, name) = h.files.save_proposal();
+    assert_eq!(Some(folder), original.parent());
+    assert_eq!(name, "board.pcbcraft");
+    // Once the project has a file of its own, that one is proposed.
+    let own = h.dir.path().join("own.pcbcraft");
+    h.files.adopt(&h.engine, Some(own), false)?;
+    assert_eq!(h.files.save_proposal().1, "own.pcbcraft");
+    Ok(())
 }
 
 /// Nothing unsaved: quitting closes the window at once, with no dialog.

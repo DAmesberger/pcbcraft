@@ -66,6 +66,9 @@ impl ShortcutSheet {
     pub fn toggle(&mut self) {
         self.open = !self.open;
     }
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
 
     pub fn show(&mut self, ctx: &egui::Context, registry: &Registry, active: &[Context]) {
         if !self.open {

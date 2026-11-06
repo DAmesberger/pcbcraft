@@ -71,12 +71,13 @@ fn arrows_skip_disabled_rows_and_enter_runs_the_highlighted_one() {
     palette.open();
     frame(&ctx, &mut palette, &rows, vec![]);
     assert_eq!(palette.highlighted, 0);
+    // Disabled beta is listed last: alpha, gamma, beta.
     frame(&ctx, &mut palette, &rows, vec![key(egui::Key::ArrowDown)]);
-    assert_eq!(palette.highlighted, 2, "beta is disabled");
+    assert_eq!(palette.highlighted, 1, "gamma");
     frame(&ctx, &mut palette, &rows, vec![key(egui::Key::ArrowDown)]);
-    assert_eq!(palette.highlighted, 0, "wraps");
+    assert_eq!(palette.highlighted, 0, "wraps past disabled beta");
     frame(&ctx, &mut palette, &rows, vec![key(egui::Key::ArrowUp)]);
-    assert_eq!(palette.highlighted, 2);
+    assert_eq!(palette.highlighted, 1);
     let (event, _) = frame(&ctx, &mut palette, &rows, vec![key(egui::Key::Enter)]);
     assert_eq!(event, Some(PaletteEvent::Run("gamma".into())));
     assert!(!palette.is_open());
@@ -101,7 +102,7 @@ fn typing_ranks_the_query_and_disabled_rows_never_run() {
     let (event, _) = frame(&ctx, &mut palette, &rows, vec![key(egui::Key::Enter)]);
     assert_eq!(event, None, "the only match is disabled");
     assert!(palette.is_open());
-    // Back to everything: the enabled row is highlighted.
+    // Back to everything: the enabled row leads and is highlighted.
     frame(
         &ctx,
         &mut palette,
@@ -112,7 +113,7 @@ fn typing_ranks_the_query_and_disabled_rows_never_run() {
             key(egui::Key::Backspace),
         ],
     );
-    assert_eq!(palette.highlighted, 1);
+    assert_eq!(palette.highlighted, 0);
     let (event, _) = frame(&ctx, &mut palette, &rows, vec![key(egui::Key::Enter)]);
     assert_eq!(event, Some(PaletteEvent::Run("alpha".into())));
 }
@@ -143,4 +144,36 @@ fn recent_commands_are_kept_most_recent_first_and_bounded() {
     assert_eq!(palette.recent().first().map(String::as_str), Some("c5"));
     assert_eq!(palette.recent().get(1).map(String::as_str), Some("c19"));
     assert_eq!(palette.recent().iter().filter(|r| *r == "c5").count(), 1);
+}
+
+/// A command with two keys (the palette's own, ⌘P and ⇧⌘P) is listed
+/// once; commands that cannot run here follow those that can, in each
+/// group, and keep their ranking otherwise.
+#[test]
+fn duplicates_go_and_unavailable_commands_follow_the_available_ones() {
+    let named = |id: &str, title: &str, enabled: bool, recent: bool| PaletteRow {
+        title: title.to_owned(),
+        recent,
+        ..row(id, enabled)
+    };
+    let mut rows = vec![
+        named("app.palette", "Command palette", true, false),
+        named("delete", "Delete", false, false),
+        named("app.palette-alt", "Command palette", true, false),
+        named("save", "Save", true, false),
+        named("route", "Route", false, true),
+        named("undo", "Undo", true, true),
+    ];
+    arrange(&mut rows, true);
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["undo", "route", "app.palette", "save", "delete"]);
+    // With a query there is no Recent group: one ranking, available first.
+    let mut rows = vec![
+        named("route", "Route", false, true),
+        named("undo", "Undo", true, true),
+        named("save", "Save", true, false),
+    ];
+    arrange(&mut rows, false);
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["undo", "save", "route"]);
 }
