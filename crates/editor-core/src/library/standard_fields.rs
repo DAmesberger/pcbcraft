@@ -11,10 +11,15 @@
 //! No temperature field: a unit here is a scale of the SI unit, and a Celsius
 //! reading needs an offset.
 use super::bundle::{self, Bundle, SourceRevision, to_record};
-use super::{Definition, DefinitionMeta};
+use super::{Definition, DefinitionMeta, Library};
 use crate::diagnostics::{Error, Result};
-use crate::fields::{FieldDefinition, QuantityKind, ToleranceBasis, ValueType};
-use crate::ids::{DefinitionId, LibraryId, QuantityKindRef, Revision, SourceLineageId};
+use crate::fields::{
+    Choice, FieldDefinition, FieldSelection, QuantityKind, ToleranceBasis, ValueType,
+};
+use crate::ids::{
+    ChoiceId, DefinitionId, DefinitionKind, FieldRef, LibraryId, QuantityKindRef, Revision,
+    SourceLineageId,
+};
 use crate::quantity::{UnitOfMeasure, UnitSet};
 
 /// The source name imported copies show.
@@ -65,7 +70,7 @@ const STANDARD: [Standard; 7] = [
     },
     Standard {
         kind_name: "Voltage",
-        kind_lineage: "92d5c04e7ab1486d8f39e6b10c47da23",
+        kind_lineage: VOLTAGE_KIND_LINEAGE,
         field_name: "Rated voltage",
         field_lineage: "e7304bc6185f4a9dbc72f09ad1e563b8",
         dimension: [2, 1, -3, -1, 0, 0, 0],
@@ -102,6 +107,22 @@ const STANDARD: [Standard; 7] = [
 ];
 
 const TOLERANCE_LINEAGE: &str = "58c3f7e16a0d4b929e47b1d30ca2f685";
+const VOLTAGE_KIND_LINEAGE: &str = "92d5c04e7ab1486d8f39e6b10c47da23";
+const FORWARD_VOLTAGE_LINEAGE: &str = "0eeb669094bf434ab801ff44513db708";
+const COLOUR_LINEAGE: &str = "b2387bbf96b94b0495552e4d79c1645a";
+
+/// The colours the `Colour` field offers: the emitted colours of indicator
+/// LEDs. Choice IDs count from 1 and are never reused.
+pub const LED_COLOURS: [&str; 8] = [
+    "Red",
+    "Orange",
+    "Amber",
+    "Yellow",
+    "Yellow-green",
+    "Green",
+    "Blue",
+    "White",
+];
 
 /// The built-in source's identity, as origins of imported copies record it.
 pub fn library_id() -> Option<LibraryId> {
@@ -126,6 +147,32 @@ fn first(lineage: SourceLineageId) -> SourceRevision {
         lineage,
         revision: Revision::FIRST,
     }
+}
+
+/// The selections an LED component starts with: `Colour`, then `Forward
+/// voltage`, both shown on the symbol, from the project's imported copies
+/// of the standard fields. `NotFound` when they were not imported.
+pub fn led_fields(library: &Library) -> Result<Vec<FieldSelection>> {
+    let source = library_id()
+        .ok_or_else(|| Error::Invalid("the built-in library identity is malformed".into()))?;
+    [COLOUR_LINEAGE, FORWARD_VOLTAGE_LINEAGE]
+        .into_iter()
+        .map(|lineage| {
+            let lineage = parsed(lineage)?;
+            let local = library
+                .origins
+                .iter()
+                .find(|o| o.origin.library == source && o.origin.lineage == lineage)
+                .map(|o| o.local)
+                .filter(|local| local.kind == DefinitionKind::Field)
+                .ok_or_else(|| Error::NotFound("a standard LED field is not imported".into()))?;
+            Ok(FieldSelection {
+                field: FieldRef::new(local.id, local.revision),
+                default: None,
+                show_on_symbol: true,
+            })
+        })
+        .collect()
 }
 
 /// The bundle of every standard kind and field: kinds first, then fields,
@@ -195,6 +242,50 @@ pub fn bundle() -> Result<Bundle> {
         }),
         &mut |_| Err(unreferenced("tolerance")),
         &mut |_, _| Err(unreferenced("tolerance")),
+    )?);
+    let voltage = parsed(VOLTAGE_KIND_LINEAGE)?;
+    records.push(to_record(
+        parsed(FORWARD_VOLTAGE_LINEAGE)?,
+        Revision::FIRST,
+        meta(
+            "Forward voltage",
+            "Built-in field: an LED's or diode's forward voltage.",
+        ),
+        Definition::Field(FieldDefinition {
+            next_local: 1,
+            value_type: ValueType::Quantity {
+                // A placeholder the record's links resolve to the kind's lineage.
+                kind: QuantityKindRef::new(DefinitionId(1), Revision::FIRST),
+                min: Some(0.0),
+                max: None,
+            },
+            default: None,
+            required_at: None,
+        }),
+        &mut |_| Ok(first(voltage)),
+        &mut |_, _| Ok(voltage),
+    )?);
+    let choices: Vec<Choice> = (1u32..)
+        .zip(LED_COLOURS)
+        .map(|(id, label)| Choice {
+            id: ChoiceId(id),
+            label: label.to_owned(),
+        })
+        .collect();
+    let next_local = u32::try_from(choices.len() + 1)
+        .map_err(|_| Error::Invalid("too many built-in colours".into()))?;
+    records.push(to_record(
+        parsed(COLOUR_LINEAGE)?,
+        Revision::FIRST,
+        meta("Colour", "Built-in field: the colour an LED emits."),
+        Definition::Field(FieldDefinition {
+            next_local,
+            value_type: ValueType::Enum { choices },
+            default: None,
+            required_at: None,
+        }),
+        &mut |_| Err(unreferenced("colour")),
+        &mut |_, _| Err(unreferenced("colour")),
     )?);
     let library = library_id()
         .ok_or_else(|| Error::Invalid("the built-in library identity is malformed".into()))?;

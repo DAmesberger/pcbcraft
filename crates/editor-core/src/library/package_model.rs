@@ -321,12 +321,21 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
             ChipKind::Resistor => MaterialId::Alumina96,
             ChipKind::Capacitor => MaterialId::BariumTitanate,
             ChipKind::Inductor => MaterialId::Ferrite,
+            // A chip LED's white substrate (its lens is role `Lens`).
+            ChipKind::Led => MaterialId::Alumina96,
         },
         // A module: green board, nickel-silver can (role `Other`), gold
         // (ENIG) pads and castellations.
         (PackageForm::Module(_), BodyRole::Body) => MaterialId::SolderMaskGreen,
         (PackageForm::Module(_), BodyRole::Other) => MaterialId::NickelSilver,
         (PackageForm::Module(_), BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => {
+            MaterialId::Gold
+        }
+        // A USB-C receptacle: LCP insulator and pegs, nickel-plated shell
+        // (role `Other`), gold solder tails.
+        (PackageForm::UsbC(_), BodyRole::Body) => MaterialId::Lcp,
+        (PackageForm::UsbC(_), BodyRole::Other) => MaterialId::Nickel,
+        (PackageForm::UsbC(_), BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => {
             MaterialId::Gold
         }
         (PackageForm::Header(_), BodyRole::Body) => MaterialId::Pbt,

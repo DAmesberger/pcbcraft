@@ -371,6 +371,7 @@ fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Grid => "BGA / LGA",
         FamilyKind::Tht => "through-hole",
         FamilyKind::Module => "module",
+        FamilyKind::UsbC => "USB-C receptacle",
     }
 }
 

@@ -129,6 +129,7 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Grid => "grid array",
         FamilyKind::Tht => "through-hole",
         FamilyKind::Module => "module",
+        FamilyKind::UsbC => "USB-C receptacle",
     }
 }
 

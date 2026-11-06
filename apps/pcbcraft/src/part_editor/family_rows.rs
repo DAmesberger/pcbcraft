@@ -9,6 +9,7 @@ mod module;
 mod molded;
 mod tabbed;
 mod tht;
+mod usb_c;
 
 /// The rows of a later family's form; returns whether a value changed.
 pub fn rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
@@ -18,6 +19,7 @@ pub fn rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
         PackageForm::Grid(f) => grid::rows(ui, f),
         PackageForm::Tht(f) => tht::rows(ui, f),
         PackageForm::Module(f) => module::rows(ui, f),
+        PackageForm::UsbC(f) => usb_c::rows(ui, f),
         PackageForm::Generic
         | PackageForm::Chip(_)
         | PackageForm::GullWing(_)

@@ -19,22 +19,26 @@ use crate::library::templates::catalog::{
 use crate::library::templates::footprint;
 use crate::library::templates::footprint_family;
 use crate::library::{
-    Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
-    ModelPlacement, PackageDefinition, PackageModel, PackageTerminal, drafts,
+    ChipKind, Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
+    ModelPlacement, PackageDefinition, PackageForm, PackageModel, PackageTerminal, drafts,
+    standard_fields,
 };
 use crate::model::Document;
 use std::sync::Arc;
 
 /// `library.new_from_template`: five drafts in one undo step
 /// (`Outcome::DraftsCreated`, component first). The drafts are new
-/// lineages; nothing is published or imported.
+/// lineages and nothing is published. A chip LED's component selects the
+/// standard `Colour` and `Forward voltage` fields, importing the standard
+/// fields in the same step when the project lacks them; nothing else is
+/// imported.
 pub(crate) fn new_from_template(
     document: &mut Document,
     request: NewFromTemplate,
     _evaluator: Option<&dyn FootprintEvaluator>,
 ) -> Result<Outcome> {
-    let project = Arc::make_mut(&mut document.project);
     let mut ids = [DefinitionId(0); catalog::NEW_FROM_TEMPLATE_DRAFTS];
+    let project = Arc::make_mut(&mut document.project);
     for id in &mut ids {
         *id = DefinitionId(project.allocate()?);
     }
@@ -47,13 +51,27 @@ pub(crate) fn new_from_template(
         binding: BindingRef::new(binding, Revision::FIRST),
     };
     let rules = project.rules.effective();
-    let edits = catalog::new_from_template_with(
+    let mut edits = catalog::new_from_template_with(
         &project.library,
         &request,
         refs,
         &rules,
         document.drafts.symbols,
     )?;
+    let led = edits.iter().any(|edit| {
+        matches!(&edit.definition, Definition::Package(p)
+            if matches!(&p.form, PackageForm::Chip(c) if c.kind == ChipKind::Led))
+    });
+    if led {
+        super::library::import_bundle(document, &standard_fields::bundle()?)?;
+        let selections = standard_fields::led_fields(&document.project.library)?;
+        for edit in &mut edits {
+            if let Definition::Component(body) = &mut edit.definition {
+                body.fields.clone_from(&selections);
+            }
+        }
+    }
+    let project = &document.project;
     let drafts = Arc::make_mut(&mut document.drafts);
     for edit in edits {
         drafts::create(

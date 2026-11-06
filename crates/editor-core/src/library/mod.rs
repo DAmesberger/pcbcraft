@@ -52,7 +52,7 @@ pub use graphics::{
 pub use model3d::{LibraryModel, ModelDefinition};
 pub use package::{PackageDefinition, PackageTerminal};
 pub use package_form::{
-    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm,
+    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm, UsbCForm,
 };
 pub use package_model::{
     Axis, BodyRole, GeneratedMaterials, ModelPlacement, PackageEdit, PackageModel, QuickAction,

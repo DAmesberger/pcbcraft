@@ -392,7 +392,8 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 | PackageForm::Molded(_)
                 | PackageForm::Grid(_)
                 | PackageForm::Tht(_)
-                | PackageForm::Module(_) => {}
+                | PackageForm::Module(_)
+                | PackageForm::UsbC(_) => {}
             }
             match model {
                 PackageModel::Envelope { material: _ } => {}
