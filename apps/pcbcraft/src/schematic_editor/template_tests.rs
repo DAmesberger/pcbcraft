@@ -375,3 +375,259 @@ fn the_palette_rows_show_in_full_on_hover() -> TestResult {
     assert!(missing.is_empty(), "cut without a hover: {missing:?}");
     Ok(())
 }
+
+/// "header 1x4" is the part itself: "not yet created", read as written, the
+/// default marked, listed once. Enter creates it in one undo step and arms it.
+#[test]
+fn a_generic_part_creates_without_a_form_and_arms_placement() -> TestResult {
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let rows = typed(&mut editor, &engine, &ctx, "header 1x4");
+    let at = |label: &str| rows.iter().find(|(t, _)| t == label).map(|(_, p)| p.y);
+    for label in ["not yet created", "rows × columns", "2.54 mm (default)"] {
+        assert!(at(label).is_some(), "{label}: {rows:?}");
+    }
+    let same = rows
+        .iter()
+        .filter(|(t, p)| t == "Pin header 1×4 2.54 mm" && p.x < 800.0);
+    assert_eq!(
+        same.count(),
+        1,
+        "one row, not also a template row: {rows:?}"
+    );
+    let (_, row) = rows
+        .iter()
+        .find(|(t, p)| t == "Pin header 1×4 2.54 mm" && p.x < 800.0)
+        .ok_or("the row")?;
+    if let Some((_, heading)) = rows.iter().find(|(t, _)| t.starts_with("FROM TEMPLATE")) {
+        assert!(row.y < heading.y, "the part above the template rows");
+    }
+
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    let [operation] = &operations[..] else {
+        return Err(format!("one operation, got {operations:?}").into());
+    };
+    assert!(matches!(
+        operation,
+        Operation::Library(pcbcraft_core::LibraryCommand::PublishFromTemplate(_))
+    ));
+    apply_hosted(&mut engine, operation.clone())?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(editor.tool, Tool::Place);
+    let component = editor.component.ok_or("armed")?;
+    let published = engine
+        .project()
+        .library
+        .component(component)
+        .ok_or("published")?;
+    assert_eq!(published.meta.name, "Pin header 1×4 2.54 mm");
+    assert!(published.definition.generic.is_some());
+    assert!(engine.drafts().items.is_empty());
+
+    engine.undo()?;
+    assert!(engine.project().library.components.is_empty());
+    assert!(!engine.can_undo());
+    Ok(())
+}
+
+/// The same text again finds the part: no second component, nothing sent.
+#[test]
+fn a_part_the_project_holds_is_what_the_text_finds() -> TestResult {
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    typed(&mut editor, &engine, &ctx, "resistor 0603");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    apply_hosted(&mut engine, operations.into_iter().next().ok_or("one")?)?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    let component = editor.component.ok_or("armed")?;
+
+    let mut editor = SchematicEditor::default();
+    let rows = typed(&mut editor, &engine, &ctx, "resistor 0603");
+    assert!(
+        !rows.iter().any(|(t, _)| t == "not yet created"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|(t, _)| t.starts_with("IN THIS PROJECT")),
+        "{rows:?}"
+    );
+    let named = "Chip resistor 0603 (1608 metric)";
+    let listed = rows.iter().filter(|(t, p)| t == named && p.x < 800.0);
+    assert_eq!(listed.count(), 1, "once, not also by name: {rows:?}");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(operations.is_empty(), "{operations:?}");
+    assert_eq!(editor.tool, Tool::Place);
+    assert_eq!(editor.component, Some(component));
+    // Esc keeps a part that was already there.
+    workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert_eq!(editor.take_template_undo(), None);
+    assert_eq!(engine.project().library.latest_components().len(), 1);
+    Ok(())
+}
+
+/// Esc in the palette and Esc once armed leave the project as it was.
+#[test]
+fn cancelling_a_generic_part_changes_nothing() -> TestResult {
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let before = engine.project().clone();
+    typed(&mut editor, &engine, &ctx, "led 0603");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(operations.is_empty());
+    assert_eq!(*engine.project(), before);
+
+    typed(&mut editor, &engine, &ctx, "led 0603");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    apply_hosted(&mut engine, operations.into_iter().next().ok_or("one")?)?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(editor.tool, Tool::Place);
+    workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert_eq!(editor.tool, Tool::Select);
+    assert_eq!(editor.take_template_undo(), Some(engine.revision()));
+    engine.undo()?;
+    assert_eq!(*engine.project(), before);
+    Ok(())
+}
+
+/// A value the text named reaches each instance placed: the LED's colour
+/// field exists today. A passive's value takes the same path once its
+/// template selects the field; until then it is left out.
+#[test]
+fn the_named_colour_reaches_the_placed_instance() -> TestResult {
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let rows = typed(&mut editor, &engine, &ctx, "led 0603 red");
+    assert!(rows.iter().any(|(t, _)| t == "Red"), "{rows:?}");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    apply_hosted(&mut engine, operations.into_iter().next().ok_or("one")?)?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    let at = pos2(120.0, 680.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut placed = Vec::new();
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(true)],
+        vec![button(false)],
+    ] {
+        placed.extend(workspace_frame(&mut editor, &engine, &ctx, events).1);
+    }
+    let [Operation::Instance(InstanceCommand::Place(request))] = &placed[..] else {
+        return Err(format!("one component.place, got {placed:?}").into());
+    };
+    assert_eq!(request.properties.len(), 1, "{request:?}");
+    apply_hosted(&mut engine, placed[0].clone())?;
+    let instance = engine.project().instances.first().ok_or("placed")?;
+    assert!(
+        instance
+            .properties
+            .contains_key(&request.properties[0].field),
+        "{instance:?}"
+    );
+    Ok(())
+}
+
+/// A part the family refuses lists why; Enter says so and sends nothing.
+#[test]
+fn a_refused_part_says_why_and_sends_nothing() -> TestResult {
+    let engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let rows = typed(&mut editor, &engine, &ctx, "header 1x9999");
+    assert!(rows.iter().any(|(t, _)| t == "cannot be made"), "{rows:?}");
+    assert!(
+        rows.iter().any(|(t, _)| t.contains("at most 512 pins")),
+        "{rows:?}"
+    );
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    assert!(operations.is_empty());
+    assert!(editor.palette.is_open());
+    assert_eq!(editor.component, None);
+    Ok(())
+}
+
+/// The badges fit the row, with every full text and meaning on hover.
+#[test]
+fn generic_rows_show_their_badges_in_full_on_hover() -> TestResult {
+    let engine = parts_engine()?;
+    let mut editor = SchematicEditor::default();
+    let screen = crate::kit::text::tests::Screen::new(vec2(1000.0, 700.0));
+    let run = |editor: &mut SchematicEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.canvas(ui, &engine);
+        })
+    };
+    editor.on_tool("place", &engine);
+    run(&mut editor, vec![]);
+    run(&mut editor, vec![egui::Event::Text("100n 0603 16V".into())]);
+    let drawn = run(&mut editor, vec![]);
+    screen.picture("place-palette-generic-values", &drawn, 1.0)?;
+    let (_, missing) =
+        crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| run(&mut editor, events));
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+
+    let mut header = SchematicEditor::default();
+    header.on_tool("place", &engine);
+    run(&mut header, vec![]);
+    run(&mut header, vec![egui::Event::Text("header 5x2".into())]);
+    let drawn = run(&mut header, vec![]);
+    screen.picture("place-palette-generic-header", &drawn, 1.0)?;
+    let (_, missing) =
+        crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| run(&mut header, events));
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+    Ok(())
+}

@@ -26,6 +26,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+// A command is built once and applied once, so `NewDraft`'s inline definition
+// costs one move; boxing it would only burden its many callers.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum LibraryCommand {
@@ -232,6 +235,18 @@ pub enum LibraryCommand {
     /// Any refusal changes nothing. Needs the host's footprint evaluator.
     #[serde(rename = "library.publish_from_template")]
     PublishFromTemplate(Box<NewFromTemplate>),
+    /// The part a text reads as (`library.generic_parts`): the identical
+    /// part if the project holds it (nothing changes), else built and
+    /// published as `library.publish_from_template`, one undo step. A text
+    /// that reads as several parts is refused until `candidate` picks one by
+    /// its index in that report. The outcome's `properties` are the text's
+    /// values for `component.place`. Needs the host's footprint evaluator.
+    #[serde(rename = "library.find_or_create")]
+    FindOrCreate {
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        candidate: Option<usize>,
+    },
     /// B1: replace the package, footprint and generated model of a working
     /// set from a template row, as one undo step; a non-empty footprint is
     /// refused unless `replace`. Terminal mappings change only through
@@ -290,6 +305,7 @@ declare_classes!(LibraryCommand {
     FitLeads "library.fit_leads" Edit,
     NewFromTemplate "library.new_from_template" Edit,
     PublishFromTemplate "library.publish_from_template" Ask,
+    FindOrCreate "library.find_or_create" Ask,
     PackageFromTemplate "library.package_from_template" Edit,
     SavePackageRow "library.save_package_row" Edit,
     PinoutApply "library.pinout_apply" Edit,
@@ -1109,6 +1125,9 @@ pub(crate) fn apply_library(
                 },
                 evaluator,
             )
+        }
+        LibraryCommand::FindOrCreate { query, candidate } => {
+            super::templates::find_or_create(document, &query, candidate, evaluator)
         }
         LibraryCommand::PackageFromTemplate(request) => {
             super::templates::package_from_template(document, *request, evaluator)

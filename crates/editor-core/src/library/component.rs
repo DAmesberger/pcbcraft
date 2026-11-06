@@ -48,6 +48,10 @@ pub struct ComponentDefinition {
     /// C3/C5: import review state (F8); `None` when nothing is pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<Box<super::pinout::ImportReview>>,
+    /// The generating parameters of an on-demand generic part: what a
+    /// search for the same part finds instead of building another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generic: Option<Box<super::templates::generic::GenericSpec>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
