@@ -136,7 +136,8 @@ impl PackageShape {
             | PackageForm::Molded(_)
             | PackageForm::Grid(_)
             | PackageForm::Tht(_)
-            | PackageForm::Module(_) => {
+            | PackageForm::Module(_)
+            | PackageForm::UsbC(_) => {
                 let pitch = form.values().into_iter().find_map(|v| match v.value {
                     ParamValue::Length(mm) if v.name.0.ends_with("_e") => Some(mm),
                     _ => None,
@@ -436,6 +437,15 @@ fn custom_aliases(family: FamilyKind) -> &'static [&'static str] {
             "radio module",
             "castellated",
             "shield can",
+        ],
+        FamilyKind::UsbC => &[
+            "USB",
+            "USB-C",
+            "USB C",
+            "Type-C",
+            "USB Type-C",
+            "receptacle",
+            "connector",
         ],
     }
 }

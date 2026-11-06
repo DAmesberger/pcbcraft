@@ -1,8 +1,9 @@
 //! Two-terminal rectangular chips: a ceramic (or ferrite) body between two
 //! wrapped end terminations, and on a thick-film resistor a black overcoat
-//! raised on the alumina's top. Bodies are disjoint boxes with rounded
+//! raised on the alumina's top. A chip LED is a thin white substrate and
+//! terminations under a clear lens. Bodies are disjoint boxes with rounded
 //! edges: the body's long edges and each termination's outer end.
-use super::{Build, check_positive, mm, require};
+use super::{Build, check_positive, mm, require, top_edges};
 use crate::Result;
 use pcbcraft_core::library::{BodyRole, ChipForm, ChipKind};
 use pcbcraft_core::materials::MaterialId;
@@ -17,6 +18,12 @@ const END_EDGE_MM: f64 = 0.08;
 const OVERCOAT_MM: f64 = 0.03;
 /// The overcoat stops this far in from the long edges (docs/materials.md).
 const OVERCOAT_INSET_MM: f64 = 0.04;
+
+/// A chip LED's substrate thickness (Kingbright's APT1608 and APT2012
+/// drawings both give 0.25 mm), at most half the height.
+const LED_SUBSTRATE_MM: f64 = 0.25;
+/// Round of the lens's top edges (est.), capped by the lens's size.
+const LENS_EDGE_MM: f64 = 0.1;
 
 pub(super) fn check(c: &ChipForm) -> Result<()> {
     check_positive(&[
@@ -40,9 +47,13 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
     let resistor = c.kind == ChipKind::Resistor;
     let overcoat = (c.height / 10.0).min(OVERCOAT_MM);
     let inset = OVERCOAT_INSET_MM.min(c.width / 4.0);
+    let led = c.kind == ChipKind::Led;
+    let substrate = LED_SUBSTRATE_MM.min(c.height / 2.0);
     let body_height = if resistor {
         let oc = b.length("overcoat", overcoat)?;
         format!("{h} - {oc}")
+    } else if led {
+        b.length("substrate", substrate)?
     } else {
         h.clone()
     };
@@ -84,6 +95,38 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
             ],
         )?;
     }
+    if led {
+        let name = b.name("lens");
+        let material = b.material(BodyRole::Lens);
+        b.solid(
+            &name,
+            BodyRole::Lens,
+            material,
+            [
+                format!("- {l} / 2 + {t}"),
+                format!("- {w} / 2"),
+                body_height.clone(),
+            ],
+            [
+                format!("{l} - 2 * {t}"),
+                w.clone(),
+                format!("{h} - {body_height}"),
+            ],
+        )?;
+        let half = (c.length / 2.0 - c.termination, c.width / 2.0);
+        let radius = LENS_EDGE_MM
+            .min(half.1 / 2.0)
+            .min((c.height - substrate) / 2.0);
+        b.round(
+            "lens_round",
+            &name,
+            &top_edges([-half.0, -half.1, substrate], [half.0, half.1, c.height]),
+            radius,
+        )?;
+    }
+    // An LED's terminations wrap only its substrate.
+    let end_height = if led { body_height.clone() } else { h.clone() };
+    let end_top = if led { substrate } else { c.height };
     let material = b.material(BodyRole::Termination);
     let mut ends = Vec::new();
     for (part, x) in [
@@ -96,18 +139,18 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
             BodyRole::Termination,
             material,
             [x, format!("- {w} / 2"), "0 mm".into()],
-            [t.clone(), w.clone(), h.clone()],
+            [t.clone(), w.clone(), end_height.clone()],
         )?;
         ends.push(name);
     }
     // The body's four long edges, kept below the overcoat's inset so the
     // overcoat sits on the flat; then the edges round each outer end face.
     let (hl, hw) = (c.length / 2.0, c.width / 2.0);
-    let small = c.width.min(c.height);
+    let small = c.width.min(end_top);
     let top = if resistor {
         c.height - overcoat
     } else {
-        c.height
+        end_top
     };
     let mut body_edge = BODY_EDGE_MM.min(0.1 * small);
     if resistor {
@@ -130,9 +173,9 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
     for (name, x) in ends.iter().zip([-hl, hl]) {
         let edges = [
             [x, 0.0, 0.0],
-            [x, hw, c.height / 2.0],
-            [x, 0.0, c.height],
-            [x, -hw, c.height / 2.0],
+            [x, hw, end_top / 2.0],
+            [x, 0.0, end_top],
+            [x, -hw, end_top / 2.0],
         ];
         let feature = format!("{name} round");
         b.native.fillet(&feature, name, &edges, r.clone().into())?;

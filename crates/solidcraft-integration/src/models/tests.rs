@@ -168,6 +168,16 @@ fn centre(native: &Native, name: &str) -> Result<[f64; 3]> {
 /// Every body pair is disjoint: the definition's bodies' volumes add up to
 /// the volume of their union.
 fn disjoint(native: &mut Native, definition: &ModelDefinition) -> Result<()> {
+    disjoint_within(native, definition, 1e-6)
+}
+
+/// [`disjoint`] within a relative `tolerance`: curved faces are measured
+/// through their tessellation, so the volumes agree only to about 1e-5.
+fn disjoint_within(
+    native: &mut Native,
+    definition: &ModelDefinition,
+    tolerance: f64,
+) -> Result<()> {
     let total: f64 = definition
         .bodies
         .iter()
@@ -184,10 +194,100 @@ fn disjoint(native: &mut Native, definition: &ModelDefinition) -> Result<()> {
     )?;
     let union = volume(native, first)?;
     assert!(
-        (union - total).abs() < 1e-6 * total.max(1.0),
+        (union - total).abs() < tolerance * total.max(1.0),
         "bodies overlap: {total} mm³ apart, {union} mm³ joined"
     );
     Ok(())
+}
+
+/// A chip LED: the drawing's 0.25 mm substrate and terminations under a
+/// clear lens, full height, on its lead points.
+#[test]
+fn a_chip_led_is_a_substrate_and_terminations_under_a_clear_lens() -> Result<()> {
+    let form = PackageForm::Chip(Box::new(ChipForm {
+        kind: ChipKind::Led,
+        length: 1.6,
+        width: 0.8,
+        height: 0.75,
+        termination: 0.3,
+    }));
+    let (mut native, definition) = built(form, 2)?;
+    let material = |name: &str| {
+        definition
+            .bodies
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| b.material)
+    };
+    assert_eq!(material("pkgt body"), Some(MaterialId::Alumina96));
+    assert_eq!(material("pkgt lens"), Some(MaterialId::SiliconeClear));
+    assert_eq!(material("pkgt termination 1"), Some(MaterialId::TinMatte));
+    let (lo, hi) = bounds(&native, "pkgt body")?;
+    near(lo[2], 0.0, "substrate on the seating plane");
+    near(hi[2], 0.25, "substrate top");
+    let (lo, hi) = bounds(&native, "pkgt lens")?;
+    near(lo[2], 0.25, "lens on the substrate");
+    near(hi[2], 0.75, "lens top");
+    let (lo, hi) = bounds(&native, "pkgt termination 2")?;
+    near(lo[0], 0.5, "termination 2 inner end");
+    near(hi[0], 0.8, "termination 2 outer end");
+    near(hi[2], 0.25, "termination wraps only the substrate");
+    assert_eq!(leads(&definition).len(), 2);
+    disjoint(&mut native, &definition)
+}
+
+/// A USB-C receptacle matches its drawing's outline: 8.94 wide over the
+/// shell, top at 3.31, the stakes 0.95 below the seating plane centred on
+/// their slots; the opening is a real hole; twelve tails carry the contact
+/// lands and four stakes the shell; bodies are disjoint.
+#[test]
+fn a_usb_c_receptacle_matches_the_drawing_outline() -> Result<()> {
+    let form = PackageForm::UsbC(Box::new(pcbcraft_core::library::UsbCForm::typical()));
+    let (mut native, definition) = built(form, 13)?;
+    let (lo, hi) = bounds(&native, "pkgt shell")?;
+    near(hi[0] - lo[0], 8.94, "shell width");
+    near(hi[2], 3.31, "shell top");
+    near(lo[2], 0.15, "shell underside");
+    near(lo[1], -3.675, "mating face");
+    near(hi[1], 3.675, "shell rear");
+    let (lo, hi) = bounds(&native, "pkgt stake 1")?;
+    near(lo[2], -0.95, "stake below the seating plane");
+    near(lo[0], -4.47, "stake at the outline");
+    near((lo[0] + hi[0]) / 2.0, -4.32, "stake on its slot");
+    near((lo[1] + hi[1]) / 2.0, -1.075, "front stake on its slot");
+
+    // Hand-computed: the outer obround less the opening, along the depth.
+    let area = |w: f64, h: f64| (w - h) * h + std::f64::consts::PI * h * h / 4.0;
+    let shell = (area(8.94, 3.16) - area(8.34, 2.56)) * 7.35;
+    let actual = volume(&native, "pkgt shell")?;
+    assert!(
+        (actual - shell).abs() < 1e-3 * shell,
+        "shell volume {actual} != {shell}"
+    );
+
+    let carrying = |id: u32| {
+        definition
+            .bodies
+            .iter()
+            .filter(|b| b.terminal == Some(id))
+            .count()
+    };
+    for id in 1..=12 {
+        assert_eq!(carrying(id), 1, "terminal {id}");
+    }
+    assert_eq!(carrying(13), 4, "the shell's stakes");
+    let material = |name: &str| {
+        definition
+            .bodies
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| b.material)
+    };
+    assert_eq!(material("pkgt shell"), Some(MaterialId::Nickel));
+    assert_eq!(material("pkgt tongue"), Some(MaterialId::Lcp));
+    assert_eq!(material("pkgt tail 1"), Some(MaterialId::Gold));
+    assert_eq!(native.evaluation_error(), None);
+    disjoint_within(&mut native, &definition, 1e-4)
 }
 
 #[test]

@@ -11,7 +11,7 @@ use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{DefinitionId, MAX_LABEL, PackageRowRef, printable};
 use crate::library::bundle::Bundle;
 use crate::library::package_form::{
-    ChipKind, GridForm, ModuleForm, MoldedForm, PackageForm, TabbedForm, ThtForm,
+    ChipKind, GridForm, ModuleForm, MoldedForm, PackageForm, TabbedForm, ThtForm, UsbCForm,
 };
 use crate::library::part::{Basis, Provenance};
 use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
@@ -62,10 +62,13 @@ pub enum FamilyKind {
     /// Radio and processor modules: a board with a shield can, edge pad
     /// rows, a ground array and an antenna end.
     Module,
+    /// USB Type-C receptacles for USB 2.0: surface-mount contacts and
+    /// through-hole shell stakes.
+    UsbC,
 }
 
 impl FamilyKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Chip,
         Self::GullWing,
         Self::NoLead,
@@ -75,11 +78,12 @@ impl FamilyKind {
         Self::Grid,
         Self::Tht,
         Self::Module,
+        Self::UsbC,
     ];
 
     /// The parametric footprint template kind that builds this family's
-    /// lands; `None` for a module, whose lands come only from its form
-    /// (`library.package_from_template`).
+    /// lands; `None` for a module or a USB-C receptacle, whose lands come
+    /// only from its form (`library.package_from_template`).
     pub fn template_kind(self) -> Option<TemplateKind> {
         Some(match self {
             Self::Chip => TemplateKind::Chip,
@@ -90,14 +94,17 @@ impl FamilyKind {
             Self::Molded => TemplateKind::Molded,
             Self::Grid => TemplateKind::Grid,
             Self::Tht => TemplateKind::Tht,
-            Self::Module => return None,
+            Self::Module | Self::UsbC => return None,
         })
     }
 
     /// The gallery's outline names of the family.
     pub fn outline_label(self) -> &'static str {
-        self.template_kind()
-            .map_or("Radio / MCU module", TemplateKind::label)
+        match self {
+            Self::Module => "Radio / MCU module",
+            Self::UsbC => "USB Type-C receptacle",
+            _ => self.template_kind().map_or("", TemplateKind::label),
+        }
     }
 
     /// The family revision rows are checked against now.
@@ -117,6 +124,7 @@ impl FamilyKind {
             Self::Grid => "Grid array",
             Self::Tht => "Through-hole",
             Self::Module => "Module",
+            Self::UsbC => "USB-C receptacle",
         }
     }
 
@@ -133,17 +141,19 @@ impl FamilyKind {
             Self::Grid => PackageForm::Grid(Box::new(GridForm::typical())),
             Self::Tht => PackageForm::Tht(Box::new(ThtForm::typical())),
             Self::Module => PackageForm::Module(Box::new(ModuleForm::typical())),
+            Self::UsbC => PackageForm::UsbC(Box::new(UsbCForm::typical())),
         }
     }
 
     /// The skeleton a new row of `form` starts from: a chip or molded body
-    /// is a 2-terminal part (molded ones polarised), a header a connector,
+    /// is a 2-terminal part (molded ones polarised), a header or a
+    /// receptacle a connector,
     /// anything else an IC box. Never a category guess beyond the family.
     pub fn default_skeleton(form: &PackageForm) -> SkeletonHint {
         match form {
             PackageForm::Chip(_) => SkeletonHint::TwoTerminal { polarised: false },
             PackageForm::Molded(_) => SkeletonHint::TwoTerminal { polarised: true },
-            PackageForm::Header(_) => SkeletonHint::Connector,
+            PackageForm::Header(_) | PackageForm::UsbC(_) => SkeletonHint::Connector,
             PackageForm::Generic => SkeletonHint::Blank,
             _ => SkeletonHint::IcBox,
         }
@@ -162,6 +172,7 @@ impl FamilyKind {
             PackageForm::Grid(_) => Self::Grid,
             PackageForm::Tht(_) => Self::Tht,
             PackageForm::Module(_) => Self::Module,
+            PackageForm::UsbC(_) => Self::UsbC,
         })
     }
 }
@@ -314,8 +325,10 @@ impl PackageRowDefinition {
 
     /// The row carries land overrides, which its citation covers (a row
     /// without a citation has estimated lands even when it overrides them).
+    /// A USB-C receptacle's values are themselves its land pattern.
     pub fn lands_cited(&self) -> bool {
-        self.lands.is_some() && self.citation.is_some()
+        (self.lands.is_some() || matches!(self.values, PackageForm::UsbC(_)))
+            && self.citation.is_some()
     }
 
     /// Publish findings: `package_row.family` (no family, a family that
@@ -815,6 +828,7 @@ pub fn default_prefix_for(
             ChipKind::Resistor => "R",
             ChipKind::Capacitor => "C",
             ChipKind::Inductor => "L",
+            ChipKind::Led => "D",
         },
         (SkeletonHint::TwoTerminal { .. }, _) => "R",
         (SkeletonHint::Connector, _) => "J",

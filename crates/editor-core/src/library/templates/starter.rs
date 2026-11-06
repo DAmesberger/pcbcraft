@@ -39,7 +39,7 @@ pub const MAX_TABLE_BYTES: usize = 1024 * 1024;
 pub const SOURCE_NAME: &str = "Pcbcraft starter rows";
 
 /// The tables, one per family file.
-pub const TABLES: [(&str, &str); 8] = [
+pub const TABLES: [(&str, &str); 9] = [
     ("chip.json", include_str!("starter/chip.json")),
     ("gull_wing.json", include_str!("starter/gull_wing.json")),
     ("no_lead.json", include_str!("starter/no_lead.json")),
@@ -48,6 +48,7 @@ pub const TABLES: [(&str, &str); 8] = [
     ("molded.json", include_str!("starter/molded.json")),
     ("grid.json", include_str!("starter/grid.json")),
     ("tht.json", include_str!("starter/tht.json")),
+    ("usb_c.json", include_str!("starter/usb_c.json")),
 ];
 
 /// One parsed starter row.

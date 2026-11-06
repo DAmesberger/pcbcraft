@@ -36,6 +36,7 @@ pub mod part_file;
 mod profile;
 mod tabbed;
 mod tht;
+mod usb_c;
 
 use crate::material::BodyKind;
 use crate::native::{BoxBody, Expr, Native};
@@ -78,6 +79,7 @@ pub fn family_rev(form: &PackageForm) -> Option<u16> {
         PackageForm::Grid(_) => grid::FAMILY_REV,
         PackageForm::Tht(_) => tht::FAMILY_REV,
         PackageForm::Module(_) => module::FAMILY_REV,
+        PackageForm::UsbC(_) => usb_c::FAMILY_REV,
     }
 }
 
@@ -184,6 +186,7 @@ pub fn build_definition(
         PackageForm::Grid(f) => grid::check(f)?,
         PackageForm::Tht(f) => tht::check(f)?,
         PackageForm::Module(f) => module::check(f)?,
+        PackageForm::UsbC(f) => usb_c::check(f)?,
         PackageForm::Generic => {}
     }
     native.component(component, false)?;
@@ -204,6 +207,7 @@ pub fn build_definition(
         PackageForm::Grid(f) => grid::build(&mut b, f)?,
         PackageForm::Tht(f) => tht::build(&mut b, f)?,
         PackageForm::Module(f) => module::build(&mut b, f)?,
+        PackageForm::UsbC(f) => usb_c::build(&mut b, f)?,
         PackageForm::Generic => {
             return Err(Error::Invalid(
                 "model.unsupported: a generic package has no generated model".into(),

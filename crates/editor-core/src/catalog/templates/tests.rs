@@ -1087,13 +1087,16 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
             PackageForm::Module(m) => usize::try_from(m.ground_pads()).unwrap_or(0),
             _ => 0,
         };
+        // A receptacle's shell has four stakes, and two peg holes land
+        // nothing (`a_usb_c_receptacle_…` checks them).
+        let receptacle = matches!(package.form, PackageForm::UsbC(_));
         assert_eq!(
             pads.len(),
-            package.terminals.len() + ground.saturating_sub(1),
+            package.terminals.len() + ground.saturating_sub(1) + if receptacle { 5 } else { 0 },
             "{name}"
         );
         let mut landed = std::collections::BTreeSet::new();
-        for pad in pads {
+        for pad in pads.iter().filter(|_| !receptacle) {
             let terminal = pad.terminal.and_then(|t| package.terminal(t));
             let terminal =
                 terminal.ok_or(format!("{name}: pad {} lands no terminal", pad.number))?;
@@ -1942,6 +1945,8 @@ fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
                 (SymbolKind::Capacitor, "C")
             } else if name.starts_with("Chip ferrite bead") {
                 (SymbolKind::FerriteBead, "FB")
+            } else if name.starts_with("Chip LED") {
+                (SymbolKind::Led, "D")
             } else if name.starts_with("Tantalum") || name.starts_with("Radial") {
                 (SymbolKind::PolarisedCapacitor, "C")
             } else {
@@ -1957,7 +1962,7 @@ fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
         );
         seen.insert(format!("{kind:?}"));
     }
-    assert_eq!(seen.len(), 5, "{seen:?}");
+    assert_eq!(seen.len(), 6, "{seen:?}");
     Ok(())
 }
 
@@ -2005,5 +2010,356 @@ fn prefix_explicit_symbol_and_conventions_choose_the_drawing() -> Fallible<()> {
     let message = refused.err().map(|e| e.to_string()).unwrap_or_default();
     assert!(message.contains("needs 2 terminals"), "{message}");
     assert_eq!(engine.to_file(), before);
+    Ok(())
+}
+
+/// The rows `query` finds on a fresh install (the built-in starter rows).
+fn starter_hits(engine: &Engine, query: &str) -> Fallible<Vec<String>> {
+    let report = templates_with(engine, query, &CatalogContext::default())?;
+    Ok(report
+        .hits
+        .iter()
+        .filter(|h| h.is_starter())
+        .map(|h| h.name.clone())
+        .collect())
+}
+
+/// Blocking and other findings the drafts report, as `code: message`.
+fn draft_findings(engine: &Engine) -> Fallible<Vec<String>> {
+    let QueryResult::Drafts(checks) = engine.query(Query::CheckDrafts {})? else {
+        return Err("not the draft checks".into());
+    };
+    Ok(checks
+        .iter()
+        .flat_map(|c| &c.findings)
+        .map(|f| format!("{}: {}", f.code, f.message))
+        .collect())
+}
+
+const USB_C: &str = "USB-C receptacle, USB 2.0, 16 contacts, top mount (GCT USB4105)";
+
+/// The designer's path: search finds the receptacle, Create builds it with
+/// USB-named pins, the A and B rows' duplicates carried by one terminal,
+/// the drawing's lands and its provenance, and it publishes.
+#[test]
+fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
+    let mut engine = Engine::default();
+    for query in ["usb", "USB-C", "usb-c", "type-c", "Type-C", "connector"] {
+        assert!(
+            starter_hits(&engine, query)?.iter().any(|n| n == USB_C),
+            "{query} finds the receptacle"
+        );
+    }
+    assert_eq!(
+        starter_hits(&engine, "usb")?.first().map(String::as_str),
+        Some(USB_C)
+    );
+    let report = templates_with(&engine, "usb", &CatalogContext::default())?;
+    let hit = report
+        .hits
+        .iter()
+        .find(|h| h.name == USB_C)
+        .ok_or("the row")?;
+    assert!(hit.cited && hit.citation_checked && hit.lands_cited);
+    assert_eq!(hit.skeleton, SkeletonHint::Connector);
+
+    let row = crate::library::templates::starter::row(USB_C)?;
+    let ids = new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Starter { name: USB_C.into() },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: "USB-C".into(),
+            designator_prefix: None,
+            symbol: None,
+        },
+    )?;
+    let draft = |k: usize| {
+        ids.get(k)
+            .and_then(|id| engine.drafts().get(*id))
+            .ok_or_else(|| format!("draft {k}"))
+    };
+    let Definition::Component(component) = &draft(0)?.definition else {
+        return Err("component".into());
+    };
+    assert_eq!(component.designator_prefix, "J");
+    let pins: Vec<(&str, Vec<&str>)> = component
+        .terminals
+        .iter()
+        .map(|t| {
+            let labels = match &t.class {
+                crate::library::TerminalClass::Electrical(f) => {
+                    f.functions.iter().map(|f| f.label.as_str()).collect()
+                }
+                _ => Vec::new(),
+            };
+            (t.name.as_str(), labels)
+        })
+        .collect();
+    assert_eq!(
+        pins,
+        [
+            ("VBUS", vec!["power output"]),
+            ("CC1", vec!["passive"]),
+            ("CC2", vec!["passive"]),
+            ("D+", vec!["passive"]),
+            ("D-", vec!["passive"]),
+            ("SBU1", vec!["passive"]),
+            ("SBU2", vec!["passive"]),
+            ("GND", vec!["passive"]),
+            ("SHIELD", vec!["passive"]),
+        ]
+    );
+    let terminal = |name: &str| {
+        component
+            .terminals
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| t.id)
+    };
+    let Definition::Package(package) = &draft(2)?.definition else {
+        return Err("package".into());
+    };
+    let Definition::Binding(binding) = &draft(4)?.definition else {
+        return Err("binding".into());
+    };
+    // Hand-read from the Type-C pinout, pad by pad.
+    let carried = [
+        ("A1B12", "GND"),
+        ("A4B9", "VBUS"),
+        ("B8", "SBU2"),
+        ("A5", "CC1"),
+        ("B7", "D-"),
+        ("A6", "D+"),
+        ("A7", "D-"),
+        ("B6", "D+"),
+        ("A8", "SBU1"),
+        ("B5", "CC2"),
+        ("B4A9", "VBUS"),
+        ("B1A12", "GND"),
+        ("S", "SHIELD"),
+    ];
+    assert_eq!(package.terminals.len(), carried.len());
+    assert_eq!(binding.mappings.len(), carried.len());
+    for (designation, name) in carried {
+        let id = package
+            .terminals
+            .iter()
+            .find(|t| t.designation == designation)
+            .map(|t| t.id)
+            .ok_or(designation)?;
+        assert_eq!(binding.terminal_of(id), terminal(name), "{designation}");
+    }
+
+    let Definition::Footprint(footprint) = &draft(3)?.definition else {
+        return Err("footprint".into());
+    };
+    use crate::library::PadKind;
+    let kind = |k: PadKind| footprint.pads.iter().filter(|p| p.kind == k).count();
+    assert_eq!(kind(PadKind::Smd), 12);
+    assert_eq!(kind(PadKind::PlatedThrough), 4);
+    assert_eq!(kind(PadKind::NonPlatedHole), 2);
+    let polarity = footprint.polarity.as_ref().ok_or("the marked land")?;
+    assert_eq!(
+        footprint.pad(polarity.pad).map(|p| p.number.as_str()),
+        Some("A1B12")
+    );
+    let pad = |number: &str| {
+        footprint
+            .pads
+            .iter()
+            .find(|p| p.number == number)
+            .ok_or_else(|| format!("pad {number}"))
+    };
+    // The drawing: VBUS at ±2.40, GND at ±3.20, 0.60 and 0.30 wide lands
+    // 1.15 long, 3.68 from the outline centre (7.355 from the board edge).
+    assert_eq!(pad("A4B9")?.position, [-2.4, 3.68]);
+    assert_eq!(pad("B1A12")?.position, [3.2, 3.68]);
+    assert_eq!(pad("A6")?.position, [-0.25, 3.68]);
+    assert_eq!(pad("A6")?.shape, PadShape::Rect { size: [0.3, 1.15] });
+    assert_eq!(pad("A1B12")?.shape, PadShape::Rect { size: [0.6, 1.15] });
+    assert_eq!(
+        pad("S")?.hole.as_ref().map(|h| h.shape),
+        Some(crate::library::HoleShape::Slot {
+            width: 0.6,
+            length: 1.4,
+            angle_deg: 90.0
+        })
+    );
+    assert!(
+        footprint
+            .pads
+            .iter()
+            .filter(|p| p.kind == PadKind::NonPlatedHole)
+            .all(|p| p.terminal.is_none() && p.hole.as_ref().is_some_and(|h| !h.plated))
+    );
+
+    let provenance = &draft(0)?.meta.provenance;
+    for text in [
+        "GCT USB4105",
+        "rev. B4",
+        "p. 1",
+        "lands from the cited drawing",
+    ] {
+        assert!(provenance.contains(text), "{provenance}");
+    }
+    let Definition::Symbol(symbol) = &draft(1)?.definition else {
+        return Err("symbol".into());
+    };
+    assert_eq!(symbol.units.iter().map(|u| u.pins.len()).sum::<usize>(), 9);
+
+    let findings = draft_findings(&engine)?;
+    assert_eq!(findings, Vec::<String>::new());
+    apply(
+        &mut engine,
+        LibraryCommand::Publish {
+            drafts: ids,
+            close: false,
+        },
+    )?;
+    Ok(())
+}
+
+/// The designer's path for an LED: search finds it, Create draws the LED
+/// (not a plain diode) with its cathode and anode named and pad 1 marked,
+/// the drawing's lands, and the typed colour and forward voltage fields.
+#[test]
+fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
+    for (name, land, gap) in [
+        ("Chip LED 0603 (1608 metric)", [0.8, 0.8], 0.825),
+        ("Chip LED 0805 (2012 metric)", [1.25, 1.1], 1.175),
+    ] {
+        let mut engine = Engine::default();
+        for query in ["led", "LED", "light", "diode", "chip led"] {
+            assert!(
+                starter_hits(&engine, query)?.iter().any(|n| n == name),
+                "{query} finds {name}"
+            );
+        }
+        assert_eq!(
+            starter_hits(&engine, "led")?
+                .first()
+                .map(|n| n.starts_with("Chip LED")),
+            Some(true)
+        );
+
+        let before = engine.to_file();
+        let (symbol, prefix) = starter_build(&mut engine, name, None, None)?;
+        assert_eq!(prefix, "D");
+        assert_eq!(
+            symbol,
+            expected(&symbol, SymbolKind::Led, SymbolConventions::default())?,
+            "the LED's own drawing"
+        );
+        let plain = expected(&symbol, SymbolKind::Diode, SymbolConventions::default())?;
+        assert_ne!(symbol, plain, "told apart from a plain diode");
+
+        let drafts: Vec<_> = engine
+            .drafts()
+            .items
+            .iter()
+            .map(|d| (d.id, d.definition.clone()))
+            .collect();
+        let find = |pick: fn(&Definition) -> bool| {
+            drafts
+                .iter()
+                .find(|(_, d)| pick(d))
+                .map(|(_, d)| d)
+                .ok_or("draft")
+        };
+        let Definition::Component(component) = find(|d| matches!(d, Definition::Component(_)))?
+        else {
+            return Err("component".into());
+        };
+        let names: Vec<&str> = component
+            .terminals
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, ["K", "A"], "terminal 1 is the cathode, as drawn");
+
+        // Colour and forward voltage, typed, from the project's copies.
+        let library = &engine.project().library;
+        let selected: Vec<&str> = component
+            .fields
+            .iter()
+            .filter_map(|s| library.field(s.field))
+            .map(|f| f.meta.name.as_str())
+            .collect();
+        assert_eq!(selected, ["Colour", "Forward voltage"]);
+        assert!(component.fields.iter().all(|s| s.show_on_symbol));
+        let voltage = component.fields.get(1).ok_or("forward voltage")?;
+        let view = library.field_view(voltage.field).ok_or("field view")?;
+        let typed = crate::fields::parse_value(
+            "2.2 V",
+            &view.field.definition.value_type,
+            view.kind_body(),
+        )?;
+        assert!(matches!(typed, crate::fields::FieldValue::Quantity { .. }));
+
+        let Definition::Footprint(footprint) = find(|d| matches!(d, Definition::Footprint(_)))?
+        else {
+            return Err("footprint".into());
+        };
+        let polarity = footprint.polarity.as_ref().ok_or("the marked pad")?;
+        let first = footprint.pads.first().ok_or("pad 1")?;
+        assert_eq!(polarity.pad, first.id);
+        assert_eq!(first.position, [-gap, 0.0], "the cathode at −x");
+        assert_eq!(first.shape, PadShape::Rect { size: land });
+        let legend = polarity
+            .markers
+            .iter()
+            .filter_map(|id| footprint.graphics.iter().find(|g| g.id == *id))
+            .all(|g| g.layer == crate::library::graphics::DrawingLayer::Silkscreen);
+        assert!(
+            legend && !polarity.markers.is_empty(),
+            "marked on the legend"
+        );
+
+        let Definition::Package(package) = find(|d| matches!(d, Definition::Package(_)))? else {
+            return Err("package".into());
+        };
+        assert!(matches!(&package.form, PackageForm::Chip(c) if c.kind == ChipKind::Led));
+
+        let ids: Vec<DefinitionId> = drafts.iter().map(|(id, _)| *id).collect();
+        let findings = draft_findings(&engine)?;
+        assert_eq!(findings, Vec::<String>::new(), "{name}");
+        apply(
+            &mut engine,
+            LibraryCommand::Publish {
+                drafts: ids,
+                close: false,
+            },
+        )?;
+        engine.undo()?;
+        engine.undo()?;
+        assert_eq!(
+            engine.to_file(),
+            before,
+            "one undo step, the fields included"
+        );
+
+        // A second LED reuses the imported fields.
+        starter_build(&mut engine, name, None, None)?;
+        let fields = engine.project().library.fields.len();
+        starter_build(&mut engine, name, None, None)?;
+        assert_eq!(engine.project().library.fields.len(), fields);
+    }
+    Ok(())
+}
+
+/// A request naming the LED symbol on another row keeps that row's fields
+/// (none): the fields follow the LED construction, not a drawing choice.
+#[test]
+fn an_led_symbol_on_another_row_imports_nothing() -> Fallible<()> {
+    let mut engine = Engine::default();
+    starter_build(
+        &mut engine,
+        "Chip capacitor 0603 (1608 metric)",
+        Some("D"),
+        Some(SymbolKind::Led),
+    )?;
+    assert!(engine.project().library.fields.is_empty());
     Ok(())
 }

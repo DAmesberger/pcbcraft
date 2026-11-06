@@ -56,7 +56,8 @@ pub fn family(form: &PackageForm) -> Family {
         | PackageForm::Molded(_)
         | PackageForm::Grid(_)
         | PackageForm::Tht(_)
-        | PackageForm::Module(_) => Family::Later,
+        | PackageForm::Module(_)
+        | PackageForm::UsbC(_) => Family::Later,
     }
 }
 
@@ -132,6 +133,7 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
                 (ChipKind::Resistor, "Resistor".to_owned()),
                 (ChipKind::Capacitor, "Capacitor".to_owned()),
                 (ChipKind::Inductor, "Inductor".to_owned()),
+                (ChipKind::Led, "LED".to_owned()),
             ];
             changed |= kit::choice_row(ui, "Chip", &mut c.kind, &options);
             changed |= length(ui, "Length", &mut c.length);
@@ -224,7 +226,8 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
         | PackageForm::Molded(_)
         | PackageForm::Grid(_)
         | PackageForm::Tht(_)
-        | PackageForm::Module(_) => changed |= super::family_rows::rows(ui, form),
+        | PackageForm::Module(_)
+        | PackageForm::UsbC(_) => changed |= super::family_rows::rows(ui, form),
     }
     changed
 }

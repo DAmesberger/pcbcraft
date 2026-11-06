@@ -72,7 +72,7 @@ The first run "finished" by waiving every error; this run did not waive. Parts t
 
 | # | First-run finding | Status in this run |
 |---|---|---|
-| 1 | No USB-C part or template | **Remains.** "usb" finds nothing in Open or New from template. |
+| 1 | No USB-C part or template | **Remains.** "usb" finds nothing in Open or New from template. Since fixed in New from template (finding 2 below). |
 | 2 | Waiving one row at a time | **Seen fixed, not exercised.** The list is grouped by kind, with tick boxes per row and per group, and *Waive…* appears on hover (`s23-hover-row.png`). No waiver was made. |
 | 3 | Truncated production rows, stale tooltips | **Fixed for rows.** Hovering "Label SDA on …" showed the full title and fix, and the tooltip closed when the pointer left. The Result line reads in full ("17 errors · 14 warnings"). **Group titles are still cut** with no hover seen: "Unrouted connecti…", "Unconnected termin…" (finding 10). |
 | 4 | Value text collides | **Fixed.** Values read "100 nF", "1 µF", "4.7 kΩ", "1 kΩ", small, beside the body, and clear of pins on turned resistors. ICs and headers show their component name ("LDO AP2112K-3.3", "Pin header 1×4 2.54 mm"). Template passives show nothing until a value is typed in the card. |
@@ -105,7 +105,7 @@ Estimates are agent hours. "Founder's bar" marks findings about cut-off text, cr
 | # | Step | What happened | What a designer expects | Suggested fix | Estimate |
 |---|---|---|---|---|---|
 | 1 | Schematic | **There is no way to mark a pin no-connect.** No Wire, Label or Power entry does it: the Label menu has Net, Global and Hierarchical label only (`s26-label-menu.png`). The command palette finds nothing for "no-connect" and only unrelated commands for "nc" (`s16-no-nc-command.png`). Right-clicking a pin shows no menu. The ERC row says "Connect the terminal or mark it no-connect", but offers only a locate chip. The seven unused pins stay **errors** in the production check, so a correct design cannot export without waiving them. | A no-connect (×) tool on the ribbon and in the palette (Q or X in other tools), plus a quick action on the ERC row. | Add a schematic no-connect marker as a typed command, accepted by ERC and the production check, with a "Mark no-connect" button on unconnected-terminal rows. | 3–4 h |
-| 2 | Parts | **No USB-C part or template** (first run's finding 1, unchanged). | — | — | 6–10 h |
+| 2 | Parts | **No USB-C part or template** (first run's finding 1, unchanged). | — | **Fixed in New from template:** see the [first run's finding 1](e2e-ux-run.md). | 6–10 h |
 
 ### Major
 
@@ -127,7 +127,7 @@ Estimates are agent hours. "Founder's bar" marks findings about cut-off text, cr
 | 11 | Production check | "GND: 12 pads unrouted" appeared after a top pour that visibly reached most GND pads, and the airwire count fell from 29 to 19. The wording does not say whether 12 is the net's pad count or the unrouted ones. | "GND: 3 of 12 pads unconnected". | Report connected/total, and recheck after a fill finishes. | 1 h |
 | 12 | Shortcut | **⇧⌘U does nothing in the Schematic workspace** (first run's open item). | Update PCB from either workspace, opening the PCB review. | Bind it app-wide. | 30 min |
 | 13 | Save | **⌘S on an untitled project does nothing visible; File › Save proposes "untitled"** (first run's finding 19). | ⌘S opens the save panel with "USB sensor board.pcbcraft". | Same as before. | 1 h |
-| 14 | LED | No LED template; an LED made from the 0603 chip template draws as a plain diode, without the emission arrows that tell a designer it is an LED. | An LED template (0603, 0805) with the LED symbol. | Add an LED symbol kind to the chip template. | 1 h |
+| 14 | LED | No LED template; an LED made from the 0603 chip template draws as a plain diode, without the emission arrows that tell a designer it is an LED. | An LED template (0603, 0805) with the LED symbol. | Add an LED symbol kind to the chip template. **Fixed:** "led", "light" and "diode" find Chip LED 0603 and 0805 rows, cited to Kingbright's datasheets. They draw the LED symbol with `K` and `A` pins, mark pad 1 on the legend and select typed Colour and Forward voltage fields. | 1 h |
 
 ### Polish
 

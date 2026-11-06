@@ -151,6 +151,7 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Grid => "BGA",
         FamilyKind::Tht => "THT",
         FamilyKind::Module => "Modules",
+        FamilyKind::UsbC => "USB-C",
     }
 }
 

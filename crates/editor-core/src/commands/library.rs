@@ -623,7 +623,10 @@ fn place_request(
 /// failure discards the whole candidate. Imported on a copy, so a bundle
 /// whose revisions are all in the project already leaves the document
 /// (revision, undo) alone.
-fn import_bundle(document: &mut Document, bundle: &Bundle) -> Result<import::ImportReport> {
+pub(super) fn import_bundle(
+    document: &mut Document,
+    bundle: &Bundle,
+) -> Result<import::ImportReport> {
     library::bundle::validate_bundle(bundle)?;
     let mut project = (*document.project).clone();
     let mut library = std::mem::take(&mut project.library);

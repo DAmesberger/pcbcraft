@@ -82,13 +82,14 @@ impl Kind<'_> {
 }
 
 /// The symbol a chip construction draws: a resistor, a capacitor
-/// (polarised when the package marks pin 1) or an inductor.
+/// (polarised when the package marks pin 1), an inductor or an LED.
 pub fn chip_symbol(chip: ChipKind, polarised: bool) -> SymbolKind {
     match chip {
         ChipKind::Resistor => SymbolKind::Resistor,
         ChipKind::Capacitor if polarised => SymbolKind::PolarisedCapacitor,
         ChipKind::Capacitor => SymbolKind::Capacitor,
         ChipKind::Inductor => SymbolKind::Inductor,
+        ChipKind::Led => SymbolKind::Led,
     }
 }
 
@@ -502,6 +503,15 @@ pub fn form_designations(form: &PackageForm, count: usize) -> Vec<String> {
     if let PackageForm::Module(m) = form {
         return m.designations_for(count);
     }
+    if let PackageForm::UsbC(_) = form {
+        return (0..count)
+            .map(|k| {
+                super::package_form::usb_c::DESIGNATIONS
+                    .get(k)
+                    .map_or_else(|| (k + 1).to_string(), |d| (*d).to_owned())
+            })
+            .collect();
+    }
     let leads = usize::try_from(form.lead_count()).unwrap_or(0);
     let balls = match form {
         PackageForm::Grid(g) => g.ball_names(),
@@ -555,8 +565,10 @@ pub fn form_lands_with(
     terminals: &[PackageTerminalId],
     rules: &DesignRules,
 ) -> Option<Vec<Pad>> {
-    if let PackageForm::Module(m) = form {
-        return m.lands(terminals);
+    match form {
+        PackageForm::Module(m) => return m.lands(terminals),
+        PackageForm::UsbC(u) => return u.lands(terminals),
+        _ => {}
     }
     let no_lead_gap = no_lead_copper_gap(rules);
     let points = form.lead_points();
@@ -624,7 +636,7 @@ pub fn form_lands_with(
                 let (_, land) = t.estimated_drill_and_land();
                 [land, land]
             }
-            PackageForm::Generic | PackageForm::Module(_) => [1.0, 1.0],
+            PackageForm::Generic | PackageForm::Module(_) | PackageForm::UsbC(_) => [1.0, 1.0],
         }
     };
     let tab_index = match form {
@@ -919,7 +931,9 @@ pub fn from_template_with(
         },
         refs,
     );
-    if polarised || count > 2 {
+    if matches!(spec.form, PackageForm::UsbC(_)) {
+        mark_row_end(&mut edits);
+    } else if polarised || count > 2 {
         mark_pin_one(&mut edits);
     }
     Ok(edits)
@@ -930,8 +944,11 @@ pub fn from_template_with(
 /// skeleton takes the kind its designator `prefix` customarily names (so
 /// a user's `D` on a tantalum row draws a diode), else the row's
 /// suggestion, else its form's: a chip's construction, or a diode when
-/// polarised and a resistor when not. The other skeletons keep their box.
-/// A presentation default the author edits, never an electrical claim.
+/// polarised and a resistor when not. A prefix that is the row's or the
+/// chip's own customary letter keeps that more specific kind (an LED
+/// row's `D` draws the LED, not a plain diode). The other skeletons keep
+/// their box. A presentation default the author edits, never an
+/// electrical claim.
 pub fn choose_symbol(
     skeleton: SkeletonHint,
     form: &PackageForm,
@@ -943,13 +960,23 @@ pub fn choose_symbol(
         return explicit;
     }
     Some(match skeleton {
-        SkeletonHint::TwoTerminal { polarised } => SymbolKind::for_prefix(prefix, polarised)
-            .or(row.filter(|k| k.terminal_count() == Some(2)))
-            .unwrap_or(match form {
-                PackageForm::Chip(chip) => chip_symbol(chip.kind, polarised),
-                _ if polarised => SymbolKind::Diode,
-                _ => SymbolKind::Resistor,
-            }),
+        SkeletonHint::TwoTerminal { polarised } => {
+            let specific = row
+                .filter(|k| k.terminal_count() == Some(2))
+                .or(match form {
+                    PackageForm::Chip(chip) if chip.kind == ChipKind::Led => Some(SymbolKind::Led),
+                    _ => None,
+                });
+            match (SymbolKind::for_prefix(prefix, polarised), specific) {
+                (Some(_), Some(kind)) if kind.prefix().eq_ignore_ascii_case(prefix.trim()) => kind,
+                (Some(kind), _) | (None, Some(kind)) => kind,
+                (None, None) => match form {
+                    PackageForm::Chip(chip) => chip_symbol(chip.kind, polarised),
+                    _ if polarised => SymbolKind::Diode,
+                    _ => SymbolKind::Resistor,
+                },
+            }
+        }
         SkeletonHint::IcBox => SymbolKind::IcBox,
         SkeletonHint::Connector => SymbolKind::Connector,
         SkeletonHint::Blank => return None,
@@ -1209,9 +1236,11 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
         provenance: provenance.into(),
     };
     let count = form_terminal_count(&form);
-    let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let package_terminals: Vec<PackageTerminalId> = (1..=count).map(PackageTerminalId).collect();
     let designations = form_designations(&form, package_terminals.len());
+    let plan = electrical_plan(&form, &designations, spec.symbol);
+    let electrical = u32::try_from(plan.len()).unwrap_or(0);
+    let terminals: Vec<TerminalId> = (1..=electrical).map(TerminalId).collect();
     let package = PackageDefinition {
         next_local: count + 1,
         terminals: package_terminals
@@ -1256,16 +1285,26 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
     }
     let named: Vec<(TerminalId, &str)> = terminals
         .iter()
-        .zip(&designations)
-        .map(|(id, name)| (*id, name.as_str()))
+        .zip(&plan)
+        .map(|(id, e)| (*id, e.name.as_str()))
         .collect();
+    let name_of = |id: TerminalId| {
+        named
+            .iter()
+            .find(|(t, _)| *t == id)
+            .map(|(_, name)| (*name).to_owned())
+    };
     let symbol = match spec.symbol {
         SymbolStyle::Block => named_block_symbol(refs.component, &named),
         SymbolStyle::Drawn(kind) => {
             symbol_style::generate(kind, spec.conventions, refs.component, &terminals)
                 .unwrap_or_else(|_| block_symbol(refs.component, &terminals))
         }
-        SymbolStyle::Column => column_symbol(refs.component, &terminals),
+        SymbolStyle::Column => {
+            let mut symbol = column_symbol(refs.component, &terminals);
+            fit_pin_names(&mut symbol, name_of);
+            symbol
+        }
         SymbolStyle::Empty => block_symbol(refs.component, &[]),
     };
     vec![
@@ -1276,20 +1315,17 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                 pin_rules: Vec::new(),
                 marking: None,
                 review: None,
-                next_local: 2 * count + 1,
+                next_local: 2 * electrical + 1,
                 designator_prefix: prefix.into(),
                 terminals: terminals
                     .iter()
-                    .map(|id| Terminal {
+                    .zip(&plan)
+                    .map(|(id, e)| Terminal {
                         id: *id,
-                        name: usize::try_from(id.0)
-                            .ok()
-                            .and_then(|k| designations.get(k.checked_sub(1)?))
-                            .cloned()
-                            .unwrap_or_else(|| id.to_string()),
+                        name: e.name.clone(),
                         class: TerminalClass::Electrical(TerminalFunctions::fixed(
-                            FunctionId(id.0 + count),
-                            Direction::Passive,
+                            FunctionId(id.0 + electrical),
+                            e.direction,
                         )),
                     })
                     .collect(),
@@ -1323,10 +1359,13 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                 package: refs.package,
                 mappings: package_terminals
                     .iter()
-                    .zip(&terminals)
-                    .map(|(package_terminal, terminal)| TerminalMap {
-                        package_terminal: *package_terminal,
-                        terminal: *terminal,
+                    .enumerate()
+                    .filter_map(|(k, package_terminal)| {
+                        let e = plan.iter().position(|e| e.leads.contains(&k))?;
+                        Some(TerminalMap {
+                            package_terminal: *package_terminal,
+                            terminal: *terminals.get(e)?,
+                        })
                     })
                     .collect(),
                 footprints: vec![refs.footprint],
@@ -1334,6 +1373,56 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
             }),
         },
     ]
+}
+
+/// One electrical terminal of a generated component: its name, pin type
+/// and the package terminals (indices in lead order) that carry it.
+struct Electrical {
+    name: String,
+    direction: Direction,
+    leads: Vec<usize>,
+}
+
+/// The electrical terminals a generated component of `form` gets: a USB-C
+/// receptacle's named USB terminals, each carried by every land of its
+/// signal (`usb_c::TERMINALS`); a drawn diode or LED's cathode `K`
+/// (terminal 1, the marked end) and anode `A`; otherwise one passive
+/// terminal per package terminal, named by its designation.
+fn electrical_plan(
+    form: &PackageForm,
+    designations: &[String],
+    symbol: SymbolStyle,
+) -> Vec<Electrical> {
+    use super::package_form::usb_c;
+    if matches!(form, PackageForm::UsbC(_)) && designations.len() == usb_c::DESIGNATIONS.len() {
+        return usb_c::TERMINALS
+            .iter()
+            .map(|(name, direction, leads)| Electrical {
+                name: (*name).to_owned(),
+                direction: *direction,
+                leads: leads.to_vec(),
+            })
+            .collect();
+    }
+    let diode = matches!(
+        symbol,
+        SymbolStyle::Drawn(
+            SymbolKind::Diode | SymbolKind::Zener | SymbolKind::Schottky | SymbolKind::Led
+        )
+    );
+    designations
+        .iter()
+        .enumerate()
+        .map(|(k, designation)| Electrical {
+            name: match (diode && designations.len() == 2, k) {
+                (true, 0) => "K".to_owned(),
+                (true, _) => "A".to_owned(),
+                (false, _) => designation.clone(),
+            },
+            direction: Direction::Passive,
+            leads: vec![k],
+        })
+        .collect()
 }
 
 /// Silkscreen pin-1 dot radius, in mm.
@@ -1351,6 +1440,34 @@ pub fn mark_pin_one(edits: &mut [DraftEdit]) {
     }
 }
 
+/// Mark pad 1 of a receptacle's footprint with the dot past its +y end: a
+/// shell stake's land lies at its −x side, where [`mark_pin_one`] would
+/// put it.
+fn mark_row_end(edits: &mut [DraftEdit]) {
+    for edit in edits {
+        if let Definition::Footprint(footprint) = &mut edit.definition
+            && let Some(pad) = footprint.pad(PadId(1))
+        {
+            let half = pad.bounds().size().map(|v| v / 2.0);
+            let center = [
+                pad.position[0],
+                pad.position[1] + half[1] + polarity_gap(footprint, pad),
+            ];
+            mark_polarity_at(footprint, PadId(1), center);
+        }
+    }
+}
+
+/// How far a polarity dot's centre stands off a pad's edge.
+fn polarity_gap(footprint: &FootprintDefinition, pad: &Pad) -> f64 {
+    templates::footprint::SILK_PAD_CLEARANCE_MM
+        + pad
+            .mask_expansion(&footprint.defaults)
+            .unwrap_or(0.0)
+            .max(0.0)
+        + 2.0 * PIN_ONE_DOT_RADIUS_MM
+}
+
 /// Mark `pad` of `footprint` as the polarity pad, as [`mark_pin_one`]
 /// does for pad 1. A missing pad or an exhausted identity counter leaves
 /// the footprint unchanged.
@@ -1358,15 +1475,17 @@ pub fn mark_polarity(footprint: &mut FootprintDefinition, pad_id: PadId) {
     let Some(pad) = footprint.pad(pad_id) else {
         return;
     };
-    let at = pad.position;
     let half = pad.bounds().size().map(|v| v / 2.0);
-    let gap = templates::footprint::SILK_PAD_CLEARANCE_MM
-        + pad
-            .mask_expansion(&footprint.defaults)
-            .unwrap_or(0.0)
-            .max(0.0)
-        + 2.0 * PIN_ONE_DOT_RADIUS_MM;
-    let center = [at[0] - half[0] - gap, at[1]];
+    let center = [
+        pad.position[0] - half[0] - polarity_gap(footprint, pad),
+        pad.position[1],
+    ];
+    mark_polarity_at(footprint, pad_id, center);
+}
+
+/// Mark `pad_id` as the polarity pad with a filled silkscreen dot at
+/// `center`.
+fn mark_polarity_at(footprint: &mut FootprintDefinition, pad_id: PadId, center: Point) {
     let id = GraphicId(footprint.next_local);
     let Some(next) = footprint.next_local.checked_add(1) else {
         return;
