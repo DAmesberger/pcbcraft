@@ -17,12 +17,23 @@ fn frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> (egui::FullOutput, Option<Operation>) {
+    frame_at(editor, engine, ctx, events, 700.0)
+}
+
+/// One frame with the slot `width` wide.
+fn frame_at(
+    editor: &mut PcbEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    width: f32,
+) -> (egui::FullOutput, Option<Operation>) {
     let mut command = None;
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 Pos2::ZERO,
-                egui::vec2(700.0, 1400.0),
+                egui::vec2(width, 1400.0),
             )),
             events,
             ..Default::default()
@@ -65,6 +76,36 @@ fn positions(output: &egui::FullOutput, label: &str) -> Vec<Pos2> {
         walk(&shape.shape, label, &mut out);
     }
     out
+}
+
+/// The reason field's hint is painted whole, not cut short, in a slot as
+/// wide as the app's Properties card.
+fn hint_shows_whole(
+    editor: &mut PcbEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    hint: &str,
+) -> TestResult {
+    let width = solidcraft_ui_egui::theme::Tokens::get().form_card_width;
+    frame_at(editor, engine, ctx, vec![], width);
+    let (output, _) = frame_at(editor, engine, ctx, vec![], width);
+    let output = &output;
+    fn walk(shape: &Shape, hint: &str, out: &mut Vec<bool>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, hint, out)),
+            Shape::Text(text) if text.galley.job.text == hint => out.push(text.galley.elided),
+            _ => {}
+        }
+    }
+    let mut elided = Vec::new();
+    for shape in &output.shapes {
+        walk(&shape.shape, hint, &mut elided);
+    }
+    match elided.as_slice() {
+        [false] => Ok(()),
+        [] => Err(format!("no {hint} hint in {:?}", texts(output)).into()),
+        _ => Err(format!("{hint} hint cut short: {elided:?}").into()),
+    }
 }
 
 fn press(point: Pos2) -> Vec<egui::Event> {
@@ -280,6 +321,7 @@ fn a_waiver_without_a_reason_is_committed_by_default() -> TestResult {
         "Via on GND too close to via on VCC",
     )?;
     assert!(click(&mut editor, &engine, &ctx, "Waive…")?.is_none());
+    hint_shows_whole(&mut editor, &engine, &ctx, "Optional")?;
     let op = click(&mut editor, &engine, &ctx, "Waive 1 finding")?.ok_or("no waiver edit")?;
     assert!(matches!(
         &op,
@@ -447,6 +489,7 @@ fn a_whole_group_is_waived_with_one_reason_in_one_undo_step() -> TestResult {
         header.y < reason.y && reason.y < next.y,
         "the form is under its group, before the next: {header:?} {reason:?} {next:?}"
     );
+    hint_shows_whole(&mut editor, &engine, &ctx, "Required")?;
     // The reason is required by the setting: without one, Waive does
     // nothing, and the engine refuses such a waiver unchanged.
     assert!(click(&mut editor, &engine, &ctx, "Waive 9 findings")?.is_none());

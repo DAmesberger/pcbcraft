@@ -82,6 +82,11 @@ impl Controller {
     fn dirty(&self) -> bool {
         self.saved.as_ref() != Some(&self.current)
     }
+    /// The current revision holds the saved content again (an undo or redo
+    /// back to it): nothing is unsaved.
+    fn back_at_saved(&mut self) {
+        self.saved = Some(self.current.clone());
+    }
     fn observe(&mut self, revision: u64) -> bool {
         let next = Stamp {
             epoch: self.current.epoch,
@@ -318,6 +323,9 @@ pub struct FileUi {
     /// The current document; cloning shares its data.
     document: Document,
     captured: Option<Document>,
+    /// The content last saved (or opened). Undo and redo restore shared
+    /// snapshots, so returning to it is seen by identity, not by revision.
+    saved_document: Option<Document>,
     picker: rfd::AsyncFileDialog,
     folder: PathBuf,
     sender: Sender<Job>,
@@ -361,6 +369,7 @@ impl FileUi {
             controller: Controller::new(engine.revision()),
             document: engine.document().clone(),
             captured: None,
+            saved_document: Some(engine.document().clone()),
             picker,
             folder: home_directory(),
             sender,
@@ -384,6 +393,15 @@ impl FileUi {
         if self.controller.observe(engine.revision()) {
             self.document = engine.document().clone();
             self.changed_at = now;
+            if self.controller.dirty()
+                && self
+                    .saved_document
+                    .as_ref()
+                    .is_some_and(|saved| same_content(saved, &self.document))
+            {
+                self.controller.back_at_saved();
+                self.clear_recovery(false);
+            }
         }
     }
     pub fn dirty(&self) -> bool {
@@ -410,6 +428,7 @@ impl FileUi {
     ) -> Outcome<()> {
         self.controller.adopt(engine.revision(), path, recovered)?;
         self.document = engine.document().clone();
+        self.saved_document = (!recovered).then(|| self.document.clone());
         self.changed_at = self.now;
         self.clear_recovery(false);
         Ok(())
@@ -719,7 +738,7 @@ impl FileUi {
                     if let Some((current, continuation)) =
                         self.controller.saved(&ticket, path.clone())
                     {
-                        self.captured = None;
+                        self.saved_document = self.captured.take();
                         self.status = Some((
                             Level::Ok,
                             if current {
@@ -1012,6 +1031,12 @@ enum Choice {
     Save,
     Discard,
     Cancel,
+}
+
+/// Both documents share the same data: an undo or redo restored the very
+/// snapshot that was saved.
+fn same_content(a: &Document, b: &Document) -> bool {
+    Arc::ptr_eq(&a.project, &b.project) && Arc::ptr_eq(&a.drafts, &b.drafts)
 }
 
 fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {

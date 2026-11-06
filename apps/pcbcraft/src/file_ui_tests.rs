@@ -144,6 +144,21 @@ impl Harness {
             .collect())
     }
 
+    /// Every file in the recovery folder (none before it exists), empty
+    /// session reservations too.
+    fn recovery_files(&self) -> Fallible<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        let entries = match std::fs::read_dir(self.dir.path().join("recovery")) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in entries {
+            files.push(entry?.path());
+        }
+        Ok(files)
+    }
+
     /// Wait for the background snapshot of the current edit (taken two
     /// seconds after the last change).
     fn snapshot(&mut self, name: &str) -> Fallible {
@@ -277,5 +292,55 @@ fn an_unanswered_exit_keeps_the_latest_edit_for_recovery() -> Fallible {
     h.edit("Latest")?;
     assert!(h.files.keep_for_recovery(Duration::from_secs(5)));
     assert_eq!(h.recoverable()?, ["Latest"]);
+    Ok(())
+}
+
+/// Undo back to the saved content clears the unsaved state; redo away from
+/// it sets it again. Nothing is asked on quit at the saved content.
+#[test]
+fn undo_to_the_saved_content_is_not_unsaved() -> Fallible {
+    let mut h = Harness::new()?;
+    let path = h.dir.path().join("board.pcbcraft");
+    h.files.adopt(&h.engine, Some(path), false)?;
+    h.edit("Edited")?;
+    h.engine.undo()?;
+    h.frame(vec![]);
+    assert!(!h.files.dirty(), "undo to the saved content");
+    h.engine.redo()?;
+    h.frame(vec![]);
+    assert!(h.files.dirty(), "redo away from it");
+    h.engine.undo()?;
+    h.frame(vec![]);
+    h.files.request(Action::Close);
+    assert!(!shows(&h.shown(), TITLE));
+    h.until("the close", Harness::closed)
+}
+
+/// A clean quit leaves no file of this session behind, not even the empty
+/// reservation made at launch: after a project was opened, with Don't
+/// Save, and with nothing to save.
+#[test]
+fn a_clean_quit_leaves_no_recovery_file() -> Fallible {
+    for edit in [false, true] {
+        let mut h = Harness::new()?;
+        // The worker's store is ready (it makes the folder) at launch.
+        h.until("the recovery folder", |h| {
+            h.dir.path().join("recovery").is_dir()
+        })?;
+        assert_eq!(h.recovery_files()?, Vec::<PathBuf>::new(), "at launch");
+        let path = h.dir.path().join("board.pcbcraft");
+        h.files.adopt(&h.engine, Some(path), false)?;
+        h.frame(vec![]);
+        if edit {
+            h.edit("Discarded")?;
+        }
+        h.files.request(Action::Close);
+        if edit {
+            h.click(DONT_SAVE)?;
+        }
+        h.until("the close", Harness::closed)?;
+        assert!(!h.files.keep_for_recovery(Duration::from_secs(1)));
+        assert_eq!(h.recovery_files()?, Vec::<PathBuf>::new(), "edit: {edit}");
+    }
     Ok(())
 }

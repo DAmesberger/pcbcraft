@@ -1086,11 +1086,7 @@ fn reason_form(
             ui,
             "waive-reason",
             reason,
-            if required {
-                "Why this is acceptable for this build"
-            } else {
-                "Why this is acceptable (optional)"
-            },
+            if required { "Required" } else { "Optional" },
             false,
         )
     });
