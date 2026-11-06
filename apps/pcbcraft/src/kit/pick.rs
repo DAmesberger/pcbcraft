@@ -3,7 +3,9 @@
 //! fold chevron (a group header), a tick box, a severity glyph, a one-line
 //! title with an optional count and one action shown while the row is
 //! hovered, so the title has the row's width the rest of the time. The
-//! title's hover gives the full title when it was cut, then `tip`.
+//! title keeps its lines while the action shows, each cut with "…" where
+//! it runs under the action, never re-wrapped into the narrower room, and
+//! the title's hover gives the full title when it was cut, then `tip`.
 //!
 //! Geometry follows the Issues rows (`kit::issues`), so both lists read
 //! alike.
@@ -157,25 +159,35 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
         right = button.rect.left() - t.space_6;
         action_button = Some(button);
     }
-    let title = if row.action.is_some() && hovered {
-        super::text::wrapped(
-            ui,
-            row.title,
-            font,
-            t.text,
-            right - x - count_width,
-            max_rows,
-        )
-    } else {
-        rest
-    };
-    let cut = title.elided;
     let top = cy - line / 2.0;
+    let mut cut = rest.elided;
     // The count follows the title's last line.
-    let end = title.rows.last().map_or(pos2(x, cy), |r| {
-        pos2(x + r.rect().right(), top + r.rect().center().y)
-    });
-    ui.painter().galley(pos2(x, top), title, t.text);
+    let end = if row.action.is_some() && hovered {
+        // The action takes the first line's end: the lines stay as at rest.
+        let lines: Vec<String> = rest.rows.iter().map(|r| r.row.text()).collect();
+        let mut end = pos2(x, cy);
+        for (index, text) in lines.iter().enumerate() {
+            let last = index + 1 == lines.len();
+            let room = if index == 0 {
+                right
+            } else {
+                rect.right() - t.space_6
+            };
+            let room = room - x - if last { count_width } else { 0.0 };
+            let shown = super::text::one_line(ui, text, font.clone(), t.text, room);
+            cut |= shown.elided;
+            let at = pos2(x, top + line * index as f32);
+            end = pos2(at.x + shown.size().x, at.y + line / 2.0);
+            ui.painter().galley(at, shown, t.text);
+        }
+        end
+    } else {
+        let end = rest.rows.last().map_or(pos2(x, cy), |r| {
+            pos2(x + r.rect().right(), top + r.rect().center().y)
+        });
+        ui.painter().galley(pos2(x, top), rest, t.text);
+        end
+    };
     if let Some(count) = count {
         ui.painter().galley(
             pos2(end.x + t.space_6, end.y - count.size().y / 2.0),

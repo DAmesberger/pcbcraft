@@ -638,3 +638,63 @@ fn the_layer_keys_and_copper_toggles_cover_the_stackup() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A menu row shows one key where a command has two; the palette and the
+/// Keyboard shortcuts sheet still list both. Every delete command is so.
+#[test]
+fn menu_rows_show_one_key_of_a_command_with_two() -> Result<(), String> {
+    let registry = Registry::standard();
+    let delete = Chord::key(egui::Key::Delete).shown();
+    let backspace = Chord::key(egui::Key::Backspace).shown();
+    for id in [
+        "schematic.delete",
+        "pcb.delete",
+        "footprint.delete",
+        "shape.delete",
+    ] {
+        let command = registry.get(id).ok_or(id)?;
+        assert_eq!(
+            registry.menu_shortcut(command),
+            Some(delete.clone()),
+            "{id}"
+        );
+        assert_eq!(
+            registry.shortcut(command),
+            Some(format!("{delete}, {backspace}")),
+            "{id}"
+        );
+    }
+    // One key: as ever. No key: none.
+    let save = registry.get("file.save").ok_or("save")?;
+    assert_eq!(registry.menu_shortcut(save), registry.shortcut(save));
+    // The user's own key replaces both.
+    let mut custom = Registry::standard();
+    custom
+        .rebind("pcb.delete", Some(Chord::key(egui::Key::K)))
+        .map_err(|e| e.to_string())?;
+    let command = custom.get("pcb.delete").ok_or("pcb.delete")?;
+    assert_eq!(
+        custom.menu_shortcut(command),
+        Some(Chord::key(egui::Key::K).shown())
+    );
+    Ok(())
+}
+
+/// The shortcuts sheet has one row per name in a context: the palette's
+/// two keys share it (N7).
+#[test]
+fn the_shortcut_sheet_lists_a_name_once_with_all_its_keys() {
+    let registry = Registry::standard();
+    let rows = crate::app::sheet_rows(&registry, "Command palette", &[Context::Global]);
+    let shown: Vec<_> = rows
+        .iter()
+        .filter(|(n, _)| n == "Command palette")
+        .collect();
+    let both = format!(
+        "{}, {}",
+        Chord::cmd(egui::Key::P).shown(),
+        Chord::cmd(egui::Key::P).with_shift().shown()
+    );
+    assert_eq!(shown.len(), 1, "{rows:?}");
+    assert_eq!(shown[0].1, both);
+}

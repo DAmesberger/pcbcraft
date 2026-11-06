@@ -807,6 +807,15 @@ impl Registry {
             .or_else(|| command.key_text.clone())
     }
 
+    /// The shortcut as a menu row shows it: one key, as a menu has room
+    /// for and macOS shows it. A command with two keys (Delete and
+    /// Backspace) shows its first; [`Self::shortcut`] lists both.
+    pub fn menu_shortcut(&self, command: &Command) -> Option<String> {
+        self.chord(command)
+            .map(Chord::shown)
+            .or_else(|| self.shortcut(command))
+    }
+
     /// The command a ribbon button runs in `workspace`, for its tooltip.
     pub fn for_tool(&self, workspace: Workspace, tool: &str) -> Option<&Command> {
         self.commands.iter().find(|c| {

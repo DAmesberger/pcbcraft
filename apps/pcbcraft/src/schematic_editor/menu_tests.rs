@@ -129,8 +129,11 @@ fn a_symbol_offers_arrange_edit_no_connect_and_delete() -> TestResult {
         instance: r1,
         occurrence,
     };
+    // N8: Edit › Delete has something to delete only with a selection.
+    assert!(!editor.can_delete(engine.project()));
     editor.menu_select(engine.project(), target);
     assert_eq!(editor.selected_instance(), Some(r1));
+    assert!(editor.can_delete(engine.project()));
     let rows = editor.menu_rows(&ctx, &engine, target);
     assert_eq!(
         labels(&rows),
@@ -152,7 +155,10 @@ fn a_symbol_offers_arrange_edit_no_connect_and_delete() -> TestResult {
     };
     assert_eq!(key("Rotate"), crate::keys::shown(&ctx, "schematic.rotate"));
     assert_eq!(key("Mirror"), crate::keys::shown(&ctx, "schematic.mirror"));
-    assert_eq!(key("Delete…"), crate::keys::shown(&ctx, "schematic.delete"));
+    assert_eq!(
+        key("Delete…"),
+        Some(crate::commands::Chord::key(egui::Key::Delete).shown())
+    );
     assert_eq!(enabled(&rows, "Rotate"), Some(true));
     Ok(())
 }

@@ -64,7 +64,7 @@ fn every_item_is_a_registry_command_with_its_key() -> TestResult {
             chord.filter(|c| c.command),
             "{id}: the menu takes the registry's ⌘ key"
         );
-        assert_eq!(shown.shown, registry.shortcut(command), "{id}");
+        assert_eq!(shown.shown, registry.menu_shortcut(command), "{id}");
         // The clipboard items wait for a focused field.
         assert_eq!(shown.enabled, text_edit(id).is_none(), "{id}");
     }
@@ -201,6 +201,9 @@ fn enabled_follows_availability() -> TestResult {
         assert!(item(&typing, id)?.enabled, "{id} in a field");
     }
     assert!(state(&typing, Entry::Delete).is_some_and(|s| !s.enabled));
+    // With nothing to delete it is greyed, whatever the keyboard.
+    let empty = now(&registry, &active, false, &|_| false);
+    assert!(state(&empty, Entry::Delete).is_some_and(|s| !s.enabled));
     // Nothing deletes in the Global context alone.
     let global = active_contexts(Context::Global);
     let nowhere = now(&registry, &global, false, &all);

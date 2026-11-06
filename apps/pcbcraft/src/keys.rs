@@ -108,6 +108,13 @@ pub fn shown(ctx: &egui::Context, id: &str) -> Option<String> {
     registry.get(id).and_then(|c| registry.shortcut(c))
 }
 
+/// The key a menu row shows for the command `id`: one key
+/// ([`Registry::menu_shortcut`]).
+pub fn menu_key(ctx: &egui::Context, id: &str) -> Option<String> {
+    let registry = registry(ctx);
+    registry.get(id).and_then(|c| registry.menu_shortcut(c))
+}
+
 /// `text (key)` when the command `id` has a key, else `text`.
 pub fn labelled(ctx: &egui::Context, text: &str, id: &str) -> String {
     match shown(ctx, id) {

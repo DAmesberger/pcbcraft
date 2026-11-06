@@ -320,3 +320,19 @@ fn a_lent_preview_is_restored_only_under_its_own_subject() -> TestResult {
     );
     Ok(())
 }
+
+/// N3: a state chip reads at the WCAG AA ratio on its fill, and never takes
+/// the saturated selection fill it looked selected on.
+#[test]
+fn state_chips_are_legible_and_do_not_look_selected() {
+    for dark in [false, true] {
+        solidcraft_ui_egui::theme::set_dark(dark);
+        let t = solidcraft_ui_egui::theme::Tokens::get();
+        for strong in [false, true] {
+            let (fill, ink) = super::identity::chip_colours(&t, strong);
+            assert_ne!(fill, t.chip, "the selection chip's fill");
+            let ratio = crate::kit::contrast(ink, fill);
+            assert!(ratio >= 4.5, "dark {dark}, strong {strong}: {ratio}");
+        }
+    }
+}

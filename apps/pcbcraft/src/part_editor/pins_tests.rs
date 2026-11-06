@@ -185,7 +185,7 @@ fn pins_tab_sits_between_symbol_and_footprint_and_lists_terminals() -> TestResul
     assert!(ribbon.tabs.iter().any(|t| t.label == "Pins" && t.active));
     assert_eq!(h.editor.located().0, "pins");
     let shown = h.texts();
-    for caption in ["NAME", "CLASS", "GPIO", "PADS"] {
+    for caption in ["NAME", "TYPE", "GPIO", "PADS"] {
         assert!(shown.iter().any(|t| t == caption), "{caption} in {shown:?}");
     }
     for terminal in &h.component()?.terminals.clone() {
@@ -495,7 +495,7 @@ fn paste_document_follows_the_explicit_mapping() -> TestResult {
         Delimiter::Auto,
     )?;
     let mut mapping = Mapping {
-        columns: pins_table::initial_columns(4),
+        columns: pins_table::initial_columns(4, None),
         source_title: "EXM datasheet".into(),
         page: "41".into(),
         ..Mapping::default()
@@ -654,6 +654,9 @@ fn unticked_paste_rows_are_left_out_of_the_apply() {
 fn paste_preview_plans_without_changing_the_document() -> TestResult {
     let mut h = Harness::new()?;
     h.click("Paste table…")?;
+    // N9: the field Preview waits for says it is required.
+    let shown = h.texts();
+    assert!(shown.iter().any(|t| t == "Required"), "{shown:?}");
     let flow = h.editor.pins.table.paste.as_mut().ok_or("not open")?;
     flow.text = "Pin;Name;AF7\n1;PA9;USART1_TX\n2;PA10;USART1_RX\n".into();
     flow.mapping.source_title = "EXM datasheet".into();
@@ -666,6 +669,12 @@ fn paste_preview_plans_without_changing_the_document() -> TestResult {
         flow.plan.is_some() || flow.refusal.is_some(),
         "the preview shows a plan or a refusal"
     );
+    // N12: the flagged rows are not what is left to review.
+    if flow.plan.is_some() {
+        let shown = h.texts();
+        assert!(shown.iter().any(|t| t == "Flagged rows"), "{shown:?}");
+        assert!(!shown.iter().any(|t| t == "To review"), "{shown:?}");
+    }
     h.click("Cancel")?;
     assert!(h.editor.pins.table.paste.is_none());
     Ok(())
@@ -870,5 +879,80 @@ fn mcu_paste_has_no_combination_findings() -> TestResult {
     let found = combination(&undriven)?;
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with("PA05: function ‘PA05’"), "{found:?}");
+    Ok(())
+}
+
+/// N1: a column captioned as a type starts as Pin type, so "power input"
+/// never becomes a function; without captions the mapping is by position.
+#[test]
+fn a_type_caption_starts_as_the_pin_type_column() -> TestResult {
+    let mut flow = pins_table::PasteFlow::new();
+    flow.text = "Pin\tName\tType (power, input)\tAlternate\n1\tVIN\tpower input\tX\n".into();
+    flow.rows()?;
+    assert_eq!(
+        flow.mapping.columns,
+        [
+            ColumnMap::Number,
+            ColumnMap::Name,
+            ColumnMap::Type,
+            ColumnMap::Function
+        ]
+    );
+    let by_position = [
+        ColumnMap::Number,
+        ColumnMap::Name,
+        ColumnMap::Function,
+        ColumnMap::Function,
+    ];
+    assert_eq!(pins_table::initial_columns(4, None), by_position);
+    // A function column's caption that merely holds the letters is one.
+    let captions = ["Pin", "Name", "Prototype", "Alt"].map(String::from);
+    assert_eq!(pins_table::initial_columns(4, Some(&captions)), by_position);
+    // Only the first type column: `document` reads one.
+    let captions = ["Pin", "Name", "Type", "Pin type"].map(String::from);
+    assert_eq!(
+        pins_table::initial_columns(4, Some(&captions)),
+        [
+            ColumnMap::Number,
+            ColumnMap::Name,
+            ColumnMap::Type,
+            ColumnMap::Function
+        ]
+    );
+    Ok(())
+}
+
+/// N1: pins read by what they are. Power and ground pins are power inputs
+/// in the model, with no repeated "power"; other rows name their signal;
+/// the table says the same, and the class where a terminal has no functions.
+#[test]
+fn power_and_ground_pins_read_sensibly() -> TestResult {
+    use pcbcraft_core::functions::{Direction as D, SignalKind as S};
+    assert_eq!(
+        pins_table::kind_text(D::PowerInput, S::Power),
+        "Power input"
+    );
+    assert_eq!(
+        pins_table::kind_text(D::PowerOutput, S::Power),
+        "Power output"
+    );
+    assert_eq!(pins_table::kind_text(D::Passive, S::Unspecified), "Passive");
+    assert_eq!(pins_table::kind_text(D::Input, S::Digital), "Input digital");
+    assert_eq!(
+        pins_table::kind_text(D::Bidirectional, S::Analog),
+        "Bidirectional analog"
+    );
+    let rows = pins_table::split_table(
+        "Pin\tName\tType\n1\tVIN\tpower input\n2\tGND\tground\n3\tNC\tnc\n",
+        Delimiter::Auto,
+    )?;
+    let mapping = mapping_of(vec![ColumnMap::Number, ColumnMap::Name, ColumnMap::Type]);
+    let (document, _) = pins_table::document(&rows, &mapping, "LDO", "SOT-23-5");
+    let document = document.ok_or("no document")?;
+    let ground = document.pins[1].functions.first().ok_or("GND")?;
+    assert_eq!(
+        pins_table::kind_text(ground.direction, ground.signal),
+        "Power input"
+    );
     Ok(())
 }

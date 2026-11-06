@@ -14,7 +14,7 @@ use solidcraft_ui_egui::{
     theme::Tokens,
     titlebar::TRAFFIC_LIGHTS,
     toolbar::APP_BAR_HEIGHT,
-    ui_kit::{self, Button, Container, Edge, Surface},
+    ui_kit::{Container, Edge, Surface},
 };
 
 /// Gap between the viewport edge and floating cards (Solidcraft's
@@ -139,19 +139,19 @@ impl App {
                     ui.add_space(t.space_8);
                     self.file_menu(ui);
                     let save = self.with_shortcut("Save project", AppCommand::Save);
-                    let button = shell::icon_button(ui, "save", &save, !self.files.busy());
+                    let button = bar_icon(ui, "save", &save, !self.files.busy());
                     reveal::register(&ctx, Target::App(AppCommand::Save), button.rect);
                     if button.clicked() {
                         self.files.request(Action::Save);
                     }
                     let undo = self.with_shortcut("Undo", AppCommand::Undo);
-                    let button = shell::icon_button(ui, "undo", &undo, self.engine.can_undo());
+                    let button = bar_icon(ui, "undo", &undo, self.engine.can_undo());
                     reveal::register(&ctx, Target::App(AppCommand::Undo), button.rect);
                     if button.clicked() {
                         self.history(false);
                     }
                     let redo = self.with_shortcut("Redo", AppCommand::Redo);
-                    let button = shell::icon_button(ui, "redo", &redo, self.engine.can_redo());
+                    let button = bar_icon(ui, "redo", &redo, self.engine.can_redo());
                     reveal::register(&ctx, Target::App(AppCommand::Redo), button.rect);
                     if button.clicked() {
                         self.history(true);
@@ -164,13 +164,13 @@ impl App {
                         },
                         AppCommand::ToggleBrowser,
                     );
-                    let button = shell::icon_button(ui, "list", &browser, true);
+                    let button = bar_icon(ui, "list", &browser, true);
                     reveal::register(&ctx, Target::App(AppCommand::ToggleBrowser), button.rect);
                     if button.clicked() {
                         self.toggle_browser();
                     }
                     let palette = self.with_shortcut("Command palette", AppCommand::Palette);
-                    let button = shell::icon_button(ui, "zoom", &palette, true);
+                    let button = bar_icon(ui, "zoom", &palette, true);
                     reveal::register(&ctx, Target::App(AppCommand::Palette), button.rect);
                     if button.clicked() {
                         self.palette.toggle();
@@ -214,7 +214,7 @@ impl App {
     /// bar and the key do.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let file = ui_kit::button(ui, "File", Button::Ghost);
+        let file = bar_text_button(ui, "File");
         let rows = self.menu_now(&ctx, |now| {
             crate::menu_bar::rows(now, crate::menu_bar::IN_WINDOW_FILE)
         });
@@ -644,6 +644,51 @@ impl App {
 
 /// The document tab showing `label`: a long name ends in "…", keeping room
 /// to drag the window by, and shows in full on hover above `tip`.
+/// An icon button on the always dark application bar, as Solidcraft's
+/// (`toolbar.rs`): the dark theme's artwork, its bar hover, and 35 % opacity
+/// when disabled.
+fn bar_icon(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    let t = Tokens::get();
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(t.control_height, t.control_height), sense);
+    if enabled && (response.hovered() || response.has_focus()) {
+        ui.painter()
+            .rect_filled(rect, t.radius_sm, t.app_bar_hover_button);
+    }
+    solidcraft_ui_egui::icons::paint_on(
+        ui.painter(),
+        rect.shrink(t.space_4),
+        icon,
+        Some(true),
+        if enabled { 1.0 } else { 0.35 },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.on_hover_text(label)
+}
+
+/// A text button on the application bar (File), in the bar's text token.
+fn bar_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let t = Tokens::get();
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(t.font_button),
+        t.app_bar_text,
+    );
+    let size = vec2(galley.size().x + t.space_16, t.control_height);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, t.radius_sm, t.app_bar_hover);
+    }
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response
+}
+
 fn tab(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
     let t = Tokens::get();
     let room = (ui.available_width() - TAB_DRAG_ROOM).max(TAB_MIN_WIDTH);
@@ -684,6 +729,65 @@ fn toast_area(canvas: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// N2: the application bar's text and enabled icons stand out from the
+    /// always dark bar in both themes, and a disabled icon is fainter but
+    /// still there. Measured on the raster, against the bar's own token.
+    #[test]
+    fn the_application_bar_is_legible() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::kit::text::tests::Screen;
+        for dark in [false, true] {
+            solidcraft_ui_egui::theme::set_dark(dark);
+            let t = Tokens::get();
+            assert!(kit::contrast(t.app_bar_text, t.app_bar) >= 4.5);
+            let screen = Screen::new(vec2(200.0, 40.0));
+            let mut rects = Vec::new();
+            let mut draw = |ui: &mut egui::Ui| {
+                ui.painter()
+                    .rect_filled(ui.ctx().content_rect(), 0.0, t.app_bar);
+                ui.horizontal(|ui| {
+                    rects = vec![
+                        bar_text_button(ui, "File").rect,
+                        bar_icon(ui, "undo", "Undo", true).rect,
+                        bar_icon(ui, "undo", "Undo", false).rect,
+                        bar_icon(ui, "save", "Save", true).rect,
+                        bar_icon(ui, "zoom", "Find", false).rect,
+                    ];
+                });
+            };
+            screen.run(vec![], &mut draw);
+            let output = screen.run(vec![], &mut draw);
+            let rgba = screen.rgba(&output);
+            let strongest = |rect: Rect| {
+                // Inside the control: the fill's feathered edge is not ink.
+                let rect = rect.shrink(2.0);
+                let mut best = 1.0_f32;
+                for y in rect.top() as usize..rect.bottom() as usize {
+                    for x in rect.left() as usize..rect.right() as usize {
+                        let at = (y * screen.size.x as usize + x) * 4;
+                        if let Some(px) = rgba.get(at..at + 3) {
+                            let ink = egui::Color32::from_rgb(px[0], px[1], px[2]);
+                            best = best.max(kit::contrast(ink, t.app_bar));
+                        }
+                    }
+                }
+                best
+            };
+            let [file, undo, off, save, find] = rects[..] else {
+                return Err("five controls".into());
+            };
+            assert!(strongest(file) >= 4.5, "File {}", strongest(file));
+            assert!(strongest(undo) >= 3.0, "Undo {}", strongest(undo));
+            assert!(strongest(save) >= 3.0, "Save {}", strongest(save));
+            // WCAG exempts disabled controls, but they must still show.
+            for (name, rect) in [("Undo", off), ("Find", find)] {
+                assert!(strongest(rect) >= 1.5, "off {name} {}", strongest(rect));
+            }
+            screen.picture(if dark { "app-bar" } else { "app-bar-light" }, &output, 3.0)?;
+            assert!(strongest(off) < strongest(undo), "disabled reads fainter");
+        }
+        Ok(())
+    }
 
     /// A 170-character file name in a narrow application bar: the tab
     /// stays inside the bar with room left to drag the window by, ends in

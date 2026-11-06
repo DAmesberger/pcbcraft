@@ -29,7 +29,7 @@ Inspect the matching implementation in the pinned Solidcraft checkout before ada
 - Command results and gesture refusals are toasts. Messages holds the history, and pills show persistent modes. Route a refusal back to its origin (`refusal::Refused`). Do not add editor `notice` strings or `kit::Tone::Note` text.
 - Bound every list (`kit::list_frame`, 8 rows, then "Show all"); never cap one silently. Nothing is inserted above the control being edited. The scroll offset resets when the subject changes.
 
-`cargo xtask ui-forms` and `cargo xtask ui-containers` enforce building with the kit and the shared containers. `issues::style::check` defines the wording rules; its tests cover the refusal wording and the core finding fixtures. Apply these rules in review where no test reaches.
+`cargo xtask ui-forms` and `cargo xtask ui-containers` enforce building with the kit and the shared containers. `issues::style::check` defines the wording rules; its tests cover the refusal wording and the core finding fixtures. A refusal's sentence may run past the 80 characters: pass it whole (`refusal::shown_error`) and let `kit::text` fit it, so a cut can show the rest. Apply these rules in review where no test reaches.
 
 For a visible change, run the actual app when available, reproduce the interaction and inspect a real screenshot or recording. Add an interaction scenario for behavior that can regress. Include small-window layout and both views when affected. Do not claim visual verification from a mockup or from compilation alone.
 

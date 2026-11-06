@@ -17,6 +17,10 @@ use pcbcraft_core::Error;
 use pcbcraft_core::issues::{MAX_TITLE, style};
 use std::sync::Arc;
 
+/// The longest text shown for one message, in characters: a bound for a
+/// display that fits text itself. Messages keeps the whole text.
+pub const MAX_SHOWN: usize = 600;
+
 /// Where a refused operation came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Origin {
@@ -57,8 +61,9 @@ pub fn level(error: &Error) -> Level {
 
 /// The wording a person sees for `error`, chosen by variant. Engine text is
 /// shown by its first sentence when that follows the message style;
-/// otherwise the variant's own wording stands in. The full engine text
-/// still goes to Messages.
+/// otherwise the variant's own wording stands in. The sentence is whole:
+/// where it shows decides how it fits (`kit::text`: wrapped, or cut with
+/// the full text on hover). The full engine text still goes to Messages.
 pub fn shown_error(error: &Error) -> String {
     let fallback = match error {
         Error::Stale { .. } => return "The project changed meanwhile; try again".into(),
@@ -76,7 +81,7 @@ pub fn shown_error(error: &Error) -> String {
         | Error::NotFound(text)
         | Error::Conflict(text)
         | Error::Limit(text)
-        | Error::Unsupported(text) => presentable(text).unwrap_or_else(|| fallback.into()),
+        | Error::Unsupported(text) => whole_sentence(text).unwrap_or_else(|| fallback.into()),
         Error::Stale { .. } | Error::Json(_) => fallback.into(),
     }
 }
@@ -85,6 +90,27 @@ pub fn shown_error(error: &Error) -> String {
 /// [`MAX_TITLE`] characters at a word, if it then follows the message
 /// style; `None` when it names IDs, codes or Debug output.
 pub fn presentable(text: &str) -> Option<String> {
+    let shown = clip(&first_sentence(text), MAX_TITLE);
+    style::check(&shown).is_empty().then_some(shown)
+}
+
+/// As [`presentable`], for a place that fits text itself: the sentence is
+/// not clipped to a title, only bounded by [`MAX_SHOWN`]. Past a title's
+/// length it must still name objects, not IDs or codes; otherwise only the
+/// part that does shows.
+pub fn whole_sentence(text: &str) -> Option<String> {
+    let title = presentable(text)?;
+    let sentence = clip(&first_sentence(text), MAX_SHOWN);
+    Some(if style::naming(&sentence).is_empty() {
+        sentence
+    } else {
+        title
+    })
+}
+
+/// The first sentence of `text` as the app words it, without its code or
+/// full stop.
+fn first_sentence(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default().trim();
     let line = quoted(without_code(line));
     let line = line.as_str();
@@ -92,9 +118,11 @@ pub fn presentable(text: &str) -> Option<String> {
         Some(end) => &line[..end],
         None => line,
     };
-    let sentence = sentence.trim_end().trim_end_matches('.').trim_end();
-    let shown = clip(sentence, MAX_TITLE);
-    style::check(&shown).is_empty().then_some(shown)
+    sentence
+        .trim_end()
+        .trim_end_matches('.')
+        .trim_end()
+        .to_owned()
 }
 
 /// `line` without the rule code engine text leads with
@@ -281,12 +309,12 @@ mod tests {
         }
         for error in &errors {
             let shown = shown_error(error);
-            assert!(
-                style::check(&shown).is_empty(),
-                "{:?} → {shown:?}: {:?}",
-                error,
-                style::check(&shown)
-            );
+            // Every rule but the length: where it shows fits a long one.
+            let problems: Vec<_> = style::check(&shown)
+                .into_iter()
+                .filter(|p| *p != style::Problem::TooLong)
+                .collect();
+            assert!(problems.is_empty(), "{error:?} → {shown:?}: {problems:?}");
         }
         Ok(())
     }
@@ -339,8 +367,15 @@ mod tests {
             shown_error(&Error::Invalid("an odd ` stays".into())),
             "That value is not accepted"
         );
-        let long = shown_error(&Error::Invalid("word ".repeat(40)));
-        assert!(long.ends_with('…') && long.chars().count() <= MAX_TITLE);
+        // A long sentence stays whole: where it shows fits it, and a cut
+        // there can show the rest. Only absurd lengths are bounded.
+        let long = "word ".repeat(40);
+        assert_eq!(shown_error(&Error::Invalid(long.clone())), long.trim_end());
+        let absurd = shown_error(&Error::Invalid("word ".repeat(400)));
+        assert!(absurd.ends_with('…') && absurd.chars().count() <= MAX_SHOWN);
+        // Past a title's length it still never names an internal ID.
+        let id = shown_error(&Error::Invalid(format!("{}(ID 8)", "word ".repeat(40))));
+        assert!(!id.contains("ID 8") && id.ends_with('…'), "{id}");
     }
 
     #[test]

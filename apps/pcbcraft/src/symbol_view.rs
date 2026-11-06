@@ -346,6 +346,15 @@ fn ear_clip(points: &[Point]) -> Vec<[u32; 3]> {
     out
 }
 
+/// How far to lower `galley` so its glyphs keep clear of the line above:
+/// Latin text has room at the top of its line box, a taller fallback font
+/// (CJK) reaches its top or beyond.
+fn above_line_box(galley: &egui::Galley) -> f32 {
+    const CLEAR: f32 = 0.12;
+    let height = galley.size().y;
+    (CLEAR * height - galley.mesh_bounds.top()).clamp(0.0, height)
+}
+
 /// Paint text at its justification anchor, turned upright by the core rule.
 /// Each line of a multi-line text goes where the core layout puts it
 /// ([`PlacedText::lines`]), so line spacing and justification match the
@@ -372,7 +381,9 @@ pub fn paint_text(painter: &Painter, view: View, text: &PlacedText, color: Color
             HAlign::Right => -box_size.x,
         };
         let dy = match justify.v {
-            VAlign::Top => 0.0,
+            // Glyphs of a taller fallback font (CJK) keep off the body's
+            // edge above them.
+            VAlign::Top => above_line_box(&galley),
             VAlign::Middle => -box_size.y / 2.0,
             VAlign::Bottom => -box_size.y,
         };
@@ -424,6 +435,40 @@ mod tests {
         let triangles = ear_clip(&l);
         assert!((area(&l, &triangles) - 3.0).abs() < 1e-9);
         assert!(is_convex(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tall_fallback_glyphs_stay_below_a_top_anchor() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        fonts::load_system_fonts_in_background(&ctx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !fonts::system_fonts_ready() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(fonts::system_fonts_ready(), "the search finished");
+        fonts::setup_fonts_without_waiting(&ctx, "en", "");
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear();
+        ctx.run_ui(Default::default(), |ui| {
+            for (text, size) in [("基板テスト", 40.0), ("Resistor", 40.0)] {
+                let galley = ui.painter().layout_no_wrap(
+                    text.to_owned(),
+                    fonts::medium(size),
+                    egui::Color32::BLACK,
+                );
+                let lowered = above_line_box(&galley);
+                assert!(
+                    galley.mesh_bounds.top() + lowered >= 0.1 * galley.size().y,
+                    "{text}"
+                );
+                assert_eq!(lowered > 0.0, text != "Resistor", "{text}: {lowered}");
+            }
+        })
+        .textures_delta
+        .clear();
     }
 
     #[test]

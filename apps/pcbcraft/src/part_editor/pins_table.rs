@@ -159,12 +159,37 @@ pub fn chip_text(function: &Function) -> String {
     }
 }
 
-/// A terminal's class as the table shows it.
-fn class_text(terminal: &Terminal) -> &'static str {
-    match terminal.class {
-        TerminalClass::Electrical(_) => "Electrical",
-        TerminalClass::DeviceNc => "Device NC",
-        TerminalClass::Reserved => "Reserved",
+/// How a function's direction and signal read: "Bidirectional digital",
+/// and only "Power input" or "Passive" where the signal adds nothing. A
+/// ground pin is a power input in the model: it reads as one.
+pub fn kind_text(direction: Direction, signal: SignalKind) -> String {
+    let mut chars = direction.label().chars();
+    let name: String = chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    match signal {
+        SignalKind::Digital => format!("{name} digital"),
+        SignalKind::Analog => format!("{name} analog"),
+        SignalKind::Power | SignalKind::Unspecified => name,
+    }
+}
+
+/// A terminal's type as the table shows it: what its class says when it
+/// has no functions (`TerminalClass`: device NC, reserved), else the
+/// direction its functions have ("Power input"), or "Mixed" when they
+/// differ. The class "Electrical" alone would tell the rows nothing apart.
+pub fn type_text(terminal: &Terminal) -> String {
+    let functions = match &terminal.class {
+        TerminalClass::Electrical(functions) => functions,
+        TerminalClass::DeviceNc => return "Device NC".to_owned(),
+        TerminalClass::Reserved => return "Reserved".to_owned(),
+    };
+    let mut directions = functions.functions.iter().map(|f| f.direction);
+    match directions.next() {
+        None => "Electrical".to_owned(),
+        Some(first) if directions.all(|d| d == first) => kind_text(first, SignalKind::Unspecified),
+        Some(_) => "Mixed".to_owned(),
     }
 }
 
@@ -215,7 +240,7 @@ pub struct Lit {
 const COLUMNS: [(&str, f32); 7] = [
     ("#", 36.0),
     ("Name", 110.0),
-    ("Class", 84.0),
+    ("Type", 84.0),
     ("GPIO", 56.0),
     ("Functions (default bold)", 0.0),
     ("Pads", 84.0),
@@ -362,7 +387,7 @@ fn row(
         t.form_dim,
     );
     paint_cell(ui, cell(1), &terminal.name, font.clone(), t.form_ink);
-    paint_cell(ui, cell(2), class_text(terminal), font.clone(), t.form_dim);
+    paint_cell(ui, cell(2), &type_text(terminal), font.clone(), t.form_dim);
     paint_cell(ui, cell(3), &gpio_text(terminal), font.clone(), t.form_dim);
     let pad_text = pads
         .get(&terminal.id)
@@ -871,15 +896,31 @@ impl Default for Mapping {
 }
 
 /// The starting mapping for `columns` columns: number, name, then
-/// functions; the person changes any of them before anything is planned.
-pub fn initial_columns(columns: usize) -> Vec<ColumnMap> {
+/// functions, except that the first column captioned as a type ("Type",
+/// "Pin type", "Type (power, input)") is the Pin type column. `captions`
+/// is the table's first row when it holds captions. The person changes any
+/// of them before anything is planned.
+pub fn initial_columns(columns: usize, captions: Option<&[String]>) -> Vec<ColumnMap> {
+    let type_column = captions
+        .into_iter()
+        .flatten()
+        .position(|caption| is_type_caption(caption));
     (0..columns)
         .map(|i| match i {
             0 => ColumnMap::Number,
+            i if Some(i) == type_column => ColumnMap::Type,
             1 => ColumnMap::Name,
             _ => ColumnMap::Function,
         })
         .collect()
+}
+
+/// Whether a column's caption has the word "type". This only starts the
+/// mapping the person reviews; a pin's name is never read this way.
+fn is_type_caption(caption: &str) -> bool {
+    caption
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word.eq_ignore_ascii_case("type"))
 }
 
 /// One row the mapping cannot turn into a pin as stated.
@@ -1320,7 +1361,8 @@ impl PasteFlow {
         let rows = split_table(&self.text, self.delimiter)?;
         let width = rows.iter().map(Vec::len).max().unwrap_or(0);
         if self.mapping.columns.len() != width {
-            let initial = initial_columns(width);
+            let captions = rows.first().filter(|_| self.mapping.header);
+            let initial = initial_columns(width, captions.map(Vec::as_slice));
             self.mapping.columns.resize(width, ColumnMap::Ignore);
             if self.mapping.columns.iter().all(|c| *c == ColumnMap::Ignore) {
                 self.mapping.columns = initial;

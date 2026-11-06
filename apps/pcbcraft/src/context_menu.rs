@@ -44,7 +44,7 @@ impl<A> Entry<A> {
         Self {
             label: label.to_owned(),
             icon: command.map_or("", |c| c.icon),
-            key: command.and_then(|c| registry.shortcut(c)),
+            key: command.and_then(|c| registry.menu_shortcut(c)),
             enabled: enabled && command.is_some(),
             run: Run::Command(id),
         }
@@ -64,7 +64,7 @@ impl<A> Entry<A> {
     /// Show the key of the registry command `id`, the key that runs the
     /// same action.
     pub fn key_of(mut self, ctx: &egui::Context, id: &str) -> Self {
-        self.key = crate::keys::shown(ctx, id);
+        self.key = crate::keys::menu_key(ctx, id);
         self
     }
 }

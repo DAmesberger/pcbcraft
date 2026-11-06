@@ -36,7 +36,11 @@ impl RibbonState {
 
     /// Whether the ribbon can run `event` now; `Err` says why not.
     pub(super) fn allows(&self, event: RibbonEvent, context: Context) -> Result<(), String> {
-        let elsewhere = || format!("Not available here; it applies in {}", context.label());
+        let elsewhere = || match context {
+            // It applies everywhere, so this workspace just lacks it now.
+            Context::Global => "Not available here".to_owned(),
+            context => format!("Not available here; it applies in {}", context.label()),
+        };
         match event {
             RibbonEvent::Tab(id) => self.tabs.contains(&id).then_some(()).ok_or_else(elsewhere),
             RibbonEvent::Tool(id) => match self.tools.iter().find(|t| t.0 == id) {

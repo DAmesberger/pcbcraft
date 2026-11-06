@@ -189,13 +189,12 @@ fn the_menu_is_solidcrafts_rows_with_keys() -> TestResult {
         "on its row"
     );
     assert!(key.left() > rotate.right() + 100.0, "right-aligned");
-    at(&Chord::key(egui::Key::Delete).shown()).or_else(|_| {
-        at(&format!(
-            "{}, {}",
-            Chord::key(egui::Key::Delete).shown(),
-            Chord::key(egui::Key::Backspace).shown()
-        ))
-    })?;
+    // Delete and Backspace both delete; a menu row shows the one key.
+    at(&Chord::key(egui::Key::Delete).shown())?;
+    assert!(
+        texts.iter().all(|(t, ..)| !t.contains(", ")),
+        "two keys in a row: {texts:?}"
+    );
     let right = texts
         .iter()
         .map(|(_, r, ..)| r.right())
